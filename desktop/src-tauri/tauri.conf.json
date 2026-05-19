@@ -29,7 +29,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDlCOUIwRDExQTc5RTFGMzYKUldRMkg1Nm5FUTJibTJ2cGlHY0pkL0dGemxXMUlzc01pVTVMM1U3WGpmWUtrUC8wK2ErSXhLKzEK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUwMUQ3MkJEMUZBNjBEQzIKUldUQ0RhWWZ2WElkNENCZSt2ZHpmMDN0akhSc2d0Z0trRTgwOWlkaFZHaWpZbzgyNDM3aXhXc1MK",
       "endpoints": [
         "https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/releases/latest/download/latest.json"
       ],
