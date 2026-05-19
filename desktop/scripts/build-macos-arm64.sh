@@ -9,12 +9,12 @@ REPO_ROOT="$(cd "${DESKTOP_DIR}/.." && pwd)"
 TARGET_TRIPLE="aarch64-apple-darwin"
 TAURI_TARGET_DIR="${DESKTOP_DIR}/src-tauri/target"
 CANONICAL_OUTPUT_DIR="${DESKTOP_DIR}/build-artifacts/macos-arm64"
-APP_BUNDLE_NAME="Claude Code Haha.app"
-APP_BUNDLE_ID="com.claude-code-haha.desktop"
+APP_BUNDLE_NAME="EchoFlowAI-Claude-Code.app"
+APP_BUNDLE_ID="com.echoflowai-claude-code.desktop"
 
 usage() {
   cat <<'EOF'
-Build Claude Code Haha desktop for macOS Apple Silicon and output a DMG.
+Build EchoFlowAI-Claude-Code desktop for macOS Apple Silicon and output a DMG.
 
 Usage:
   ./desktop/scripts/build-macos-arm64.sh [extra tauri build args...]
@@ -191,7 +191,7 @@ build_canonical_dmg() {
 
   # Create a read-write DMG first so we can customize the Finder layout
   hdiutil create \
-    -volname "Claude Code Haha" \
+    -volname "EchoFlowAI-Claude-Code" \
     -srcfolder "${staging_dir}" \
     -ov \
     -format UDRW \
@@ -212,7 +212,7 @@ build_canonical_dmg() {
   # 所以这里允许 osascript 非零退出,只 warn,不让 set -e 炸掉整个脚本。
   if ! osascript <<APPLESCRIPT
 tell application "Finder"
-  tell disk "Claude Code Haha"
+  tell disk "EchoFlowAI-Claude-Code"
     open
     set current view of container window to icon view
     set toolbar visible of container window to false
@@ -283,7 +283,7 @@ sign_canonical_app_bundle() {
 
 if [[ -n "${LATEST_APP}" ]]; then
   # Normalize the Tauri-produced app in place before copying it anywhere.
-  # Without this, opening target/.../bundle/macos/Claude Code Haha.app directly
+  # Without this, opening target/.../bundle/macos/EchoFlowAI-Claude-Code.app directly
   # uses the executable's ad-hoc signing identifier instead of the app bundle id,
   # which makes macOS notification authorization behave like a different app.
   sign_canonical_app_bundle "${LATEST_APP}"
@@ -298,7 +298,7 @@ if [[ -n "${LATEST_APP}" ]]; then
   cp -R "${LATEST_APP}" "${CANONICAL_OUTPUT_DIR}/"
   sign_canonical_app_bundle "${CANONICAL_OUTPUT_DIR}/${APP_BUNDLE_NAME}"
   rm -f "${CANONICAL_OUTPUT_DIR}/"*.dmg
-  CANONICAL_DMG="${CANONICAL_OUTPUT_DIR}/$(basename "${LATEST_DMG:-Claude Code Haha_0.1.0_aarch64.dmg}")"
+  CANONICAL_DMG="${CANONICAL_OUTPUT_DIR}/$(basename "${LATEST_DMG:-EchoFlowAI-Claude-Code_0.1.0_aarch64.dmg}")"
   build_canonical_dmg \
     "${CANONICAL_OUTPUT_DIR}/${APP_BUNDLE_NAME}" \
     "${CANONICAL_DMG}"

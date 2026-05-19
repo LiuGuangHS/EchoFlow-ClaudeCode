@@ -42,7 +42,7 @@ describe('provider-aware thinking support', () => {
   })
 
   test('does not assume adaptive thinking for Anthropic-compatible third-party base URLs', () => {
-    process.env.ANTHROPIC_BASE_URL = 'https://api.jiekou.ai/anthropic'
+    process.env.ANTHROPIC_BASE_URL = 'https://api.echoflow.cn'
     delete process.env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES
     clearCapabilityCache()
 
@@ -50,7 +50,7 @@ describe('provider-aware thinking support', () => {
   })
 
   test('honors explicit provider capability overrides with no supported capabilities', () => {
-    process.env.ANTHROPIC_BASE_URL = 'https://api.jiekou.ai/anthropic'
+    process.env.ANTHROPIC_BASE_URL = 'https://api.echoflow.cn'
     process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = 'claude-sonnet-4-6'
     process.env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES = 'none'
     clearCapabilityCache()

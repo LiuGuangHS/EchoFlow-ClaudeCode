@@ -25,7 +25,7 @@ export default function NewTaskModal() {
       <header className="bg-[var(--color-background)] flex justify-between items-center px-6 h-12 w-full z-40">
         <div className="flex items-center gap-6">
           <span className="text-sm font-bold text-[var(--color-text-primary)] uppercase tracking-tighter font-[var(--font-headline)]">
-            Claude Code Companion
+            EchoFlowAI-Claude-Code
           </span>
           <nav className="hidden md:flex gap-4 font-[var(--font-headline)] font-semibold tracking-wide text-sm">
             <a className="text-[var(--color-text-tertiary)] hover:text-[var(--color-brand)] transition-colors cursor-pointer">Code</a>

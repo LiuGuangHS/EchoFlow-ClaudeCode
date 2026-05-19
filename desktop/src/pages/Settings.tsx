@@ -322,7 +322,14 @@ function ProviderSettings() {
                   {!isActive && (
                     <Button variant="ghost" size="sm" onClick={() => handleActivate(provider.id)}>{t('settings.providers.setDefault')}</Button>
                   )}
-                  <Button variant="ghost" size="sm" onClick={() => handleTest(provider)} loading={test?.loading}>{t('settings.providers.test')}</Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleTest(provider)}
+                    loading={test?.loading}
+                  >
+                    {t('settings.providers.test')}
+                  </Button>
                   <Button variant="ghost" size="sm" onClick={() => setEditingProvider(provider)}>{t('settings.providers.edit')}</Button>
                   {!isActive && (
                     <Button variant="ghost" size="sm" onClick={() => handleDelete(provider)} className="text-[var(--color-error)] hover:text-[var(--color-error)]">{t('common.delete')}</Button>
@@ -3062,14 +3069,14 @@ function PluginSettings() {
 
 // ─── About Settings ──────────────────────────────────────
 
-const GITHUB_REPO = 'https://github.com/NanmiCoder/cc-haha'
+const GITHUB_REPO = 'https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code'
 const GITHUB_ISSUES = `${GITHUB_REPO}/issues`
 const GITHUB_RELEASES = `${GITHUB_REPO}/releases`
-const AUTHOR_GITHUB = 'https://github.com/NanmiCoder'
+const AUTHOR_GITHUB = GITHUB_REPO
 const SOCIAL_LINKS = [
-  { name: 'Bilibili', icon: '/icons/bilibili.svg', url: 'https://space.bilibili.com/434377496', label: '程序员阿江-Relakkes' },
-  { name: 'Douyin', icon: '/icons/douyin.svg', url: 'https://www.douyin.com/user/MS4wLjABAAAATJPY7LAlaa5X-c8uNdWkvz0jUGgpw4eeXIwu_8BhvqE', label: '程序员阿江-Relakkes' },
-  { name: 'Xiaohongshu', icon: '/icons/xiaohongshu.svg', url: 'https://www.xiaohongshu.com/user/profile/5f58bd990000000001003753', label: '程序员阿江-Relakkes' },
+  { name: 'Bilibili', icon: '/icons/bilibili.svg', url: GITHUB_REPO, label: 'EchoFlowAI 官方' },
+  { name: 'Douyin', icon: '/icons/douyin.svg', url: GITHUB_REPO, label: 'EchoFlowAI 官方' },
+  { name: 'Xiaohongshu', icon: '/icons/xiaohongshu.svg', url: GITHUB_REPO, label: 'EchoFlowAI 官方' },
 ] as const
 
 function isValidUpdateProxyUrl(value: string) {
@@ -3206,8 +3213,8 @@ function AboutSettings() {
   return (
     <div className="w-full min-w-0 max-w-lg mx-auto flex flex-col items-center py-6">
       {/* Logo + App Name + Version */}
-      <img src="/app-icon.png" alt="Claude Code Haha" className="w-20 h-20 mb-4" />
-      <h1 className="text-xl font-bold text-[var(--color-text-primary)]">Claude Code Haha</h1>
+      <img src="/app-icon.png" alt="EchoFlowAI-Claude-Code" className="w-20 h-20 mb-4" />
+      <h1 className="text-xl font-bold text-[var(--color-text-primary)]">EchoFlowAI-Claude-Code</h1>
       {version && (
         <div className="mt-1 flex items-center gap-2 text-xs text-[var(--color-text-tertiary)]">
           <span>{t('settings.about.version')} {version}</span>
@@ -3229,7 +3236,7 @@ function AboutSettings() {
         >
           <img src="/icons/github.svg" alt="GitHub" className="w-5 h-5 opacity-70" />
           <div className="flex-1 text-left">
-            <div className="text-sm font-medium text-[var(--color-text-primary)]">NanmiCoder/cc-haha</div>
+            <div className="text-sm font-medium text-[var(--color-text-primary)]">LiuGuangHS/EchoFlowAI-Claude-Code</div>
             <div className="text-xs text-[var(--color-text-tertiary)]">{t('settings.about.starHint')}</div>
           </div>
         </button>
@@ -3428,7 +3435,7 @@ function AboutSettings() {
           className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer"
         >
           <img src="/icons/github.svg" alt="GitHub" className="w-4 h-4 opacity-60" />
-          <span className="text-sm text-[var(--color-text-primary)]">程序员阿江-Relakkes</span>
+          <span className="text-sm text-[var(--color-text-primary)]">EchoFlowAI</span>
           <span className="text-xs text-[var(--color-text-tertiary)] ml-auto">GitHub</span>
         </button>
       </div>

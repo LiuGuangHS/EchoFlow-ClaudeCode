@@ -54,7 +54,7 @@
     "needsApiKey": true,
     "websiteUrl": "https://open.bigmodel.cn",
     "apiKeyUrl": "https://www.bigmodel.cn/invite?icode=d41B2qi8Z5xNwTGLNPPF3OZLO2QH3C0EBTSr%2BArzMw4%3D",
-    "promoText": "智谱 GLM 为 cc-haha 用户准备了专属邀请福利，使用此链接注册后可领取新用户权益。",
+    "promoText": "智谱 GLM 为 EchoFlowAI-Claude-Code 用户准备了专属邀请福利，使用此链接注册后可领取新用户权益。",
     "authStrategy": "auth_token",
     "defaultEnv": {
       "CC_HAHA_SEND_DISABLED_THINKING": "1"
@@ -118,58 +118,26 @@
     }
   },
   {
-    "id": "jiekouai",
-    "name": "接口AI",
-    "baseUrl": "https://api.jiekou.ai/anthropic",
+    "id": "echoflowai",
+    "name": "清云API",
+    "baseUrl": "https://api.echoflow.cn",
     "apiFormat": "anthropic",
     "defaultModels": {
       "main": "claude-sonnet-4-6",
-      "haiku": "claude-haiku-4-5-20251001",
+      "haiku": "claude-haiku-4-5",
       "sonnet": "claude-sonnet-4-6",
       "opus": "claude-opus-4-7"
     },
     "needsApiKey": true,
-    "websiteUrl": "https://jiekou.ai",
-    "apiKeyUrl": "https://jiekou.ai/referral?invited_code=OBNU3K",
-    "promoText": "接口AI为 cc-haha 的用户提供官方资源与稳定高性能体验，订阅包价格为官方 8 折；绑定 GitHub 后还可领取 3 美元优惠券。",
+    "websiteUrl": "https://api.echoflow.cn/",
+    "apiKeyUrl": "https://api.echoflow.cn/",
+    "promoText": "清云API 提供 Anthropic Messages 兼容协议，可直接用于 Claude Code。",
     "featured": true,
     "authStrategy": "auth_token",
-    "defaultEnv": {
-      "ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES": "none"
-    },
     "modelContextWindows": {
       "claude-sonnet-4-6": 1000000,
-      "claude-haiku-4-5-20251001": 200000,
       "claude-haiku-4-5": 200000,
       "claude-opus-4-7": 1000000
-    }
-  },
-  {
-    "id": "shengsuanyun",
-    "name": "胜算云",
-    "baseUrl": "https://router.shengsuanyun.com/api",
-    "apiFormat": "anthropic",
-    "defaultModels": {
-      "main": "anthropic/claude-sonnet-4.6",
-      "haiku": "anthropic/claude-haiku-4.5:thinking",
-      "sonnet": "anthropic/claude-sonnet-4.6",
-      "opus": "anthropic/claude-opus-4.7"
-    },
-    "needsApiKey": true,
-    "websiteUrl": "https://www.shengsuanyun.com",
-    "apiKeyUrl": "https://www.shengsuanyun.com/?from=CH_LEJ88KWR",
-    "promoText": "胜算云为 cc-haha 的用户提供了特别福利，使用此链接注册的新用户可获 10 元模力及首充 10% 赠送！",
-    "featured": true,
-    "authStrategy": "auth_token",
-    "defaultEnv": {
-      "API_TIMEOUT_MS": "3000000",
-      "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-      "ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES": "none"
-    },
-    "modelContextWindows": {
-      "anthropic/claude-sonnet-4.6": 1000000,
-      "anthropic/claude-haiku-4.5:thinking": 200000,
-      "anthropic/claude-opus-4.7": 1000000
     }
   },
   {

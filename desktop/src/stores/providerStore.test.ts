@@ -7,6 +7,8 @@ const {
   runtimeStoreState,
   setSessionRuntimeMock,
   setSelectionMock,
+  setModelMock,
+  fetchSettingsMock,
 } = vi.hoisted(() => ({
   providersApiMock: {
     list: vi.fn(),
@@ -32,6 +34,8 @@ const {
   },
   setSessionRuntimeMock: vi.fn(),
   setSelectionMock: vi.fn(),
+  setModelMock: vi.fn(),
+  fetchSettingsMock: vi.fn(),
 }))
 
 vi.mock('../api/providers', () => ({
@@ -59,8 +63,8 @@ vi.mock('./sessionRuntimeStore', () => ({
 vi.mock('./settingsStore', () => ({
   useSettingsStore: {
     getState: () => ({
-      setModel: vi.fn(),
-      fetchAll: vi.fn(),
+      setModel: setModelMock,
+      fetchAll: fetchSettingsMock,
     }),
   },
 }))
@@ -89,6 +93,7 @@ describe('providerStore runtime refresh', () => {
     chatStoreState.sessions = {}
     runtimeStoreState.selections = {}
     providersApiMock.list.mockResolvedValue({ providers: [], activeId: null })
+    providersApiMock.activate.mockResolvedValue({ ok: true })
   })
 
   it('reapplies an updated active provider to idle connected sessions using default runtime', async () => {
@@ -146,5 +151,26 @@ describe('providerStore runtime refresh', () => {
 
     expect(setSelectionMock).not.toHaveBeenCalled()
     expect(setSessionRuntimeMock).not.toHaveBeenCalled()
+  })
+
+  it('does not overwrite the global model when activating a provider with upstream default models', async () => {
+    const provider = makeProvider({
+      presetId: 'echoflowai',
+      name: '清云API',
+      models: {
+        main: '',
+        haiku: '',
+        sonnet: '',
+        opus: '',
+      },
+    })
+    providersApiMock.list.mockResolvedValue({ providers: [provider], activeId: provider.id })
+
+    const { useProviderStore } = await import('./providerStore')
+    await useProviderStore.getState().activateProvider(provider.id)
+
+    expect(providersApiMock.activate).toHaveBeenCalledWith(provider.id)
+    expect(setModelMock).not.toHaveBeenCalled()
+    expect(fetchSettingsMock).not.toHaveBeenCalled()
   })
 })

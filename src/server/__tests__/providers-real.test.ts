@@ -89,10 +89,10 @@ describe('Real Provider Configs', () => {
       models: MODEL_MAPPING,
     })
 
-    const jiekou = await service.addProvider({
+    const echoFlow = await service.addProvider({
       presetId: 'custom',
-      name: '接口AI中转站',
-      baseUrl: 'https://api.jiekou.ai/anthropic',
+      name: 'EchoFlowAI custom provider',
+      baseUrl: 'https://api.echoflow.cn',
       apiKey: 'sk-fake-test-key-for-testing-only',
       models: {
         main: 'claude-opus-4-7',
@@ -111,10 +111,10 @@ describe('Real Provider Configs', () => {
       'MiniMax-M2.7-highspeed': 204800,
     })
 
-    // 切换到接口AI中转站
-    await service.activateProvider(jiekou.id)
+    // 切换到 EchoFlowAI custom provider
+    await service.activateProvider(echoFlow.id)
     settings = await readCcHahaSettings()
-    expect((settings.env as Record<string, string>).ANTHROPIC_BASE_URL).toBe('https://api.jiekou.ai/anthropic')
+    expect((settings.env as Record<string, string>).ANTHROPIC_BASE_URL).toBe('https://api.echoflow.cn')
     expect((settings.env as Record<string, string>).ANTHROPIC_AUTH_TOKEN).toBe('sk-fake-test-key-for-testing-only')
     expect((settings.env as Record<string, string>).ANTHROPIC_API_KEY).toBe('')
     expect((settings.env as Record<string, string>).ANTHROPIC_MODEL).toBe('claude-opus-4-7')
@@ -122,7 +122,7 @@ describe('Real Provider Configs', () => {
 
     // 验证 activeId 正确
     const list = await service.listProviders()
-    expect(list.activeId).toBe(jiekou.id)
+    expect(list.activeId).toBe(echoFlow.id)
 
     // 原版 settings.json 依然不存在
     expect(await originalSettingsExists()).toBe(false)
@@ -146,8 +146,8 @@ describe('Real Provider Configs', () => {
     // 添加并激活 provider
     const provider = await service.addProvider({
       presetId: 'custom',
-      name: '接口AI中转站',
-      baseUrl: 'https://api.jiekou.ai/anthropic',
+      name: 'EchoFlowAI custom provider',
+      baseUrl: 'https://api.echoflow.cn',
       apiKey: 'sk_test',
       models: {
         main: 'claude-opus-4-7',
@@ -161,7 +161,7 @@ describe('Real Provider Configs', () => {
     const settings = await readCcHahaSettings()
 
     // 验证新字段写入
-    expect((settings.env as Record<string, string>).ANTHROPIC_BASE_URL).toBe('https://api.jiekou.ai/anthropic')
+    expect((settings.env as Record<string, string>).ANTHROPIC_BASE_URL).toBe('https://api.echoflow.cn')
     expect((settings.env as Record<string, string>).ANTHROPIC_AUTH_TOKEN).toBe('sk_test')
     expect((settings.env as Record<string, string>).ANTHROPIC_API_KEY).toBe('')
 

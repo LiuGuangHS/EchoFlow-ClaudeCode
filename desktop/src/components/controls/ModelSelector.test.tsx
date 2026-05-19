@@ -102,7 +102,7 @@ describe('ModelSelector', () => {
 
     render(<ModelSelector runtimeKey="session-1" />)
 
-    await clickByRole(/alpha/i)
+    await clickByRole(/provider-main.*Provider A/i)
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /provider-fast/ }))
       await Promise.resolve()
@@ -115,6 +115,58 @@ describe('ModelSelector', () => {
     expect(setSessionRuntime).toHaveBeenCalledWith('session-1', {
       providerId: 'provider-a',
       modelId: 'provider-fast',
+    })
+  })
+
+  it('shows 清云API prefilled models for provider runtime selection', async () => {
+    const setSessionRuntime = vi.fn()
+    useSettingsStore.setState({
+      locale: 'en',
+      availableModels: MODELS,
+      currentModel: MODELS[0],
+      activeProviderName: '清云API',
+    })
+    useProviderStore.setState({
+      providers: [{
+        id: 'qingyun-api',
+        presetId: 'echoflowai',
+        name: '清云API',
+        apiKey: '***',
+        baseUrl: 'https://api.echoflow.cn',
+        apiFormat: 'anthropic',
+        models: {
+          main: 'claude-sonnet-4-6',
+          haiku: 'claude-haiku-4-5',
+          sonnet: 'claude-sonnet-4-6',
+          opus: 'claude-opus-4-7',
+        },
+      }],
+      activeId: 'qingyun-api',
+      hasLoadedProviders: true,
+      isLoading: true,
+    })
+    useChatStore.setState({
+      setSessionRuntime,
+    } as Partial<ReturnType<typeof useChatStore.getState>>)
+
+    render(<ModelSelector runtimeKey="session-default" />)
+
+    expect(screen.getByRole('button', { name: /claude-sonnet-4-6.*清云API/i })).toBeInTheDocument()
+
+    await clickByRole(/claude-sonnet-4-6.*清云API/i)
+    expect(screen.queryByText('Claude Official')).not.toBeInTheDocument()
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /claude-opus-4-7.*Opus Model/i }))
+      await Promise.resolve()
+    })
+
+    expect(useSessionRuntimeStore.getState().selections['session-default']).toEqual({
+      providerId: 'qingyun-api',
+      modelId: 'claude-opus-4-7',
+    })
+    expect(setSessionRuntime).toHaveBeenCalledWith('session-default', {
+      providerId: 'qingyun-api',
+      modelId: 'claude-opus-4-7',
     })
   })
 

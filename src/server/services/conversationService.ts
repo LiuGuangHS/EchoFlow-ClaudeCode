@@ -930,7 +930,7 @@ export class ConversationService {
       CALLER_DIR: workDir,
       PWD: workDir,
       ...(sdkUrl
-        ? { CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID: 'com.claude-code-haha.desktop' }
+        ? { CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID: 'com.echoflowai-claude-code.desktop' }
         : {}),
       ...(desktopServerUrl
         ? { CC_HAHA_DESKTOP_SERVER_URL: desktopServerUrl }

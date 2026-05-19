@@ -118,7 +118,9 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
   const runtimeSelectionKey = runtimeSelection
     ? `${runtimeSelection.providerId ?? 'official'}:${runtimeSelection.modelId}`
     : undefined
-  const runtimeModelLabel = runtimeSelection?.modelId ?? currentModel?.name ?? currentModel?.id
+  const runtimeModelLabel = runtimeSelection
+    ? runtimeSelection.modelId
+    : currentModel?.name ?? currentModel?.id
   const activeSession = useSessionStore((state) => activeTabId ? state.sessions.find((session) => session.id === activeTabId) ?? null : null)
   const loadedMessageCount = sessionState?.messages?.length ?? 0
   const messageCount = Math.max(loadedMessageCount, activeSession?.messageCount ?? 0)

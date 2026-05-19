@@ -407,7 +407,7 @@ export function ActiveSession() {
                   </>
                 ) : (
                   <>
-                    <img src="/app-icon.png" alt="Claude Code Haha" className="mb-6 h-24 w-24" />
+                    <img src="/app-icon.png" alt="EchoFlowAI-Claude-Code" className="mb-6 h-24 w-24" />
                     <h1 className="mb-2 text-3xl font-extrabold tracking-tight text-[var(--color-text-primary)]" style={{ fontFamily: 'var(--font-headline)' }}>
                       {t('empty.title')}
                     </h1>

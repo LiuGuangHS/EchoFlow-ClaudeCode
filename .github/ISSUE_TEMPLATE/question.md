@@ -9,9 +9,9 @@ assignees: ''
 ## 提交前确认
 <!-- 请确认以下事项 -->
 
-- [ ] 我已经阅读了 [README 常见问题](https://github.com/NanmiCoder/cc-haha#常见问题)
-- [ ] 我已经阅读了[第三方模型使用指南](https://github.com/NanmiCoder/cc-haha/blob/main/docs/guide/third-party-models.md)（如使用第三方 provider）
-- [ ] 我已经搜索过[现有 issues](https://github.com/NanmiCoder/cc-haha/issues)，确认没有重复问题
+- [ ] 我已经阅读了 [README 常见问题](https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code#常见问题)
+- [ ] 我已经阅读了[第三方模型使用指南](https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/blob/main/docs/guide/third-party-models.md)（如使用第三方 provider）
+- [ ] 我已经搜索过[现有 issues](https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/issues)，确认没有重复问题
 - [ ] 我已经隐藏截图和日志中的 API Key、Token、Cookie 等敏感信息
 
 ## 问题描述

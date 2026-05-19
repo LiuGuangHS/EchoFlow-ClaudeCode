@@ -196,7 +196,7 @@ describe('Settings > General tab', () => {
       appMode: {
         mode: 'default',
         portableDir: null,
-        defaultPortableDir: '/Applications/Claude Code Haha/CLAUDE_CONFIG_DIR',
+        defaultPortableDir: '/Applications/EchoFlowAI-Claude-Code/CLAUDE_CONFIG_DIR',
         activeConfigDir: null,
         configDirSource: 'system',
       },
@@ -206,9 +206,9 @@ describe('Settings > General tab', () => {
         useSettingsStore.setState({
           appMode: {
             mode,
-            portableDir: mode === 'portable' ? portableDir ?? '/Applications/Claude Code Haha/CLAUDE_CONFIG_DIR' : null,
-            defaultPortableDir: '/Applications/Claude Code Haha/CLAUDE_CONFIG_DIR',
-            activeConfigDir: mode === 'portable' ? portableDir ?? '/Applications/Claude Code Haha/CLAUDE_CONFIG_DIR' : null,
+            portableDir: mode === 'portable' ? portableDir ?? '/Applications/EchoFlowAI-Claude-Code/CLAUDE_CONFIG_DIR' : null,
+            defaultPortableDir: '/Applications/EchoFlowAI-Claude-Code/CLAUDE_CONFIG_DIR',
+            activeConfigDir: mode === 'portable' ? portableDir ?? '/Applications/EchoFlowAI-Claude-Code/CLAUDE_CONFIG_DIR' : null,
             configDirSource: mode === 'portable' ? 'portable' : 'system',
           },
           appModeRequiresRestart: true,
@@ -360,7 +360,7 @@ describe('Settings > General tab', () => {
       appMode: {
         mode: 'portable',
         portableDir: '/Users/test/cc-haha-data',
-        defaultPortableDir: '/Applications/Claude Code Haha/CLAUDE_CONFIG_DIR',
+        defaultPortableDir: '/Applications/EchoFlowAI-Claude-Code/CLAUDE_CONFIG_DIR',
         activeConfigDir: '/Users/test/cc-haha-data',
         configDirSource: 'portable',
       },
@@ -395,7 +395,7 @@ describe('Settings > General tab', () => {
     expect(screen.getByText('Choose or enter a portable data directory first.')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Use the default portable folder beside the app' }))
-    expect(input).toHaveValue('/Applications/Claude Code Haha/CLAUDE_CONFIG_DIR')
+    expect(input).toHaveValue('/Applications/EchoFlowAI-Claude-Code/CLAUDE_CONFIG_DIR')
     expect(screen.queryByText('Choose or enter a portable data directory first.')).not.toBeInTheDocument()
   })
 
@@ -419,7 +419,7 @@ describe('Settings > General tab', () => {
       appMode: {
         mode: 'portable',
         portableDir: '/env/claude-data',
-        defaultPortableDir: '/Applications/Claude Code Haha/CLAUDE_CONFIG_DIR',
+        defaultPortableDir: '/Applications/EchoFlowAI-Claude-Code/CLAUDE_CONFIG_DIR',
         activeConfigDir: '/env/claude-data',
         configDirSource: 'environment',
       },
@@ -619,7 +619,7 @@ describe('Settings > General tab', () => {
       expect(desktopNotificationsMock.requestDesktopNotificationPermission).toHaveBeenCalledTimes(1)
     })
     expect(desktopNotificationsMock.notifyDesktop).toHaveBeenCalledWith({
-      title: 'Claude Code Haha notifications are enabled',
+      title: 'EchoFlowAI-Claude-Code notifications are enabled',
       body: 'Permission prompts and completed agent replies will now use system notifications.',
     })
   })
@@ -1028,6 +1028,81 @@ describe('Settings > Providers tab', () => {
     })
   })
 
+  it('defaults the provider form to EchoFlow with prefilled Claude models', async () => {
+    providerStoreState.createProvider = vi.fn().mockResolvedValue({
+      id: 'provider-new',
+      presetId: 'echoflowai',
+      name: '清云API',
+      apiKey: 'sk-test',
+      baseUrl: 'https://api.echoflow.cn',
+      apiFormat: 'anthropic',
+      models: {
+        main: '',
+        haiku: '',
+        sonnet: '',
+        opus: '',
+      },
+    })
+    providerStoreState.presets = [
+      {
+        id: 'echoflowai',
+        name: '清云API',
+        baseUrl: 'https://api.echoflow.cn',
+        apiFormat: 'anthropic',
+        defaultModels: {
+          main: 'claude-sonnet-4-6',
+          haiku: 'claude-haiku-4-5',
+          sonnet: 'claude-sonnet-4-6',
+          opus: 'claude-opus-4-7',
+        },
+        needsApiKey: true,
+        websiteUrl: 'https://api.echoflow.cn/',
+        apiKeyUrl: 'https://api.echoflow.cn/',
+        featured: true,
+      },
+      {
+        id: 'custom',
+        name: 'Custom',
+        baseUrl: '',
+        apiFormat: 'anthropic',
+        defaultModels: {
+          main: '',
+          haiku: '',
+          sonnet: '',
+          opus: '',
+        },
+        needsApiKey: true,
+        websiteUrl: '',
+      },
+    ]
+
+    render(<Settings />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Add Provider|添加服务商/i }))
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).getByDisplayValue('清云API')).toBeInTheDocument()
+    expect(within(dialog).getAllByDisplayValue('claude-sonnet-4-6').length).toBeGreaterThan(0)
+    expect(within(dialog).getByDisplayValue('claude-haiku-4-5')).toBeInTheDocument()
+    expect(within(dialog).getByDisplayValue('claude-opus-4-7')).toBeInTheDocument()
+
+    fireEvent.change(within(dialog).getByPlaceholderText('sk-...'), { target: { value: 'sk-test' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: /Save|Add|保存|添加/i }))
+
+    await waitFor(() => {
+      expect(providerStoreState.createProvider).toHaveBeenCalledWith(expect.objectContaining({
+        presetId: 'echoflowai',
+        name: '清云API',
+        baseUrl: 'https://api.echoflow.cn',
+        models: {
+          main: 'claude-sonnet-4-6',
+          haiku: 'claude-haiku-4-5',
+          sonnet: 'claude-sonnet-4-6',
+          opus: 'claude-opus-4-7',
+        },
+      }))
+    })
+  })
+
   it('hides the API key by default and reveals it from the eye button', () => {
     providerStoreState.presets = [
       {
@@ -1075,7 +1150,7 @@ describe('Settings > About tab', () => {
     useUpdateStore.setState({
       status: 'available',
       availableVersion: '0.1.5',
-      releaseNotes: '# Claude Code Haha v0.1.5\n\n- Fixed updater rendering\n- Added markdown support',
+      releaseNotes: '# EchoFlowAI-Claude-Code v0.1.5\n\n- Fixed updater rendering\n- Added markdown support',
       progressPercent: 0,
       downloadedBytes: 0,
       totalBytes: null,
@@ -1092,7 +1167,7 @@ describe('Settings > About tab', () => {
   it('renders release notes with markdown formatting', async () => {
     render(<Settings />)
 
-    expect(await screen.findByRole('heading', { name: 'Claude Code Haha v0.1.5' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'EchoFlowAI-Claude-Code v0.1.5' })).toBeInTheDocument()
     expect(screen.getByText('Fixed updater rendering')).toBeInTheDocument()
     expect(screen.getByText('Added markdown support')).toBeInTheDocument()
   })
@@ -1101,7 +1176,7 @@ describe('Settings > About tab', () => {
     useUpdateStore.setState({
       status: 'downloading',
       availableVersion: '0.1.5',
-      releaseNotes: '# Claude Code Haha v0.1.5',
+      releaseNotes: '# EchoFlowAI-Claude-Code v0.1.5',
       progressPercent: 0,
       downloadedBytes: 1536,
       totalBytes: null,

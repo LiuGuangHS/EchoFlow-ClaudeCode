@@ -1,36 +1,36 @@
-# Claude Code Haha
+# EchoFlowAI-Claude-Code
 
 <p align="center">
-  <img src="docs/images/logo-horizontal.png" alt="Claude Code Haha" width="480">
+  <img src="docs/images/logo-horizontal.png" alt="EchoFlowAI-Claude-Code" width="480">
 </p>
 
 <div align="center">
 
-[![GitHub Stars](https://img.shields.io/github/stars/NanmiCoder/cc-haha?style=social)](https://github.com/NanmiCoder/cc-haha/stargazers)
-[![GitHub Forks](https://img.shields.io/github/forks/NanmiCoder/cc-haha?style=social)](https://github.com/NanmiCoder/cc-haha/network/members)
-[![GitHub Issues](https://img.shields.io/github/issues/NanmiCoder/cc-haha)](https://github.com/NanmiCoder/cc-haha/issues)
-[![GitHub Pull Requests](https://img.shields.io/github/issues-pr/NanmiCoder/cc-haha)](https://github.com/NanmiCoder/cc-haha/pulls)
-[![License](https://img.shields.io/github/license/NanmiCoder/cc-haha)](https://github.com/NanmiCoder/cc-haha/blob/main/LICENSE)
+[![GitHub Stars](https://img.shields.io/github/stars/LiuGuangHS/EchoFlowAI-Claude-Code?style=social)](https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/stargazers)
+[![GitHub Forks](https://img.shields.io/github/forks/LiuGuangHS/EchoFlowAI-Claude-Code?style=social)](https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/network/members)
+[![GitHub Issues](https://img.shields.io/github/issues/LiuGuangHS/EchoFlowAI-Claude-Code)](https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/issues)
+[![GitHub Pull Requests](https://img.shields.io/github/issues-pr/LiuGuangHS/EchoFlowAI-Claude-Code)](https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/pulls)
+[![License](https://img.shields.io/github/license/LiuGuangHS/EchoFlowAI-Claude-Code)](https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/blob/main/LICENSE)
 [![中文](https://img.shields.io/badge/🇨🇳_中文-Available-green)](README.md)
 [![English](https://img.shields.io/badge/🇺🇸_English-当前-blue)](README.en.md)
-[![Docs](https://img.shields.io/badge/📖_Documentation-Visit-FF7A00)](https://claudecode-haha.relakkesyang.org)
+[![Docs](https://img.shields.io/badge/📖_Documentation-Visit-FF7A00)](https://liuguanghs.github.io/EchoFlowAI-Claude-Code/)
 
 </div>
 
-A Claude Code build repaired from the source leaked from Anthropic's npm registry on 2026-03-31. Claude Code Haha is now primarily a **desktop Claude Code workspace** for macOS and Windows: sessions, projects, branch / Worktree launch, right-side file changes, code diffs, permission review, provider setup, Computer Use, H5 remote access, IM integration, and scheduled tasks in one app.
+A Claude Code build repaired from the source leaked from Anthropic's npm registry on 2026-03-31. EchoFlowAI-Claude-Code is now primarily a **desktop Claude Code workspace** for macOS and Windows: sessions, projects, branch / Worktree launch, right-side file changes, code diffs, permission review, provider setup, Computer Use, H5 remote access, IM integration, and scheduled tasks in one app.
 
 <p align="center">
-  <a href="#desktop-preview">Desktop Preview</a> · <a href="#install-the-desktop-app">Install</a> · <a href="#desktop-highlights">Highlights</a> · <a href="#sponsorship--partnership">Sponsorship</a> · <a href="#more-documentation">More Docs</a>
+  <a href="#desktop-preview">Desktop Preview</a> · <a href="#install-the-desktop-app">Install</a> · <a href="#desktop-highlights">Highlights</a> · <a href="#feedback--sponsorship">Feedback</a> · <a href="#more-documentation">More Docs</a>
 </p>
 
 ---
 
 ## Desktop Preview
 
-The Claude Code Haha desktop app brings sessions, multi-project navigation, branch / Worktree controls, right-side file changes, code diffs, permission review, provider setup, and remote access into one graphical workspace for daily development flows beyond the terminal.
+The EchoFlowAI-Claude-Code desktop app brings sessions, multi-project navigation, branch / Worktree controls, right-side file changes, code diffs, permission review, provider setup, and remote access into one graphical workspace for daily development flows beyond the terminal.
 
 <p align="center">
-  <a href="https://github.com/NanmiCoder/cc-haha/releases"><img src="https://img.shields.io/badge/⬇_Download_Desktop-macOS_%7C_Windows-FF7A00?style=for-the-badge" alt="Download Desktop"></a>
+  <a href="https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/releases"><img src="https://img.shields.io/badge/⬇_Download_Desktop-macOS_%7C_Windows-FF7A00?style=for-the-badge" alt="Download Desktop"></a>
   &nbsp;
   <a href="docs/desktop/04-installation.md"><img src="https://img.shields.io/badge/📖_Install_Guide-Guide-gray?style=for-the-badge" alt="Install Guide"></a>
 </p>
@@ -54,7 +54,7 @@ The Claude Code Haha desktop app brings sessions, multi-project navigation, bran
 
 ## Install the Desktop App
 
-1. Download the macOS or Windows desktop installer from [Releases](https://github.com/NanmiCoder/cc-haha/releases).
+1. Download the macOS or Windows desktop installer from [Releases](https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/releases).
 2. On first launch, configure your model provider, API key, and default model in Settings.
 3. If macOS blocks the app on first open, follow the [desktop installation guide](docs/desktop/04-installation.md) for Gatekeeper steps.
 
@@ -107,68 +107,40 @@ See [environment variables](docs/en/guide/env-vars.md) and [global usage](docs/e
 
 ---
 
-## Sponsorship & Partnership
+## Feedback & Sponsorship
 
-This project is maintained in the author's spare time. Corporate or individual sponsorships are welcome to support ongoing development. Custom features, integrations, and business partnerships are also open for discussion.
+EchoFlowAI-Claude-Code improves around real user workflows. Installation, provider setup, desktop usage, fork customization, and enterprise integration feedback are all welcome. Feature suggestions, case studies, sponsorship, custom integration, and business collaboration are welcome too.
 
 <table>
-  <thead>
-    <tr>
-      <th width="220">Sponsor</th>
-      <th align="left">Description</th>
-    </tr>
-  </thead>
   <tbody>
     <tr>
-      <td align="center" valign="middle">
-        <a href="https://jiekou.ai/referral?invited_code=OBNU3K">
-          <img src="docs/images/sponsors/jiekou-logo.svg" width="72" alt="JieKou AI"><br>
-          <strong>接口AI</strong>
-        </a>
+      <td width="34%" align="center" valign="top">
+        <img src="docs/images/community/wechat-contact.png" width="180" alt="WeChat contact QR code"><br>
+        <strong>Feedback, Sponsorship, Collaboration</strong><br>
+        <sub>Feature ideas / sponsorship / custom integration / business</sub>
       </td>
-      <td valign="middle">
-        Thanks to <a href="https://jiekou.ai/referral?invited_code=OBNU3K">JieKou AI</a> for sponsoring this project. JieKou AI provides official model resources with stable, high-performance API access. Subscription bundles are priced at 20% off the official rate; new users who register through <a href="https://jiekou.ai/referral?invited_code=OBNU3K">this link</a> and bind GitHub can claim a $3 coupon.
+      <td width="33%" align="center" valign="top">
+        <img src="docs/images/community/qingyun-vibecoding-group.png" width="230" alt="Qingyun AI VibeCoding community QR code"><br>
+        <strong>Qingyun AI VibeCoding Community</strong><br>
+        <sub>AI Coding / Claude Code forks / engineering automation</sub>
       </td>
-    </tr>
-    <tr>
-      <td align="center" valign="middle">
-        <a href="https://www.shengsuanyun.com/?from=CH_LEJ88KWR">
-          <img src="docs/images/sponsors/shengsuanyun-logo.svg" width="180" alt="ShengSuanYun">
-        </a>
-      </td>
-      <td valign="middle">
-        Thanks to <a href="https://www.shengsuanyun.com/?from=CH_LEJ88KWR">ShengSuanYun</a> for sponsoring this project. ShengSuanYun is an industrial-grade AI task parallel execution platform for AI Native Teams, aggregating Claude, ChatGPT, Gemini, and other LLM, image, and video model capacity through direct, non-reverse-engineered access. Its platform SLA reaches 99.7%, with <a href="https://watch.shengsuanyun.com/status/shengsuanyun">service status</a> available online. It also supports dedicated enterprise gateways, cost and permission controls, smart routing, security protection, BYOK, usage-based billing, upcoming tokens plans, and invoicing. New users registering through <a href="https://www.shengsuanyun.com/?from=CH_LEJ88KWR">this link</a> can receive 10 yuan in model credits plus a 10% first top-up bonus.
+      <td width="33%" align="center" valign="top">
+        <img src="docs/images/community/qingyun-aigc-group.png" width="230" alt="Qingyun AIGC community QR code"><br>
+        <strong>Qingyun AIGC Community</strong><br>
+        <sub>AIGC tools / model apps / content workflows / industry cases</sub>
       </td>
     </tr>
   </tbody>
 </table>
 
-📧 **Contact**: relakkes@gmail.com
+| What you get in the groups | Best for |
+|---|---|
+| Faster feedback loop | Installation failures, provider setup, model calls, and desktop issues with screenshots or logs |
+| Forking experience | White-labeling, private API providers, internal distribution, Tauri packaging, releases |
+| Update signals | Important fixes, prereleases, configuration changes, and practical cases |
+| Peer learning | AI Coding, AIGC toolchains, automation workflows, and enterprise adoption |
 
----
-
-## ☕ Buy Me a Coffee
-
-If this project helps you, consider buying me a coffee — every bit of support keeps this project going ❤️
-
-<table>
-<tr>
-<td align="center" width="33%">
-<img src="docs/images/donate/wechat_pay.jpeg" width="250" alt="WeChat Pay"><br>
-<b>WeChat Pay</b>
-</td>
-<td align="center" width="33%">
-<img src="docs/images/donate/zfb_pay.png" width="250" alt="Alipay"><br>
-<b>Alipay</b>
-</td>
-<td align="center" width="33%">
-<a href="https://buymeacoffee.com/relakkes" target="_blank">
-<img src="docs/images/donate/bmc_button.png" width="250" alt="Buy Me a Coffee">
-</a><br>
-<b>Buy Me a Coffee</b>
-</td>
-</tr>
-</table>
+You can also file reproducible issues on GitHub. Clear steps, logs, OS version, and expected behavior make issues easier to resolve.
 
 ---
 
@@ -187,23 +159,27 @@ If this project helps you, consider buying me a coffee — every bit of support 
 
 ## Thanks
 
-Thanks to the following open-source projects and community practices for reference and inspiration:
+Thanks to the original project, open-source projects, and community practices that made this work possible:
 
+- [Anthropic Claude Code](https://www.anthropic.com/claude-code): this repository is a learning-oriented repair and fork based on Claude Code source leaked from the Anthropic npm registry on 2026-03-31. The original source code, trademarks, and related copyrights belong to Anthropic and their respective rights holders.
+- [cc-haha](https://github.com/NanmiCoder/cc-haha): thanks to the cc-haha project for its continued work on the desktop workspace, provider management, documentation structure, and engineering practices. This fork builds on it with EchoFlowAI-Claude-Code branding and customization.
 - [React](https://github.com/facebook/react): frontend engineering and component-based UI ecosystem.
 - [Tauri](https://github.com/tauri-apps/tauri): cross-platform desktop app capabilities and engineering practices.
 - [cc-switch](https://github.com/farion1231/cc-switch): reference for model provider configuration.
+
+EchoFlowAI-Claude-Code is provided for learning, research, and internal engineering practice. If any content in this repository affects your rights, please contact us through the channels above.
 
 ---
 
 ## ⭐ Star History
 
-If this project helps you, please support it with a ⭐ Star so more people can discover Claude Code Haha.
+If this project helps you, please support it with a ⭐ Star so more people can discover EchoFlowAI-Claude-Code.
 
-<a href="https://www.star-history.com/#NanmiCoder/cc-haha&Date">
+<a href="https://www.star-history.com/#LiuGuangHS/EchoFlowAI-Claude-Code&Date">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=NanmiCoder/cc-haha&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=NanmiCoder/cc-haha&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=NanmiCoder/cc-haha&type=Date" />
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=LiuGuangHS/EchoFlowAI-Claude-Code&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=LiuGuangHS/EchoFlowAI-Claude-Code&type=Date" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=LiuGuangHS/EchoFlowAI-Claude-Code&type=Date" />
   </picture>
 </a>
 

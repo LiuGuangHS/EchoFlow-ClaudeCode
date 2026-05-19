@@ -32,6 +32,8 @@ describe('desktop persistence migrations', () => {
     window.localStorage.setItem('cc-haha-session-runtime', JSON.stringify({
       good: { providerId: null, modelId: 'claude-sonnet' },
       alsoGood: { providerId: 'provider-1', modelId: 'gpt-5.4' },
+      badOfficial: { providerId: null, modelId: '' },
+      badProviderDefault: { providerId: 'provider-default', modelId: '' },
       bad: { providerId: 'provider-2' },
     }))
 

@@ -164,7 +164,7 @@ jobs:
             SEARCH_DIR="$FALLBACK_DIR"
           fi
 
-          STAGING="desktop/build-artifacts/ci-Claude-Code-Haha-v${{ steps.version.outputs.version }}-${{ matrix.artifact_name }}"
+          STAGING="desktop/build-artifacts/ci-EchoFlowAI-Claude-Code-v${{ steps.version.outputs.version }}-${{ matrix.artifact_name }}"
           mkdir -p "$STAGING"
 
           echo "Searching for artifacts in: $SEARCH_DIR"
@@ -209,7 +209,7 @@ jobs:
                   ;;
               esac
 
-              target="Claude-Code-Haha_${{ steps.version.outputs.version }}_${{ matrix.asset_platform }}_${{ matrix.asset_arch }}_${bundle}${ext}"
+              target="EchoFlowAI-Claude-Code_${{ steps.version.outputs.version }}_${{ matrix.asset_platform }}_${{ matrix.asset_arch }}_${bundle}${ext}"
               echo "  Copying: ${base} -> ${target}"
               cp -R "$f" "$STAGING/$target"
             done
@@ -223,7 +223,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Claude-Code-Haha-v${{ steps.version.outputs.version }}-${{ matrix.artifact_name }}
+          name: EchoFlowAI-Claude-Code-v${{ steps.version.outputs.version }}-${{ matrix.artifact_name }}
           path: ${{ steps.collect.outputs.staging_dir }}
           retention-days: 7
           if-no-files-found: warn

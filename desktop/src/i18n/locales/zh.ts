@@ -837,7 +837,7 @@ export const zh: Record<TranslationKey, string> = {
   'settings.general.notificationsStatusUnsupported': '当前环境不可用',
   'settings.general.notificationsAuthorize': '授权通知',
   'settings.general.notificationsOpenSettings': '打开系统设置',
-  'settings.general.notificationsTestTitle': 'Claude Code Haha 通知已启用',
+  'settings.general.notificationsTestTitle': 'EchoFlowAI-Claude-Code 通知已启用',
   'settings.general.notificationsTestBody': '后续授权确认和 Agent 回复完成都会通过系统通知提醒。',
   'settings.general.h5AccessTitle': 'H5 访问',
   'settings.general.h5AccessDescription': '在局域网内暴露桌面端 H5 应用。手机通过带 H5 token 的二维码快速连接。',

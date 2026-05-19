@@ -835,7 +835,7 @@ export const en = {
   'settings.general.notificationsStatusUnsupported': 'Unavailable in this environment',
   'settings.general.notificationsAuthorize': 'Authorize',
   'settings.general.notificationsOpenSettings': 'Open Settings',
-  'settings.general.notificationsTestTitle': 'Claude Code Haha notifications are enabled',
+  'settings.general.notificationsTestTitle': 'EchoFlowAI-Claude-Code notifications are enabled',
   'settings.general.notificationsTestBody': 'Permission prompts and completed agent replies will now use system notifications.',
   'settings.general.h5AccessTitle': 'H5 Access',
   'settings.general.h5AccessDescription': 'Expose the desktop H5 app on your local network. Phones connect with a QR link that includes a short-lived H5 token.',

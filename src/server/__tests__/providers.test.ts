@@ -404,6 +404,32 @@ describe('ProviderService', () => {
       expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('gpt-5.5')
     })
 
+    test('should activate EchoFlow provider with preconfigured Claude models', async () => {
+      const svc = new ProviderService()
+      const provider = await svc.addProvider(sampleInput({
+        presetId: 'echoflowai',
+        name: '清云API',
+        baseUrl: 'https://api.echoflow.cn',
+        models: {
+          main: 'claude-sonnet-4-6',
+          haiku: 'claude-haiku-4-5',
+          sonnet: 'claude-sonnet-4-6',
+          opus: 'claude-opus-4-7',
+        },
+      }))
+
+      await svc.activateProvider(provider.id)
+
+      const settings = await readSettings()
+      const env = settings.env as Record<string, string>
+      expect(env.ANTHROPIC_BASE_URL).toBe('https://api.echoflow.cn')
+      expect(env.ANTHROPIC_AUTH_TOKEN).toBe('sk-test-key-123')
+      expect(env.ANTHROPIC_MODEL).toBe('claude-sonnet-4-6')
+      expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-haiku-4-5')
+      expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-sonnet-4-6')
+      expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('claude-opus-4-7')
+    })
+
     test('updating active provider should override and clear model context windows', async () => {
       const svc = new ProviderService()
       const added = await svc.addProvider(sampleInput({
@@ -582,38 +608,43 @@ describe('ProviderService', () => {
     test('should include preset default env on activation and runtime env', async () => {
       const svc = new ProviderService()
       const provider = await svc.addProvider(sampleInput({
-        presetId: 'shengsuanyun',
-        baseUrl: 'https://router.shengsuanyun.com/api',
+        presetId: 'deepseek',
+        baseUrl: 'https://api.deepseek.com/anthropic',
       }))
 
       await svc.activateProvider(provider.id)
 
       const settings = await readSettings()
       const env = settings.env as Record<string, string>
-      expect(env.API_TIMEOUT_MS).toBe('3000000')
-      expect(env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1')
+      expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,max_effort')
+      expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,max_effort')
+      expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,max_effort')
       expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined()
       expect(JSON.parse(env.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS)).toEqual({
-        'anthropic/claude-sonnet-4.6': 1000000,
-        'anthropic/claude-haiku-4.5:thinking': 200000,
-        'anthropic/claude-opus-4.7': 1000000,
+        'deepseek-v4-pro': 1000000,
+        'deepseek-v4-flash': 1000000,
+        'deepseek-chat': 1000000,
+        'deepseek-reasoner': 1000000,
       })
 
       const runtimeEnv = await svc.getProviderRuntimeEnv(provider.id)
-      expect(runtimeEnv.API_TIMEOUT_MS).toBe('3000000')
-      expect(runtimeEnv.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1')
+      expect(runtimeEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,max_effort')
+      expect(runtimeEnv.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,max_effort')
+      expect(runtimeEnv.ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,max_effort')
       expect(runtimeEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined()
       expect(JSON.parse(runtimeEnv.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS)).toEqual({
-        'anthropic/claude-sonnet-4.6': 1000000,
-        'anthropic/claude-haiku-4.5:thinking': 200000,
-        'anthropic/claude-opus-4.7': 1000000,
+        'deepseek-v4-pro': 1000000,
+        'deepseek-v4-flash': 1000000,
+        'deepseek-chat': 1000000,
+        'deepseek-reasoner': 1000000,
       })
 
       await svc.activateOfficial()
       const clearedSettings = await readSettings()
       const clearedEnv = (clearedSettings.env as Record<string, string> | undefined) ?? {}
-      expect(clearedEnv.API_TIMEOUT_MS).toBeUndefined()
-      expect(clearedEnv.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBeUndefined()
+      expect(clearedEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES).toBeUndefined()
+      expect(clearedEnv.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBeUndefined()
+      expect(clearedEnv.ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES).toBeUndefined()
       expect(clearedEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined()
       expect(clearedEnv.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS).toBeUndefined()
     })
