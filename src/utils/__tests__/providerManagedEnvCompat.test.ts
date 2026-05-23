@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { isProviderManagedEnvVar } from '../managedEnvConstants.js'
 import { normalizeLegacyDeepSeekManagedEnv } from '../providerManagedEnvCompat.js'
 
 describe('provider managed env compatibility', () => {
@@ -35,5 +36,9 @@ describe('provider managed env compatibility', () => {
 
     expect(changed).toBe(false)
     expect(env).toBe(input)
+  })
+
+  test('treats attribution header routing as provider-managed env', () => {
+    expect(isProviderManagedEnvVar('CLAUDE_CODE_ATTRIBUTION_HEADER')).toBe(true)
   })
 })

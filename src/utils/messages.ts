@@ -2310,6 +2310,21 @@ export function normalizeMessagesForAPI(
   // mismatched thinking block signatures cause API 400 errors.
   const withFilteredOrphans = filterOrphanedThinkingOnlyMessages(relocated)
 
+  // Reorder assistant content so any tool_use blocks form a contiguous run.
+  // mergeAssistantMessages also reorders, but this pass additionally protects
+  // single-message cases (e.g. sessions resumed from disk that were persisted
+  // before this fix landed). See reorderAssistantToolUseBlocks for the
+  // Bedrock validation rationale.
+  const withReorderedToolUse = withFilteredOrphans.map(msg => {
+    if (msg.type !== 'assistant') return msg
+    const reordered = reorderAssistantToolUseBlocks(msg.message.content)
+    if (reordered === msg.message.content) return msg
+    return {
+      ...msg,
+      message: { ...msg.message, content: reordered },
+    }
+  })
+
   // Order matters: strip trailing thinking first, THEN filter whitespace-only
   // messages. The reverse order has a bug: a message like [text("\n\n"), thinking("...")]
   // survives the whitespace filter (has a non-text block), then thinking stripping
@@ -2319,7 +2334,7 @@ export function normalizeMessagesForAPI(
   // conditions a prior pass was meant to handle. Consider unifying into a single
   // pass that cleans content, then validates in one shot.
   const withFilteredThinking =
-    filterTrailingThinkingFromLastAssistant(withFilteredOrphans)
+    filterTrailingThinkingFromLastAssistant(withReorderedToolUse)
   const withFilteredWhitespace =
     filterWhitespaceOnlyAssistantMessages(withFilteredThinking)
   const withNonEmpty = ensureNonEmptyAssistantContent(withFilteredWhitespace)
@@ -2394,9 +2409,83 @@ export function mergeAssistantMessages(
     ...a,
     message: {
       ...a.message,
-      content: [...a.message.content, ...b.message.content],
+      // Reorder so that any tool_use blocks introduced by `b` don't end up
+      // separated from `a`'s tool_use blocks by intervening text. Without
+      // this, Bedrock's strict history validation rejects "tool_use ids …
+      // without tool_result blocks immediately after" because text inside
+      // the tool_use cluster makes the earlier tool_use blocks no longer
+      // count as "trailing" — only the final tool_use is paired with the
+      // next message's tool_results.
+      content: reorderAssistantToolUseBlocks([
+        ...a.message.content,
+        ...b.message.content,
+      ]),
     },
   }
+}
+
+/**
+ * Reorder an assistant message's content so that all `tool_use` blocks form
+ * a contiguous run. Any non-`tool_use` blocks that the model emitted in the
+ * middle of that run (typically `text`) are pushed to the position right
+ * after the last `tool_use`.
+ *
+ * Why: Anthropic's history validation (and Bedrock's stricter copy of it)
+ * requires every `tool_use` block to be paired with a matching `tool_result`
+ * in the next message. The validator only treats the *trailing* run of
+ * `tool_use` blocks as "needing tool_results next", so when the model
+ * streams `text` between tool calls — e.g. `tu1, tu2, tu3, tu4, text, tu5` —
+ * only `tu5` is considered trailing on the next request, and `tu1..tu4` are
+ * reported as missing tool_results, producing a 400 on the *next* turn even
+ * though the previous turn returned all 5 tool_results correctly.
+ *
+ * Block-type policy:
+ * - `thinking` and `redacted_thinking` keep their relative positions
+ *   (signatures are position-sensitive within a turn).
+ * - `tool_use` blocks become contiguous, in their original id order
+ *   (preserves any caller logic that pairs tool_results by index).
+ * - Non-`tool_use`, non-thinking blocks that were interleaved between
+ *   tool_use blocks are moved to immediately after the tool_use cluster.
+ *
+ * No blocks are dropped. The function is a no-op when there are fewer than
+ * two `tool_use` blocks or when the existing tool_use run is already
+ * contiguous.
+ */
+export function reorderAssistantToolUseBlocks<T extends { type: string }>(
+  content: T[],
+): T[] {
+  if (content.length < 2) return content
+
+  const toolUseIndices: number[] = []
+  for (let i = 0; i < content.length; i++) {
+    if (content[i]!.type === 'tool_use') toolUseIndices.push(i)
+  }
+  if (toolUseIndices.length < 2) return content
+
+  const first = toolUseIndices[0]!
+  const last = toolUseIndices[toolUseIndices.length - 1]!
+
+  let hasInterleaved = false
+  for (let i = first; i <= last; i++) {
+    if (content[i]!.type !== 'tool_use') {
+      hasInterleaved = true
+      break
+    }
+  }
+  if (!hasInterleaved) return content
+
+  const head = content.slice(0, first)
+  const window = content.slice(first, last + 1)
+  const tail = content.slice(last + 1)
+
+  const tools: T[] = []
+  const displaced: T[] = []
+  for (const block of window) {
+    if (block.type === 'tool_use') tools.push(block)
+    else displaced.push(block)
+  }
+
+  return [...head, ...tools, ...displaced, ...tail]
 }
 
 function isToolResultMessage(msg: Message): boolean {

@@ -39,6 +39,130 @@ describe('WebSocket memory events', () => {
   })
 })
 
+describe('WebSocket AskUserQuestion events', () => {
+  it('forwards structured AskUserQuestion answers from CLI toolUseResult metadata', () => {
+    expect(translateCliMessage({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'ask-1',
+            content: 'User has answered your questions: "Pick one?"="A". You can now continue with the user\'s answers in mind.',
+          },
+        ],
+      },
+      toolUseResult: {
+        questions: [{ question: 'Pick one?', options: [{ label: 'A' }] }],
+        answers: { 'Pick one?': 'A' },
+      },
+    }, 'session-1')).toEqual([
+      {
+        type: 'tool_result',
+        toolUseId: 'ask-1',
+        content: {
+          questions: [{ question: 'Pick one?', options: [{ label: 'A' }] }],
+          answers: { 'Pick one?': 'A' },
+        },
+        isError: false,
+        parentToolUseId: undefined,
+      },
+    ])
+  })
+})
+
+describe('WebSocket compact events', () => {
+  it('forwards CLI compacting status to the desktop client', () => {
+    expect(translateCliMessage({
+      type: 'system',
+      subtype: 'status',
+      status: 'compacting',
+    }, 'session-1')).toEqual([
+      {
+        type: 'status',
+        state: 'compacting',
+        verb: 'Compacting conversation',
+      },
+    ])
+
+    expect(translateCliMessage({
+      type: 'system',
+      subtype: 'status',
+      status: null,
+    }, 'session-1')).toEqual([
+      {
+        type: 'status',
+        state: 'thinking',
+        verb: 'Thinking',
+      },
+    ])
+
+    expect(translateCliMessage({
+      type: 'system',
+      subtype: 'status',
+      status: 'warming',
+    }, 'session-1')).toEqual([])
+  })
+
+  it('forwards compact summaries as system notifications instead of user chat bubbles', () => {
+    const summary = [
+      'This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.',
+      '',
+      'Built the compact UI and verified the WebSocket event path.',
+    ].join('\n')
+
+    expect(translateCliMessage({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: summary,
+      },
+      isSynthetic: true,
+    }, 'session-1')).toEqual([
+      {
+        type: 'system_notification',
+        subtype: 'compact_summary',
+        message: summary,
+        data: { isSynthetic: true },
+      },
+    ])
+  })
+
+  it('suppresses compact local command output after the compact summary', () => {
+    expect(translateCliMessage({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: '<local-command-stdout>Compacted </local-command-stdout>',
+      },
+    }, 'session-1')).toEqual([])
+  })
+})
+
+describe('WebSocket API retry events', () => {
+  it('forwards CLI api_retry messages as structured retry status', () => {
+    expect(translateCliMessage({
+      type: 'system',
+      subtype: 'api_retry',
+      attempt: 2,
+      max_retries: 10,
+      retry_delay_ms: 1500,
+      error_status: 503,
+      error: 'server_error',
+    }, 'session-1')).toEqual([
+      {
+        type: 'api_retry',
+        attempt: 2,
+        maxRetries: 10,
+        retryDelayMs: 1500,
+        errorStatus: 503,
+        errorType: 'server_error',
+      },
+    ])
+  })
+})
+
 describe('WebSocket background task events', () => {
   it('forwards task start and progress as structured desktop notifications', () => {
     const started = {

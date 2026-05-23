@@ -1,4 +1,10 @@
+/**
+ * Claude Code billing fingerprint algorithm based on sub2api.
+ * Reference: https://github.com/Wei-Shaw/sub2api
+ * License: LGPL-3.0-or-later, Copyright (c) 2026 Wesley Liddick.
+ */
 import { createHash } from 'crypto'
+import { CLAUDE_CODE_COMPAT_VERSION } from '../constants/claudeCodeCompatibility.js'
 import type { AssistantMessage, UserMessage } from '../types/message.js'
 
 /**
@@ -72,5 +78,5 @@ export function computeFingerprintFromMessages(
   messages: (UserMessage | AssistantMessage)[],
 ): string {
   const firstMessageText = extractFirstMessageText(messages)
-  return computeFingerprint(firstMessageText, MACRO.VERSION)
+  return computeFingerprint(firstMessageText, CLAUDE_CODE_COMPAT_VERSION)
 }

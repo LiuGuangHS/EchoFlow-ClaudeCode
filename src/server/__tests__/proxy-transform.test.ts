@@ -139,6 +139,18 @@ describe('anthropicToOpenaiChat', () => {
     expect(anthropicToOpenaiChat(highReq).reasoning_effort).toBe('high')
   })
 
+  test('passes explicit thinking toggle for DeepSeek-compatible chat proxies', () => {
+    const req: AnthropicRequest = {
+      model: 'deepseek-v4-flash',
+      max_tokens: 100,
+      messages: [{ role: 'user', content: 'Hi' }],
+      thinking: { type: 'disabled' },
+    }
+
+    expect(anthropicToOpenaiChat(req).thinking).toBeUndefined()
+    expect(anthropicToOpenaiChat(req, { passThinkingToggle: true }).thinking).toEqual({ type: 'disabled' })
+  })
+
   test('assistant message with tool_use', () => {
     const req: AnthropicRequest = {
       model: 'gpt-4',
@@ -159,6 +171,32 @@ describe('anthropicToOpenaiChat', () => {
     expect(msg.tool_calls![0].id).toBe('tc_1')
     expect(msg.tool_calls![0].function.name).toBe('get_weather')
     expect(msg.tool_calls![0].function.arguments).toBe('{"city":"NYC"}')
+  })
+
+  test('round-trips assistant thinking as reasoning_content for DeepSeek tool-call history', () => {
+    const req: AnthropicRequest = {
+      model: 'deepseek-v4-pro',
+      max_tokens: 100,
+      messages: [{
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'Need the date first. ' },
+          { type: 'thinking', thinking: 'Then call weather.' },
+          { type: 'text', text: 'Let me check that.' },
+          { type: 'tool_use', id: 'call_1', name: 'get_weather', input: { location: 'Hangzhou' } },
+        ],
+      }],
+    }
+
+    const defaultResult = anthropicToOpenaiChat(req)
+    expect(defaultResult.messages[0].reasoning_content).toBeUndefined()
+
+    const result = anthropicToOpenaiChat(req, { roundTripReasoningContent: true })
+    const msg = result.messages[0]
+    expect(msg.role).toBe('assistant')
+    expect(msg.content).toBe('Let me check that.')
+    expect(msg.reasoning_content).toBe('Need the date first. Then call weather.')
+    expect(msg.tool_calls?.[0].id).toBe('call_1')
   })
 
   test('user message with tool_result', () => {

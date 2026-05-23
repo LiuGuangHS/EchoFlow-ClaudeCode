@@ -62,7 +62,7 @@ describe('ensureDesktopCliLauncherInstalled', () => {
     await rm(tempSourceDir, { recursive: true, force: true })
   })
 
-  unixOnly('copies the bundled sidecar into the user bin dir and configures PATH', async () => {
+  unixOnly('installs a launcher wrapper in the user bin dir and configures PATH', async () => {
     const sourcePath = join(tempSourceDir, 'claude-sidecar')
     await writeFile(sourcePath, '#!/bin/sh\necho desktop-sidecar\n', 'utf8')
     await chmod(sourcePath, 0o755)
@@ -80,7 +80,10 @@ describe('ensureDesktopCliLauncherInstalled', () => {
     expect(status.needsTerminalRestart).toBe(true)
     expect(status.configTarget).toBe(shellConfigPath)
 
-    expect(await readFile(launcherPath, 'utf8')).toContain('desktop-sidecar')
+    const launcher = await readFile(launcherPath, 'utf8')
+    expect(launcher).toContain(`SIDECAR='${sourcePath}'`)
+    expect(launcher).toContain('cli --app-root "$APP_ROOT" "$@"')
+    expect(launcher).toContain('/usr/bin/script -q /dev/null')
     expect(await readFile(shellConfigPath, 'utf8')).toContain(
       'export PATH="$HOME/.local/bin:$PATH"',
     )

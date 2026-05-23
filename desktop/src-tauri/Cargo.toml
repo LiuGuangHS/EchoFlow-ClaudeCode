@@ -1,6 +1,6 @@
 [package]
 name = "claude-code-desktop"
-version = "0.2.8-1"
+version = "0.3.0"
 edition = "2021"
 
 [lib]

@@ -1,6 +1,6 @@
 // biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
 import { CONTEXT_1M_BETA_HEADER } from '../constants/betas.js'
-import { getOpenAIContextWindowForModel } from '../services/openaiAuth/models.js'
+import { getOpenAICodexContextWindowForModel } from '../services/openaiAuth/models.js'
 import { getGlobalConfig } from './config.js'
 import { isEnvTruthy } from './envUtils.js'
 import { getCanonicalName } from './model/model.js'
@@ -84,7 +84,7 @@ export function getContextWindowForModel(
     return configuredWindow
   }
 
-  const openAIContextWindow = getOpenAIContextWindowForModel(model)
+  const openAIContextWindow = getOpenAICodexContextWindowForModel(model)
   if (openAIContextWindow) {
     return openAIContextWindow
   }

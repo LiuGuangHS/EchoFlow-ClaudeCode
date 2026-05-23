@@ -14,7 +14,8 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import type { CuPermissionRequest } from '../../vendor/computer-use-mcp/types.js'
 import { computerUseApprovalService } from '../services/computerUseApprovalService.js'
-import { detectPythonRuntime } from './computer-use-python.js'
+import { detectPythonRuntime, isPythonVersionAtLeast } from './computer-use-python.js'
+import { buildPipInstallAttempts } from '../../utils/computerUse/pipInstall.js'
 import {
   DEFAULT_DESKTOP_GRANT_FLAGS,
   loadStoredComputerUseConfig,
@@ -41,6 +42,8 @@ const installStampPath = join(runtimeStateRoot, 'requirements.sha256')
 // 记录上次创建 venv 时所用的 config.pythonPath 原值。读取该文件来判断当前
 // venv 是否仍与最新的自定义路径配置一致。
 const baseInterpreterMarkerPath = join(runtimeStateRoot, 'venv-base-interpreter.txt')
+const MIN_PYTHON_MAJOR = 3
+const MIN_PYTHON_MINOR = 9
 
 const isWindows = process.platform === 'win32'
 const REQUIREMENTS_CONTENT = isWindows ? REQUIREMENTS_WIN32 : REQUIREMENTS_DARWIN
@@ -53,10 +56,6 @@ function getPythonCommandEnv(): Record<string, string> | undefined {
     PYTHONUTF8: '1',
   } as Record<string, string>
 }
-
-// 清华大学 PyPI 镜像，国内安装速度更快
-const PIP_INDEX_URL = 'https://pypi.tuna.tsinghua.edu.cn/simple/'
-const PIP_TRUSTED_HOST = 'pypi.tuna.tsinghua.edu.cn'
 
 // Paths that resolve correctly in both dev and bundled modes
 function getRequirementsPath(): string {
@@ -125,6 +124,20 @@ async function runCommand(
   } catch {
     return { ok: false, stdout: '', stderr: `Failed to run ${cmd}`, code: -1 }
   }
+}
+
+export async function runPipInstallWithFallback(
+  pythonCmd: string,
+  baseArgs: string[],
+  run: typeof runCommand = runCommand,
+): Promise<{ ok: boolean; stdout: string; stderr: string; code: number }> {
+  let firstFailure: { ok: boolean; stdout: string; stderr: string; code: number } | null = null
+  for (const args of buildPipInstallAttempts(baseArgs)) {
+    const result = await run(pythonCmd, args)
+    if (result.ok) return result
+    firstFailure ??= result
+  }
+  return firstFailure ?? { ok: false, stdout: '', stderr: 'pip install failed', code: -1 }
 }
 
 /**
@@ -256,6 +269,26 @@ type SetupResult = {
   steps: { name: string; ok: boolean; message: string }[]
 }
 
+export function getUnsupportedPythonVersionStep(
+  version: string | null,
+): SetupResult['steps'][number] | null {
+  if (isPythonVersionAtLeast(version, MIN_PYTHON_MAJOR, MIN_PYTHON_MINOR)) return null
+  return {
+    name: 'python_version',
+    ok: false,
+    message: `Computer Use 需要 Python >= ${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR}，当前版本为 ${version ?? 'unknown'}`,
+  }
+}
+
+export async function installSetupDependencies(
+  venvPython: string,
+  reqPath: string,
+  install: typeof runPipInstallWithFallback = runPipInstallWithFallback,
+): Promise<{ ok: boolean; stdout: string; stderr: string; code: number }> {
+  await install(venvPython, ['-m', 'pip', 'install', '--upgrade', 'pip'])
+  return install(venvPython, ['-m', 'pip', 'install', '-r', reqPath])
+}
+
 async function runSetup(): Promise<SetupResult> {
   const steps: SetupResult['steps'] = []
 
@@ -317,6 +350,9 @@ async function runSetup(): Promise<SetupResult> {
         ? `Python ${pythonRuntime.version}（使用现有虚拟环境）`
         : `Python ${pythonRuntime.version}`,
   })
+
+  const unsupportedVersionStep = getUnsupportedPythonVersionStep(pythonRuntime.version)
+  if (unsupportedVersionStep) return { success: false, steps: [...steps, unsupportedVersionStep] }
 
   // Step 2: Extract runtime files to ~/.claude/.runtime/
   try {
@@ -403,18 +439,7 @@ async function runSetup(): Promise<SetupResult> {
   } catch {}
 
   if (installedDigest !== digest) {
-    // Upgrade pip first (using China mirror)
-    await runCommand(venvPython, [
-      '-m', 'pip', 'install', '--upgrade', 'pip',
-      '-i', PIP_INDEX_URL, '--trusted-host', PIP_TRUSTED_HOST,
-    ])
-
-    // Install deps (using China mirror)
-    const installResult = await runCommand(venvPython, [
-      '-m', 'pip', 'install',
-      '-r', reqPath,
-      '-i', PIP_INDEX_URL, '--trusted-host', PIP_TRUSTED_HOST,
-    ])
+    const installResult = await installSetupDependencies(venvPython, reqPath)
     if (!installResult.ok) {
       steps.push({
         name: 'deps',

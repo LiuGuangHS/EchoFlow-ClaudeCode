@@ -7,8 +7,8 @@ const {
   runtimeStoreState,
   setSessionRuntimeMock,
   setSelectionMock,
-  setModelMock,
-  fetchSettingsMock,
+  settingsSetModelMock,
+  settingsFetchAllMock,
 } = vi.hoisted(() => ({
   providersApiMock: {
     list: vi.fn(),
@@ -34,8 +34,8 @@ const {
   },
   setSessionRuntimeMock: vi.fn(),
   setSelectionMock: vi.fn(),
-  setModelMock: vi.fn(),
-  fetchSettingsMock: vi.fn(),
+  settingsSetModelMock: vi.fn(),
+  settingsFetchAllMock: vi.fn(),
 }))
 
 vi.mock('../api/providers', () => ({
@@ -63,8 +63,8 @@ vi.mock('./sessionRuntimeStore', () => ({
 vi.mock('./settingsStore', () => ({
   useSettingsStore: {
     getState: () => ({
-      setModel: setModelMock,
-      fetchAll: fetchSettingsMock,
+      setModel: settingsSetModelMock,
+      fetchAll: settingsFetchAllMock,
     }),
   },
 }))
@@ -153,24 +153,32 @@ describe('providerStore runtime refresh', () => {
     expect(setSessionRuntimeMock).not.toHaveBeenCalled()
   })
 
-  it('does not overwrite the global model when activating a provider with upstream default models', async () => {
-    const provider = makeProvider({
-      presetId: 'echoflowai',
-      name: '清云API',
-      models: {
-        main: '',
-        haiku: '',
-        sonnet: '',
-        opus: '',
-      },
+  it('sets the OpenAI default model when activating built-in ChatGPT Official', async () => {
+    providersApiMock.activate.mockResolvedValue({ ok: true })
+    providersApiMock.list.mockResolvedValue({
+      providers: [],
+      activeId: 'openai-official',
     })
-    providersApiMock.list.mockResolvedValue({ providers: [provider], activeId: provider.id })
+
+    const { useProviderStore } = await import('./providerStore')
+    await useProviderStore.getState().activateProvider('openai-official')
+
+    expect(settingsSetModelMock).toHaveBeenCalledWith('gpt-5.3-codex')
+    expect(settingsFetchAllMock).toHaveBeenCalled()
+  })
+
+  it('sets the provider main model when activating a saved provider', async () => {
+    const provider = makeProvider()
+    providersApiMock.activate.mockResolvedValue({ ok: true })
+    providersApiMock.list.mockResolvedValue({
+      providers: [provider],
+      activeId: provider.id,
+    })
 
     const { useProviderStore } = await import('./providerStore')
     await useProviderStore.getState().activateProvider(provider.id)
 
-    expect(providersApiMock.activate).toHaveBeenCalledWith(provider.id)
-    expect(setModelMock).not.toHaveBeenCalled()
-    expect(fetchSettingsMock).not.toHaveBeenCalled()
+    expect(settingsSetModelMock).toHaveBeenCalledWith('model-main')
+    expect(settingsFetchAllMock).toHaveBeenCalled()
   })
 })

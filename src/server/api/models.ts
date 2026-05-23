@@ -10,9 +10,15 @@
 
 import { SettingsService } from '../services/settingsService.js'
 import { ProviderService } from '../services/providerService.js'
+import { attributionHeaderEnvForModel } from '../services/attributionHeaderPolicy.js'
 import { ApiError, errorResponse } from '../middleware/errorHandler.js'
 import { hasOpenAIAuthLogin } from '../../utils/auth.js'
 import { OPENAI_CODEX_MODEL_CATALOG } from '../../services/openaiAuth/models.js'
+import {
+  OPENAI_OFFICIAL_PROVIDER_ID,
+  OPENAI_OFFICIAL_PROVIDER_NAME,
+  isOpenAIOfficialProviderId,
+} from '../services/openaiOfficialProvider.js'
 
 // ─── Fallback models (used when no provider is configured) ────────────────────
 
@@ -109,6 +115,15 @@ function buildProviderModelList(models: {
   return modelList
 }
 
+function buildOpenAIModelList(): ApiModelInfo[] {
+  return OPENAI_CODEX_MODEL_CATALOG.map(model => ({
+    id: model.value,
+    name: model.label,
+    description: model.description,
+    context: '',
+  }))
+}
+
 function getEnvConfiguredAnthropicModels(): ApiModelInfo[] {
   return buildProviderModelList({
     main: process.env.ANTHROPIC_MODEL?.trim() || '',
@@ -123,12 +138,7 @@ function getOpenAIAuthModels(): ApiModelInfo[] {
     return []
   }
 
-  return OPENAI_CODEX_MODEL_CATALOG.map(model => ({
-    id: model.value,
-    name: model.label,
-    description: model.description,
-    context: '',
-  }))
+  return buildOpenAIModelList()
 }
 
 function getStandaloneModelList(): ApiModelInfo[] {
@@ -189,6 +199,16 @@ export async function handleModelsApi(
 
 async function handleModelsList(): Promise<Response> {
   const { providers, activeId } = await providerService.listProviders()
+  if (isOpenAIOfficialProviderId(activeId)) {
+    return Response.json({
+      models: buildOpenAIModelList(),
+      provider: {
+        id: OPENAI_OFFICIAL_PROVIDER_ID,
+        name: OPENAI_OFFICIAL_PROVIDER_NAME,
+      },
+    })
+  }
+
   const activeProvider = activeId ? providers.find((p) => p.id === activeId) : null
   if (activeProvider) {
     const modelList = buildProviderModelList(activeProvider.models)
@@ -204,8 +224,9 @@ async function handleCurrentModel(req: Request): Promise<Response> {
   if (req.method === 'GET') {
     // Build the full model list: prefer active provider's models, fall back to defaults
     const { providers, activeId } = await providerService.listProviders()
+    const isOpenAIProviderActive = isOpenAIOfficialProviderId(activeId)
     const activeProvider = activeId ? providers.find((p) => p.id === activeId) : null
-    const settings = activeProvider
+    const settings = activeProvider || isOpenAIProviderActive
       ? await providerService.getManagedSettings()
       : await settingsService.getUserSettings()
     const explicitModel = (settings.model as string) || ''
@@ -216,7 +237,10 @@ async function handleCurrentModel(req: Request): Promise<Response> {
     let currentModelId: string
     let currentModelName: string
 
-    if (activeProvider) {
+    if (isOpenAIProviderActive) {
+      currentModelId = explicitModel || env.ANTHROPIC_MODEL || 'gpt-5.3-codex'
+      currentModelName = currentModelId
+    } else if (activeProvider) {
       // Provider is active — only use the provider-managed cc-haha settings.
       // This avoids leaking global ~/.claude/settings.json model choices into
       // the active provider flow.
@@ -237,9 +261,11 @@ async function handleCurrentModel(req: Request): Promise<Response> {
     const lookupId = contextTier ? `${currentModelId}:${contextTier}` : currentModelId
 
     // Build available models for name lookup
-    const availableModels = activeProvider
-      ? buildProviderModelList(activeProvider.models)
-      : getStandaloneModelList()
+    const availableModels = isOpenAIProviderActive
+      ? buildOpenAIModelList()
+      : activeProvider
+        ? buildProviderModelList(activeProvider.models)
+        : getStandaloneModelList()
 
     const modelEntry = availableModels.find((m) => m.id === lookupId)
       || availableModels.find((m) => m.id === currentModelId)
@@ -275,7 +301,16 @@ async function handleCurrentModel(req: Request): Promise<Response> {
     }
     const { activeId } = await providerService.listProviders()
     if (activeId) {
-      await providerService.updateManagedSettings(updates)
+      const currentManagedSettings = await providerService.getManagedSettings()
+      const currentEnv =
+        (currentManagedSettings.env as Record<string, string> | undefined) ?? {}
+      await providerService.updateManagedSettings({
+        ...updates,
+        env: {
+          ...currentEnv,
+          ...attributionHeaderEnvForModel(baseId),
+        },
+      })
     } else {
       await settingsService.updateUserSettings(updates)
     }

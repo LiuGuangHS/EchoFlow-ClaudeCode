@@ -69,4 +69,70 @@ describe('WebSocket handler session isolation', () => {
     expect(clearCallbacks).toHaveBeenCalledWith(sessionId)
     expect(cancelComputerUse).toHaveBeenCalledWith(sessionId)
   })
+
+  it('replays pending permission requests when a client reconnects', () => {
+    const sessionId = `permission-reconnect-${crypto.randomUUID()}`
+    const ws = makeClientSocket(sessionId)
+    spyOn(conversationService, 'hasSession').mockReturnValue(true)
+    spyOn(conversationService, 'onOutput').mockImplementation(() => {})
+    spyOn(conversationService, 'removeOutputCallback').mockImplementation(() => {})
+    spyOn(conversationService, 'getPendingPermissionRequests').mockReturnValue([
+      {
+        requestId: 'request-ask-1',
+        toolName: 'AskUserQuestion',
+        toolUseId: 'tool-ask-1',
+        input: {
+          questions: [
+            {
+              header: 'Scope',
+              question: 'Which scope?',
+              options: [{ label: 'A', description: 'First' }, { label: 'B', description: 'Second' }],
+            },
+          ],
+        },
+        description: 'Answer questions?',
+      },
+    ])
+
+    handleWebSocket.open(ws)
+
+    expect(ws.sent.map((payload) => JSON.parse(payload))).toContainEqual({
+      type: 'permission_request',
+      requestId: 'request-ask-1',
+      toolName: 'AskUserQuestion',
+      toolUseId: 'tool-ask-1',
+      input: {
+        questions: [
+          {
+            header: 'Scope',
+            question: 'Which scope?',
+            options: [{ label: 'A', description: 'First' }, { label: 'B', description: 'Second' }],
+          },
+        ],
+      },
+      description: 'Answer questions?',
+    })
+  })
+
+  it('keeps disconnected sessions alive longer while user input is pending', () => {
+    const sessionId = `permission-disconnect-${crypto.randomUUID()}`
+    const ws = makeClientSocket(sessionId)
+    const setTimeoutSpy = spyOn(globalThis, 'setTimeout').mockImplementation(() => 0 as any)
+    spyOn(conversationService, 'getPendingPermissionRequests').mockReturnValue([
+      {
+        requestId: 'request-ask-1',
+        toolName: 'AskUserQuestion',
+        toolUseId: 'tool-ask-1',
+        input: { questions: [] },
+      },
+    ])
+
+    handleWebSocket.open(ws)
+    setTimeoutSpy.mockClear()
+
+    handleWebSocket.close(ws, 1006, 'renderer reconnecting')
+
+    expect(setTimeoutSpy).toHaveBeenCalled()
+    expect(setTimeoutSpy.mock.calls[0]?.[1]).toBeGreaterThan(30_000)
+  })
 })

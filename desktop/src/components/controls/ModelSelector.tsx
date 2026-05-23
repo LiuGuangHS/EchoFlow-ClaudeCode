@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { OFFICIAL_DEFAULT_MODEL_ID, OFFICIAL_MODELS } from '../../constants/modelCatalog'
+import {
+  OPENAI_OFFICIAL_DEFAULT_MODEL_ID,
+  OPENAI_OFFICIAL_MODELS,
+  OPENAI_OFFICIAL_PROVIDER_ID,
+} from '../../constants/openaiOfficialProvider'
 import { useTranslation } from '../../i18n'
 import { useChatStore } from '../../stores/chatStore'
 import { useProviderStore } from '../../stores/providerStore'
@@ -11,6 +16,8 @@ import type { RuntimeSelection } from '../../types/runtime'
 import type { EffortLevel, ModelInfo } from '../../types/settings'
 import { useMobileViewport } from '../../hooks/useMobileViewport'
 import { isTauriRuntime } from '../../lib/desktopRuntime'
+import { useHahaOAuthStore } from '../../stores/hahaOAuthStore'
+import { useHahaOpenAIOAuthStore } from '../../stores/hahaOpenAIOAuthStore'
 import { MobileBottomSheet } from '../shared/MobileBottomSheet'
 
 type ProviderChoice = {
@@ -31,7 +38,8 @@ type Props = {
 }
 
 type DropdownPosition = {
-  top: number
+  top: number | undefined
+  bottom: number | undefined
   left: number
   width: number
   maxHeight: number
@@ -43,12 +51,17 @@ const VIEWPORT_MARGIN = 16
 const DROPDOWN_MAX_HEIGHT = 420
 const DROPDOWN_MIN_HEIGHT = 180
 
-function officialChoices(availableModels: ModelInfo[], isDefault: boolean, officialName: string): ProviderChoice {
+function officialChoices(
+  providerId: string | null,
+  models: ModelInfo[],
+  isDefault: boolean,
+  officialName: string,
+): ProviderChoice {
   return {
-    providerId: null,
+    providerId,
     providerName: officialName,
     isDefault,
-    models: availableModels.length > 0 ? availableModels : OFFICIAL_MODELS,
+    models,
   }
 }
 
@@ -89,17 +102,42 @@ function buildProviderChoices(
   activeId: string | null,
   availableModels: ModelInfo[],
   officialName: string,
+  openAIOfficialName: string,
   labels: Record<'main' | 'haiku' | 'sonnet' | 'opus', string>,
+  claudeOfficialLoggedIn: boolean,
+  openAIOfficialLoggedIn: boolean,
 ): ProviderChoice[] {
-  return [
-    officialChoices(availableModels, activeId === null, officialName),
-    ...providers.map((provider) => ({
+  const claudeOfficialModels = activeId === null && availableModels.length > 0
+    ? availableModels
+    : OFFICIAL_MODELS
+  const openAIOfficialModels = activeId === OPENAI_OFFICIAL_PROVIDER_ID && availableModels.length > 0
+    ? availableModels
+    : OPENAI_OFFICIAL_MODELS
+
+  const choices: ProviderChoice[] = []
+
+  if (claudeOfficialLoggedIn) {
+    choices.push(officialChoices(null, claudeOfficialModels, activeId === null, officialName))
+  }
+  if (openAIOfficialLoggedIn) {
+    choices.push(officialChoices(
+      OPENAI_OFFICIAL_PROVIDER_ID,
+      openAIOfficialModels,
+      activeId === OPENAI_OFFICIAL_PROVIDER_ID,
+      openAIOfficialName,
+    ))
+  }
+
+  for (const provider of providers) {
+    choices.push({
       providerId: provider.id,
       providerName: provider.name,
       isDefault: activeId === provider.id,
       models: buildProviderModels(provider, labels),
-    })),
-  ]
+    })
+  }
+
+  return choices
 }
 
 function resolveDefaultRuntimeSelection(
@@ -116,7 +154,11 @@ function resolveDefaultRuntimeSelection(
 
   return {
     providerId: inferredProviderId,
-    modelId: currentModelId ?? OFFICIAL_DEFAULT_MODEL_ID,
+    modelId: currentModelId ?? (
+      inferredProviderId === OPENAI_OFFICIAL_PROVIDER_ID
+        ? OPENAI_OFFICIAL_DEFAULT_MODEL_ID
+        : OFFICIAL_DEFAULT_MODEL_ID
+    ),
   }
 }
 
@@ -145,6 +187,10 @@ export function ModelSelector({
     isLoading: providersLoading,
     fetchProviders,
   } = useProviderStore()
+  const claudeOAuthStatus = useHahaOAuthStore((s) => s.status)
+  const fetchClaudeOAuthStatus = useHahaOAuthStore((s) => s.fetchStatus)
+  const openAIOAuthStatus = useHahaOpenAIOAuthStore((s) => s.status)
+  const fetchOpenAIOAuthStatus = useHahaOpenAIOAuthStore((s) => s.fetchStatus)
   const runtimeSelection = useSessionRuntimeStore((state) =>
     runtimeKey ? state.selections[runtimeKey] : undefined,
   )
@@ -171,6 +217,11 @@ export function ModelSelector({
     requestedProvidersRef.current = true
     void fetchProviders()
   }, [fetchProviders, isRuntimeScoped, providersLoading])
+
+  useEffect(() => {
+    void fetchClaudeOAuthStatus()
+    void fetchOpenAIOAuthStatus()
+  }, [fetchClaudeOAuthStatus, fetchOpenAIOAuthStatus])
 
   useEffect(() => {
     if (!open) return
@@ -217,9 +268,8 @@ export function ModelSelector({
     const maxHeight = Math.min(DROPDOWN_MAX_HEIGHT, availableHeight)
 
     setDropdownPosition({
-      top: placeBelow
-        ? rect.bottom + DROPDOWN_GAP
-        : Math.max(VIEWPORT_MARGIN, rect.top - DROPDOWN_GAP - maxHeight),
+      top: placeBelow ? rect.bottom + DROPDOWN_GAP : undefined,
+      bottom: placeBelow ? undefined : (viewportHeight - rect.top + DROPDOWN_GAP),
       left,
       width,
       maxHeight,
@@ -258,11 +308,14 @@ export function ModelSelector({
     () => buildProviderChoices(
       providers,
       activeId,
-      activeId === null ? availableModels : OFFICIAL_MODELS,
+      availableModels,
       t('settings.providers.officialName'),
+      t('settings.providers.openaiOfficialName'),
       roleLabels,
+      claudeOAuthStatus?.loggedIn === true,
+      openAIOAuthStatus?.loggedIn === true,
     ),
-    [activeId, availableModels, providers, roleLabels, t],
+    [activeId, availableModels, providers, roleLabels, t, claudeOAuthStatus, openAIOAuthStatus],
   )
 
   const selectedModel = isControlled
@@ -482,6 +535,7 @@ export function ModelSelector({
         className="fixed z-[80] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] shadow-[var(--shadow-dropdown)]"
         style={{
           top: dropdownPosition.top,
+          bottom: dropdownPosition.bottom,
           left: dropdownPosition.left,
           width: dropdownPosition.width,
         }}

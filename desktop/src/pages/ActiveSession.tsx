@@ -324,6 +324,7 @@ export function ActiveSession() {
   const streamingText = sessionState?.streamingText ?? ''
   const activeGoal = sessionState?.activeGoal ?? null
   const isEmpty = messages.length === 0 && !streamingText && (session?.messageCount ?? 0) === 0
+  const visibleMessageCount = messages.length > 0 ? messages.length : session?.messageCount ?? 0
 
   const isActive = chatState !== 'idle' ||
     (trackedTaskSessionId === activeTabId && hasRunningTasks) ||
@@ -463,10 +464,10 @@ export function ActiveSession() {
                           <span className="truncate">{t('session.lastUpdated', { time: lastUpdated })}</span>
                         </>
                       )}
-                      {!showWorkspacePanel && session?.messageCount !== undefined && session.messageCount > 0 && (
+                      {!showWorkspacePanel && visibleMessageCount > 0 && (
                         <>
                           <span className="text-[var(--color-outline)]">·</span>
-                          <span>{t('session.messages', { count: session.messageCount })}</span>
+                          <span>{t('session.messages', { count: visibleMessageCount })}</span>
                         </>
                       )}
                     </div>

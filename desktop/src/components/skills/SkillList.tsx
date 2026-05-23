@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSkillStore } from '../../stores/skillStore'
 import { useSessionStore } from '../../stores/sessionStore'
 import { useTranslation } from '../../i18n'
@@ -34,23 +34,45 @@ export function SkillList() {
   const t = useTranslation()
   const activeSession = sessions.find((session) => session.id === activeSessionId)
   const currentWorkDir = activeSession?.workDir || undefined
+  const [searchQuery, setSearchQuery] = useState('')
+  const normalizedSearchQuery = searchQuery.trim().toLocaleLowerCase()
 
   useEffect(() => {
     fetchSkills(currentWorkDir)
   }, [fetchSkills, currentWorkDir])
 
+  const filteredSkills = useMemo(() => {
+    if (!normalizedSearchQuery) return skills
+
+    return skills.filter((skill) => {
+      const fields = [
+        skill.name,
+        skill.displayName,
+        skill.description,
+        skill.source,
+        t(`settings.skills.source.${skill.source}`),
+        skill.version,
+        skill.pluginName,
+      ]
+
+      return fields.some((field) =>
+        field?.toLocaleLowerCase().includes(normalizedSearchQuery),
+      )
+    })
+  }, [skills, normalizedSearchQuery, t])
+
   const grouped = useMemo(() => {
     const result: Partial<Record<SkillSource, SkillMeta[]>> = {}
-    for (const skill of skills) {
+    for (const skill of filteredSkills) {
       const src = skill.source as SkillSource
       ;(result[src] ??= []).push(skill)
     }
     return result
-  }, [skills])
+  }, [filteredSkills])
 
   const totalTokens = useMemo(
-    () => skills.reduce((sum, skill) => sum + estimateTokens(skill.contentLength), 0),
-    [skills],
+    () => filteredSkills.reduce((sum, skill) => sum + estimateTokens(skill.contentLength), 0),
+    [filteredSkills],
   )
 
   const visibleGroupCount = useMemo(
@@ -105,12 +127,47 @@ export function SkillList() {
             <p className="text-sm leading-6 text-[var(--color-text-secondary)] max-w-3xl">
               {t('settings.skills.browserDescription')}
             </p>
+            <div className="mt-4 max-w-2xl">
+              <label className="sr-only" htmlFor="settings-skill-search">
+                {t('settings.skills.searchLabel')}
+              </label>
+              <div className="flex min-h-11 items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 transition-colors focus-within:border-[var(--color-border-focus)] focus-within:ring-2 focus-within:ring-[var(--color-brand)]/20">
+                <span className="material-symbols-outlined text-[18px] text-[var(--color-text-tertiary)]">
+                  search
+                </span>
+                <input
+                  id="settings-skill-search"
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  placeholder={t('settings.skills.searchPlaceholder')}
+                  className="min-w-0 flex-1 bg-transparent text-sm text-[var(--color-text-primary)] outline-none placeholder:text-[var(--color-text-tertiary)]"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    aria-label={t('settings.skills.clearSearch')}
+                    onClick={() => setSearchQuery('')}
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[var(--color-text-tertiary)] transition-colors hover:text-[var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">close</span>
+                  </button>
+                )}
+              </div>
+              {normalizedSearchQuery && (
+                <p className="mt-2 text-[11px] text-[var(--color-text-tertiary)]">
+                  {t('settings.skills.searchResultCount', {
+                    count: String(filteredSkills.length),
+                    total: String(skills.length),
+                  })}
+                </p>
+              )}
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3 min-w-0 sm:grid-cols-3">
             <SummaryCard
               label={t('settings.skills.summary.totalSkills')}
-              value={String(skills.length)}
+              value={String(filteredSkills.length)}
               icon="auto_awesome"
             />
             <SummaryCard
@@ -130,6 +187,20 @@ export function SkillList() {
           </div>
         </div>
       </section>
+
+      {filteredSkills.length === 0 && (
+        <div className="text-center py-12 rounded-2xl border border-dashed border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-6">
+          <span className="material-symbols-outlined text-[40px] text-[var(--color-text-tertiary)] mb-2 block">
+            search_off
+          </span>
+          <p className="text-sm text-[var(--color-text-tertiary)]">
+            {t('settings.skills.noSearchResults')}
+          </p>
+          <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
+            {t('settings.skills.noSearchResultsHint')}
+          </p>
+        </div>
+      )}
 
       <div className={`grid gap-4 ${visibleGroupCount >= 2 ? 'xl:grid-cols-2' : ''}`}>
         {SOURCE_ORDER.map((source) => {

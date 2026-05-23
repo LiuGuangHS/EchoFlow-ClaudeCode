@@ -36,6 +36,13 @@ describe('model context window resolution', () => {
     expect(getContextWindowForModel('glm-4.5-air')).toBe(128_000)
   })
 
+  test('uses Codex OAuth effective context windows for OpenAI GPT models', () => {
+    expect(getContextWindowForModel('gpt-5.5')).toBe(258_400)
+    expect(getContextWindowForModel('gpt-5.4')).toBe(950_000)
+    expect(getContextWindowForModel('gpt-5.4-mini')).toBe(258_400)
+    expect(getContextWindowForModel('gpt-5.3-codex-spark')).toBe(121_600)
+  })
+
   test('uses per-model provider overrides before built-in defaults', () => {
     process.env[MODEL_CONTEXT_WINDOWS_ENV_KEY] = JSON.stringify({
       'deepseek-v4-pro': 500_000,

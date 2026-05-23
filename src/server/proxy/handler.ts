@@ -9,7 +9,9 @@
  * Original work by Jason Young, MIT License
  */
 
+import { signClaudeCodeCCHInTransformedString } from '../../utils/claudeCodeCch.js'
 import { ProviderService } from '../services/providerService.js'
+import { ensureClaudeCodeAttribution } from './claudeCodeAttribution.js'
 import { anthropicToOpenaiChat } from './transform/anthropicToOpenaiChat.js'
 import { anthropicToOpenaiResponses } from './transform/anthropicToOpenaiResponses.js'
 import { openaiChatToAnthropic } from './transform/openaiChatToAnthropic.js'
@@ -17,8 +19,54 @@ import { openaiResponsesToAnthropic } from './transform/openaiResponsesToAnthrop
 import { openaiChatStreamToAnthropic } from './streaming/openaiChatStreamToAnthropic.js'
 import { openaiResponsesStreamToAnthropic } from './streaming/openaiResponsesStreamToAnthropic.js'
 import type { AnthropicRequest } from './transform/types.js'
+import { getProxyFetchOptions } from '../../utils/proxy.js'
+import { getManualNetworkProxyUrl, loadNetworkSettings } from '../services/networkSettings.js'
 
 const providerService = new ProviderService()
+
+type ProxyFetchOptions = ReturnType<typeof getProxyFetchOptions>
+type UpstreamRequestInit = RequestInit & ProxyFetchOptions
+
+function createTimeoutController(timeoutMs: number): {
+  signal: AbortSignal
+  clear: () => void
+} {
+  const controller = new AbortController()
+  const timer = setTimeout(() => {
+    controller.abort(new DOMException('The operation timed out.', 'TimeoutError'))
+  }, timeoutMs)
+
+  return {
+    signal: controller.signal,
+    clear: () => clearTimeout(timer),
+  }
+}
+
+async function fetchUpstreamWithTimeout(
+  url: string,
+  init: Omit<UpstreamRequestInit, 'signal'>,
+  timeoutMs: number,
+  isStream: boolean,
+): Promise<Response> {
+  if (!isStream) {
+    return fetch(url, {
+      ...init,
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+  }
+
+  // For streaming requests, this timeout should only cover the connection and
+  // response headers. Keeping the signal alive aborts long generations mid-body.
+  const timeout = createTimeoutController(timeoutMs)
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: timeout.signal,
+    })
+  } finally {
+    timeout.clear()
+  }
+}
 
 export async function handleProxyRequest(req: Request, url: URL): Promise<Response> {
   const providerMatch = url.pathname.match(/^\/proxy\/providers\/([^/]+)\/v1\/messages$/)
@@ -79,14 +127,18 @@ export async function handleProxyRequest(req: Request, url: URL): Promise<Respon
     )
   }
 
+  body = ensureClaudeCodeAttribution(body)
+
   const isStream = body.stream === true
   const baseUrl = config.baseUrl.replace(/\/+$/, '')
+  const networkSettings = await loadNetworkSettings()
+  const proxyUrl = getManualNetworkProxyUrl(networkSettings)
 
   try {
     if (config.apiFormat === 'openai_chat') {
-      return await handleOpenaiChat(body, baseUrl, config.apiKey, isStream)
+      return await handleOpenaiChat(body, baseUrl, config.apiKey, isStream, networkSettings.aiRequestTimeoutMs, proxyUrl)
     } else {
-      return await handleOpenaiResponses(body, baseUrl, config.apiKey, isStream)
+      return await handleOpenaiResponses(body, baseUrl, config.apiKey, isStream, networkSettings.aiRequestTimeoutMs, proxyUrl)
     }
   } catch (err) {
     console.error('[Proxy] Upstream request failed:', err)
@@ -108,19 +160,26 @@ async function handleOpenaiChat(
   baseUrl: string,
   apiKey: string,
   isStream: boolean,
+  aiRequestTimeoutMs: number,
+  proxyUrl: string | undefined,
 ): Promise<Response> {
-  const transformed = anthropicToOpenaiChat(body)
+  const deepSeekCompatible = shouldUseDeepSeekReasoningCompat(baseUrl)
+  const transformed = anthropicToOpenaiChat(body, {
+    roundTripReasoningContent: deepSeekCompatible,
+    passThinkingToggle: deepSeekCompatible,
+  })
   const url = `${baseUrl}/v1/chat/completions`
+  const proxyOptions = getProxyFetchOptions({ proxyUrl })
 
-  const upstream = await fetch(url, {
+  const upstream = await fetchUpstreamWithTimeout(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify(transformed),
-    signal: isStream ? AbortSignal.timeout(30_000) : AbortSignal.timeout(300_000),
-  })
+    body: signClaudeCodeCCHInTransformedString(JSON.stringify(transformed)),
+    ...proxyOptions,
+  }, aiRequestTimeoutMs, isStream)
 
   if (!upstream.ok) {
     const errText = await upstream.text().catch(() => '')
@@ -160,24 +219,34 @@ async function handleOpenaiChat(
   return Response.json(anthropicResponse)
 }
 
+function shouldUseDeepSeekReasoningCompat(baseUrl: string): boolean {
+  return (
+    /(^|[./-])deepseek([./-]|$)/i.test(baseUrl) ||
+    /(^|[./-])opencode\.ai([:/]|$)/i.test(baseUrl)
+  )
+}
+
 async function handleOpenaiResponses(
   body: AnthropicRequest,
   baseUrl: string,
   apiKey: string,
   isStream: boolean,
+  aiRequestTimeoutMs: number,
+  proxyUrl: string | undefined,
 ): Promise<Response> {
   const transformed = anthropicToOpenaiResponses(body)
   const url = `${baseUrl}/v1/responses`
+  const proxyOptions = getProxyFetchOptions({ proxyUrl })
 
-  const upstream = await fetch(url, {
+  const upstream = await fetchUpstreamWithTimeout(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify(transformed),
-    signal: isStream ? AbortSignal.timeout(30_000) : AbortSignal.timeout(300_000),
-  })
+    body: signClaudeCodeCCHInTransformedString(JSON.stringify(transformed)),
+    ...proxyOptions,
+  }, aiRequestTimeoutMs, isStream)
 
   if (!upstream.ok) {
     const errText = await upstream.text().catch(() => '')

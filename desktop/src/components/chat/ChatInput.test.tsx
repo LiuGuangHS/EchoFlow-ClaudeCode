@@ -841,6 +841,22 @@ describe('ChatInput file mentions', () => {
     expect(fileSearchMenu).not.toHaveTextContent('Navigate')
   })
 
+  it('keeps the active-session toolbar in flow so multiline caret cannot render behind controls', async () => {
+    render(<ChatInput />)
+
+    await waitFor(() => {
+      expect(mocks.getGitInfo).toHaveBeenCalledWith(sessionId)
+    })
+
+    const input = screen.getByRole('textbox')
+    const toolbar = screen.getByTestId('chat-input-toolbar')
+
+    expect(toolbar).not.toHaveClass('absolute')
+    expect(toolbar).toHaveClass('mt-2')
+    expect(input).not.toHaveClass('pb-12')
+    expect(input).not.toHaveClass('pb-14')
+  })
+
   it('prioritizes active-session slash commands by command name when filtering', async () => {
     useChatStore.setState({
       sessions: {

@@ -102,57 +102,26 @@ export function PluginList() {
   return (
     <div className="flex flex-col gap-6 min-w-0">
       <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-container-low)] overflow-hidden">
-        <div className="grid gap-4 px-5 py-5 min-w-0 2xl:grid-cols-[minmax(0,1.45fr)_minmax(420px,0.95fr)] 2xl:items-end">
-          <div className="min-w-0">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--color-text-tertiary)] mb-2">
-              {t('settings.plugins.browserEyebrow')}
-            </div>
-            <div className="flex items-center gap-3 mb-2">
-              <span className="material-symbols-outlined text-[22px] text-[var(--color-brand)]">
-                extension
-              </span>
-              <h3 className="text-lg font-semibold text-[var(--color-text-primary)]">
-                {t('settings.plugins.browserTitle')}
-              </h3>
-            </div>
-            <p className="text-sm leading-6 text-[var(--color-text-secondary)] max-w-3xl">
-              {t('settings.plugins.browserDescription')}
-            </p>
-            {lastReloadSummary && (
-              <p className="mt-3 text-xs text-[var(--color-text-tertiary)]">
-                {t('settings.plugins.lastReload', {
-                  enabled: String(lastReloadSummary.enabled),
-                  skills: String(lastReloadSummary.skills),
-                  errors: String(lastReloadSummary.errors),
-                })}
+        <div className="flex flex-col gap-4 px-5 py-5 min-w-0">
+          <div className="flex flex-col gap-4 min-w-0 xl:flex-row xl:items-start xl:justify-between">
+            <div className="min-w-0 max-w-4xl">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--color-text-tertiary)] mb-2">
+                {t('settings.plugins.browserEyebrow')}
+              </div>
+              <div className="flex items-center gap-3 mb-2">
+                <span className="material-symbols-outlined text-[22px] text-[var(--color-brand)]">
+                  extension
+                </span>
+                <h3 className="text-lg font-semibold text-[var(--color-text-primary)]">
+                  {t('settings.plugins.browserTitle')}
+                </h3>
+              </div>
+              <p className="text-sm leading-6 text-[var(--color-text-secondary)]">
+                {t('settings.plugins.browserDescription')}
               </p>
-            )}
-          </div>
-
-          <div className="flex flex-col gap-3 min-w-0 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-            <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(120px,1fr))] gap-3">
-              <SummaryCard
-                label={t('settings.plugins.summary.total')}
-                value={String(summary?.total ?? plugins.length)}
-                icon="extension"
-              />
-              <SummaryCard
-                label={t('settings.plugins.summary.enabled')}
-                value={String(summary?.enabled ?? plugins.filter((plugin) => plugin.enabled).length)}
-                icon="check_circle"
-              />
-              <SummaryCard
-                label={t('settings.plugins.summary.attention')}
-                value={String(grouped.attention.length)}
-                icon="warning"
-              />
-              <SummaryCard
-                label={t('settings.plugins.summary.marketplaces')}
-                value={String(summary?.marketplaceCount ?? marketplaces.length)}
-                icon="storefront"
-              />
             </div>
-            <div className="flex flex-wrap gap-2 sm:justify-end">
+
+            <div className="flex flex-wrap gap-2 xl:justify-end">
               <Button
                 variant="secondary"
                 size="sm"
@@ -173,6 +142,39 @@ export function PluginList() {
               </Button>
             </div>
           </div>
+
+          <div className="grid min-w-0 grid-cols-2 gap-2 md:grid-cols-4">
+            <SummaryCard
+              label={t('settings.plugins.summary.total')}
+              value={String(summary?.total ?? plugins.length)}
+              icon="extension"
+            />
+            <SummaryCard
+              label={t('settings.plugins.summary.enabled')}
+              value={String(summary?.enabled ?? plugins.filter((plugin) => plugin.enabled).length)}
+              icon="check_circle"
+            />
+            <SummaryCard
+              label={t('settings.plugins.summary.attention')}
+              value={String(grouped.attention.length)}
+              icon="warning"
+            />
+            <SummaryCard
+              label={t('settings.plugins.summary.marketplaces')}
+              value={String(summary?.marketplaceCount ?? marketplaces.length)}
+              icon="storefront"
+            />
+          </div>
+
+          {lastReloadSummary && (
+            <p className="text-xs text-[var(--color-text-tertiary)]">
+              {t('settings.plugins.lastReload', {
+                enabled: String(lastReloadSummary.enabled),
+                skills: String(lastReloadSummary.skills),
+                errors: String(lastReloadSummary.errors),
+              })}
+            </p>
+          )}
         </div>
       </section>
 
@@ -326,14 +328,14 @@ function SummaryCard({
   icon: string
 }) {
   return (
-    <div className="min-w-0 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-3 py-3">
-      <div className="flex min-w-0 items-start gap-1.5 text-[11px] uppercase tracking-[0.08em] text-[var(--color-text-tertiary)]">
+    <div className="min-w-0 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3">
+      <div className="flex min-w-0 items-center gap-1.5 text-[11px] uppercase tracking-[0.08em] text-[var(--color-text-tertiary)]">
         <span className="material-symbols-outlined text-[14px] flex-shrink-0">{icon}</span>
-        <span className="min-w-0 break-words text-[10px] leading-4 whitespace-normal">
+        <span className="min-w-0 truncate text-[10px] leading-4">
           {label}
         </span>
       </div>
-      <div className="mt-2 truncate text-xl font-semibold text-[var(--color-text-primary)]">
+      <div className="mt-1.5 truncate text-lg font-semibold text-[var(--color-text-primary)]">
         {value}
       </div>
     </div>

@@ -81,6 +81,10 @@ vi.mock('../components/settings/ClaudeOfficialLogin', () => ({
   ClaudeOfficialLogin: () => <div data-testid="claude-official-login" />,
 }))
 
+vi.mock('../components/settings/ChatGPTOfficialLogin', () => ({
+  ChatGPTOfficialLogin: () => <div data-testid="chatgpt-official-login" />,
+}))
+
 vi.mock('../pages/AdapterSettings', () => ({
   AdapterSettings: () => <div>Adapter Settings Mock</div>,
 }))
@@ -165,12 +169,17 @@ describe('Settings > General tab', () => {
       responseLanguage: '',
       uiZoom: 1,
       webSearch: { mode: 'auto', tavilyApiKey: '', braveApiKey: '' },
+      network: {
+        aiRequestTimeoutMs: 120_000,
+        proxy: { mode: 'system', url: '' },
+      },
       h5Access: {
         enabled: false,
         tokenPreview: null,
         allowedOrigins: [],
         publicBaseUrl: null,
       },
+      h5AccessDiagnostics: null,
       h5AccessError: null,
       setThinkingEnabled: vi.fn().mockImplementation(async (enabled: boolean) => {
         useSettingsStore.setState({ thinkingEnabled: enabled })
@@ -192,6 +201,9 @@ describe('Settings > General tab', () => {
       }),
       setWebSearch: vi.fn().mockImplementation(async (webSearch) => {
         useSettingsStore.setState({ webSearch })
+      }),
+      setNetwork: vi.fn().mockImplementation(async (network) => {
+        useSettingsStore.setState({ network })
       }),
       appMode: {
         mode: 'default',
@@ -249,7 +261,7 @@ describe('Settings > General tab', () => {
       updateH5AccessSettings: vi.fn(),
     })
 
-    useUIStore.setState({ pendingSettingsTab: null })
+    useUIStore.setState({ pendingSettingsTab: null, toasts: [] })
     useUpdateStore.setState({
       status: 'idle',
       availableVersion: null,
@@ -308,10 +320,74 @@ describe('Settings > General tab', () => {
 
     const notificationsHeading = screen.getByRole('heading', { name: 'System Notifications' })
     const uiZoomHeading = screen.getByRole('heading', { name: 'UI Zoom' })
+    const networkHeading = screen.getByRole('heading', { name: 'Network' })
     const webFetchHeading = screen.getByRole('heading', { name: 'WebFetch Preflight' })
 
     expect((notificationsHeading.compareDocumentPosition(uiZoomHeading) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0).toBe(true)
-    expect((uiZoomHeading.compareDocumentPosition(webFetchHeading) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0).toBe(true)
+    expect((uiZoomHeading.compareDocumentPosition(networkHeading) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0).toBe(true)
+    expect((networkHeading.compareDocumentPosition(webFetchHeading) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0).toBe(true)
+  })
+
+  it('saves provider network timeout and manual proxy from General settings', async () => {
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+    expect(screen.getByRole('button', { name: /System proxy/i })).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.click(screen.getByRole('button', { name: /Manual proxy/i }))
+    const proxyInput = screen.getByLabelText('Proxy URL')
+    const saveButton = screen.getAllByRole('button', { name: 'Save' })[0]!
+
+    expect(screen.getByText('Enter a proxy URL.')).toBeInTheDocument()
+    expect(saveButton).toBeDisabled()
+
+    fireEvent.change(proxyInput, { target: { value: 'socks5://127.0.0.1:7890' } })
+    expect(screen.getByText('Enter an HTTP or HTTPS proxy URL.')).toBeInTheDocument()
+    expect(saveButton).toBeDisabled()
+
+    fireEvent.change(proxyInput, { target: { value: '  http://127.0.0.1:7890  ' } })
+    const timeoutInput = screen.getByLabelText('AI request timeout')
+    expect(timeoutInput).toHaveAttribute('type', 'number')
+    expect(screen.queryByRole('slider', { name: 'AI request timeout' })).not.toBeInTheDocument()
+
+    fireEvent.change(timeoutInput, { target: { value: '180' } })
+
+    await act(async () => {
+      fireEvent.click(saveButton)
+    })
+
+    expect(useSettingsStore.getState().setNetwork).toHaveBeenCalledWith({
+      aiRequestTimeoutMs: 180_000,
+      proxy: {
+        mode: 'manual',
+        url: 'http://127.0.0.1:7890',
+      },
+    })
+    expect(useUIStore.getState().toasts[useUIStore.getState().toasts.length - 1]).toMatchObject({
+      type: 'success',
+      message: 'Network settings saved.',
+    })
+  })
+
+  it('validates typed provider network timeout and supports precise step controls', () => {
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+    const timeoutInput = screen.getByLabelText('AI request timeout')
+    const saveButton = screen.getAllByRole('button', { name: 'Save' })[0]!
+
+    fireEvent.change(timeoutInput, { target: { value: '700' } })
+    expect(screen.getByText('Enter a whole number from 5 to 600 seconds.')).toBeInTheDocument()
+    expect(saveButton).toBeDisabled()
+
+    fireEvent.change(timeoutInput, { target: { value: '90' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Increase by 30 seconds' }))
+    expect(timeoutInput).toHaveValue(120)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Decrease by 30 seconds' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Decrease by 30 seconds' }))
+    expect(timeoutInput).toHaveValue(60)
+    expect(saveButton).not.toBeDisabled()
   })
 
   it('keeps data storage at the bottom of General settings', () => {
@@ -782,6 +858,7 @@ describe('Settings > General tab', () => {
     fireEvent.click(screen.getByText('H5 Access'))
     const section = screen.getByRole('region', { name: 'H5 Access' })
 
+    expect(within(section).getByLabelText('Access host / IP')).toHaveValue('https://phone.example/app')
     await act(async () => {
       fireEvent.click(within(section).getByRole('button', { name: 'Copy H5 URL' }))
     })
@@ -803,7 +880,35 @@ describe('Settings > General tab', () => {
     expect(within(section).getByText('H5 unavailable')).toBeInTheDocument()
   })
 
-  it('updates H5 public URL from General settings', async () => {
+  it('updates H5 host by reusing the current service port', async () => {
+    useSettingsStore.setState({
+      h5Access: {
+        enabled: true,
+        tokenPreview: 'h5a1b2c3',
+        allowedOrigins: [],
+        publicBaseUrl: 'http://172.20.16.1:54064',
+      },
+    })
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('H5 Access'))
+
+    const section = screen.getByRole('region', { name: 'H5 Access' })
+    expect(within(section).getByLabelText('Current port')).toHaveValue('54064')
+    fireEvent.change(within(section).getByLabelText('Access host / IP'), {
+      target: { value: '192.168.1.100' },
+    })
+
+    await act(async () => {
+      fireEvent.click(within(section).getByRole('button', { name: 'Save H5 settings' }))
+    })
+
+    expect(useSettingsStore.getState().updateH5AccessSettings).toHaveBeenCalledWith({
+      publicBaseUrl: 'http://192.168.1.100:54064',
+    })
+  })
+
+  it('still accepts a full H5 public URL for reverse proxy setups', async () => {
     useSettingsStore.setState({
       h5Access: {
         enabled: false,
@@ -817,7 +922,7 @@ describe('Settings > General tab', () => {
     fireEvent.click(screen.getByText('H5 Access'))
 
     const section = screen.getByRole('region', { name: 'H5 Access' })
-    fireEvent.change(within(section).getByLabelText('Public URL'), {
+    fireEvent.change(within(section).getByLabelText('Access host / IP'), {
       target: { value: 'https://phone.example/app' },
     })
 
@@ -830,6 +935,100 @@ describe('Settings > General tab', () => {
     })
   })
 
+  it('shows the stale-host banner and a one-click switch when the saved H5 host is unreachable', async () => {
+    useSettingsStore.setState({
+      h5Access: {
+        enabled: true,
+        tokenPreview: 'h5a1b2c3',
+        allowedOrigins: [],
+        publicBaseUrl: 'http://192.168.1.207:55379',
+      },
+      h5AccessDiagnostics: {
+        storedHostStaleness: 'unreachable',
+        storedPublicBaseUrl: 'http://192.168.1.207:55379',
+        effectivePublicBaseUrl: 'http://192.168.0.105:55379',
+        suggestedHost: '192.168.0.105',
+        localInterfaceHosts: ['192.168.0.105'],
+      },
+    })
+    render(<Settings />)
+    fireEvent.click(screen.getByText('H5 Access'))
+
+    const section = screen.getByRole('region', { name: 'H5 Access' })
+    const banner = within(section).getByTestId('h5-access-stale-host-banner')
+    expect(banner).toBeInTheDocument()
+    expect(banner.textContent).toContain('192.168.1.207')
+    expect(within(section).queryByTestId('h5-access-proxy-note')).toBeNull()
+
+    await act(async () => {
+      fireEvent.click(within(section).getByTestId('h5-access-stale-host-apply'))
+    })
+
+    expect(useSettingsStore.getState().updateH5AccessSettings).toHaveBeenCalledWith({
+      publicBaseUrl: 'http://192.168.0.105:55379',
+    })
+  })
+
+  it('shows the proxy note when the saved H5 URL is a reverse proxy', () => {
+    useSettingsStore.setState({
+      h5Access: {
+        enabled: true,
+        tokenPreview: 'h5a1b2c3',
+        allowedOrigins: [],
+        publicBaseUrl: 'https://h5.mydomain.com',
+      },
+      h5AccessDiagnostics: {
+        storedHostStaleness: 'proxy',
+        storedPublicBaseUrl: 'https://h5.mydomain.com',
+        effectivePublicBaseUrl: 'https://h5.mydomain.com',
+        suggestedHost: '192.168.0.105',
+        localInterfaceHosts: ['192.168.0.105'],
+      },
+    })
+    render(<Settings />)
+    fireEvent.click(screen.getByText('H5 Access'))
+
+    const section = screen.getByRole('region', { name: 'H5 Access' })
+    expect(within(section).getByTestId('h5-access-proxy-note')).toBeInTheDocument()
+    expect(within(section).queryByTestId('h5-access-stale-host-banner')).toBeNull()
+  })
+
+  it('shows the friendly backend reason when saving an H5 host that is not on any local interface', async () => {
+    useSettingsStore.setState({
+      h5Access: {
+        enabled: true,
+        tokenPreview: 'h5a1b2c3',
+        allowedOrigins: [],
+        publicBaseUrl: 'http://192.168.0.105:55379',
+      },
+      h5AccessDiagnostics: {
+        storedHostStaleness: 'ok',
+        storedPublicBaseUrl: 'http://192.168.0.105:55379',
+        effectivePublicBaseUrl: 'http://192.168.0.105:55379',
+        suggestedHost: '192.168.0.105',
+        localInterfaceHosts: ['192.168.0.105'],
+      },
+      updateH5AccessSettings: vi.fn().mockImplementation(async () => {
+        useSettingsStore.setState({
+          h5AccessError: 'H5 host 10.255.255.254 is not bound to any local network interface on this machine. Available LAN IPv4: 192.168.0.105',
+        })
+        throw new Error('rejected')
+      }),
+    })
+    render(<Settings />)
+    fireEvent.click(screen.getByText('H5 Access'))
+
+    const section = screen.getByRole('region', { name: 'H5 Access' })
+    fireEvent.change(within(section).getByLabelText('Access host / IP'), {
+      target: { value: '10.255.255.254' },
+    })
+    await act(async () => {
+      fireEvent.click(within(section).getByRole('button', { name: 'Save H5 settings' }))
+    })
+
+    expect(within(section).getByText(/10\.255\.255\.254/)).toBeInTheDocument()
+  })
+
   it('saves WebSearch fallback provider settings', () => {
     render(<Settings />)
 
@@ -839,7 +1038,8 @@ describe('Settings > General tab', () => {
     fireEvent.change(screen.getByLabelText('Tavily API key'), {
       target: { value: 'tvly-test-key' },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    const saveButtons = screen.getAllByRole('button', { name: 'Save' })
+    fireEvent.click(saveButtons[saveButtons.length - 1]!)
 
     expect(useSettingsStore.getState().setWebSearch).toHaveBeenCalledWith({
       mode: 'tavily',
@@ -913,6 +1113,16 @@ describe('Settings > Providers tab', () => {
     expect(screen.queryByTestId('claude-official-login')).not.toBeInTheDocument()
   })
 
+  it('does not query ChatGPT OAuth status before providers finish loading', () => {
+    providerStoreState.providers = []
+    providerStoreState.activeId = 'openai-official'
+    providerStoreState.hasLoadedProviders = false
+
+    render(<Settings />)
+
+    expect(screen.queryByTestId('chatgpt-official-login')).not.toBeInTheDocument()
+  })
+
   it('shows official OAuth status only after official provider is confirmed active', () => {
     providerStoreState.providers = []
     providerStoreState.activeId = null
@@ -921,6 +1131,20 @@ describe('Settings > Providers tab', () => {
     render(<Settings />)
 
     expect(screen.getByTestId('claude-official-login')).toBeInTheDocument()
+  })
+
+  it('shows ChatGPT Official as the active built-in provider', () => {
+    providerStoreState.providers = []
+    providerStoreState.activeId = 'openai-official'
+    providerStoreState.hasLoadedProviders = true
+
+    render(<Settings />)
+
+    const openAIProvider = screen.getByTestId('openai-official-provider')
+    expect(within(openAIProvider).getByText('ChatGPT Official')).toBeInTheDocument()
+    expect(within(openAIProvider).getByText('Default')).toBeInTheDocument()
+    expect(screen.getByTestId('chatgpt-official-login')).toBeInTheDocument()
+    expect(screen.queryByTestId('claude-official-login')).not.toBeInTheDocument()
   })
 
   it('requires confirmation before deleting a provider', async () => {

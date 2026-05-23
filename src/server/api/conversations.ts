@@ -14,7 +14,7 @@ import { ApiError, errorResponse } from '../middleware/errorHandler.js'
 import { sessionService } from '../services/sessionService.js'
 
 // In-memory conversation state per session
-const sessionStates = new Map<string, 'idle' | 'thinking' | 'tool_executing'>()
+const sessionStates = new Map<string, 'idle' | 'thinking' | 'compacting' | 'tool_executing'>()
 
 export async function handleConversationsApi(
   req: Request,
@@ -135,13 +135,13 @@ function stopChat(sessionId: string): Response {
 
 export function setSessionChatState(
   sessionId: string,
-  state: 'idle' | 'thinking' | 'tool_executing'
+  state: 'idle' | 'thinking' | 'compacting' | 'tool_executing'
 ): void {
   sessionStates.set(sessionId, state)
 }
 
 export function getSessionChatState(
   sessionId: string
-): 'idle' | 'thinking' | 'tool_executing' {
+): 'idle' | 'thinking' | 'compacting' | 'tool_executing' {
   return sessionStates.get(sessionId) || 'idle'
 }

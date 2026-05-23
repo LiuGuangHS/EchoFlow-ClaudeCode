@@ -7,6 +7,7 @@ import { getOpenAIOAuthTokens } from './storage.js'
 import { anthropicToOpenaiResponses } from '../../server/proxy/transform/anthropicToOpenaiResponses.js'
 import { openaiResponsesToAnthropic } from '../../server/proxy/transform/openaiResponsesToAnthropic.js'
 import { openaiResponsesStreamToAnthropic } from '../../server/proxy/streaming/openaiResponsesStreamToAnthropic.js'
+import { openaiResponsesStreamToAnthropicResponse } from '../../server/proxy/streaming/openaiResponsesStreamToAnthropicResponse.js'
 import type { AnthropicRequest } from '../../server/proxy/transform/types.js'
 import { logForDebugging } from '../../utils/debug.js'
 
@@ -36,6 +37,10 @@ export function buildOpenAICodexFetch(
       ...originalBody,
       model: mappedModel,
     })
+    const upstreamBody = {
+      ...transformedBody,
+      stream: true,
+    }
 
     const tokens = await ensureFreshOpenAITokens()
     if (!tokens) {
@@ -58,7 +63,7 @@ export function buildOpenAICodexFetch(
     const upstream = await inner(OPENAI_CODEX_API_ENDPOINT, {
       method: 'POST',
       headers,
-      body: JSON.stringify(transformedBody),
+      body: JSON.stringify(upstreamBody),
       signal: init?.signal,
     })
 
@@ -103,11 +108,25 @@ export function buildOpenAICodexFetch(
       )
     }
 
+    if (upstream.body && isEventStreamResponse(upstream)) {
+      const responseBody = await openaiResponsesStreamToAnthropicResponse(
+        upstream.body,
+        mappedModel,
+      )
+      return Response.json(responseBody)
+    }
+
     const responseBody = await upstream.json()
     return Response.json(
       openaiResponsesToAnthropic(responseBody, mappedModel),
     )
   }
+}
+
+function isEventStreamResponse(response: Response): boolean {
+  return (response.headers.get('Content-Type') ?? '')
+    .toLowerCase()
+    .includes('text/event-stream')
 }
 
 async function readAnthropicBody(

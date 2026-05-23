@@ -10,12 +10,15 @@ export type SessionListItem = {
   projectRoot?: string | null
   workDir: string | null
   workDirExists: boolean
+  sourceSessionId?: string
+  sourceMessageId?: string
 }
 
 export type MessageEntry = {
   id: string
   type: 'user' | 'assistant' | 'system' | 'tool_use' | 'tool_result'
   content: unknown
+  toolUseResult?: unknown
   timestamp: string
   model?: string
   parentUuid?: string

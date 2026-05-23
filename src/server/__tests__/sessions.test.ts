@@ -14,6 +14,8 @@ import {
 } from '../services/repositoryLaunchService.js'
 import { conversationService } from '../services/conversationService.js'
 import { clearCommandsCache } from '../../commands.js'
+import { parseJSONL } from '../../utils/json.js'
+import { createSessionBranch } from '../../utils/sessionBranching.js'
 import { sanitizePath } from '../../utils/sessionStoragePortable.js'
 import { clearInstalledPluginsCache } from '../../utils/plugins/installedPluginsManager.js'
 import { clearPluginCache } from '../../utils/plugins/pluginLoader.js'
@@ -265,6 +267,33 @@ function makeAssistantToolUseEntry(
   }
 }
 
+function makeToolResultUserEntry(
+  toolUseId: string,
+  content: string,
+  uuid?: string,
+  parentUuid?: string,
+  sessionId = 'test-session',
+): Record<string, unknown> {
+  return {
+    parentUuid: parentUuid || null,
+    isSidechain: false,
+    type: 'user',
+    message: {
+      role: 'user',
+      content: [{
+        type: 'tool_result',
+        tool_use_id: toolUseId,
+        content,
+      }],
+    },
+    uuid: uuid || crypto.randomUUID(),
+    timestamp: '2026-01-01T00:02:30.000Z',
+    userType: 'external',
+    cwd: '/tmp/test',
+    sessionId,
+  }
+}
+
 function makeMetaUserEntry(): Record<string, unknown> {
   return {
     parentUuid: null,
@@ -303,6 +332,17 @@ function makeWorktreeStateEntry(
       sessionId,
       ...overrides,
     },
+  }
+}
+
+function makeContentReplacementEntry(
+  sessionId: string,
+  replacements: Array<{ kind: 'tool-result'; toolUseId: string; replacement: string }>,
+): Record<string, unknown> {
+  return {
+    type: 'content-replacement',
+    sessionId,
+    replacements,
   }
 }
 
@@ -541,6 +581,39 @@ describe('SessionService', () => {
     expect(resultA.sessions[0]!.id).toBe(id1)
   })
 
+  it('should expose sourceSessionId and sourceMessageId for forked sessions', async () => {
+    const sourceSessionId = 'parent-session-0001-0000-0000-000000000000'
+    const forkSessionId = 'forked-session-0001-0000-0000-000000000000'
+    const forkMessageUuid = crypto.randomUUID()
+
+    await writeSessionFile('-tmp-project', forkSessionId, [
+      makeSnapshotEntry(),
+      {
+        parentUuid: null,
+        isSidechain: false,
+        type: 'user',
+        message: { role: 'user', content: 'Forked from parent' },
+        uuid: crypto.randomUUID(),
+        sessionId: forkSessionId,
+        timestamp: new Date().toISOString(),
+        cwd: '/tmp/project',
+        forkedFrom: {
+          sessionId: sourceSessionId,
+          messageUuid: forkMessageUuid,
+        },
+      },
+      makeAssistantEntry('Response in fork'),
+    ])
+
+    const result = await service.listSessions()
+    expect(result.total).toBe(1)
+
+    const session = result.sessions[0]!
+    expect(session.id).toBe(forkSessionId)
+    expect(session.sourceSessionId).toBe(sourceSessionId)
+    expect(session.sourceMessageId).toBe(forkMessageUuid)
+  })
+
   // --------------------------------------------------------------------------
   // getSession
   // --------------------------------------------------------------------------
@@ -601,6 +674,42 @@ describe('SessionService', () => {
 
     const messages = await service.getSessionMessages(sessionId)
     expect(messages).toHaveLength(2)
+  })
+
+  it('preserves structured toolUseResult metadata for AskUserQuestion answers', async () => {
+    const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    await writeSessionFile('-tmp-project', sessionId, [
+      makeSnapshotEntry(),
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'ask-1',
+              content: 'User has answered your questions: "Pick one?"="A". You can now continue with the user\'s answers in mind.',
+            },
+          ],
+        },
+        toolUseResult: {
+          questions: [{ question: 'Pick one?', options: [{ label: 'A' }] }],
+          answers: { 'Pick one?': 'A' },
+        },
+        uuid: crypto.randomUUID(),
+        timestamp: '2026-01-01T00:00:01.000Z',
+      },
+    ])
+
+    const messages = await service.getSessionMessages(sessionId)
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      type: 'tool_result',
+      toolUseResult: {
+        answers: { 'Pick one?': 'A' },
+      },
+    })
   })
 
   it('should append subagent tool calls under their parent agent tool result', async () => {
@@ -1564,6 +1673,154 @@ describe('SessionService', () => {
     expect(launchInfo!.workDir).toBe(expectedWorkDir)
     expect(launchInfo!.transcriptMessageCount).toBe(2)
   })
+
+  it('createSessionBranch should preserve branch metadata, copied snapshots, and filtered replacements', async () => {
+    const sessionId = 'branch-source-session'
+    const workDir = path.join(tmpDir, 'branch-source')
+    const worktreePath = path.join(workDir, '.claude', 'worktrees', 'desktop-main-12345678')
+    const firstUserId = crypto.randomUUID()
+    const firstAssistantId = crypto.randomUUID()
+    const firstToolResultId = crypto.randomUUID()
+    const laterUserId = crypto.randomUUID()
+    const laterAssistantId = crypto.randomUUID()
+    const repository = {
+      branch: 'feature/rail',
+      worktree: true,
+      baseRef: 'feature/rail',
+      repoRoot: workDir,
+    }
+    const sourceProjectDir = sanitizePath(workDir)
+    const sourcePath = await writeSessionFile(sourceProjectDir, sessionId, [
+      makeSessionMetaEntry(workDir),
+      {
+        type: 'session-meta',
+        isMeta: true,
+        workDir,
+        repository,
+        timestamp: '2026-01-01T00:00:00.000Z',
+      },
+      makeWorktreeStateEntry(sessionId, worktreePath, {
+        originalCwd: workDir,
+      }),
+      makeFileHistorySnapshotEntry(firstUserId, {
+        'src/step.js': {
+          backupFileName: 'branch-source-step@v1',
+          version: 1,
+          backupTime: '2026-01-01T00:00:00.000Z',
+        },
+      }),
+      {
+        ...makeUserEntry('branch this conversation', firstUserId),
+        cwd: workDir,
+        sessionId,
+      },
+      {
+        ...makeAssistantToolUseEntry([
+          { id: 'tool-1', name: 'Read', input: { path: 'src/step.js' } },
+        ], firstUserId),
+        uuid: firstAssistantId,
+        cwd: workDir,
+        sessionId,
+      },
+      {
+        ...makeToolResultUserEntry('tool-1', 'first tool result', firstToolResultId, firstAssistantId, sessionId),
+        cwd: workDir,
+      },
+      makeContentReplacementEntry(sessionId, [
+        { kind: 'tool-result', toolUseId: 'tool-1', replacement: 'preview-1' },
+        { kind: 'tool-result', toolUseId: 'tool-2', replacement: 'preview-2' },
+      ]),
+      makeFileHistorySnapshotEntry(laterUserId, {
+        'src/step.js': {
+          backupFileName: 'branch-source-step@v2',
+          version: 2,
+          backupTime: '2026-01-01T00:00:00.000Z',
+        },
+      }),
+      {
+        ...makeUserEntry('later prompt', laterUserId),
+        parentUuid: firstToolResultId,
+        cwd: workDir,
+        sessionId,
+      },
+      {
+        ...makeAssistantEntry('later reply', laterUserId),
+        uuid: laterAssistantId,
+        cwd: workDir,
+        sessionId,
+      },
+    ])
+
+    const sourceBefore = await fs.readFile(sourcePath, 'utf-8')
+
+    const branch = await createSessionBranch({
+      sourceSessionId: sessionId,
+      sourceTranscriptPath: sourcePath,
+      targetMessageId: firstToolResultId,
+      title: 'Desktop branch',
+      sourceWorkDir: workDir,
+      sourceRepository: repository,
+      sourceWorktreeSession: {
+        originalCwd: workDir,
+        worktreePath,
+        worktreeName: 'desktop-main-12345678',
+        worktreeBranch: 'worktree-desktop-main-12345678',
+        originalBranch: 'main',
+        sessionId,
+      },
+    })
+
+    const branchMessages = await service.getSessionMessages(branch.sessionId)
+    expect(branchMessages.map((message) => message.id)).toEqual([
+      firstUserId,
+      firstAssistantId,
+      firstToolResultId,
+    ])
+    expect(branch.title).toBe('Desktop branch (Branch)')
+
+    const launchInfo = await service.getSessionLaunchInfo(branch.sessionId)
+    expect(launchInfo).toMatchObject({
+      workDir,
+      repository,
+      worktreeSession: {
+        originalCwd: workDir,
+        worktreePath,
+      },
+    })
+
+    const branchEntries = parseJSONL<Record<string, unknown>>(await fs.readFile(branch.forkPath))
+    expect(branchEntries.some((entry) => (
+      entry.type === 'content-replacement' &&
+      entry.sessionId === branch.sessionId &&
+      Array.isArray(entry.replacements) &&
+      entry.replacements.length === 1 &&
+      (entry.replacements[0] as { toolUseId?: string }).toolUseId === 'tool-1'
+    ))).toBe(true)
+    expect(branchEntries.some((entry) => (
+      entry.type === 'file-history-snapshot' &&
+      typeof (entry.snapshot as { messageId?: string } | undefined)?.messageId === 'string' &&
+      (entry.snapshot as { messageId?: string }).messageId === firstUserId
+    ))).toBe(true)
+    expect(branchEntries.some((entry) => (
+      entry.type === 'file-history-snapshot' &&
+      typeof (entry.snapshot as { messageId?: string } | undefined)?.messageId === 'string' &&
+      (entry.snapshot as { messageId?: string }).messageId === laterUserId
+    ))).toBe(false)
+    expect(branchEntries.some((entry) => (
+      entry.type === 'custom-title' &&
+      entry.customTitle === 'Desktop branch (Branch)'
+    ))).toBe(true)
+    expect(branchEntries.filter((entry) => (
+      entry.type === 'user' ||
+      entry.type === 'assistant'
+    )).every((entry) => (
+      entry.sessionId === branch.sessionId &&
+      typeof (entry.forkedFrom as { sessionId?: string } | undefined)?.sessionId === 'string'
+    ))).toBe(true)
+
+    const sourceAfter = await fs.readFile(sourcePath, 'utf-8')
+    expect(sourceAfter).toBe(sourceBefore)
+  })
 })
 
 // ============================================================================
@@ -1802,11 +2059,11 @@ describe('Sessions API', () => {
     }
   })
 
-  it('GET /api/sessions/:id/git-info should include isolated worktree identity', async () => {
+  it('GET /api/sessions/:id/git-info should keep the visible launch branch while including isolated worktree identity', async () => {
     const workDir = await createCleanGitRepo(tmpDir)
     const { sessionId } = await sessionService.createSession(
       workDir,
-      { branch: 'main', worktree: true },
+      { branch: 'feature/rail', worktree: true },
     )
     const launchInfo = await sessionService.getSessionLaunchInfo(sessionId)
     const repository = launchInfo?.repository
@@ -1814,7 +2071,7 @@ describe('Sessions API', () => {
     expect(repository?.worktreeBranch).toBeTruthy()
 
     const activeWorktree = repository!.worktreePath!
-    git(workDir, 'worktree', 'add', '-b', repository!.worktreeBranch!, activeWorktree, 'main')
+    git(workDir, 'worktree', 'add', '-b', repository!.worktreeBranch!, activeWorktree, 'feature/rail')
     const sessionsMap = (conversationService as any).sessions as Map<string, { workDir: string }>
 
     sessionsMap.set(sessionId, { workDir: activeWorktree })
@@ -1834,7 +2091,7 @@ describe('Sessions API', () => {
           branch: string | null
         } | null
       }
-      expect(body.branch).toBe('main')
+      expect(body.branch).toBe('feature/rail')
       expect(body.workDir).toBe(activeWorktree)
       expect(body.worktree).toEqual({
         enabled: true,
@@ -2729,6 +2986,147 @@ describe('Sessions API', () => {
     expect(await res.json()).toMatchObject({
       error: 'METHOD_NOT_ALLOWED',
     })
+  })
+
+  it('POST /api/sessions/:id/branch should create a branched session up to the target message', async () => {
+    const sessionId = '11111111-1111-4111-8111-111111111111'
+    const workDir = path.join(tmpDir, 'branch-api-workdir')
+    const firstUserId = crypto.randomUUID()
+    const firstAssistantId = crypto.randomUUID()
+    const secondUserId = crypto.randomUUID()
+    const secondAssistantId = crypto.randomUUID()
+
+    await writeSessionFile(sanitizePath(workDir), sessionId, [
+      {
+        type: 'session-meta',
+        isMeta: true,
+        workDir,
+        timestamp: '2026-01-01T00:00:00.000Z',
+      },
+      {
+        ...makeUserEntry('first prompt', firstUserId),
+        cwd: workDir,
+        sessionId,
+      },
+      {
+        ...makeAssistantEntry('first reply', firstUserId),
+        uuid: firstAssistantId,
+        cwd: workDir,
+        sessionId,
+      },
+      {
+        ...makeUserEntry('second prompt', secondUserId),
+        parentUuid: firstAssistantId,
+        cwd: workDir,
+        sessionId,
+      },
+      {
+        ...makeAssistantEntry('second reply', secondUserId),
+        uuid: secondAssistantId,
+        cwd: workDir,
+        sessionId,
+      },
+    ])
+
+    const res = await fetch(`${baseUrl}/api/sessions/${sessionId}/branch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        targetMessageId: firstAssistantId,
+        title: 'API branch',
+      }),
+    })
+    expect(res.status).toBe(201)
+
+    const body = await res.json() as {
+      sessionId: string
+      title: string
+      workDir: string
+      sourceSessionId: string
+      targetMessageId: string
+    }
+    expect(body).toMatchObject({
+      title: 'API branch (Branch)',
+      workDir,
+      sourceSessionId: sessionId,
+      targetMessageId: firstAssistantId,
+    })
+
+    const branchMessages = await service.getSessionMessages(body.sessionId)
+    expect(branchMessages.map((message) => message.id)).toEqual([
+      firstUserId,
+      firstAssistantId,
+    ])
+  })
+
+  it('POST /api/sessions/:id/branch should reject sidechain targets', async () => {
+    const sessionId = '22222222-2222-4222-8222-222222222222'
+    const rootUserId = crypto.randomUUID()
+    const rootAssistantId = crypto.randomUUID()
+    const sidechainId = crypto.randomUUID()
+
+    await writeSessionFile('-tmp-api-branch-sidechain', sessionId, [
+      makeSnapshotEntry(),
+      {
+        ...makeUserEntry('root prompt', rootUserId),
+        sessionId,
+      },
+      {
+        ...makeAssistantEntry('root reply', rootUserId),
+        uuid: rootAssistantId,
+        sessionId,
+      },
+      {
+        ...makeUserEntry('side question', sidechainId),
+        parentUuid: rootAssistantId,
+        isSidechain: true,
+        sessionId,
+      },
+    ])
+
+    const res = await fetch(`${baseUrl}/api/sessions/${sessionId}/branch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetMessageId: sidechainId }),
+    })
+
+    expect(res.status).toBe(400)
+    expect(await res.json()).toMatchObject({
+      error: 'BAD_REQUEST',
+    })
+  })
+
+  it('POST /api/sessions/:id/branch should validate request bodies and missing sessions', async () => {
+    const methodNotAllowedRes = await fetch(`${baseUrl}/api/sessions/33333333-3333-4333-8333-333333333333/branch`)
+    expect(methodNotAllowedRes.status).toBe(405)
+
+    const missingTargetRes = await fetch(`${baseUrl}/api/sessions/branch-missing-target/branch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    expect(missingTargetRes.status).toBe(400)
+
+    const invalidJsonRes = await fetch(`${baseUrl}/api/sessions/branch-invalid-json/branch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{',
+    })
+    expect(invalidJsonRes.status).toBe(400)
+
+    const invalidTitleRes = await fetch(`${baseUrl}/api/sessions/44444444-4444-4444-8444-444444444444/branch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetMessageId: 'message-1', title: 123 }),
+    })
+    expect(invalidTitleRes.status).toBe(400)
+
+    const missingSessionRes = await fetch(`${baseUrl}/api/sessions/00000000-0000-0000-0000-000000000000/branch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetMessageId: 'missing-target' }),
+    })
+    expect(missingSessionRes.status).toBe(404)
   })
 
   it('POST /api/sessions/:id/rewind should preview and trim the active conversation chain', async () => {

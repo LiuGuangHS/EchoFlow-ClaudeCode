@@ -18,7 +18,10 @@ import type {
 /**
  * Convert Anthropic Messages request to OpenAI Chat Completions request.
  */
-export function anthropicToOpenaiChat(body: AnthropicRequest): OpenAIChatRequest {
+export function anthropicToOpenaiChat(
+  body: AnthropicRequest,
+  options: { roundTripReasoningContent?: boolean; passThinkingToggle?: boolean } = {},
+): OpenAIChatRequest {
   const messages: OpenAIChatMessage[] = []
 
   // Convert system prompt
@@ -33,7 +36,7 @@ export function anthropicToOpenaiChat(body: AnthropicRequest): OpenAIChatRequest
 
   // Convert messages
   for (const msg of body.messages) {
-    convertMessage(msg, messages)
+    convertMessage(msg, messages, options)
   }
 
   // Build request
@@ -85,12 +88,19 @@ export function anthropicToOpenaiChat(body: AnthropicRequest): OpenAIChatRequest
     } else if (body.thinking.type === 'enabled') {
       result.reasoning_effort = 'high'
     }
+    if (options.passThinkingToggle) {
+      result.thinking = { type: body.thinking.type }
+    }
   }
 
   return result
 }
 
-function convertMessage(msg: AnthropicMessage, output: OpenAIChatMessage[]): void {
+function convertMessage(
+  msg: AnthropicMessage,
+  output: OpenAIChatMessage[],
+  options: { roundTripReasoningContent?: boolean },
+): void {
   const content = msg.content
 
   // Simple string content
@@ -108,7 +118,7 @@ function convertMessage(msg: AnthropicMessage, output: OpenAIChatMessage[]): voi
   if (msg.role === 'user') {
     convertUserMessage(content, output)
   } else {
-    convertAssistantMessage(content, output)
+    convertAssistantMessage(content, output, options)
   }
 }
 
@@ -147,13 +157,20 @@ function convertUserMessage(blocks: AnthropicContentBlock[], output: OpenAIChatM
   }
 }
 
-function convertAssistantMessage(blocks: AnthropicContentBlock[], output: OpenAIChatMessage[]): void {
+function convertAssistantMessage(
+  blocks: AnthropicContentBlock[],
+  output: OpenAIChatMessage[],
+  options: { roundTripReasoningContent?: boolean },
+): void {
   let textContent = ''
+  let reasoningContent = ''
   const toolCalls: OpenAIToolCall[] = []
 
   for (const block of blocks) {
     if (block.type === 'text') {
       textContent += block.text
+    } else if (block.type === 'thinking' && options.roundTripReasoningContent) {
+      reasoningContent += block.thinking
     } else if (block.type === 'tool_use') {
       toolCalls.push({
         id: block.id,
@@ -164,7 +181,6 @@ function convertAssistantMessage(blocks: AnthropicContentBlock[], output: OpenAI
         },
       })
     }
-    // Skip thinking blocks — no OpenAI equivalent
   }
 
   const msg: OpenAIChatMessage = {
@@ -174,6 +190,9 @@ function convertAssistantMessage(blocks: AnthropicContentBlock[], output: OpenAI
 
   if (toolCalls.length > 0) {
     msg.tool_calls = toolCalls
+  }
+  if (reasoningContent) {
+    msg.reasoning_content = reasoningContent
   }
 
   output.push(msg)

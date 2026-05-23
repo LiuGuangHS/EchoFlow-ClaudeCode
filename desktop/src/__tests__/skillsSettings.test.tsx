@@ -144,6 +144,47 @@ describe('Settings > Skills tab', () => {
     expect(screen.getByText('Telegram Access')).toBeInTheDocument()
   })
 
+  it('filters installed skills locally by keyword and clears the search', () => {
+    useSkillStore.setState({
+      skills: [
+        {
+          name: 'alpha',
+          displayName: 'Alpha Skill',
+          description: 'First skill description',
+          source: 'user',
+          userInvocable: true,
+          contentLength: 400,
+          hasDirectory: true,
+        },
+        {
+          name: 'telegram:access',
+          displayName: 'Telegram Access',
+          description: 'Plugin-provided access workflow',
+          source: 'plugin',
+          pluginName: 'telegram',
+          userInvocable: true,
+          contentLength: 280,
+          hasDirectory: true,
+        },
+      ],
+    })
+
+    render(<Settings />)
+    switchToSkillsTab()
+
+    const searchInput = screen.getByPlaceholderText('Search skills by name, description, or source...')
+    fireEvent.change(searchInput, { target: { value: 'telegram' } })
+
+    expect(screen.getByText('Telegram Access')).toBeInTheDocument()
+    expect(screen.queryByText('Alpha Skill')).not.toBeInTheDocument()
+    expect(screen.getByText('1 of 2 skills match')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByLabelText('Clear skill search'))
+
+    expect(screen.getByText('Telegram Access')).toBeInTheDocument()
+    expect(screen.getByText('Alpha Skill')).toBeInTheDocument()
+  })
+
   it('uses the active session workDir even when settings tab is focused', () => {
     const fetchSkills = vi.fn()
     useSkillStore.setState({

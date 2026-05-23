@@ -15,6 +15,7 @@ import { handleProxyRequest } from './proxy/handler.js'
 import { ProviderService } from './services/providerService.js'
 import { handleHahaOAuthCallback } from './api/haha-oauth.js'
 import { handleHahaOpenAIOAuthCallback } from './api/haha-openai-oauth.js'
+import { OPENAI_CODEX_REDIRECT_PATH } from '../services/openaiAuth/client.js'
 import { ensureDesktopCliLauncherInstalled } from './services/desktopCliLauncherService.js'
 import { enableConfigs } from '../utils/config.js'
 import { diagnosticsService } from './services/diagnosticsService.js'
@@ -267,7 +268,10 @@ export function startServer(port = PORT, host = HOST) {
           return handleHahaOAuthCallback(url)
         }
 
-        if (url.pathname === '/callback/openai') {
+        if (
+          url.pathname === OPENAI_CODEX_REDIRECT_PATH ||
+          url.pathname === '/callback/openai'
+        ) {
           return handleHahaOpenAIOAuthCallback(url)
         }
 

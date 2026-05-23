@@ -1,8 +1,22 @@
 export const OPENAI_DEFAULT_MAIN_MODEL = 'gpt-5.3-codex'
 export const OPENAI_DEFAULT_SONNET_MODEL = 'gpt-5.4'
 export const OPENAI_DEFAULT_HAIKU_MODEL = 'gpt-5.4-mini'
-export const OPENAI_GPT5_STANDARD_CONTEXT_WINDOW = 400_000
-export const OPENAI_GPT5_LARGE_CONTEXT_WINDOW = 1_050_000
+export const OPENAI_CODEX_EFFECTIVE_CONTEXT_PERCENT = 95
+export const OPENAI_CODEX_STANDARD_CONTEXT_WINDOW = 272_000
+export const OPENAI_CODEX_LARGE_CONTEXT_WINDOW = 1_000_000
+export const OPENAI_CODEX_SPARK_CONTEXT_WINDOW = 128_000
+export const OPENAI_CODEX_STANDARD_EFFECTIVE_CONTEXT_WINDOW = Math.floor(
+  (OPENAI_CODEX_STANDARD_CONTEXT_WINDOW * OPENAI_CODEX_EFFECTIVE_CONTEXT_PERCENT) /
+    100,
+)
+export const OPENAI_CODEX_LARGE_EFFECTIVE_CONTEXT_WINDOW = Math.floor(
+  (OPENAI_CODEX_LARGE_CONTEXT_WINDOW * OPENAI_CODEX_EFFECTIVE_CONTEXT_PERCENT) /
+    100,
+)
+export const OPENAI_CODEX_SPARK_EFFECTIVE_CONTEXT_WINDOW = Math.floor(
+  (OPENAI_CODEX_SPARK_CONTEXT_WINDOW * OPENAI_CODEX_EFFECTIVE_CONTEXT_PERCENT) /
+    100,
+)
 
 export type OpenAIModelCatalogEntry = {
   value: string
@@ -80,6 +94,8 @@ export function getOpenAIModelDisplayName(model: string): string | null {
   switch (model.trim().toLowerCase()) {
     case 'gpt-5.3-codex':
       return 'GPT-5.3 Codex'
+    case 'gpt-5.3-codex-spark':
+      return 'GPT-5.3 Codex Spark'
     case 'gpt-5.5':
       return 'GPT-5.5'
     case 'gpt-5.4':
@@ -101,21 +117,28 @@ export function getOpenAIModelDisplayName(model: string): string | null {
   }
 }
 
-export function getOpenAIContextWindowForModel(model: string): number | null {
+export function getOpenAICodexContextWindowForModel(
+  model: string,
+): number | null {
   const normalized = model.trim().toLowerCase()
 
-  // Current OpenAI model docs split GPT-5-family context windows into
-  // standard 400k models and larger 1.05M models.
+  // Codex OAuth follows the Codex app model catalog, not the public API model
+  // context limits. The catalog applies effective_context_window_percent=95,
+  // and the runtime /context display reports this effective window.
   if (
-    normalized === 'gpt-5.5' ||
-    normalized === 'gpt-5.5-pro' ||
     normalized === 'gpt-5.4' ||
     normalized === 'gpt-5.4-pro'
   ) {
-    return OPENAI_GPT5_LARGE_CONTEXT_WINDOW
+    return OPENAI_CODEX_LARGE_EFFECTIVE_CONTEXT_WINDOW
+  }
+
+  if (normalized === 'gpt-5.3-codex-spark') {
+    return OPENAI_CODEX_SPARK_EFFECTIVE_CONTEXT_WINDOW
   }
 
   if (
+    normalized === 'gpt-5.5' ||
+    normalized === 'gpt-5.5-pro' ||
     normalized === 'gpt-5.4-mini' ||
     normalized === 'gpt-5.4-nano' ||
     normalized === 'gpt-5.3-codex' ||
@@ -130,8 +153,11 @@ export function getOpenAIContextWindowForModel(model: string): number | null {
     normalized === 'gpt-5-mini' ||
     normalized === 'gpt-5-nano'
   ) {
-    return OPENAI_GPT5_STANDARD_CONTEXT_WINDOW
+    return OPENAI_CODEX_STANDARD_EFFECTIVE_CONTEXT_WINDOW
   }
 
   return null
 }
+
+export const getOpenAIContextWindowForModel =
+  getOpenAICodexContextWindowForModel

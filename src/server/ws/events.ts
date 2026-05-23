@@ -63,6 +63,15 @@ export type ServerMessage =
   | { type: 'message_complete'; usage: TokenUsage }
   | { type: 'thinking'; text: string }
   | { type: 'status'; state: ChatState; verb?: string; elapsed?: number; tokens?: number }
+  | {
+      type: 'api_retry'
+      attempt: number
+      maxRetries: number
+      retryDelayMs: number
+      errorStatus: number | null
+      errorType?: string
+      errorMessage?: string
+    }
   | { type: 'error'; message: string; code: string; retryable?: boolean }
   | { type: 'system_notification'; subtype: string; message?: string; data?: unknown }
   | { type: 'pong' }
@@ -79,7 +88,7 @@ export type TokenUsage = {
   cache_creation_tokens?: number
 }
 
-export type ChatState = 'idle' | 'thinking' | 'tool_executing' | 'streaming' | 'permission_pending'
+export type ChatState = 'idle' | 'thinking' | 'compacting' | 'tool_executing' | 'streaming' | 'permission_pending'
 
 export type TeamMemberStatus = {
   agentId: string

@@ -25,6 +25,7 @@ import {
   type CreateSessionRepositoryOptions,
   type PreparedSessionWorkspace,
 } from './repositoryLaunchService.js'
+import { registerFilesystemAccessRoot } from './filesystemAccessRoots.js'
 import { cleanSessionTitleSource } from '../../utils/sessionTitleText.js'
 
 // ============================================================================
@@ -41,6 +42,8 @@ export type SessionListItem = {
   projectRoot: string | null
   workDir: string | null
   workDirExists: boolean
+  sourceSessionId?: string
+  sourceMessageId?: string
 }
 
 export type DeleteSessionFailure = {
@@ -77,6 +80,7 @@ export type MessageEntry = {
   id: string
   type: 'user' | 'assistant' | 'system' | 'tool_use' | 'tool_result'
   content: unknown
+  toolUseResult?: unknown
   timestamp: string
   model?: string
   parentUuid?: string
@@ -424,6 +428,7 @@ export class SessionService {
       id: entry.uuid || crypto.randomUUID(),
       type,
       content: msg.content,
+      ...(entry.toolUseResult !== undefined ? { toolUseResult: entry.toolUseResult } : {}),
       timestamp: entry.timestamp || new Date().toISOString(),
       model: msg.model,
       parentUuid: entry.parentUuid ?? undefined,
@@ -1318,6 +1323,20 @@ export class SessionService {
           }
         }
 
+        // Extract fork parent relationship from transcript entries
+        let sourceSessionId: string | undefined
+        let sourceMessageId: string | undefined
+        for (const e of entries) {
+          const fork = (e as Record<string, unknown>).forkedFrom as
+            | { sessionId?: string; messageUuid?: string }
+            | undefined
+          if (fork?.sessionId) {
+            sourceSessionId = fork.sessionId
+            sourceMessageId = fork.messageUuid
+            break
+          }
+        }
+
         return {
           id: sessionId,
           title,
@@ -1328,6 +1347,8 @@ export class SessionService {
           projectRoot,
           workDir,
           workDirExists,
+          sourceSessionId,
+          sourceMessageId,
         }
       } catch {
         // Skip unreadable files
@@ -1419,6 +1440,7 @@ export class SessionService {
       sessionId,
     )
     const absWorkDir = preparedWorkspace.workDir
+    registerFilesystemAccessRoot(absWorkDir)
     console.log(
       `[SessionService] createSession: requested workDir=${JSON.stringify(
         workDir,

@@ -1,9 +1,10 @@
 import { openBrowser } from '../../utils/browser.js'
 import { AuthCodeListener } from '../oauth/auth-code-listener.js'
-import { generateCodeVerifier, generateState } from '../oauth/crypto.js'
 import {
   buildOpenAIAuthorizeUrl,
   exchangeOpenAICodeForTokens,
+  generateOpenAICodeVerifier,
+  generateOpenAIState,
   isOpenAITokenExpired,
   OPENAI_CODEX_OAUTH_PORT,
   OPENAI_CODEX_REDIRECT_PATH,
@@ -59,7 +60,7 @@ export class OpenAIOAuthService {
     null
 
   constructor() {
-    this.codeVerifier = generateCodeVerifier()
+    this.codeVerifier = generateOpenAICodeVerifier()
   }
 
   async startOAuthFlow(
@@ -71,7 +72,7 @@ export class OpenAIOAuthService {
     this.authCodeListener = new AuthCodeListener(OPENAI_CODEX_REDIRECT_PATH)
     this.port = await this.authCodeListener.start(OPENAI_CODEX_OAUTH_PORT)
 
-    const state = generateState()
+    const state = generateOpenAIState()
     const redirectUri = `http://localhost:${this.port}${OPENAI_CODEX_REDIRECT_PATH}`
     const authorizeUrl = buildOpenAIAuthorizeUrl({
       redirectUri,

@@ -23,6 +23,12 @@ export const ProviderAuthStrategySchema = z.enum([
 ])
 export type ProviderAuthStrategy = z.infer<typeof ProviderAuthStrategySchema>
 
+export const ProviderRuntimeKindSchema = z.enum([
+  'anthropic_compatible',
+  'openai_oauth',
+])
+export type ProviderRuntimeKind = z.infer<typeof ProviderRuntimeKindSchema>
+
 export const ModelMappingSchema = z.object({
   main: z.string(),
   haiku: z.string(),
@@ -44,6 +50,7 @@ export const SavedProviderSchema = z.object({
   authStrategy: ProviderAuthStrategySchema.optional(),
   baseUrl: z.string(),
   apiFormat: ApiFormatSchema.default('anthropic'),
+  runtimeKind: ProviderRuntimeKindSchema.default('anthropic_compatible'),
   models: ModelMappingSchema,
   autoCompactWindow: AutoCompactWindowSchema.optional(),
   modelContextWindows: ModelContextWindowsSchema.optional(),
@@ -63,6 +70,7 @@ export const CreateProviderSchema = z.object({
   authStrategy: ProviderAuthStrategySchema.optional(),
   baseUrl: z.string(),
   apiFormat: ApiFormatSchema.default('anthropic'),
+  runtimeKind: ProviderRuntimeKindSchema.default('anthropic_compatible'),
   models: ModelMappingSchema,
   autoCompactWindow: AutoCompactWindowSchema.optional(),
   modelContextWindows: ModelContextWindowsSchema.optional(),
@@ -75,6 +83,7 @@ export const UpdateProviderSchema = z.object({
   authStrategy: ProviderAuthStrategySchema.optional(),
   baseUrl: z.string().optional(),
   apiFormat: ApiFormatSchema.optional(),
+  runtimeKind: ProviderRuntimeKindSchema.optional(),
   models: ModelMappingSchema.optional(),
   autoCompactWindow: AutoCompactWindowSchema.nullable().optional(),
   modelContextWindows: ModelContextWindowsSchema.nullable().optional(),

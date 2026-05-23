@@ -1,8 +1,9 @@
-import { useRef, useEffect, useMemo, memo, useState, useCallback, useLayoutEffect, type ReactNode } from 'react'
-import { ArrowDown, BookMarked, Bot, CheckCircle2, ChevronDown, ChevronRight, CircleStop, LoaderCircle, MessageCircle, Settings, Target, XCircle } from 'lucide-react'
+import { useRef, useEffect, useMemo, memo, useState, useCallback, useDeferredValue, useLayoutEffect, type ReactNode } from 'react'
+import { ArrowDown, BookMarked, Bot, CheckCircle2, ChevronDown, ChevronRight, CircleStop, FileStack, LoaderCircle, MessageCircle, Settings, Target, XCircle } from 'lucide-react'
 import { ApiError } from '../../api/client'
 import { sessionsApi, type SessionTurnCheckpoint } from '../../api/sessions'
 import { useChatStore } from '../../stores/chatStore'
+import { useSessionStore } from '../../stores/sessionStore'
 import { useWorkspaceChatContextStore } from '../../stores/workspaceChatContextStore'
 import { SETTINGS_TAB_ID, useTabStore } from '../../stores/tabStore'
 import { useTeamStore } from '../../stores/teamStore'
@@ -23,12 +24,18 @@ import { CurrentTurnChangeCard } from './CurrentTurnChangeCard'
 import type { AgentTaskNotification, UIMessage } from '../../types/chat'
 import { ConfirmDialog } from '../shared/ConfirmDialog'
 import { clearWindowSelection, getSelectionPopoverPosition, useSelectionPopoverDismiss } from '../../hooks/useSelectionPopoverDismiss'
+import {
+  getHeightsForSession,
+  getMetricsForSession,
+  type VirtualRenderItemMetric,
+} from './virtualHeightCache'
 
 type ToolCall = Extract<UIMessage, { type: 'tool_use' }>
 type ToolResult = Extract<UIMessage, { type: 'tool_result' }>
 type MemoryEvent = Extract<UIMessage, { type: 'memory_event' }>
 type GoalEvent = Extract<UIMessage, { type: 'goal_event' }>
 type BackgroundTaskEvent = Extract<UIMessage, { type: 'background_task' }>
+type CompactSummaryEvent = Extract<UIMessage, { type: 'compact_summary' }>
 
 type RenderItem =
   | { kind: 'tool_group'; toolCalls: ToolCall[]; id: string }
@@ -46,6 +53,11 @@ type RewindTurnTarget = {
   content: string
   expectedContent: string
   attachments?: Extract<UIMessage, { type: 'user_text' }>['attachments']
+}
+
+type BranchableMessageTarget = {
+  uiMessageId: string
+  transcriptMessageId: string
 }
 
 type TurnChangeCardModel = {
@@ -129,6 +141,80 @@ function ChatSelectionMenu({
       <MessageCircle size={21} strokeWidth={2.15} className="shrink-0 text-[var(--color-text-primary)]" aria-hidden="true" />
       <span>{t('chat.addSelectionToChat')}</span>
     </button>
+  )
+}
+
+function formatCompactTokenCount(tokens: number): string {
+  if (tokens >= 1000) return `${Math.round(tokens / 100) / 10}k`
+  return String(tokens)
+}
+
+function getCompactSummaryTitle(message: CompactSummaryEvent, t: ReturnType<typeof useTranslation>) {
+  if (message.trigger === 'auto') return t('chat.compactSummary.autoTitle')
+  if (message.trigger === 'manual') return t('chat.compactSummary.manualTitle')
+  if (!message.title || message.title === 'Context compacted' || message.title === 'Conversation compacted') {
+    return t('chat.compactSummary.title')
+  }
+  return message.title
+}
+
+function CompactStatusDivider({ message, state }: { message?: CompactSummaryEvent; state: 'compacting' | 'complete' }) {
+  const t = useTranslation()
+  const [expanded, setExpanded] = useState(false)
+  const hasSummary = Boolean(message?.summary?.trim())
+  const meta = [
+    message?.trigger ? t(`chat.compactSummary.trigger.${message.trigger}` as TranslationKey) : null,
+    typeof message?.preTokens === 'number'
+      ? t('chat.compactSummary.tokens', { count: formatCompactTokenCount(message.preTokens) })
+      : null,
+    typeof message?.messagesSummarized === 'number'
+      ? t('chat.compactSummary.messages', { count: String(message.messagesSummarized) })
+      : null,
+  ].filter((item): item is string => Boolean(item))
+  const hasDetails = hasSummary || meta.length > 0
+  const title = state === 'compacting'
+    ? t('chat.compactSummary.compacting')
+    : message
+      ? getCompactSummaryTitle(message, t)
+      : t('chat.compactSummary.title')
+
+  return (
+    <section data-testid="compact-status-divider" className="my-4 w-full px-1">
+      <div className="flex w-full items-center gap-3">
+        <div className="h-px flex-1 bg-[var(--color-border)]" aria-hidden="true" />
+        <button
+          type="button"
+          aria-expanded={hasDetails ? expanded : undefined}
+          onClick={() => hasDetails && setExpanded((value) => !value)}
+          disabled={!hasDetails}
+          className="group inline-flex min-h-8 max-w-[min(78vw,520px)] items-center gap-2 rounded-md px-2.5 py-1 text-[13px] font-semibold text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-text-primary)] disabled:cursor-default disabled:hover:text-[var(--color-text-secondary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]/30"
+        >
+          {state === 'compacting' ? (
+            <LoaderCircle size={16} strokeWidth={2.1} className="shrink-0 animate-spin text-[var(--color-text-tertiary)]" aria-hidden="true" />
+          ) : (
+            <FileStack size={16} strokeWidth={2.05} className="shrink-0 text-[var(--color-text-tertiary)]" aria-hidden="true" />
+          )}
+          <span className="min-w-0 truncate font-medium text-[var(--color-text-primary)]">
+            {title}
+          </span>
+        </button>
+        <div className="h-px flex-1 bg-[var(--color-border)]" aria-hidden="true" />
+      </div>
+      {hasDetails && expanded && (
+        <div className="mx-auto mt-1.5 w-full max-w-[620px] rounded-md border border-[var(--color-border)]/65 bg-[var(--color-surface-container-lowest)] px-3 py-2">
+          {meta.length > 0 && (
+            <div className="mb-1.5 flex flex-wrap gap-x-2 gap-y-1 text-[11px] font-medium text-[var(--color-text-tertiary)]">
+              {meta.map((item) => <span key={item}>{item}</span>)}
+            </div>
+          )}
+          {message?.summary && (
+            <div className="max-h-[220px] overflow-auto whitespace-pre-wrap break-words text-[12px] leading-5 text-[var(--color-text-secondary)]">
+              {message.summary}
+            </div>
+          )}
+          </div>
+      )}
+    </section>
   )
 }
 
@@ -366,11 +452,13 @@ function appendChildToolCall(
   }
 }
 
-export function buildRenderModel(messages: UIMessage[]): RenderModel {
+export function buildRenderModel(messages: UIMessage[], activeAskUserQuestionToolUseId?: string | null): RenderModel {
   const items: RenderItem[] = []
   const toolResultMap = new Map<string, ToolResult>()
   const childToolCallsByParent = new Map<string, ToolCall[]>()
   const toolUseIds = new Set<string>()
+  const lastUnresolvedAskUserQuestionIndexByToolUseId = new Map<string, number>()
+  let lastUnresolvedAskUserQuestionIndex: number | null = null
   let pendingToolCalls: ToolCall[] = []
 
   const flushGroup = () => {
@@ -401,6 +489,16 @@ export function buildRenderModel(messages: UIMessage[]): RenderModel {
       toolResultMap.set(msg.toolUseId, msg)
     }
   }
+  messages.forEach((msg, index) => {
+    if (
+      msg.type === 'tool_use' &&
+      msg.toolName === 'AskUserQuestion' &&
+      !toolResultMap.has(msg.toolUseId)
+    ) {
+      lastUnresolvedAskUserQuestionIndexByToolUseId.set(msg.toolUseId, index)
+      lastUnresolvedAskUserQuestionIndex = index
+    }
+  })
 
   for (const msg of messages) {
     if (msg.type === 'assistant_text' && !msg.content.trim()) {
@@ -424,6 +522,26 @@ export function buildRenderModel(messages: UIMessage[]): RenderModel {
         continue
       }
       if (msg.toolName === 'AskUserQuestion') {
+        const isResolved = toolResultMap.has(msg.toolUseId)
+        const lastUnresolvedIndex = lastUnresolvedAskUserQuestionIndexByToolUseId.get(msg.toolUseId)
+        if (!isResolved && lastUnresolvedIndex !== undefined && messages[lastUnresolvedIndex] !== msg) {
+          continue
+        }
+        if (
+          !isResolved &&
+          activeAskUserQuestionToolUseId &&
+          msg.toolUseId !== activeAskUserQuestionToolUseId
+        ) {
+          continue
+        }
+        if (
+          !isResolved &&
+          !activeAskUserQuestionToolUseId &&
+          lastUnresolvedAskUserQuestionIndex !== null &&
+          messages[lastUnresolvedAskUserQuestionIndex] !== msg
+        ) {
+          continue
+        }
         flushGroup()
         items.push({ kind: 'message', message: msg })
       } else {
@@ -448,6 +566,48 @@ function isTurnResponseMessage(message: UIMessage) {
     message.type === 'error' ||
     message.type === 'task_summary'
   )
+}
+
+function getBranchableMessageTargets(messages: UIMessage[]): Map<string, BranchableMessageTarget> {
+  const branchableTargets = new Map<string, BranchableMessageTarget>()
+  let currentTurnCandidates: Array<Extract<UIMessage, { type: 'user_text' | 'assistant_text' }>> = []
+  let hasResponseForCurrentTurn = false
+
+  const markCurrentTurnBranchable = () => {
+    if (!hasResponseForCurrentTurn) return
+    for (const candidate of currentTurnCandidates) {
+      if (!candidate.transcriptMessageId) continue
+      branchableTargets.set(candidate.id, {
+        uiMessageId: candidate.id,
+        transcriptMessageId: candidate.transcriptMessageId,
+      })
+    }
+  }
+
+  for (const message of messages) {
+    if (message.type === 'user_text') {
+      markCurrentTurnBranchable()
+      currentTurnCandidates = []
+      hasResponseForCurrentTurn = false
+      if (!message.pending && message.transcriptMessageId) {
+        currentTurnCandidates = [message]
+      }
+      continue
+    }
+
+    if (currentTurnCandidates.length === 0) continue
+
+    if (isTurnResponseMessage(message)) {
+      hasResponseForCurrentTurn = true
+    }
+
+    if (message.type === 'assistant_text' && message.transcriptMessageId) {
+      currentTurnCandidates.push(message)
+    }
+  }
+
+  markCurrentTurnBranchable()
+  return branchableTargets
 }
 
 export function getCompletedTurnTargets(messages: UIMessage[]): RewindTurnTarget[] {
@@ -627,7 +787,15 @@ type MessageListProps = {
 }
 
 const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 48
+const SCROLL_BOTTOM_SENTINEL = 1_000_000_000
 const MAX_SCROLL_SNAPSHOTS = 100
+const VIRTUALIZE_MIN_RENDER_ITEMS = 120
+const VIRTUALIZE_MIN_CONTENT_CHARS = 120_000
+const VIRTUAL_OVERSCAN_PX = 1200
+const VIRTUAL_DEFAULT_VIEWPORT_HEIGHT = 720
+const VIRTUAL_MIN_ITEM_HEIGHT = 48
+const VIRTUAL_MAX_ITEM_HEIGHT = 24_000
+const EMPTY_MESSAGES: UIMessage[] = []
 const CHAT_SCROLL_AREA_CLASS = [
   'chat-scroll-area',
   '[scrollbar-width:auto]',
@@ -642,10 +810,30 @@ const CHAT_SCROLL_AREA_CLASS = [
   '[&::-webkit-scrollbar-thumb:hover]:border-2',
   '[&::-webkit-scrollbar-thumb:hover]:bg-[color-mix(in_srgb,var(--color-outline)_90%,transparent)]',
 ].join(' ')
+const CHAT_RENDER_ITEM_CLASS = [
+  'chat-render-item',
+].join(' ')
 
 type SessionScrollSnapshot = {
   scrollTop: number
   wasAtBottom: boolean
+}
+
+type VirtualViewport = {
+  scrollTop: number
+  viewportHeight: number
+}
+
+type VirtualTranscriptItem = {
+  item: RenderItem
+  index: number
+}
+
+type VirtualTranscriptWindow = {
+  enabled: boolean
+  beforeHeight: number
+  afterHeight: number
+  items: VirtualTranscriptItem[]
 }
 
 const sessionScrollSnapshots = new Map<string, SessionScrollSnapshot>()
@@ -671,13 +859,347 @@ function rememberSessionScroll(sessionId: string, element: HTMLElement) {
   })
 }
 
-function clampScrollTop(element: HTMLElement, scrollTop: number) {
-  return Math.max(0, Math.min(scrollTop, getBottomScrollTop(element)))
-}
-
 function getBottomScrollTop(element: HTMLElement) {
   return Math.max(0, element.scrollHeight - element.clientHeight)
 }
+
+function setScrollTopWithoutLayoutRead(element: HTMLElement, scrollTop: number) {
+  element.scrollTop = Math.max(0, scrollTop)
+}
+
+function setScrollToBottomWithoutLayoutRead(element: HTMLElement, behavior: ScrollBehavior) {
+  if (typeof element.scrollTo === 'function') {
+    try {
+      element.scrollTo({ top: SCROLL_BOTTOM_SENTINEL, behavior })
+    } catch {
+      element.scrollTo(0, SCROLL_BOTTOM_SENTINEL)
+    }
+  }
+  element.scrollTop = SCROLL_BOTTOM_SENTINEL
+
+  // Browsers clamp the large value to the true bottom without needing us to
+  // synchronously read layout metrics. JSDOM test doubles do not clamp, so keep
+  // the old numeric behavior there as a fallback.
+  if (element.scrollTop === SCROLL_BOTTOM_SENTINEL) {
+    element.scrollTop = getBottomScrollTop(element)
+  }
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value))
+}
+
+function getRenderItemKey(item: RenderItem) {
+  return item.kind === 'tool_group' ? item.id : item.message.id
+}
+
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function getShallowStringWeight(value: unknown, depth = 0): number {
+  if (typeof value === 'string') return value.length
+  if (!value || depth > 1) return 0
+  if (Array.isArray(value)) {
+    return value.slice(0, 12).reduce((total, item) => total + getShallowStringWeight(item, depth + 1), 0)
+  }
+  if (!isRecordValue(value)) return 0
+
+  let total = 0
+  for (const item of Object.values(value).slice(0, 24)) {
+    total += getShallowStringWeight(item, depth + 1)
+    if (total >= VIRTUALIZE_MIN_CONTENT_CHARS) return total
+  }
+  return total
+}
+
+function getMessageContentWeight(message: UIMessage): number {
+  switch (message.type) {
+    case 'user_text':
+    case 'assistant_text':
+    case 'thinking':
+    case 'system':
+      return message.content.length
+    case 'tool_use':
+      return getShallowStringWeight(message.input) + (message.partialInput?.length ?? 0)
+    case 'tool_result':
+      return getShallowStringWeight(message.content)
+    case 'permission_request':
+      return getShallowStringWeight(message.input) + (message.description?.length ?? 0)
+    case 'error':
+      return message.message.length
+    case 'compact_summary':
+      return message.title.length + (message.summary?.length ?? 0)
+    case 'goal_event':
+      return (message.objective?.length ?? 0) + (message.message?.length ?? 0)
+    case 'memory_event':
+      return (message.message?.length ?? 0) + message.files.reduce((total, file) => total + file.path.length + (file.summary?.length ?? 0), 0)
+    case 'background_task':
+      return getShallowStringWeight(message.task)
+    case 'task_summary':
+      return message.tasks.reduce((total, task) => total + task.subject.length + (task.activeForm?.length ?? 0), 0)
+  }
+}
+
+function getRenderItemContentWeight(item: RenderItem): number {
+  if (item.kind === 'message') return getMessageContentWeight(item.message)
+  return item.toolCalls.reduce((total, toolCall) => total + getMessageContentWeight(toolCall), 0)
+}
+
+function shouldVirtualizeRenderItems(metrics: VirtualRenderItemMetric[]) {
+  if (metrics.length >= VIRTUALIZE_MIN_RENDER_ITEMS) return true
+
+  let totalWeight = 0
+  for (const metric of metrics) {
+    totalWeight += metric.contentWeight
+    if (totalWeight >= VIRTUALIZE_MIN_CONTENT_CHARS) return true
+  }
+  return false
+}
+
+function countLineBreaksCapped(content: string, maxLines: number) {
+  let lineBreaks = 0
+  for (let index = 0; index < content.length; index += 1) {
+    if (content.charCodeAt(index) === 10) {
+      lineBreaks += 1
+      if (lineBreaks >= maxLines) return lineBreaks
+    }
+  }
+  return lineBreaks
+}
+
+function estimateTextHeight(content: string, baseHeight: number) {
+  const sample = content.length > 12_000 ? content.slice(0, 12_000) : content
+  const sampledLineBreaks = countLineBreaksCapped(sample, 900)
+  const explicitLines = content.length > sample.length
+    ? Math.ceil((sampledLineBreaks + 1) * (content.length / sample.length))
+    : sampledLineBreaks + 1
+  const wrappedLines = Math.ceil(content.length / 76)
+  const estimated = baseHeight + Math.max(explicitLines, wrappedLines) * 22
+  return clampNumber(estimated, VIRTUAL_MIN_ITEM_HEIGHT, VIRTUAL_MAX_ITEM_HEIGHT)
+}
+
+function estimateMessageHeight(message: UIMessage): number {
+  switch (message.type) {
+    case 'user_text':
+      return estimateTextHeight(message.content, message.attachments?.length ? 140 : 74)
+    case 'assistant_text':
+      return estimateTextHeight(message.content, 96)
+    case 'thinking':
+      return estimateTextHeight(message.content, 88)
+    case 'tool_use':
+      return clampNumber(92 + Math.ceil(getMessageContentWeight(message) / 120) * 18, 72, 2200)
+    case 'tool_result':
+      return clampNumber(88 + Math.ceil(getMessageContentWeight(message) / 120) * 18, 64, 2200)
+    case 'background_task':
+    case 'goal_event':
+    case 'memory_event':
+    case 'permission_request':
+    case 'task_summary':
+      return 110
+    case 'compact_summary':
+      return message.summary ? clampNumber(92 + Math.ceil(message.summary.length / 90) * 20, 80, 1800) : 70
+    case 'error':
+    case 'system':
+      return 64
+  }
+}
+
+function estimateRenderItemHeight(item: RenderItem): number {
+  if (item.kind === 'message') return estimateMessageHeight(item.message)
+  const textWeight = getRenderItemContentWeight(item)
+  return clampNumber(92 + item.toolCalls.length * 78 + Math.ceil(textWeight / 140) * 16, 88, 2600)
+}
+
+function getMessageMetricSignature(message: UIMessage): string {
+  switch (message.type) {
+    case 'user_text':
+      return `${message.type}:${message.content.length}:${message.attachments?.length ?? 0}:${message.pending ? 1 : 0}`
+    case 'assistant_text':
+    case 'thinking':
+    case 'system':
+      return `${message.type}:${message.content.length}`
+    case 'tool_use':
+      return `${message.type}:${message.toolName}:${message.toolUseId}:${message.partialInput?.length ?? 0}:${message.isPending ? 1 : 0}`
+    case 'tool_result':
+      return `${message.type}:${message.toolUseId}:${message.isError ? 1 : 0}`
+    case 'compact_summary':
+      return `${message.type}:${message.phase ?? ''}:${message.title.length}:${message.summary?.length ?? 0}`
+    case 'goal_event':
+      return `${message.type}:${message.action}:${message.status ?? ''}:${message.objective?.length ?? 0}:${message.message?.length ?? 0}`
+    case 'memory_event':
+      return `${message.type}:${message.event}:${message.files.length}:${message.message?.length ?? 0}`
+    case 'background_task':
+      return `${message.type}:${message.task.taskId}:${message.task.status}:${message.task.updatedAt}`
+    case 'permission_request':
+      return `${message.type}:${message.requestId}:${message.toolUseId ?? ''}:${message.description?.length ?? 0}`
+    case 'error':
+      return `${message.type}:${message.code}:${message.message.length}`
+    case 'task_summary':
+      return `${message.type}:${message.tasks.length}:${message.tasks.map((task) => task.id).join(',')}`
+  }
+}
+
+function getRenderItemMetricSignature(item: RenderItem): string {
+  if (item.kind === 'message') return getMessageMetricSignature(item.message)
+  return item.toolCalls.map(getMessageMetricSignature).join('|')
+}
+
+function findVirtualStartIndex(offsets: number[], target: number) {
+  let low = 0
+  let high = offsets.length - 1
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2)
+    if ((offsets[mid + 1] ?? offsets[mid] ?? 0) < target) {
+      low = mid + 1
+    } else {
+      high = mid
+    }
+  }
+  return Math.max(0, low)
+}
+
+function findVirtualEndIndex(offsets: number[], target: number) {
+  let low = 0
+  let high = offsets.length - 1
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2)
+    if ((offsets[mid] ?? 0) <= target) {
+      low = mid + 1
+    } else {
+      high = mid
+    }
+  }
+  return clampNumber(low + 1, 0, offsets.length - 1)
+}
+
+function buildVirtualTranscriptWindow(
+  renderItems: RenderItem[],
+  itemKeys: string[],
+  metrics: VirtualRenderItemMetric[],
+  measuredHeights: Map<string, number>,
+  viewport: VirtualViewport,
+  overscanPx: number,
+): VirtualTranscriptWindow {
+  if (!shouldVirtualizeRenderItems(metrics)) {
+    return {
+      enabled: false,
+      beforeHeight: 0,
+      afterHeight: 0,
+      items: renderItems.map((item, index) => ({ item, index })),
+    }
+  }
+
+  const offsets = new Array<number>(renderItems.length + 1)
+  offsets[0] = 0
+  for (let index = 0; index < renderItems.length; index += 1) {
+    const item = renderItems[index]!
+    const measuredHeight = measuredHeights.get(itemKeys[index]!)
+    const height = measuredHeight && measuredHeight > 0
+      ? measuredHeight
+      : metrics[index]?.estimatedHeight ?? estimateRenderItemHeight(item)
+    offsets[index + 1] = offsets[index]! + height
+  }
+
+  const totalHeight = offsets[renderItems.length] ?? 0
+  const viewportHeight = viewport.viewportHeight || VIRTUAL_DEFAULT_VIEWPORT_HEIGHT
+  const maxScrollTop = Math.max(0, totalHeight - viewportHeight)
+  const scrollTop = clampNumber(viewport.scrollTop, 0, maxScrollTop)
+  const windowTop = Math.max(0, scrollTop - overscanPx)
+  const windowBottom = Math.min(totalHeight, scrollTop + viewportHeight + overscanPx)
+  const startIndex = findVirtualStartIndex(offsets, windowTop)
+  const endIndex = Math.min(renderItems.length, findVirtualEndIndex(offsets, windowBottom))
+
+  return {
+    enabled: true,
+    beforeHeight: offsets[startIndex] ?? 0,
+    afterHeight: totalHeight - (offsets[endIndex] ?? totalHeight),
+    items: renderItems.slice(startIndex, endIndex).map((item, offset) => ({
+      item,
+      index: startIndex + offset,
+    })),
+  }
+}
+
+const VIRTUAL_SPACER_CHUNK_PX = 800
+
+function VirtualSpacer({ height, position }: { height: number; position: 'top' | 'bottom' }) {
+  if (height <= 0) return null
+  if (height <= VIRTUAL_SPACER_CHUNK_PX) {
+    return (
+      <div
+        data-virtual-spacer={position}
+        aria-hidden="true"
+        style={{ height }}
+      />
+    )
+  }
+
+  // Splitting the spacer into chunks lets the WebView keep painting placeholder
+  // boxes via content-visibility:auto + contain-intrinsic-size, instead of
+  // leaving a single huge area unpainted while React reconciles the window.
+  const chunkCount = Math.max(1, Math.ceil(height / VIRTUAL_SPACER_CHUNK_PX))
+  const chunkHeight = Math.floor(height / chunkCount)
+  const remainder = height - chunkHeight * chunkCount
+  const chunks: Array<{ key: string; px: number }> = []
+  for (let i = 0; i < chunkCount; i++) {
+    const px = i === chunkCount - 1 ? chunkHeight + remainder : chunkHeight
+    chunks.push({ key: `${position}-${i}`, px })
+  }
+
+  return (
+    <div data-virtual-spacer={position} aria-hidden="true">
+      {chunks.map((chunk) => (
+        <div
+          key={chunk.key}
+          data-virtual-spacer-chunk={position}
+          style={{
+            height: chunk.px,
+            contentVisibility: 'auto',
+            containIntrinsicSize: `0 ${chunk.px}px`,
+          }}
+        />
+      ))}
+    </div>
+  )
+}
+
+const MeasuredRenderItem = memo(function MeasuredRenderItem({
+  itemKey,
+  onHeightChange,
+  children,
+}: {
+  itemKey: string
+  onHeightChange: (itemKey: string, height: number) => void
+  children: ReactNode
+}) {
+  const itemRef = useRef<HTMLDivElement>(null)
+
+  useLayoutEffect(() => {
+    const node = itemRef.current
+    if (!node) return undefined
+
+    if (typeof ResizeObserver === 'undefined') return undefined
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0]
+      if (entry && Number.isFinite(entry.contentRect.height) && entry.contentRect.height > 0) {
+        onHeightChange(itemKey, Math.ceil(entry.contentRect.height))
+      }
+    })
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [itemKey, onHeightChange])
+
+  return (
+    <div
+      ref={itemRef}
+      data-virtual-message-item={itemKey}
+      className={CHAT_RENDER_ITEM_CLASS}
+    >
+      {children}
+    </div>
+  )
+})
 
 export function MessageList({ sessionId, compact = false }: MessageListProps = {}) {
   const activeTabId = useTabStore((s) => s.activeTabId)
@@ -685,6 +1207,7 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
   const sessionState = useChatStore((s) =>
     resolvedSessionId ? s.sessions[resolvedSessionId] : undefined,
   )
+  const branchSession = useSessionStore((s) => s.branchSession)
   const stopGeneration = useChatStore((s) => s.stopGeneration)
   const reloadHistory = useChatStore((s) => s.reloadHistory)
   const queueComposerPrefill = useChatStore((s) => s.queueComposerPrefill)
@@ -692,20 +1215,36 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
     resolvedSessionId ? Boolean(s.getMemberBySessionId(resolvedSessionId)) : false,
   )
   const addToast = useUIStore((s) => s.addToast)
-  const messages = sessionState?.messages ?? []
+  const messages = sessionState?.messages ?? EMPTY_MESSAGES
   const chatState = sessionState?.chatState ?? 'idle'
   const streamingText = sessionState?.streamingText ?? ''
   const activeThinkingId = sessionState?.activeThinkingId ?? null
   const agentTaskNotifications = sessionState?.agentTaskNotifications ?? {}
+  const activeAskUserQuestionToolUseId =
+    sessionState?.pendingPermission?.toolName === 'AskUserQuestion'
+      ? sessionState.pendingPermission.toolUseId
+      : null
   const shouldFollowContentResize =
     streamingText.trim().length > 0 ||
     chatState === 'streaming' ||
+    chatState === 'compacting' ||
     chatState === 'tool_executing' ||
     (chatState === 'thinking' && Boolean(activeThinkingId))
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const scrollContentRef = useRef<HTMLDivElement>(null)
+  const virtualItemHeightsRef = useRef<Map<string, number>>(
+    resolvedSessionId ? getHeightsForSession(resolvedSessionId) : new Map<string, number>(),
+  )
+  const virtualItemMetricCacheRef = useRef<Map<string, VirtualRenderItemMetric>>(
+    resolvedSessionId ? getMetricsForSession(resolvedSessionId) : new Map<string, VirtualRenderItemMetric>(),
+  )
+  const pendingMeasuredHeightsRef = useRef(false)
+  const measureFlushFrameRef = useRef<number | null>(null)
+  const lastAutoScrollAtRef = useRef(0)
   const shouldAutoScrollRef = useRef(true)
   const isProgrammaticScrollingRef = useRef(false)
+  const ignoreProgrammaticScrollUntilRef = useRef(0)
+  const ignoreProgrammaticScrollTopRef = useRef<number | null>(null)
   const lastSessionIdRef = useRef<string | null | undefined>(resolvedSessionId)
   const lastTailMessageIdBySessionRef = useRef(new Map<string, string | null>())
   const t = useTranslation()
@@ -713,29 +1252,61 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
   const [turnChangeLoadError, setTurnChangeLoadError] = useState<string | null>(null)
   const [turnActionErrors, setTurnActionErrors] = useState<Record<string, string>>({})
   const [isLoadingTurnChangeCards, setIsLoadingTurnChangeCards] = useState(false)
+  const [branchingMessageId, setBranchingMessageId] = useState<string | null>(null)
   const [rewindingTurnId, setRewindingTurnId] = useState<string | null>(null)
   const [turnUndoConfirmTargetId, setTurnUndoConfirmTargetId] = useState<string | null>(null)
   const [showJumpToLatest, setShowJumpToLatest] = useState(false)
+  const [virtualViewport, setVirtualViewport] = useState<VirtualViewport>({
+    scrollTop: SCROLL_BOTTOM_SENTINEL,
+    viewportHeight: VIRTUAL_DEFAULT_VIEWPORT_HEIGHT,
+  })
+  const [measuredItemsVersion, setMeasuredItemsVersion] = useState(0)
+  const branchActionsDisabled = isMemberSession
+  const hasCompactingDivider = messages.some((message) =>
+    message.type === 'compact_summary' && message.phase === 'compacting')
+
+  useEffect(() => () => {
+    if (measureFlushFrameRef.current !== null) {
+      cancelAnimationFrame(measureFlushFrameRef.current)
+    }
+  }, [])
+
+  const syncVirtualViewportFromContainer = useCallback((container: HTMLElement) => {
+    const nextScrollTop = container.scrollTop
+    const nextViewportHeight = container.clientHeight || VIRTUAL_DEFAULT_VIEWPORT_HEIGHT
+    setVirtualViewport((current) => {
+      if (
+        Math.abs(current.scrollTop - nextScrollTop) < 1 &&
+        Math.abs(current.viewportHeight - nextViewportHeight) < 1
+      ) {
+        return current
+      }
+      return {
+        scrollTop: nextScrollTop,
+        viewportHeight: nextViewportHeight,
+      }
+    })
+  }, [])
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior) => {
     shouldAutoScrollRef.current = true
     isProgrammaticScrollingRef.current = true
+    ignoreProgrammaticScrollUntilRef.current = performance.now() + 250
+    lastAutoScrollAtRef.current = performance.now()
     const container = scrollContainerRef.current
-    const targetScrollTop = container ? getBottomScrollTop(container) : null
+    let requestedScrollTop: number | null = null
     if (container) {
-      const nextScrollTop = targetScrollTop ?? 0
-      if (typeof container.scrollTo === 'function') {
-        try {
-          container.scrollTo({ top: nextScrollTop, behavior })
-        } catch {
-          container.scrollTo(0, nextScrollTop)
-        }
-      }
-      container.scrollTop = nextScrollTop
+      setScrollToBottomWithoutLayoutRead(container, behavior)
+      requestedScrollTop = container.scrollTop
+      ignoreProgrammaticScrollTopRef.current = requestedScrollTop
     }
+    setVirtualViewport((current) => ({
+      scrollTop: SCROLL_BOTTOM_SENTINEL,
+      viewportHeight: current.viewportHeight,
+    }))
     if (container && resolvedSessionId) {
       sessionScrollSnapshots.set(resolvedSessionId, {
-        scrollTop: getBottomScrollTop(container),
+        scrollTop: container.scrollTop,
         wasAtBottom: true,
       })
     }
@@ -747,15 +1318,14 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
         shouldAutoScrollRef.current &&
         latestContainer &&
         (
-          targetScrollTop === null ||
-          latestContainer.scrollTop === targetScrollTop ||
-          isNearScrollBottom(latestContainer)
+          requestedScrollTop === null ||
+          latestContainer.scrollTop === requestedScrollTop
         )
       ) {
-        latestContainer.scrollTop = getBottomScrollTop(latestContainer)
+        setScrollToBottomWithoutLayoutRead(latestContainer, 'auto')
         if (resolvedSessionId) {
           sessionScrollSnapshots.set(resolvedSessionId, {
-            scrollTop: getBottomScrollTop(latestContainer),
+            scrollTop: latestContainer.scrollTop,
             wasAtBottom: true,
           })
         }
@@ -764,12 +1334,48 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
     })
   }, [resolvedSessionId])
 
+  const flushMeasuredHeightVersion = useCallback(() => {
+    if (!pendingMeasuredHeightsRef.current) return
+    pendingMeasuredHeightsRef.current = false
+    setMeasuredItemsVersion((version) => version + 1)
+  }, [])
+
+  const handleVirtualItemHeightChange = useCallback((itemKey: string, height: number) => {
+    const measuredHeight = clampNumber(height, VIRTUAL_MIN_ITEM_HEIGHT, VIRTUAL_MAX_ITEM_HEIGHT)
+    const previousHeight = virtualItemHeightsRef.current.get(itemKey)
+    if (previousHeight !== undefined && Math.abs(previousHeight - measuredHeight) < 1) return
+
+    virtualItemHeightsRef.current.set(itemKey, measuredHeight)
+
+    if (typeof requestAnimationFrame === 'undefined') {
+      pendingMeasuredHeightsRef.current = true
+      flushMeasuredHeightVersion()
+    } else if (!pendingMeasuredHeightsRef.current) {
+      pendingMeasuredHeightsRef.current = true
+      if (measureFlushFrameRef.current !== null) {
+        cancelAnimationFrame(measureFlushFrameRef.current)
+      }
+      measureFlushFrameRef.current = requestAnimationFrame(() => {
+        measureFlushFrameRef.current = null
+        flushMeasuredHeightVersion()
+      })
+    }
+  }, [flushMeasuredHeightVersion])
+
   const updateAutoScrollState = useCallback(() => {
     // Ignore scroll events triggered by our own programmatic scrolling to
     // prevent the jump-to-latest button from flickering during auto-scroll.
-    if (isProgrammaticScrollingRef.current) return
     const container = scrollContainerRef.current
     if (!container) return
+    const shouldIgnoreRecentProgrammaticScroll =
+      performance.now() < ignoreProgrammaticScrollUntilRef.current &&
+      ignoreProgrammaticScrollTopRef.current !== null &&
+      Math.abs(container.scrollTop - ignoreProgrammaticScrollTopRef.current) < 1
+    if (isProgrammaticScrollingRef.current || shouldIgnoreRecentProgrammaticScroll) {
+      syncVirtualViewportFromContainer(container)
+      return
+    }
+    syncVirtualViewportFromContainer(container)
     const isAtBottom = isNearScrollBottom(container)
     shouldAutoScrollRef.current = isAtBottom
     setShowJumpToLatest(!isAtBottom)
@@ -777,19 +1383,59 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
     if (resolvedSessionId) {
       rememberSessionScroll(resolvedSessionId, container)
     }
-  }, [resolvedSessionId])
+  }, [resolvedSessionId, syncVirtualViewportFromContainer])
 
   useLayoutEffect(() => {
     if (lastSessionIdRef.current !== resolvedSessionId) {
       const snapshot = resolvedSessionId ? sessionScrollSnapshots.get(resolvedSessionId) : undefined
       shouldAutoScrollRef.current = snapshot?.wasAtBottom ?? true
       lastSessionIdRef.current = resolvedSessionId
+      virtualItemHeightsRef.current = resolvedSessionId
+        ? getHeightsForSession(resolvedSessionId)
+        : new Map<string, number>()
+      virtualItemMetricCacheRef.current = resolvedSessionId
+        ? getMetricsForSession(resolvedSessionId)
+        : new Map<string, VirtualRenderItemMetric>()
+      pendingMeasuredHeightsRef.current = false
+      if (measureFlushFrameRef.current !== null) {
+        cancelAnimationFrame(measureFlushFrameRef.current)
+        measureFlushFrameRef.current = null
+      }
+      setMeasuredItemsVersion((version) => version + 1)
 
       const container = scrollContainerRef.current
       if (container && snapshot && !snapshot.wasAtBottom) {
-        container.scrollTop = clampScrollTop(container, snapshot.scrollTop)
+        ignoreProgrammaticScrollUntilRef.current = performance.now() + 250
+        ignoreProgrammaticScrollTopRef.current = snapshot.scrollTop
+        setScrollTopWithoutLayoutRead(container, snapshot.scrollTop)
+        setVirtualViewport((current) => ({
+          scrollTop: snapshot.scrollTop,
+          viewportHeight: container.clientHeight || current.viewportHeight || VIRTUAL_DEFAULT_VIEWPORT_HEIGHT,
+        }))
         setShowJumpToLatest(true)
+      } else if (container) {
+        // Switch to a session we were at the bottom of (or first visit): write
+        // the bottom sentinel without going through scrollToBottom's read path,
+        // so we never force a layout flush during the switch's commit.
+        ignoreProgrammaticScrollUntilRef.current = performance.now() + 250
+        ignoreProgrammaticScrollTopRef.current = null
+        lastAutoScrollAtRef.current = performance.now()
+        shouldAutoScrollRef.current = true
+        setScrollToBottomWithoutLayoutRead(container, 'auto')
+        setVirtualViewport((current) => ({
+          scrollTop: SCROLL_BOTTOM_SENTINEL,
+          viewportHeight: container.clientHeight || current.viewportHeight || VIRTUAL_DEFAULT_VIEWPORT_HEIGHT,
+        }))
+        setShowJumpToLatest(false)
+        if (resolvedSessionId) {
+          sessionScrollSnapshots.set(resolvedSessionId, {
+            scrollTop: container.scrollTop,
+            wasAtBottom: true,
+          })
+        }
       } else {
+        // No container yet (initial mount before ref settles): fall back to the
+        // existing scrollToBottom path which is safe pre-mount.
         scrollToBottom('auto')
       }
     }
@@ -839,10 +1485,24 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
   }, [scrollToBottom, shouldFollowContentResize])
 
   const { toolResultMap, childToolCallsByParent, renderItems } = useMemo(
-    () => buildRenderModel(messages),
-    [messages],
+    () => buildRenderModel(messages, activeAskUserQuestionToolUseId),
+    [activeAskUserQuestionToolUseId, messages],
   )
-  const completedTurnTargets = useMemo(() => getCompletedTurnTargets(messages), [messages])
+  // Defer the per-message branchable / completed-turn computations so the first
+  // commit on tab switch can render the virtualization window without doing two
+  // additional O(N) walks synchronously. They re-run in a low-priority render
+  // once the initial frame is painted.
+  const deferredMessages = useDeferredValue(messages)
+  const branchableMessageTargets = useMemo(
+    () => branchActionsDisabled
+      ? new Map<string, BranchableMessageTarget>()
+      : getBranchableMessageTargets(deferredMessages),
+    [branchActionsDisabled, deferredMessages],
+  )
+  const completedTurnTargets = useMemo(
+    () => getCompletedTurnTargets(deferredMessages),
+    [deferredMessages],
+  )
   const latestCompletedTurnId =
     completedTurnTargets.length > 0
       ? completedTurnTargets[completedTurnTargets.length - 1]?.messageId ?? null
@@ -851,10 +1511,59 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
     () => buildTurnCardInsertionMap(renderItems, turnChangeCards),
     [renderItems, turnChangeCards],
   )
+  const renderItemKeys = useMemo(
+    () => renderItems.map(getRenderItemKey),
+    [renderItems],
+  )
+  const renderItemMetrics = useMemo(
+    () => renderItems.map((item, index) => {
+      const key = renderItemKeys[index]!
+      const signature = getRenderItemMetricSignature(item)
+      const cached = virtualItemMetricCacheRef.current.get(key)
+      if (cached?.signature === signature) return cached
+
+      const metric = {
+        signature,
+        contentWeight: getRenderItemContentWeight(item),
+        estimatedHeight: estimateRenderItemHeight(item),
+      }
+      virtualItemMetricCacheRef.current.set(key, metric)
+      return metric
+    }),
+    [renderItemKeys, renderItems],
+  )
+  const virtualTranscriptWindow = useMemo(
+    () => buildVirtualTranscriptWindow(
+      renderItems,
+      renderItemKeys,
+      renderItemMetrics,
+      virtualItemHeightsRef.current,
+      virtualViewport,
+      VIRTUAL_OVERSCAN_PX,
+    ),
+    [measuredItemsVersion, renderItemKeys, renderItemMetrics, renderItems, virtualViewport],
+  )
   const confirmTurnCard = useMemo(
     () => turnChangeCards.find((card) => card.target.messageId === turnUndoConfirmTargetId) ?? null,
     [turnChangeCards, turnUndoConfirmTargetId],
   )
+
+  useEffect(() => {
+    const liveKeys = new Set(renderItemKeys)
+    let removed = false
+    for (const key of virtualItemHeightsRef.current.keys()) {
+      if (!liveKeys.has(key)) {
+        virtualItemHeightsRef.current.delete(key)
+        removed = true
+      }
+    }
+    for (const key of virtualItemMetricCacheRef.current.keys()) {
+      if (!liveKeys.has(key)) {
+        virtualItemMetricCacheRef.current.delete(key)
+      }
+    }
+    if (removed) setMeasuredItemsVersion((version) => version + 1)
+  }, [renderItemKeys])
 
   useEffect(() => {
     if (!resolvedSessionId || completedTurnTargets.length === 0 || isMemberSession) {
@@ -982,6 +1691,106 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
     t,
   ])
 
+  const handleBranchMessage = useCallback(async (target: BranchableMessageTarget) => {
+    if (!resolvedSessionId || branchingMessageId) return
+
+    setBranchingMessageId(target.uiMessageId)
+    try {
+      const result = await branchSession(resolvedSessionId, target.transcriptMessageId)
+      const title = result.title.trim() || t('sidebar.newSession')
+      useTabStore.getState().openTab(result.sessionId, title)
+      useChatStore.getState().connectToSession(result.sessionId)
+      addToast({
+        type: 'success',
+        message: t('chat.branchSuccess', { title }),
+      })
+    } catch (error) {
+      addToast({
+        type: 'error',
+        message: t('chat.branchError', { detail: getApiErrorMessage(error) }),
+      })
+    } finally {
+      setBranchingMessageId(null)
+    }
+  }, [addToast, branchSession, branchingMessageId, resolvedSessionId, t])
+
+  // Pre-compute per-message branchAction + toolResult lookups so MessageBlock's
+  // memo barrier is not broken by inline object literals on every render.
+  const branchActionByMessageId = useMemo(() => {
+    if (branchableMessageTargets.size === 0) {
+      return new Map<string, { label: string; loading: boolean; onBranch: () => void }>()
+    }
+    const result = new Map<string, { label: string; loading: boolean; onBranch: () => void }>()
+    const label = t('chat.branchFromHere')
+    for (const [uiMessageId, target] of branchableMessageTargets) {
+      result.set(uiMessageId, {
+        label,
+        loading: branchingMessageId === target.uiMessageId,
+        onBranch: () => { void handleBranchMessage(target) },
+      })
+    }
+    return result
+  }, [branchableMessageTargets, branchingMessageId, handleBranchMessage, t])
+
+  const toolResultByToolUseId = useMemo(() => {
+    if (toolResultMap.size === 0) return new Map<string, { content: unknown; isError: boolean }>()
+    const result = new Map<string, { content: unknown; isError: boolean }>()
+    for (const [toolUseId, toolResult] of toolResultMap) {
+      result.set(toolUseId, { content: toolResult.content, isError: toolResult.isError })
+    }
+    return result
+  }, [toolResultMap])
+
+  const renderTranscriptItem = (item: RenderItem, index: number) => {
+    const cardsForItem = turnCardsByRenderIndex.get(index) ?? []
+
+    return (
+      <>
+        {item.kind === 'tool_group' ? (
+          <ToolCallGroup
+            toolCalls={item.toolCalls}
+            resultMap={toolResultMap}
+            childToolCallsByParent={childToolCallsByParent}
+            agentTaskNotifications={agentTaskNotifications}
+            isStreaming={
+              chatState === 'tool_executing' &&
+              item.toolCalls.some((tc) => !toolResultMap.has(tc.toolUseId))
+            }
+          />
+        ) : (
+          <MessageBlock
+            sessionId={resolvedSessionId}
+            message={item.message}
+            activeThinkingId={activeThinkingId}
+            agentTaskNotifications={agentTaskNotifications}
+            toolResult={
+              item.message.type === 'tool_use'
+                ? toolResultByToolUseId.get(item.message.toolUseId) ?? null
+                : null
+            }
+            branchAction={branchActionByMessageId.get(item.message.id)}
+          />
+        )}
+
+        {resolvedSessionId && cardsForItem.map((card) => (
+          <CurrentTurnChangeCard
+            key={`turn-change-${card.target.messageId}`}
+            sessionId={resolvedSessionId}
+            targetUserMessageId={card.checkpoint.target.targetUserMessageId}
+            checkpoint={card.checkpoint}
+            workDir={card.workDir}
+            error={turnActionErrors[card.target.messageId] ?? null}
+            isUndoing={rewindingTurnId === card.target.messageId}
+            isLatest={card.isLatest}
+            onUndo={() => {
+              setTurnUndoConfirmTargetId(card.target.messageId)
+            }}
+          />
+        ))}
+      </>
+    )
+  }
+
   return (
     <div className="relative min-h-0 flex-1">
       <div
@@ -993,65 +1802,43 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
           ref={scrollContentRef}
           className={compact ? 'mx-auto max-w-full' : 'mx-auto max-w-[860px]'}
         >
-          {renderItems.map((item, index) => {
-            const itemKey = item.kind === 'tool_group' ? item.id : item.message.id
-            const cardsForItem = turnCardsByRenderIndex.get(index) ?? []
+          {virtualTranscriptWindow.enabled ? (
+            <VirtualSpacer height={virtualTranscriptWindow.beforeHeight} position="top" />
+          ) : null}
 
-            return (
-              <div key={itemKey}>
-                {item.kind === 'tool_group' ? (
-                  <ToolCallGroup
-                    toolCalls={item.toolCalls}
-                    resultMap={toolResultMap}
-                    childToolCallsByParent={childToolCallsByParent}
-                    agentTaskNotifications={agentTaskNotifications}
-                    isStreaming={
-                      chatState === 'tool_executing' &&
-                      item.toolCalls.some((tc) => !toolResultMap.has(tc.toolUseId))
-                    }
-                  />
-                ) : (
-                  <MessageBlock
-                    sessionId={resolvedSessionId}
-                    message={item.message}
-                    activeThinkingId={activeThinkingId}
-                    agentTaskNotifications={agentTaskNotifications}
-                    toolResult={
-                      item.message.type === 'tool_use'
-                        ? (() => {
-                            const result = toolResultMap.get(item.message.toolUseId)
-                            return result ? { content: result.content, isError: result.isError } : null
-                          })()
-                        : null
-                    }
-                  />
-                )}
+          {virtualTranscriptWindow.items.map(({ item, index }) => {
+            const itemKey = getRenderItemKey(item)
+            const content = renderTranscriptItem(item, index)
 
-                {resolvedSessionId && cardsForItem.map((card) => (
-                  <CurrentTurnChangeCard
-                    key={`turn-change-${card.target.messageId}`}
-                    sessionId={resolvedSessionId}
-                    targetUserMessageId={card.checkpoint.target.targetUserMessageId}
-                    checkpoint={card.checkpoint}
-                    workDir={card.workDir}
-                    error={turnActionErrors[card.target.messageId] ?? null}
-                    isUndoing={rewindingTurnId === card.target.messageId}
-                    isLatest={card.isLatest}
-                    onUndo={() => {
-                      setTurnUndoConfirmTargetId(card.target.messageId)
-                    }}
-                  />
-                ))}
+            return virtualTranscriptWindow.enabled ? (
+              <MeasuredRenderItem
+                key={itemKey}
+                itemKey={itemKey}
+                onHeightChange={handleVirtualItemHeightChange}
+              >
+                {content}
+              </MeasuredRenderItem>
+            ) : (
+              <div key={itemKey} className={CHAT_RENDER_ITEM_CLASS}>
+                {content}
               </div>
             )
           })}
+
+          {virtualTranscriptWindow.enabled ? (
+            <VirtualSpacer height={virtualTranscriptWindow.afterHeight} position="bottom" />
+          ) : null}
 
           {streamingText.trim() && (
             <AssistantMessage content={streamingText} isStreaming={chatState === 'streaming'} />
           )}
 
+          {chatState === 'compacting' && !hasCompactingDivider && (
+            <CompactStatusDivider state="compacting" />
+          )}
+
           {/* Show StreamingIndicator when:
-              - tool_executing: tool is running
+              - tool_executing: background work is running
               - thinking but no active ThinkingBlock yet: the gap between
                 sending a message and receiving the first thinking delta */}
           {(chatState === 'tool_executing' || (chatState === 'thinking' && !activeThinkingId)) && (
@@ -1112,12 +1899,18 @@ export const MessageBlock = memo(function MessageBlock({
   activeThinkingId,
   agentTaskNotifications,
   toolResult,
+  branchAction,
 }: {
   sessionId?: string | null
   message: UIMessage
   activeThinkingId: string | null
   agentTaskNotifications: Record<string, AgentTaskNotification>
   toolResult?: { content: unknown; isError: boolean } | null
+  branchAction?: {
+    label: string
+    loading?: boolean
+    onBranch: () => void
+  }
 }) {
   const t = useTranslation()
 
@@ -1133,6 +1926,7 @@ export const MessageBlock = memo(function MessageBlock({
           <UserMessage
             content={message.content}
             attachments={message.attachments}
+            branchAction={branchAction}
           />
         </SelectableChatMessage>
       )
@@ -1144,13 +1938,13 @@ export const MessageBlock = memo(function MessageBlock({
           role="assistant"
           content={message.content}
         >
-          <AssistantMessage content={message.content} />
+          <AssistantMessage content={message.content} branchAction={branchAction} />
         </SelectableChatMessage>
       )
     case 'thinking':
       return <ThinkingBlock content={message.content} isActive={message.id === activeThinkingId} />
     case 'tool_use':
-      if (message.toolName === 'AskUserQuestion') {
+      if (message.toolName === 'AskUserQuestion' && !message.isPending) {
         return (
           <AskUserQuestion
             sessionId={sessionId}
@@ -1165,6 +1959,8 @@ export const MessageBlock = memo(function MessageBlock({
           toolName={message.toolName}
           input={message.input}
           result={toolResult}
+          isPending={message.isPending}
+          partialInput={message.partialInput}
           agentTaskNotification={
             message.toolName === 'Agent'
               ? agentTaskNotifications[message.toolUseId]
@@ -1213,6 +2009,8 @@ export const MessageBlock = memo(function MessageBlock({
       return <InlineTaskSummary tasks={message.tasks} />
     case 'memory_event':
       return <MemoryEventCard message={message} />
+    case 'compact_summary':
+      return <CompactStatusDivider message={message} state={message.phase === 'compacting' ? 'compacting' : 'complete'} />
     case 'goal_event':
       return <GoalEventCard message={message} />
     case 'background_task':

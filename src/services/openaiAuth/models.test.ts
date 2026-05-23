@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  OPENAI_CODEX_LARGE_EFFECTIVE_CONTEXT_WINDOW,
+  OPENAI_CODEX_SPARK_EFFECTIVE_CONTEXT_WINDOW,
+  OPENAI_CODEX_STANDARD_EFFECTIVE_CONTEXT_WINDOW,
   OPENAI_DEFAULT_MAIN_MODEL,
-  OPENAI_GPT5_LARGE_CONTEXT_WINDOW,
-  OPENAI_GPT5_STANDARD_CONTEXT_WINDOW,
-  getOpenAIContextWindowForModel,
+  getOpenAICodexContextWindowForModel,
   isOpenAIResponsesModel,
   resolveOpenAICodexModel,
 } from './models.js'
@@ -22,21 +23,21 @@ describe('openai auth model resolution', () => {
     expect(resolveOpenAICodexModel('opus')).toBe(OPENAI_DEFAULT_MAIN_MODEL)
   })
 
-  test('maps large-context GPT-5 models to a 1.05M context window', () => {
-    expect(getOpenAIContextWindowForModel('gpt-5.5')).toBe(
-      OPENAI_GPT5_LARGE_CONTEXT_WINDOW,
+  test('maps Codex OAuth GPT models to effective Codex context windows', () => {
+    expect(getOpenAICodexContextWindowForModel('gpt-5.5')).toBe(
+      OPENAI_CODEX_STANDARD_EFFECTIVE_CONTEXT_WINDOW,
     )
-    expect(getOpenAIContextWindowForModel('gpt-5.4')).toBe(
-      OPENAI_GPT5_LARGE_CONTEXT_WINDOW,
+    expect(getOpenAICodexContextWindowForModel('gpt-5.4')).toBe(
+      OPENAI_CODEX_LARGE_EFFECTIVE_CONTEXT_WINDOW,
     )
-  })
-
-  test('maps standard GPT-5 models to a 400k context window', () => {
-    expect(getOpenAIContextWindowForModel('gpt-5.3-codex')).toBe(
-      OPENAI_GPT5_STANDARD_CONTEXT_WINDOW,
+    expect(getOpenAICodexContextWindowForModel('gpt-5.3-codex')).toBe(
+      OPENAI_CODEX_STANDARD_EFFECTIVE_CONTEXT_WINDOW,
     )
-    expect(getOpenAIContextWindowForModel('gpt-5.4-mini')).toBe(
-      OPENAI_GPT5_STANDARD_CONTEXT_WINDOW,
+    expect(getOpenAICodexContextWindowForModel('gpt-5.4-mini')).toBe(
+      OPENAI_CODEX_STANDARD_EFFECTIVE_CONTEXT_WINDOW,
+    )
+    expect(getOpenAICodexContextWindowForModel('gpt-5.3-codex-spark')).toBe(
+      OPENAI_CODEX_SPARK_EFFECTIVE_CONTEXT_WINDOW,
     )
   })
 })

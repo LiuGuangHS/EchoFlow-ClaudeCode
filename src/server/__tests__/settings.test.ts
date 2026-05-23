@@ -620,9 +620,69 @@ describe('Models API', () => {
 
     const managedSettings = await providerSvc.getManagedSettings()
     expect(managedSettings.model).toBe('glm-5-turbo')
+    expect((managedSettings.env as Record<string, string>).CLAUDE_CODE_ATTRIBUTION_HEADER).toBe('0')
 
     const globalSettings = await settingsSvc.getUserSettings()
     expect(globalSettings.model).toBeUndefined()
+  })
+
+  it('GET /api/models should return the OpenAI model catalog when ChatGPT Official is active', async () => {
+    const providerSvc = new ProviderService()
+    await providerSvc.activateProvider('openai-official')
+
+    const { req, url, segments } = makeRequest('GET', '/api/models')
+    const res = await handleModelsApi(req, url, segments)
+
+    expect(res.status).toBe(200)
+    const body = await res.json() as {
+      models: Array<{ id: string; name: string }>
+      provider: { id: string; name: string } | null
+    }
+    expect(body.provider).toEqual({
+      id: 'openai-official',
+      name: 'ChatGPT Official',
+    })
+    expect(body.models.map((model) => model.id)).toEqual([
+      'gpt-5.3-codex',
+      'gpt-5.4',
+      'gpt-5.5',
+      'gpt-5.4-mini',
+    ])
+  })
+
+  it('PUT /api/models/current should persist GPT model to managed settings when ChatGPT Official is active', async () => {
+    const settingsSvc = new SettingsService()
+    const providerSvc = new ProviderService()
+    await settingsSvc.updateUserSettings({ model: 'claude-haiku-4-5' })
+    await providerSvc.activateProvider('openai-official')
+
+    const { req, url, segments } = makeRequest('PUT', '/api/models/current', {
+      modelId: 'gpt-5.5',
+    })
+    const res = await handleModelsApi(req, url, segments)
+
+    expect(res.status).toBe(200)
+    const managedSettings = await providerSvc.getManagedSettings()
+    expect(managedSettings.model).toBe('gpt-5.5')
+
+    const globalSettings = await settingsSvc.getUserSettings()
+    expect(globalSettings.model).toBe('claude-haiku-4-5')
+  })
+
+  it('GET /api/models/current should read current GPT model from managed settings when ChatGPT Official is active', async () => {
+    const providerSvc = new ProviderService()
+    await providerSvc.activateProvider('openai-official')
+    await providerSvc.updateManagedSettings({ model: 'gpt-5.5' })
+
+    const { req, url, segments } = makeRequest('GET', '/api/models/current')
+    const res = await handleModelsApi(req, url, segments)
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.model).toMatchObject({
+      id: 'gpt-5.5',
+      name: 'GPT-5.5',
+    })
   })
 
   it('GET /api/effort should return default effort level', async () => {

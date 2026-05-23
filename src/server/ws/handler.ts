@@ -17,6 +17,7 @@ import { computerUseApprovalService } from '../services/computerUseApprovalServi
 import { sessionService } from '../services/sessionService.js'
 import { SettingsService } from '../services/settingsService.js'
 import { ProviderService } from '../services/providerService.js'
+import { isOpenAIOfficialProviderId } from '../services/openaiOfficialProvider.js'
 import { diagnosticsService } from '../services/diagnosticsService.js'
 import { deriveTitle, generateTitle, saveAiTitle } from '../services/titleService.js'
 import { parseSlashCommand } from '../../utils/slashCommandParsing.js'
@@ -43,8 +44,10 @@ const sessionSlashCommands = new Map<string, SessionSlashCommand[]>()
 
 /**
  * Timers for delayed session cleanup after client disconnect.
- * If a client reconnects within 5 minutes, the timer is cancelled.
+ * If a client reconnects before the timer fires, the timer is cancelled.
  */
+const CLIENT_DISCONNECT_CLEANUP_MS = 30_000
+const PENDING_PERMISSION_DISCONNECT_CLEANUP_MS = 30 * 60_000
 const sessionCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 /**
@@ -106,8 +109,16 @@ export type WebSocketData = {
   serverHost: string
 }
 
-// Active WebSocket sessions
-const activeSessions = new Map<string, ServerWebSocket<WebSocketData>>()
+// Active WebSocket clients, grouped by session. Desktop, H5, and IM adapters can
+// legitimately watch the same running session at the same time.
+const activeSessions = new Map<string, Set<ServerWebSocket<WebSocketData>>>()
+const clientOutputCallbacks = new Map<
+  ServerWebSocket<WebSocketData>,
+  {
+    sessionId: string
+    callback: (cliMsg: any) => void
+  }
+>()
 
 export const handleWebSocket = {
   open(ws: ServerWebSocket<WebSocketData>) {
@@ -134,15 +145,16 @@ export const handleWebSocket = {
       sessionCleanupTimers.delete(sessionId)
     }
 
-    activeSessions.set(sessionId, ws)
+    addActiveClient(sessionId, ws)
     if (prewarmedSessions.has(sessionId)) {
       bindPrewarmMetadataCapture(sessionId)
     } else {
-      rebindSessionOutput(sessionId, ws)
+      bindClientSessionOutput(sessionId, ws)
     }
 
     const msg: ServerMessage = { type: 'connected', sessionId }
     ws.send(JSON.stringify(msg))
+    replayPendingPermissionRequests(ws, sessionId)
   },
 
   message(ws: ServerWebSocket<WebSocketData>, rawMessage: string | Buffer) {
@@ -217,24 +229,29 @@ export const handleWebSocket = {
     }
 
     console.log(`[WS] Client disconnected from session: ${sessionId} (${code}: ${reason})`)
-    if (activeSessions.get(sessionId) !== ws) {
+    if (!removeActiveClient(sessionId, ws)) {
       console.log(`[WS] Ignoring stale client disconnect for session: ${sessionId}`)
       return
     }
-    computerUseApprovalService.cancelSession(sessionId)
-    activeSessions.delete(sessionId)
-    conversationService.clearOutputCallbacks(sessionId)
+    removeClientOutputCallback(ws)
 
-    // Schedule delayed cleanup: if the client doesn't reconnect within 30 seconds,
-    // stop the CLI subprocess to avoid leaking resources.
+    if (hasActiveClients(sessionId)) {
+      return
+    }
+
+    computerUseApprovalService.cancelSession(sessionId)
+
+    // Schedule delayed cleanup. Sessions waiting on user input need a longer
+    // grace period so transient renderer disconnects do not abort the prompt.
+    const cleanupDelayMs = getDisconnectCleanupDelayMs(sessionId)
     const cleanupTimer = setTimeout(() => {
       sessionCleanupTimers.delete(sessionId)
-      if (!activeSessions.has(sessionId)) {
-        console.log(`[WS] Session ${sessionId} not reconnected after 30s, stopping CLI subprocess`)
+      if (!hasActiveClients(sessionId)) {
+        console.log(`[WS] Session ${sessionId} not reconnected after ${cleanupDelayMs}ms, stopping CLI subprocess`)
         conversationService.stopSession(sessionId)
         cleanupSessionRuntimeState(sessionId)
       }
-    }, 30_000)
+    }, cleanupDelayMs)
     sessionCleanupTimers.set(sessionId, cleanupTimer)
   },
 
@@ -339,7 +356,7 @@ async function handleUserMessage(
   const shouldForwardCurrentTurnLocalCommand =
     createCurrentTurnLocalCommandForwarder(desktopSlashCommand)
 
-  rebindSessionOutput(sessionId, ws, {
+  bindAllClientSessionOutputs(sessionId, {
     shouldForward: (cliMsg) => {
       if (userMessageSent || (cliMsg.type === 'result' && cliMsg.is_error)) {
         return true
@@ -848,6 +865,21 @@ function extractAssistantText(cliMsg: any): string {
   return textBlock?.text || ''
 }
 
+function readObject(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  return value as Record<string, unknown>
+}
+
+function normalizeAskUserQuestionToolResult(content: unknown, toolUseResult: unknown): unknown {
+  const result = readObject(toolUseResult)
+  const answers = readObject(result?.answers)
+  if (!result || !answers || !Array.isArray(result.questions)) return content
+  return {
+    questions: result.questions,
+    answers,
+  }
+}
+
 function isDuplicateOfLastApiError(
   lastApiError: SessionStreamState['lastApiError'],
   resultMessage: string,
@@ -998,25 +1030,39 @@ export function translateCliMessage(cliMsg: any, sessionId: string): ServerMessa
       // CLI 发送 type:'user' 消息，其中 content 包含 tool_result 块
       const messages: ServerMessage[] = []
 
+      if (isCompactSummaryMessageContent(cliMsg.message?.content)) {
+        messages.push({
+          type: 'system_notification',
+          subtype: 'compact_summary',
+          message: cliMsg.message.content,
+          data: {
+            isSynthetic: cliMsg.isSynthetic,
+          },
+        })
+      }
+
       const localCommandOutput = extractLocalCommandOutput(
         cliMsg.message?.content,
       )
       if (localCommandOutput) {
-        const goalEvent = extractGoalEvent(
-          localCommandOutput,
-          streamState.pendingLocalCommand,
-        )
+        const pendingLocalCommand = streamState.pendingLocalCommand
         streamState.pendingLocalCommand = undefined
-        if (goalEvent) {
-          messages.push({
-            type: 'system_notification',
-            subtype: 'goal_event',
-            message: goalEvent.message,
-            data: goalEvent,
-          })
-        } else {
-          messages.push({ type: 'content_start', blockType: 'text' })
-          messages.push({ type: 'content_delta', text: localCommandOutput })
+        if (!isCompactLocalCommandOutput(localCommandOutput)) {
+          const goalEvent = extractGoalEvent(
+            localCommandOutput,
+            pendingLocalCommand,
+          )
+          if (goalEvent) {
+            messages.push({
+              type: 'system_notification',
+              subtype: 'goal_event',
+              message: goalEvent.message,
+              data: goalEvent,
+            })
+          } else {
+            messages.push({ type: 'content_start', blockType: 'text' })
+            messages.push({ type: 'content_delta', text: localCommandOutput })
+          }
         }
       }
 
@@ -1029,7 +1075,7 @@ export function translateCliMessage(cliMsg: any, sessionId: string): ServerMessa
             messages.push({
               type: 'tool_result',
               toolUseId: block.tool_use_id,
-              content: block.content,
+              content: normalizeAskUserQuestionToolResult(block.content, cliMsg.toolUseResult),
               isError: !!block.is_error,
               parentToolUseId,
             })
@@ -1224,6 +1270,10 @@ export function translateCliMessage(cliMsg: any, sessionId: string): ServerMessa
     case 'system': {
       // 区分不同的 system 子类型
       const subtype = cliMsg.subtype
+      if (subtype === 'api_retry') {
+        const apiRetryMessage = toApiRetryServerMessage(cliMsg)
+        return apiRetryMessage ? [apiRetryMessage] : []
+      }
       if (subtype === 'init') {
         // CLI 初始化完成 — 缓存 slash commands 并发送模型信息
         // NOTE: Do NOT send status:idle here — the CLI init fires while
@@ -1256,6 +1306,19 @@ export function translateCliMessage(cliMsg: any, sessionId: string): ServerMessa
             verb: typeof cliMsg.verb === 'string' ? cliMsg.verb : undefined,
           },
         }]
+      }
+      if (subtype === 'status') {
+        if (cliMsg.status === 'compacting') {
+          return [{
+            type: 'status',
+            state: 'compacting',
+            verb: 'Compacting conversation',
+          }]
+        }
+        if (cliMsg.status == null) {
+          return [{ type: 'status', state: 'thinking', verb: 'Thinking' }]
+        }
+        return []
       }
       if (subtype === 'hook_started' || subtype === 'hook_response') {
         // Hook 执行中 — 不转发给前端
@@ -1361,12 +1424,86 @@ export function translateCliMessage(cliMsg: any, sessionId: string): ServerMessa
 // Helpers
 // ============================================================================
 
+function finiteNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function normalizeRetryCount(value: unknown): number | null {
+  const numeric = finiteNumber(value)
+  if (numeric === null) return null
+  return Math.max(0, Math.trunc(numeric))
+}
+
+function readRetryErrorRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  return value as Record<string, unknown>
+}
+
+function readRetryErrorString(value: unknown, keys: string[]): string | undefined {
+  const record = readRetryErrorRecord(value)
+  if (!record) return undefined
+  for (const key of keys) {
+    const candidate = record[key]
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim()
+  }
+  return undefined
+}
+
+function toApiRetryServerMessage(cliMsg: any): ServerMessage | null {
+  const attempt = normalizeRetryCount(cliMsg.attempt)
+  const maxRetries = normalizeRetryCount(cliMsg.max_retries)
+  const retryDelayMs = normalizeRetryCount(cliMsg.retry_delay_ms)
+  if (attempt === null || maxRetries === null || retryDelayMs === null) return null
+
+  const embeddedError = readRetryErrorRecord(cliMsg.error)
+  const embeddedStatus = embeddedError ? finiteNumber(embeddedError.status) : null
+  const rawStatus = cliMsg.error_status === null
+    ? null
+    : finiteNumber(cliMsg.error_status) ?? embeddedStatus
+  const errorType = typeof cliMsg.error === 'string' && cliMsg.error.trim()
+    ? cliMsg.error.trim()
+    : readRetryErrorString(cliMsg.error, ['type', 'code', 'name'])
+  const errorMessage = readRetryErrorString(cliMsg.error, ['message', 'error'])
+
+  return {
+    type: 'api_retry',
+    attempt,
+    maxRetries,
+    retryDelayMs,
+    errorStatus: rawStatus === null ? null : Math.trunc(rawStatus),
+    ...(errorType ? { errorType } : {}),
+    ...(errorMessage ? { errorMessage } : {}),
+  }
+}
+
 function sendMessage(ws: ServerWebSocket<WebSocketData>, message: ServerMessage) {
   ws.send(JSON.stringify(message))
 }
 
 function sendError(ws: ServerWebSocket<WebSocketData>, message: string, code: string) {
   sendMessage(ws, { type: 'error', message, code })
+}
+
+function getDisconnectCleanupDelayMs(sessionId: string): number {
+  return conversationService.getPendingPermissionRequests(sessionId).length > 0
+    ? PENDING_PERMISSION_DISCONNECT_CLEANUP_MS
+    : CLIENT_DISCONNECT_CLEANUP_MS
+}
+
+function replayPendingPermissionRequests(
+  ws: ServerWebSocket<WebSocketData>,
+  sessionId: string,
+): void {
+  for (const request of conversationService.getPendingPermissionRequests(sessionId)) {
+    sendMessage(ws, {
+      type: 'permission_request',
+      requestId: request.requestId,
+      toolName: request.toolName,
+      ...(request.toolUseId ? { toolUseId: request.toolUseId } : {}),
+      input: request.input,
+      ...(request.description ? { description: request.description } : {}),
+    })
+  }
 }
 
 function getDesktopSlashCommand(content: string): ReturnType<typeof parseSlashCommand> {
@@ -1478,6 +1615,10 @@ function extractLocalCommandOutput(
   return null
 }
 
+function isCompactLocalCommandOutput(output: string): boolean {
+  return output.trim() === 'Compacted'
+}
+
 function extractTaggedContent(raw: string, tag: string): string | null {
   const match = raw.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`))
   return match?.[1]?.trim() ?? null
@@ -1567,7 +1708,65 @@ function getCompactBoundaryMessage(cliMsg: any): string {
   return 'Context compacted'
 }
 
-function rebindSessionOutput(
+function isCompactSummaryMessageContent(content: unknown): content is string {
+  return (
+    typeof content === 'string' &&
+    content.trim().startsWith(
+      'This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.',
+    )
+  )
+}
+
+function addActiveClient(
+  sessionId: string,
+  ws: ServerWebSocket<WebSocketData>,
+): void {
+  let clients = activeSessions.get(sessionId)
+  if (!clients) {
+    clients = new Set()
+    activeSessions.set(sessionId, clients)
+  }
+  clients.add(ws)
+}
+
+function removeActiveClient(
+  sessionId: string,
+  ws: ServerWebSocket<WebSocketData>,
+): boolean {
+  const clients = activeSessions.get(sessionId)
+  if (!clients?.has(ws)) return false
+  clients.delete(ws)
+  if (clients.size === 0) {
+    activeSessions.delete(sessionId)
+  }
+  return true
+}
+
+function hasActiveClients(sessionId: string): boolean {
+  return (activeSessions.get(sessionId)?.size ?? 0) > 0
+}
+
+function removeClientOutputCallback(ws: ServerWebSocket<WebSocketData>): void {
+  const entry = clientOutputCallbacks.get(ws)
+  if (!entry) return
+  conversationService.removeOutputCallback(entry.sessionId, entry.callback)
+  clientOutputCallbacks.delete(ws)
+}
+
+function bindAllClientSessionOutputs(
+  sessionId: string,
+  options?: {
+    shouldForward?: (cliMsg: any) => boolean
+  },
+): void {
+  const clients = activeSessions.get(sessionId)
+  if (!clients) return
+  for (const ws of clients) {
+    bindClientSessionOutput(sessionId, ws, options)
+  }
+}
+
+function bindClientSessionOutput(
   sessionId: string,
   ws: ServerWebSocket<WebSocketData>,
   options?: {
@@ -1576,8 +1775,9 @@ function rebindSessionOutput(
 ) {
   if (!conversationService.hasSession(sessionId)) return
 
-  conversationService.clearOutputCallbacks(sessionId)
-  conversationService.onOutput(sessionId, (cliMsg) => {
+  removeClientOutputCallback(ws)
+
+  const callback = (cliMsg: any) => {
     if (options?.shouldForward && !options.shouldForward(cliMsg)) {
       return
     }
@@ -1590,7 +1790,10 @@ function rebindSessionOutput(
     if (cliMsg.type === 'result') {
       triggerTitleGeneration(ws, sessionId)
     }
-  })
+  }
+
+  clientOutputCallbacks.set(ws, { sessionId, callback })
+  conversationService.onOutput(sessionId, callback)
 }
 
 type RuntimeSettings = {
@@ -1601,12 +1804,22 @@ type RuntimeSettings = {
   providerId?: string | null
 }
 
+function isKnownRuntimeProviderId(
+  providerId: string,
+  providers: Array<{ id: string }>,
+): boolean {
+  return (
+    isOpenAIOfficialProviderId(providerId) ||
+    providers.some((provider) => provider.id === providerId)
+  )
+}
+
 async function getRuntimeSettings(sessionId?: string): Promise<RuntimeSettings> {
   const runtimeOverride = sessionId ? runtimeOverrides.get(sessionId) : undefined
   if (runtimeOverride) {
     if (typeof runtimeOverride.providerId === 'string') {
       const { providers } = await providerService.listProviders()
-      const providerExists = providers.some((provider) => provider.id === runtimeOverride.providerId)
+      const providerExists = isKnownRuntimeProviderId(runtimeOverride.providerId, providers)
       if (!providerExists) {
         console.warn(
           `[WS] Ignoring stale runtime provider id for ${sessionId}: ${runtimeOverride.providerId}`,
@@ -1639,7 +1852,7 @@ async function getDefaultRuntimeSettings(): Promise<RuntimeSettings> {
   // Check if a custom provider is active
   const { providers, activeId } = await providerService.listProviders()
   let resolvedActiveId = activeId
-  if (activeId && !providers.some((provider) => provider.id === activeId)) {
+  if (activeId && !isKnownRuntimeProviderId(activeId, providers)) {
     console.warn(`[WS] Active provider id is stale, falling back to official provider: ${activeId}`)
     resolvedActiveId = null
     await providerService.activateOfficial()
@@ -1804,9 +2017,12 @@ async function waitForRuntimeTransitionBeforeUserTurn(
  * Send a message to a specific session's WebSocket (for use by services)
  */
 export function sendToSession(sessionId: string, message: ServerMessage): boolean {
-  const ws = activeSessions.get(sessionId)
-  if (!ws) return false
-  ws.send(JSON.stringify(message))
+  const clients = activeSessions.get(sessionId)
+  if (!clients || clients.size === 0) return false
+  const payload = JSON.stringify(message)
+  for (const ws of clients) {
+    ws.send(payload)
+  }
   return true
 }
 
@@ -1869,11 +2085,14 @@ export function closeSessionConnection(sessionId: string, reason = 'session clos
   conversationService.clearOutputCallbacks(sessionId)
   cleanupSessionRuntimeState(sessionId)
 
-  const ws = activeSessions.get(sessionId)
-  if (!ws) return false
+  const clients = activeSessions.get(sessionId)
+  if (!clients || clients.size === 0) return false
 
   activeSessions.delete(sessionId)
-  ws.close(1000, reason)
+  for (const ws of clients) {
+    clientOutputCallbacks.delete(ws)
+    ws.close(1000, reason)
+  }
   return true
 }
 
@@ -1885,6 +2104,7 @@ export function __resetWebSocketHandlerStateForTests(): void {
   for (const timer of sessionCleanupTimers.values()) clearTimeout(timer)
   for (const timer of prewarmIdleTimers.values()) clearTimeout(timer)
   activeSessions.clear()
+  clientOutputCallbacks.clear()
   sessionCleanupTimers.clear()
   prewarmIdleTimers.clear()
 }

@@ -52,6 +52,36 @@ describe('resolveAnthropicClientApiKey', () => {
   })
 })
 
+describe('shouldUseOpenAICodexTransport', () => {
+  test('lets ChatGPT Official marker override a saved Claude subscriber login', async () => {
+    const { shouldUseOpenAICodexTransport } = await import('./client.js')
+
+    expect(shouldUseOpenAICodexTransport({
+      hasOpenAIAuth: true,
+      isClaudeSubscriber: true,
+      forceOpenAICodex: true,
+      isOpenAIModel: true,
+      hasAnthropicAuthToken: false,
+      hasExplicitApiKey: false,
+      hasFallbackApiKey: false,
+    })).toBe(true)
+  })
+
+  test('keeps Claude subscriber transport when ChatGPT Official is not selected', async () => {
+    const { shouldUseOpenAICodexTransport } = await import('./client.js')
+
+    expect(shouldUseOpenAICodexTransport({
+      hasOpenAIAuth: true,
+      isClaudeSubscriber: true,
+      forceOpenAICodex: false,
+      isOpenAIModel: true,
+      hasAnthropicAuthToken: false,
+      hasExplicitApiKey: false,
+      hasFallbackApiKey: false,
+    })).toBe(false)
+  })
+})
+
 describe('getAnthropicClient', () => {
   test('passes bearer-token provider auth without an SDK api key', async () => {
     const { getAnthropicClient } = await import('./client.js')

@@ -2,7 +2,8 @@
  * Haha OpenAI OAuth REST API
  *
  * POST   /api/haha-openai-oauth/start    — 生成 PKCE+state,返回 authorize URL
- * GET    /callback/openai                — 用户浏览器 redirect 到此,完成 token 交换
+ * GET    /auth/callback                  — 用户浏览器 redirect 到此,完成 token 交换
+ * GET    /callback/openai                — 兼容旧路径
  * GET    /api/haha-openai-oauth          — 查询当前登录状态(不回传 token 本体)
  * DELETE /api/haha-openai-oauth          — 登出,删除 token 文件
  */
@@ -41,7 +42,7 @@ export async function handleHahaOpenAIOAuthApi(
       if (!parsed.success) {
         throw ApiError.badRequest('serverPort (positive integer) required')
       }
-      const session = hahaOpenAIOAuthService.startSession({
+      const session = await hahaOpenAIOAuthService.startSession({
         serverPort: parsed.data.serverPort,
       })
       return Response.json({

@@ -985,15 +985,15 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
               disabled={isWorkspaceMissing}
               rows={1}
               className={`w-full resize-none bg-transparent text-sm leading-relaxed text-[var(--color-text-primary)] outline-none placeholder:text-[var(--color-text-tertiary)] disabled:opacity-50 ${
-                useCompactControls ? 'py-1.5 pb-14' : 'py-2 pb-12'
+                useCompactControls ? 'py-1.5' : 'py-2'
               }`}
             />
           )}
 
-          <div className={isHeroComposer
+          <div data-testid="chat-input-toolbar" className={isHeroComposer
             ? 'flex items-center justify-between border-t border-[var(--color-border-separator)] pt-3'
-            : `absolute bottom-0 left-0 right-0 flex items-center justify-between border-t border-[var(--color-border-separator)] ${
-              useCompactControls ? 'gap-2 px-2.5 py-2' : 'px-3 py-3'
+            : `mt-2 flex items-center justify-between border-t border-[var(--color-border-separator)] ${
+              useCompactControls ? '-mx-3 -mb-3 gap-2 px-2.5 py-2' : '-mx-4 -mb-4 px-3 py-3'
             }`}>
             <div className="flex min-w-0 items-center gap-2">
               {!isMemberSession && (

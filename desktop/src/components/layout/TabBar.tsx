@@ -1,4 +1,5 @@
-import { forwardRef, useRef, useState, useEffect, useCallback } from 'react'
+import { forwardRef, useMemo, useRef, useState, useEffect, useCallback } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import {
   SCHEDULED_TAB_ID,
   SETTINGS_TAB_ID,
@@ -44,6 +45,13 @@ export function TabBar() {
   const activeTabId = useTabStore((s) => s.activeTabId)
   const setActiveTab = useTabStore((s) => s.setActiveTab)
   const closeTab = useTabStore((s) => s.closeTab)
+  const sessionTabIds = useMemo(
+    () => tabs.filter((tab) => isSessionTab(tab)).map((tab) => tab.sessionId),
+    [tabs],
+  )
+  const activeChatSessionIds = useChatStore(useShallow((s) =>
+    sessionTabIds.filter((sessionId) => s.sessions[sessionId]?.chatState !== 'idle')
+  ))
   const disconnectSession = useChatStore((s) => s.disconnectSession)
   const activeTab = tabs.find((tab) => tab.sessionId === activeTabId) ?? null
   const isActiveSessionTab = isSessionTab(activeTab) || isSessionTabId(activeTabId)
@@ -75,6 +83,16 @@ export function TabBar() {
   const tabRefs = useRef(new Map<string, HTMLDivElement | null>())
   const startDraggingRef = useRef<(() => Promise<void>) | null>(null)
   const t = useTranslation()
+  const runningSessionIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const tab of tabs) {
+      if (isSessionTab(tab) && tab.status === 'running') ids.add(tab.sessionId)
+    }
+    for (const sessionId of activeChatSessionIds) {
+      ids.add(sessionId)
+    }
+    return ids
+  }, [activeChatSessionIds, tabs])
 
   useEffect(() => {
     if (!isTauri) return
@@ -332,10 +350,12 @@ export function TabBar() {
             key={tab.sessionId}
             ref={(node) => { tabRefs.current.set(tab.sessionId, node) }}
             tab={tab}
+            isRunning={runningSessionIds.has(tab.sessionId)}
             isActive={tab.sessionId === activeTabId}
             isDragOver={dragOverIndex === index}
             isDragging={tab.sessionId === draggingSessionId}
             dragOffsetX={tab.sessionId === draggingSessionId ? dragOffsetX : 0}
+            runningLabel={t('tabs.sessionRunning')}
             onClick={() => handleTabClick(tab.sessionId)}
             onClose={() => handleClose(tab.sessionId)}
             onContextMenu={(e) => handleContextMenu(e, tab.sessionId)}
@@ -473,15 +493,17 @@ export function TabBar() {
 
 const TabItem = forwardRef<HTMLDivElement, {
   tab: Tab
+  isRunning: boolean
   isActive: boolean
   isDragOver: boolean
   isDragging: boolean
   dragOffsetX: number
+  runningLabel: string
   onClick: () => void
   onClose: () => void
   onContextMenu: (e: React.MouseEvent) => void
   onMouseDown: (event: React.MouseEvent) => void
-}>(({ tab, isActive, isDragOver, isDragging, dragOffsetX, onClick, onClose, onContextMenu, onMouseDown }, ref) => {
+}>(({ tab, isRunning, isActive, isDragOver, isDragging, dragOffsetX, runningLabel, onClick, onClose, onContextMenu, onMouseDown }, ref) => {
   return (
     <div
       ref={ref}
@@ -506,8 +528,12 @@ const TabItem = forwardRef<HTMLDivElement, {
         transform: isDragging ? `translateX(${dragOffsetX}px) scale(1.02)` : undefined,
       }}
     >
-      {tab.type === 'session' && tab.status === 'running' && (
-        <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-success)] animate-pulse flex-shrink-0" />
+      {tab.type === 'session' && isRunning && (
+        <span
+          className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-[var(--color-success)] animate-pulse"
+          aria-label={runningLabel}
+          title={runningLabel}
+        />
       )}
       {tab.type === 'session' && tab.status === 'error' && (
         <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-error)] flex-shrink-0" />

@@ -17,6 +17,7 @@ describe('ConversationService', () => {
   let originalOAuthToken: string | undefined
   let originalProviderManagedByHost: string | undefined
   let originalDiagnosticsFile: string | undefined
+  let originalAttributionHeader: string | undefined
   let originalHome: string | undefined
   let originalPath: string | undefined
   let originalShell: string | undefined
@@ -34,6 +35,7 @@ describe('ConversationService', () => {
     originalOAuthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN
     originalProviderManagedByHost = process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST
     originalDiagnosticsFile = process.env.CLAUDE_CODE_DIAGNOSTICS_FILE
+    originalAttributionHeader = process.env.CLAUDE_CODE_ATTRIBUTION_HEADER
     originalHome = process.env.HOME
     originalPath = process.env.PATH
     originalShell = process.env.SHELL
@@ -51,6 +53,7 @@ describe('ConversationService', () => {
     delete process.env.CLAUDE_CODE_ENTRYPOINT
     delete process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST
     delete process.env.CLAUDE_CODE_DIAGNOSTICS_FILE
+    delete process.env.CLAUDE_CODE_ATTRIBUTION_HEADER
     process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV = '1'
     resetTerminalShellEnvironmentCacheForTests()
   })
@@ -82,6 +85,9 @@ describe('ConversationService', () => {
 
     if (originalDiagnosticsFile === undefined) delete process.env.CLAUDE_CODE_DIAGNOSTICS_FILE
     else process.env.CLAUDE_CODE_DIAGNOSTICS_FILE = originalDiagnosticsFile
+
+    if (originalAttributionHeader === undefined) delete process.env.CLAUDE_CODE_ATTRIBUTION_HEADER
+    else process.env.CLAUDE_CODE_ATTRIBUTION_HEADER = originalAttributionHeader
 
     if (originalHome === undefined) delete process.env.HOME
     else process.env.HOME = originalHome
@@ -133,6 +139,7 @@ describe('ConversationService', () => {
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe('test-token')
     expect(env.ANTHROPIC_BASE_URL).toBe('https://example.invalid/anthropic')
     expect(env.ANTHROPIC_MODEL).toBe('test-model')
+    expect(env.CLAUDE_CODE_ATTRIBUTION_HEADER).toBe('0')
     expect(env.CLAUDE_CODE_DIAGNOSTICS_FILE).toBe(path.join(tmpDir, 'cc-haha', 'diagnostics', 'cli-diagnostics.jsonl'))
     expect(env.CLAUDE_COWORK_MEMORY_PATH_OVERRIDE).toBe(
       `${path.join(tmpDir, 'projects', 'D--workspace-code-myself-code-cc-haha', 'memory')}${path.sep}`,
@@ -200,6 +207,29 @@ describe('ConversationService', () => {
     expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined()
     expect(env.ANTHROPIC_MODEL).toBeUndefined()
+  })
+
+  test('buildChildEnv injects General network timeout and manual proxy for CLI requests', async () => {
+    await fs.writeFile(
+      path.join(tmpDir, 'settings.json'),
+      JSON.stringify({
+        network: {
+          aiRequestTimeoutMs: 180_000,
+          proxy: {
+            mode: 'manual',
+            url: ' http://127.0.0.1:7890 ',
+          },
+        },
+      }),
+      'utf-8',
+    )
+
+    const service = new ConversationService() as any
+    const env = (await service.buildChildEnv('/tmp')) as Record<string, string>
+
+    expect(env.API_TIMEOUT_MS).toBe('180000')
+    expect(env.HTTP_PROXY).toBe('http://127.0.0.1:7890')
+    expect(env.HTTPS_PROXY).toBe('http://127.0.0.1:7890')
   })
 
   test('buildChildEnv injects CLAUDE_CODE_OAUTH_TOKEN when official mode + haha oauth token exists', async () => {
@@ -280,6 +310,7 @@ describe('ConversationService', () => {
     expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('kimi-k2.6')
     expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('kimi-k2.6')
     expect(env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST).toBe('1')
+    expect(env.CLAUDE_CODE_ATTRIBUTION_HEADER).toBe('0')
     expect(env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined()
   })
 
@@ -307,6 +338,7 @@ describe('ConversationService', () => {
 
     expect(env.ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:3456/proxy/providers/${provider.id}`)
     expect(env.ANTHROPIC_MODEL).toBe('new-provider-sonnet')
+    expect(env.CLAUDE_CODE_ATTRIBUTION_HEADER).toBe('0')
   })
 
   test('buildChildEnv clears stale api key for bearer-token providers', async () => {
@@ -335,7 +367,46 @@ describe('ConversationService', () => {
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe('provider-key')
     expect(env.ANTHROPIC_API_KEY).toBe('')
     expect(env.ANTHROPIC_MODEL).toBe('claude-sonnet-4-6')
-    expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBeUndefined()
+    expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe('none')
+    expect(env.CLAUDE_CODE_ATTRIBUTION_HEADER).toBe('1')
+  })
+
+  test('buildChildEnv lets General network timeout override provider preset timeouts', async () => {
+    await fs.writeFile(
+      path.join(tmpDir, 'settings.json'),
+      JSON.stringify({
+        network: {
+          aiRequestTimeoutMs: 180_000,
+          proxy: { mode: 'system', url: '' },
+        },
+      }),
+      'utf-8',
+    )
+
+    const providerService = new ProviderService()
+    const provider = await providerService.addProvider({
+      presetId: 'shengsuanyun',
+      name: 'Shengsuanyun',
+      apiKey: 'provider-key',
+      baseUrl: 'https://router.shengsuanyun.com/api',
+      apiFormat: 'anthropic',
+      models: {
+        main: 'anthropic/claude-sonnet-4.6',
+        haiku: 'anthropic/claude-haiku-4.5:thinking',
+        sonnet: 'anthropic/claude-sonnet-4.6',
+        opus: 'anthropic/claude-opus-4.7',
+      },
+    })
+
+    const service = new ConversationService() as any
+    const env = (await service.buildChildEnv('/tmp', undefined, {
+      providerId: provider.id,
+      model: 'anthropic/claude-sonnet-4.6',
+    })) as Record<string, string>
+
+    expect(env.ANTHROPIC_BASE_URL).toBe('https://router.shengsuanyun.com/api')
+    expect(env.API_TIMEOUT_MS).toBe('180000')
+    expect(env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1')
   })
 
   test('buildChildEnv can force official auth even when a custom default provider exists', async () => {
@@ -364,6 +435,49 @@ describe('ConversationService', () => {
     expect(env.ANTHROPIC_API_KEY).toBeUndefined()
     expect(env.CLAUDE_CODE_ENTRYPOINT).toBe('claude-desktop')
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('forced-official-token')
+  })
+
+  test('buildChildEnv does not inject Claude OAuth when ChatGPT Official is active', async () => {
+    const providerService = new ProviderService()
+    await providerService.activateProvider('openai-official')
+
+    const { hahaOAuthService } = await import('../services/hahaOAuthService.js')
+    await hahaOAuthService.saveTokens({
+      accessToken: 'claude-oauth-token-that-must-not-be-used',
+      refreshToken: 'claude-refresh-token',
+      expiresAt: Date.now() + 30 * 60_000,
+      scopes: ['user:inference'],
+      subscriptionType: 'max',
+    })
+
+    const service = new ConversationService() as any
+    const env = (await service.buildChildEnv('/tmp')) as Record<string, string>
+
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined()
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined()
+    expect(env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined()
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined()
+  })
+
+  test('buildChildEnv injects ChatGPT Official runtime env for session-scoped provider selection', async () => {
+    const service = new ConversationService() as any
+    const env = (await service.buildChildEnv('/tmp', undefined, {
+      providerId: 'openai-official',
+    })) as Record<string, string>
+
+    expect(env.CC_HAHA_OPENAI_OAUTH_PROVIDER).toBe('1')
+    expect(env.OPENAI_CODEX_OAUTH_FILE).toBe(
+      path.join(tmpDir, 'cc-haha', 'openai-oauth.json'),
+    )
+    expect(env.ANTHROPIC_MODEL).toBe('gpt-5.3-codex')
+    expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.4')
+    expect(env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST).toBe('1')
+    expect(env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined()
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined()
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined()
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined()
   })
 
   test('buildChildEnv does not leak inherited CLAUDE_CODE_OAUTH_TOKEN when official token is unavailable', async () => {

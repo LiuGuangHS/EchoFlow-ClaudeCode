@@ -19,8 +19,8 @@ import { getShellConfigPaths } from '../../utils/shellConfig.js'
 import { getUserBinDir } from '../../utils/xdg.js'
 
 const DESKTOP_CLI_NAME = 'claude-haha'
-const PATH_BLOCK_START = '# >>> Claude Code Haha PATH >>>'
-const PATH_BLOCK_END = '# <<< Claude Code Haha PATH <<<'
+const PATH_BLOCK_START = '# >>> EchoFlowAI-Claude-Code PATH >>>'
+const PATH_BLOCK_END = '# <<< EchoFlowAI-Claude-Code PATH <<<'
 const WINDOWS_PATH_TARGET = 'Windows User PATH'
 const WINDOWS_USER_BIN_EXPR = '%USERPROFILE%\\.local\\bin'
 
@@ -166,7 +166,7 @@ async function ensureDesktopCliLauncherInstalledImpl(): Promise<DesktopCliLaunch
   let lastError: string | null = null
 
   try {
-    await syncLauncherBinary(sourcePath, launcherPath)
+    await syncLauncher(sourcePath, launcherPath)
   } catch (error) {
     lastError = error instanceof Error ? error.message : String(error)
   }
@@ -236,8 +236,13 @@ function resolveBundledSidecarSourcePath(): string | null {
   return launcher.command
 }
 
-async function syncLauncherBinary(sourcePath: string, targetPath: string) {
+async function syncLauncher(sourcePath: string, targetPath: string) {
   await mkdir(dirname(targetPath), { recursive: true })
+
+  if (process.platform !== 'win32') {
+    await syncUnixLauncherWrapper(sourcePath, targetPath)
+    return
+  }
 
   if (await filesMatch(sourcePath, targetPath)) {
     return
@@ -260,6 +265,57 @@ async function syncLauncherBinary(sourcePath: string, targetPath: string) {
   } finally {
     await unlink(tempPath).catch(() => undefined)
   }
+}
+
+async function syncUnixLauncherWrapper(sourcePath: string, targetPath: string) {
+  const wrapper = buildUnixLauncherWrapper(sourcePath)
+
+  const existing = await readFile(targetPath, 'utf8').catch(() => null)
+  if (existing === wrapper) {
+    await chmod(targetPath, 0o755)
+    return
+  }
+
+  const tempPath = `${targetPath}.tmp.${process.pid}.${Date.now()}`
+  await writeFile(tempPath, wrapper, { encoding: 'utf8', mode: 0o755 })
+
+  try {
+    await rename(tempPath, targetPath)
+    await chmod(targetPath, 0o755)
+  } finally {
+    await unlink(tempPath).catch(() => undefined)
+  }
+}
+
+function buildUnixLauncherWrapper(sourcePath: string) {
+  const quotedSource = shellSingleQuote(sourcePath)
+  const quotedAppRoot = shellSingleQuote(dirname(sourcePath))
+
+  return `#!/usr/bin/env bash
+set -euo pipefail
+
+SIDECAR=${quotedSource}
+APP_ROOT=${quotedAppRoot}
+
+if [[ ! -x "$SIDECAR" ]]; then
+  echo "claude-haha launcher could not find bundled sidecar: $SIDECAR" >&2
+  exit 127
+fi
+
+# Bun-compiled macOS sidecars can be suspended by job control while reading the
+# controlling TTY directly. A nested PTY keeps the terminal foreground handoff
+# stable for the interactive TUI; non-interactive commands keep direct exec
+# semantics and exit codes.
+if [[ "$(uname -s)" == "Darwin" && -t 0 && -t 1 && -x /usr/bin/script ]]; then
+  exec /usr/bin/script -q /dev/null "$SIDECAR" cli --app-root "$APP_ROOT" "$@"
+fi
+
+exec "$SIDECAR" cli --app-root "$APP_ROOT" "$@"
+`
+}
+
+function shellSingleQuote(value: string) {
+  return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
 async function replaceWindowsBinary(tempPath: string, targetPath: string) {

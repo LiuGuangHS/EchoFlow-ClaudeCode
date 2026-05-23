@@ -9,6 +9,8 @@ export type ProviderAuthStrategy =
   | 'dual_same_token'
   | 'dual_dummy'
 
+export type ProviderRuntimeKind = 'anthropic_compatible' | 'openai_oauth'
+
 export type ModelMapping = {
   main: string
   haiku: string
@@ -26,6 +28,7 @@ export type SavedProvider = {
   authStrategy?: ProviderAuthStrategy
   baseUrl: string
   apiFormat: ApiFormat
+  runtimeKind?: ProviderRuntimeKind
   models: ModelMapping
   autoCompactWindow?: number
   modelContextWindows?: ModelContextWindows
@@ -39,6 +42,7 @@ export type CreateProviderInput = {
   authStrategy?: ProviderAuthStrategy
   baseUrl: string
   apiFormat?: ApiFormat
+  runtimeKind?: ProviderRuntimeKind
   models: ModelMapping
   autoCompactWindow?: number
   modelContextWindows?: ModelContextWindows
@@ -51,6 +55,7 @@ export type UpdateProviderInput = {
   authStrategy?: ProviderAuthStrategy
   baseUrl?: string
   apiFormat?: ApiFormat
+  runtimeKind?: ProviderRuntimeKind
   models?: ModelMapping
   autoCompactWindow?: number | null
   modelContextWindows?: ModelContextWindows | null

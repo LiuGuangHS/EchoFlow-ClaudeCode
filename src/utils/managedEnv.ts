@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { isRemoteManagedSettingsEligible } from '../services/remoteManagedSettings/syncCache.js'
+import { mergeActiveProviderManagedEnv } from '../server/services/providerRuntimeEnv.js'
 import { clearCACertsCache } from './caCerts.js'
 import { getGlobalConfig } from './config.js'
 import { getClaudeConfigHomeDir, isEnvTruthy } from './envUtils.js'
@@ -104,9 +105,10 @@ function getCcHahaSettingsEnv(): Record<string, string> {
     const ccHahaSettings = join(getClaudeConfigHomeDir(), 'cc-haha', 'settings.json')
     const raw = readFileSync(ccHahaSettings, 'utf-8')
     const parsed = JSON.parse(raw) as { env?: Record<string, string> }
-    return normalizeLegacyDeepSeekManagedEnv(parsed.env ?? {}).env
+    const settingsEnv = normalizeLegacyDeepSeekManagedEnv(parsed.env ?? {}).env
+    return mergeActiveProviderManagedEnv(settingsEnv, getClaudeConfigHomeDir())
   } catch {
-    return {}
+    return mergeActiveProviderManagedEnv({}, getClaudeConfigHomeDir())
   }
 }
 

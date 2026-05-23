@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { sessionsApi } from '../api/sessions'
+import { dropSession as dropVirtualHeightSession } from '../components/chat/virtualHeightCache'
 
 const TAB_STORAGE_KEY = 'cc-haha-open-tabs'
 
@@ -108,6 +109,7 @@ export const useTabStore = create<TabStore>((set, get) => ({
 
     set({ tabs: newTabs, activeTabId: newActiveId })
     get().saveTabs()
+    dropVirtualHeightSession(sessionId)
   },
 
   setActiveTab: (sessionId) => {

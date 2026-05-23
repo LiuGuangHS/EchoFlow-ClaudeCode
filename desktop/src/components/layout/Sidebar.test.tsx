@@ -64,6 +64,7 @@ vi.mock('../../i18n', () => ({
       'sidebar.expandProject': 'Expand {project}',
       'sidebar.collapseProject': 'Collapse {project}',
       'sidebar.worktree': 'worktree',
+      'sidebar.sessionRunning': 'Session running',
       'common.retry': 'Retry',
       'common.loading': 'Loading...',
       'common.cancel': 'Cancel',
@@ -90,6 +91,11 @@ vi.mock('../../i18n', () => ({
       'sidebar.batchDeleteFailed': '{count} sessions could not be deleted.',
       'sidebar.collapse': 'Collapse sidebar',
       'sidebar.expand': 'Expand sidebar',
+      'session.lastUpdated': 'last updated {time}',
+      'session.timeJustNow': 'just now',
+      'session.timeMinutes': '{n}m ago',
+      'session.timeHours': '{n}h ago',
+      'session.timeDays': '{n}d ago',
     }
 
     let text = translations[key] ?? key
@@ -774,6 +780,39 @@ describe('Sidebar', () => {
     expect(screen.getByRole('button', { name: /Worktree Session/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Subdir Session/ })).toBeInTheDocument()
     expect(screen.getAllByText('worktree')).toHaveLength(1)
+  })
+
+  it('right-aligns running status, worktree marker, and update time on session rows', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-05-19T12:00:00.000Z'))
+
+    useSessionStore.setState({
+      sessions: [
+        {
+          ...makeSession('running-worktree', 'Running Worktree', '/workspace/repo/.claude/worktrees/desktop-main-12345678', '2026-05-19T07:00:00.000Z'),
+          projectRoot: '/workspace/repo',
+        },
+        makeSession('idle-source', 'Idle Source', '/workspace/repo', '2026-05-19T11:40:00.000Z'),
+      ],
+    })
+    useTabStore.setState({
+      tabs: [
+        { sessionId: 'running-worktree', title: 'Running Worktree', type: 'session', status: 'running' },
+        { sessionId: 'idle-source', title: 'Idle Source', type: 'session', status: 'idle' },
+      ],
+      activeTabId: 'running-worktree',
+    })
+
+    render(<Sidebar />)
+
+    const runningRow = screen.getByRole('button', { name: /Running Worktree/ })
+    expect(within(runningRow).getByLabelText('Session running')).toBeInTheDocument()
+    expect(within(runningRow).getByText('worktree')).toHaveClass('sr-only')
+    expect(within(runningRow).getByText('5h ago')).toBeInTheDocument()
+
+    const idleRow = screen.getByRole('button', { name: /Idle Source/ })
+    expect(within(idleRow).queryByLabelText('Session running')).not.toBeInTheDocument()
+    expect(within(idleRow).getByText('20m ago')).toBeInTheDocument()
   })
 
   it('shows a toast when session creation fails', async () => {
