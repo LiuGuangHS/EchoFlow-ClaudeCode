@@ -264,4 +264,42 @@ describe('sessionStore', () => {
       workDir: '/workspace/repo/branches/session-branch-existing',
     })
   })
+
+  it('preserves sourceSessionId and sourceMessageId in the optimistic branch session', async () => {
+    branchMock.mockResolvedValue({
+      sessionId: 'session-branch-2',
+      title: 'Fork exploration',
+      workDir: '/workspace/repo/branches/session-branch-2',
+      sourceSessionId: 'session-source-2',
+      targetMessageId: 'transcript-message-2',
+    })
+    listMock.mockImplementation(() => new Promise(() => {}))
+    useSessionStore.setState({
+      sessions: [{
+        id: 'session-source-2',
+        title: 'Source session',
+        createdAt: '2026-05-19T00:00:00.000Z',
+        modifiedAt: '2026-05-19T00:00:00.000Z',
+        messageCount: 6,
+        projectPath: '/workspace/repo',
+        projectRoot: '/workspace/repo',
+        workDir: '/workspace/repo',
+        workDirExists: true,
+      }],
+    })
+
+    const result = await useSessionStore.getState().branchSession(
+      'session-source-2',
+      'transcript-message-2',
+      { title: 'Fork exploration' },
+    )
+
+    expect(result.sessionId).toBe('session-branch-2')
+
+    const forkedSession = useSessionStore.getState().sessions.find((s) => s.id === 'session-branch-2')
+    expect(forkedSession).toBeDefined()
+    expect(forkedSession!.sourceSessionId).toBe('session-source-2')
+    expect(forkedSession!.sourceMessageId).toBe('transcript-message-2')
+    expect(forkedSession!.title).toBe('Fork exploration')
+  })
 })

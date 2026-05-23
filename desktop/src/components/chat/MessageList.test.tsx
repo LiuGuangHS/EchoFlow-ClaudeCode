@@ -2725,26 +2725,35 @@ describe('MessageList nested tool calls', () => {
     })
   })
 
-  it('hides branch actions while the current session is still running', () => {
+  it('hides branch actions for the in-progress turn while preserving them for completed turns', () => {
     useChatStore.setState({
       sessions: {
         [ACTIVE_TAB]: makeSessionState({
           chatState: 'streaming',
           streamingText: 'partial',
           messages: [
+            // Completed turn — should still show branch buttons
             {
               id: 'local-user-1',
               transcriptMessageId: 'transcript-user-1',
               type: 'user_text',
-              content: '从这里开始',
+              content: 'Starting point',
               timestamp: 1,
             },
             {
               id: 'local-assistant-1',
               transcriptMessageId: 'transcript-assistant-1',
               type: 'assistant_text',
-              content: '这是完成的答复。',
+              content: 'This is a completed reply.',
               timestamp: 2,
+            },
+            // In-progress turn (no response yet) — should NOT show branch buttons
+            {
+              id: 'local-user-2',
+              transcriptMessageId: 'transcript-user-2',
+              type: 'user_text',
+              content: 'A new question without a reply yet',
+              timestamp: 3,
             },
           ],
         }),
@@ -2753,7 +2762,19 @@ describe('MessageList nested tool calls', () => {
 
     render(<MessageList />)
 
-    expect(screen.queryByRole('button', { name: 'Fork a new conversation' })).toBeNull()
+    // Completed turn messages are still branchable
+    const branchButtons = screen.getAllByRole('button', { name: 'Fork a new conversation' })
+    expect(branchButtons).toHaveLength(2)
+
+    // The first user message should be branchable (has response)
+    expect(branchButtons[0]!.closest('[data-message-actions]')).toBeTruthy()
+    // The second user message should NOT appear in branch buttons
+    const secondUserBranchBtn = screen
+      .queryAllByRole('button', { name: 'Fork a new conversation' })
+      .filter((btn) =>
+        btn.closest('[data-message-actions]')?.textContent?.includes('A new question')
+      )
+    expect(secondUserBranchBtn).toHaveLength(0)
   })
 
   it('keeps historical sessions readable when turn checkpoint payloads are missing', async () => {

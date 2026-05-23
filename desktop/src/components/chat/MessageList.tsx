@@ -1217,13 +1217,7 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
   })
   const [isVirtualScrollActive, setIsVirtualScrollActive] = useState(false)
   const [measuredItemsVersion, setMeasuredItemsVersion] = useState(0)
-  const branchActionsDisabled =
-    isMemberSession ||
-    chatState !== 'idle' ||
-    streamingText.trim().length > 0 ||
-    Boolean(activeThinkingId) ||
-    Boolean(sessionState?.activeToolUseId) ||
-    Boolean(sessionState?.activeToolName)
+  const branchActionsDisabled = isMemberSession
   const hasCompactingDivider = messages.some((message) =>
     message.type === 'compact_summary' && message.phase === 'compacting')
 

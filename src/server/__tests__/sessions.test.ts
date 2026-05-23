@@ -581,6 +581,39 @@ describe('SessionService', () => {
     expect(resultA.sessions[0]!.id).toBe(id1)
   })
 
+  it('should expose sourceSessionId and sourceMessageId for forked sessions', async () => {
+    const sourceSessionId = 'parent-session-0001-0000-0000-000000000000'
+    const forkSessionId = 'forked-session-0001-0000-0000-000000000000'
+    const forkMessageUuid = crypto.randomUUID()
+
+    await writeSessionFile('-tmp-project', forkSessionId, [
+      makeSnapshotEntry(),
+      {
+        parentUuid: null,
+        isSidechain: false,
+        type: 'user',
+        message: { role: 'user', content: 'Forked from parent' },
+        uuid: crypto.randomUUID(),
+        sessionId: forkSessionId,
+        timestamp: new Date().toISOString(),
+        cwd: '/tmp/project',
+        forkedFrom: {
+          sessionId: sourceSessionId,
+          messageUuid: forkMessageUuid,
+        },
+      },
+      makeAssistantEntry('Response in fork'),
+    ])
+
+    const result = await service.listSessions()
+    expect(result.total).toBe(1)
+
+    const session = result.sessions[0]!
+    expect(session.id).toBe(forkSessionId)
+    expect(session.sourceSessionId).toBe(sourceSessionId)
+    expect(session.sourceMessageId).toBe(forkMessageUuid)
+  })
+
   // --------------------------------------------------------------------------
   // getSession
   // --------------------------------------------------------------------------

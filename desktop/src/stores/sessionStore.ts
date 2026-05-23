@@ -125,6 +125,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       projectRoot: sourceSession?.projectRoot ?? sourceSession?.workDir ?? result.workDir ?? null,
       workDir: result.workDir ?? sourceSession?.workDir ?? null,
       workDirExists: true,
+      sourceSessionId: result.sourceSessionId ?? sourceSessionId,
+      sourceMessageId: result.targetMessageId ?? targetMessageId,
     }
 
     set((state) => ({
