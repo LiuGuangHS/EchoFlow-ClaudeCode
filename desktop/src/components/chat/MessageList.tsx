@@ -799,6 +799,7 @@ const VIRTUAL_MAX_ITEM_HEIGHT = 24_000
 // convert those into bottom-scroll corrections.
 const CONTENT_RESIZE_FOLLOW_MIN_DELTA_PX = 2
 const EMPTY_MESSAGES: UIMessage[] = []
+const EMPTY_AGENT_TASK_NOTIFICATIONS: Record<string, AgentTaskNotification> = {}
 const CHAT_SCROLL_AREA_CLASS = [
   'chat-scroll-area',
   '[scrollbar-width:auto]',
@@ -1222,7 +1223,7 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
   const chatState = sessionState?.chatState ?? 'idle'
   const streamingText = sessionState?.streamingText ?? ''
   const activeThinkingId = sessionState?.activeThinkingId ?? null
-  const agentTaskNotifications = sessionState?.agentTaskNotifications ?? {}
+  const agentTaskNotifications = sessionState?.agentTaskNotifications ?? EMPTY_AGENT_TASK_NOTIFICATIONS
   const activeAskUserQuestionToolUseId =
     sessionState?.pendingPermission?.toolName === 'AskUserQuestion'
       ? sessionState.pendingPermission.toolUseId
