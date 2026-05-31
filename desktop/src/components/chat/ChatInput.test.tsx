@@ -594,6 +594,69 @@ describe('ChatInput file mentions', () => {
     })
   })
 
+  it('inserts queued inline workspace citations at the current cursor and keeps file context attached', async () => {
+    render(<ChatInput compact />)
+
+    const input = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.change(input, {
+      target: {
+        value: '请看实现',
+        selectionStart: 2,
+        selectionEnd: 2,
+      },
+    })
+    input.setSelectionRange(2, 2)
+
+    act(() => {
+      useChatStore.getState().queueComposerInsertion(sessionId, {
+        text: '@"src/App.tsx"',
+        reference: {
+          kind: 'file',
+          path: 'src/App.tsx',
+          absolutePath: '/repo/src/App.tsx',
+          name: 'App.tsx',
+        },
+      })
+    })
+
+    await waitFor(() => {
+      expect(input.value).toBe('请看 @"src/App.tsx" 实现')
+    })
+    expect(screen.getByText('App.tsx')).toBeInTheDocument()
+    expect(useWorkspaceChatContextStore.getState().referencesBySession[sessionId]).toMatchObject([
+      {
+        kind: 'file',
+        path: 'src/App.tsx',
+        absolutePath: '/repo/src/App.tsx',
+        name: 'App.tsx',
+      },
+    ])
+
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(mocks.wsSend).toHaveBeenCalledWith(sessionId, {
+      type: 'user_message',
+      content: '请看 @"src/App.tsx" 实现',
+      attachments: [{
+        type: 'file',
+        name: 'App.tsx',
+        path: '/repo/src/App.tsx',
+        isDirectory: undefined,
+        lineStart: undefined,
+        lineEnd: undefined,
+        note: undefined,
+        quote: undefined,
+      }],
+    })
+    const messages = useChatStore.getState().sessions[sessionId]?.messages ?? []
+    expect(messages[messages.length - 1]).toMatchObject({
+      type: 'user_text',
+      content: '请看 @"src/App.tsx" 实现',
+      modelContent: '@"/repo/src/App.tsx" 请看 @"src/App.tsx" 实现',
+      attachments: [{ name: 'App.tsx', path: 'src/App.tsx' }],
+    })
+  })
+
   it('turns a selected @ directory into a workspace chip and model path reference', async () => {
     mocks.search.mockResolvedValueOnce({
       currentPath: '/repo',
@@ -855,6 +918,36 @@ describe('ChatInput file mentions', () => {
     expect(toolbar).toHaveClass('mt-2')
     expect(input).not.toHaveClass('pb-12')
     expect(input).not.toHaveClass('pb-14')
+  })
+
+  it('uses Ctrl or Command Enter to send when that composer preference is selected', async () => {
+    useSettingsStore.setState({
+      chatSendBehavior: 'modifierEnter',
+    })
+
+    render(<ChatInput />)
+
+    await waitFor(() => {
+      expect(mocks.getGitInfo).toHaveBeenCalledWith(sessionId)
+    })
+
+    const input = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.change(input, {
+      target: {
+        value: 'avoid accidental sends',
+        selectionStart: 'avoid accidental sends'.length,
+      },
+    })
+
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(mocks.wsSend).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true })
+    expect(mocks.wsSend).toHaveBeenCalledWith(sessionId, {
+      type: 'user_message',
+      content: 'avoid accidental sends',
+      attachments: [],
+    })
   })
 
   it('prioritizes active-session slash commands by command name when filtering', async () => {

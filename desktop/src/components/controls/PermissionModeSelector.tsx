@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
 import DOMPurify from 'dompurify'
-import { createPortal } from 'react-dom'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useChatStore } from '../../stores/chatStore'
 import { useSessionStore } from '../../stores/sessionStore'
@@ -10,6 +9,7 @@ import type { PermissionMode } from '../../types/settings'
 import { useMobileViewport } from '../../hooks/useMobileViewport'
 import { isTauriRuntime } from '../../lib/desktopRuntime'
 import { MobileBottomSheet } from '../shared/MobileBottomSheet'
+import { ActionDialog } from '../shared/ActionDialog'
 
 const MODE_ICONS: Record<PermissionMode, string> = {
   default: 'verified_user',
@@ -31,19 +31,16 @@ type Props = {
 export function PermissionModeSelector({ workDir: workDirProp, compact = false, value, onChange }: Props = {}) {
   const t = useTranslation()
   const isMobile = useMobileViewport() && !isTauriRuntime()
-  const { permissionMode: storeMode, setPermissionMode } = useSettingsStore()
+  const { permissionMode: storeMode } = useSettingsStore()
   const setSessionPermissionMode = useChatStore((s) => s.setSessionPermissionMode)
   const activeTabId = useTabStore((s) => s.activeTabId)
   const sessions = useSessionStore((s) => s.sessions)
-  const activeSessionId = useSessionStore((s) => s.activeSessionId)
   const [open, setOpen] = useState(false)
   const [confirmDialog, setConfirmDialog] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
 
   const isControlled = value !== undefined
-  const currentMode = isControlled ? value : storeMode
-
   const PERMISSION_ITEMS: Array<{
     value: PermissionMode
     label: string
@@ -87,7 +84,12 @@ export function PermissionModeSelector({ workDir: workDirProp, compact = false, 
     dontAsk: t('permMode.label.dontAsk'),
   }
 
-  const activeSession = sessions.find((s) => s.id === activeSessionId)
+  const activeSession = activeTabId
+    ? sessions.find((s) => s.id === activeTabId)
+    : null
+  const currentMode = isControlled
+    ? value
+    : (activeSession?.permissionMode as PermissionMode | undefined) || storeMode
   const workDir = workDirProp || activeSession?.workDir || '~'
   const compactButtonClass = compact
     ? isMobile
@@ -134,7 +136,6 @@ export function PermissionModeSelector({ workDir: workDirProp, compact = false, 
             if (isControlled) {
               onChange?.(item.value)
             } else {
-              void setPermissionMode(item.value)
               if (activeTabId) setSessionPermissionMode(activeTabId, item.value)
             }
             setOpen(false)
@@ -212,74 +213,60 @@ export function PermissionModeSelector({ workDir: workDirProp, compact = false, 
         )
       )}
 
-      {/* Bypass confirmation dialog */}
-      {confirmDialog && createPortal(
-        <div className={`fixed inset-0 z-[100] flex items-center justify-center bg-black/40 ${isMobile ? 'px-4' : 'pl-[var(--sidebar-width)] pr-4'}`} onClick={() => setConfirmDialog(false)}>
-          <div
-            className={`${isMobile ? 'w-full max-w-md' : 'w-[420px]'} rounded-2xl bg-[var(--color-surface-container-lowest)] border border-[var(--color-border)] shadow-[var(--shadow-dropdown)] overflow-hidden`}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Header */}
-            <div className="flex items-center gap-3 px-5 py-4 bg-[var(--color-error)]/8 border-b border-[var(--color-error)]/15">
-              <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-[var(--color-error)]/12">
-                <span className="material-symbols-outlined text-[22px] text-[var(--color-error)]">warning</span>
-              </div>
-              <div>
-                <div className="text-sm font-bold text-[var(--color-text-primary)]">{t('permMode.enableBypassTitle')}</div>
-                <div className="text-xs text-[var(--color-text-tertiary)] mt-0.5">{t('permMode.enableBypassSubtitle')}</div>
-              </div>
+      <ActionDialog
+        open={confirmDialog}
+        onClose={() => setConfirmDialog(false)}
+        title={t('permMode.enableBypassTitle')}
+        width={420}
+        body={(
+          <div className="space-y-3">
+            <p className="text-xs font-medium text-[var(--color-error)]">
+              {t('permMode.enableBypassSubtitle')}
+            </p>
+            <p
+              className="text-xs leading-relaxed text-[var(--color-text-secondary)]"
+              dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(t('permMode.enableBypassBody')) }}
+            />
+            <div className="flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-container)] px-3 py-2" title={workDir}>
+              <span className="material-symbols-outlined shrink-0 text-[16px] text-[var(--color-text-tertiary)]">folder</span>
+              <code className="truncate text-xs font-[var(--font-mono)] text-[var(--color-text-primary)]">{workDir}</code>
             </div>
-
-            {/* Body */}
-            <div className="px-5 py-4">
-              <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed mb-3" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(t('permMode.enableBypassBody')) }} />
-              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--color-surface-container)] border border-[var(--color-border)]" title={workDir}>
-                <span className="material-symbols-outlined text-[16px] text-[var(--color-text-tertiary)] shrink-0">folder</span>
-                <code className="text-xs font-[var(--font-mono)] text-[var(--color-text-primary)] truncate">{workDir}</code>
-              </div>
-              <ul className="mt-3 space-y-1.5 text-xs text-[var(--color-text-secondary)]">
-                <li className="flex items-start gap-2">
-                  <span className="material-symbols-outlined text-[14px] text-[var(--color-error)] mt-0.5">check</span>
-                  {t('permMode.permReadWrite')}
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="material-symbols-outlined text-[14px] text-[var(--color-error)] mt-0.5">check</span>
-                  {t('permMode.permShell')}
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="material-symbols-outlined text-[14px] text-[var(--color-error)] mt-0.5">check</span>
-                  {t('permMode.permPackages')}
-                </li>
-              </ul>
-            </div>
-
-            {/* Actions */}
-            <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-container-low)]">
-              <button
-                onClick={() => setConfirmDialog(false)}
-                className="px-4 py-2 text-xs font-semibold text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] rounded-lg transition-colors"
-              >
-                {t('common.cancel')}
-              </button>
-              <button
-                onClick={() => {
-                  if (isControlled) {
-                    onChange?.('bypassPermissions')
-                  } else {
-                    void setPermissionMode('bypassPermissions')
-                    if (activeTabId) setSessionPermissionMode(activeTabId, 'bypassPermissions')
-                  }
-                  setConfirmDialog(false)
-                }}
-                className="px-4 py-2 text-xs font-semibold text-white bg-[var(--color-error)] hover:opacity-90 rounded-lg transition-colors"
-              >
-                {t('permMode.enableBypassBtn')}
-              </button>
-            </div>
+            <ul className="space-y-1.5 text-xs text-[var(--color-text-secondary)]">
+              <li className="flex items-start gap-2">
+                <span className="material-symbols-outlined mt-0.5 text-[14px] text-[var(--color-error)]">check</span>
+                {t('permMode.permReadWrite')}
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="material-symbols-outlined mt-0.5 text-[14px] text-[var(--color-error)]">check</span>
+                {t('permMode.permShell')}
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="material-symbols-outlined mt-0.5 text-[14px] text-[var(--color-error)]">check</span>
+                {t('permMode.permPackages')}
+              </li>
+            </ul>
           </div>
-        </div>,
-        document.body,
-      )}
+        )}
+        actions={[
+          {
+            label: t('common.cancel'),
+            onClick: () => setConfirmDialog(false),
+            variant: 'secondary',
+          },
+          {
+            label: t('permMode.enableBypassBtn'),
+            onClick: () => {
+              if (isControlled) {
+                onChange?.('bypassPermissions')
+              } else if (activeTabId) {
+                setSessionPermissionMode(activeTabId, 'bypassPermissions')
+              }
+              setConfirmDialog(false)
+            },
+            variant: 'danger',
+          },
+        ]}
+      />
     </div>
   )
 }

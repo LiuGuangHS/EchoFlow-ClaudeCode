@@ -2,6 +2,11 @@
 import { CONTEXT_1M_BETA_HEADER } from '../constants/betas.js'
 import { getOpenAICodexContextWindowForModel } from '../services/openaiAuth/models.js'
 import { getGlobalConfig } from './config.js'
+import {
+  calculateContextBudget,
+  calculateContextPercentagesFromTokens,
+  type ProviderUsageTrust,
+} from './contextBudget.js'
 import { isEnvTruthy } from './envUtils.js'
 import { getCanonicalName } from './model/model.js'
 import { getModelCapability } from './model/modelCapabilities.js'
@@ -145,20 +150,12 @@ export function calculateContextPercentages(
     return { used: null, remaining: null }
   }
 
-  const totalInputTokens =
+  return calculateContextPercentagesFromTokens(
     currentUsage.input_tokens +
-    currentUsage.cache_creation_input_tokens +
-    currentUsage.cache_read_input_tokens
-
-  const usedPercentage = Math.round(
-    (totalInputTokens / contextWindowSize) * 100,
+      currentUsage.cache_creation_input_tokens +
+      currentUsage.cache_read_input_tokens,
+    contextWindowSize,
   )
-  const clampedUsed = Math.min(100, Math.max(0, usedPercentage))
-
-  return {
-    used: clampedUsed,
-    remaining: 100 - clampedUsed,
-  }
 }
 
 /**
@@ -184,7 +181,21 @@ export function calculateCurrentContextTokenTotal(
     cache_read_input_tokens: number
   } | null,
   contextWindow?: number,
+  options?: { hasMediaInput?: boolean; usageTrust?: ProviderUsageTrust },
 ): number {
+  const hasMediaInput = options?.hasMediaInput ?? false
+  const usageTrust = options?.usageTrust ?? 'high'
+
+  if (contextWindow !== undefined) {
+    return calculateContextBudget({
+      estimatedTokens,
+      contextWindow,
+      currentUsage,
+      usageTrust,
+      hasMediaInput,
+    }).usedTokens
+  }
+
   if (!currentUsage) return estimatedTokens
 
   const totalFromAPI =
@@ -193,8 +204,7 @@ export function calculateCurrentContextTokenTotal(
     currentUsage.cache_read_input_tokens +
     (currentUsage.output_tokens ?? 0)
 
-  const total = Math.max(estimatedTokens, totalFromAPI)
-  return contextWindow !== undefined ? Math.min(total, contextWindow) : total
+  return Math.max(estimatedTokens, totalFromAPI)
 }
 
 /**

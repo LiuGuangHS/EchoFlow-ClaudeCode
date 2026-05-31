@@ -19,6 +19,7 @@ const TAB_STORAGE_KEY = 'cc-haha-open-tabs'
 const SESSION_RUNTIME_STORAGE_KEY = 'cc-haha-session-runtime'
 const THEME_STORAGE_KEY = 'cc-haha-theme'
 const LOCALE_STORAGE_KEY = 'cc-haha-locale'
+const EFFORT_LEVELS = ['low', 'medium', 'high', 'max']
 
 function readJson(storage: StorageLike, key: string): unknown {
   const raw = storage.getItem(key)
@@ -88,7 +89,14 @@ function migrateSessionRuntime(storage: StorageLike, report: DesktopMigrationRep
       Object.entries(parsed).filter(([, selection]) => (
         isRecord(selection) &&
         typeof selection.modelId === 'string' &&
-        (selection.providerId === null || typeof selection.providerId === 'string')
+        (selection.providerId === null || typeof selection.providerId === 'string') &&
+        (
+          selection.effortLevel === undefined ||
+          (
+            typeof selection.effortLevel === 'string' &&
+            EFFORT_LEVELS.includes(selection.effortLevel)
+          )
+        )
       )),
     )
 

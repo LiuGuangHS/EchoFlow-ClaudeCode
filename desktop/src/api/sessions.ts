@@ -1,6 +1,7 @@
 import { api } from './client'
 import type { AgentTaskNotification } from '../types/chat'
 import type { SessionListItem, MessageEntry } from '../types/session'
+import type { PermissionMode } from '../types/settings'
 
 type SessionsResponse = { sessions: SessionListItem[]; total: number }
 type MessagesResponse = {
@@ -39,6 +40,7 @@ export type CreateSessionRepositoryOptions = {
 export type CreateSessionRequest = {
   workDir?: string
   repository?: CreateSessionRepositoryOptions
+  permissionMode?: PermissionMode
 }
 export type BranchSessionRequest = {
   targetMessageId: string

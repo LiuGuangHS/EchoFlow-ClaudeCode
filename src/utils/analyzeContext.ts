@@ -19,6 +19,8 @@ import {
   countMessagesTokensWithAPI,
   countTokensViaHaikuFallback,
   roughTokenCountEstimation,
+  roughTokenCountEstimationForAPIRequest,
+  roughTokenCountEstimationForContent,
 } from '../services/tokenEstimation.js'
 import { estimateSkillFrontmatterTokens } from '../skills/loadSkillsDir.js'
 import {
@@ -52,6 +54,7 @@ import {
   calculateCurrentContextTokenTotal,
   getContextWindowForModel,
 } from './context.js'
+import { getProviderUsageTrust, hasMediaInput } from './contextBudget.js'
 import { getCwd } from './cwd.js'
 import { logForDebugging } from './debug.js'
 import { isEnvTruthy } from './envUtils.js'
@@ -59,6 +62,7 @@ import { errorMessage, toError } from './errors.js'
 import { logError } from './log.js'
 import { normalizeMessagesForAPI } from './messages.js'
 import { getRuntimeMainLoopModel } from './model/model.js'
+import { isFirstPartyAnthropicBaseUrl } from './model/providers.js'
 import type { SettingSource } from './settings/constants.js'
 import { jsonStringify } from './slowOperations.js'
 import { buildEffectiveSystemPrompt } from './systemPrompt.js'
@@ -83,7 +87,7 @@ async function countTokensWithFallback(
   estimateOnly = false,
 ): Promise<number | null> {
   if (estimateOnly) {
-    return roughTokenCountEstimation(jsonStringify({ messages, tools }))
+    return roughTokenCountEstimationForAPIRequest(messages, tools)
   }
 
   try {
@@ -810,8 +814,7 @@ function processAssistantMessage(
 ): void {
   // Process each content block individually
   for (const block of msg.message.content) {
-    const blockStr = jsonStringify(block)
-    const blockTokens = roughTokenCountEstimation(blockStr)
+    const blockTokens = roughTokenCountEstimationForContent([block])
 
     if ('type' in block && block.type === 'tool_use') {
       breakdown.toolCallTokens += blockTokens
@@ -842,8 +845,7 @@ function processUserMessage(
 
   // Process each content block individually
   for (const block of msg.message.content) {
-    const blockStr = jsonStringify(block)
-    const blockTokens = roughTokenCountEstimation(blockStr)
+    const blockTokens = roughTokenCountEstimationForContent([block])
 
     if ('type' in block && block.type === 'tool_result') {
       breakdown.toolResultTokens += blockTokens
@@ -865,8 +867,12 @@ function processAttachment(
   msg: AttachmentMessage,
   breakdown: MessageBreakdown,
 ): void {
-  const contentStr = jsonStringify(msg.attachment)
-  const tokens = roughTokenCountEstimation(contentStr)
+  const userMessages = normalizeAttachmentForAPI(msg.attachment)
+  const tokens = userMessages.reduce(
+    (total, userMsg) =>
+      total + roughTokenCountEstimationForContent(userMsg.message.content),
+    0,
+  )
   breakdown.attachmentTokens += tokens
   const attachType = msg.attachment.type || 'unknown'
   breakdown.attachmentsByType.set(
@@ -1208,6 +1214,12 @@ export async function analyzeContextUsage(
     totalIncludingReserved,
     apiUsage,
     contextWindow,
+    {
+      hasMediaInput: hasMediaInput(originalMessages ?? messages),
+      usageTrust: getProviderUsageTrust({
+        isFirstPartyAnthropic: isFirstPartyAnthropicBaseUrl(),
+      }),
+    },
   )
 
   // Pre-calculate grid based on model context window and terminal width

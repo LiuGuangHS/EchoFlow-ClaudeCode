@@ -53,4 +53,22 @@ describe('calculateCurrentContextTokenTotal', () => {
     expect(calculateCurrentContextTokenTotal(50_000, null)).toBe(50_000)
     expect(calculateCurrentContextTokenTotal(50_000, null, 200_000)).toBe(50_000)
   })
+
+  test('ignores suspicious media usage that appears to count encoded bytes', () => {
+    expect(calculateCurrentContextTokenTotal(30_000, {
+      input_tokens: 220_000,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+      output_tokens: 1_000,
+    }, 200_000, { hasMediaInput: true, usageTrust: 'low' })).toBe(30_000)
+  })
+
+  test('keeps high provider usage for media when it is close to local estimate', () => {
+    expect(calculateCurrentContextTokenTotal(180_000, {
+      input_tokens: 195_000,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+      output_tokens: 5_000,
+    }, 200_000, { hasMediaInput: true, usageTrust: 'high' })).toBe(200_000)
+  })
 })

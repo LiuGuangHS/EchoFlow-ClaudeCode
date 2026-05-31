@@ -113,6 +113,17 @@ export class WsBridge {
     this.handlers.set(chatId, handler)
   }
 
+  getSessionId(chatId: string): string | null {
+    return this.sessions.get(chatId)?.sessionId ?? null
+  }
+
+  isSessionOpen(chatId: string, sessionId?: string): boolean {
+    const session = this.sessions.get(chatId)
+    if (!session) return false
+    if (sessionId && session.sessionId !== sessionId) return false
+    return session.ws.readyState === WebSocket.OPEN
+  }
+
   /** Reset session for a chatId (e.g. /new command). */
   resetSession(chatId: string): void {
     const session = this.sessions.get(chatId)

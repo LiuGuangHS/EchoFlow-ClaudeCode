@@ -24,7 +24,7 @@ import { loadPluginMcpServers } from '../../utils/plugins/mcpPluginIntegration.j
 import { parsePluginIdentifier } from '../../utils/plugins/pluginIdentifier.js'
 import { loadAllPlugins } from '../../utils/plugins/pluginLoader.js'
 import { loadPluginHooks } from '../../utils/plugins/loadPluginHooks.js'
-import { getPluginCommands } from '../../utils/plugins/loadPluginCommands.js'
+import { getPluginSkills } from '../../utils/plugins/loadPluginCommands.js'
 import { clearPluginCacheExclusions } from '../../utils/plugins/orphanedPluginFilter.js'
 import { parseFrontmatter } from '../../utils/frontmatterParser.js'
 import { extractDescriptionFromMarkdown } from '../../utils/markdownConfigLoader.js'
@@ -238,8 +238,8 @@ export class PluginService {
     const pluginState = await this.loadPluginState()
     const { enabled, disabled, errors } = pluginState
 
-    const [commands, agentDefinitions] = await Promise.all([
-      getPluginCommands(),
+    const [skills, agentDefinitions] = await Promise.all([
+      getPluginSkills(),
       getAgentDefinitionsWithOverrides(cwd),
     ])
 
@@ -262,7 +262,7 @@ export class PluginService {
       summary: {
         enabled: enabled.length,
         disabled: disabled.length,
-        skills: commands.length,
+        skills: skills.length,
         agents: agentDefinitions.allAgents.length,
         hooks: hookCount,
         mcpServers: mcpCounts.reduce((sum, count) => sum + count, 0),

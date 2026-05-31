@@ -37,7 +37,9 @@ export type McpServerRecord = {
   projectPath?: string
 }
 
+export type McpWritableScope = 'local' | 'project' | 'user'
+
 export type McpUpsertPayload = {
-  scope: string
+  scope: McpWritableScope
   config: McpEditableConfig
 }

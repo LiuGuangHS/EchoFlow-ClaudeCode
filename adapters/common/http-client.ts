@@ -72,6 +72,23 @@ export class AdapterHttpClient {
     }
   }
 
+  async sessionExists(sessionId: string): Promise<boolean> {
+    const { controller, timer } = this.createTimeoutController()
+    try {
+      const res = await fetch(`${this.httpBaseUrl}/api/sessions/${encodeURIComponent(sessionId)}`, {
+        signal: controller.signal,
+      })
+      if (res.status === 404) return false
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: res.statusText }))
+        throw new Error(`Failed to check session: ${(err as any).message}`)
+      }
+      return true
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
   async listRecentProjects(): Promise<RecentProject[]> {
     const { controller, timer } = this.createTimeoutController()
     try {

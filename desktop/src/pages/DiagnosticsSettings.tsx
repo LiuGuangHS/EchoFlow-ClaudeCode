@@ -6,6 +6,7 @@ import { useTranslation } from '../i18n'
 import { formatBytes } from '../lib/formatBytes'
 import { useUIStore } from '../stores/uiStore'
 import { DoctorPanel } from '../components/doctor/DoctorPanel'
+import { ConfirmDialog } from '../components/shared/ConfirmDialog'
 
 export function DiagnosticsSettings() {
   const t = useTranslation()
@@ -15,6 +16,7 @@ export function DiagnosticsSettings() {
   const [isLoading, setIsLoading] = useState(true)
   const [isExporting, setIsExporting] = useState(false)
   const [isClearing, setIsClearing] = useState(false)
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
   const [lastExportPath, setLastExportPath] = useState<string | null>(null)
 
   const load = useCallback(async () => {
@@ -90,13 +92,13 @@ export function DiagnosticsSettings() {
   }
 
   const handleClear = async () => {
-    if (!window.confirm(t('settings.diagnostics.confirmClear'))) return
     setIsClearing(true)
     try {
       await diagnosticsApi.clear()
       setEvents([])
       setStatus(await diagnosticsApi.getStatus())
       setLastExportPath(null)
+      setClearConfirmOpen(false)
       addToast({ type: 'success', message: t('settings.diagnostics.cleared') })
     } catch (error) {
       addToast({
@@ -152,7 +154,7 @@ export function DiagnosticsSettings() {
             <span className="material-symbols-outlined text-[16px]">content_copy</span>
             {t('settings.diagnostics.copySummary')}
           </Button>
-          <Button variant="danger" size="sm" onClick={handleClear} loading={isClearing}>
+          <Button variant="danger" size="sm" onClick={() => setClearConfirmOpen(true)} loading={isClearing}>
             <span className="material-symbols-outlined text-[16px]">delete</span>
             {t('settings.diagnostics.clearLogs')}
           </Button>
@@ -186,6 +188,20 @@ export function DiagnosticsSettings() {
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={clearConfirmOpen}
+        onClose={() => {
+          if (!isClearing) setClearConfirmOpen(false)
+        }}
+        onConfirm={handleClear}
+        title={t('settings.diagnostics.clearLogs')}
+        body={t('settings.diagnostics.confirmClear')}
+        confirmLabel={t('settings.diagnostics.clearLogs')}
+        cancelLabel={t('common.cancel')}
+        confirmVariant="danger"
+        loading={isClearing}
+      />
     </div>
   )
 }

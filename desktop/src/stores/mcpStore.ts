@@ -11,7 +11,7 @@ type McpStore = {
   createServer: (name: string, payload: McpUpsertPayload, cwd?: string) => Promise<McpServerRecord>
   updateServer: (server: McpServerRecord, payload: McpUpsertPayload, cwd?: string) => Promise<McpServerRecord>
   deleteServer: (server: McpServerRecord, cwd?: string) => Promise<void>
-  toggleServer: (server: McpServerRecord, cwd?: string) => Promise<McpServerRecord>
+  toggleServer: (server: McpServerRecord, cwd?: string, sessionId?: string) => Promise<McpServerRecord>
   reconnectServer: (server: McpServerRecord, cwd?: string) => Promise<McpServerRecord>
   refreshServerStatus: (server: McpServerRecord, cwd?: string) => Promise<McpServerRecord>
   selectServer: (server: McpServerRecord | null) => void
@@ -54,6 +54,8 @@ function replaceServer(
   return servers.map((item, itemIndex) => (itemIndex === index ? normalizedNext : item))
 }
 
+let fetchServersRequestId = 0
+
 export const useMcpStore = create<McpStore>((set) => ({
   servers: [],
   selectedServer: null,
@@ -61,6 +63,7 @@ export const useMcpStore = create<McpStore>((set) => ({
   error: null,
 
   fetchServers: async (projectPaths, fallbackCwd) => {
+    const requestId = ++fetchServersRequestId
     set({ isLoading: true, error: null })
     try {
       const normalizedPaths = Array.from(new Set((projectPaths ?? []).filter(Boolean)))
@@ -89,8 +92,10 @@ export const useMcpStore = create<McpStore>((set) => ({
         }
       }
 
+      if (requestId !== fetchServersRequestId) return
       set({ servers: [...deduped.values()], isLoading: false })
     } catch (error) {
+      if (requestId !== fetchServersRequestId) return
       set({
         isLoading: false,
         error: error instanceof Error ? error.message : 'Failed to load MCP servers',
@@ -110,7 +115,8 @@ export const useMcpStore = create<McpStore>((set) => ({
   },
 
   updateServer: async (server, payload, cwd) => {
-    const response = await mcpApi.update(server.name, payload, cwd)
+    const previousCwd = isProjectScoped(server) ? server.projectPath : undefined
+    const response = await mcpApi.update(server.name, payload, cwd, previousCwd)
     const updated = attachProjectPath(response.server, cwd ?? server.projectPath)
     set((state) => ({
       servers: replaceServer(state.servers, server, updated, cwd ?? server.projectPath),
@@ -132,8 +138,8 @@ export const useMcpStore = create<McpStore>((set) => ({
     }))
   },
 
-  toggleServer: async (server, cwd) => {
-    const response = await mcpApi.toggle(server.name, cwd)
+  toggleServer: async (server, cwd, sessionId) => {
+    const response = await mcpApi.toggle(server.name, cwd, sessionId)
     const updated = attachProjectPath(response.server, cwd ?? server.projectPath)
     set((state) => ({
       servers: replaceServer(state.servers, server, updated, cwd ?? server.projectPath),

@@ -22,6 +22,16 @@ describe('Tauri default capability', () => {
     ).toBe(true)
   })
 
+  it('allows the browser confirm shim used by the desktop webview', () => {
+    const permissions = readDefaultCapabilityPermissions()
+
+    expect(
+      permissions.some(permission =>
+        permission === 'dialog:default' || permission === 'dialog:allow-confirm'
+      )
+    ).toBe(true)
+  })
+
   it('keeps file dialog access enabled', () => {
     const permissions = readDefaultCapabilityPermissions()
 

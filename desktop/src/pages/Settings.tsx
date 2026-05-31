@@ -9,7 +9,7 @@ import { ConfirmDialog } from '../components/shared/ConfirmDialog'
 import { Input } from '../components/shared/Input'
 import { Button } from '../components/shared/Button'
 import { Dropdown } from '../components/shared/Dropdown'
-import type { PermissionMode, EffortLevel, ThemeMode, UpdateProxyMode, NetworkProxyMode, WebSearchMode, AppMode } from '../types/settings'
+import type { ThemeMode, UpdateProxyMode, NetworkProxyMode, WebSearchMode, AppMode, ChatSendBehavior } from '../types/settings'
 import type { Locale } from '../i18n'
 import type { SavedProvider, UpdateProviderInput, ProviderTestResult, ModelMapping, ApiFormat, ProviderAuthStrategy } from '../types/provider'
 import type { ProviderPreset } from '../types/providerPreset'
@@ -152,7 +152,6 @@ export function Settings() {
         <div className="w-[180px] border-r border-[var(--color-border)] py-3 flex-shrink-0 flex flex-col">
           <div className="flex-1">
             <TabButton icon="dns" label={t('settings.tab.providers')} active={activeTab === 'providers'} onClick={() => setActiveTab('providers')} />
-            <TabButton icon="shield" label={t('settings.tab.permissions')} active={activeTab === 'permissions'} onClick={() => setActiveTab('permissions')} />
             <TabButton icon="tune" label={t('settings.tab.general')} active={activeTab === 'general'} onClick={() => setActiveTab('general')} />
             <TabButton icon="qr_code_2" label={t('settings.tab.h5Access')} active={activeTab === 'h5Access'} onClick={() => setActiveTab('h5Access')} />
             <TabButton icon="chat" label={t('settings.tab.adapters')} active={activeTab === 'adapters'} onClick={() => setActiveTab('adapters')} />
@@ -174,7 +173,6 @@ export function Settings() {
         {/* Tab content */}
         <div className="flex-1 overflow-y-auto px-8 py-6">
           {activeTab === 'providers' && <ProviderSettings />}
-          {activeTab === 'permissions' && <PermissionSettings />}
           {activeTab === 'activity' && <ActivitySettings />}
           {activeTab === 'general' && <GeneralSettings />}
           {activeTab === 'h5Access' && <H5AccessSettings />}
@@ -1435,67 +1433,18 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
 }
 
 
-// ─── Permission Settings ──────────────────────────────────────
-
-function PermissionSettings() {
-  const { permissionMode, setPermissionMode } = useSettingsStore()
-  const t = useTranslation()
-
-  const MODES: Array<{ mode: PermissionMode; icon: string; label: string; desc: string }> = [
-    { mode: 'default', icon: 'verified_user', label: t('settings.permissions.default'), desc: t('settings.permissions.defaultDesc') },
-    { mode: 'acceptEdits', icon: 'edit_note', label: t('settings.permissions.acceptEdits'), desc: t('settings.permissions.acceptEditsDesc') },
-    { mode: 'plan', icon: 'architecture', label: t('settings.permissions.plan'), desc: t('settings.permissions.planDesc') },
-    { mode: 'bypassPermissions', icon: 'bolt', label: t('settings.permissions.bypass'), desc: t('settings.permissions.bypassDesc') },
-  ]
-
-  return (
-    <div className="max-w-xl">
-      <h2 className="text-base font-semibold text-[var(--color-text-primary)] mb-1">{t('settings.permissions.title')}</h2>
-      <p className="text-sm text-[var(--color-text-tertiary)] mb-4">{t('settings.permissions.description')}</p>
-
-      <div className="flex flex-col gap-2">
-        {MODES.map(({ mode, icon, label, desc }) => {
-          const isSelected = permissionMode === mode
-          return (
-            <button
-              key={mode}
-              onClick={() => setPermissionMode(mode)}
-              className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-all text-left ${
-                isSelected
-                  ? 'border-[var(--color-brand)] bg-[var(--color-surface-container)] shadow-[var(--shadow-focus-ring)]'
-                  : 'border-[var(--color-border)] hover:border-[var(--color-border-focus)] hover:bg-[var(--color-surface-hover)]'
-              }`}
-            >
-              <span className="material-symbols-outlined text-[20px] text-[var(--color-text-secondary)]">{icon}</span>
-              <div className="flex-1">
-                <div className="text-sm font-semibold text-[var(--color-text-primary)]">{label}</div>
-                <div className="text-xs text-[var(--color-text-tertiary)]">{desc}</div>
-              </div>
-              {isSelected && (
-                <span className="material-symbols-outlined text-[18px] text-[var(--color-brand)]" style={{ fontVariationSettings: "'FILL' 1" }}>
-                  check_circle
-                </span>
-              )}
-            </button>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
 // ─── General Settings ──────────────────────────────────────
 
 function GeneralSettings() {
   const {
-    effortLevel,
-    setEffort,
     thinkingEnabled,
     setThinkingEnabled,
     locale,
     setLocale,
     theme,
     setTheme,
+    chatSendBehavior,
+    setChatSendBehavior,
     skipWebFetchPreflight,
     setSkipWebFetchPreflight,
     desktopNotificationsEnabled,
@@ -1573,13 +1522,6 @@ function GeneralSettings() {
     setPortableDirDraft(appMode.portableDir ?? appMode.defaultPortableDir ?? '')
   }, [appMode.defaultPortableDir, appMode.portableDir])
 
-  const EFFORT_LABELS: Record<EffortLevel, string> = {
-    low: t('settings.general.effort.low'),
-    medium: t('settings.general.effort.medium'),
-    high: t('settings.general.effort.high'),
-    max: t('settings.general.effort.max'),
-  }
-
   const LANGUAGES: Array<{ value: Locale; label: string }> = [
     { value: 'en', label: 'English' },
     { value: 'zh', label: '中文' },
@@ -1636,6 +1578,19 @@ function GeneralSettings() {
       value: 'manual',
       label: t('settings.general.networkProxyModeManual'),
       description: t('settings.general.networkProxyModeManualDescription'),
+    },
+  ]
+
+  const CHAT_SEND_BEHAVIORS: Array<{ value: ChatSendBehavior; label: string; description: string }> = [
+    {
+      value: 'enter',
+      label: t('settings.general.chatSendBehaviorEnter'),
+      description: t('settings.general.chatSendBehaviorEnterDescription'),
+    },
+    {
+      value: 'modifierEnter',
+      label: t('settings.general.chatSendBehaviorModifier'),
+      description: t('settings.general.chatSendBehaviorModifierDescription'),
     },
   ]
 
@@ -2006,25 +1961,6 @@ function GeneralSettings() {
         }
       />
 
-      {/* Effort Level */}
-      <h2 className="text-base font-semibold text-[var(--color-text-primary)] mb-1">{t('settings.general.effortTitle')}</h2>
-      <p className="text-sm text-[var(--color-text-tertiary)] mb-3">{t('settings.general.effortDescription')}</p>
-      <div className="flex gap-2">
-        {(['low', 'medium', 'high', 'max'] as EffortLevel[]).map((level) => (
-          <button
-            key={level}
-            onClick={() => setEffort(level)}
-            className={`flex-1 py-2 text-xs font-semibold rounded-lg border transition-all ${
-              effortLevel === level
-                ? 'bg-[var(--color-brand)] text-white border-[var(--color-brand)]'
-                : 'border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]'
-            }`}
-          >
-            {EFFORT_LABELS[level]}
-          </button>
-        ))}
-      </div>
-
       <div className="mt-8">
         <h2 className="text-base font-semibold text-[var(--color-text-primary)] mb-1">{t('settings.general.thinkingTitle')}</h2>
         <p className="text-sm text-[var(--color-text-tertiary)] mb-3">{t('settings.general.thinkingDescription')}</p>
@@ -2092,6 +2028,31 @@ function GeneralSettings() {
               )}
             </div>
           )}
+        </div>
+      </div>
+
+      <div className="mt-8">
+        <h2 className="text-base font-semibold text-[var(--color-text-primary)] mb-1">{t('settings.general.chatSendBehaviorTitle')}</h2>
+        <p className="text-sm text-[var(--color-text-tertiary)] mb-3">{t('settings.general.chatSendBehaviorDescription')}</p>
+        <div className="grid grid-cols-2 gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-container-low)] p-2">
+          {CHAT_SEND_BEHAVIORS.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => void setChatSendBehavior(option.value)}
+              aria-pressed={chatSendBehavior === option.value}
+              className={`rounded-lg border px-3 py-2 text-left transition-colors ${
+                chatSendBehavior === option.value
+                  ? 'border-[var(--color-brand)] bg-[var(--color-surface-selected)] text-[var(--color-text-primary)]'
+                  : 'border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]'
+              }`}
+            >
+              <div className="text-xs font-semibold">{option.label}</div>
+              <div className="mt-1 text-[11px] leading-4 text-[var(--color-text-tertiary)]">
+                {option.description}
+              </div>
+            </button>
+          ))}
         </div>
       </div>
 
@@ -3609,22 +3570,21 @@ function AboutSettings() {
 
   const hasKnownProgress = typeof totalBytes === 'number' && totalBytes > 0
   const downloadedText = formatBytes(downloadedBytes)
-  const updateDescription =
-    updateStatus === 'checking'
-      ? t('update.checking')
-      : updateStatus === 'downloading'
-        ? hasKnownProgress
-          ? t('update.progress', { progress: String(progressPercent) })
-          : t('update.progressBytes', { downloaded: downloadedText })
-        : updateStatus === 'restarting'
-          ? t('update.restarting')
-          : updateStatus === 'available' && availableVersion
-            ? t('update.newVersion', { version: availableVersion })
-            : updateStatus === 'up-to-date'
-              ? t('update.upToDate', { version: version || t('update.currentVersionUnknown') })
-              : error
-                ? t('update.failed', { error })
-                : t('update.idle')
+  const updateDescription = (() => {
+    if (updateStatus === 'checking') return t('update.checking')
+    if (error) return t('update.failed', { error })
+    if (updateStatus === 'downloading') {
+      return hasKnownProgress
+        ? t('update.progress', { progress: String(progressPercent) })
+        : t('update.progressBytes', { downloaded: downloadedText })
+    }
+    if (updateStatus === 'downloaded') return t('update.downloaded')
+    if (updateStatus === 'installing') return t('update.installing')
+    if (updateStatus === 'restarting') return t('update.restarting')
+    if (updateStatus === 'available' && availableVersion) return t('update.newVersion', { version: availableVersion })
+    if (updateStatus === 'up-to-date') return t('update.upToDate', { version: version || t('update.currentVersionUnknown') })
+    return t('update.idle')
+  })()
 
   return (
     <div className="w-full min-w-0 max-w-lg mx-auto flex flex-col items-center py-6">
@@ -3830,10 +3790,16 @@ function AboutSettings() {
               <Button
                 size="sm"
                 onClick={() => void installUpdate()}
-                loading={updateStatus === 'downloading' || updateStatus === 'restarting'}
-                disabled={updateStatus === 'checking'}
+                loading={updateStatus === 'downloading' || updateStatus === 'installing' || updateStatus === 'restarting'}
+                disabled={updateStatus === 'checking' || updateStatus === 'downloading'}
               >
-                {updateStatus === 'restarting' ? t('update.restarting') : t('update.now')}
+                {updateStatus === 'downloaded'
+                  ? t('update.installAndRestart')
+                  : updateStatus === 'installing'
+                    ? t('update.installing')
+                    : updateStatus === 'restarting'
+                      ? t('update.restarting')
+                      : t('update.now')}
               </Button>
             </div>
           )}

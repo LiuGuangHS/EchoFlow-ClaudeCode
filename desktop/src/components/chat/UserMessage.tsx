@@ -7,16 +7,17 @@ type Props = {
   content: string
   attachments?: UIAttachment[]
   branchAction?: MessageBranchAction
+  timestamp?: number
 }
 
-export const UserMessage = memo(function UserMessage({ content, attachments, branchAction }: Props) {
+export const UserMessage = memo(function UserMessage({ content, attachments, branchAction, timestamp }: Props) {
   const hasText = content.trim().length > 0
 
   return (
-    <div className="group mb-5 flex justify-end">
+    <div className="mb-5 flex justify-end">
       <div
         data-message-shell="user"
-        className="flex min-w-0 w-full max-w-[82%] flex-col items-end gap-2 sm:max-w-[78%] lg:max-w-[72%]"
+        className="group flex min-w-0 max-w-[82%] flex-col items-end gap-2 sm:max-w-[78%] lg:max-w-[72%]"
       >
         {attachments && attachments.length > 0 && (
           <AttachmentGallery attachments={attachments} variant="message" />
@@ -41,6 +42,7 @@ export const UserMessage = memo(function UserMessage({ content, attachments, bra
             copyLabel="Copy prompt"
             branchAction={branchAction}
             align="end"
+            timestamp={timestamp}
           />
         )}
       </div>

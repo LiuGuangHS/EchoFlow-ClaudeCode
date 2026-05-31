@@ -45,6 +45,7 @@ export function ContentRouter() {
             <TerminalSettings
               active={active}
               cwd={tab.terminalCwd}
+              runtimeId={tab.terminalRuntimeId ?? tab.sessionId}
               workspace
               testId={`terminal-host-${tab.sessionId}`}
               onNewTerminal={() => useTabStore.getState().openTerminalTab(tab.terminalCwd)}

@@ -482,7 +482,7 @@ dependencies = [
 
 [[package]]
 name = "claude-code-desktop"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "portable-pty",

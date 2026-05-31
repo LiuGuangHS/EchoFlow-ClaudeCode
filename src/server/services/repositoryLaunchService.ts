@@ -5,6 +5,7 @@ import { promisify } from 'node:util'
 import { ApiError } from '../middleware/errorHandler.js'
 import { findCanonicalGitRoot, findGitRoot } from '../../utils/git.js'
 import { registerFilesystemAccessRoot } from './filesystemAccessRoots.js'
+import { normalizeDriveRootPathForPlatform } from './windowsDrivePath.js'
 import {
   ensureWorktreesDirExcluded,
   performPostCreationSetup,
@@ -168,10 +169,10 @@ async function runGit(
 }
 
 async function resolveDirectory(workDir: string): Promise<string> {
-  const resolved = path.resolve(workDir)
+  const resolved = path.resolve(normalizeDriveRootPathForPlatform(workDir))
   let realPath: string
   try {
-    realPath = await fs.realpath(resolved)
+    realPath = normalizeDriveRootPathForPlatform(await fs.realpath(resolved))
   } catch {
     throw repositoryBadRequest(
       REPOSITORY_ERROR.workdirMissing,
@@ -332,7 +333,7 @@ export async function getRepositoryContext(workDir: string): Promise<RepositoryC
   } catch (error) {
     return {
       state: 'missing_workdir',
-      workDir: path.resolve(workDir),
+      workDir: path.resolve(normalizeDriveRootPathForPlatform(workDir)),
       repoRoot: null,
       repoName: null,
       currentBranch: null,

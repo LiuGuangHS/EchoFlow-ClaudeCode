@@ -6,12 +6,21 @@ import { diffLines } from 'diff'
 import type { MessageEntry } from './sessionService.js'
 import type { FileHistorySnapshot } from '../../utils/fileHistory.js'
 import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
+import {
+  isSameOrInsidePathForPlatform,
+  normalizeDriveRootPathForPlatform,
+} from './windowsDrivePath.js'
 
 const MAX_PREVIEW_BYTES = 1024 * 1024
 const MAX_UNTRACKED_STAT_BYTES = 256 * 1024
 const GIT_TIMEOUT_MS = 5_000
 const MAX_GIT_BUFFER_BYTES = 2_000_000
+const VCS_METADATA_DIRECTORY_NAMES = new Set(['.git', '.svn', '.hg', '.bzr', '.jj', '.sl'])
 const execFile = promisify(execFileCallback)
+
+function isVcsMetadataDirectoryName(name: string): boolean {
+  return VCS_METADATA_DIRECTORY_NAMES.has(name.toLowerCase())
+}
 
 const LANGUAGE_MAP: Record<string, string> = {
   cjs: 'javascript',
@@ -512,7 +521,7 @@ export class WorkspaceService {
       }
     }
     const visibleEntries = entries
-      .filter((entry) => !entry.name.startsWith('.'))
+      .filter((entry) => !(entry.isDirectory() && isVcsMetadataDirectoryName(entry.name)))
       .sort((a, b) => {
         if (a.isDirectory() !== b.isDirectory()) {
           return a.isDirectory() ? -1 : 1
@@ -999,7 +1008,7 @@ export class WorkspaceService {
     if (!workDir) {
       throw new Error(`Session not found: ${sessionId}`)
     }
-    return path.resolve(workDir)
+    return path.resolve(normalizeDriveRootPathForPlatform(workDir))
   }
 
   private async getWorkspaceRoot(
@@ -1021,7 +1030,7 @@ export class WorkspaceService {
       return {
         kind: 'ok',
         workspaceRoot: workDir,
-        canonicalWorkspaceRoot: await fs.realpath(workDir),
+        canonicalWorkspaceRoot: normalizeDriveRootPathForPlatform(await fs.realpath(workDir)),
       }
     } catch (error) {
       return {
@@ -1144,14 +1153,7 @@ export class WorkspaceService {
   }
 
   private isWithinRoot(targetPath: string, rootPath: string): boolean {
-    const target = this.normalizeComparableAbsolutePath(targetPath)
-    const root = this.normalizeComparableAbsolutePath(rootPath)
-    return target === root || target.startsWith(`${root}${path.sep}`)
-  }
-
-  private normalizeComparableAbsolutePath(filePath: string): string {
-    const resolved = path.resolve(filePath)
-    return process.platform === 'win32' ? resolved.toLowerCase() : resolved
+    return isSameOrInsidePathForPlatform(targetPath, rootPath)
   }
 
   private normalizeRelativePath(filePath: string): string {

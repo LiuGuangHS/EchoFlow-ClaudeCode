@@ -70,15 +70,19 @@ const sessionTitleState = new Map<string, {
 const runtimeOverrides = new Map<string, {
   providerId: string | null
   modelId: string
+  effort?: string
 }>()
 
 const runtimeTransitionPromises = new Map<string, Promise<void>>()
 const sessionStartupPromises = new Map<string, Promise<void>>()
+const runtimeOverrideVersions = new Map<string, number>()
+const sessionStartupRuntimeVersions = new Map<string, number>()
 const lastResolvedStartupWorkDirs = new Map<string, string>()
 const prewarmPendingSessions = new Set<string>()
 const prewarmedSessions = new Set<string>()
 const prewarmIdleTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const DEFAULT_PREWARM_IDLE_TIMEOUT_MS = 5 * 60_000
+const VALID_EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'max'])
 
 async function sendRepositoryStartupStatus(
   ws: ServerWebSocket<WebSocketData>,
@@ -192,7 +196,7 @@ export const handleWebSocket = {
           break
 
         case 'set_permission_mode':
-          handleSetPermissionMode(ws, message)
+          void handleSetPermissionMode(ws, message)
           break
 
         case 'set_runtime_config':
@@ -365,7 +369,7 @@ async function handleUserMessage(
     },
   })
 
-  const sent = conversationService.sendMessage(
+  const sent = await conversationService.sendMessage(
     sessionId,
     message.content,
     message.attachments
@@ -479,11 +483,38 @@ function handleComputerUsePermissionResponse(
   }
 }
 
-function handleSetPermissionMode(
+async function handleSetPermissionMode(
   ws: ServerWebSocket<WebSocketData>,
   message: Extract<ClientMessage, { type: 'set_permission_mode' }>
-) {
+): Promise<void> {
   const { sessionId } = ws.data
+  const pendingStartup = sessionStartupPromises.get(sessionId)
+
+  if (pendingStartup) {
+    await persistSessionPermissionMode(sessionId, message.mode)
+    await enqueueRuntimeTransition(sessionId, async () => {
+      await pendingStartup.catch(() => undefined)
+      if (!conversationService.hasSession(sessionId)) return
+      await applyPermissionModeToActiveSession(ws, sessionId, message.mode)
+    })
+    return
+  }
+
+  if (!conversationService.hasSession(sessionId)) {
+    await persistSessionPermissionMode(sessionId, message.mode)
+    return
+  }
+
+  await applyPermissionModeToActiveSession(ws, sessionId, message.mode)
+}
+
+async function applyPermissionModeToActiveSession(
+  ws: ServerWebSocket<WebSocketData>,
+  sessionId: string,
+  mode: string,
+): Promise<void> {
+  const currentMode = conversationService.getSessionPermissionMode(sessionId)
+  if (currentMode === mode) return
 
   // Switching to/from bypassPermissions requires the CLI to be (re)started with
   // --dangerously-skip-permissions. The CLI rejects a runtime set_permission_mode
@@ -491,20 +522,21 @@ function handleSetPermissionMode(
   // sending the SDK message (which would silently fail), restart the CLI subprocess
   // with the correct arguments so the new permission mode takes effect.
   const needsRestart =
-    conversationService.hasSession(sessionId) &&
-    (message.mode === 'bypassPermissions' || conversationService.getSessionPermissionMode(sessionId) === 'bypassPermissions')
+    mode === 'bypassPermissions' || currentMode === 'bypassPermissions'
 
   if (needsRestart) {
     void enqueueRuntimeTransition(sessionId, () =>
-      restartSessionWithPermissionMode(ws, sessionId, message.mode),
+      restartSessionWithPermissionMode(ws, sessionId, mode),
     )
     return
   }
 
-  const ok = conversationService.setPermissionMode(sessionId, message.mode)
+  const ok = conversationService.setPermissionMode(sessionId, mode)
   if (!ok) {
     console.warn(`[WS] Ignored permission mode update for inactive session ${sessionId}`)
+    return
   }
+  await persistSessionPermissionMode(sessionId, mode)
 }
 
 async function handleSetRuntimeConfig(
@@ -521,44 +553,73 @@ async function handleSetRuntimeConfig(
     })
     return
   }
+  const effortLevel =
+    typeof message.effortLevel === 'string' ? message.effortLevel.trim() : undefined
+  if (effortLevel !== undefined && !VALID_EFFORT_LEVELS.has(effortLevel)) {
+    sendMessage(ws, {
+      type: 'error',
+      message: 'Runtime effort selection is invalid.',
+      code: 'RUNTIME_CONFIG_INVALID',
+    })
+    return
+  }
 
   const nextOverride = {
     providerId: message.providerId ?? null,
     modelId,
+    ...(effortLevel ? { effort: effortLevel } : {}),
   }
   const prevOverride = runtimeOverrides.get(sessionId)
-  runtimeOverrides.set(sessionId, nextOverride)
-
   if (
     prevOverride &&
     prevOverride.providerId === nextOverride.providerId &&
-    prevOverride.modelId === nextOverride.modelId
+    prevOverride.modelId === nextOverride.modelId &&
+    prevOverride.effort === nextOverride.effort
   ) {
     return
   }
 
-  if (!conversationService.hasSession(sessionId)) {
-    const pendingStartup = sessionStartupPromises.get(sessionId)
-    if (pendingStartup) {
-      await enqueueRuntimeTransition(sessionId, async () => {
-        await pendingStartup.catch(() => undefined)
-        const currentOverride = runtimeOverrides.get(sessionId)
-        if (
-          currentOverride?.providerId !== nextOverride.providerId ||
-          currentOverride.modelId !== nextOverride.modelId ||
-          !conversationService.hasSession(sessionId)
-        ) {
-          return
-        }
-        await restartSessionWithRuntimeConfig(ws, sessionId)
-      })
-    }
+  runtimeOverrides.set(sessionId, nextOverride)
+  runtimeOverrideVersions.set(
+    sessionId,
+    (runtimeOverrideVersions.get(sessionId) ?? 0) + 1,
+  )
+
+  if (conversationService.hasSession(sessionId)) {
+    await enqueueRuntimeTransition(sessionId, async () => {
+      await persistSessionRuntimeConfig(sessionId, nextOverride)
+      await restartSessionWithRuntimeConfig(ws, sessionId)
+    })
     return
   }
 
-  await enqueueRuntimeTransition(sessionId, () =>
-    restartSessionWithRuntimeConfig(ws, sessionId),
-  )
+  const pendingStartup = sessionStartupPromises.get(sessionId)
+  if (pendingStartup) {
+    const startupRuntimeVersion = sessionStartupRuntimeVersions.get(sessionId) ?? 0
+    const currentRuntimeVersion = runtimeOverrideVersions.get(sessionId) ?? 0
+    if (startupRuntimeVersion >= currentRuntimeVersion) {
+      await persistSessionRuntimeConfig(sessionId, nextOverride)
+      return
+    }
+
+    await enqueueRuntimeTransition(sessionId, async () => {
+      await persistSessionRuntimeConfig(sessionId, nextOverride)
+      await pendingStartup.catch(() => undefined)
+      const currentOverride = runtimeOverrides.get(sessionId)
+      if (
+        currentOverride?.providerId !== nextOverride.providerId ||
+        currentOverride.modelId !== nextOverride.modelId ||
+        currentOverride.effort !== nextOverride.effort ||
+        !conversationService.hasSession(sessionId)
+      ) {
+        return
+      }
+      await restartSessionWithRuntimeConfig(ws, sessionId)
+    })
+    return
+  }
+
+  await persistSessionRuntimeConfig(sessionId, nextOverride)
 }
 
 async function restartSessionWithPermissionMode(
@@ -567,13 +628,11 @@ async function restartSessionWithPermissionMode(
   mode: string,
 ): Promise<void> {
   try {
-    // Persist the new mode first so it's read on restart
-    await settingsService.setPermissionMode(mode)
-
     const workDir = conversationService.getSessionWorkDir(sessionId)
+    await persistSessionPermissionMode(sessionId, mode, workDir)
     conversationService.stopSession(sessionId)
 
-    // Rebuild runtime settings (will pick up the persisted mode)
+    // Rebuild runtime settings (will pick up the session-scoped mode)
     const runtimeSettings = await getRuntimeSettings(sessionId)
     const sdkUrl =
       `ws://${ws.data.serverHost}:${ws.data.serverPort}/sdk/${sessionId}` +
@@ -602,6 +661,42 @@ async function restartSessionWithPermissionMode(
     })
     sendMessage(ws, { type: 'status', state: 'idle' })
   }
+}
+
+async function persistSessionPermissionMode(
+  sessionId: string,
+  mode: string,
+  knownWorkDir?: string | null,
+): Promise<void> {
+  const workDir =
+    knownWorkDir ||
+    conversationService.getSessionWorkDir(sessionId) ||
+    await sessionService.getSessionWorkDir(sessionId).catch(() => null)
+
+  if (!workDir) return
+
+  await sessionService.appendSessionMetadata(sessionId, {
+    workDir,
+    permissionMode: mode,
+  })
+}
+
+async function persistSessionRuntimeConfig(
+  sessionId: string,
+  runtime: { providerId: string | null; modelId: string; effort?: string },
+): Promise<void> {
+  const workDir =
+    conversationService.getSessionWorkDir(sessionId) ||
+    await sessionService.getSessionWorkDir(sessionId).catch(() => null)
+
+  if (!workDir) return
+
+  await sessionService.appendSessionMetadata(sessionId, {
+    workDir,
+    runtimeProviderId: runtime.providerId,
+    runtimeModelId: runtime.modelId,
+    ...(runtime.effort ? { effortLevel: runtime.effort } : {}),
+  })
 }
 
 async function restartSessionWithRuntimeConfig(
@@ -937,6 +1032,9 @@ async function ensureCliSessionStarted(
 
   if (conversationService.hasSession(sessionId)) return
 
+  const startupRuntimeVersion = runtimeOverrideVersions.get(sessionId) ?? 0
+  sessionStartupRuntimeVersions.set(sessionId, startupRuntimeVersion)
+
   const startup = (async () => {
     const workDir = await resolveSessionWorkDir(sessionId)
     lastResolvedStartupWorkDirs.set(sessionId, workDir)
@@ -955,6 +1053,7 @@ async function ensureCliSessionStarted(
   } finally {
     if (sessionStartupPromises.get(sessionId) === startup) {
       sessionStartupPromises.delete(sessionId)
+      sessionStartupRuntimeVersions.delete(sessionId)
     }
   }
 }
@@ -1815,7 +1914,23 @@ function isKnownRuntimeProviderId(
 }
 
 async function getRuntimeSettings(sessionId?: string): Promise<RuntimeSettings> {
-  const runtimeOverride = sessionId ? runtimeOverrides.get(sessionId) : undefined
+  const launchInfo = sessionId
+    ? await sessionService.getSessionLaunchInfo(sessionId).catch(() => null)
+    : null
+  const sessionPermissionMode = sessionId
+    ? launchInfo?.permissionMode ?? await getSessionPermissionMode(sessionId)
+    : undefined
+  const persistedRuntimeOverride =
+    launchInfo?.runtimeModelId
+      ? {
+          providerId: launchInfo.runtimeProviderId ?? null,
+          modelId: launchInfo.runtimeModelId,
+          ...(launchInfo.effortLevel ? { effort: launchInfo.effortLevel } : {}),
+        }
+      : undefined
+  const runtimeOverride = sessionId
+    ? runtimeOverrides.get(sessionId) ?? persistedRuntimeOverride
+    : undefined
   if (runtimeOverride) {
     if (typeof runtimeOverride.providerId === 'string') {
       const { providers } = await providerService.listProviders()
@@ -1825,27 +1940,37 @@ async function getRuntimeSettings(sessionId?: string): Promise<RuntimeSettings> 
           `[WS] Ignoring stale runtime provider id for ${sessionId}: ${runtimeOverride.providerId}`,
         )
         runtimeOverrides.delete(sessionId!)
-        return getDefaultRuntimeSettings()
+        const defaults = await getDefaultRuntimeSettings()
+        return {
+          ...defaults,
+          permissionMode: sessionPermissionMode ?? defaults.permissionMode,
+        }
       }
     }
 
     const userSettings = await settingsService.getUserSettings()
-    const effort =
-      typeof userSettings.effort === 'string' && userSettings.effort.trim()
-        ? userSettings.effort
-        : undefined
     const thinking = resolveDesktopThinkingMode(userSettings)
 
     return {
-      permissionMode: await settingsService.getPermissionMode().catch(() => undefined),
+      permissionMode: sessionPermissionMode ?? await settingsService.getPermissionMode().catch(() => undefined),
       model: runtimeOverride.modelId,
-      effort,
+      effort: runtimeOverride.effort,
       thinking,
       providerId: runtimeOverride.providerId,
     }
   }
 
-  return getDefaultRuntimeSettings()
+  const defaults = await getDefaultRuntimeSettings()
+  return {
+    ...defaults,
+    permissionMode: sessionPermissionMode ?? defaults.permissionMode,
+    effort: launchInfo?.effortLevel ?? defaults.effort,
+  }
+}
+
+async function getSessionPermissionMode(sessionId: string): Promise<string | undefined> {
+  const launchInfo = await sessionService.getSessionLaunchInfo(sessionId).catch(() => null)
+  return launchInfo?.permissionMode
 }
 
 async function getDefaultRuntimeSettings(): Promise<RuntimeSettings> {
@@ -1935,6 +2060,7 @@ async function buildSessionStartupDiagnosticMessage(
   if (runtimeOverride) {
     lines.push(`- runtimeOverride.providerId: ${runtimeOverride.providerId ?? '(official)'}`)
     lines.push(`- runtimeOverride.modelId: ${runtimeOverride.modelId}`)
+    lines.push(`- runtimeOverride.effort: ${runtimeOverride.effort ?? '(auto)'}`)
   } else {
     lines.push('- runtimeOverride: (none)')
   }

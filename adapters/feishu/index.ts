@@ -29,6 +29,7 @@ import {
 } from '../common/permission.js'
 import { SessionStore } from '../common/session-store.js'
 import { AdapterHttpClient, type RecentProject } from '../common/http-client.js'
+import { restoreStoredSessionBinding } from '../common/session-recovery.js'
 import { isAllowedUser, tryPair } from '../common/pairing.js'
 import { optimizeMarkdownForFeishu } from './markdown-style.js'
 import { extractInboundPayload } from './extract-payload.js'
@@ -218,17 +219,15 @@ function clearTransientChatState(chatId: string): void {
 }
 
 async function ensureExistingSession(chatId: string): Promise<{ sessionId: string; workDir: string } | null> {
-  const stored = sessionStore.get(chatId)
-  if (!stored) return null
-
-  if (!bridge.hasSession(chatId)) {
-    bridge.connectSession(chatId, stored.sessionId)
-    bridge.onServerMessage(chatId, (msg) => handleServerMessage(chatId, msg))
-    const opened = await bridge.waitForOpen(chatId)
-    if (!opened) return null
-  }
-
-  return stored
+  return await restoreStoredSessionBinding({
+    chatId,
+    bridge,
+    sessionStore,
+    httpClient,
+    onServerMessage: (msg) => handleServerMessage(chatId, msg),
+    logPrefix: '[Feishu]',
+    clearTransientState: () => clearTransientChatState(chatId),
+  })
 }
 
 async function buildStatusText(chatId: string): Promise<string> {
@@ -646,14 +645,8 @@ function buildPermissionCard(
 // ---------- session management ----------
 
 async function ensureSession(chatId: string): Promise<boolean> {
-  if (bridge.hasSession(chatId)) return true
-
-  const stored = sessionStore.get(chatId)
-  if (stored) {
-    bridge.connectSession(chatId, stored.sessionId)
-    bridge.onServerMessage(chatId, (msg) => handleServerMessage(chatId, msg))
-    return await bridge.waitForOpen(chatId)
-  }
+  const stored = await ensureExistingSession(chatId)
+  if (stored) return true
 
   const workDir = defaultWorkDir
   if (workDir) {

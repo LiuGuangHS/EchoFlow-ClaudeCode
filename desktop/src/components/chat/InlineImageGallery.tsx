@@ -1,6 +1,9 @@
 import { useMemo, useState } from 'react'
 import { ImageGalleryModal } from './ImageGalleryModal'
 import { getBaseUrl } from '../../api/client'
+import { extractAssistantOutputTargets } from '../../lib/assistantOutputTargets'
+import { previewFsUrl } from '../../lib/handlePreviewLink'
+import { getServerBaseUrl } from '../../lib/desktopRuntime'
 
 const IMAGE_EXTENSIONS = /\.(png|jpe?g|gif|webp|svg|bmp|avif|ico)$/i
 
@@ -35,19 +38,66 @@ function fileName(filePath: string): string {
   return filePath.split('/').pop() || filePath
 }
 
-type Props = {
-  text: string
+type GalleryImage = {
+  src: string
+  name: string
 }
 
-export function InlineImageGallery({ text }: Props) {
+type Props = {
+  text: string
+  /**
+   * When provided, relative workspace image paths (e.g. `outputs/foo/frame.png`)
+   * are also rendered inline, served via `/preview-fs/<sessionId>/...`. Absent
+   * (ToolResult/ToolCall usage) keeps the legacy absolute-path-only behavior.
+   */
+  sessionId?: string
+  workDir?: string | null
+}
+
+export function InlineImageGallery({ text, sessionId, workDir }: Props) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
 
   const imagePaths = useMemo(() => extractImagePaths(text), [text])
 
-  const images = useMemo(
-    () => imagePaths.map((p) => ({ src: fileUrl(p), name: fileName(p) })),
-    [imagePaths],
-  )
+  const images = useMemo<GalleryImage[]>(() => {
+    // 1. Absolute paths (legacy behavior) — served via /api/filesystem/file.
+    const absolute: GalleryImage[] = imagePaths.map((p) => ({ src: fileUrl(p), name: fileName(p) }))
+
+    if (!sessionId) {
+      return absolute
+    }
+
+    // 2. Relative workspace images — only when a sessionId is available so we can
+    //    build a /preview-fs URL. Reuses the sandboxed target extractor instead of
+    //    a bespoke relative-path regex.
+    const base = getServerBaseUrl()
+    const relativeTargets = extractAssistantOutputTargets(text, { workDir }).filter(
+      (target) => target.kind === 'image',
+    )
+
+    // Dedup: an absolute path inside the workspace can be caught by BOTH sources.
+    // Skip a relative target whose basename already appears among the absolute
+    // images, and also collapse duplicate relative targets by resolved src.
+    const absoluteNames = new Set(absolute.map((img) => img.name))
+    const seenSrc = new Set(absolute.map((img) => img.src))
+    const relative: GalleryImage[] = []
+
+    for (const target of relativeTargets) {
+      const relPath = target.normalizedPath ?? target.href
+      const name = fileName(relPath)
+      if (absoluteNames.has(name)) {
+        continue
+      }
+      const src = previewFsUrl(base, sessionId, relPath)
+      if (seenSrc.has(src)) {
+        continue
+      }
+      seenSrc.add(src)
+      relative.push({ src, name })
+    }
+
+    return [...absolute, ...relative]
+  }, [imagePaths, sessionId, text, workDir])
 
   if (images.length === 0) return null
 

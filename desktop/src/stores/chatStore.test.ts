@@ -19,6 +19,7 @@ const {
   updateTabTitleMock,
   updateTabStatusMock,
   updateSessionTitleMock,
+  updateSessionPermissionModeMock,
   sessionStoreSnapshot,
   cliTaskStoreSnapshot,
 } = vi.hoisted(() => ({
@@ -38,6 +39,7 @@ const {
   updateTabTitleMock: vi.fn(),
   updateTabStatusMock: vi.fn(),
   updateSessionTitleMock: vi.fn(),
+  updateSessionPermissionModeMock: vi.fn(),
   sessionStoreSnapshot: {
     sessions: [] as Array<{
       id: string
@@ -103,6 +105,7 @@ vi.mock('./sessionStore', () => ({
     getState: () => ({
       sessions: sessionStoreSnapshot.sessions,
       updateSessionTitle: updateSessionTitleMock,
+      updateSessionPermissionMode: updateSessionPermissionModeMock,
     }),
   },
 }))
@@ -138,6 +141,8 @@ function makeSession(overrides: Partial<PerSessionState> = {}): PerSessionState 
     messages: [],
     chatState: 'streaming',
     connectionState: 'connected',
+    historyStatus: 'idle',
+    historyError: null,
     streamingText: '',
     streamingToolInput: '',
     activeToolUseId: null,
@@ -693,6 +698,117 @@ describe('chatStore history mapping', () => {
         },
       ])
     })
+  })
+
+  it('does not duplicate a hydrated assistant reply when live output replays after reconnect', () => {
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession({
+          messages: [
+            {
+              id: 'live-user',
+              type: 'user_text',
+              content: 'live prompt',
+              transcriptMessageId: 'transcript-user-1',
+              timestamp: 1,
+            },
+            {
+              id: 'live-assistant',
+              type: 'assistant_text',
+              content: 'live answer',
+              transcriptMessageId: 'transcript-assistant-1',
+              timestamp: 2,
+            },
+          ],
+          streamingText: 'live answer',
+          chatState: 'streaming',
+        }),
+      },
+    })
+
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'message_complete',
+      usage: { input_tokens: 1, output_tokens: 2 },
+    })
+
+    expect(useChatStore.getState().sessions[TEST_SESSION_ID]?.messages).toMatchObject([
+      {
+        id: 'live-user',
+        type: 'user_text',
+        transcriptMessageId: 'transcript-user-1',
+      },
+      {
+        id: 'live-assistant',
+        type: 'assistant_text',
+        content: 'live answer',
+        transcriptMessageId: 'transcript-assistant-1',
+      },
+    ])
+    expect(notifyDesktopMock).not.toHaveBeenCalled()
+  })
+
+  it('collapses duplicate assistant replies after transcript id hydration', async () => {
+    vi.mocked(sessionsApi.getMessages).mockResolvedValueOnce({
+      messages: [
+        {
+          id: 'transcript-user-1',
+          type: 'user',
+          timestamp: '2026-04-06T00:00:00.000Z',
+          content: 'live prompt',
+        },
+        {
+          id: 'transcript-assistant-1',
+          type: 'assistant',
+          timestamp: '2026-04-06T00:00:01.000Z',
+          content: 'live answer',
+        },
+      ],
+    })
+
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession({
+          messages: [
+            {
+              id: 'live-user',
+              type: 'user_text',
+              content: 'live prompt',
+              transcriptMessageId: 'transcript-user-1',
+              timestamp: 1,
+            },
+            {
+              id: 'live-assistant',
+              type: 'assistant_text',
+              content: 'live answer',
+              transcriptMessageId: 'transcript-assistant-1',
+              timestamp: 2,
+            },
+            {
+              id: 'replayed-assistant',
+              type: 'assistant_text',
+              content: 'live answer',
+              timestamp: 3,
+            },
+          ],
+        }),
+      },
+    })
+
+    await useChatStore.getState().loadHistory(TEST_SESSION_ID)
+
+    expect(useChatStore.getState().sessions[TEST_SESSION_ID]?.messages).toMatchObject([
+      {
+        id: 'live-user',
+        type: 'user_text',
+        transcriptMessageId: 'transcript-user-1',
+      },
+      {
+        id: 'live-assistant',
+        type: 'assistant_text',
+        content: 'live answer',
+        transcriptMessageId: 'transcript-assistant-1',
+      },
+    ])
   })
 
   it('retries transcript id hydration after the assistant message is persisted', async () => {
@@ -1503,6 +1619,7 @@ describe('chatStore history mapping', () => {
     useSessionRuntimeStore.getState().setSelection(TEST_SESSION_ID, {
       providerId: 'provider-1',
       modelId: 'kimi-k2.6',
+      effortLevel: 'high',
     })
 
     useChatStore.getState().connectToSession(TEST_SESSION_ID)
@@ -1511,6 +1628,7 @@ describe('chatStore history mapping', () => {
       type: 'set_runtime_config',
       providerId: 'provider-1',
       modelId: 'kimi-k2.6',
+      effortLevel: 'high',
     })
     expect(sendMock.mock.calls.slice(0, 2)).toEqual([
       [
@@ -1519,6 +1637,7 @@ describe('chatStore history mapping', () => {
           type: 'set_runtime_config',
           providerId: 'provider-1',
           modelId: 'kimi-k2.6',
+          effortLevel: 'high',
         },
       ],
       [TEST_SESSION_ID, { type: 'prewarm_session' }],
@@ -1555,16 +1674,36 @@ describe('chatStore history mapping', () => {
     })
   })
 
+  it('retries history loading for an already connected empty session', async () => {
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession({
+          connectionState: 'connected',
+          chatState: 'idle',
+          messages: [],
+        }),
+      },
+    })
+
+    useChatStore.getState().connectToSession(TEST_SESSION_ID)
+    await Promise.resolve()
+
+    expect(sessionsApi.getMessages).toHaveBeenCalledWith(TEST_SESSION_ID)
+    expect(sendMock).not.toHaveBeenCalledWith(TEST_SESSION_ID, { type: 'prewarm_session' })
+  })
+
   it('sends explicit runtime overrides over websocket', () => {
     useChatStore.getState().setSessionRuntime(TEST_SESSION_ID, {
       providerId: null,
       modelId: 'claude-opus-4-7',
+      effortLevel: 'max',
     })
 
     expect(sendMock).toHaveBeenCalledWith(TEST_SESSION_ID, {
       type: 'set_runtime_config',
       providerId: null,
       modelId: 'claude-opus-4-7',
+      effortLevel: 'max',
     })
   })
 
@@ -1676,6 +1815,7 @@ describe('chatStore history mapping', () => {
       type: 'set_permission_mode',
       mode: 'acceptEdits',
     })
+    expect(updateSessionPermissionModeMock).toHaveBeenCalledWith('session-1', 'acceptEdits')
   })
 
   it('stores terminal task notifications for agent tool cards', () => {

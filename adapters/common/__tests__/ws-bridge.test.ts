@@ -17,6 +17,8 @@ describe('WsBridge', () => {
     const result = bridge.connectSession('chat-1', 'my-uuid-session-id')
     expect(result).toBe(true)
     expect(bridge.hasSession('chat-1')).toBe(true)
+    expect(bridge.getSessionId('chat-1')).toBe('my-uuid-session-id')
+    expect(bridge.isSessionOpen('chat-1', 'my-uuid-session-id')).toBe(false)
   })
 
   it('connectSession for different chatIds creates separate sessions', () => {

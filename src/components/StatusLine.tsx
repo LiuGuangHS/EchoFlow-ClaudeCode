@@ -16,15 +16,17 @@ import type { Message } from '../types/message.js';
 import type { StatusLineCommandInput } from '../types/statusLine.js';
 import type { VimMode } from '../types/textInputTypes.js';
 import { checkHasTrustDialogAccepted } from '../utils/config.js';
-import { calculateContextPercentages, getContextWindowForModel } from '../utils/context.js';
+import { calculateCurrentContextTokenTotal, getContextWindowForModel } from '../utils/context.js';
+import { calculateContextPercentagesFromTokens, getProviderUsageTrust, hasMediaInput } from '../utils/contextBudget.js';
 import { getCwd } from '../utils/cwd.js';
 import { logForDebugging } from '../utils/debug.js';
 import { isFullscreenEnvEnabled } from '../utils/fullscreen.js';
 import { createBaseHookInput, executeStatusLineCommand } from '../utils/hooks.js';
 import { getLastAssistantMessage } from '../utils/messages.js';
 import { getRuntimeMainLoopModel, type ModelName, renderModelName } from '../utils/model/model.js';
+import { isFirstPartyAnthropicBaseUrl } from '../utils/model/providers.js';
 import { getCurrentSessionTitle } from '../utils/sessionStorage.js';
-import { doesMostRecentAssistantMessageExceed200k, getCurrentUsage } from '../utils/tokens.js';
+import { doesMostRecentAssistantMessageExceed200k, getCurrentUsage, tokenCountWithEstimation } from '../utils/tokens.js';
 import { getCurrentWorktreeSession } from '../utils/worktree.js';
 import { isVimModeEnabled } from './PromptInput/utils.js';
 export function statusLineShouldDisplay(settings: ReadonlySettings): boolean {
@@ -44,7 +46,14 @@ function buildStatusLineCommandInput(permissionMode: PermissionMode, exceeds200k
   const outputStyleName = settings?.outputStyle || DEFAULT_OUTPUT_STYLE_NAME;
   const currentUsage = getCurrentUsage(messages);
   const contextWindowSize = getContextWindowForModel(runtimeModel, getSdkBetas());
-  const contextPercentages = calculateContextPercentages(currentUsage, contextWindowSize);
+  const estimatedContextTokens = tokenCountWithEstimation(messages);
+  const contextTokens = calculateCurrentContextTokenTotal(estimatedContextTokens, currentUsage, contextWindowSize, {
+    usageTrust: getProviderUsageTrust({
+      isFirstPartyAnthropic: isFirstPartyAnthropicBaseUrl()
+    }),
+    hasMediaInput: hasMediaInput(messages)
+  });
+  const contextPercentages = calculateContextPercentagesFromTokens(contextTokens, contextWindowSize);
   const sessionId = getSessionId();
   const sessionName = getCurrentSessionTitle(sessionId);
   const rawUtil = getRawUtilization();

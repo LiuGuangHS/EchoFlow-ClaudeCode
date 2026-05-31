@@ -56,6 +56,16 @@ import {
 } from './types.js'
 import { getProjectMcpServerStatus } from './utils.js'
 
+function getMcpProjectConfig() {
+  return getCurrentProjectConfig(getCwd())
+}
+
+function saveMcpProjectConfig(
+  updater: Parameters<typeof saveCurrentProjectConfig>[0],
+): void {
+  saveCurrentProjectConfig(updater, getCwd())
+}
+
 /**
  * Get the path to the managed MCP configuration file
  */
@@ -693,7 +703,7 @@ export async function addMcpConfig(
       break
     }
     case 'local': {
-      const projectConfig = getCurrentProjectConfig()
+      const projectConfig = getMcpProjectConfig()
       if (projectConfig.mcpServers?.[name]) {
         throw new Error(`MCP server ${name} already exists in local config`)
       }
@@ -743,7 +753,7 @@ export async function addMcpConfig(
     }
 
     case 'local': {
-      saveCurrentProjectConfig(current => ({
+      saveMcpProjectConfig(current => ({
         ...current,
         mcpServers: {
           ...current.mcpServers,
@@ -812,11 +822,11 @@ export async function removeMcpConfig(
 
     case 'local': {
       // Check if server exists before updating
-      const config = getCurrentProjectConfig()
+      const config = getMcpProjectConfig()
       if (!config.mcpServers?.[name]) {
         throw new Error(`No project-local MCP server found with name: ${name}`)
       }
-      saveCurrentProjectConfig(current => {
+      saveMcpProjectConfig(current => {
         const { [name]: _, ...restMcpServers } = current.mcpServers ?? {}
         return {
           ...current,
@@ -975,7 +985,7 @@ export function getMcpConfigsByScope(
       }
     }
     case 'local': {
-      const mcpServers = getCurrentProjectConfig().mcpServers
+      const mcpServers = getMcpProjectConfig().mcpServers
       if (!mcpServers) {
         return { servers: {}, errors: [] }
       }
@@ -1522,7 +1532,7 @@ function isDefaultDisabledBuiltin(_name: string): boolean {
  * @returns true if the server is disabled
  */
 export function isMcpServerDisabled(name: string): boolean {
-  const projectConfig = getCurrentProjectConfig()
+  const projectConfig = getMcpProjectConfig()
   if (isDefaultDisabledBuiltin(name)) {
     const enabledServers = projectConfig.enabledMcpServers || []
     return !enabledServers.includes(name)
@@ -1550,7 +1560,7 @@ export function setMcpServerEnabled(name: string, enabled: boolean): void {
   const isBuiltinStateChange =
     isDefaultDisabledBuiltin(name) && isMcpServerDisabled(name) === enabled
 
-  saveCurrentProjectConfig(current => {
+  saveMcpProjectConfig(current => {
     if (isDefaultDisabledBuiltin(name)) {
       const prev = current.enabledMcpServers || []
       const next = toggleMembership(prev, name, enabled)

@@ -5,7 +5,6 @@ import { useUIStore } from '../../stores/uiStore'
 import { useTranslation, type TranslationKey } from '../../i18n'
 import { ConfirmDialog } from '../shared/ConfirmDialog'
 import type { SessionListItem } from '../../types/session'
-import { buildSessionTree } from '../../lib/sessionTree'
 import { useTabStore, SETTINGS_TAB_ID, SCHEDULED_TAB_ID } from '../../stores/tabStore'
 import { useChatStore } from '../../stores/chatStore'
 import { useOpenTargetStore } from '../../stores/openTargetStore'
@@ -835,7 +834,6 @@ export function Sidebar({ isMobile = false, onRequestClose }: SidebarProps) {
                 const visibleItems = projectCollapsed
                   ? []
                   : getVisibleProjectSessions(project.sessions, sessionsExpanded, activeTabId)
-                const treeItems = buildSessionTree(visibleItems)
                 const hiddenCount = project.sessions.length - visibleItems.length
                 const groupIds = project.sessions.map((session) => session.id)
                 const groupSelectedCount = groupIds.filter((id) => selectedSessionIds.has(id)).length
@@ -936,21 +934,8 @@ export function Sidebar({ isMobile = false, onRequestClose }: SidebarProps) {
                           className={hasInternalScroll ? 'max-h-[420px] overflow-y-auto pr-1' : undefined}
                           data-testid={`sidebar-project-session-list-${domSafeProjectKey(project.key)}`}
                         >
-                          {treeItems.map((treeSession) => {
-                            const { depth, isLastChild, ...session } = treeSession
-                            const indentLeft = `${Math.min(depth, 3) * 1}rem`
-                            return (
+                          {visibleItems.map((session) => (
                             <div key={session.id} className="relative mb-0.5 last:mb-0">
-                              {depth > 0 && (
-                                <div
-                                  className="absolute top-0 border-l-2 border-[var(--color-border)]"
-                                  style={{
-                                    left: `calc(${indentLeft} - 0.5rem)`,
-                                    height: isLastChild ? '50%' : '100%',
-                                  }}
-                                  aria-hidden="true"
-                                />
-                              )}
                               {renamingId === session.id ? (
                                 <input
                                   autoFocus
@@ -965,7 +950,6 @@ export function Sidebar({ isMobile = false, onRequestClose }: SidebarProps) {
                                     }
                                   }}
                                   className="w-full rounded-[var(--radius-md)] border border-[var(--color-border-focus)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-primary)] outline-none"
-                                  style={{ paddingLeft: `calc(0.75rem + ${indentLeft})` }}
                                 />
                               ) : (
                                 <button
@@ -988,17 +972,9 @@ export function Sidebar({ isMobile = false, onRequestClose }: SidebarProps) {
                                       : 'sidebar-session-row--idle text-[var(--color-text-secondary)] hover:bg-[var(--color-sidebar-item-hover)] hover:text-[var(--color-text-primary)]'
                                     }
                                   `}
-                                  style={{ paddingLeft: `calc(0.625rem + ${indentLeft})` }}
                                   aria-pressed={isBatchMode ? selectedSessionIds.has(session.id) : undefined}
                                 >
                                   <span className="flex min-w-0 items-center gap-2">
-                                    {depth > 0 && (
-                                      <GitBranch
-                                        size={13}
-                                        className="flex-shrink-0 text-[var(--color-text-tertiary)] opacity-50"
-                                        aria-hidden="true"
-                                      />
-                                    )}
                                     {isBatchMode ? (
                                       <span
                                         className={`flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-[5px] border transition-colors ${
@@ -1032,7 +1008,7 @@ export function Sidebar({ isMobile = false, onRequestClose }: SidebarProps) {
                                 </button>
                               )}
                             </div>
-                          )})}
+                          ))}
                         </div>
                         {(hiddenCount > 0 || sessionsExpanded) && (
                           <div className="mt-2 flex justify-start px-2.5">
@@ -1681,17 +1657,21 @@ function normalizeProjectKeyList(values: unknown): string[] {
 }
 
 function normalizeProjectPathForComparison(value: string): string {
-  const normalized = value.replace(/\\/g, '/').replace(/\/+$/g, '')
-  return normalized || value
+  const normalized = value.replace(/\\/g, '/').replace(/\/+$/g, '') || value
+  return isWindows ? normalized.toLowerCase() : normalized
+}
+
+function isDriveRootComparisonPath(value: string): boolean {
+  return /^[a-z]:$/i.test(value)
 }
 
 function projectPathMatches(projectKey: string, workDir: string): boolean {
   const normalizedProjectKey = normalizeProjectPathForComparison(projectKey)
   const normalizedWorkDir = normalizeProjectPathForComparison(workDir)
 
-  return normalizedProjectKey === normalizedWorkDir
-    || normalizedWorkDir.startsWith(`${normalizedProjectKey}/`)
-    || normalizedProjectKey.startsWith(`${normalizedWorkDir}/`)
+  if (normalizedProjectKey === normalizedWorkDir) return true
+  if (isDriveRootComparisonPath(normalizedProjectKey)) return false
+  return normalizedWorkDir.startsWith(`${normalizedProjectKey}/`)
 }
 
 function hasSidebarProjectPreferences(preferences: SidebarProjectPreferences): boolean {

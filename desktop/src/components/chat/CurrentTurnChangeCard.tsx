@@ -1,17 +1,18 @@
 import { useCallback, useMemo, useState } from 'react'
-import { sessionsApi, type SessionTurnCheckpoint } from '../../api/sessions'
-import { useTranslation } from '../../i18n'
-import { WorkspaceDiffSurface } from '../workspace/WorkspaceCodeSurface'
-
-type DiffPreviewState = {
-  loading: boolean
-  diff?: string
-  error?: string
-}
+import type { MouseEvent as ReactMouseEvent } from 'react'
+import { ChevronDown, ChevronUp } from 'lucide-react'
+import type { SessionTurnCheckpoint } from '../../api/sessions'
+import { useTranslation, type TranslationKey } from '../../i18n'
+import { OpenWithMenu } from '../common/OpenWithMenu'
+import { buildOpenWithItems, describeFileType, isPreviewableChangedFile, type OpenWithItem } from '../../lib/openWithItems'
+import { openWithContextForWorkspaceFile } from '../../lib/openWithContextForHref'
+import { getServerBaseUrl } from '../../lib/desktopRuntime'
+import { useOpenTargetStore } from '../../stores/openTargetStore'
+import { useBrowserPanelStore } from '../../stores/browserPanelStore'
+import { useWorkspacePanelStore } from '../../stores/workspacePanelStore'
 
 type CurrentTurnChangeCardProps = {
   sessionId: string
-  targetUserMessageId: string
   checkpoint: SessionTurnCheckpoint
   workDir: string | null
   error: string | null
@@ -25,9 +26,10 @@ type ChangedFileEntry = {
   displayPath: string
 }
 
+const COLLAPSED_COUNT = 5
+
 export function CurrentTurnChangeCard({
   sessionId,
-  targetUserMessageId,
   checkpoint,
   workDir,
   error,
@@ -36,8 +38,8 @@ export function CurrentTurnChangeCard({
   onUndo,
 }: CurrentTurnChangeCardProps) {
   const t = useTranslation()
-  const [expandedPath, setExpandedPath] = useState<string | null>(null)
-  const [diffByPath, setDiffByPath] = useState<Record<string, DiffPreviewState>>({})
+  const [openWith, setOpenWith] = useState<{ items: OpenWithItem[]; anchor: DOMRect; triggerEl: HTMLElement } | null>(null)
+  const [showAllFiles, setShowAllFiles] = useState(false)
 
   const files = useMemo<ChangedFileEntry[]>(
     () => checkpoint.code.filesChanged.map((filePath) => ({
@@ -47,49 +49,46 @@ export function CurrentTurnChangeCard({
     [checkpoint.code.filesChanged, workDir],
   )
 
-  const toggleDiff = useCallback((fileEntry: ChangedFileEntry) => {
-    const nextExpandedPath = expandedPath === fileEntry.apiPath ? null : fileEntry.apiPath
-    setExpandedPath(nextExpandedPath)
-    if (!nextExpandedPath || diffByPath[fileEntry.apiPath]?.diff || diffByPath[fileEntry.apiPath]?.loading) {
+  const canCollapse = files.length > COLLAPSED_COUNT
+  const visibleFiles = canCollapse && !showAllFiles
+    ? files.slice(0, COLLAPSED_COUNT)
+    : files
+
+  const openDiffInWorkspace = useCallback((fileEntry: ChangedFileEntry) => {
+    // Jump to the right-side workspace and open a diff tab. We pass the workDir-relative
+    // path (same format the workspace file tree passes to openPreview), so the diff tab
+    // is keyed/fetched identically to the tree-driven one.
+    void useWorkspacePanelStore.getState().openPreview(sessionId, fileEntry.displayPath, 'diff')
+  }, [sessionId])
+
+  const handleOpenWith = useCallback((event: ReactMouseEvent<HTMLButtonElement>, fileEntry: ChangedFileEntry) => {
+    event.stopPropagation()
+    // Toggle: if the menu is already open, a second click on the trigger closes it
+    // (the OpenWithMenu's outside-mousedown handler excludes the trigger, so its
+    //  own click is the only thing that can close it on re-click).
+    if (openWith) {
+      setOpenWith(null)
       return
     }
-
-    setDiffByPath((current) => ({
-      ...current,
-      [fileEntry.apiPath]: { loading: true },
-    }))
-
-    void sessionsApi
-      .getTurnCheckpointDiff(
+    const triggerEl = event.currentTarget
+    const rect = triggerEl.getBoundingClientRect()
+    void (async () => {
+      await useOpenTargetStore.getState().ensureTargets()
+      const targets = useOpenTargetStore.getState().targets
+      const ctx = openWithContextForWorkspaceFile(fileEntry.displayPath, fileEntry.apiPath, {
         sessionId,
-        targetUserMessageId,
-        fileEntry.apiPath,
-        checkpoint.target.userMessageIndex,
-      )
-      .then((result) => {
-        setDiffByPath((current) => ({
-          ...current,
-          [fileEntry.apiPath]: {
-            loading: false,
-            diff: result.state === 'ok' ? result.diff || '' : undefined,
-            error: result.state === 'ok'
-              ? undefined
-              : result.error || t('chat.turnChangesDiffUnavailable'),
-          },
-        }))
+        serverBaseUrl: getServerBaseUrl(),
       })
-      .catch((diffError) => {
-        setDiffByPath((current) => ({
-          ...current,
-          [fileEntry.apiPath]: {
-            loading: false,
-            error: diffError instanceof Error
-              ? diffError.message
-              : String(diffError),
-          },
-        }))
+      const items = buildOpenWithItems(ctx, targets, {
+        openInAppBrowser: (url) => useBrowserPanelStore.getState().open(sessionId, url),
+        openSystem: (p) => { void import('@tauri-apps/plugin-shell').then((m) => m.open(p)).catch(() => {}) },
+        openWorkspacePreview: (rel) => { void useWorkspacePanelStore.getState().openPreview(sessionId, rel, 'file') },
+        openTarget: (id, abs) => { void useOpenTargetStore.getState().openTarget(id, abs) },
+        t: (k, v) => t(k as TranslationKey, v),
       })
-  }, [diffByPath, expandedPath, sessionId, t, targetUserMessageId])
+      setOpenWith({ items, anchor: rect, triggerEl })
+    })()
+  }, [openWith, sessionId, t])
 
   const cardLabel = isLatest
     ? t('chat.turnChangesLatestCardLabel')
@@ -140,61 +139,69 @@ export function CurrentTurnChangeCard({
       </div>
 
       <div className="divide-y divide-[var(--color-border)]">
-        {files.map((fileEntry) => {
-          const isExpanded = expandedPath === fileEntry.apiPath
-          const diffState = diffByPath[fileEntry.apiPath]
+        {visibleFiles.map((fileEntry) => {
+          const fileName = fileEntry.displayPath.split('/').pop() || fileEntry.displayPath
+          const typeInfo = describeFileType(fileEntry.displayPath)
+          const previewable = isPreviewableChangedFile(fileEntry.displayPath)
           return (
-            <div key={fileEntry.apiPath}>
+            <div key={fileEntry.apiPath} className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => toggleDiff(fileEntry)}
-                aria-label={t(
-                  isExpanded ? 'chat.turnChangesHideDiffAria' : 'chat.turnChangesShowDiffAria',
-                  { path: fileEntry.displayPath },
-                )}
-                className="flex min-h-11 w-full items-center gap-3 px-4 text-left text-sm text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-brand)]/35"
+                onClick={() => openDiffInWorkspace(fileEntry)}
+                aria-label={t('chat.turnChangesOpenInWorkspaceAria', { path: fileEntry.displayPath })}
+                title={fileEntry.displayPath}
+                className="flex min-h-[52px] min-w-0 flex-1 items-center gap-3 rounded-[var(--radius-md)] px-4 text-left transition-colors hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-brand)]/35"
               >
-                <span className="material-symbols-outlined shrink-0 text-[17px] text-[var(--color-text-tertiary)]">
-                  {isExpanded ? 'keyboard_arrow_down' : 'chevron_right'}
+                <span className="material-symbols-outlined shrink-0 text-[22px] text-[var(--color-text-tertiary)]">{typeInfo.icon}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium text-[var(--color-text-primary)]">{fileName}</span>
+                  <span className="block truncate text-xs text-[var(--color-text-tertiary)]">{`${t(typeInfo.categoryKey as Parameters<typeof t>[0])} · ${typeInfo.ext}`}</span>
                 </span>
-                <span className="min-w-0 flex-1 truncate font-mono text-[13px]">
-                  {fileEntry.displayPath}
-                </span>
+                <span className="material-symbols-outlined shrink-0 text-[18px] text-[var(--color-text-tertiary)]">chevron_right</span>
               </button>
-
-              {isExpanded && (
-                <div className="border-t border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] px-4 py-3">
-                  {diffState?.loading ? (
-                    <div className="text-xs text-[var(--color-text-tertiary)]">
-                      {t('chat.turnChangesDiffLoading')}
-                    </div>
-                  ) : diffState?.error ? (
-                    <div className="text-xs text-[var(--color-error)]">
-                      {diffState.error}
-                    </div>
-                  ) : diffState?.diff ? (
-                    <WorkspaceDiffSurface
-                      value={diffState.diff}
-                      path={fileEntry.displayPath}
-                      className="max-h-[430px] overflow-auto rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-code-bg)]"
-                    />
-                  ) : (
-                    <div className="text-xs text-[var(--color-text-tertiary)]">
-                      {t('chat.turnChangesDiffUnavailable')}
-                    </div>
-                  )}
-                </div>
+              {previewable && (
+                <button
+                  type="button"
+                  aria-label={t('openWith.title')}
+                  onClick={(event) => handleOpenWith(event, fileEntry)}
+                  className="mr-2 inline-flex h-8 shrink-0 items-center gap-1 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 text-xs font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]/35"
+                >
+                  {t('openWith.title')}
+                  <ChevronDown size={14} strokeWidth={1.9} />
+                </button>
               )}
             </div>
           )
         })}
       </div>
 
+      {canCollapse && (
+        <button
+          type="button"
+          onClick={() => setShowAllFiles((current) => !current)}
+          className="flex w-full items-center justify-center gap-1 border-t border-[var(--color-border)] px-4 py-2 text-xs text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-brand)]/35"
+        >
+          {showAllFiles ? (
+            <>
+              {t('chat.turnChangesShowLess')}
+              <ChevronUp size={14} strokeWidth={1.9} />
+            </>
+          ) : (
+            <>
+              {t('chat.turnChangesShowMore', { count: String(files.length - COLLAPSED_COUNT) })}
+              <ChevronDown size={14} strokeWidth={1.9} />
+            </>
+          )}
+        </button>
+      )}
+
       {error && (
         <div className="border-t border-[var(--color-error)]/20 bg-[var(--color-error-container)]/18 px-4 py-3 text-xs text-[var(--color-error)]">
           {error}
         </div>
       )}
+
+      {openWith && <OpenWithMenu items={openWith.items} anchor={openWith.anchor} triggerEl={openWith.triggerEl} onClose={() => setOpenWith(null)} />}
     </section>
   )
 }

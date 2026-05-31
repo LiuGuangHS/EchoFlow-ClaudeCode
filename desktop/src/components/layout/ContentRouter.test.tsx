@@ -19,8 +19,8 @@ vi.mock('../../pages/Settings', () => ({
 }))
 
 vi.mock('../../pages/TerminalSettings', () => ({
-  TerminalSettings: ({ active, cwd, onNewTerminal, testId }: { active: boolean; cwd?: string; onNewTerminal: () => void; testId: string }) => (
-    <div data-active={active ? 'true' : 'false'} data-cwd={cwd ?? ''} data-testid={testId}>
+  TerminalSettings: ({ active, cwd, onNewTerminal, runtimeId, testId }: { active: boolean; cwd?: string; onNewTerminal: () => void; runtimeId?: string; testId: string }) => (
+    <div data-active={active ? 'true' : 'false'} data-cwd={cwd ?? ''} data-runtime-id={runtimeId ?? ''} data-testid={testId}>
       <button type="button" onClick={onNewTerminal}>New Terminal</button>
     </div>
   ),
@@ -45,7 +45,26 @@ describe('ContentRouter terminal tabs', () => {
 
     expect(screen.getByTestId('terminal-host-__terminal__1')).toHaveAttribute('data-active', 'true')
     expect(screen.getByTestId('terminal-host-__terminal__1')).toHaveAttribute('data-cwd', '/tmp/project')
+    expect(screen.getByTestId('terminal-host-__terminal__1')).toHaveAttribute('data-runtime-id', '__terminal__1')
     expect(screen.queryByTestId('active-session')).not.toBeInTheDocument()
+  })
+
+  it('uses a promoted docked runtime when rendering a terminal tab', () => {
+    useTabStore.setState({
+      tabs: [{
+        sessionId: '__terminal__1',
+        title: 'Terminal 1',
+        type: 'terminal',
+        status: 'idle',
+        terminalCwd: '/tmp/project',
+        terminalRuntimeId: '__session_terminal__session-1',
+      }],
+      activeTabId: '__terminal__1',
+    })
+
+    render(<ContentRouter />)
+
+    expect(screen.getByTestId('terminal-host-__terminal__1')).toHaveAttribute('data-runtime-id', '__session_terminal__session-1')
   })
 
   it('keeps terminal tabs mounted while chat content is active', () => {

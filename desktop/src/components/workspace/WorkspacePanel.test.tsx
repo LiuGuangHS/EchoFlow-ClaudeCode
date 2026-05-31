@@ -241,6 +241,15 @@ vi.mock('../../api/sessions', () => ({
   })(),
 }))
 
+vi.mock('../../api/openTargets', () => ({
+  openTargetsApi: {
+    list: vi.fn().mockResolvedValue({ platform: 'darwin', targets: [], primaryTargetId: null, cachedAt: 0, ttlMs: 60000 }),
+    open: vi.fn().mockResolvedValue({ ok: true, targetId: '', path: '' }),
+  },
+}))
+
+vi.mock('@tauri-apps/plugin-shell', () => ({ open: vi.fn().mockResolvedValue(undefined) }))
+
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useChatStore } from '../../stores/chatStore'
 import { useWorkspaceChatContextStore } from '../../stores/workspaceChatContextStore'
@@ -1195,7 +1204,129 @@ describe('WorkspacePanel', () => {
     ])
   })
 
-  it('copies file paths from the file tree menu with the legacy clipboard fallback', async () => {
+  it('adds a workspace directory to the chat context from the file tree menu', async () => {
+    await setWorkspaceState((state) => ({
+      ...state,
+      panelBySession: {
+        ...state.panelBySession,
+        'session-add-directory': {
+          isOpen: true,
+          activeView: 'all',
+        },
+      },
+      statusBySession: {
+        ...state.statusBySession,
+        'session-add-directory': {
+          state: 'ok',
+          workDir: '/repo',
+          repoName: 'repo',
+          branch: 'main',
+          isGitRepo: true,
+          changedFiles: [],
+        },
+      },
+      treeBySessionPath: {
+        ...state.treeBySessionPath,
+        'session-add-directory': {
+          '': {
+            state: 'ok',
+            path: '',
+            entries: [{ name: 'src', path: 'src', isDirectory: true }],
+          },
+        },
+      },
+    }))
+
+    const view = await renderPanel('session-add-directory')
+
+    await act(() => {
+      fireEvent.contextMenu(view.getByRole('button', { name: /src/i }), {
+        clientX: 260,
+        clientY: 80,
+      })
+    })
+
+    await clickElement(view.getByRole('menuitem', { name: 'Add to chat' }))
+
+    expect(useWorkspaceChatContextStore.getState().referencesBySession['session-add-directory']).toMatchObject([
+      {
+        kind: 'file',
+        path: 'src',
+        absolutePath: '/repo/src',
+        name: 'src/',
+        isDirectory: true,
+      },
+    ])
+  })
+
+  it('does not show duplicate inline citation actions in the file tree menu', async () => {
+    useChatStore.setState({
+      sessions: {
+        'session-cite-file': {
+          messages: [],
+          chatState: 'idle',
+          connectionState: 'connected',
+          streamingText: '',
+          streamingToolInput: '',
+          activeToolUseId: null,
+          activeToolName: null,
+          activeThinkingId: null,
+          pendingPermission: null,
+          pendingComputerUsePermission: null,
+          tokenUsage: { input_tokens: 0, output_tokens: 0 },
+          elapsedSeconds: 0,
+          statusVerb: '',
+          slashCommands: [],
+          agentTaskNotifications: {},
+          elapsedTimer: null,
+        },
+      },
+    })
+    await setWorkspaceState((state) => ({
+      ...state,
+      panelBySession: {
+        ...state.panelBySession,
+        'session-cite-file': {
+          isOpen: true,
+          activeView: 'all',
+        },
+      },
+      statusBySession: {
+        ...state.statusBySession,
+        'session-cite-file': {
+          state: 'ok',
+          workDir: '/repo',
+          repoName: 'repo',
+          branch: 'main',
+          isGitRepo: true,
+          changedFiles: [],
+        },
+      },
+      treeBySessionPath: {
+        ...state.treeBySessionPath,
+        'session-cite-file': {
+          '': {
+            state: 'ok',
+            path: '',
+            entries: [{ name: 'App.tsx', path: 'src/App.tsx', isDirectory: false }],
+          },
+        },
+      },
+    }))
+
+    const view = await renderPanel('session-cite-file')
+
+    await act(() => {
+      fireEvent.contextMenu(view.getByRole('button', { name: /App\.tsx/i }), {
+        clientX: 260,
+        clientY: 80,
+      })
+    })
+
+    expect(view.queryByRole('menuitem', { name: 'Cite in message' })).toBeNull()
+  })
+
+  it('copies relative and absolute file paths from the file tree menu with the legacy clipboard fallback', async () => {
     const originalClipboard = navigator.clipboard
     const originalExecCommand = document.execCommand
     Object.defineProperty(document, 'execCommand', {
@@ -1258,11 +1389,22 @@ describe('WorkspacePanel', () => {
       await waitFor(() => {
         expect(execCommand).toHaveBeenCalledWith('copy')
       })
-      expect(writeText).toHaveBeenCalledWith('/repo/src/App.tsx')
+      expect(writeText).toHaveBeenCalledWith('src/App.tsx')
       expect(useUIStore.getState().toasts[useUIStore.getState().toasts.length - 1]).toMatchObject({
         type: 'success',
         message: 'Path copied.',
       })
+
+      await act(() => {
+        fireEvent.contextMenu(view.getByRole('button', { name: /App\.tsx/i }), {
+          clientX: 260,
+          clientY: 80,
+        })
+      })
+
+      await clickElement(view.getByRole('menuitem', { name: 'Copy absolute path' }))
+
+      expect(writeText).toHaveBeenLastCalledWith('/repo/src/App.tsx')
     } finally {
       Object.defineProperty(document, 'execCommand', {
         configurable: true,

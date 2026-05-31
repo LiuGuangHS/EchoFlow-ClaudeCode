@@ -165,8 +165,8 @@ export const useCLITaskStore = create<CLITaskStore>((set, get) => ({
     set({
       tasks: [],
       resetting: true,
-      completedAndDismissed: false,
-      dismissedCompletionKey: null,
+      completedAndDismissed: true,
+      dismissedCompletionKey: completionKey,
       expanded: false,
     })
 

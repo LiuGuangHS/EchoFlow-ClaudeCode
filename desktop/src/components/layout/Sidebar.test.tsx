@@ -782,6 +782,50 @@ describe('Sidebar', () => {
     expect(screen.getAllByText('worktree')).toHaveLength(1)
   })
 
+  it('keeps a Windows drive root session separate from sessions in child projects', () => {
+    const now = new Date().toISOString()
+    useSessionStore.setState({
+      sessions: [
+        makeSession('drive-root', 'Drive Root Session', 'D:\\', now),
+        makeSession('drive-project', 'Drive Project Session', 'D:\\SomeProject', now),
+      ],
+    })
+
+    render(<Sidebar />)
+
+    expect(screen.getByText('D:')).toBeInTheDocument()
+    expect(screen.getByText('SomeProject')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Drive Root Session/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Drive Project Session/ })).toBeInTheDocument()
+  })
+
+  it('does not restore a hidden Windows drive root when creating a child project session', async () => {
+    window.localStorage.setItem(PROJECT_HIDDEN_STORAGE_KEY, JSON.stringify(['D:\\']))
+    createSession.mockResolvedValue('child-new')
+    const now = new Date().toISOString()
+    useSessionStore.setState({
+      sessions: [
+        makeSession('child-1', 'Child Session', 'D:\\workspace\\code\\cc-haha', now),
+      ],
+    })
+    useTabStore.setState({
+      tabs: [{ sessionId: 'child-1', title: 'Child Session', type: 'session', status: 'idle' }],
+      activeTabId: 'child-1',
+    })
+
+    render(<Sidebar />)
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'New Session' }))
+    })
+
+    await waitFor(() => {
+      expect(createSession).toHaveBeenCalledWith('D:\\workspace\\code\\cc-haha')
+    })
+    expect(JSON.parse(window.localStorage.getItem(PROJECT_HIDDEN_STORAGE_KEY) ?? '[]')).toEqual(['D:\\'])
+    expect(desktopUiPreferencesApiMock.updateSidebarPreferences).not.toHaveBeenCalled()
+  })
+
   it('right-aligns running status, worktree marker, and update time on session rows', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-05-19T12:00:00.000Z'))

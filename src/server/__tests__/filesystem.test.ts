@@ -65,7 +65,10 @@ describe('filesystem API', () => {
   it('allows browsing a directory under the user home directory', async () => {
     const homeFixtureDir = await fsp.mkdtemp(path.join(os.homedir(), 'claude-filesystem-test-'))
     cleanupDirs.add(homeFixtureDir)
+    await fsp.mkdir(path.join(homeFixtureDir, '.config'))
+    await fsp.mkdir(path.join(homeFixtureDir, '.git'))
     await fsp.writeFile(path.join(homeFixtureDir, 'note.txt'), 'hello')
+    await fsp.writeFile(path.join(homeFixtureDir, '.env.local'), 'SECRET=example')
 
     const res = await handleFilesystemRoute(
       '/api/filesystem/browse',
@@ -77,6 +80,9 @@ describe('filesystem API', () => {
 
     expect(res.status).toBe(200)
     const body = await res.json() as { entries: Array<{ name: string }> }
+    expect(body.entries.some((entry) => entry.name === '.config')).toBe(true)
+    expect(body.entries.some((entry) => entry.name === '.env.local')).toBe(true)
+    expect(body.entries.some((entry) => entry.name === '.git')).toBe(false)
     expect(body.entries.some((entry) => entry.name === 'note.txt')).toBe(true)
   })
 

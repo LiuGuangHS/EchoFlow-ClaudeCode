@@ -31,25 +31,37 @@ vi.mock('../components/chat/SessionTaskBar', () => ({
   SessionTaskBar: () => <div data-testid="session-task-bar" />,
 }))
 
-vi.mock('../components/workspace/WorkspacePanel', () => ({
-  WorkspacePanel: ({ sessionId }: { sessionId: string }) => (
+vi.mock('../components/workbench/WorkbenchPanel', () => ({
+  WorkbenchPanel: ({ sessionId }: { sessionId: string }) => (
     <div data-testid="workspace-panel">workspace:{sessionId}</div>
   ),
 }))
 
 vi.mock('./TerminalSettings', () => ({
   TerminalSettings: ({
+    active,
     cwd,
     onOpenInTab,
     onClose,
+    runtimeId,
+    preserveOnUnmount,
     testId,
   }: {
+    active?: boolean
     cwd?: string
     onOpenInTab?: () => void
     onClose?: () => void
+    runtimeId?: string
+    preserveOnUnmount?: boolean
     testId: string
   }) => (
-    <div data-testid={testId} data-cwd={cwd ?? ''}>
+    <div
+      data-testid={testId}
+      data-active={active ? 'true' : 'false'}
+      data-cwd={cwd ?? ''}
+      data-preserve-on-unmount={preserveOnUnmount ? 'true' : 'false'}
+      data-runtime-id={runtimeId ?? ''}
+    >
       <button type="button" onClick={onOpenInTab}>Open in Tab</button>
       <button type="button" onClick={onClose}>Close terminal panel</button>
     </div>
@@ -132,6 +144,45 @@ describe('ActiveSession task polling', () => {
     render(<ActiveSession />)
 
     expect(screen.getByTestId('message-list')).toBeInTheDocument()
+    expect(screen.getByTestId('chat-input')).toHaveAttribute('data-variant', 'default')
+  })
+
+  it('shows a loading state for historical sessions while messages are loading', () => {
+    const sessionId = 'history-visible-loading-session'
+
+    useSessionStore.setState({
+      sessions: [{
+        id: sessionId,
+        title: 'History Loading Session',
+        createdAt: '2026-05-07T00:00:00.000Z',
+        modifiedAt: '2026-05-07T00:00:00.000Z',
+        messageCount: 2,
+        projectPath: '/workspace/project',
+        workDir: '/workspace/project',
+        workDirExists: true,
+      }],
+      activeSessionId: sessionId,
+      isLoading: false,
+      error: null,
+    })
+    useTabStore.setState({
+      tabs: [{ sessionId, title: 'History Loading Session', type: 'session', status: 'idle' }],
+      activeTabId: sessionId,
+    })
+    useChatStore.setState({
+      sessions: {
+        [sessionId]: {
+          ...useChatStore.getState().getSession(sessionId),
+          connectionState: 'connected',
+          historyStatus: 'loading',
+        },
+      },
+    })
+
+    render(<ActiveSession />)
+
+    expect(screen.getByRole('status')).toHaveTextContent(/Loading|加载中/)
+    expect(screen.queryByTestId('message-list')).not.toBeInTheDocument()
     expect(screen.getByTestId('chat-input')).toHaveAttribute('data-variant', 'default')
   })
 
@@ -601,16 +652,18 @@ describe('ActiveSession task polling', () => {
     const chatColumn = screen.getByTestId('active-session-chat-column')
     const resizeHandle = screen.getByTestId('workspace-resize-handle')
 
+    const workbenchPanel = screen.getByTestId('workbench-panel')
+
     expect(within(contentRow).getByTestId('message-list')).toBeInTheDocument()
     expect(within(contentRow).getByTestId('message-list')).toHaveAttribute('data-compact', 'true')
-    expect(within(contentRow).getByTestId('workspace-panel')).toHaveTextContent(`workspace:${sessionId}`)
+    expect(within(workbenchPanel).getByTestId('workspace-panel')).toHaveTextContent(`workspace:${sessionId}`)
     expect(within(chatColumn).getByTestId('chat-input')).toBeInTheDocument()
     expect(within(chatColumn).getByTestId('chat-input')).toHaveAttribute('data-compact', 'true')
     expect(chatColumn).toHaveClass('flex-1')
     expect(chatColumn).not.toHaveClass('shrink-0')
     expect(contentRow.children[0]).toBe(chatColumn)
     expect(contentRow.children[1]).toBe(resizeHandle)
-    expect(contentRow.children[2]).toBe(screen.getByTestId('workspace-panel'))
+    expect(contentRow.children[2]).toBe(workbenchPanel)
 
     act(() => {
       fireEvent.keyDown(resizeHandle, { key: 'ArrowLeft' })
@@ -840,6 +893,8 @@ describe('ActiveSession task polling', () => {
 
     expect(panel).toHaveStyle({ height: `${TERMINAL_PANEL_DEFAULT_HEIGHT}px` })
     expect(host).toHaveAttribute('data-cwd', '/tmp/project-root/packages/app')
+    expect(host).toHaveAttribute('data-active', 'true')
+    expect(host).toHaveAttribute('data-preserve-on-unmount', 'true')
     expect(resizeHandle).toHaveAttribute('aria-valuemin', `${TERMINAL_PANEL_MIN_HEIGHT}`)
     expect(resizeHandle).toHaveAttribute('aria-valuemax', `${TERMINAL_PANEL_MAX_HEIGHT}`)
 
@@ -885,7 +940,65 @@ describe('ActiveSession task polling', () => {
 
     const terminalTab = useTabStore.getState().tabs.find((tab) => tab.type === 'terminal')
     expect(useTerminalPanelStore.getState().isPanelOpen(sessionId)).toBe(false)
+    expect(useTerminalPanelStore.getState().getPanelRuntimeId(sessionId)).toBeUndefined()
     expect(terminalTab?.terminalCwd).toBe('/tmp/project-root/packages/app')
+    expect(terminalTab?.terminalRuntimeId).toBe(`__session_terminal__${sessionId}`)
     expect(useTabStore.getState().activeTabId).toBe(terminalTab?.sessionId)
+  })
+
+  it('keeps the docked terminal mounted when the panel is hidden', async () => {
+    const sessionId = 'terminal-hide-session'
+
+    useSessionStore.setState({
+      sessions: [{
+        id: sessionId,
+        title: 'Terminal Hide Session',
+        createdAt: '2026-04-10T00:00:00.000Z',
+        modifiedAt: '2026-04-10T00:00:00.000Z',
+        messageCount: 1,
+        projectPath: '/tmp/project-root',
+        workDir: '/tmp/project-root',
+        workDirExists: true,
+      }],
+      activeSessionId: sessionId,
+      isLoading: false,
+      error: null,
+    })
+    useTabStore.setState({
+      tabs: [{ sessionId, title: 'Terminal Hide Session', type: 'session', status: 'idle' }],
+      activeTabId: sessionId,
+    })
+    useChatStore.setState({
+      sessions: {
+        [sessionId]: {
+          messages: [{ id: 'msg-1', type: 'assistant_text', content: 'hello', timestamp: 1 }],
+          chatState: 'idle',
+          connectionState: 'connected',
+          streamingText: '',
+          streamingToolInput: '',
+          activeToolUseId: null,
+          activeToolName: null,
+          activeThinkingId: null,
+          pendingPermission: null,
+          pendingComputerUsePermission: null,
+          tokenUsage: { input_tokens: 0, output_tokens: 0 },
+          elapsedSeconds: 0,
+          statusVerb: '',
+          slashCommands: [],
+          agentTaskNotifications: {},
+          elapsedTimer: null,
+        },
+      },
+    })
+    useTerminalPanelStore.getState().openPanel(sessionId)
+
+    render(<ActiveSession />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close terminal panel' }))
+
+    expect(useTerminalPanelStore.getState().isPanelOpen(sessionId)).toBe(false)
+    expect(screen.getByTestId('session-terminal-panel')).toHaveClass('hidden')
+    expect(screen.getByTestId(`session-terminal-host-${sessionId}`)).toHaveAttribute('data-active', 'false')
+    expect(screen.getByTestId(`session-terminal-host-${sessionId}`)).toHaveAttribute('data-runtime-id', `__session_terminal__${sessionId}`)
   })
 })

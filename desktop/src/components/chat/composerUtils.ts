@@ -1,34 +1,70 @@
 import type { SettingsTab } from '../../stores/uiStore'
+import type { TranslationKey } from '../../i18n'
+
+/** Map from slash command name to its i18n description key */
+const SLASH_CMD_DESCRIPTION_KEYS: Record<string, TranslationKey> = {
+  mcp: 'slashCmd.mcp.description',
+  skills: 'slashCmd.skills.description',
+  help: 'slashCmd.help.description',
+  status: 'slashCmd.status.description',
+  cost: 'slashCmd.cost.description',
+  context: 'slashCmd.context.description',
+  plugin: 'slashCmd.plugin.description',
+  memory: 'slashCmd.memory.description',
+  doctor: 'slashCmd.doctor.description',
+  compact: 'slashCmd.compact.description',
+  clear: 'slashCmd.clear.description',
+  goal: 'slashCmd.goal.description',
+  review: 'slashCmd.review.description',
+  commit: 'slashCmd.commit.description',
+  pr: 'slashCmd.pr.description',
+  init: 'slashCmd.init.description',
+  bug: 'slashCmd.bug.description',
+  config: 'slashCmd.config.description',
+  login: 'slashCmd.login.description',
+  logout: 'slashCmd.logout.description',
+  model: 'slashCmd.model.description',
+  permissions: 'slashCmd.permissions.description',
+  'terminal-setup': 'slashCmd.terminal-setup.description',
+  vim: 'slashCmd.vim.description',
+}
+
+/** Names of commands the desktop owns the description for (i.e. localized in our locales). */
+const BUILT_IN_COMMAND_NAMES = new Set(Object.keys(SLASH_CMD_DESCRIPTION_KEYS))
 
 export const PANEL_SLASH_COMMANDS = [
-  { name: 'mcp', description: 'Open available MCP tools for the current chat context' },
-  { name: 'skills', description: 'Browse user-invocable skills for the current chat context' },
-  { name: 'help', description: 'Show available desktop and agent commands' },
-  { name: 'status', description: 'Show session status, usage, and context' },
-  { name: 'cost', description: 'Show session usage and costs' },
-  { name: 'context', description: 'Show current context usage' },
+  { name: 'mcp' },
+  { name: 'skills' },
+  { name: 'help' },
+  { name: 'status' },
+  { name: 'cost' },
+  { name: 'context' },
 ] as const
 
 export const SETTINGS_SLASH_COMMANDS = [
-  { name: 'plugin', description: 'Open desktop plugin controls in Settings', tab: 'plugins' as const },
-  { name: 'memory', description: 'Open project memory files in Settings', tab: 'memory' as const },
-  { name: 'doctor', description: 'Open Doctor in Diagnostics', tab: 'diagnostics' as const },
+  { name: 'plugin', tab: 'plugins' as const },
+  { name: 'memory', tab: 'memory' as const },
+  { name: 'doctor', tab: 'diagnostics' as const },
 ] as const
 
 export const SLASH_COMMAND_ALIASES = [
   { name: 'plugins', target: 'plugin' },
 ] as const
 
-export const FALLBACK_SLASH_COMMANDS = [
-  ...PANEL_SLASH_COMMANDS,
-  ...SETTINGS_SLASH_COMMANDS.map(({ name, description }) => ({ name, description })),
+/** Static fallback with English descriptions (for non-React contexts) */
+export const FALLBACK_SLASH_COMMANDS: SlashCommandOption[] = [
+  { name: 'mcp', description: 'Open available MCP tools for the current chat context' },
+  { name: 'skills', description: 'Browse user-invocable skills for the current chat context' },
+  { name: 'help', description: 'Show available desktop and agent commands' },
+  { name: 'status', description: 'Show session status, usage, and context' },
+  { name: 'cost', description: 'Show session usage and costs' },
+  { name: 'context', description: 'Show current context usage' },
+  { name: 'plugin', description: 'Open desktop plugin controls in Settings' },
+  { name: 'memory', description: 'Open project memory files in Settings' },
+  { name: 'doctor', description: 'Open Doctor in Diagnostics' },
   { name: 'compact', description: 'Compact conversation context' },
   { name: 'clear', description: 'Clear conversation history' },
-  {
-    name: 'goal',
-    description: 'Set a completion goal',
-    argumentHint: '[<condition> | clear]',
-  },
+  { name: 'goal', description: 'Set a completion goal', argumentHint: '[<condition> | clear]' },
   { name: 'review', description: 'Review code changes' },
   { name: 'commit', description: 'Create a git commit' },
   { name: 'pr', description: 'Create a pull request' },
@@ -42,6 +78,36 @@ export const FALLBACK_SLASH_COMMANDS = [
   { name: 'terminal-setup', description: 'Set up terminal integration' },
   { name: 'vim', description: 'Toggle vim editing mode' },
 ]
+
+/** Build localized fallback commands using the current locale.
+ *
+ * Resolution order for each command's description:
+ *   1. Localized string from the i18n table (zh -> en) when a key is registered.
+ *   2. The static English description shipped in FALLBACK_SLASH_COMMANDS.
+ *
+ * This guarantees we never render a raw key (e.g. "slashCmd.foo.description")
+ * in the UI even if a command is missing from SLASH_CMD_DESCRIPTION_KEYS or
+ * its translation entry is absent.
+ */
+export function getLocalizedFallbackCommands(t: (key: TranslationKey) => string): SlashCommandOption[] {
+  return FALLBACK_SLASH_COMMANDS.map((cmd) => {
+    const key = SLASH_CMD_DESCRIPTION_KEYS[cmd.name]
+    let description = cmd.description
+    if (key) {
+      const translated = t(key)
+      // i18n returns the key itself when no translation is found; fall back to
+      // the static English description in that case.
+      if (translated && translated !== key) {
+        description = translated
+      }
+    }
+    return {
+      name: cmd.name,
+      description,
+      ...(cmd.argumentHint && { argumentHint: cmd.argumentHint }),
+    }
+  })
+}
 
 export type SlashCommandOption = {
   name: string
@@ -78,30 +144,34 @@ export function mergeSlashCommands(
   preferred: ReadonlyArray<SlashCommandOption>,
   fallback: ReadonlyArray<SlashCommandOption> = FALLBACK_SLASH_COMMANDS,
 ): SlashCommandOption[] {
+  const fallbackByName = new Map<string, SlashCommandOption>()
+  for (const command of fallback) {
+    if (command?.name) fallbackByName.set(command.name, command)
+  }
+
   const merged = new Map<string, SlashCommandOption>()
 
   for (const command of preferred) {
     if (!command?.name) continue
+    const localized = fallbackByName.get(command.name)
+    // For commands the desktop owns the copy for, prefer the localized fallback
+    // description so users see translated text instead of the CLI's English.
+    const useLocalDescription =
+      BUILT_IN_COMMAND_NAMES.has(command.name) && Boolean(localized?.description)
+    const description = useLocalDescription
+      ? localized!.description
+      : command.description?.trim() || localized?.description || ''
+    const argumentHint = command.argumentHint?.trim() || localized?.argumentHint
     merged.set(command.name, {
       name: command.name,
-      description: command.description?.trim() || '',
-      ...(command.argumentHint?.trim() && { argumentHint: command.argumentHint.trim() }),
+      description,
+      ...(argumentHint && { argumentHint }),
     })
   }
 
   for (const command of fallback) {
     if (!command?.name) continue
-    const existing = merged.get(command.name)
-    if (existing) {
-      if ((!existing.description && command.description) || (!existing.argumentHint && command.argumentHint)) {
-        merged.set(command.name, {
-          ...existing,
-          description: existing.description || command.description,
-          argumentHint: existing.argumentHint || command.argumentHint,
-        })
-      }
-      continue
-    }
+    if (merged.has(command.name)) continue
     merged.set(command.name, command)
   }
 

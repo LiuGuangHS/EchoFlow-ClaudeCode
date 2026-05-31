@@ -305,6 +305,43 @@ describe('workspacePanelStore', () => {
     ])
   })
 
+  it('openPreview opens the workspace panel when it was closed', async () => {
+    mocks.getWorkspaceFileMock.mockResolvedValue({
+      state: 'ok', path: 'src/a.ts', content: 'export const a = 1', language: 'typescript', size: 18,
+    })
+    expect(useWorkspacePanelStore.getState().isPanelOpen('session-closed-preview')).toBe(false)
+    await useWorkspacePanelStore.getState().openPreview('session-closed-preview', 'src/a.ts', 'file')
+    expect(useWorkspacePanelStore.getState().isPanelOpen('session-closed-preview')).toBe(true)
+  })
+
+  it('defaults the workbench mode to "workspace"', () => {
+    expect(useWorkspacePanelStore.getState().getMode('session-no-mode')).toBe('workspace')
+  })
+
+  it('setMode stores the workbench mode per session', () => {
+    const store = useWorkspacePanelStore.getState()
+    store.setMode('session-a', 'browser')
+    store.setMode('session-b', 'workspace')
+    expect(useWorkspacePanelStore.getState().getMode('session-a')).toBe('browser')
+    expect(useWorkspacePanelStore.getState().getMode('session-b')).toBe('workspace')
+    // Unrelated sessions still fall back to the default.
+    expect(useWorkspacePanelStore.getState().getMode('session-c')).toBe('workspace')
+  })
+
+  it('openPreview opens the panel and forces "workspace" mode', async () => {
+    mocks.getWorkspaceFileMock.mockResolvedValue({
+      state: 'ok', path: 'src/a.ts', content: 'export const a = 1', language: 'typescript', size: 18,
+    })
+    // Start in browser mode (panel could already be showing the browser).
+    useWorkspacePanelStore.getState().setMode('session-preview-mode', 'browser')
+    expect(useWorkspacePanelStore.getState().getMode('session-preview-mode')).toBe('browser')
+
+    await useWorkspacePanelStore.getState().openPreview('session-preview-mode', 'src/a.ts', 'file')
+
+    expect(useWorkspacePanelStore.getState().isPanelOpen('session-preview-mode')).toBe(true)
+    expect(useWorkspacePanelStore.getState().getMode('session-preview-mode')).toBe('workspace')
+  })
+
   it('opens preview tabs, supports multiple kinds, and reuses duplicates without persistence', async () => {
     const storage = typeof globalThis.localStorage === 'undefined' ? null : globalThis.localStorage
     const setItemSpy = storage ? vi.spyOn(storage, 'setItem') : null
@@ -591,6 +628,10 @@ describe('workspacePanelStore', () => {
         'session-clear': { isOpen: true, activeView: 'all' },
         'session-reset': { isOpen: true, activeView: 'all' },
       },
+      modeBySession: {
+        'session-clear': 'browser',
+        'session-reset': 'browser',
+      },
       statusBySession: {
         'session-clear': {
           state: 'ok',
@@ -669,6 +710,8 @@ describe('workspacePanelStore', () => {
     const state = useWorkspacePanelStore.getState()
     expect(state.panelBySession['session-clear']).toBeUndefined()
     expect(state.panelBySession['session-reset']).toBeUndefined()
+    expect(state.modeBySession['session-clear']).toBeUndefined()
+    expect(state.modeBySession['session-reset']).toBeUndefined()
     expect(state.statusBySession['session-clear']).toBeUndefined()
     expect(state.statusBySession['session-reset']).toBeUndefined()
     expect(state.expandedPathsBySession['session-clear']).toBeUndefined()

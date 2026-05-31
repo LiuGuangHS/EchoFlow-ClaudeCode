@@ -394,10 +394,12 @@ describe('WorkspaceService', () => {
     })
   })
 
-  it('lists a single directory level with dotfiles excluded and directories first', async () => {
+  it('lists a single directory level with dotfiles included and directories first', async () => {
     const workDir = await makeTempDir('workspace-service-tree-')
     const service = new WorkspaceService(async () => workDir)
 
+    await fs.mkdir(path.join(workDir, '.hidden-dir'))
+    await fs.mkdir(path.join(workDir, '.git'))
     await fs.mkdir(path.join(workDir, 'b-dir'))
     await fs.mkdir(path.join(workDir, 'a-dir'))
     await fs.mkdir(path.join(workDir, 'a-dir', 'inner'))
@@ -409,8 +411,10 @@ describe('WorkspaceService', () => {
       state: 'ok',
       path: '',
       entries: [
+        { name: '.hidden-dir', path: '.hidden-dir', isDirectory: true },
         { name: 'a-dir', path: 'a-dir', isDirectory: true },
         { name: 'b-dir', path: 'b-dir', isDirectory: true },
+        { name: '.hidden.txt', path: '.hidden.txt', isDirectory: false },
         { name: 'z-file.txt', path: 'z-file.txt', isDirectory: false },
       ],
     })

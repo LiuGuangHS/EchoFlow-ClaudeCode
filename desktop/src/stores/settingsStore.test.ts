@@ -279,6 +279,56 @@ describe('settingsStore network persistence', () => {
       },
     })
   })
+
+  it('persists the chat send behavior preference and normalizes invalid values', async () => {
+    const updateUser = vi.fn().mockResolvedValue({})
+    vi.doMock('../api/settings', () => ({
+      settingsApi: {
+        getUser: vi.fn().mockResolvedValue({
+          chatSendBehavior: 'unexpected',
+        }),
+        updateUser,
+        getPermissionMode: vi.fn().mockResolvedValue({ mode: 'default' }),
+        setPermissionMode: vi.fn(),
+        getCliLauncherStatus: vi.fn(),
+      },
+    }))
+    vi.doMock('../api/models', () => ({
+      modelsApi: {
+        list: vi.fn().mockResolvedValue({ models: [] }),
+        getCurrent: vi.fn().mockResolvedValue({ model: null }),
+        setCurrent: vi.fn(),
+        getEffort: vi.fn().mockResolvedValue({ level: 'medium' }),
+        setEffort: vi.fn(),
+      },
+    }))
+    vi.doMock('../api/h5Access', () => ({
+      h5AccessApi: {
+        get: vi.fn().mockResolvedValue({
+          settings: {
+            enabled: false,
+            tokenPreview: null,
+            allowedOrigins: [],
+            publicBaseUrl: null,
+          },
+        }),
+        enable: vi.fn(),
+        disable: vi.fn(),
+        regenerate: vi.fn(),
+        update: vi.fn(),
+      },
+    }))
+
+    const { useSettingsStore } = await import('./settingsStore')
+
+    await useSettingsStore.getState().fetchAll()
+    expect(useSettingsStore.getState().chatSendBehavior).toBe('enter')
+
+    await useSettingsStore.getState().setChatSendBehavior('modifierEnter')
+
+    expect(useSettingsStore.getState().chatSendBehavior).toBe('modifierEnter')
+    expect(updateUser).toHaveBeenCalledWith({ chatSendBehavior: 'modifierEnter' })
+  })
 })
 
 describe('settingsStore app mode', () => {

@@ -101,6 +101,7 @@
     "dialog:allow-open",
     "dialog:allow-save",
     "dialog:allow-message",
+    "dialog:allow-confirm",
     "notification:default",
     "process:allow-exit",
     "process:allow-restart",

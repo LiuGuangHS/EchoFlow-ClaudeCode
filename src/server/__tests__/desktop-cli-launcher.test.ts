@@ -3,7 +3,11 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
-import { ensureDesktopCliLauncherInstalled } from '../services/desktopCliLauncherService.js'
+import {
+  buildWindowsLauncherWrapper,
+  ensureDesktopCliLauncherInstalled,
+  getDesktopCliCommandName,
+} from '../services/desktopCliLauncherService.js'
 
 const isWindows = process.platform === 'win32'
 const unixOnly = isWindows ? it.skip : it
@@ -13,6 +17,7 @@ const ORIGINAL_USERPROFILE = process.env.USERPROFILE
 const ORIGINAL_SHELL = process.env.SHELL
 const ORIGINAL_PATH = process.env.PATH
 const ORIGINAL_CLAUDE_CLI_PATH = process.env.CLAUDE_CLI_PATH
+const ORIGINAL_CLAUDE_CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR
 
 describe('ensureDesktopCliLauncherInstalled', () => {
   let tempHome = ''
@@ -25,6 +30,7 @@ describe('ensureDesktopCliLauncherInstalled', () => {
     process.env.USERPROFILE = tempHome
     process.env.SHELL = '/bin/zsh'
     process.env.PATH = ''
+    delete process.env.CLAUDE_CONFIG_DIR
   })
 
   afterEach(async () => {
@@ -58,6 +64,12 @@ describe('ensureDesktopCliLauncherInstalled', () => {
       process.env.CLAUDE_CLI_PATH = ORIGINAL_CLAUDE_CLI_PATH
     }
 
+    if (ORIGINAL_CLAUDE_CONFIG_DIR === undefined) {
+      delete process.env.CLAUDE_CONFIG_DIR
+    } else {
+      process.env.CLAUDE_CONFIG_DIR = ORIGINAL_CLAUDE_CONFIG_DIR
+    }
+
     await rm(tempHome, { recursive: true, force: true })
     await rm(tempSourceDir, { recursive: true, force: true })
   })
@@ -86,6 +98,32 @@ describe('ensureDesktopCliLauncherInstalled', () => {
     expect(launcher).toContain('/usr/bin/script -q /dev/null')
     expect(await readFile(shellConfigPath, 'utf8')).toContain(
       'export PATH="$HOME/.local/bin:$PATH"',
+    )
+  })
+
+  unixOnly('pins portable config dir in the installed launcher wrapper', async () => {
+    const sourcePath = join(tempSourceDir, 'claude-sidecar')
+    const portableDir = join(tempHome, 'portable-config')
+    await writeFile(sourcePath, '#!/bin/sh\necho desktop-sidecar\n', 'utf8')
+    await chmod(sourcePath, 0o755)
+    process.env.CLAUDE_CLI_PATH = sourcePath
+    process.env.CLAUDE_CONFIG_DIR = portableDir
+
+    await ensureDesktopCliLauncherInstalled()
+
+    const launcher = await readFile(join(tempHome, '.local', 'bin', 'claude-haha'), 'utf8')
+    expect(launcher).toContain(`export CLAUDE_CONFIG_DIR='${portableDir}'`)
+  })
+
+  it('uses a Windows cmd launcher so portable env can be injected', () => {
+    expect(getDesktopCliCommandName('win32')).toBe('claude-haha.cmd')
+
+    process.env.CLAUDE_CONFIG_DIR = 'C:\\Portable\\ClaudeConfig'
+    const wrapper = buildWindowsLauncherWrapper('C:\\Apps\\cc-haha\\claude-sidecar.exe')
+
+    expect(wrapper).toContain('set "CLAUDE_CONFIG_DIR=C:\\Portable\\ClaudeConfig"')
+    expect(wrapper).toContain(
+      '"%SIDECAR%" cli --app-root "%APP_ROOT%" %*',
     )
   })
 

@@ -12,6 +12,8 @@ export function isThemeMode(value: unknown): value is ThemeMode {
 
 export type WebSearchMode = 'auto' | 'anthropic' | 'tavily' | 'brave' | 'disabled'
 
+export type ChatSendBehavior = 'enter' | 'modifierEnter'
+
 export type WebSearchSettings = {
   mode?: WebSearchMode
   tavilyApiKey?: string
@@ -80,6 +82,7 @@ export type UserSettings = {
   alwaysThinkingEnabled?: boolean
   permissionMode?: PermissionMode
   theme?: ThemeMode
+  chatSendBehavior?: ChatSendBehavior
   skipWebFetchPreflight?: boolean
   desktopNotificationsEnabled?: boolean
   webSearch?: WebSearchSettings

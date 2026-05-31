@@ -10,11 +10,14 @@ export type UpdateStatus =
   | 'available'
   | 'up-to-date'
   | 'downloading'
+  | 'downloaded'
+  | 'installing'
   | 'restarting'
   | 'error'
 
 type CheckOptions = {
   silent?: boolean
+  autoDownload?: boolean
 }
 
 const DISMISSED_UPDATE_VERSION_KEY = 'cc-haha-dismissed-update-version'
@@ -31,12 +34,16 @@ type UpdateStore = {
   shouldPrompt: boolean
   initialize: () => Promise<void>
   checkForUpdates: (options?: CheckOptions) => Promise<Update | null>
+  downloadUpdate: () => Promise<void>
   installUpdate: () => Promise<void>
   dismissPrompt: () => void
 }
 
 let pendingUpdate: Update | null = null
 let pendingUpdateProxyKey: string | null = null
+let pendingUpdateDownloaded = false
+let downloadPromise: Promise<void> | null = null
+let downloadingProxyKey: string | null = null
 let startupCheckPromise: Promise<void> | null = null
 
 function readDismissedUpdateVersion(): string | null {
@@ -83,6 +90,10 @@ async function setPendingUpdate(next: Update | null, proxyKey: string | null) {
   const previous = pendingUpdate
   pendingUpdate = next
   pendingUpdateProxyKey = next ? proxyKey : null
+  pendingUpdateDownloaded = false
+  if (!downloadPromise) {
+    downloadingProxyKey = null
+  }
 
   if (previous && previous !== next) {
     try {
@@ -91,6 +102,10 @@ async function setPendingUpdate(next: Update | null, proxyKey: string | null) {
       // Ignore stale resource cleanup failures.
     }
   }
+}
+
+function shouldPromptForVersion(version: string | null) {
+  return !!version && readDismissedUpdateVersion() !== version
 }
 
 function getErrorMessage(error: unknown) {
@@ -122,8 +137,9 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
     await startupCheckPromise
   },
 
-  checkForUpdates: async ({ silent = false } = {}) => {
+  checkForUpdates: async ({ silent = false, autoDownload = true } = {}) => {
     if (!isTauriRuntime()) return null
+    if (downloadPromise && get().status === 'downloading' && pendingUpdate) return pendingUpdate
 
     set((state) => ({
       ...state,
@@ -157,7 +173,7 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
       }
 
       const dismissedVersion = readDismissedUpdateVersion()
-      const shouldPrompt = dismissedVersion !== update.version
+      const shouldOffer = dismissedVersion !== update.version
 
       set((state) => ({
         ...state,
@@ -169,8 +185,14 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
         totalBytes: null,
         checkedAt,
         error: null,
-        shouldPrompt,
+        shouldPrompt: false,
       }))
+
+      if (autoDownload && (shouldOffer || !silent)) {
+        void get().downloadUpdate().catch(() => {
+          // The store records the failure and keeps the manual install path retryable.
+        })
+      }
       return update
     } catch (error) {
       if (!silent) {
@@ -191,7 +213,7 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
     }
   },
 
-  installUpdate: async () => {
+  downloadUpdate: async () => {
     if (!isTauriRuntime()) return
 
     let update = pendingUpdate
@@ -200,29 +222,42 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
       update = null
     }
     if (!update) {
-      update = await get().checkForUpdates()
+      update = await get().checkForUpdates({ autoDownload: false })
       if (!update) return
+    }
+
+    if (pendingUpdateDownloaded) {
+      set((state) => ({
+        ...state,
+        status: 'downloaded',
+        progressPercent: 100,
+        shouldPrompt: shouldPromptForVersion(state.availableVersion),
+      }))
+      return
+    }
+
+    if (downloadPromise) {
+      await downloadPromise
+      return
     }
 
     set((state) => ({
       ...state,
       status: 'downloading',
       error: null,
-      shouldPrompt: true,
+      shouldPrompt: false,
       progressPercent: 0,
       downloadedBytes: 0,
       totalBytes: null,
     }))
 
-    let prepareInstallAttempted = false
-    try {
-      writeDismissedUpdateVersion(null)
-      const { invoke } = await import('@tauri-apps/api/core')
-      const { relaunch } = await import('@tauri-apps/plugin-process')
+    const downloadingUpdate = update
+    downloadingProxyKey = pendingUpdateProxyKey
+    const activeDownload = (async () => {
       let totalBytes: number | null = null
       let downloadedBytes = 0
 
-      await update.download((event) => {
+      await downloadingUpdate.download((event) => {
         if (event.event === 'Started') {
           totalBytes = event.data.contentLength ?? null
           downloadedBytes = 0
@@ -253,6 +288,81 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
         }
       })
 
+      if (pendingUpdate !== downloadingUpdate) return
+      if (getUpdateProxyKey() !== downloadingProxyKey) {
+        await setPendingUpdate(null, null)
+        set((state) => ({
+          ...state,
+          status: 'available',
+          progressPercent: 0,
+          shouldPrompt: false,
+        }))
+        return
+      }
+
+      pendingUpdateDownloaded = true
+      set((state) => ({
+        ...state,
+        status: 'downloaded',
+        error: null,
+        shouldPrompt: shouldPromptForVersion(state.availableVersion),
+        progressPercent: 100,
+      }))
+    })()
+    downloadPromise = activeDownload
+
+    try {
+      await downloadPromise
+    } catch (error) {
+      if (pendingUpdate === downloadingUpdate) {
+        set((state) => ({
+          ...state,
+          status: 'available',
+          error: getErrorMessage(error),
+          shouldPrompt: false,
+        }))
+      }
+      throw error
+    } finally {
+      if (downloadPromise === activeDownload) {
+        downloadPromise = null
+        downloadingProxyKey = null
+      }
+    }
+  },
+
+  installUpdate: async () => {
+    if (!isTauriRuntime()) return
+
+    let update = pendingUpdate
+    if (update && pendingUpdateProxyKey !== getUpdateProxyKey()) {
+      await setPendingUpdate(null, null)
+      update = null
+    }
+    if (!update) {
+      update = await get().checkForUpdates({ autoDownload: false })
+      if (!update) return
+    }
+
+    let prepareInstallAttempted = false
+    try {
+      writeDismissedUpdateVersion(null)
+      if (!pendingUpdateDownloaded) {
+        await get().downloadUpdate()
+      }
+      if (!pendingUpdateDownloaded) return
+
+      const { invoke } = await import('@tauri-apps/api/core')
+      const { relaunch } = await import('@tauri-apps/plugin-process')
+
+      set((state) => ({
+        ...state,
+        status: 'installing',
+        error: null,
+        shouldPrompt: false,
+        progressPercent: 100,
+      }))
+
       prepareInstallAttempted = true
       await invoke('prepare_for_update_install')
       await update.install()
@@ -275,7 +385,7 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
       }
       set((state) => ({
         ...state,
-        status: 'available',
+        status: pendingUpdateDownloaded ? 'downloaded' : 'available',
         error: getErrorMessage(error),
         shouldPrompt: true,
       }))

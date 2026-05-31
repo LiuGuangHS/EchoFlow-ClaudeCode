@@ -1,8 +1,5 @@
-import { createHash } from 'node:crypto'
-import { createReadStream } from 'node:fs'
 import {
   chmod,
-  copyFile,
   mkdir,
   readFile,
   rename,
@@ -19,6 +16,7 @@ import { getShellConfigPaths } from '../../utils/shellConfig.js'
 import { getUserBinDir } from '../../utils/xdg.js'
 
 const DESKTOP_CLI_NAME = 'claude-haha'
+const DESKTOP_CLI_WINDOWS_LEGACY_EXE = `${DESKTOP_CLI_NAME}.exe`
 const PATH_BLOCK_START = '# >>> EchoFlowAI-Claude-Code PATH >>>'
 const PATH_BLOCK_END = '# <<< EchoFlowAI-Claude-Code PATH <<<'
 const WINDOWS_PATH_TARGET = 'Windows User PATH'
@@ -43,7 +41,7 @@ let inFlightEnsure: Promise<DesktopCliLauncherStatus> | null = null
 export function getDesktopCliCommandName(
   platform: NodeJS.Platform = process.platform,
 ) {
-  return platform === 'win32' ? `${DESKTOP_CLI_NAME}.exe` : DESKTOP_CLI_NAME
+  return platform === 'win32' ? `${DESKTOP_CLI_NAME}.cmd` : DESKTOP_CLI_NAME
 }
 
 export function resolveHomeDir(env: NodeJS.ProcessEnv = process.env) {
@@ -244,27 +242,8 @@ async function syncLauncher(sourcePath: string, targetPath: string) {
     return
   }
 
-  if (await filesMatch(sourcePath, targetPath)) {
-    return
-  }
-
-  const tempPath = `${targetPath}.tmp.${process.pid}.${Date.now()}`
-  await copyFile(sourcePath, tempPath)
-
-  if (process.platform !== 'win32') {
-    await chmod(tempPath, 0o755)
-  }
-
-  try {
-    if (process.platform === 'win32') {
-      await replaceWindowsBinary(tempPath, targetPath)
-    } else {
-      await rename(tempPath, targetPath)
-      await chmod(targetPath, 0o755)
-    }
-  } finally {
-    await unlink(tempPath).catch(() => undefined)
-  }
+  await syncWindowsLauncherWrapper(sourcePath, targetPath)
+  await removeLegacyWindowsBinaryLauncher(targetPath)
 }
 
 async function syncUnixLauncherWrapper(sourcePath: string, targetPath: string) {
@@ -290,12 +269,17 @@ async function syncUnixLauncherWrapper(sourcePath: string, targetPath: string) {
 function buildUnixLauncherWrapper(sourcePath: string) {
   const quotedSource = shellSingleQuote(sourcePath)
   const quotedAppRoot = shellSingleQuote(dirname(sourcePath))
+  const portableConfigDir = process.env.CLAUDE_CONFIG_DIR
+  const configExport = portableConfigDir
+    ? `export CLAUDE_CONFIG_DIR=${shellSingleQuote(portableConfigDir)}\n`
+    : ''
 
   return `#!/usr/bin/env bash
 set -euo pipefail
 
 SIDECAR=${quotedSource}
 APP_ROOT=${quotedAppRoot}
+${configExport}
 
 if [[ ! -x "$SIDECAR" ]]; then
   echo "claude-haha launcher could not find bundled sidecar: $SIDECAR" >&2
@@ -314,11 +298,52 @@ exec "$SIDECAR" cli --app-root "$APP_ROOT" "$@"
 `
 }
 
+async function syncWindowsLauncherWrapper(sourcePath: string, targetPath: string) {
+  const wrapper = buildWindowsLauncherWrapper(sourcePath)
+
+  const existing = await readFile(targetPath, 'utf8').catch(() => null)
+  if (existing === wrapper) {
+    return
+  }
+
+  const tempPath = `${targetPath}.tmp.${process.pid}.${Date.now()}`
+  await writeFile(tempPath, wrapper, { encoding: 'utf8' })
+
+  try {
+    await replaceFile(tempPath, targetPath)
+  } finally {
+    await unlink(tempPath).catch(() => undefined)
+  }
+}
+
+export function buildWindowsLauncherWrapper(sourcePath: string) {
+  const appRoot = dirname(sourcePath)
+  const portableConfigDir = process.env.CLAUDE_CONFIG_DIR
+  const configLine = portableConfigDir
+    ? `set "CLAUDE_CONFIG_DIR=${portableConfigDir}"\r\n`
+    : ''
+
+  return [
+    '@echo off',
+    'setlocal',
+    `set "SIDECAR=${sourcePath}"`,
+    `set "APP_ROOT=${appRoot}"`,
+    configLine.trimEnd(),
+    'if not exist "%SIDECAR%" (',
+    '  echo claude-haha launcher could not find bundled sidecar: %SIDECAR% 1>&2',
+    '  exit /b 127',
+    ')',
+    '"%SIDECAR%" cli --app-root "%APP_ROOT%" %*',
+    'exit /b %ERRORLEVEL%',
+    '',
+  ].filter((line) => line.length > 0).join('\r\n')
+}
+
 function shellSingleQuote(value: string) {
   return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
-async function replaceWindowsBinary(tempPath: string, targetPath: string) {
+async function replaceFile(tempPath: string, targetPath: string) {
   try {
     await unlink(targetPath)
   } catch {
@@ -343,39 +368,34 @@ async function replaceWindowsBinary(tempPath: string, targetPath: string) {
   await unlink(backupPath).catch(() => undefined)
 }
 
-async function filesMatch(sourcePath: string, targetPath: string) {
+async function removeLegacyWindowsBinaryLauncher(targetPath: string) {
+  const legacyPath = join(dirname(targetPath), DESKTOP_CLI_WINDOWS_LEGACY_EXE)
+  if (legacyPath === targetPath) return
+
   try {
-    const [sourceStats, targetStats] = await Promise.all([
-      stat(sourcePath),
-      stat(targetPath),
-    ])
-
-    if (!sourceStats.isFile() || !targetStats.isFile()) {
-      return false
-    }
-
-    if (sourceStats.size !== targetStats.size) {
-      return false
-    }
-
-    const [sourceHash, targetHash] = await Promise.all([
-      hashFile(sourcePath),
-      hashFile(targetPath),
-    ])
-    return sourceHash === targetHash
+    const legacyStats = await stat(legacyPath)
+    if (!legacyStats.isFile()) return
   } catch {
-    return false
+    return
   }
-}
 
-async function hashFile(filePath: string) {
-  return await new Promise<string>((resolvePromise, reject) => {
-    const hash = createHash('sha256')
-    const stream = createReadStream(filePath)
-    stream.on('data', (chunk) => hash.update(chunk))
-    stream.on('error', reject)
-    stream.on('end', () => resolvePromise(hash.digest('hex')))
-  })
+  try {
+    await unlink(legacyPath)
+    return
+  } catch {
+    // Retry below by renaming the stale executable out of PATHEXT lookup.
+  }
+
+  const backupPath = `${legacyPath}.old.${Date.now()}`
+  try {
+    await rename(legacyPath, backupPath)
+  } catch (error) {
+    throw new Error(
+      `failed to remove legacy Windows launcher ${legacyPath}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    )
+  }
 }
 
 async function isUsableLauncher(filePath: string) {

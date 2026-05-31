@@ -136,6 +136,74 @@ describe('sessionStore', () => {
     expect(useTabStore.getState().tabs[0]?.title).toBe('使用bash写一个shell，随便写点什么东西')
   })
 
+  it('ignores stale session list responses when a newer refresh finishes first', async () => {
+    const slow = createDeferred<{
+      sessions: Array<{
+        id: string
+        title: string
+        createdAt: string
+        modifiedAt: string
+        messageCount: number
+        projectPath: string
+        workDir: string | null
+        workDirExists: boolean
+      }>
+      total: number
+    }>()
+    const fast = createDeferred<{
+      sessions: Array<{
+        id: string
+        title: string
+        createdAt: string
+        modifiedAt: string
+        messageCount: number
+        projectPath: string
+        workDir: string | null
+        workDirExists: boolean
+      }>
+      total: number
+    }>()
+    listMock
+      .mockReturnValueOnce(slow.promise)
+      .mockReturnValueOnce(fast.promise)
+
+    const first = useSessionStore.getState().fetchSessions()
+    const second = useSessionStore.getState().fetchSessions()
+
+    fast.resolve({
+      sessions: [{
+        id: 'new-session',
+        title: 'New session',
+        createdAt: '2026-05-07T00:00:00.000Z',
+        modifiedAt: '2026-05-07T00:00:02.000Z',
+        messageCount: 1,
+        projectPath: '',
+        workDir: '/workspace/new',
+        workDirExists: true,
+      }],
+      total: 1,
+    })
+    await second
+
+    slow.resolve({
+      sessions: [{
+        id: 'old-session',
+        title: 'Old session',
+        createdAt: '2026-05-07T00:00:00.000Z',
+        modifiedAt: '2026-05-07T00:00:01.000Z',
+        messageCount: 1,
+        projectPath: '',
+        workDir: '/workspace/old',
+        workDirExists: true,
+      }],
+      total: 1,
+    })
+    await first
+
+    expect(useSessionStore.getState().sessions).toHaveLength(1)
+    expect(useSessionStore.getState().sessions[0]?.id).toBe('new-session')
+  })
+
   it('forwards direct branch switch repository options when creating a session', async () => {
     createMock.mockResolvedValue({ sessionId: 'session-branch-switch', workDir: '/workspace/repo' })
     listMock.mockImplementation(() => new Promise(() => {}))
@@ -263,43 +331,5 @@ describe('sessionStore', () => {
       projectRoot: '/workspace/repo',
       workDir: '/workspace/repo/branches/session-branch-existing',
     })
-  })
-
-  it('preserves sourceSessionId and sourceMessageId in the optimistic branch session', async () => {
-    branchMock.mockResolvedValue({
-      sessionId: 'session-branch-2',
-      title: 'Fork exploration',
-      workDir: '/workspace/repo/branches/session-branch-2',
-      sourceSessionId: 'session-source-2',
-      targetMessageId: 'transcript-message-2',
-    })
-    listMock.mockImplementation(() => new Promise(() => {}))
-    useSessionStore.setState({
-      sessions: [{
-        id: 'session-source-2',
-        title: 'Source session',
-        createdAt: '2026-05-19T00:00:00.000Z',
-        modifiedAt: '2026-05-19T00:00:00.000Z',
-        messageCount: 6,
-        projectPath: '/workspace/repo',
-        projectRoot: '/workspace/repo',
-        workDir: '/workspace/repo',
-        workDirExists: true,
-      }],
-    })
-
-    const result = await useSessionStore.getState().branchSession(
-      'session-source-2',
-      'transcript-message-2',
-      { title: 'Fork exploration' },
-    )
-
-    expect(result.sessionId).toBe('session-branch-2')
-
-    const forkedSession = useSessionStore.getState().sessions.find((s) => s.id === 'session-branch-2')
-    expect(forkedSession).toBeDefined()
-    expect(forkedSession!.sourceSessionId).toBe('session-source-2')
-    expect(forkedSession!.sourceMessageId).toBe('transcript-message-2')
-    expect(forkedSession!.title).toBe('Fork exploration')
   })
 })

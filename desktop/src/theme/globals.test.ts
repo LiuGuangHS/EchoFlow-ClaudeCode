@@ -43,6 +43,7 @@ describe('desktop theme tokens', () => {
     '--color-activity-cell-border',
     '--color-activity-cell-border-hover',
     '--color-activity-cell-border-active',
+    '--shadow-activity-cell-hover',
     '--color-activity-tooltip-surface',
     '--color-activity-tooltip-border',
     '--color-activity-tooltip-text',
@@ -79,6 +80,15 @@ describe('desktop theme tokens', () => {
     }
   })
 
+  it('keeps activity heatmap colors on the app theme accent instead of the old blue ramp', () => {
+    expect(css).not.toContain('#DCEEFF')
+    expect(css).not.toContain('#B6D9FF')
+    expect(css).not.toContain('#2387E8')
+    expect(css).toContain('--color-activity-heat-4: var(--color-primary);')
+    expect(css).toContain('.activity-heat-cell:hover')
+    expect(css).toContain('box-shadow: var(--shadow-activity-cell-hover);')
+  })
+
   it('avoids color-mix in the startup-critical UI zoom shell chrome for Safari 15 WebView support', () => {
     const zoomShellCss = getCssBetween('.settings-zoom-kbd {', '/* ─── Tailwind Theme Override')
 
@@ -90,5 +100,24 @@ describe('desktop theme tokens', () => {
     expect(css).toContain('--settings-zoom-thumb-bg: var(--color-surface-bright);')
     expect(css).toContain('--settings-zoom-thumb-border: rgba(255, 181, 159, 0.78);')
     expect(css).toContain('box-shadow: var(--settings-zoom-thumb-shadow);')
+  })
+
+  it('maps markdown typography colors to theme tokens', () => {
+    const markdownProseStart = normalizedCss.indexOf('.markdown-prose {')
+    expect(markdownProseStart).toBeGreaterThanOrEqual(0)
+    const markdownProseEnd = normalizedCss.indexOf('}', markdownProseStart)
+    const markdownProseBlock = normalizedCss.slice(markdownProseStart, markdownProseEnd)
+
+    expect(markdownProseBlock).toContain('--tw-prose-body: var(--color-text-primary);')
+    expect(markdownProseBlock).toContain('--tw-prose-quotes: var(--color-text-primary);')
+    expect(markdownProseBlock).toContain('--tw-prose-bold: var(--color-text-primary);')
+    expect(markdownProseBlock).toContain('--tw-prose-code: var(--color-code-fg);')
+    expect(markdownProseBlock).toContain('--tw-prose-pre-bg: var(--color-code-bg);')
+    expect(markdownProseBlock).toContain('--tw-prose-td-borders: var(--color-border);')
+  })
+
+  it('keeps code viewer line hover and line numbers on theme tokens', () => {
+    expect(css).toContain('background: var(--color-surface-hover);')
+    expect(css).toContain('--line-numbers-foreground: var(--color-text-tertiary);')
   })
 })

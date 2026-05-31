@@ -179,7 +179,6 @@ export function ModelSelector({
     effortLevel,
     activeProviderName,
     setModel,
-    setEffort,
   } = useSettingsStore()
   const {
     providers,
@@ -211,6 +210,7 @@ export function ModelSelector({
   const isRuntimeScoped =
     !isControlled &&
     (runtimeKey !== undefined || onRuntimeSelectionChange !== undefined)
+  const canEditRuntimeEffort = runtimeKey !== undefined
 
   useEffect(() => {
     if (!isRuntimeScoped || providersLoading || requestedProvidersRef.current) return
@@ -351,6 +351,7 @@ export function ModelSelector({
   const buttonProviderLabel = isRuntimeScoped
     ? selectedProviderChoice?.providerName ?? activeProviderName ?? t('settings.providers.officialName')
     : null
+  const selectedRuntimeEffort = activeRuntimeSelection?.effortLevel ?? effortLevel
 
   const handleRuntimeSelect = (selection: RuntimeSelection) => {
     onRuntimeSelectionChange?.(selection)
@@ -361,6 +362,14 @@ export function ModelSelector({
       }
     }
     setOpen(false)
+  }
+
+  const handleRuntimeEffortSelect = (level: EffortLevel) => {
+    if (!activeRuntimeSelection) return
+    handleRuntimeSelect({
+      ...activeRuntimeSelection,
+      effortLevel: level,
+    })
   }
 
   const dropdownContent = (
@@ -395,7 +404,11 @@ export function ModelSelector({
                     return (
                       <button
                         key={`${choice.providerId ?? 'official'}:${model.id}`}
-                        onClick={() => handleRuntimeSelect({ providerId: choice.providerId, modelId: model.id })}
+                        onClick={() => handleRuntimeSelect({
+                          providerId: choice.providerId,
+                          modelId: model.id,
+                          effortLevel: selectedRuntimeEffort,
+                        })}
                         className={`
                           w-full rounded-lg border px-3 text-left transition-colors
                           ${isMobileBrowser ? 'min-h-[56px] py-3' : 'py-2.5'}
@@ -481,20 +494,19 @@ export function ModelSelector({
         )}
       </div>
 
-      {!isControlled && !isRuntimeScoped && (
+      {canEditRuntimeEffort && (
         <div className="border-t border-[var(--color-border)] p-3">
           <div className="mb-2 px-1 text-[10px] font-bold uppercase tracking-widest text-[var(--color-outline)]">
             {t('model.effort')}
           </div>
           <div className="grid grid-cols-4 gap-1.5">
             {EFFORT_OPTIONS.map((opt) => {
-              const isSelected = opt.value === effortLevel
+              const isSelected = opt.value === selectedRuntimeEffort
               return (
                 <button
                   key={opt.value}
                   onClick={() => {
-                    void setEffort(opt.value)
-                    setOpen(false)
+                    handleRuntimeEffortSelect(opt.value)
                   }}
                   className={`
                     rounded-lg py-2 text-center text-xs font-semibold transition-colors

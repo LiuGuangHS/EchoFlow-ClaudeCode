@@ -281,15 +281,19 @@ async function handleSessionWorkspaceRoute(
 }
 
 async function createSession(req: Request): Promise<Response> {
-  let body: { workDir?: string; repository?: CreateSessionRepositoryOptions }
+  let body: { workDir?: string; repository?: CreateSessionRepositoryOptions; permissionMode?: string }
   try {
-    body = (await req.json()) as { workDir?: string; repository?: CreateSessionRepositoryOptions }
+    body = (await req.json()) as { workDir?: string; repository?: CreateSessionRepositoryOptions; permissionMode?: string }
   } catch {
     throw ApiError.badRequest('Invalid JSON body')
   }
 
   if (body.workDir && typeof body.workDir !== 'string') {
     throw ApiError.badRequest('workDir must be a string')
+  }
+
+  if (body.permissionMode !== undefined && typeof body.permissionMode !== 'string') {
+    throw ApiError.badRequest('permissionMode must be a string')
   }
 
   if (body.repository !== undefined) {
@@ -304,7 +308,7 @@ async function createSession(req: Request): Promise<Response> {
     }
   }
 
-  const result = await sessionService.createSession(body.workDir, body.repository)
+  const result = await sessionService.createSession(body.workDir, body.repository, body.permissionMode)
   recentProjectsCache = null
   return Response.json(result, { status: 201 })
 }
@@ -499,6 +503,10 @@ async function getSessionInspection(sessionId: string, url: URL): Promise<Respon
   }
 
   const active = conversationService.hasSession(sessionId)
+  const launchInfo = await sessionService.getSessionLaunchInfo(sessionId).catch(() => null)
+  const permissionMode = active
+    ? conversationService.getSessionPermissionMode(sessionId)
+    : launchInfo?.permissionMode ?? 'default'
   const initMessage = conversationService.getSessionInitMessage(sessionId) ??
     [...conversationService.getRecentSdkMessages(sessionId)]
     .reverse()
@@ -518,7 +526,7 @@ async function getSessionInspection(sessionId: string, url: URL): Promise<Respon
     status: {
       sessionId,
       workDir,
-      permissionMode: conversationService.getSessionPermissionMode(sessionId),
+      permissionMode,
       version: typeof initMessage?.claude_code_version === 'string' ? initMessage.claude_code_version : transcriptMetadata?.version,
       cwd: typeof initMessage?.cwd === 'string' ? initMessage.cwd : transcriptMetadata?.cwd ?? workDir,
       model: typeof initMessage?.model === 'string' ? initMessage.model : transcriptMetadata?.model,
@@ -876,13 +884,14 @@ function isDesktopWorktreeBranchName(branch: string | null): boolean {
 
 async function getRecentProjects(url: URL): Promise<Response> {
   const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '10', 10) || 10, 1), 500)
+  const sessionScanLimit = Math.min(Math.max(limit * 8, 50), 200)
 
   // Return cached response if fresh
   if (recentProjectsCache && Date.now() - recentProjectsCache.timestamp < RECENT_PROJECTS_CACHE_TTL) {
     return Response.json({ projects: recentProjectsCache.projects.slice(0, limit) })
   }
 
-  const { sessions } = await sessionService.listSessions({ limit: 200 })
+  const { sessions } = await sessionService.listSessions({ limit: sessionScanLimit })
   const validSessions = sessions.filter((session) => session.workDirExists && session.workDir)
 
   // First pass: group by logical project root so worktrees stay under the same project.

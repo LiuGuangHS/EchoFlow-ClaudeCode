@@ -98,7 +98,7 @@ describe('provider presets API', () => {
     expect(minimax?.authStrategy).toBe('auth_token')
     expect(minimax?.defaultModels.main).toBe('MiniMax-M2.7')
     expect(minimax?.modelContextWindows?.['MiniMax-M2.7']).toBe(204800)
-    expect(echoflowai?.name).toBe('清云API')
+    expect(echoflowai?.name).toBe('EchoFlowAPI')
     expect(echoflowai?.baseUrl).toBe('https://api.echoflow.cn')
     expect(echoflowai?.authStrategy).toBe('auth_token')
     expect(echoflowai?.defaultModels).toEqual({
@@ -147,7 +147,7 @@ describe('provider presets API', () => {
     expect(minimax?.apiKeyUrl).toBe('https://platform.minimaxi.com/subscribe/token-plan?code=1TG2Cseab2&source=link')
     expect(echoflowai?.apiKeyUrl).toBe('https://api.echoflow.cn/')
     expect(echoflowai?.websiteUrl).toBe('https://api.echoflow.cn/')
-    expect(echoflowai?.promoText).toContain('清云API')
+    expect(echoflowai?.promoText).toContain('EchoFlowAPI')
     expect(echoflowai?.featured).toBe(true)
     expect(custom?.promoText).toBeUndefined()
     expect(custom?.authStrategy).toBe('auth_token')
@@ -185,5 +185,14 @@ describe('provider presets API', () => {
 
     const updatedRaw = await fs.readFile(path.join(tmpDir, 'cc-haha', 'settings.json'), 'utf-8')
     expect(JSON.parse(updatedRaw)).toEqual(updateBody)
+  })
+
+  test('provider presets carry docs-backed context windows for current coding models', () => {
+    const byId = new Map(PROVIDER_PRESETS.map((preset) => [preset.id, preset]))
+
+    for (const id of ['deepseek', 'zhipuglm', 'kimi', 'minimax']) {
+      const preset = byId.get(id)!
+      expect(preset.modelContextWindows?.[preset.defaultModels.main]).toBeGreaterThan(0)
+    }
   })
 })

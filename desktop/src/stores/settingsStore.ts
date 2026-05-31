@@ -7,6 +7,7 @@ import {
   isThemeMode,
   type AppMode,
   type AppModeConfig,
+  type ChatSendBehavior,
   type DesktopTerminalSettings,
   type DesktopTerminalStartupShell,
   type H5AccessDiagnostics,
@@ -57,6 +58,7 @@ type SettingsStore = {
   activeProviderName: string | null
   locale: Locale
   theme: ThemeMode
+  chatSendBehavior: ChatSendBehavior
   skipWebFetchPreflight: boolean
   desktopNotificationsEnabled: boolean
   desktopTerminal: DesktopTerminalSettings
@@ -82,6 +84,7 @@ type SettingsStore = {
   setThinkingEnabled: (enabled: boolean) => Promise<void>
   setLocale: (locale: Locale) => void
   setTheme: (theme: ThemeMode) => Promise<void>
+  setChatSendBehavior: (behavior: ChatSendBehavior) => Promise<void>
   setSkipWebFetchPreflight: (enabled: boolean) => Promise<void>
   setDesktopNotificationsEnabled: (enabled: boolean) => Promise<void>
   setDesktopTerminal: (settings: DesktopTerminalSettings) => Promise<void>
@@ -133,12 +136,13 @@ const DEFAULT_NETWORK_SETTINGS: NetworkSettings = {
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
   permissionMode: 'default',
   currentModel: null,
-  effortLevel: 'medium',
+  effortLevel: 'max',
   thinkingEnabled: true,
   availableModels: [],
   activeProviderName: null,
   locale: getStoredLocale(),
   theme: useUIStore.getState().theme,
+  chatSendBehavior: 'enter',
   skipWebFetchPreflight: true,
   desktopNotificationsEnabled: false,
   desktopTerminal: DEFAULT_DESKTOP_TERMINAL_SETTINGS,
@@ -189,6 +193,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         effortLevel: level,
         thinkingEnabled: userSettings.alwaysThinkingEnabled !== false,
         theme,
+        chatSendBehavior: normalizeChatSendBehavior(userSettings.chatSendBehavior),
         skipWebFetchPreflight: userSettings.skipWebFetchPreflight !== false,
         desktopNotificationsEnabled: userSettings.desktopNotificationsEnabled === true,
         desktopTerminal: normalizeDesktopTerminalSettings(userSettings.desktopTerminal),
@@ -269,6 +274,18 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     } catch {
       set({ theme: prev })
       useUIStore.getState().setTheme(prev)
+    }
+  },
+
+  setChatSendBehavior: async (behavior) => {
+    const prev = get().chatSendBehavior
+    const next = normalizeChatSendBehavior(behavior)
+    set({ chatSendBehavior: next })
+    try {
+      await settingsApi.updateUser({ chatSendBehavior: next })
+    } catch (error) {
+      set({ chatSendBehavior: prev })
+      throw error
     }
   },
 
@@ -464,6 +481,10 @@ function normalizeWebSearchSettings(settings: WebSearchSettings | undefined): We
     tavilyApiKey: settings?.tavilyApiKey ?? '',
     braveApiKey: settings?.braveApiKey ?? '',
   }
+}
+
+function normalizeChatSendBehavior(value: unknown): ChatSendBehavior {
+  return value === 'modifierEnter' ? 'modifierEnter' : 'enter'
 }
 
 function isUpdateProxyMode(value: unknown): value is UpdateProxyMode {

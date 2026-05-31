@@ -691,7 +691,7 @@ describe('Models API', () => {
 
     expect(res.status).toBe(200)
     const body = await res.json()
-    expect(body.level).toBe('medium')
+    expect(body.level).toBe('max')
     expect(body.available).toEqual(['low', 'medium', 'high', 'max'])
   })
 
@@ -704,7 +704,7 @@ describe('Models API', () => {
 
     expect(res.status).toBe(200)
     const body = await res.json()
-    expect(body.level).toBe('medium')
+    expect(body.level).toBe('max')
     expect(body.available).toEqual(['low', 'medium', 'high', 'max'])
   })
 

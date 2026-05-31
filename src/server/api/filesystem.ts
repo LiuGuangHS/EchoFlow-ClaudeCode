@@ -13,6 +13,10 @@ import { findGitRoot, gitExe } from '../../utils/git.js'
 import { ripGrep } from '../../utils/ripgrep.js'
 import { getInitialSettings } from '../../utils/settings/settings.js'
 import { isWithinRegisteredFilesystemRoot } from '../services/filesystemAccessRoots.js'
+import {
+  isSameOrInsidePathForPlatform,
+  normalizeDriveRootPathForPlatform,
+} from '../services/windowsDrivePath.js'
 
 type FilesystemEntry = {
   name: string
@@ -26,6 +30,7 @@ type ScoredFilesystemEntry = FilesystemEntry & {
 }
 
 const FILE_SEARCH_TIMEOUT_MS = 10_000
+const VCS_METADATA_DIRECTORY_NAMES = new Set(['.git', '.svn', '.hg', '.bzr', '.jj', '.sl'])
 
 const IMAGE_MIME_TYPES: Record<string, string> = {
   '.png': 'image/png',
@@ -40,18 +45,15 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
 }
 
 function isWithinRoot(targetPath: string, rootPath: string): boolean {
-  const target = normalizeComparablePath(targetPath)
-  const root = normalizeComparablePath(rootPath)
-  return target === root || target.startsWith(`${root}${path.sep}`)
+  return isSameOrInsidePathForPlatform(targetPath, rootPath)
 }
 
-function normalizeComparablePath(filePath: string): string {
-  const resolved = path.resolve(filePath)
-  return process.platform === 'win32' ? resolved.toLowerCase() : resolved
+function isVcsMetadataDirectoryName(name: string): boolean {
+  return VCS_METADATA_DIRECTORY_NAMES.has(name.toLowerCase())
 }
 
-function isAllowedFilesystemPath(targetPath: string): boolean {
-  const resolvedPath = path.resolve(targetPath)
+export function isAllowedFilesystemPath(targetPath: string): boolean {
+  const resolvedPath = path.resolve(normalizeDriveRootPathForPlatform(targetPath))
   const homeDir = path.resolve(os.homedir())
 
   if (isWithinRoot(resolvedPath, homeDir) || isWithinRoot(resolvedPath, '/tmp')) {
@@ -88,7 +90,7 @@ async function handleServeFile(url: URL): Promise<Response> {
     return json({ error: 'Missing path parameter' }, 400)
   }
 
-  const resolvedPath = path.resolve(filePath)
+  const resolvedPath = path.resolve(normalizeDriveRootPathForPlatform(filePath))
 
   if (!isAllowedFilesystemPath(resolvedPath)) {
     return json({ error: 'Access denied: path outside allowed directory' }, 403)
@@ -127,7 +129,7 @@ async function handleServeFile(url: URL): Promise<Response> {
 
 async function handleBrowse(url: URL): Promise<Response> {
   const targetPath = url.searchParams.get('path') || os.homedir() || '/'
-  const resolvedPath = path.resolve(targetPath)
+  const resolvedPath = path.resolve(normalizeDriveRootPathForPlatform(targetPath))
 
   if (!isAllowedFilesystemPath(resolvedPath)) {
     return json({ error: 'Access denied: path outside allowed directory' }, 403)
@@ -159,10 +161,9 @@ async function handleBrowse(url: URL): Promise<Response> {
 
     const entries = fs.readdirSync(resolvedPath, { withFileTypes: true })
 
-    // Browse mode: show all directories (and optionally files)
+    // Browse mode: show dot-prefixed project entries while keeping VCS internals hidden.
     const filtered = entries.filter((e) => {
-      if (e.name.startsWith('.')) return false
-      if (e.isDirectory()) return true
+      if (e.isDirectory()) return !isVcsMetadataDirectoryName(e.name)
       return includeFiles
     })
 

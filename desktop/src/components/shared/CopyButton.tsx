@@ -1,13 +1,14 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type PointerEventHandler, type ReactNode } from 'react'
 import { copyTextToClipboard } from '../chat/clipboard'
 
 type Props = {
   text: string
   label?: string
   copiedLabel?: string
-  displayLabel?: string
-  displayCopiedLabel?: string
+  displayLabel?: ReactNode
+  displayCopiedLabel?: ReactNode
   className?: string
+  onPointerUp?: PointerEventHandler<HTMLButtonElement>
 }
 
 export function CopyButton({
@@ -17,6 +18,7 @@ export function CopyButton({
   displayLabel,
   displayCopiedLabel,
   className = '',
+  onPointerUp,
 }: Props) {
   const [copied, setCopied] = useState(false)
 
@@ -48,6 +50,7 @@ export function CopyButton({
     <button
       type="button"
       onClick={handleCopy}
+      onPointerUp={onPointerUp}
       className={className}
       aria-label={currentLabel}
       title={currentLabel}

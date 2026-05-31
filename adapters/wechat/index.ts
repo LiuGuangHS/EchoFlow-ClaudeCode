@@ -17,6 +17,7 @@ import {
 } from '../common/permission.js'
 import { SessionStore } from '../common/session-store.js'
 import { AdapterHttpClient } from '../common/http-client.js'
+import { restoreStoredSessionBinding } from '../common/session-recovery.js'
 import { isAllowedUser, tryPair } from '../common/pairing.js'
 import { AttachmentStore } from '../common/attachment/attachment-store.js'
 import { checkAttachmentLimit } from '../common/attachment/attachment-limits.js'
@@ -203,17 +204,15 @@ function enqueueWechat(chatId: string, task: () => Promise<void>): void {
 }
 
 async function ensureExistingSession(chatId: string): Promise<{ sessionId: string; workDir: string } | null> {
-  const stored = sessionStore.get(chatId)
-  if (!stored) return null
-
-  if (!bridge.hasSession(chatId)) {
-    bridge.connectSession(chatId, stored.sessionId)
-    bridge.onServerMessage(chatId, (msg) => handleServerMessage(chatId, msg))
-    const opened = await bridge.waitForOpen(chatId)
-    if (!opened) return null
-  }
-
-  return stored
+  return await restoreStoredSessionBinding({
+    chatId,
+    bridge,
+    sessionStore,
+    httpClient,
+    onServerMessage: (msg) => handleServerMessage(chatId, msg),
+    logPrefix: '[WeChat]',
+    clearTransientState: () => clearTransientChatState(chatId),
+  })
 }
 
 async function buildStatusText(chatId: string): Promise<string> {
@@ -268,14 +267,8 @@ async function buildStatusText(chatId: string): Promise<string> {
 }
 
 async function ensureSession(chatId: string): Promise<boolean> {
-  if (bridge.hasSession(chatId)) return true
-
-  const stored = sessionStore.get(chatId)
-  if (stored) {
-    bridge.connectSession(chatId, stored.sessionId)
-    bridge.onServerMessage(chatId, (msg) => handleServerMessage(chatId, msg))
-    return await bridge.waitForOpen(chatId)
-  }
+  const stored = await ensureExistingSession(chatId)
+  if (stored) return true
 
   const workDir = defaultWorkDir
   if (workDir) return await createSessionForChat(chatId, workDir)

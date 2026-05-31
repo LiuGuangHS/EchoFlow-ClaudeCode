@@ -95,8 +95,8 @@ describe('cliTaskStore', () => {
     expect(useCLITaskStore.getState()).toMatchObject({
       tasks: [],
       resetting: true,
-      completedAndDismissed: false,
-      dismissedCompletionKey: null,
+      completedAndDismissed: true,
+      dismissedCompletionKey: 'session-1::1::Keep current session isolated::completed::::|session-1::2::Second completed task::completed::::',
       expanded: false,
     })
 
@@ -105,6 +105,34 @@ describe('cliTaskStore', () => {
     await resetPromise
 
     expect(useCLITaskStore.getState().resetting).toBe(false)
+  })
+
+  it('keeps a dismissed completed list hidden if polling returns it again', async () => {
+    const completedTasks = [
+      makeTask('session-1', 'completed'),
+      { ...makeTask('session-1', 'completed'), id: '2', subject: 'Second completed task' },
+    ]
+
+    vi.mocked(cliTasksApi.resetTaskList).mockResolvedValue({ ok: true })
+    vi.mocked(cliTasksApi.getTasksForList).mockResolvedValue({ tasks: completedTasks })
+
+    useCLITaskStore.setState({
+      sessionId: 'session-1',
+      tasks: completedTasks,
+      expanded: true,
+      completedAndDismissed: false,
+      dismissedCompletionKey: null,
+    })
+
+    await useCLITaskStore.getState().resetCompletedTasks()
+    await useCLITaskStore.getState().fetchSessionTasks('session-1')
+
+    expect(useCLITaskStore.getState()).toMatchObject({
+      tasks: completedTasks,
+      completedAndDismissed: true,
+      dismissedCompletionKey: 'session-1::1::Keep current session isolated::completed::::|session-1::2::Second completed task::completed::::',
+      expanded: false,
+    })
   })
 
   it('refreshes tasks for the currently tracked session by default', async () => {

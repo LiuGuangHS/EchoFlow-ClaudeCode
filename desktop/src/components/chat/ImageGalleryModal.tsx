@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { Modal } from '../shared/Modal'
+import { useOverlayStore } from '../../stores/overlayStore'
 
 type GalleryImage = {
   src: string
@@ -16,6 +17,16 @@ type Props = {
 
 export function ImageGalleryModal({ open, images, activeIndex, onClose, onSelect }: Props) {
   const activeImage = images[activeIndex]
+
+  // Native child webviews (e.g. the in-app browser preview) always render
+  // ABOVE the DOM, so this fullscreen overlay would be partially covered.
+  // Bump the overlay count while open so BrowserSurface can hide the webview.
+  useEffect(() => {
+    if (!open) return
+    const { push, pop } = useOverlayStore.getState()
+    push()
+    return () => pop()
+  }, [open])
 
   useEffect(() => {
     if (!open || images.length <= 1) return

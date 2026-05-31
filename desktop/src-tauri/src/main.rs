@@ -71,6 +71,9 @@ fn determine_startup_portable_dir() -> Option<PathBuf> {
     // 2. 优先检查便携目录本地的配置文件（保证移动便携版到新电脑依然生效，并能正确处理切回默认模式）
     if let Some((mode, portable_dir)) = get_mode_from_config(&default_portable) {
         if mode == "portable" {
+            if dir_has_portable_data(&default_portable) {
+                return Some(default_portable.clone());
+            }
             return Some(portable_dir.unwrap_or(default_portable.clone()));
         } else {
             return None; // 明确设置了 default，直接使用系统默认
@@ -111,11 +114,22 @@ fn determine_startup_portable_dir() -> Option<PathBuf> {
         if !dir.is_dir() {
             return false;
         }
-        ["window-state.json", "terminal-config.json"]
+        [
+            "settings.json",
+            ".claude.json",
+            ".mcp.json",
+            "window-state.json",
+            "terminal-config.json",
+        ]
             .iter()
             .any(|f| dir.join(f).is_file())
             || dir.join("Cache").is_dir()
             || dir.join("EBWebView").is_dir()
+            || dir.join("projects").is_dir()
+            || dir.join("skills").is_dir()
+            || dir.join("plugins").is_dir()
+            || dir.join("cowork_plugins").is_dir()
+            || dir.join("cc-haha").is_dir()
     }
 
     if dir_has_portable_data(&default_portable) {

@@ -6,8 +6,18 @@ import { ApiError } from '../middleware/errorHandler.js'
 import { readRecoverableJsonFile } from './recoverableJsonFile.js'
 import { ensurePersistentStorageUpgraded } from './persistentStorageMigrations.js'
 
-const CURRENT_DESKTOP_UI_PREFERENCES_SCHEMA_VERSION = 1
+const CURRENT_DESKTOP_UI_PREFERENCES_SCHEMA_VERSION = 2
 const MAX_PROJECT_PREFERENCE_ENTRIES = 2_000
+const MAX_PROFILE_DISPLAY_NAME_LENGTH = 80
+const MAX_PROFILE_SUBTITLE_LENGTH = 160
+const MAX_PROFILE_AVATAR_BYTES = 2_000_000
+const DEFAULT_PROFILE_SUBTITLE = 'github.com/NanmiCoder/cc-haha'
+
+const AVATAR_CONTENT_TYPES = {
+  'image/png': { extension: 'png', mediaType: 'image/png' },
+  'image/jpeg': { extension: 'jpg', mediaType: 'image/jpeg' },
+  'image/webp': { extension: 'webp', mediaType: 'image/webp' },
+} as const
 
 export type SidebarProjectPreferences = {
   projectOrder: string[]
@@ -17,9 +27,17 @@ export type SidebarProjectPreferences = {
   projectSortBy: 'createdAt' | 'updatedAt'
 }
 
+export type DesktopProfilePreferences = {
+  displayName: string
+  subtitle: string
+  avatarFile: string | null
+  avatarUpdatedAt: string | null
+}
+
 export type DesktopUiPreferences = {
   schemaVersion: number
   sidebar: SidebarProjectPreferences
+  profile: DesktopProfilePreferences
   [key: string]: unknown
 }
 
@@ -36,10 +54,18 @@ const DEFAULT_SIDEBAR_PROJECT_PREFERENCES: SidebarProjectPreferences = {
   projectSortBy: 'updatedAt',
 }
 
+const DEFAULT_PROFILE_PREFERENCES: DesktopProfilePreferences = {
+  displayName: 'cc-haha',
+  subtitle: DEFAULT_PROFILE_SUBTITLE,
+  avatarFile: null,
+  avatarUpdatedAt: null,
+}
+
 function defaultPreferences(): DesktopUiPreferences {
   return {
     schemaVersion: CURRENT_DESKTOP_UI_PREFERENCES_SCHEMA_VERSION,
     sidebar: { ...DEFAULT_SIDEBAR_PROJECT_PREFERENCES },
+    profile: { ...DEFAULT_PROFILE_PREFERENCES },
   }
 }
 
@@ -73,6 +99,40 @@ export function normalizeSidebarProjectPreferences(value: unknown): SidebarProje
   }
 }
 
+function normalizeProfileDisplayName(value: unknown): string {
+  if (typeof value !== 'string') return DEFAULT_PROFILE_PREFERENCES.displayName
+  const trimmed = value.trim().replace(/\s+/g, ' ')
+  if (trimmed.length === 0) return DEFAULT_PROFILE_PREFERENCES.displayName
+  return trimmed.slice(0, MAX_PROFILE_DISPLAY_NAME_LENGTH)
+}
+
+function normalizeProfileSubtitle(value: unknown): string {
+  if (typeof value !== 'string') return DEFAULT_PROFILE_PREFERENCES.subtitle
+  const trimmed = value.trim().replace(/\s+/g, ' ')
+  if (trimmed.length === 0) return DEFAULT_PROFILE_PREFERENCES.subtitle
+  return trimmed.slice(0, MAX_PROFILE_SUBTITLE_LENGTH)
+}
+
+function normalizeAvatarFile(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  if (!/^profile\/avatar\.(png|jpg|webp)$/.test(value)) return null
+  return value
+}
+
+function normalizeProfilePreferences(value: unknown): DesktopProfilePreferences {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { ...DEFAULT_PROFILE_PREFERENCES }
+  }
+
+  const record = value as Record<string, unknown>
+  return {
+    displayName: normalizeProfileDisplayName(record.displayName),
+    subtitle: normalizeProfileSubtitle(record.subtitle),
+    avatarFile: normalizeAvatarFile(record.avatarFile),
+    avatarUpdatedAt: typeof record.avatarUpdatedAt === 'string' ? record.avatarUpdatedAt : null,
+  }
+}
+
 function normalizeProjectOrganization(value: unknown): SidebarProjectPreferences['projectOrganization'] {
   return value === 'project' || value === 'recentProject' || value === 'time' ? value : 'recentProject'
 }
@@ -91,6 +151,7 @@ function normalizeDesktopUiPreferences(value: unknown): DesktopUiPreferences | n
     ...record,
     schemaVersion: CURRENT_DESKTOP_UI_PREFERENCES_SCHEMA_VERSION,
     sidebar: normalizeSidebarProjectPreferences(record.sidebar),
+    profile: normalizeProfilePreferences(record.profile),
   }
 }
 
@@ -109,6 +170,18 @@ export class DesktopUiPreferencesService {
 
   private getPreferencesPath(): string {
     return path.join(this.getConfigDir(), 'cc-haha', 'desktop-ui.json')
+  }
+
+  private getProfileDir(): string {
+    return path.join(this.getConfigDir(), 'cc-haha', 'profile')
+  }
+
+  private getProfileAvatarPath(avatarFile: string): string {
+    const normalized = normalizeAvatarFile(avatarFile)
+    if (!normalized) {
+      throw ApiError.badRequest('Invalid avatar file path')
+    }
+    return path.join(this.getConfigDir(), 'cc-haha', normalized)
   }
 
   private async fileExists(filePath: string): Promise<boolean> {
@@ -183,10 +256,138 @@ export class DesktopUiPreferencesService {
         ...preferences,
         schemaVersion: CURRENT_DESKTOP_UI_PREFERENCES_SCHEMA_VERSION,
         sidebar: normalizeSidebarProjectPreferences(sidebar),
+        profile: normalizeProfilePreferences(preferences.profile),
       }
 
       await this.writePreferences(nextPreferences)
       return nextPreferences
     })
+  }
+
+  async updateProfilePreferences(profile: unknown): Promise<DesktopUiPreferences> {
+    const filePath = this.getPreferencesPath()
+    return this.withWriteLock(filePath, async () => {
+      const { preferences } = await this.readPreferences()
+      const currentProfile = normalizeProfilePreferences(preferences.profile)
+      const patch = profile && typeof profile === 'object' && !Array.isArray(profile)
+        ? profile as Record<string, unknown>
+        : {}
+      const nextProfile = normalizeProfilePreferences({
+        ...currentProfile,
+        displayName: Object.prototype.hasOwnProperty.call(patch, 'displayName')
+          ? patch.displayName
+          : currentProfile.displayName,
+        subtitle: Object.prototype.hasOwnProperty.call(patch, 'subtitle')
+          ? patch.subtitle
+          : currentProfile.subtitle,
+      })
+      const nextPreferences: DesktopUiPreferences = {
+        ...preferences,
+        schemaVersion: CURRENT_DESKTOP_UI_PREFERENCES_SCHEMA_VERSION,
+        sidebar: normalizeSidebarProjectPreferences(preferences.sidebar),
+        profile: {
+          ...nextProfile,
+          avatarFile: currentProfile.avatarFile,
+          avatarUpdatedAt: currentProfile.avatarUpdatedAt,
+        },
+      }
+
+      await this.writePreferences(nextPreferences)
+      return nextPreferences
+    })
+  }
+
+  async updateProfileAvatar(bytes: Uint8Array, contentType: string | null): Promise<DesktopUiPreferences> {
+    const type = contentType?.split(';')[0]?.trim().toLowerCase()
+    const avatarType = type ? AVATAR_CONTENT_TYPES[type as keyof typeof AVATAR_CONTENT_TYPES] : undefined
+    if (!avatarType) {
+      throw ApiError.badRequest('Unsupported avatar type')
+    }
+    if (bytes.byteLength > MAX_PROFILE_AVATAR_BYTES) {
+      throw ApiError.badRequest('Avatar image is too large')
+    }
+
+    const filePath = this.getPreferencesPath()
+    return this.withWriteLock(filePath, async () => {
+      const { preferences } = await this.readPreferences()
+      const profileDir = this.getProfileDir()
+      const avatarFile = `profile/avatar.${avatarType.extension}`
+      const avatarPath = this.getProfileAvatarPath(avatarFile)
+      const tmpFile = `${avatarPath}.tmp.${process.pid}.${Date.now()}.${randomBytes(6).toString('hex')}`
+
+      await fs.mkdir(profileDir, { recursive: true })
+      try {
+        await fs.writeFile(tmpFile, bytes)
+        await fs.rename(tmpFile, avatarPath)
+      } catch (error) {
+        await fs.unlink(tmpFile).catch(() => {})
+        throw ApiError.internal(`Failed to write profile avatar: ${error}`)
+      }
+
+      await Promise.all(
+        Object.values(AVATAR_CONTENT_TYPES)
+          .filter((candidate) => candidate.extension !== avatarType.extension)
+          .map((candidate) => fs.unlink(path.join(profileDir, `avatar.${candidate.extension}`)).catch(() => {})),
+      )
+
+      const nextPreferences: DesktopUiPreferences = {
+        ...preferences,
+        schemaVersion: CURRENT_DESKTOP_UI_PREFERENCES_SCHEMA_VERSION,
+        sidebar: normalizeSidebarProjectPreferences(preferences.sidebar),
+        profile: {
+          ...normalizeProfilePreferences(preferences.profile),
+          avatarFile,
+          avatarUpdatedAt: new Date().toISOString(),
+        },
+      }
+
+      await this.writePreferences(nextPreferences)
+      return nextPreferences
+    })
+  }
+
+  async clearProfileAvatar(): Promise<DesktopUiPreferences> {
+    const filePath = this.getPreferencesPath()
+    return this.withWriteLock(filePath, async () => {
+      const { preferences } = await this.readPreferences()
+      const profileDir = this.getProfileDir()
+      await Promise.all(
+        Object.values(AVATAR_CONTENT_TYPES)
+          .map((candidate) => fs.unlink(path.join(profileDir, `avatar.${candidate.extension}`)).catch(() => {})),
+      )
+      const nextPreferences: DesktopUiPreferences = {
+        ...preferences,
+        schemaVersion: CURRENT_DESKTOP_UI_PREFERENCES_SCHEMA_VERSION,
+        sidebar: normalizeSidebarProjectPreferences(preferences.sidebar),
+        profile: {
+          ...normalizeProfilePreferences(preferences.profile),
+          avatarFile: null,
+          avatarUpdatedAt: null,
+        },
+      }
+
+      await this.writePreferences(nextPreferences)
+      return nextPreferences
+    })
+  }
+
+  async readProfileAvatar(): Promise<{ bytes: Uint8Array; contentType: string } | null> {
+    const { preferences } = await this.readPreferences()
+    const avatarFile = normalizeAvatarFile(preferences.profile.avatarFile)
+    if (!avatarFile) return null
+
+    const extension = path.extname(avatarFile).slice(1)
+    const contentType = Object.values(AVATAR_CONTENT_TYPES).find((candidate) => candidate.extension === extension)?.mediaType
+    if (!contentType) return null
+
+    try {
+      return {
+        bytes: await fs.readFile(this.getProfileAvatarPath(avatarFile)),
+        contentType,
+      }
+    } catch (error) {
+      if (errnoCode(error) === 'ENOENT') return null
+      throw ApiError.internal(`Failed to read profile avatar: ${error}`)
+    }
   }
 }

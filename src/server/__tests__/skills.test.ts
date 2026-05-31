@@ -279,4 +279,105 @@ describe('Skills API', () => {
       }),
     )
   })
+
+  it('lists plugin skills after an external CLI install updates portable config on disk', async () => {
+    const marketplaceRoot = path.join(tmpHome, 'marketplace-root')
+    const pluginRoot = path.join(marketplaceRoot, 'plugins', 'draw')
+    const pluginsDir = path.join(tmpHome, '.claude', 'plugins')
+    const marketplaceFile = path.join(
+      marketplaceRoot,
+      '.claude-plugin',
+      'marketplace.json',
+    )
+
+    await fs.mkdir(path.join(pluginRoot, '.claude-plugin'), { recursive: true })
+    await fs.mkdir(path.dirname(marketplaceFile), { recursive: true })
+    await fs.mkdir(pluginsDir, { recursive: true })
+    await writeSkill(
+      path.join(pluginRoot, 'skills'),
+      'render',
+      ['---', 'description: Render with the drawing plugin.', '---', '', '# Render'].join('\n'),
+    )
+    await fs.writeFile(
+      path.join(pluginRoot, '.claude-plugin', 'plugin.json'),
+      JSON.stringify({
+        name: 'draw',
+        version: '1.0.0',
+        description: 'Drawing plugin',
+      }),
+      'utf-8',
+    )
+    await fs.writeFile(
+      marketplaceFile,
+      JSON.stringify({
+        name: 'test-market',
+        owner: { name: 'Test' },
+        plugins: [
+          {
+            name: 'draw',
+            source: './plugins/draw',
+            version: '1.0.0',
+          },
+        ],
+      }),
+      'utf-8',
+    )
+    await fs.writeFile(
+      path.join(pluginsDir, 'known_marketplaces.json'),
+      JSON.stringify({
+        'test-market': {
+          source: { source: 'directory', path: marketplaceRoot },
+          installLocation: marketplaceRoot,
+          lastUpdated: new Date(0).toISOString(),
+        },
+      }),
+      'utf-8',
+    )
+
+    const settingsPath = path.join(tmpHome, '.claude', 'settings.json')
+    await fs.writeFile(
+      settingsPath,
+      JSON.stringify({
+        enabledPlugins: {
+          'draw@test-market': false,
+        },
+      }),
+      'utf-8',
+    )
+
+    const initial = makeRequest('/api/skills')
+    const initialRes = await handleSkillsApi(initial.req, initial.url, initial.segments)
+    const initialBody = await initialRes.json() as {
+      skills: Array<{ name: string; source: string }>
+    }
+    expect(initialBody.skills).not.toContainEqual(
+      expect.objectContaining({ name: 'draw:render', source: 'plugin' }),
+    )
+
+    // Simulates the embedded terminal running the CLI against the same
+    // CLAUDE_CONFIG_DIR while the desktop server process stays alive.
+    await fs.writeFile(
+      settingsPath,
+      JSON.stringify({
+        enabledPlugins: {
+          'draw@test-market': true,
+        },
+      }),
+      'utf-8',
+    )
+
+    const after = makeRequest('/api/skills')
+    const afterRes = await handleSkillsApi(after.req, after.url, after.segments)
+    const afterBody = await afterRes.json() as {
+      skills: Array<{ name: string; source: string; description: string }>
+    }
+
+    expect(afterBody.skills).toContainEqual(
+      expect.objectContaining({
+        name: 'draw:render',
+        source: 'plugin',
+        description: 'Render with the drawing plugin.',
+      }),
+    )
+  })
 })

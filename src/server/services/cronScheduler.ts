@@ -8,7 +8,7 @@
  */
 
 import * as fs from 'fs/promises'
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import * as path from 'path'
 import * as os from 'os'
 import * as crypto from 'crypto'
@@ -453,13 +453,18 @@ export class CronScheduler {
       console.warn(`[cron] task ${task.id}: folderPath "${task.folderPath}" is not a valid directory, falling back to homedir`)
       workDir = os.homedir()
     }
+    workDir = this.resolveCanonicalWorkDir(workDir)
 
     // Only create a session when explicitly requested (manual "Run Now"),
     // not for automatic cron runs — avoids flooding the sidebar.
     let sessionId: string | undefined
     if (options?.createSession) {
       try {
-        const result = await this.sessionService.createSession(workDir)
+        const result = await this.sessionService.createSession(
+          workDir,
+          undefined,
+          'bypassPermissions',
+        )
         sessionId = result.sessionId
         // Delete the placeholder JSONL file so the CLI can create it fresh
         // with actual content. Same pattern as conversationService.ts.
@@ -596,6 +601,7 @@ export class CronScheduler {
         }
       }
 
+      await this.persistScheduledSessionPermission(sessionId, workDir)
       await updateRun(completedRun)
 
       // Send IM notification if configured
@@ -627,15 +633,40 @@ export class CronScheduler {
           new Date(completedAt).getTime() - new Date(startedAt).getTime(),
       }
 
+      await this.persistScheduledSessionPermission(sessionId, workDir)
       await updateRun(failedRun)
 
       return failedRun
     }
   }
 
+  private async persistScheduledSessionPermission(
+    sessionId: string | undefined,
+    workDir: string,
+  ): Promise<void> {
+    if (!sessionId) return
+    await this.sessionService.appendSessionMetadata(sessionId, {
+      workDir,
+      permissionMode: 'bypassPermissions',
+    }).catch(() => {
+      // The task result is still valid even if session metadata refresh fails.
+    })
+  }
+
+  private resolveCanonicalWorkDir(workDir: string): string {
+    try {
+      return realpathSync(workDir)
+    } catch {
+      return workDir
+    }
+  }
+
   private getRuntimeArgs(task: CronTask): string[] {
     const model = task.model?.trim()
-    return model ? ['--model', model] : []
+    return [
+      ...(model ? ['--model', model] : []),
+      '--dangerously-skip-permissions',
+    ]
   }
 
   private async buildTaskChildEnv(

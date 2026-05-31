@@ -57,16 +57,14 @@ describe('ModelSelector', () => {
     expect(onChange).toHaveBeenCalledWith('beta')
   })
 
-  it('routes uncontrolled model and effort changes through settings actions', async () => {
+  it('routes uncontrolled model changes through settings actions', async () => {
     const setModel = vi.fn(async () => {})
-    const setEffort = vi.fn(async () => {})
     useSettingsStore.setState({
       locale: 'en',
       availableModels: MODELS,
       currentModel: MODELS[0],
-      effortLevel: 'medium',
+      effortLevel: 'max',
       setModel,
-      setEffort,
     })
 
     render(<ModelSelector />)
@@ -74,10 +72,6 @@ describe('ModelSelector', () => {
     await clickByRole(/alpha/i)
     await clickByRole(/Beta/)
     expect(setModel).toHaveBeenCalledWith('beta')
-
-    await clickByRole(/Alpha/)
-    await clickByRole(/^High$/)
-    expect(setEffort).toHaveBeenCalledWith('high')
   })
 
   it('selects provider-scoped runtime models and mirrors session selections', async () => {
@@ -122,26 +116,88 @@ describe('ModelSelector', () => {
     expect(useSessionRuntimeStore.getState().selections['session-1']).toEqual({
       providerId: 'provider-a',
       modelId: 'provider-fast',
+      effortLevel: 'max',
     })
     expect(setSessionRuntime).toHaveBeenCalledWith('session-1', {
       providerId: 'provider-a',
       modelId: 'provider-fast',
+      effortLevel: 'max',
     })
   })
 
-  it('shows 清云API prefilled models for provider runtime selection', async () => {
+  it('keeps runtime effort scoped to the selected session', async () => {
     const setSessionRuntime = vi.fn()
     useSettingsStore.setState({
       locale: 'en',
       availableModels: MODELS,
       currentModel: MODELS[0],
-      activeProviderName: '清云API',
+      activeProviderName: 'Provider A',
+      effortLevel: 'max',
     })
     useProviderStore.setState({
       providers: [{
-        id: 'qingyun-api',
+        id: 'provider-a',
+        presetId: 'custom',
+        name: 'Provider A',
+        apiKey: '***',
+        baseUrl: 'https://api.example.com',
+        apiFormat: 'anthropic',
+        models: {
+          main: 'provider-main',
+          haiku: 'provider-fast',
+          sonnet: 'provider-main',
+          opus: '',
+        },
+      }],
+      activeId: 'provider-a',
+      hasLoadedProviders: true,
+      isLoading: true,
+    })
+    useSessionRuntimeStore.getState().setSelection('session-2', {
+      providerId: 'provider-a',
+      modelId: 'provider-main',
+      effortLevel: 'max',
+    })
+    useChatStore.setState({
+      setSessionRuntime,
+    } as Partial<ReturnType<typeof useChatStore.getState>>)
+
+    render(<ModelSelector runtimeKey="session-1" />)
+
+    await clickByRole(/alpha/i)
+    await clickByRole(/^High$/)
+
+    expect(useSessionRuntimeStore.getState().selections['session-1']).toEqual({
+      providerId: 'provider-a',
+      modelId: 'alpha',
+      effortLevel: 'high',
+    })
+    expect(useSessionRuntimeStore.getState().selections['session-2']).toEqual({
+      providerId: 'provider-a',
+      modelId: 'provider-main',
+      effortLevel: 'max',
+    })
+    expect(setSessionRuntime).toHaveBeenCalledWith('session-1', {
+      providerId: 'provider-a',
+      modelId: 'alpha',
+      effortLevel: 'high',
+    })
+    expect(useSettingsStore.getState().effortLevel).toBe('max')
+  })
+
+  it('shows EchoFlowAPI prefilled models for provider runtime selection', async () => {
+    const setSessionRuntime = vi.fn()
+    useSettingsStore.setState({
+      locale: 'en',
+      availableModels: MODELS,
+      currentModel: MODELS[0],
+      activeProviderName: 'EchoFlowAPI',
+    })
+    useProviderStore.setState({
+      providers: [{
+        id: 'echoflowapi',
         presetId: 'echoflowai',
-        name: '清云API',
+        name: 'EchoFlowAPI',
         apiKey: '***',
         baseUrl: 'https://api.echoflow.cn',
         apiFormat: 'anthropic',
@@ -152,7 +208,7 @@ describe('ModelSelector', () => {
           opus: 'claude-opus-4-7',
         },
       }],
-      activeId: 'qingyun-api',
+      activeId: 'echoflowapi',
       hasLoadedProviders: true,
       isLoading: true,
     })
@@ -162,9 +218,9 @@ describe('ModelSelector', () => {
 
     render(<ModelSelector runtimeKey="session-default" />)
 
-    expect(screen.getByRole('button', { name: /claude-sonnet-4-6.*清云API/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /claude-sonnet-4-6.*EchoFlowAPI/i })).toBeInTheDocument()
 
-    await clickByRole(/claude-sonnet-4-6.*清云API/i)
+    await clickByRole(/claude-sonnet-4-6.*EchoFlowAPI/i)
     expect(screen.queryByText('Claude Official')).not.toBeInTheDocument()
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /claude-opus-4-7.*Opus Model/i }))
@@ -172,11 +228,11 @@ describe('ModelSelector', () => {
     })
 
     expect(useSessionRuntimeStore.getState().selections['session-default']).toEqual({
-      providerId: 'qingyun-api',
+      providerId: 'echoflowapi',
       modelId: 'claude-opus-4-7',
     })
     expect(setSessionRuntime).toHaveBeenCalledWith('session-default', {
-      providerId: 'qingyun-api',
+      providerId: 'echoflowapi',
       modelId: 'claude-opus-4-7',
     })
   })
@@ -228,10 +284,12 @@ describe('ModelSelector', () => {
     expect(useSessionRuntimeStore.getState().selections['session-openai']).toEqual({
       providerId: OPENAI_OFFICIAL_PROVIDER_ID,
       modelId: 'gpt-5.5',
+      effortLevel: 'max',
     })
     expect(setSessionRuntime).toHaveBeenCalledWith('session-openai', {
       providerId: OPENAI_OFFICIAL_PROVIDER_ID,
       modelId: 'gpt-5.5',
+      effortLevel: 'max',
     })
   })
 

@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import '@testing-library/jest-dom'
 
 vi.mock('../../api/sessions', () => ({
@@ -19,6 +19,17 @@ import { sessionsApi } from '../../api/sessions'
 import { filesystemApi } from '../../api/filesystem'
 
 describe('DirectoryPicker', () => {
+  let originalInnerWidth: number
+
+  beforeEach(() => {
+    originalInnerWidth = window.innerWidth
+  })
+
+  afterEach(() => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalInnerWidth })
+    vi.restoreAllMocks()
+  })
+
   it('uses the source repository name as the fallback label for desktop worktree paths', () => {
     render(
       <DirectoryPicker
@@ -107,6 +118,36 @@ describe('DirectoryPicker', () => {
     )
 
     expect(screen.getByRole('button').querySelector('svg')).toBeInTheDocument()
+  })
+
+  it('keeps the recent-project menu inside the viewport when the trigger is near the right edge', async () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
+    vi.mocked(sessionsApi.getRecentProjects).mockResolvedValue({ projects: [] })
+
+    render(
+      <DirectoryPicker
+        value="/workspace/project"
+        onChange={vi.fn()}
+      />,
+    )
+
+    const trigger = screen.getByRole('button')
+    vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({
+      x: 920,
+      y: 24,
+      top: 24,
+      left: 920,
+      right: 1010,
+      bottom: 60,
+      width: 90,
+      height: 36,
+      toJSON: () => ({}),
+    } as DOMRect)
+
+    fireEvent.click(trigger)
+
+    const menu = await screen.findByTestId('directory-picker-menu')
+    expect(menu).toHaveStyle({ left: '612px', width: '400px' })
   })
 
   it('renders browse entries without nesting interactive buttons', async () => {

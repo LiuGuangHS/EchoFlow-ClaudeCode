@@ -256,6 +256,7 @@ describe('Plugins API', () => {
 
     await fs.mkdir(path.join(pluginRoot, '.claude-plugin'), { recursive: true })
     await fs.mkdir(path.join(pluginRoot, 'commands'), { recursive: true })
+    await fs.mkdir(path.join(pluginRoot, 'skills', 'paint'), { recursive: true })
     await fs.mkdir(path.dirname(marketplaceFile), { recursive: true })
     await fs.mkdir(pluginsDir, { recursive: true })
 
@@ -271,6 +272,11 @@ describe('Plugins API', () => {
     await fs.writeFile(
       path.join(pluginRoot, 'commands', 'render.md'),
       '---\ndescription: Render a drawing.\n---\nRender this drawing.',
+      'utf-8',
+    )
+    await fs.writeFile(
+      path.join(pluginRoot, 'skills', 'paint', 'SKILL.md'),
+      '---\ndescription: Paint with the drawing plugin.\n---\nPaint this drawing.',
       'utf-8',
     )
     await fs.writeFile(
@@ -345,14 +351,24 @@ describe('Plugins API', () => {
 
     expect(result.enabled_count).toBe(1)
     expect(result.command_count).toBe(1)
+    expect(result.skill_count).toBe(1)
     expect(result.pluginCommands).toContainEqual(
       expect.objectContaining({
         name: 'draw:render',
         description: 'Render a drawing.',
       }),
     )
+    expect(result.pluginSkills).toContainEqual(
+      expect.objectContaining({
+        name: 'draw:paint',
+        description: 'Paint with the drawing plugin.',
+      }),
+    )
     expect(appState.plugins.commands).toContainEqual(
       expect.objectContaining({ name: 'draw:render' }),
+    )
+    expect(appState.plugins.commands).toContainEqual(
+      expect.objectContaining({ name: 'draw:paint' }),
     )
   })
 })

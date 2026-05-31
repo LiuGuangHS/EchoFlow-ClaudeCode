@@ -46,7 +46,7 @@ const DEFAULT_MODELS = [
 const EFFORT_LEVELS = ['low', 'medium', 'high', 'max'] as const
 
 const DEFAULT_MODEL = 'claude-opus-4-7'
-const DEFAULT_EFFORT = 'medium'
+const DEFAULT_EFFORT = 'max'
 
 const settingsService = new SettingsService()
 const providerService = new ProviderService()

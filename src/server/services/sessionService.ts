@@ -5,28 +5,37 @@
  * 确保 Desktop App 与 CLI 的数据完全互通。
  */
 
+import { createReadStream } from 'node:fs'
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import * as os from 'node:os'
+import { createInterface } from 'node:readline'
 import { ApiError } from '../middleware/errorHandler.js'
 import { sanitizePath as sanitizePortablePath } from '../../utils/sessionStoragePortable.js'
 import type { FileHistorySnapshot } from '../../utils/fileHistory.js'
 import { findCanonicalGitRoot } from '../../utils/git.js'
 import { calculateUSDCost, MODEL_COSTS } from '../../utils/modelCost.js'
 import {
-  calculateCurrentContextTokenTotal,
   MODEL_CONTEXT_WINDOW_DEFAULT,
   getContextWindowForModel,
   getModelMaxOutputTokens,
 } from '../../utils/context.js'
+import {
+  calculateContextBudget,
+  getProviderUsageTrust,
+  hasMediaInput,
+} from '../../utils/contextBudget.js'
 import { getCanonicalName } from '../../utils/model/model.js'
+import { isFirstPartyAnthropicBaseUrl } from '../../utils/model/providers.js'
 import {
   resolveSessionWorkspaceLaunch,
   type CreateSessionRepositoryOptions,
   type PreparedSessionWorkspace,
 } from './repositoryLaunchService.js'
 import { registerFilesystemAccessRoot } from './filesystemAccessRoots.js'
+import { normalizeDriveRootPathForPlatform } from './windowsDrivePath.js'
 import { cleanSessionTitleSource } from '../../utils/sessionTitleText.js'
+import { roughTokenCountEstimationForMessages } from '../../services/tokenEstimation.js'
 
 // ============================================================================
 // Types
@@ -42,8 +51,7 @@ export type SessionListItem = {
   projectRoot: string | null
   workDir: string | null
   workDirExists: boolean
-  sourceSessionId?: string
-  sourceMessageId?: string
+  permissionMode?: string
 }
 
 export type DeleteSessionFailure = {
@@ -69,6 +77,10 @@ export type SessionLaunchInfo = {
   worktreeSession?: PersistedWorktreeSession | null
   transcriptMessageCount: number
   customTitle: string | null
+  permissionMode?: string
+  runtimeProviderId?: string | null
+  runtimeModelId?: string
+  effortLevel?: string
 }
 
 export type TrimSessionResult = {
@@ -201,6 +213,7 @@ type RawEntry = {
     timestamp?: string
   }
   customTitle?: string
+  permissionMode?: string
   worktreeSession?: PersistedWorktreeSession | null
   title?: string
   [key: string]: unknown
@@ -218,6 +231,28 @@ type PersistedWorktreeSession = {
   hookBased?: boolean
 }
 
+type SessionListSummary = {
+  title: string
+  createdAt: string
+  messageCount: number
+  workDir: string | null
+  permissionMode?: string
+  runtimeProviderId?: string | null
+  runtimeModelId?: string
+  effortLevel?: string
+  repository?: PreparedSessionWorkspace['repository']
+  worktreeSession?: PersistedWorktreeSession | null
+}
+
+const VALID_SESSION_PERMISSION_MODES = new Set([
+  'default',
+  'acceptEdits',
+  'plan',
+  'bypassPermissions',
+  'dontAsk',
+])
+const VALID_SESSION_EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'max'])
+
 type ContentBlock = Record<string, unknown>
 
 const USER_INTERRUPTION_TEXTS = new Set([
@@ -234,6 +269,35 @@ const TASK_NOTIFICATION_BLOCK_RE = /<task-notification>\s*[\s\S]*?<\/task-notifi
 // ============================================================================
 
 export class SessionService {
+  private readonly sessionListCacheTtlMs = 5_000
+  private readonly sessionListCache = new Map<string, {
+    expiresAt: number
+    result: { sessions: SessionListItem[]; total: number }
+  }>()
+
+  private sessionListCacheKey(options?: {
+    project?: string
+    limit?: number
+    offset?: number
+  }): string {
+    return JSON.stringify({
+      project: options?.project ?? null,
+      limit: options?.limit ?? 50,
+      offset: options?.offset ?? 0,
+    })
+  }
+
+  private cloneSessionListResult(result: { sessions: SessionListItem[]; total: number }): { sessions: SessionListItem[]; total: number } {
+    return {
+      total: result.total,
+      sessions: result.sessions.map((session) => ({ ...session })),
+    }
+  }
+
+  private invalidateSessionListCache(): void {
+    this.sessionListCache.clear()
+  }
+
   // --------------------------------------------------------------------------
   // Config helpers
   // --------------------------------------------------------------------------
@@ -282,6 +346,153 @@ export class SessionService {
     return entries
   }
 
+  private async scanSessionListSummary(
+    filePath: string,
+    projectDir: string,
+    stat: { birthtime: Date },
+  ): Promise<SessionListSummary> {
+    let createdAt = stat.birthtime.toISOString()
+    let hasCreatedAt = false
+    let messageCount = 0
+    let firstUserTitle: string | null = null
+    let goalTitle: string | null = null
+    let aiTitle: string | null = null
+    let customTitle: string | null = null
+    let latestWorkDir: string | null = null
+    let latestCwd: string | null = null
+    let permissionMode: string | undefined
+    let runtimeProviderId: string | null | undefined
+    let runtimeModelId: string | undefined
+    let effortLevel: string | undefined
+    let repository: PreparedSessionWorkspace['repository'] | undefined
+    let worktreeSession: PersistedWorktreeSession | null | undefined
+
+    const stream = createReadStream(filePath, { encoding: 'utf8' })
+    const lines = createInterface({
+      input: stream,
+      crlfDelay: Infinity,
+    })
+
+    try {
+      for await (const line of lines) {
+        const trimmed = line.trim()
+        if (!trimmed) continue
+
+        let entry: RawEntry
+        try {
+          entry = JSON.parse(trimmed) as RawEntry
+        } catch {
+          continue
+        }
+
+        if (!hasCreatedAt && entry.timestamp) {
+          createdAt = entry.timestamp
+          hasCreatedAt = true
+        }
+
+        if (
+          (entry.type === 'user' || entry.type === 'assistant') &&
+          entry.message?.role
+        ) {
+          messageCount += 1
+        }
+
+        if (entry.type === 'session-meta') {
+          if (typeof (entry as Record<string, unknown>).workDir === 'string') {
+            latestWorkDir = normalizeDriveRootPathForPlatform(
+              (entry as Record<string, unknown>).workDir as string,
+            )
+          }
+          if (
+            typeof entry.permissionMode === 'string' &&
+            VALID_SESSION_PERMISSION_MODES.has(entry.permissionMode)
+          ) {
+            permissionMode = entry.permissionMode
+          }
+          if (
+            (entry as Record<string, unknown>).runtimeProviderId === null ||
+            typeof (entry as Record<string, unknown>).runtimeProviderId === 'string'
+          ) {
+            runtimeProviderId = (entry as Record<string, unknown>).runtimeProviderId as string | null
+          }
+          if (typeof (entry as Record<string, unknown>).runtimeModelId === 'string') {
+            runtimeModelId = (entry as Record<string, unknown>).runtimeModelId as string
+          }
+          if (
+            typeof (entry as Record<string, unknown>).effortLevel === 'string' &&
+            VALID_SESSION_EFFORT_LEVELS.has((entry as Record<string, unknown>).effortLevel as string)
+          ) {
+            effortLevel = (entry as Record<string, unknown>).effortLevel as string
+          }
+        }
+
+        if (typeof entry.cwd === 'string' && entry.cwd.trim()) {
+          latestCwd = normalizeDriveRootPathForPlatform(entry.cwd)
+        }
+
+        const candidateRepository = (entry as Record<string, unknown>)?.repository
+        if (candidateRepository && typeof candidateRepository === 'object') {
+          repository = candidateRepository as PreparedSessionWorkspace['repository']
+        }
+
+        if (entry.type === 'worktree-state') {
+          if (entry.worktreeSession === null) {
+            worktreeSession = null
+          } else if (
+            entry.worktreeSession &&
+            typeof entry.worktreeSession === 'object' &&
+            typeof entry.worktreeSession.worktreePath === 'string' &&
+            typeof entry.worktreeSession.worktreeName === 'string'
+          ) {
+            worktreeSession = entry.worktreeSession
+          }
+        }
+
+        if (entry.type === 'custom-title' && entry.customTitle) {
+          customTitle = String(entry.customTitle)
+        }
+
+        if (!goalTitle) {
+          goalTitle = this.goalCreationCommandTitle(entry)
+        }
+
+        if (entry.type === 'ai-title' && entry.aiTitle) {
+          const title = cleanSessionTitleSource(String(entry.aiTitle))
+          if (title) aiTitle = title
+        }
+
+        if (
+          !firstUserTitle &&
+          entry.type === 'user' &&
+          !entry.isMeta &&
+          entry.message?.role === 'user'
+        ) {
+          firstUserTitle = this.extractUserMessageTitle(entry.message.content)
+        }
+      }
+    } finally {
+      lines.close()
+      stream.destroy()
+    }
+
+    return {
+      title: customTitle ||
+        goalTitle ||
+        aiTitle ||
+        firstUserTitle ||
+        'Untitled Session',
+      createdAt,
+      messageCount,
+      workDir: latestWorkDir || latestCwd || this.desanitizePath(projectDir),
+      ...(permissionMode ? { permissionMode } : {}),
+      ...(runtimeProviderId !== undefined ? { runtimeProviderId } : {}),
+      ...(runtimeModelId ? { runtimeModelId } : {}),
+      ...(effortLevel ? { effortLevel } : {}),
+      ...(repository ? { repository } : {}),
+      ...(worktreeSession !== undefined ? { worktreeSession } : {}),
+    }
+  }
+
   private async appendJsonlEntry(filePath: string, entry: Record<string, unknown>): Promise<void> {
     const line = JSON.stringify(entry) + '\n'
     await fs.appendFile(filePath, line, 'utf-8')
@@ -294,14 +505,14 @@ export class SessionService {
     for (let i = entries.length - 1; i >= 0; i--) {
       const entry = entries[i]
       if (entry.type === 'session-meta' && typeof (entry as Record<string, unknown>).workDir === 'string') {
-        return (entry as Record<string, unknown>).workDir as string
+        return normalizeDriveRootPathForPlatform((entry as Record<string, unknown>).workDir as string)
       }
     }
 
     for (let i = entries.length - 1; i >= 0; i--) {
       const cwd = entries[i]?.cwd
       if (typeof cwd === 'string' && cwd.trim()) {
-        return cwd
+        return normalizeDriveRootPathForPlatform(cwd)
       }
     }
 
@@ -313,6 +524,21 @@ export class SessionService {
       const repository = (entries[i] as Record<string, unknown>)?.repository
       if (repository && typeof repository === 'object') {
         return repository as PreparedSessionWorkspace['repository']
+      }
+    }
+    return undefined
+  }
+
+  private resolvePermissionModeFromEntries(entries: RawEntry[]): string | undefined {
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const entry = entries[i]
+      if (entry?.type !== 'session-meta') continue
+      const permissionMode = entry.permissionMode
+      if (
+        typeof permissionMode === 'string' &&
+        VALID_SESSION_PERMISSION_MODES.has(permissionMode)
+      ) {
+        return permissionMode
       }
     }
     return undefined
@@ -344,7 +570,25 @@ export class SessionService {
   ): Promise<string | null> {
     const worktreeSession = this.resolveWorktreeSessionFromEntries(entries)
     const repository = this.resolveRepositoryFromEntries(entries)
+    return this.resolveProjectRootFromSessionMetadata({
+      worktreeSession,
+      repository,
+      workDir,
+      fallbackProjectDir,
+    })
+  }
 
+  private async resolveProjectRootFromSessionMetadata({
+    worktreeSession,
+    repository,
+    workDir,
+    fallbackProjectDir,
+  }: {
+    worktreeSession?: PersistedWorktreeSession | null
+    repository?: PreparedSessionWorkspace['repository']
+    workDir: string | null
+    fallbackProjectDir?: string
+  }): Promise<string | null> {
     const candidate = worktreeSession?.originalCwd ||
       repository?.repoRoot ||
       workDir ||
@@ -367,7 +611,7 @@ export class SessionService {
 
   private async canonicalizeProjectPath(projectPath: string): Promise<string> {
     try {
-      return (await fs.realpath(projectPath)).normalize('NFC')
+      return normalizeDriveRootPathForPlatform(await fs.realpath(projectPath)).normalize('NFC')
     } catch {
       return projectPath.normalize('NFC')
     }
@@ -893,6 +1137,23 @@ export class SessionService {
     return 'Untitled Session'
   }
 
+  private extractUserMessageTitle(content: unknown): string | null {
+    let text: string | undefined
+    if (typeof content === 'string') {
+      text = content
+    } else if (Array.isArray(content)) {
+      const textBlock = content.find(
+        (block: Record<string, unknown>) => block.type === 'text' && typeof block.text === 'string'
+      )
+      if (textBlock) text = textBlock.text as string
+    }
+    if (!text) return null
+
+    const title = cleanSessionTitleSource(text)
+    if (!title) return null
+    return title.length > 80 ? `${title.slice(0, 80)}...` : title
+  }
+
   // --------------------------------------------------------------------------
   // Session file discovery
   // --------------------------------------------------------------------------
@@ -915,7 +1176,7 @@ export class SessionService {
 
     // Optionally filter to a specific project
     if (projectFilter) {
-      const sanitized = this.sanitizePath(projectFilter)
+      const sanitized = this.sanitizePath(normalizeDriveRootPathForPlatform(projectFilter))
       projectDirs = projectDirs.filter((d) => d === sanitized)
     }
 
@@ -964,6 +1225,11 @@ export class SessionService {
     const windowsDrivePath = sanitized.match(/^([a-zA-Z])--(.+)$/)
     if (windowsDrivePath) {
       return `${windowsDrivePath[1]}:${path.win32.sep}${windowsDrivePath[2].replace(/-/g, path.win32.sep)}`
+    }
+
+    const windowsDriveRoot = sanitized.match(/^([a-zA-Z])--$/)
+    if (windowsDriveRoot) {
+      return `${windowsDriveRoot[1]}:${path.win32.sep}`
     }
 
     // On POSIX the original path starts with '/', so the sanitized form starts with '-'.
@@ -1098,18 +1364,39 @@ export class SessionService {
 
     const rawMaxTokens = this.getTranscriptContextWindow(latest.model)
     const promptTokens = latest.inputTokens + latest.cacheReadInputTokens + latest.cacheCreationInputTokens
-    const totalTokens = calculateCurrentContextTokenTotal(promptTokens, {
-      input_tokens: latest.inputTokens,
-      output_tokens: latest.outputTokens,
-      cache_read_input_tokens: latest.cacheReadInputTokens,
-      cache_creation_input_tokens: latest.cacheCreationInputTokens,
-    }, rawMaxTokens)
+    const transcriptMessages = entries.filter(entry =>
+      entry.type === 'user' || entry.type === 'assistant' || entry.type === 'attachment',
+    ) as Parameters<typeof roughTokenCountEstimationForMessages>[0]
+    const estimatedTokens =
+      roughTokenCountEstimationForMessages(transcriptMessages) || promptTokens
+    const contextBudget = calculateContextBudget({
+      estimatedTokens,
+      contextWindow: rawMaxTokens,
+      currentUsage: {
+        input_tokens: latest.inputTokens,
+        output_tokens: latest.outputTokens,
+        cache_read_input_tokens: latest.cacheReadInputTokens,
+        cache_creation_input_tokens: latest.cacheCreationInputTokens,
+      },
+      usageTrust: getProviderUsageTrust({
+        isFirstPartyAnthropic: isFirstPartyAnthropicBaseUrl(),
+      }),
+      hasMediaInput: hasMediaInput(transcriptMessages),
+    })
+    const totalTokens = contextBudget.usedTokens
     const percentage = rawMaxTokens > 0 ? Math.round((totalTokens / rawMaxTokens) * 100) : 0
-    const categories: TranscriptContextEstimate['categories'] = [
+    const usageCategories: TranscriptContextEstimate['categories'] = [
       { name: 'Input tokens', tokens: latest.inputTokens, color: '#8f3217' },
       { name: 'Cache read', tokens: latest.cacheReadInputTokens, color: '#0f5c8f' },
       { name: 'Cache write', tokens: latest.cacheCreationInputTokens, color: '#7c3aed' },
       { name: 'Output tokens', tokens: latest.outputTokens, color: '#2f7d32' },
+    ]
+    const contextCategories: TranscriptContextEstimate['categories'] =
+      contextBudget.ignoredUsageReason === 'low_trust_media_usage'
+        ? [{ name: 'Estimated context', tokens: totalTokens, color: '#8f3217' }]
+        : usageCategories
+    const categories: TranscriptContextEstimate['categories'] = [
+      ...contextCategories,
       { name: 'Free space', tokens: Math.max(0, rawMaxTokens - totalTokens), color: '#a1a1aa', isDeferred: true },
     ].filter((category) => category.tokens > 0)
 
@@ -1280,6 +1567,12 @@ export class SessionService {
     limit?: number
     offset?: number
   }): Promise<{ sessions: SessionListItem[]; total: number }> {
+    const cacheKey = this.sessionListCacheKey(options)
+    const cached = this.sessionListCache.get(cacheKey)
+    if (cached && cached.expiresAt > Date.now()) {
+      return this.cloneSessionListResult(cached.result)
+    }
+
     const sessionFiles = await this.discoverSessionFiles(options?.project)
     const filesWithStats = (await Promise.all(sessionFiles.map(async (sessionFile) => {
       try {
@@ -1299,64 +1592,45 @@ export class SessionService {
     const limit = options?.limit ?? 50
     const paginatedFiles = filesWithStats.slice(offset, offset + limit)
 
-    // Build session list items with metadata from file stats & first entries
-    const items = (await Promise.all(paginatedFiles.map(async ({ filePath, projectDir, sessionId, stat }) => {
+    // Build session list items with metadata from file stats & a streaming
+    // transcript summary. Keep this sequential so large JSONL files are not
+    // loaded into memory concurrently by the sidebar's frequent refresh.
+    const items: SessionListItem[] = []
+    for (const { filePath, projectDir, sessionId, stat } of paginatedFiles) {
       try {
-        const entries = await this.readJsonlFile(filePath)
-        const workDir = this.resolveWorkDirFromEntries(entries, projectDir)
-        const projectRoot = await this.resolveProjectRootFromEntries(entries, workDir, projectDir)
+        const summary = await this.scanSessionListSummary(filePath, projectDir, stat)
+        const workDir = summary.workDir
+        const projectRoot = await this.resolveProjectRootFromSessionMetadata({
+          worktreeSession: summary.worktreeSession,
+          repository: summary.repository,
+          workDir,
+          fallbackProjectDir: projectDir,
+        })
         const workDirExists = await this.pathExists(workDir)
 
-        // Count transcript messages only (user + assistant)
-        const messageCount = entries.filter(
-          (e) => (e.type === 'user' || e.type === 'assistant') && e.message?.role
-        ).length
-
-        const title = this.extractTitle(entries)
-
-        // Find the earliest timestamp from entries, fallback to file birthtime
-        let createdAt = stat.birthtime.toISOString()
-        for (const e of entries) {
-          if (e.timestamp) {
-            createdAt = e.timestamp
-            break
-          }
-        }
-
-        // Extract fork parent relationship from transcript entries
-        let sourceSessionId: string | undefined
-        let sourceMessageId: string | undefined
-        for (const e of entries) {
-          const fork = (e as Record<string, unknown>).forkedFrom as
-            | { sessionId?: string; messageUuid?: string }
-            | undefined
-          if (fork?.sessionId) {
-            sourceSessionId = fork.sessionId
-            sourceMessageId = fork.messageUuid
-            break
-          }
-        }
-
-        return {
+        items.push({
           id: sessionId,
-          title,
-          createdAt,
+          title: summary.title,
+          createdAt: summary.createdAt,
           modifiedAt: stat.mtime.toISOString(),
-          messageCount,
+          messageCount: summary.messageCount,
           projectPath: projectDir,
           projectRoot,
           workDir,
           workDirExists,
-          sourceSessionId,
-          sourceMessageId,
-        }
+          permissionMode: summary.permissionMode,
+        })
       } catch {
         // Skip unreadable files
-        return null
       }
-    }))).filter((item): item is SessionListItem => item !== null)
+    }
 
-    return { sessions: items, total }
+    const result = { sessions: items, total }
+    this.sessionListCache.set(cacheKey, {
+      expiresAt: Date.now() + this.sessionListCacheTtlMs,
+      result: this.cloneSessionListResult(result),
+    })
+    return result
   }
 
   /**
@@ -1377,6 +1651,7 @@ export class SessionService {
     )
     const title = this.extractTitle(entries)
     const workDir = this.resolveWorkDirFromEntries(entries, projectDir)
+    const permissionMode = this.resolvePermissionModeFromEntries(entries)
     const projectRoot = await this.resolveProjectRootFromEntries(entries, workDir, projectDir)
     const workDirExists = await this.pathExists(workDir)
 
@@ -1398,6 +1673,7 @@ export class SessionService {
       projectRoot,
       workDir,
       workDirExists,
+      permissionMode,
       messages,
     }
   }
@@ -1425,6 +1701,7 @@ export class SessionService {
   async createSession(
     workDir?: string,
     repositoryOptions?: CreateSessionRepositoryOptions,
+    permissionMode?: string,
   ): Promise<{ sessionId: string; workDir: string }> {
     // Default to user home directory when no workDir specified
     const resolvedWorkDir = workDir || os.homedir()
@@ -1476,10 +1753,14 @@ export class SessionService {
       isMeta: true,
       workDir: absWorkDir,
       repository: preparedWorkspace.repository,
+      ...(permissionMode && VALID_SESSION_PERMISSION_MODES.has(permissionMode)
+        ? { permissionMode }
+        : {}),
       timestamp: now,
     }
 
     await fs.writeFile(filePath, JSON.stringify(initialEntry) + '\n' + JSON.stringify(metaEntry) + '\n', 'utf-8')
+    this.invalidateSessionListCache()
 
     return { sessionId, workDir: absWorkDir }
   }
@@ -1494,6 +1775,7 @@ export class SessionService {
     }
 
     await fs.unlink(found.filePath)
+    this.invalidateSessionListCache()
   }
 
   async deleteSessions(sessionIds: string[]): Promise<DeleteSessionsResult> {
@@ -1549,6 +1831,7 @@ export class SessionService {
     }
 
     await this.appendJsonlEntry(found.filePath, entry)
+    this.invalidateSessionListCache()
   }
 
   /**
@@ -1563,6 +1846,7 @@ export class SessionService {
       aiTitle: title,
       timestamp: new Date().toISOString(),
     })
+    this.invalidateSessionListCache()
   }
 
   async getCustomTitle(sessionId: string): Promise<string | null> {
@@ -1615,11 +1899,30 @@ export class SessionService {
     const workDir = this.resolveWorkDirFromEntries(entries, found.projectDir) || process.cwd()
     const repository = this.resolveRepositoryFromEntries(entries)
     const worktreeSession = this.resolveWorktreeSessionFromEntries(entries)
+    const permissionMode = this.resolvePermissionModeFromEntries(entries)
     let customTitle: string | null = null
+    let runtimeProviderId: string | null | undefined
+    let runtimeModelId: string | undefined
+    let effortLevel: string | undefined
 
     for (const entry of entries) {
       if (entry.type === 'custom-title' && typeof entry.customTitle === 'string') {
         customTitle = entry.customTitle
+      }
+      if (entry.type === 'session-meta') {
+        const record = entry as Record<string, unknown>
+        if (record.runtimeProviderId === null || typeof record.runtimeProviderId === 'string') {
+          runtimeProviderId = record.runtimeProviderId as string | null
+        }
+        if (typeof record.runtimeModelId === 'string') {
+          runtimeModelId = record.runtimeModelId
+        }
+        if (
+          typeof record.effortLevel === 'string' &&
+          VALID_SESSION_EFFORT_LEVELS.has(record.effortLevel)
+        ) {
+          effortLevel = record.effortLevel
+        }
       }
     }
     const transcriptMessageCount = this.countTranscriptMessages(entries)
@@ -1632,6 +1935,10 @@ export class SessionService {
       worktreeSession,
       transcriptMessageCount,
       customTitle,
+      permissionMode,
+      ...(runtimeProviderId !== undefined ? { runtimeProviderId } : {}),
+      ...(runtimeModelId ? { runtimeModelId } : {}),
+      ...(effortLevel ? { effortLevel } : {}),
     }
   }
 
@@ -1639,12 +1946,13 @@ export class SessionService {
     const found = await this.findSessionFile(sessionId)
     if (!found) return
     await fs.unlink(found.filePath)
+    this.invalidateSessionListCache()
   }
 
   async clearSessionTranscript(sessionId: string, fallbackWorkDir?: string): Promise<void> {
     let found = await this.findSessionFile(sessionId)
     if (!found && fallbackWorkDir) {
-      const resolvedPath = path.resolve(fallbackWorkDir)
+      const resolvedPath = path.resolve(normalizeDriveRootPathForPlatform(fallbackWorkDir))
       const absWorkDir = await fs.realpath(resolvedPath).catch(() => resolvedPath)
       const dirPath = path.join(this.getProjectsDir(), this.sanitizePath(absWorkDir))
       await fs.mkdir(dirPath, { recursive: true })
@@ -1686,6 +1994,7 @@ export class SessionService {
       `${JSON.stringify(initialEntry)}\n${JSON.stringify(metaEntry)}\n`,
       'utf-8',
     )
+    this.invalidateSessionListCache()
   }
 
   async appendSessionMetadata(
@@ -1694,6 +2003,10 @@ export class SessionService {
       workDir: string
       customTitle?: string | null
       repository?: PreparedSessionWorkspace['repository']
+      permissionMode?: string
+      runtimeProviderId?: string | null
+      runtimeModelId?: string
+      effortLevel?: string
     }
   ): Promise<void> {
     const matches = await this.findSessionFiles(sessionId)
@@ -1710,15 +2023,26 @@ export class SessionService {
       }
     }
 
-    const targetProjectDir = this.sanitizePath(metadata.workDir)
+    const normalizedWorkDir = normalizeDriveRootPathForPlatform(metadata.workDir)
+    const targetProjectDir = this.sanitizePath(normalizedWorkDir)
     const targetFilePath = path.join(this.getProjectsDir(), targetProjectDir, `${sessionId}.jsonl`)
     await fs.mkdir(path.dirname(targetFilePath), { recursive: true })
 
     await this.appendJsonlEntry(targetFilePath, {
       type: 'session-meta',
       isMeta: true,
-      workDir: metadata.workDir,
+      workDir: normalizedWorkDir,
       repository,
+      ...(metadata.permissionMode && VALID_SESSION_PERMISSION_MODES.has(metadata.permissionMode)
+        ? { permissionMode: metadata.permissionMode }
+        : {}),
+      ...(metadata.runtimeProviderId !== undefined
+        ? { runtimeProviderId: metadata.runtimeProviderId }
+        : {}),
+      ...(metadata.runtimeModelId ? { runtimeModelId: metadata.runtimeModelId } : {}),
+      ...(metadata.effortLevel && VALID_SESSION_EFFORT_LEVELS.has(metadata.effortLevel)
+        ? { effortLevel: metadata.effortLevel }
+        : {}),
       timestamp: new Date().toISOString(),
     })
 
@@ -1729,6 +2053,7 @@ export class SessionService {
         timestamp: new Date().toISOString(),
       })
     }
+    this.invalidateSessionListCache()
   }
 
   async deletePlaceholderSessionFiles(
@@ -1746,7 +2071,7 @@ export class SessionService {
       throw err
     }
 
-    const keepProjectDir = this.sanitizePath(keepWorkDir)
+    const keepProjectDir = this.sanitizePath(normalizeDriveRootPathForPlatform(keepWorkDir))
     let removed = 0
     for (const projectDir of projectDirs) {
       if (!projectDir.isDirectory()) continue
@@ -1760,6 +2085,7 @@ export class SessionService {
       await fs.rm(filePath, { force: true })
       removed += 1
     }
+    if (removed > 0) this.invalidateSessionListCache()
     return removed
   }
 
@@ -1813,6 +2139,7 @@ export class SessionService {
         ? filteredEntries.map((entry) => JSON.stringify(entry)).join('\n') + '\n'
         : ''
     await fs.writeFile(found.filePath, content, 'utf-8')
+    this.invalidateSessionListCache()
 
     return {
       removedCount: removedMessageIds.length,

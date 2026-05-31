@@ -188,6 +188,11 @@ export function getImageTooLargeErrorMessage(): string {
     ? 'Image was too large. Try resizing the image or using a different approach.'
     : 'Image was too large. Double press esc to go back and try again with a smaller image.'
 }
+export function getImageUnsupportedErrorMessage(): string {
+  return getIsNonInteractiveSession()
+    ? 'This model does not support images. Continue with text, or switch to a vision-capable model and send the image again.'
+    : 'This model does not support images. Double press esc to go back, switch to a vision-capable model, or continue with text.'
+}
 export function getRequestTooLargeErrorMessage(): string {
   const limits = `max ${formatFileSize(PDF_TARGET_RAW_SIZE)}`
   return getIsNonInteractiveSession()
@@ -422,6 +427,20 @@ export function extractUnknownErrorFormat(value: unknown): string | undefined {
   return undefined
 }
 
+export function isUnsupportedImageInputErrorMessage(message: string): boolean {
+  const raw = message.toLowerCase()
+  if (!raw.includes('image')) return false
+  return (
+    raw.includes('not support') ||
+    raw.includes('not supported') ||
+    raw.includes('unsupported') ||
+    raw.includes('vision') ||
+    raw.includes('multimodal') ||
+    raw.includes('multi-modal') ||
+    raw.includes('modality')
+  )
+}
+
 export function getAssistantMessageFromError(
   error: unknown,
   model: string,
@@ -448,6 +467,22 @@ export function getAssistantMessageFromError(
   if (error instanceof ImageSizeError || error instanceof ImageResizeError) {
     return createAssistantAPIErrorMessage({
       content: getImageTooLargeErrorMessage(),
+    })
+  }
+
+  // Custom/Anthropic-compatible providers often reject image blocks with
+  // provider-specific wording when the selected model is text-only. Convert it
+  // to a known synthetic error so normalizeMessagesForAPI can strip the image
+  // from later turns instead of poisoning the whole session.
+  if (
+    error instanceof Error &&
+    isUnsupportedImageInputErrorMessage(error.message) &&
+    (!(error instanceof APIError) || error.status === 400 || error.status === 422)
+  ) {
+    return createAssistantAPIErrorMessage({
+      content: getImageUnsupportedErrorMessage(),
+      error: 'invalid_request',
+      errorDetails: error.message,
     })
   }
 

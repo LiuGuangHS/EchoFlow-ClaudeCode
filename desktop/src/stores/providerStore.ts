@@ -60,6 +60,7 @@ function resolveRuntimeRefreshSelection(
       modelId: modelIds.has(currentSelection.modelId)
         ? currentSelection.modelId
         : provider.models.main,
+      ...(currentSelection.effortLevel ? { effortLevel: currentSelection.effortLevel } : {}),
     }
   }
 

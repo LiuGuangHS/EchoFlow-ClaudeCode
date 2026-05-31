@@ -552,7 +552,7 @@ describe('ProviderService', () => {
       const svc = new ProviderService()
       const provider = await svc.addProvider(sampleInput({
         presetId: 'echoflowai',
-        name: '清云API',
+        name: 'EchoFlowAPI',
         baseUrl: 'https://api.echoflow.cn',
         models: {
           main: 'claude-sonnet-4-6',

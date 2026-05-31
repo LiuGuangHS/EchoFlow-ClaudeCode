@@ -24,7 +24,7 @@ import { FileSearchMenu, type FileSearchMenuHandle } from './FileSearchMenu'
 import { LocalSlashCommandPanel, type LocalSlashCommandName } from './LocalSlashCommandPanel'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
 import {
-  FALLBACK_SLASH_COMMANDS,
+  getLocalizedFallbackCommands,
   filterSlashCommands,
   findSlashTrigger,
   mergeSlashCommands,
@@ -39,6 +39,7 @@ import {
   type ComposerAttachment,
 } from '../../lib/composerAttachments'
 import { useComposerFileDrop } from './useComposerFileDrop'
+import { shouldSubmitOnEnter } from './sendShortcut'
 
 type GitInfo = SessionGitInfo
 
@@ -62,6 +63,21 @@ function workspaceReferenceToAttachment(reference: WorkspaceChatReference): Atta
     lineEnd: reference.lineEnd,
     note: reference.note,
     quote: reference.quote,
+  }
+}
+
+function insertComposerTokenAtRange(value: string, start: number, end: number, token: string) {
+  const boundedStart = Math.max(0, Math.min(start, value.length))
+  const boundedEnd = Math.max(boundedStart, Math.min(end, value.length))
+  const before = value.slice(0, boundedStart)
+  const after = value.slice(boundedEnd)
+  const leadingSpace = before.length > 0 && !/\s$/.test(before) ? ' ' : ''
+  const trailingSpace = after.length > 0 && !/^\s/.test(after) ? ' ' : ''
+  const insertion = `${leadingSpace}${token}${trailingSpace}`
+
+  return {
+    value: `${before}${insertion}${after}`,
+    cursorPos: before.length + insertion.length,
   }
 }
 
@@ -105,18 +121,20 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
       return next
     })
   }, [])
-  const { sendMessage, stopGeneration } = useChatStore()
+  const { sendMessage, stopGeneration, clearComposerInsertion } = useChatStore()
   const activeTabId = useTabStore((s) => s.activeTabId)
   const sessionState = useChatStore((s) => activeTabId ? s.sessions[activeTabId] : undefined)
   const chatState = sessionState?.chatState ?? 'idle'
   const slashCommands = sessionState?.slashCommands ?? []
   const composerPrefill = sessionState?.composerPrefill ?? null
+  const composerInsertion = sessionState?.composerInsertion ?? null
   const runtimeSelection = useSessionRuntimeStore((state) =>
     activeTabId ? state.selections[activeTabId] : undefined,
   )
   const currentModel = useSettingsStore((state) => state.currentModel)
+  const chatSendBehavior = useSettingsStore((state) => state.chatSendBehavior)
   const runtimeSelectionKey = runtimeSelection
-    ? `${runtimeSelection.providerId ?? 'official'}:${runtimeSelection.modelId}`
+    ? `${runtimeSelection.providerId ?? 'official'}:${runtimeSelection.modelId}:${runtimeSelection.effortLevel ?? 'auto'}`
     : undefined
   const runtimeModelLabel = runtimeSelection
     ? runtimeSelection.modelId
@@ -244,6 +262,38 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
     })
   }, [composerPrefill, setComposerAttachments, setComposerInput])
 
+  useEffect(() => {
+    if (!composerInsertion || !activeTabId || isMemberSession) return
+
+    const el = textareaRef.current
+    const currentInput = inputRef.current
+    const start = el?.selectionStart ?? currentInput.length
+    const end = el?.selectionEnd ?? start
+    const next = insertComposerTokenAtRange(currentInput, start, end, composerInsertion.text)
+
+    if (composerInsertion.reference) {
+      addWorkspaceReference(activeTabId, composerInsertion.reference)
+    }
+    setComposerInput(next.value)
+    setFileSearchOpen(false)
+    setSlashMenuOpen(false)
+    setAtFilter('')
+    setAtCursorPos(-1)
+    clearComposerInsertion(activeTabId, composerInsertion.nonce)
+
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus()
+      textareaRef.current?.setSelectionRange(next.cursorPos, next.cursorPos)
+    })
+  }, [
+    activeTabId,
+    addWorkspaceReference,
+    clearComposerInsertion,
+    composerInsertion,
+    isMemberSession,
+    setComposerInput,
+  ])
+
   const refreshGitInfo = useCallback(() => {
     if (!activeTabId) {
       setGitInfo(null)
@@ -354,8 +404,8 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
   }, [fileSearchOpen])
 
   const allSlashCommands = useMemo(
-    () => mergeSlashCommands(slashCommands, FALLBACK_SLASH_COMMANDS),
-    [slashCommands],
+    () => mergeSlashCommands(slashCommands, getLocalizedFallbackCommands(t)),
+    [slashCommands, t],
   )
 
   const filteredCommands = useMemo(() => {
@@ -648,7 +698,11 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
         return
       }
       if (event.key === 'Enter') {
-        if (exactSlashCommand && slashFilter.trim().toLowerCase() === exactSlashCommand.name.toLowerCase()) {
+        if (
+          exactSlashCommand &&
+          slashFilter.trim().toLowerCase() === exactSlashCommand.name.toLowerCase() &&
+          shouldSubmitOnEnter(event, chatSendBehavior)
+        ) {
           event.preventDefault()
           handleSubmit()
           return
@@ -671,7 +725,7 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
       }
     }
 
-    if (event.key === 'Enter' && !event.shiftKey) {
+    if (shouldSubmitOnEnter(event, chatSendBehavior)) {
       event.preventDefault()
       handleSubmit()
     }

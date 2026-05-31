@@ -57,6 +57,19 @@ describe('MarkdownRenderer', () => {
     expect(screen.getByText('Body copy.')).toBeInTheDocument()
   })
 
+  it('gives default markdown lists enough inset to keep bullets inside message cards', () => {
+    const { container } = render(
+      <MarkdownRenderer content={'- First item\n- Second item'} />,
+    )
+
+    const root = container.firstChild as HTMLDivElement
+    expect(root.className).toContain('prose-ul:pl-5')
+    expect(root.className).toContain('prose-ol:pl-5')
+    expect(root.className).toContain('prose-ul:list-outside')
+    expect(root.className).toContain('prose-ol:list-outside')
+    expect(screen.getByText('First item')).toBeInTheDocument()
+  })
+
   it('applies compact prose classes for dense surfaces', () => {
     const { container } = render(
       <MarkdownRenderer
@@ -93,6 +106,23 @@ describe('MarkdownRenderer', () => {
       /graph TB\s+A-->B/,
     )
     expect(screen.queryByTestId('code-viewer')).not.toBeInTheDocument()
+  })
+
+  it('keeps mermaid blocks in a generating state while assistant text is streaming', () => {
+    render(<MarkdownRenderer content={'```mermaid\ngraph TB\nA-->B'} streaming />)
+
+    expect(screen.getByTestId('mermaid-streaming-placeholder')).toHaveTextContent(
+      'Generating diagram...',
+    )
+    expect(screen.queryByTestId('mermaid-renderer')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('code-viewer')).not.toBeInTheDocument()
+  })
+
+  it('does not render completed mermaid blocks until streaming has finalized', () => {
+    render(<MarkdownRenderer content={'```mermaid\ngraph TB\nA-->B\n```'} streaming />)
+
+    expect(screen.getByTestId('mermaid-streaming-placeholder')).toBeInTheDocument()
+    expect(screen.queryByTestId('mermaid-renderer')).not.toBeInTheDocument()
   })
 
   it('detects mermaid diagrams even when the fence has no language tag', () => {

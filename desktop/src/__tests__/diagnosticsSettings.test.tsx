@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import '@testing-library/jest-dom'
 
 import { Settings } from '../pages/Settings'
@@ -90,6 +90,7 @@ vi.mock('../components/chat/CodeViewer', () => ({
 
 describe('Settings > Diagnostics tab', () => {
   beforeEach(() => {
+    vi.clearAllMocks()
     diagnosticsApiMock.getStatus.mockResolvedValue({
       logDir: '/tmp/claude/cc-haha/diagnostics',
       diagnosticsPath: '/tmp/claude/cc-haha/diagnostics/diagnostics.jsonl',
@@ -166,6 +167,36 @@ describe('Settings > Diagnostics tab', () => {
       expect(diagnosticsApiMock.exportBundle).toHaveBeenCalled()
     })
     expect(await screen.findByText('/tmp/claude/cc-haha/diagnostics/exports/cc-haha-diagnostics.tar.gz')).toBeInTheDocument()
+  })
+
+  it('asks with the shared confirm dialog before clearing diagnostics', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockImplementation(() => {
+      throw new Error('window.confirm should not be used')
+    })
+
+    try {
+      render(<Settings />)
+
+      fireEvent.click(screen.getByText('Diagnostics'))
+      fireEvent.click(await screen.findByRole('button', { name: /Clear Logs/i }))
+
+      const dialog = await screen.findByRole('dialog', { name: 'Clear Logs' })
+      expect(within(dialog).getByText('Clear all local diagnostic logs and exported bundles?')).toBeInTheDocument()
+
+      fireEvent.click(within(dialog).getByRole('button', { name: /Cancel/i }))
+      expect(diagnosticsApiMock.clear).not.toHaveBeenCalled()
+
+      fireEvent.click(screen.getByRole('button', { name: /Clear Logs/i }))
+      const confirmDialog = await screen.findByRole('dialog', { name: 'Clear Logs' })
+      fireEvent.click(within(confirmDialog).getByRole('button', { name: /Clear Logs/i }))
+
+      await waitFor(() => {
+        expect(diagnosticsApiMock.clear).toHaveBeenCalledTimes(1)
+      })
+      expect(confirmSpy).not.toHaveBeenCalled()
+    } finally {
+      confirmSpy.mockRestore()
+    }
   })
 
   it('copies the recent error summary with the legacy clipboard fallback', async () => {

@@ -36,6 +36,7 @@ type ParsedPath = {
 // Cache configuration
 const CACHE_SIZE = 500
 const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
+const VCS_METADATA_DIRECTORY_NAMES = new Set(['.git', '.svn', '.hg', '.bzr', '.jj', '.sl'])
 
 // Initialize LRU cache for directory scans
 const directoryCache = new LRUCache<string, DirectoryEntry[]>({
@@ -48,6 +49,10 @@ const pathCache = new LRUCache<string, PathEntry[]>({
   max: CACHE_SIZE,
   ttl: CACHE_TTL,
 })
+
+function isVcsMetadataDirectoryName(name: string): boolean {
+  return VCS_METADATA_DIRECTORY_NAMES.has(name.toLowerCase())
+}
 
 /**
  * Parses a partial path into directory and prefix components
@@ -95,9 +100,10 @@ export async function scanDirectory(
     const fs = getFsImplementation()
     const entries = await fs.readdir(dirPath)
 
-    // Filter for directories only, exclude hidden directories
+    // Filter for directories only. Dot-prefixed project folders like .claude and .github
+    // are valid navigation targets; VCS internals remain hidden.
     const directories = entries
-      .filter(entry => entry.isDirectory() && !entry.name.startsWith('.'))
+      .filter(entry => entry.isDirectory() && !isVcsMetadataDirectoryName(entry.name))
       .map(entry => ({
         name: entry.name,
         path: join(dirPath, entry.name),

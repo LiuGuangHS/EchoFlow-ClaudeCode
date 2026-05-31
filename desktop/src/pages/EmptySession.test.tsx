@@ -174,7 +174,7 @@ describe('EmptySession', () => {
     mocks.webviewDragHandlers.length = 0
     mocks.isMobile = false
     mocks.isTauriRuntime = false
-    useSettingsStore.setState({ locale: 'en', activeProviderName: null })
+    useSettingsStore.setState({ locale: 'en', activeProviderName: null, permissionMode: 'default' })
     useSessionStore.setState(initialSessionState, true)
     useChatStore.setState(initialChatState, true)
     useTabStore.setState(initialTabState, true)
@@ -354,6 +354,7 @@ describe('EmptySession', () => {
       expect(mocks.createSession).toHaveBeenCalledWith({
         workDir: '/workspace/project',
         repository: { branch: 'main', worktree: false },
+        permissionMode: 'default',
       })
     })
 
@@ -394,7 +395,7 @@ describe('EmptySession', () => {
     fireEvent.click(screen.getByRole('button', { name: /Run/i }))
 
     await waitFor(() => {
-      expect(mocks.createSession).toHaveBeenCalledWith({})
+      expect(mocks.createSession).toHaveBeenCalledWith({ permissionMode: 'default' })
     })
 
     expect(useSessionRuntimeStore.getState().selections['draft-session']).toEqual({
@@ -436,7 +437,7 @@ describe('EmptySession', () => {
     fireEvent.click(screen.getByRole('button', { name: /Run/i }))
 
     await waitFor(() => {
-      expect(mocks.createSession).toHaveBeenCalledWith({})
+      expect(mocks.createSession).toHaveBeenCalledWith({ permissionMode: 'default' })
     })
     expect(mocks.wsSend).toHaveBeenCalledWith('draft-session', {
       type: 'user_message',
@@ -488,7 +489,7 @@ describe('EmptySession', () => {
     fireEvent.click(screen.getByRole('button', { name: /Run/i }))
 
     await waitFor(() => {
-      expect(mocks.createSession).toHaveBeenCalledWith({})
+      expect(mocks.createSession).toHaveBeenCalledWith({ permissionMode: 'default' })
     })
     expect(mocks.wsSend).toHaveBeenCalledWith('draft-session', {
       type: 'user_message',
@@ -563,6 +564,7 @@ describe('EmptySession', () => {
     await waitFor(() => {
       expect(mocks.createSession).toHaveBeenCalledWith({
         workDir: '/workspace/project',
+        permissionMode: 'default',
       })
     })
   })
@@ -668,6 +670,7 @@ describe('EmptySession', () => {
       expect(mocks.createSession).toHaveBeenCalledWith({
         workDir: '/workspace/project',
         repository: { branch: 'main', worktree: false },
+        permissionMode: 'default',
       })
     })
   })
@@ -759,6 +762,7 @@ describe('EmptySession', () => {
       expect(mocks.createSession).toHaveBeenCalledWith({
         workDir: '/workspace/project',
         repository: { branch: 'main', worktree: false },
+        permissionMode: 'default',
       })
     })
   })

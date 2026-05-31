@@ -1,4 +1,4 @@
-import { api } from './client'
+import { ApiError, api, getApiUrl, getAuthToken } from './client'
 
 export type SidebarProjectPreferences = {
   projectOrder: string[]
@@ -8,9 +8,17 @@ export type SidebarProjectPreferences = {
   projectSortBy: 'createdAt' | 'updatedAt'
 }
 
+export type DesktopProfilePreferences = {
+  displayName: string
+  subtitle: string
+  avatarFile: string | null
+  avatarUpdatedAt: string | null
+}
+
 export type DesktopUiPreferences = {
   schemaVersion: number
   sidebar: SidebarProjectPreferences
+  profile: DesktopProfilePreferences
 }
 
 export type DesktopUiPreferencesResponse = {
@@ -29,4 +37,49 @@ export const desktopUiPreferencesApi = {
       sidebar,
     )
   },
+
+  updateProfilePreferences(profile: Pick<DesktopProfilePreferences, 'displayName' | 'subtitle'>) {
+    return api.put<{ ok: true; preferences: DesktopUiPreferences }>(
+      '/api/desktop-ui/preferences/profile',
+      profile,
+    )
+  },
+
+  async uploadProfileAvatar(file: File) {
+    return uploadProfileAvatar(file)
+  },
+
+  deleteProfileAvatar() {
+    return api.delete<{ ok: true; preferences: DesktopUiPreferences }>(
+      '/api/desktop-ui/preferences/profile/avatar',
+    )
+  },
+}
+
+export function getProfileAvatarUrl(updatedAt: string | null | undefined) {
+  const suffix = updatedAt ? `?v=${encodeURIComponent(updatedAt)}` : ''
+  return getApiUrl(`/api/desktop-ui/preferences/profile/avatar${suffix}`)
+}
+
+async function uploadProfileAvatar(file: File): Promise<{ ok: true; preferences: DesktopUiPreferences }> {
+  const headers: Record<string, string> = {
+    'Content-Type': file.type || 'application/octet-stream',
+  }
+  const token = getAuthToken()
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+
+  const res = await fetch(getApiUrl('/api/desktop-ui/preferences/profile/avatar'), {
+    method: 'PUT',
+    headers,
+    body: file,
+  })
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => res.text())
+    throw new ApiError(res.status, body)
+  }
+
+  return res.json() as Promise<{ ok: true; preferences: DesktopUiPreferences }>
 }

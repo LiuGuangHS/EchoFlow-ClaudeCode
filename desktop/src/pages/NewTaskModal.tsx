@@ -13,7 +13,6 @@ export default function NewTaskModal() {
   const [taskName, setTaskName] = useState('')
   const [description, setDescription] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
-  const [permissionMode, setPermissionMode] = useState(mockNewTaskDefaults.permissionModes[0])
   const [model, setModel] = useState(mockNewTaskDefaults.models[0])
   const [rootFolder, setRootFolder] = useState('')
   const [frequency, setFrequency] = useState(mockNewTaskDefaults.frequencies[1])
@@ -189,21 +188,11 @@ export default function NewTaskModal() {
                       <label className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-outline)] px-1">
                         Permission Mode
                       </label>
-                      <div className="relative">
-                        <select
-                          value={permissionMode}
-                          onChange={(e) => setPermissionMode(e.target.value)}
-                          className="w-full bg-[var(--color-surface-container)] rounded-lg border-none focus:ring-1 focus:ring-[var(--color-primary)] text-sm px-4 py-2.5 appearance-none cursor-pointer outline-none"
-                        >
-                          {mockNewTaskDefaults.permissionModes.map((pm) => (
-                            <option key={pm} value={pm}>
-                              {pm}
-                            </option>
-                          ))}
-                        </select>
-                        <span className="material-symbols-outlined absolute right-3 top-2.5 pointer-events-none text-[var(--color-outline)] text-sm">
-                          unfold_more
+                      <div className="w-full bg-[var(--color-surface-container)] rounded-lg border-none text-sm px-4 py-2.5 outline-none flex items-center gap-2 text-[var(--color-on-surface)]">
+                        <span className="material-symbols-outlined text-[16px] text-[var(--color-error)]">
+                          gavel
                         </span>
+                        Full Access
                       </div>
                     </div>
 

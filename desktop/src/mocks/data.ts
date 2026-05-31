@@ -185,7 +185,6 @@ export const mockToolInspection = {
 
 // ─── New Task Modal ───────────────────────────────────────────────
 export const mockNewTaskDefaults = {
-  permissionModes: ['Restricted', 'Standard', 'Full Access'],
   models: ['Claude 3.5 Sonnet', 'Claude 3.5 Haiku', 'Claude 3.5 Opus'],
   frequencies: ['Hourly', 'Daily at 9:00 AM', 'Weekly', 'Monthly', 'Custom cron'],
 }

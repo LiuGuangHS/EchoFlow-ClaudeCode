@@ -241,6 +241,24 @@ export function roughTokenCountEstimationForFileType(
   )
 }
 
+export function roughTokenCountEstimationForAPIRequest(
+  messages: readonly {
+    role?: string
+    content?: string | Array<Anthropic.ContentBlock> | Array<Anthropic.ContentBlockParam>
+  }[],
+  tools: readonly unknown[] = [],
+): number {
+  let totalTokens = 0
+  for (const message of messages) {
+    totalTokens += roughTokenCountEstimation(message.role ?? '')
+    totalTokens += roughTokenCountEstimationForContent(message.content)
+  }
+  if (tools.length > 0) {
+    totalTokens += roughTokenCountEstimation(jsonStringify({ tools }))
+  }
+  return totalTokens
+}
+
 /**
  * Estimates token count for a Message object by extracting and analyzing its text content.
  * This provides a more reliable estimate than getTokenUsage for messages that may have been compacted.
@@ -368,7 +386,7 @@ export function roughTokenCountEstimationForMessage(message: {
   return 0
 }
 
-function roughTokenCountEstimationForContent(
+export function roughTokenCountEstimationForContent(
   content:
     | string
     | Array<Anthropic.ContentBlock>

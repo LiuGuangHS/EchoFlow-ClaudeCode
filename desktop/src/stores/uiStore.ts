@@ -30,7 +30,6 @@ export type Toast = {
 
 export type SettingsTab =
   | 'providers'
-  | 'permissions'
   | 'activity'
   | 'general'
   | 'h5Access'

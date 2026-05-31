@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { sessionsApi } from '../api/sessions'
 import { dropSession as dropVirtualHeightSession } from '../components/chat/virtualHeightCache'
+import { destroyTerminalRuntime } from '../lib/terminalRuntime'
 
 const TAB_STORAGE_KEY = 'cc-haha-open-tabs'
 
@@ -16,6 +17,7 @@ export type Tab = {
   type: TabType
   status: 'idle' | 'running' | 'error'
   terminalCwd?: string
+  terminalRuntimeId?: string
 }
 
 type TabPersistence = {
@@ -28,7 +30,7 @@ type TabStore = {
   activeTabId: string | null
 
   openTab: (sessionId: string, title: string, type?: TabType) => void
-  openTerminalTab: (cwd?: string) => string
+  openTerminalTab: (cwd?: string, terminalRuntimeId?: string) => string
   closeTab: (sessionId: string) => void
   setActiveTab: (sessionId: string) => void
   updateTabTitle: (sessionId: string, title: string) => void
@@ -69,7 +71,7 @@ export const useTabStore = create<TabStore>((set, get) => ({
     get().saveTabs()
   },
 
-  openTerminalTab: (cwd) => {
+  openTerminalTab: (cwd, terminalRuntimeId) => {
     const { tabs } = get()
     const nextIndex = Math.max(
       0,
@@ -82,7 +84,7 @@ export const useTabStore = create<TabStore>((set, get) => ({
     ) + 1
     const sessionId = `${TERMINAL_TAB_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     set({
-      tabs: [...tabs, { sessionId, title: `Terminal ${nextIndex}`, type: 'terminal', status: 'idle', terminalCwd: cwd }],
+      tabs: [...tabs, { sessionId, title: `Terminal ${nextIndex}`, type: 'terminal', status: 'idle', terminalCwd: cwd, terminalRuntimeId }],
       activeTabId: sessionId,
     })
     get().saveTabs()
@@ -109,6 +111,10 @@ export const useTabStore = create<TabStore>((set, get) => ({
 
     set({ tabs: newTabs, activeTabId: newActiveId })
     get().saveTabs()
+    const closedTab = tabs[index]
+    if (closedTab?.type === 'terminal') {
+      destroyTerminalRuntime(closedTab.terminalRuntimeId ?? closedTab.sessionId)
+    }
     dropVirtualHeightSession(sessionId)
   },
 

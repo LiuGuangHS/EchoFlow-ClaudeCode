@@ -31,6 +31,7 @@ import {
 } from '../services/analytics/growthbook.js'
 import {
   getImageTooLargeErrorMessage,
+  getImageUnsupportedErrorMessage,
   getPdfInvalidErrorMessage,
   getPdfPasswordProtectedErrorMessage,
   getPdfTooLargeErrorMessage,
@@ -2006,6 +2007,7 @@ export function normalizeMessagesForAPI(
     [getPdfPasswordProtectedErrorMessage()]: new Set(['document']),
     [getPdfInvalidErrorMessage()]: new Set(['document']),
     [getImageTooLargeErrorMessage()]: new Set(['image']),
+    [getImageUnsupportedErrorMessage()]: new Set(['image']),
     [getRequestTooLargeErrorMessage()]: new Set(['document', 'image']),
   }
 
@@ -2030,10 +2032,12 @@ export function normalizeMessagesForAPI(
     if (!blockTypesToStrip) {
       continue
     }
-    // Walk backward to find the nearest preceding isMeta user message
+    // Walk backward to find the nearest preceding user message. Normal pasted
+    // images are ordinary user turns, while attachment-derived media can be
+    // meta turns; both need to be stripped after a provider media rejection.
     for (let j = i - 1; j >= 0; j--) {
       const candidate = reorderedMessages[j]!
-      if (candidate.type === 'user' && candidate.isMeta) {
+      if (candidate.type === 'user') {
         const existing = stripTargets.get(candidate.uuid)
         if (existing) {
           for (const t of blockTypesToStrip) {
@@ -2044,11 +2048,11 @@ export function normalizeMessagesForAPI(
         }
         break
       }
-      // Skip over other synthetic error messages or non-meta messages
+      // Skip over other synthetic error messages
       if (isSyntheticApiErrorMessage(candidate)) {
         continue
       }
-      // Stop if we hit an assistant message or non-meta user message
+      // Stop if we hit an assistant message or any other non-user message.
       break
     }
   }
@@ -2110,11 +2114,11 @@ export function normalizeMessagesForAPI(
             )
           }
 
-          // Strip document/image blocks from the specific meta user message that
+          // Strip document/image blocks from the specific user message that
           // preceded a PDF/image/request-too-large error, to prevent re-sending
           // the problematic content on every subsequent API call.
           const typesToStrip = stripTargets.get(normalizedMessage.uuid)
-          if (typesToStrip && normalizedMessage.isMeta) {
+          if (typesToStrip) {
             const content = normalizedMessage.message.content
             if (Array.isArray(content)) {
               const filtered = content.filter(

@@ -1,11 +1,14 @@
 import { create } from 'zustand'
+import { destroyTerminalRuntime } from '../lib/terminalRuntime'
 
 export const TERMINAL_PANEL_DEFAULT_HEIGHT = 300
 export const TERMINAL_PANEL_MIN_HEIGHT = 220
 export const TERMINAL_PANEL_MAX_HEIGHT = 560
+export const SESSION_TERMINAL_RUNTIME_PREFIX = '__session_terminal__'
 
 type TerminalPanelSessionState = {
   isOpen: boolean
+  runtimeId?: string
 }
 
 type TerminalPanelStore = {
@@ -18,10 +21,16 @@ type TerminalPanelStore = {
   togglePanel: (sessionId: string) => void
   setHeight: (height: number) => void
   clearSession: (sessionId: string) => void
+  detachRuntime: (sessionId: string) => void
+  getPanelRuntimeId: (sessionId: string) => string | undefined
 }
 
 const DEFAULT_PANEL_STATE: TerminalPanelSessionState = {
   isOpen: false,
+}
+
+function createSessionTerminalRuntimeId(sessionId: string) {
+  return `${SESSION_TERMINAL_RUNTIME_PREFIX}${sessionId}`
 }
 
 function getSessionPanelState(
@@ -50,26 +59,33 @@ export const useTerminalPanelStore = create<TerminalPanelStore>((set, get) => ({
   isPanelOpen: (sessionId) => getSessionPanelState(get().panelBySession, sessionId).isOpen,
 
   openPanel: (sessionId) =>
-    set((state) => ({
-      panelBySession: {
-        ...state.panelBySession,
-        [sessionId]: {
-          ...getSessionPanelState(state.panelBySession, sessionId),
-          isOpen: true,
+    set((state) => {
+      const panel = getSessionPanelState(state.panelBySession, sessionId)
+      return {
+        panelBySession: {
+          ...state.panelBySession,
+          [sessionId]: {
+            ...panel,
+            isOpen: true,
+            runtimeId: panel.runtimeId ?? createSessionTerminalRuntimeId(sessionId),
+          },
         },
-      },
-    })),
+      }
+    }),
 
   closePanel: (sessionId) =>
-    set((state) => ({
-      panelBySession: {
-        ...state.panelBySession,
-        [sessionId]: {
-          ...getSessionPanelState(state.panelBySession, sessionId),
-          isOpen: false,
+    set((state) => {
+      const panel = getSessionPanelState(state.panelBySession, sessionId)
+      return {
+        panelBySession: {
+          ...state.panelBySession,
+          [sessionId]: {
+            ...panel,
+            isOpen: false,
+          },
         },
-      },
-    })),
+      }
+    }),
 
   togglePanel: (sessionId) =>
     set((state) => {
@@ -80,6 +96,7 @@ export const useTerminalPanelStore = create<TerminalPanelStore>((set, get) => ({
           [sessionId]: {
             ...panel,
             isOpen: !panel.isOpen,
+            runtimeId: panel.runtimeId ?? createSessionTerminalRuntimeId(sessionId),
           },
         },
       }
@@ -88,7 +105,31 @@ export const useTerminalPanelStore = create<TerminalPanelStore>((set, get) => ({
   setHeight: (height) => set({ height: clampTerminalPanelHeight(height) }),
 
   clearSession: (sessionId) =>
-    set((state) => ({
-      panelBySession: removeRecordKey(state.panelBySession, sessionId),
-    })),
+    set((state) => {
+      const runtimeId = state.panelBySession[sessionId]?.runtimeId
+      if (runtimeId) {
+        destroyTerminalRuntime(runtimeId)
+      }
+      return {
+        panelBySession: removeRecordKey(state.panelBySession, sessionId),
+      }
+    }),
+
+  detachRuntime: (sessionId) =>
+    set((state) => {
+      const panel = state.panelBySession[sessionId]
+      if (!panel) return state
+      return {
+        panelBySession: {
+          ...state.panelBySession,
+          [sessionId]: {
+            ...panel,
+            isOpen: false,
+            runtimeId: undefined,
+          },
+        },
+      }
+    }),
+
+  getPanelRuntimeId: (sessionId) => get().panelBySession[sessionId]?.runtimeId,
 }))

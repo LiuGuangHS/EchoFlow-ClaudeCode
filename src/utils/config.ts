@@ -1584,10 +1584,8 @@ function getConfig<A>(
   }
 }
 
-// Memoized function to get the project path for config lookup
-export const getProjectPathForConfig = memoize((): string => {
-  const originalCwd = getOriginalCwd()
-  const gitRoot = findCanonicalGitRoot(originalCwd)
+function computeProjectPathForConfig(cwd: string): string {
+  const gitRoot = findCanonicalGitRoot(cwd)
 
   if (gitRoot) {
     // Normalize for consistent JSON keys (forward slashes on all platforms)
@@ -1596,16 +1594,26 @@ export const getProjectPathForConfig = memoize((): string => {
   }
 
   // Not in a git repo
-  return normalizePathForConfigKey(resolve(originalCwd))
-})
+  return normalizePathForConfigKey(resolve(cwd))
+}
 
-export function getCurrentProjectConfig(): ProjectConfig {
-  if (process.env.NODE_ENV === 'test') {
+// Memoized function to get the project path for config lookup.
+// Callers that operate on an explicit workspace, such as the desktop MCP API,
+// must pass cwd so local project config is keyed to the requested project.
+export const getProjectPathForConfig = memoize(
+  (cwd?: string): string => computeProjectPathForConfig(cwd ?? getOriginalCwd()),
+  (cwd?: string): string => normalizePathForConfigKey(resolve(cwd ?? getOriginalCwd())),
+)
+
+export function getCurrentProjectConfig(cwd?: string): ProjectConfig {
+  if (process.env.NODE_ENV === 'test' && cwd === undefined) {
     return TEST_PROJECT_CONFIG_FOR_TESTING
   }
 
-  const absolutePath = getProjectPathForConfig()
-  const config = getGlobalConfig()
+  const absolutePath = getProjectPathForConfig(cwd)
+  const config = process.env.NODE_ENV === 'test'
+    ? getConfig(getGlobalClaudeFile(), createDefaultGlobalConfig)
+    : getGlobalConfig()
 
   if (!config.projects) {
     return DEFAULT_PROJECT_CONFIG
@@ -1624,8 +1632,9 @@ export function getCurrentProjectConfig(): ProjectConfig {
 
 export function saveCurrentProjectConfig(
   updater: (currentConfig: ProjectConfig) => ProjectConfig,
+  cwd?: string,
 ): void {
-  if (process.env.NODE_ENV === 'test') {
+  if (process.env.NODE_ENV === 'test' && cwd === undefined) {
     const config = updater(TEST_PROJECT_CONFIG_FOR_TESTING)
     // Skip if no changes (same reference returned)
     if (config === TEST_PROJECT_CONFIG_FOR_TESTING) {
@@ -1634,7 +1643,7 @@ export function saveCurrentProjectConfig(
     Object.assign(TEST_PROJECT_CONFIG_FOR_TESTING, config)
     return
   }
-  const absolutePath = getProjectPathForConfig()
+  const absolutePath = getProjectPathForConfig(cwd)
 
   let written: GlobalConfig | null = null
   try {

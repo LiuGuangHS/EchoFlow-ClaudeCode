@@ -1,21 +1,18 @@
 import * as path from 'node:path'
+import {
+  isSameOrInsidePathForPlatform,
+  normalizeDriveRootPathForPlatform,
+} from './windowsDrivePath.js'
 
 const registeredRoots = new Set<string>()
 
-function normalizeComparablePath(filePath: string): string {
-  const resolved = path.resolve(filePath)
-  return process.platform === 'win32' ? resolved.toLowerCase() : resolved
-}
-
 function isWithinRoot(targetPath: string, rootPath: string): boolean {
-  const target = normalizeComparablePath(targetPath)
-  const root = normalizeComparablePath(rootPath)
-  return target === root || target.startsWith(`${root}${path.sep}`)
+  return isSameOrInsidePathForPlatform(targetPath, rootPath)
 }
 
 export function registerFilesystemAccessRoot(rootPath: string | null | undefined): void {
   if (!rootPath) return
-  registeredRoots.add(path.resolve(rootPath))
+  registeredRoots.add(path.resolve(normalizeDriveRootPathForPlatform(rootPath)))
 }
 
 export function isWithinRegisteredFilesystemRoot(targetPath: string): boolean {

@@ -106,6 +106,20 @@ describe('AdapterHttpClient', () => {
     expect(client.createSession('')).rejects.toThrow()
   })
 
+  it('sessionExists returns false for deleted sessions', async () => {
+    globalThis.fetch = mock(() =>
+      Promise.resolve(new Response(JSON.stringify({ error: 'NOT_FOUND' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+    ) as any
+
+    await expect(client.sessionExists('deleted-session')).resolves.toBe(false)
+    expect((globalThis.fetch as any).mock.calls[0][0]).toBe(
+      'http://127.0.0.1:3456/api/sessions/deleted-session',
+    )
+  })
+
   it('getGitInfo calls GET /api/sessions/:id/git-info', async () => {
     globalThis.fetch = mock(() =>
       Promise.resolve(new Response(JSON.stringify({

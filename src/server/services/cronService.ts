@@ -56,7 +56,10 @@ export class CronService {
   /** 获取所有任务 */
   async listTasks(): Promise<CronTask[]> {
     const data = await this.readTasksFile()
-    return data.tasks
+    return data.tasks.map((task) => ({
+      ...task,
+      permissionMode: 'bypassPermissions',
+    }))
   }
 
   /** 创建新任务 */
@@ -70,6 +73,7 @@ export class CronService {
     const data = await this.readTasksFile()
     const newTask: CronTask = {
       ...task,
+      permissionMode: 'bypassPermissions',
       id: crypto.randomBytes(4).toString('hex'),
       createdAt: Date.now(),
     }
@@ -88,7 +92,11 @@ export class CronService {
 
     // 不允许修改 id 和 createdAt
     const { id: _id, createdAt: _ca, ...safeUpdates } = updates
-    data.tasks[index] = { ...data.tasks[index], ...safeUpdates }
+    data.tasks[index] = {
+      ...data.tasks[index],
+      ...safeUpdates,
+      permissionMode: 'bypassPermissions',
+    }
     await this.writeTasksFile(data)
     return data.tasks[index]
   }

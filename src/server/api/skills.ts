@@ -12,8 +12,10 @@ import { parseFrontmatter } from '../../utils/frontmatterParser.js'
 import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
 import { getProjectDirsUpToHome } from '../../utils/markdownConfigLoader.js'
 import { getCwd } from '../../utils/cwd.js'
-import { loadAllPlugins, loadAllPluginsCacheOnly } from '../../utils/plugins/pluginLoader.js'
+import { clearInstalledPluginsCache } from '../../utils/plugins/installedPluginsManager.js'
+import { clearPluginCache, loadAllPlugins, loadAllPluginsCacheOnly } from '../../utils/plugins/pluginLoader.js'
 import { getSkillDirCommands } from '../../skills/loadSkillsDir.js'
+import { resetSettingsCache } from '../../utils/settings/settingsCache.js'
 import type { LoadedPlugin } from '../../types/plugin.js'
 import { ApiError, errorResponse } from '../middleware/errorHandler.js'
 
@@ -306,6 +308,10 @@ async function collectPluginSkillDirectories(): Promise<Map<string, PluginSkillL
 
   let enabledPlugins: LoadedPlugin[]
   try {
+    resetSettingsCache()
+    clearInstalledPluginsCache()
+    clearPluginCache('skills-api-external-plugin-state')
+
     const result = await loadAllPluginsCacheOnly()
     if (result.errors.some((error) => error.type === 'plugin-cache-miss')) {
       enabledPlugins = (await loadAllPlugins()).enabled

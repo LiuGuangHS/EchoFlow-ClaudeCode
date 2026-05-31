@@ -1,6 +1,7 @@
 import ReactDiffViewer, { DiffMethod } from 'react-diff-viewer-continued'
 import { Highlight, type PrismTheme } from 'prism-react-renderer'
 import { CopyButton } from '../shared/CopyButton'
+import { useUIStore } from '../../stores/uiStore'
 
 type Props = {
   filePath: string
@@ -112,6 +113,7 @@ const diffStyles = {
 }
 
 export function DiffViewer({ filePath, oldString, newString }: Props) {
+  const theme = useUIStore((state) => state.theme)
   const language = inferLanguage(filePath)
 
   const oldLines = oldString.split('\n')
@@ -149,7 +151,7 @@ export function DiffViewer({ filePath, oldString, newString }: Props) {
           renderContent={(str) => highlightSyntax(str, language)}
           hideLineNumbers={false}
           styles={diffStyles}
-          useDarkTheme={document.documentElement.getAttribute('data-theme') === 'dark'}
+          useDarkTheme={theme === 'dark'}
         />
       </div>
     </div>

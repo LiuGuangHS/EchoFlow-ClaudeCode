@@ -25,8 +25,9 @@ import {
   type ComposerAttachment,
 } from '../lib/composerAttachments'
 import { useComposerFileDrop } from '../components/chat/useComposerFileDrop'
+import { shouldSubmitOnEnter } from '../components/chat/sendShortcut'
 import {
-  FALLBACK_SLASH_COMMANDS,
+  getLocalizedFallbackCommands,
   filterSlashCommands,
   findSlashToken,
   insertSlashTrigger,
@@ -35,6 +36,7 @@ import {
   resolveSlashUiAction,
 } from '../components/chat/composerUtils'
 import type { AttachmentRef } from '../types/chat'
+import type { PermissionMode } from '../types/settings'
 import type { SlashCommandOption } from '../components/chat/composerUtils'
 
 type Attachment = ComposerAttachment
@@ -108,10 +110,13 @@ export function EmptySession() {
   const setActiveView = useUIStore((state) => state.setActiveView)
   const addToast = useUIStore((state) => state.addToast)
   const currentModel = useSettingsStore((state) => state.currentModel)
+  const chatSendBehavior = useSettingsStore((state) => state.chatSendBehavior)
+  const defaultPermissionMode = useSettingsStore((state) => state.permissionMode)
+  const [draftPermissionMode, setDraftPermissionMode] = useState<PermissionMode>(defaultPermissionMode)
   const lastPluginReloadSummary = usePluginStore((state) => state.lastReloadSummary)
   const draftRuntimeSelection = useSessionRuntimeStore((state) => state.selections[DRAFT_RUNTIME_SELECTION_KEY])
   const draftRuntimeSelectionKey = draftRuntimeSelection
-    ? `${draftRuntimeSelection.providerId ?? 'official'}:${draftRuntimeSelection.modelId}`
+    ? `${draftRuntimeSelection.providerId ?? 'official'}:${draftRuntimeSelection.modelId}:${draftRuntimeSelection.effortLevel ?? 'auto'}`
     : undefined
   const draftModelLabel = draftRuntimeSelection?.modelId ?? currentModel?.name ?? currentModel?.id
   const isMobileComposer = useMobileViewport() && !isTauriRuntime()
@@ -207,8 +212,8 @@ export function EmptySession() {
   }, [workDir, lastPluginReloadSummary])
 
   const allSlashCommands = useMemo(
-    () => mergeSlashCommands(slashCommands, FALLBACK_SLASH_COMMANDS),
-    [slashCommands],
+    () => mergeSlashCommands(slashCommands, getLocalizedFallbackCommands(t)),
+    [slashCommands, t],
   )
 
   const handleWorkDirChange = (newWorkDir: string) => {
@@ -273,9 +278,12 @@ export function EmptySession() {
       const explicitDraftSelection = useSessionRuntimeStore.getState().selections[DRAFT_RUNTIME_SELECTION_KEY]
       const sessionId = await createSession(
         workDir || undefined,
-        selectedBranch
-          ? { repository: { branch: selectedBranch, worktree: useWorktree } }
-          : undefined,
+        {
+          ...(selectedBranch
+            ? { repository: { branch: selectedBranch, worktree: useWorktree } }
+            : {}),
+          permissionMode: draftPermissionMode,
+        },
       )
       if (explicitDraftSelection) {
         useSessionRuntimeStore.getState().setSelection(sessionId, explicitDraftSelection)
@@ -380,7 +388,8 @@ export function EmptySession() {
         if (
           event.key === 'Enter' &&
           exactSlashCommand &&
-          slashFilter.trim().toLowerCase() === exactSlashCommand.name.toLowerCase()
+          slashFilter.trim().toLowerCase() === exactSlashCommand.name.toLowerCase() &&
+          shouldSubmitOnEnter(event, chatSendBehavior)
         ) {
           event.preventDefault()
           void handleSubmit()
@@ -398,7 +407,7 @@ export function EmptySession() {
       }
     }
 
-    if (event.key === 'Enter' && !event.shiftKey) {
+    if (shouldSubmitOnEnter(event, chatSendBehavior)) {
       event.preventDefault()
       handleSubmit()
     }
@@ -728,7 +737,12 @@ export function EmptySession() {
                     )}
                   </div>
 
-                  <PermissionModeSelector workDir={workDir} compact={isMobileComposer} />
+                  <PermissionModeSelector
+                    workDir={workDir}
+                    compact={isMobileComposer}
+                    value={draftPermissionMode}
+                    onChange={setDraftPermissionMode}
+                  />
                 </div>
 
                 <div className={`${isMobileComposer ? 'flex min-w-0 flex-1 items-center justify-end gap-2' : 'flex items-center gap-3'}`}>

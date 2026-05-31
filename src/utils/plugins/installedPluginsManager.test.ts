@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { deletePluginCache } from './installedPluginsManager.js'
+import {
+  clearInstalledPluginsCache,
+  deletePluginCache,
+  loadInstalledPluginsV2,
+} from './installedPluginsManager.js'
 
 describe('deletePluginCache', () => {
   let tempDir: string
@@ -29,6 +33,7 @@ describe('deletePluginCache', () => {
       process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR = originalPluginCacheDir
     }
     await fs.rm(tempDir, { recursive: true, force: true })
+    clearInstalledPluginsCache()
   })
 
   test('refuses to delete paths outside the managed plugin cache', async () => {
@@ -62,5 +67,63 @@ describe('deletePluginCache', () => {
 
     await expect(fs.stat(versionDir)).rejects.toThrow()
     await expect(fs.stat(path.join(tempDir, '.claude'))).resolves.toBeDefined()
+  })
+
+  test('rebases installed plugin paths when a portable config directory moves', async () => {
+    const oldConfigDir = path.join(tempDir, 'old-config')
+    const newConfigDir = path.join(tempDir, 'new-config')
+    const pluginId = 'portable-proof-plugin@portable-proof-market'
+    const oldInstallPath = path.join(
+      oldConfigDir,
+      'plugins',
+      'cache',
+      'portable-proof-market',
+      'portable-proof-plugin',
+      '1.0.0',
+    )
+    const newInstallPath = path.join(
+      newConfigDir,
+      'plugins',
+      'cache',
+      'portable-proof-market',
+      'portable-proof-plugin',
+      '1.0.0',
+    )
+    const installedPluginsPath = path.join(
+      newConfigDir,
+      'plugins',
+      'installed_plugins.json',
+    )
+
+    await fs.mkdir(newInstallPath, { recursive: true })
+    await fs.writeFile(path.join(newInstallPath, 'sentinel.txt'), 'ok', 'utf-8')
+    await fs.mkdir(path.dirname(installedPluginsPath), { recursive: true })
+    await fs.writeFile(
+      installedPluginsPath,
+      JSON.stringify({
+        version: 2,
+        plugins: {
+          [pluginId]: [
+            {
+              scope: 'user',
+              installPath: oldInstallPath,
+              version: '1.0.0',
+              installedAt: '2026-05-24T00:00:00.000Z',
+              lastUpdated: '2026-05-24T00:00:00.000Z',
+            },
+          ],
+        },
+      }, null, 2),
+      'utf-8',
+    )
+
+    process.env.CLAUDE_CONFIG_DIR = newConfigDir
+    clearInstalledPluginsCache()
+
+    const loaded = loadInstalledPluginsV2()
+
+    expect(loaded.plugins[pluginId]?.[0]?.installPath).toBe(newInstallPath)
+    const healed = JSON.parse(await fs.readFile(installedPluginsPath, 'utf-8'))
+    expect(healed.plugins[pluginId][0].installPath).toBe(newInstallPath)
   })
 })

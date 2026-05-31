@@ -86,6 +86,7 @@ describe('NewTaskModal', () => {
     expect(createTask).toHaveBeenCalledWith(expect.objectContaining({
       model: 'provider-fast',
       providerId: 'provider-a',
+      permissionMode: 'bypassPermissions',
       enabled: true,
       recurring: true,
     }))

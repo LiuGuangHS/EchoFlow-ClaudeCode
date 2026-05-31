@@ -32,9 +32,12 @@ describe('UpdateChecker', () => {
   })
 
   it('renders markdown release notes in the update prompt', () => {
+    useUpdateStore.setState({ status: 'downloaded' })
+
     render(<UpdateChecker />)
 
-    expect(screen.getByText('v0.1.5 available')).toBeInTheDocument()
+    expect(screen.getByText('Update ready')).toBeInTheDocument()
+    expect(screen.getByText('v0.1.5 has been downloaded. Restart when you are ready to use it.')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'EchoFlowAI-Claude-Code v0.1.5' })).toBeInTheDocument()
 
     const link = screen.getByRole('link', { name: 'Release notes' })
@@ -61,7 +64,35 @@ describe('UpdateChecker', () => {
 
     render(<UpdateChecker />)
 
-    expect(screen.getByText('Downloading update... 1.5 KB downloaded')).toBeInTheDocument()
+    expect(screen.queryByText('Downloading update... 1.5 KB downloaded')).not.toBeInTheDocument()
+    expect(screen.queryByText('Update ready')).not.toBeInTheDocument()
     expect(screen.queryByText(/0%/)).not.toBeInTheDocument()
+  })
+
+  it.each(['installing', 'restarting'] as const)('does not keep a forced prompt during %s', (status) => {
+    useUpdateStore.setState({
+      status,
+      availableVersion: '0.1.5',
+      shouldPrompt: true,
+    })
+
+    render(<UpdateChecker />)
+
+    expect(screen.queryByText('Update ready')).not.toBeInTheDocument()
+    expect(screen.queryByText('Install and restart')).not.toBeInTheDocument()
+  })
+
+  it('keeps the ready prompt retryable when install fails after download', () => {
+    useUpdateStore.setState({
+      status: 'downloaded',
+      error: 'installer failed',
+      shouldPrompt: true,
+    })
+
+    render(<UpdateChecker />)
+
+    expect(screen.getByText('Update ready')).toBeInTheDocument()
+    expect(screen.getByText('Update failed: installer failed')).toBeInTheDocument()
+    expect(screen.getByText('Install and restart')).toBeInTheDocument()
   })
 })

@@ -1,5 +1,6 @@
 import {
   api,
+  getBaseUrl,
   getDefaultBaseUrl,
   hasExplicitDefaultBaseUrl,
   setAuthToken,
@@ -39,6 +40,19 @@ export function isTauriRuntime() {
 
 export function isBrowserH5Runtime() {
   return typeof window !== 'undefined' && !isTauriRuntime()
+}
+
+/**
+ * Synchronously return the running local server's base URL (e.g.
+ * `http://127.0.0.1:<port>`).
+ *
+ * The api client caches the resolved base after startup: `initializeDesktopServerUrl`
+ * calls `invoke('get_server_url')` (desktop) or resolves a browser/H5 URL, then
+ * `setBaseUrl(...)`. Until that runs, `getBaseUrl()` returns the default
+ * (`http://127.0.0.1:3456` or `VITE_DESKTOP_SERVER_URL`).
+ */
+export function getServerBaseUrl(): string {
+  return getBaseUrl()
 }
 
 export function readStoredH5Connection(): StoredH5Connection {

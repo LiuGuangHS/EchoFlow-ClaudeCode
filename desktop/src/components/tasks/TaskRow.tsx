@@ -5,6 +5,7 @@ import { useTranslation } from '../../i18n'
 import { describeCron } from '../../lib/cronDescribe'
 import { TaskRunsPanel } from './TaskRunsPanel'
 import { NewTaskModal } from './NewTaskModal'
+import { ConfirmPopover } from '../shared/ConfirmPopover'
 
 type Props = {
   task: CronTask
@@ -193,7 +194,7 @@ export function TaskRow({ task, showLogs, onToggleLogs }: Props) {
                     onConfirm={handleDelete}
                     onCancel={() => { setConfirmAction(null); setShowMenu(false) }}
                     cancelLabel={t('common.cancel')}
-                    variant="error"
+                    confirmVariant="danger"
                   />
                 </div>
               )}
@@ -213,41 +214,6 @@ export function TaskRow({ task, showLogs, onToggleLogs }: Props) {
       {showEdit && (
         <NewTaskModal open editTask={task} onClose={() => setShowEdit(false)} />
       )}
-    </div>
-  )
-}
-
-// ─── Confirm Popover ─────────────────────────────────────────────────────────
-
-function ConfirmPopover({ message, confirmLabel, onConfirm, onCancel, cancelLabel, variant = 'brand' }: {
-  message: string
-  confirmLabel: string
-  onConfirm: () => void
-  onCancel: () => void
-  cancelLabel: string
-  variant?: 'brand' | 'error'
-}) {
-  return (
-    <div className="absolute right-0 top-full mt-1.5 z-50 w-52 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg p-3">
-      <p className="text-xs text-[var(--color-text-secondary)] mb-2.5">{message}</p>
-      <div className="flex justify-end gap-1.5">
-        <button
-          onClick={onCancel}
-          className="px-2.5 py-1 text-xs rounded-[var(--radius-sm)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] transition-colors"
-        >
-          {cancelLabel}
-        </button>
-        <button
-          onClick={onConfirm}
-          className={`px-2.5 py-1 text-xs rounded-[var(--radius-sm)] hover:opacity-90 transition-opacity ${
-            variant === 'error'
-              ? 'bg-[var(--color-error-container)] text-[var(--color-on-error-container)]'
-              : 'bg-[image:var(--gradient-btn-primary)] text-[var(--color-btn-primary-fg)]'
-          }`}
-        >
-          {confirmLabel}
-        </button>
-      </div>
     </div>
   )
 }

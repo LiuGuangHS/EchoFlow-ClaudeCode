@@ -330,6 +330,74 @@ describe('cron scheduler launcher resolution', () => {
     expect(env.CLAUDE_CODE_ENTRYPOINT).toBe('sdk-cli')
   })
 
+  unixOnly('executeTask launches scheduled tasks with full permissions', async () => {
+    const appRoot = path.join(tmpDir, 'app-root')
+    const sidecarPath = path.join(tmpDir, 'claude-sidecar')
+    const sidecarArgsPath = path.join(tmpDir, 'sidecar.args')
+
+    await fs.mkdir(appRoot, { recursive: true })
+    await fs.writeFile(
+      sidecarPath,
+      [
+        '#!/bin/sh',
+        `printf '%s\\n' "$@" > "${sidecarArgsPath}"`,
+        '/bin/cat >/dev/null',
+        'printf \'%s\\n\' \'{"type":"result","result":"permissions ok"}\'',
+        'exit 0',
+        '',
+      ].join('\n'),
+      'utf-8',
+    )
+    await fs.chmod(sidecarPath, 0o755)
+
+    process.env.CLAUDE_CLI_PATH = sidecarPath
+    process.env.CLAUDE_APP_ROOT = appRoot
+
+    const cronService = new CronService()
+    const scheduler = new CronScheduler(cronService)
+    const createSessionCalls: unknown[][] = []
+    const appendSessionMetadataCalls: unknown[][] = []
+    ;(scheduler as unknown as {
+      sessionService: {
+        createSession: (...args: unknown[]) => Promise<{ sessionId: string }>
+        deleteSessionFile: (sessionId: string) => Promise<void>
+        appendSessionMetadata: (...args: unknown[]) => Promise<void>
+      }
+    }).sessionService = {
+      createSession: async (...args: unknown[]) => {
+        createSessionCalls.push(args)
+        return { sessionId: 'scheduled-session' }
+      },
+      deleteSessionFile: async () => {},
+      appendSessionMetadata: async (...args: unknown[]) => {
+        appendSessionMetadataCalls.push(args)
+      },
+    }
+    const task = await cronService.createTask({
+      cron: '* * * * *',
+      prompt: 'cron permission test',
+      name: 'Permission Task',
+      recurring: true,
+      folderPath: tmpDir,
+      permissionMode: 'default',
+    })
+
+    const run = await scheduler.executeTask(task, { createSession: true })
+    const canonicalTmpDir = await fs.realpath(tmpDir)
+
+    expect(run.status).toBe('completed')
+    expect(run.sessionId).toBe('scheduled-session')
+    expect(createSessionCalls).toEqual([[canonicalTmpDir, undefined, 'bypassPermissions']])
+    expect(appendSessionMetadataCalls).toEqual([
+      ['scheduled-session', { workDir: canonicalTmpDir, permissionMode: 'bypassPermissions' }],
+    ])
+    const sidecarArgs = (await fs.readFile(sidecarArgsPath, 'utf-8'))
+      .trim()
+      .split('\n')
+    expect(sidecarArgs).toContain('--dangerously-skip-permissions')
+    expect(sidecarArgs).not.toContain('--permission-mode')
+  })
+
   unixOnly('executeTask inherits exported terminal shell variables', async () => {
     const appRoot = path.join(tmpDir, 'app-root')
     const sidecarPath = path.join(tmpDir, 'claude-sidecar')

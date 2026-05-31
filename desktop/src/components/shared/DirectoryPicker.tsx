@@ -20,6 +20,9 @@ let cachedProjects: RecentProject[] | null = null
 let cacheTimestamp = 0
 const CACHE_TTL = 30_000 // 30s
 const DESKTOP_WORKTREE_MARKER = '/.claude/worktrees/'
+const DROPDOWN_WIDTH = 400
+const DROPDOWN_VIEWPORT_MARGIN = 12
+const DROPDOWN_HEIGHT = 380 // approximate max height
 
 function isTauriRuntime() {
   return typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window)
@@ -41,7 +44,7 @@ export function DirectoryPicker({ value, onChange, variant = 'chip', isGitProjec
   const [browsePath, setBrowsePath] = useState('')
   const [browseParent, setBrowseParent] = useState('')
   const [loading, setLoading] = useState(false)
-  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; direction: 'up' | 'down' } | null>(null)
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number; direction: 'up' | 'down' } | null>(null)
   const ref = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const isMobileBrowser = useMobileViewport() && !isTauriRuntime()
@@ -51,13 +54,16 @@ export function DirectoryPicker({ value, onChange, variant = 'chip', isGitProjec
   const updateDropdownPos = useCallback(() => {
     if (!triggerRef.current) return
     const rect = triggerRef.current.getBoundingClientRect()
-    const DROPDOWN_HEIGHT = 380 // approximate max height
     const spaceAbove = rect.top
     const spaceBelow = window.innerHeight - rect.bottom
     const direction = spaceBelow >= DROPDOWN_HEIGHT || spaceBelow >= spaceAbove ? 'down' : 'up'
+    const width = Math.min(DROPDOWN_WIDTH, Math.max(0, window.innerWidth - DROPDOWN_VIEWPORT_MARGIN * 2))
+    const maxLeft = Math.max(DROPDOWN_VIEWPORT_MARGIN, window.innerWidth - width - DROPDOWN_VIEWPORT_MARGIN)
+    const left = Math.min(Math.max(rect.left, DROPDOWN_VIEWPORT_MARGIN), maxLeft)
     setDropdownPos({
       top: direction === 'down' ? rect.bottom + 4 : rect.top - 4,
-      left: rect.left,
+      left,
+      width,
       direction,
     })
   }, [])
@@ -159,10 +165,11 @@ export function DirectoryPicker({ value, onChange, variant = 'chip', isGitProjec
     ? 'flex h-9 min-w-0 items-center gap-1.5 rounded-[7px] border border-transparent px-2.5 text-[13px] font-medium leading-none text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-container-lowest)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]/35'
     : 'flex items-center gap-2 text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors'
 
-  const dropdownClassName = 'w-[400px] overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] shadow-[var(--shadow-dropdown)]'
+  const dropdownClassName = 'overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] shadow-[var(--shadow-dropdown)]'
   const dropdownStyle = {
     position: 'fixed' as const,
     left: dropdownPos?.left,
+    width: dropdownPos?.width,
     ...(dropdownPos?.direction === 'down'
       ? { top: dropdownPos.top }
       : { bottom: window.innerHeight - (dropdownPos?.top ?? 0) }),
@@ -340,6 +347,7 @@ export function DirectoryPicker({ value, onChange, variant = 'chip', isGitProjec
         ) : createPortal(
           <div
             ref={dropdownRef}
+            data-testid="directory-picker-menu"
             className={dropdownClassName}
             style={dropdownStyle}
           >

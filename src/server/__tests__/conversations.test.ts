@@ -529,6 +529,83 @@ describe('ConversationService', () => {
       await fs.rm(workDir, { recursive: true, force: true })
     }
   })
+
+  it('should not report transcript context as full for low-trust media usage spikes', async () => {
+    const previousConfigDir = process.env.CLAUDE_CONFIG_DIR
+    const previousNodeEnv = process.env.NODE_ENV
+    const previousUseBedrock = process.env.CLAUDE_CODE_USE_BEDROCK
+    const tmpConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), 'claude-transcript-media-'))
+    const workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'claude-workdir-media-'))
+    process.env.CLAUDE_CONFIG_DIR = tmpConfigDir
+    process.env.NODE_ENV = 'development'
+    process.env.CLAUDE_CODE_USE_BEDROCK = '1'
+
+    try {
+      const svc = new SessionService()
+      const { sessionId } = await svc.createSession(workDir)
+      const found = await svc.findSessionFile(sessionId)
+      expect(found).not.toBeNull()
+
+      await fs.appendFile(found!.filePath, JSON.stringify({
+        type: 'user',
+        uuid: crypto.randomUUID(),
+        timestamp: '2026-04-27T12:00:00.000Z',
+        cwd: workDir,
+        message: {
+          role: 'user',
+          content: [{
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: 'image/png',
+              data: 'a'.repeat(1024),
+            },
+          }],
+        },
+      }) + '\n')
+      await fs.appendFile(found!.filePath, JSON.stringify({
+        type: 'assistant',
+        uuid: crypto.randomUUID(),
+        timestamp: '2026-04-27T12:00:01.000Z',
+        cwd: workDir,
+        version: '999.0.0-test',
+        message: {
+          role: 'assistant',
+          model: 'claude-sonnet-4-6',
+          content: [{ type: 'text', text: 'ok' }],
+          usage: {
+            input_tokens: 1_000_000,
+            output_tokens: 10,
+          },
+        },
+      }) + '\n')
+
+      const contextEstimate = await svc.getTranscriptContextEstimate(sessionId)
+
+      expect(contextEstimate?.rawMaxTokens).toBe(200_000)
+      expect(contextEstimate?.totalTokens).toBeLessThan(200_000)
+      expect(contextEstimate?.percentage).toBeLessThan(100)
+      expect(contextEstimate?.categories[0]?.name).toBe('Estimated context')
+    } finally {
+      if (previousConfigDir === undefined) {
+        delete process.env.CLAUDE_CONFIG_DIR
+      } else {
+        process.env.CLAUDE_CONFIG_DIR = previousConfigDir
+      }
+      if (previousNodeEnv === undefined) {
+        delete process.env.NODE_ENV
+      } else {
+        process.env.NODE_ENV = previousNodeEnv
+      }
+      if (previousUseBedrock === undefined) {
+        delete process.env.CLAUDE_CODE_USE_BEDROCK
+      } else {
+        process.env.CLAUDE_CODE_USE_BEDROCK = previousUseBedrock
+      }
+      await fs.rm(tmpConfigDir, { recursive: true, force: true })
+      await fs.rm(workDir, { recursive: true, force: true })
+    }
+  })
 })
 
 // ============================================================================
@@ -2365,6 +2442,202 @@ describe('WebSocket Chat Integration', () => {
     }
   }, 20_000)
 
+  it('should persist permission changes made before the CLI starts', async () => {
+    await fetch(`${baseUrl}/api/permissions/mode`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'default' }),
+    })
+
+    const createRes = await fetch(`${baseUrl}/api/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workDir: process.cwd(), permissionMode: 'default' }),
+    })
+    expect(createRes.status).toBe(201)
+    const { sessionId } = await createRes.json() as { sessionId: string }
+
+    const originalStartSession = conversationService.startSession.bind(conversationService)
+    const startCalls: Array<{
+      sessionId: string
+      options: { permissionMode?: string; model?: string; effort?: string; providerId?: string | null } | undefined
+    }> = []
+
+    conversationService.startSession = (async function patchedStartSession(
+      sid: string,
+      workDir: string,
+      sdkUrl: string,
+      options?: { permissionMode?: string; model?: string; effort?: string; thinking?: 'enabled' | 'adaptive' | 'disabled'; providerId?: string | null },
+    ) {
+      startCalls.push({ sessionId: sid, options })
+      return originalStartSession(sid, workDir, sdkUrl, options)
+    }) as typeof conversationService.startSession
+
+    const ws = new WebSocket(`${wsUrl}/ws/${sessionId}`)
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error(`Timed out waiting for inactive permission switch connection for session ${sessionId}`))
+        }, 5000)
+        ws.onmessage = (event) => {
+          const msg = JSON.parse(event.data as string)
+          if (msg.type === 'connected') {
+            clearTimeout(timeout)
+            ws.send(JSON.stringify({
+              type: 'set_permission_mode',
+              mode: 'acceptEdits',
+            }))
+            resolve()
+          }
+          if (msg.type === 'error') {
+            clearTimeout(timeout)
+            reject(new Error(msg.message))
+          }
+        }
+        ws.onerror = () => {
+          clearTimeout(timeout)
+          reject(new Error(`WebSocket error for inactive permission switch session ${sessionId}`))
+        }
+      })
+
+      await waitUntil(async () => {
+        const res = await fetch(`${baseUrl}/api/sessions/${sessionId}/inspection?includeContext=0`)
+        if (!res.ok) return false
+        const body = await res.json() as { status?: { permissionMode?: string } }
+        return body.status?.permissionMode === 'acceptEdits'
+      }, `persisted inactive permission switch for ${sessionId}`)
+
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error(`Timed out waiting for first turn after inactive permission switch for session ${sessionId}`))
+        }, 10_000)
+        ws.onmessage = (event) => {
+          const msg = JSON.parse(event.data as string)
+          if (msg.type === 'message_complete') {
+            clearTimeout(timeout)
+            resolve()
+          }
+          if (msg.type === 'error') {
+            clearTimeout(timeout)
+            reject(new Error(msg.message))
+          }
+        }
+        ws.send(JSON.stringify({ type: 'user_message', content: 'first turn after permission switch' }))
+      })
+
+      expect(startCalls).toHaveLength(1)
+      expect(startCalls[0]).toMatchObject({
+        sessionId,
+        options: {
+          permissionMode: 'acceptEdits',
+        },
+      })
+    } finally {
+      ws.close()
+      conversationService.startSession = originalStartSession
+      conversationService.stopSession(sessionId)
+      await fetch(`${baseUrl}/api/permissions/mode`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'default' }),
+      })
+    }
+  }, 20_000)
+
+  it('should restart when switching from bypass permissions back to default', async () => {
+    const createRes = await fetch(`${baseUrl}/api/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workDir: process.cwd(), permissionMode: 'bypassPermissions' }),
+    })
+    expect(createRes.status).toBe(201)
+    const { sessionId } = await createRes.json() as { sessionId: string }
+
+    const originalStartSession = conversationService.startSession.bind(conversationService)
+    const startCalls: Array<{
+      sessionId: string
+      options: { permissionMode?: string; model?: string; effort?: string; providerId?: string | null } | undefined
+    }> = []
+
+    conversationService.startSession = (async function patchedStartSession(
+      sid: string,
+      workDir: string,
+      sdkUrl: string,
+      options?: { permissionMode?: string; model?: string; effort?: string; thinking?: 'enabled' | 'adaptive' | 'disabled'; providerId?: string | null },
+    ) {
+      startCalls.push({ sessionId: sid, options })
+      return originalStartSession(sid, workDir, sdkUrl, options)
+    }) as typeof conversationService.startSession
+
+    const ws = new WebSocket(`${wsUrl}/ws/${sessionId}`)
+    const messages: any[] = []
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error(`Timed out waiting for bypass-to-default permission switch connection for session ${sessionId}`))
+        }, 5000)
+        ws.onmessage = (event) => {
+          const msg = JSON.parse(event.data as string)
+          messages.push(msg)
+          if (msg.type === 'connected') {
+            clearTimeout(timeout)
+            ws.send(JSON.stringify({ type: 'prewarm_session' }))
+            resolve()
+          }
+          if (msg.type === 'error') {
+            clearTimeout(timeout)
+            reject(new Error(msg.message))
+          }
+        }
+        ws.onerror = () => {
+          clearTimeout(timeout)
+          reject(new Error(`WebSocket error for bypass-to-default permission switch session ${sessionId}`))
+        }
+      })
+
+      await waitUntil(
+        () => startCalls.length === 1 && conversationService.hasSession(sessionId),
+        `prewarmed CLI process for bypass-to-default permission switch ${sessionId}`,
+      )
+      expect(startCalls[0]).toMatchObject({
+        sessionId,
+        options: {
+          permissionMode: 'bypassPermissions',
+        },
+      })
+
+      const switchStartIndex = messages.length
+      ws.send(JSON.stringify({
+        type: 'set_permission_mode',
+        mode: 'default',
+      }))
+
+      await waitUntil(
+        async () => messages.slice(switchStartIndex).some((msg) => msg.type === 'status' && msg.state === 'idle'),
+        `bypass-to-default permission switch completion for ${sessionId}`,
+      )
+
+      expect(startCalls).toHaveLength(2)
+      expect(startCalls[1]).toMatchObject({
+        sessionId,
+        options: {
+          permissionMode: 'default',
+        },
+      })
+      await waitUntil(async () => {
+        const res = await fetch(`${baseUrl}/api/sessions/${sessionId}/inspection?includeContext=0`)
+        if (!res.ok) return false
+        const body = await res.json() as { status?: { permissionMode?: string } }
+        return body.status?.permissionMode === 'default'
+      }, `persisted bypass-to-default permission switch for ${sessionId}`)
+      expect(messages.slice(switchStartIndex).some((msg) => msg.type === 'error')).toBe(false)
+    } finally {
+      ws.close()
+      conversationService.startSession = originalStartSession
+      conversationService.stopSession(sessionId)
+    }
+  }, 20_000)
+
   it('should ignore stale persisted runtime provider ids when resuming old sessions', async () => {
     const providerService = new ProviderService()
     const activeProvider = await providerService.addProvider({
@@ -2734,6 +3007,7 @@ describe('WebSocket Chat Integration', () => {
               type: 'set_runtime_config',
               providerId: providerA.id,
               modelId: 'model-a-sonnet',
+              effortLevel: 'medium',
             }))
             ws.send(JSON.stringify({ type: 'user_message', content: 'first turn' }))
             phase = 'turn1'
@@ -2754,6 +3028,7 @@ describe('WebSocket Chat Integration', () => {
               type: 'set_runtime_config',
               providerId: providerB.id,
               modelId: 'model-b-opus',
+              effortLevel: 'max',
             }))
             return
           }
@@ -2793,6 +3068,7 @@ describe('WebSocket Chat Integration', () => {
         options: {
           providerId: providerA.id,
           model: 'model-a-sonnet',
+          effort: 'medium',
         },
       })
       expect(startCalls[1]).toMatchObject({
@@ -2800,6 +3076,7 @@ describe('WebSocket Chat Integration', () => {
         options: {
           providerId: providerB.id,
           model: 'model-b-opus',
+          effort: 'max',
         },
       })
     } finally {

@@ -541,7 +541,7 @@ describe('SessionService', () => {
     expect(page2.sessions).toHaveLength(1)
   })
 
-  it('should only parse the requested page when listing many sessions', async () => {
+  it('should only scan the requested page when listing many sessions', async () => {
     for (let i = 0; i < 12; i++) {
       const id = `1000000${i.toString(16)}-bbbb-cccc-dddd-eeeeeeeeeeee`
       const filePath = await writeSessionFile('-tmp-many-sessions', id, [
@@ -553,20 +553,64 @@ describe('SessionService', () => {
     }
 
     const serviceWithSpy = service as unknown as {
-      readJsonlFile: (...args: unknown[]) => Promise<unknown>
+      scanSessionListSummary: (...args: unknown[]) => Promise<unknown>
     }
-    const originalReadJsonlFile = serviceWithSpy.readJsonlFile.bind(service)
-    let readCount = 0
-    serviceWithSpy.readJsonlFile = async (...args) => {
-      readCount += 1
-      return originalReadJsonlFile(...args)
+    const originalScanSessionListSummary = serviceWithSpy.scanSessionListSummary.bind(service)
+    let scanCount = 0
+    serviceWithSpy.scanSessionListSummary = async (...args) => {
+      scanCount += 1
+      return originalScanSessionListSummary(...args)
     }
 
     const result = await service.listSessions({ limit: 3, offset: 0 })
 
     expect(result.total).toBe(12)
     expect(result.sessions).toHaveLength(3)
-    expect(readCount).toBe(3)
+    expect(scanCount).toBe(3)
+  })
+
+  it('should reuse cached list metadata for repeated requests', async () => {
+    for (let i = 0; i < 5; i++) {
+      const id = `2000000${i.toString(16)}-bbbb-cccc-dddd-eeeeeeeeeeee`
+      const filePath = await writeSessionFile('-tmp-cached-sessions', id, [
+        makeSnapshotEntry(),
+        makeUserEntry(`Cached message ${i}`),
+      ])
+      const mtime = new Date(Date.now() - i * 1000)
+      await fs.utimes(filePath, mtime, mtime)
+    }
+
+    const serviceWithSpy = service as unknown as {
+      scanSessionListSummary: (...args: unknown[]) => Promise<unknown>
+    }
+    const originalScanSessionListSummary = serviceWithSpy.scanSessionListSummary.bind(service)
+    let scanCount = 0
+    serviceWithSpy.scanSessionListSummary = async (...args) => {
+      scanCount += 1
+      return originalScanSessionListSummary(...args)
+    }
+
+    const first = await service.listSessions({ limit: 3, offset: 0 })
+    const second = await service.listSessions({ limit: 3, offset: 0 })
+
+    expect(first.sessions.map((session) => session.id)).toEqual(second.sessions.map((session) => session.id))
+    expect(scanCount).toBe(3)
+  })
+
+  it('should invalidate cached list metadata after writes', async () => {
+    const sessionId = '30000000-bbbb-cccc-dddd-eeeeeeeeeeee'
+    await writeSessionFile('-tmp-cache-invalidation', sessionId, [
+      makeSnapshotEntry(),
+      makeUserEntry('Original title'),
+    ])
+
+    const first = await service.listSessions({ limit: 10, offset: 0 })
+    expect(first.sessions[0]!.title).toBe('Original title')
+
+    await service.renameSession(sessionId, 'Renamed title')
+    const second = await service.listSessions({ limit: 10, offset: 0 })
+
+    expect(second.sessions[0]!.title).toBe('Renamed title')
   })
 
   it('should filter sessions by project', async () => {
@@ -579,39 +623,6 @@ describe('SessionService', () => {
     const resultA = await service.listSessions({ project: '/project/a' })
     expect(resultA.total).toBe(1)
     expect(resultA.sessions[0]!.id).toBe(id1)
-  })
-
-  it('should expose sourceSessionId and sourceMessageId for forked sessions', async () => {
-    const sourceSessionId = 'parent-session-0001-0000-0000-000000000000'
-    const forkSessionId = 'forked-session-0001-0000-0000-000000000000'
-    const forkMessageUuid = crypto.randomUUID()
-
-    await writeSessionFile('-tmp-project', forkSessionId, [
-      makeSnapshotEntry(),
-      {
-        parentUuid: null,
-        isSidechain: false,
-        type: 'user',
-        message: { role: 'user', content: 'Forked from parent' },
-        uuid: crypto.randomUUID(),
-        sessionId: forkSessionId,
-        timestamp: new Date().toISOString(),
-        cwd: '/tmp/project',
-        forkedFrom: {
-          sessionId: sourceSessionId,
-          messageUuid: forkMessageUuid,
-        },
-      },
-      makeAssistantEntry('Response in fork'),
-    ])
-
-    const result = await service.listSessions()
-    expect(result.total).toBe(1)
-
-    const session = result.sessions[0]!
-    expect(session.id).toBe(forkSessionId)
-    expect(session.sourceSessionId).toBe(sourceSessionId)
-    expect(session.sourceMessageId).toBe(forkMessageUuid)
   })
 
   // --------------------------------------------------------------------------
@@ -1173,6 +1184,30 @@ describe('SessionService', () => {
       worktree: true,
       worktreePath: expect.stringContaining(path.join('.claude', 'worktrees', 'desktop-feature-rail-')),
     })
+  })
+
+  it('should persist session permission mode in launch metadata', async () => {
+    const workDir = path.join(tmpDir, 'permission-workdir')
+    await fs.mkdir(workDir, { recursive: true })
+    const { sessionId } = await (service.createSession as unknown as (
+      workDir?: string,
+      repositoryOptions?: unknown,
+      permissionMode?: string,
+    ) => Promise<{ sessionId: string; workDir: string }>)(workDir, undefined, 'acceptEdits')
+
+    let launchInfo = await service.getSessionLaunchInfo(sessionId)
+    expect(launchInfo?.permissionMode).toBe('acceptEdits')
+
+    await (service.appendSessionMetadata as unknown as (
+      sessionId: string,
+      metadata: { workDir: string; permissionMode?: string },
+    ) => Promise<void>)(sessionId, {
+      workDir,
+      permissionMode: 'plan',
+    })
+
+    launchInfo = await service.getSessionLaunchInfo(sessionId)
+    expect(launchInfo?.permissionMode).toBe('plan')
   })
 
   it('should remove stale placeholder files after native CLI worktree startup', async () => {
@@ -1908,6 +1943,27 @@ describe('Sessions API', () => {
     expect(body.sessionId).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
     )
+  })
+
+  it('GET /api/sessions/:id/inspection should report persisted permission mode for inactive sessions', async () => {
+    const workDir = await fs.mkdtemp(path.join(tmpDir, 'api-session-permission-'))
+    const createRes = await fetch(`${baseUrl}/api/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workDir, permissionMode: 'bypassPermissions' }),
+    })
+    expect(createRes.status).toBe(201)
+
+    const { sessionId } = (await createRes.json()) as { sessionId: string }
+    const inspectionRes = await fetch(`${baseUrl}/api/sessions/${sessionId}/inspection?includeContext=0`)
+    expect(inspectionRes.status).toBe(200)
+
+    const inspection = (await inspectionRes.json()) as {
+      active: boolean
+      status: { permissionMode?: string }
+    }
+    expect(inspection.active).toBe(false)
+    expect(inspection.status.permissionMode).toBe('bypassPermissions')
   })
 
   it('GET /api/sessions/repository-context should return branch launch metadata', async () => {

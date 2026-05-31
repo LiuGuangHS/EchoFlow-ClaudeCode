@@ -1,42 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ChevronDown, Code2, FolderOpen } from 'lucide-react'
+import { ChevronDown } from 'lucide-react'
 import { useTranslation } from '../../i18n'
-import { useOpenTargetStore, type OpenTarget } from '../../stores/openTargetStore'
+import { useOpenTargetStore } from '../../stores/openTargetStore'
+import { TargetIcon } from '../common/TargetIcon'
 
 type Props = {
   path: string | null | undefined
-}
-
-function getFallbackIcon(kind: 'ide' | 'file_manager', size = 17) {
-  if (kind === 'file_manager') {
-    return <FolderOpen size={size} strokeWidth={1.9} />
-  }
-  return <Code2 size={size} strokeWidth={1.9} />
-}
-
-function TargetIcon({ target, size = 18 }: { target: OpenTarget; size?: number }) {
-  const [failed, setFailed] = useState(false)
-
-  useEffect(() => {
-    setFailed(false)
-  }, [target.iconUrl])
-
-  if (target.iconUrl && !failed) {
-    return (
-      <img
-        src={target.iconUrl}
-        alt=""
-        aria-hidden="true"
-        draggable={false}
-        onError={() => setFailed(true)}
-        className="block shrink-0 object-contain"
-        style={{ width: size, height: size }}
-      />
-    )
-  }
-
-  return getFallbackIcon(target.kind, Math.max(16, size - 1))
 }
 
 export function OpenProjectMenu({ path }: Props) {
