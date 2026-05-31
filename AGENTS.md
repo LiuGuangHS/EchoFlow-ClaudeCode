@@ -95,6 +95,7 @@ Every feature, bugfix, and behavior change must ship with proof that matches the
 - For visible UI changes, validate with an actual browser/desktop smoke path when feasible and include screenshots or a short visual-evidence note in the handoff.
 
 ## Release Workflow
+- **Fork versioning convention (EchoFlowAI 二开)**: Tags follow `vX.Y.Z-rc.N` format, where `X.Y.Z` tracks the upstream version and `N` is the fork release candidate number. Example: `v0.3.2-rc.1`, `v0.3.2-rc.2`. When upstream bumps to `v0.4.0`, the next fork tag becomes `v0.4.0-rc.1`.
 - Desktop releases are built remotely by GitHub Actions from tags matching `v*.*.*`; do not upload local build artifacts as the release source of truth.
 - The release workflow `.github/workflows/release-desktop.yml` validates that the tag matches `desktop/src-tauri/tauri.conf.json`, loads `release-notes/vX.Y.Z.md`, builds sidecars, and packages the desktop app across the matrix.
 - The hosted tag workflow is not a substitute for local release verification. Before tagging or calling a release ready, run `bun run scripts/release.ts <version> --dry`, then run `bun run verify`, and run `bun run quality:gate --mode release --allow-live --provider-model <provider:model[:label]>` when live provider access is available.
