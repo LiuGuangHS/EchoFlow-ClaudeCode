@@ -348,6 +348,13 @@ export const en = {
   'settings.chatgptOfficialLogin.copyLinkFailed': 'Unable to copy authorization link.',
   'settings.chatgptOfficialLogin.errorPrefix': 'ChatGPT OAuth error: ',
 
+  // Settings > QingYun Official Login
+  'settings.echoflowAPIOfficialLogin.tokenPlaceholder': 'Enter your token',
+  'settings.echoflowAPIOfficialLogin.getToken': 'Get Token',
+  'settings.echoflowAPIOfficialLogin.connect': 'Connect',
+  'settings.echoflowAPIOfficialLogin.connected': 'Connected',
+  'settings.echoflowAPIOfficialLogin.disconnect': 'Disconnect',
+
   // Settings > Providers
   'settings.providers.title': 'Providers',
   'settings.providers.description': 'Manage API providers for model access.',
@@ -356,6 +363,8 @@ export const en = {
   'settings.providers.officialDesc': 'Anthropic native — no API key required',
   'settings.providers.openaiOfficialName': 'ChatGPT Official',
   'settings.providers.openaiOfficialDesc': 'OpenAI OAuth via your ChatGPT account — no API key required',
+  'settings.providers.echoflowAPIOfficialName': 'EchoFlowAPI',
+  'settings.providers.echoflowAPIOfficialDesc': 'Enter your token to connect — no other setup required',
   'settings.providers.connected': 'Connected ({latency}ms)',
   'settings.providers.failed': 'Failed: {error}',
   'settings.providers.connectivityOk': '① Connectivity ({latency}ms)',

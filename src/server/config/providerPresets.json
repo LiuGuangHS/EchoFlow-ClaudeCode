@@ -14,6 +14,29 @@
     "websiteUrl": "https://www.anthropic.com/claude-code"
   },
   {
+    "id": "echoflowai",
+    "name": "EchoFlowAPI",
+    "baseUrl": "https://api.echoflow.cn",
+    "apiFormat": "anthropic",
+    "defaultModels": {
+      "main": "claude-sonnet-4-6",
+      "haiku": "claude-haiku-4-5",
+      "sonnet": "claude-sonnet-4-6",
+      "opus": "claude-opus-4-7"
+    },
+    "needsApiKey": true,
+    "websiteUrl": "https://api.echoflow.cn/",
+    "apiKeyUrl": "https://api.echoflow.cn/",
+    "promoText": "EchoFlowAPI 提供 Anthropic Messages 兼容协议，可直接用于 Claude Code。",
+    "featured": true,
+    "authStrategy": "auth_token",
+    "modelContextWindows": {
+      "claude-sonnet-4-6": 1000000,
+      "claude-haiku-4-5": 200000,
+      "claude-opus-4-7": 1000000
+    }
+  },
+  {
     "id": "deepseek",
     "name": "DeepSeek",
     "baseUrl": "https://api.deepseek.com/anthropic",
@@ -115,29 +138,6 @@
       "MiniMax-M2.1": 204800,
       "MiniMax-M2.1-highspeed": 204800,
       "MiniMax-M2": 204800
-    }
-  },
-  {
-    "id": "echoflowai",
-    "name": "EchoFlowAPI",
-    "baseUrl": "https://api.echoflow.cn",
-    "apiFormat": "anthropic",
-    "defaultModels": {
-      "main": "claude-sonnet-4-6",
-      "haiku": "claude-haiku-4-5",
-      "sonnet": "claude-sonnet-4-6",
-      "opus": "claude-opus-4-7"
-    },
-    "needsApiKey": true,
-    "websiteUrl": "https://api.echoflow.cn/",
-    "apiKeyUrl": "https://api.echoflow.cn/",
-    "promoText": "EchoFlowAPI 提供 Anthropic Messages 兼容协议，可直接用于 Claude Code。",
-    "featured": true,
-    "authStrategy": "auth_token",
-    "modelContextWindows": {
-      "claude-sonnet-4-6": 1000000,
-      "claude-haiku-4-5": 200000,
-      "claude-opus-4-7": 1000000
     }
   },
   {

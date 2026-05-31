@@ -283,7 +283,6 @@ function ProviderSettings() {
 
   const isClaudeOfficialActive = hasLoadedProviders && activeId === null
   const isOpenAIOfficialActive = hasLoadedProviders && activeId === OPENAI_OFFICIAL_PROVIDER_ID
-
   return (
     <div className="max-w-2xl">
       <div className="flex items-center justify-between mb-4">
@@ -842,7 +841,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
     setTestResult(null)
   }
 
-  const isCustom = selectedPreset.id === 'custom'
+  const isCustom = selectedPreset.id === 'custom' || selectedPreset.id === 'echoflowai'
   const requiresApiKey = selectedPreset.needsApiKey !== false
   const autoCompactWindowErrorKey = getAutoCompactWindowErrorKey(autoCompactWindow)
   const modelContextWindowErrorSlots = MODEL_SLOTS.filter((slot) => getModelContextWindowErrorKey(modelContextInputs[slot]))

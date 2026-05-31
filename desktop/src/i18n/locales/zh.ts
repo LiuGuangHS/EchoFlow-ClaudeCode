@@ -350,6 +350,13 @@ export const zh: Record<TranslationKey, string> = {
   'settings.chatgptOfficialLogin.copyLinkFailed': '无法复制授权链接。',
   'settings.chatgptOfficialLogin.errorPrefix': 'ChatGPT OAuth 错误:',
 
+  // Settings > 清云API 登录
+  'settings.echoflowAPIOfficialLogin.tokenPlaceholder': '输入您的 Token',
+  'settings.echoflowAPIOfficialLogin.getToken': '获取 Token',
+  'settings.echoflowAPIOfficialLogin.connect': '连接',
+  'settings.echoflowAPIOfficialLogin.connected': '已连接',
+  'settings.echoflowAPIOfficialLogin.disconnect': '断开连接',
+
   // Settings > Providers
   'settings.providers.title': '服务商',
   'settings.providers.description': '管理 API 服务商以访问模型。',
@@ -358,6 +365,8 @@ export const zh: Record<TranslationKey, string> = {
   'settings.providers.officialDesc': 'Anthropic 原生接入 — 无需 API 密钥',
   'settings.providers.openaiOfficialName': 'ChatGPT 官方',
   'settings.providers.openaiOfficialDesc': '通过 ChatGPT 账号完成 OpenAI OAuth — 无需 API 密钥',
+  'settings.providers.echoflowAPIOfficialName': 'EchoFlowAPI',
+  'settings.providers.echoflowAPIOfficialDesc': '输入 Token 即可使用 — 无需其他配置',
   'settings.providers.connected': '已连接 ({latency}ms)',
   'settings.providers.failed': '失败: {error}',
   'settings.providers.connectivityOk': '① 连通 ({latency}ms)',
