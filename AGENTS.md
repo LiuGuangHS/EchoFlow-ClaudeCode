@@ -27,7 +27,8 @@ This is a Bun-based Coding Agent product with a CLI, local server, desktop app, 
 
 - `bin/claude-haha` is the executable entrypoint; `bun run start` and `./bin/claude-haha` run the CLI locally.
 - `src/` contains the CLI/runtime surface: `entrypoints/` for startup paths, `screens/` and `components/` for the Ink TUI, `commands/` for slash commands, `services/` for API/MCP/OAuth logic, `tools/` for agent tools, `utils/` for shared runtime helpers, and `server/` for the local API/WebSocket service.
-- `desktop/` contains the desktop product: React UI in `desktop/src/`, API clients in `desktop/src/api/`, shared UI in `desktop/src/components/`, Electron host code in `desktop/electron/`, legacy Tauri resources/sidecar assets in `desktop/src-tauri/`, and desktop build scripts in `desktop/scripts/`.
+- `desktop/` contains the desktop product: React UI in `desktop/src/`, API clients in `desktop/src/api/`, shared UI in `desktop/src/components/`, Electron host code in `desktop/electron/`, legacy/shared assets in `desktop/src-tauri/`, and desktop build scripts in `desktop/scripts/`.
+- Desktop is Electron-first. `desktop/src-tauri/` is retained for icons, sidecar binaries, preview-agent resources, and compatibility assets. Do not treat `desktop/src-tauri/tauri.conf.json` as the release source of truth unless a task explicitly revives Tauri packaging.
 - `adapters/` contains IM adapter sidecars for Telegram, Feishu, WeChat, DingTalk, and shared adapter utilities.
 - `docs/` and `docs/en/` are VitePress documentation. Root screenshots and `docs/images/` are reference assets unless a task explicitly updates docs media.
 - `release-notes/`, `scripts/release.ts`, and `.github/workflows/` define release and CI behavior. Treat workflow changes as product changes because they alter what future agents and contributors can safely ship.
@@ -38,9 +39,12 @@ Install root dependencies with `bun install`. Install desktop dependencies in `d
 - `./bin/claude-haha` or `bun run start`: run the CLI locally.
 - `SERVER_PORT=3456 bun run src/server/index.ts`: start the local API/WebSocket server used by `desktop/`.
 - `cd desktop && bun run dev`: run the desktop frontend in Vite.
+- `cd desktop && bun run electron:dev`: build Electron main/preload bundles, start Vite, and launch the Electron shell for host-level desktop behavior.
+- `cd desktop && bun run check:electron`: type-check Electron host code, run Electron host tests, and rebuild Electron bundles.
 - `cd desktop && bun run build`: type-check and produce a production web build.
 - `cd desktop && bun run test`: run desktop Vitest suites.
 - `cd desktop && bun run lint`: run desktop TypeScript no-emit checks.
+- `cd desktop && bun run build:windows-x64`: package the Windows x64 Electron app from PowerShell; requires Bun/Bunx and Visual Studio 2022 Build Tools with the Desktop development with C++ workload.
 - `cd adapters && bun run test`: run all adapter tests; use `test:telegram`, `test:feishu`, `test:wechat`, or `test:dingtalk` for focused adapter work.
 - `bun run docs:dev` / `bun run docs:build`: preview or build the VitePress docs.
 - `bun run check:impact`: print the changed-area impact report and recommended local checks.
@@ -54,7 +58,7 @@ Use the narrowest meaningful verification while iterating, then run the correct 
 | Desktop UI/store/API work | `bun run check:desktop` | Runs desktop lint, Vitest, and production build. For visible UI flows, also use browser/agent-browser smoke when unit tests cannot prove the workflow. |
 | Server/API/provider/runtime/MCP/OAuth/WebSocket work | `bun run check:server` | Covers `src/server`, `src/tools`, provider/runtime, MCP, OAuth, WebSocket, and API behavior. |
 | IM adapter work | `bun run check:adapters` | On a fresh checkout, run `cd adapters && bun install` first if dependencies are missing. |
-| Electron/native/sidecar/packaging/version changes | `bun run check:native` | Runs sidecar build, Electron host checks, Electron `--dir` packaging, and current-platform package-smoke. |
+| Electron/native/sidecar/packaging/version changes | `bun run check:native` | Runs sidecar build, Electron host checks, Electron `--dir` packaging, and current-platform package-smoke. For Windows full installer packaging, use PowerShell with `cd desktop && bun run build:windows-x64`; it imports the MSVC environment via Visual Studio Build Tools. |
 | Docs, README, release notes, or docs workflow changes | `bun run check:docs` | This runs `npm ci`; run it sequentially, not in parallel with commands that depend on root `node_modules`. |
 | Persistence shape changes | `bun run check:persistence-upgrade` | Required for local JSON, `localStorage`, app config migrations, and old-fixture upgrade behavior. |
 | Coverage during handoff | `bun run check:coverage` or `bun run verify` | Changed executable production lines must meet the changed-line threshold. |
@@ -83,6 +87,8 @@ Every feature, bugfix, and behavior change must ship with proof that matches the
 - Run `bun run check:persistence-upgrade` for storage-shape changes. The change is blocked until migration tests, old fixtures, backup behavior, and unknown-field preservation pass.
 - `~/.claude/settings.json` is user-owned shared state: preserve unknown fields on read/write, merge additively, and never write a repo-owned global `schemaVersion` into it.
 - Desktop Doctor and any automatic repair path must be deny-by-default. One-click repair may only mutate allowlisted, regenerable desktop UI state such as `cc-haha-*` `localStorage` keys or native window state.
+- Public desktop and release branding is `EchoFlowAI-Claude-Code`. Internal CLI names and persistence paths such as `claude-haha`, `cc-haha-*`, and `~/.claude/cc-haha/**` are legacy compatibility surfaces; do not rename them without a migration task, forward/backward compatibility tests, and explicit user-data preservation.
+- Windows AppUserModelID must stay equal to `desktop/package.json` `build.appId`; it controls toast attribution and taskbar identity. Branding changes must update Electron identity tests.
 - Doctor and repair flows must never mutate chat transcripts, model/provider config, Skills, MCP config, plugin state, IM bindings, adapter sessions, OAuth tokens, or team/session records unless a future task explicitly adds a reviewed, backup-first manual repair flow.
 - Protected files include `~/.claude/projects/**/*.jsonl`, `~/.claude/settings.json`, project `.claude/settings.json`, `~/.claude/cc-haha/providers.json`, `~/.claude/cc-haha/settings.json`, `~/.claude/adapters.json`, `~/.claude/adapter-sessions.json`, `~/.claude/skills`, project `.claude/skills`, `.mcp.json`, managed MCP config, `~/.claude/plugins/**`, `~/.claude/teams/**`, and `~/.claude/cc-haha/*oauth*.json`. Diagnose these paths only with redaction by default.
 - If a persistence shape cannot be upgraded in place, the implementation is blocked until the upgrade path is explicit and tested.
@@ -95,14 +101,17 @@ Every feature, bugfix, and behavior change must ship with proof that matches the
 - For visible UI changes, validate with an actual browser/desktop smoke path when feasible and include screenshots or a short visual-evidence note in the handoff.
 
 ## Release Workflow
-- **Fork versioning convention (EchoFlowAI 二开)**: Tags follow `vX.Y.Z-rc.N` format, where `X.Y.Z` tracks the upstream version and `N` is the fork release candidate number. Example: `v0.3.2-rc.1`, `v0.3.2-rc.2`. When upstream bumps to `v0.4.0`, the next fork tag becomes `v0.4.0-rc.1`.
+- Desktop release versioning currently follows plain semver tags that exactly match `desktop/package.json`: `vX.Y.Z`. `desktop/package.json` is the Electron release version source of truth; `desktop/src-tauri/tauri.conf.json` may lag because Tauri packaging is legacy.
+- Do not use fork RC tags such as `vX.Y.Z-rc.N` unless the release tooling is updated first.
+- `scripts/release.ts`, release-note naming, and `.github/workflows/release-desktop.yml` expect plain `X.Y.Z` versions and publish non-prerelease GitHub Releases.
 - Desktop releases are built remotely by GitHub Actions from tags matching `v*.*.*`; do not upload local build artifacts as the release source of truth.
-- The release workflow `.github/workflows/release-desktop.yml` runs a non-live PR-quality preflight, validates that the tag matches `desktop/package.json`, loads `release-notes/vX.Y.Z.md`, builds sidecars, and packages the Electron desktop app across the matrix.
+- The release workflow `.github/workflows/release-desktop.yml` validates that the tag matches `desktop/package.json`, loads `release-notes/vX.Y.Z.md`, builds sidecars, and packages the Electron desktop app across the matrix.
 - The hosted tag workflow is not a substitute for local release verification. Before tagging or calling a release ready, run `bun run scripts/release.ts <version> --dry`, then run `bun run verify`, and run `bun run quality:gate --mode release --allow-live --provider-model <provider:model[:label]>` when live provider access is available.
 - GitHub Release body is sourced from `release-notes/vX.Y.Z.md` in the tagged commit. Keep the filename, app version, and tag aligned exactly.
 - Use `bun run scripts/release.ts <version>` to cut a desktop release. The script updates Electron desktop version files, requires the matching release-notes file, commits it, and creates the annotated tag.
 - The normal release push is `git push origin main --tags`. If no live provider is configured, or a provider quota/key is unavailable, run the non-live gate anyway and report the live-release blocker explicitly.
 - For local macOS test packaging, `desktop/scripts/build-macos-arm64.sh` is the canonical Apple Silicon build entrypoint, with outputs under `desktop/build-artifacts/macos-arm64/`.
+- For Windows installer packaging, use `desktop/scripts/build-windows-x64.ps1` through `cd desktop && bun run build:windows-x64`; use `SKIP_INSTALL=1` only when dependencies are already installed, and `REBUILD_NATIVE=1` when Electron native dependencies such as `node-pty` need rebuilding.
 
 ## Docs Workflow Notes
 - The docs workflow `.github/workflows/deploy-docs.yml` uses `npm ci`, not Bun. When root `package.json` dependencies change, keep `package-lock.json` in the same commit or the docs build will fail.
