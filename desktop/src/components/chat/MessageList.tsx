@@ -75,6 +75,11 @@ type ChatSelectionState = {
   y: number
 }
 
+type SelectionPointer = {
+  clientX: number
+  clientY: number
+}
+
 const CHAT_SELECTION_MENU_OFFSET = 10
 const CHAT_SELECTION_MENU_WIDTH = 158
 const CHAT_SELECTION_MENU_HEIGHT = 44
@@ -95,7 +100,7 @@ function getChatSelectionPosition(range: Range, root: HTMLElement, pointer: { cl
 
 function getChatSelectionFromContainer(
   root: HTMLElement | null,
-  pointer: { clientX: number; clientY: number },
+  pointer: SelectionPointer,
 ): ChatSelectionState | null {
   if (!root) return null
   const selection = window.getSelection()
@@ -114,6 +119,13 @@ function getChatSelectionFromContainer(
   return {
     ...getChatSelectionPosition(range, root, pointer),
     text,
+  }
+}
+
+function getSelectionPointer(event: SelectionPointer): SelectionPointer {
+  return {
+    clientX: event.clientX,
+    clientY: event.clientY,
   }
 }
 
@@ -388,6 +400,8 @@ function SelectableChatMessage({
 }) {
   const rootRef = useRef<HTMLDivElement>(null)
   const selectionMenuRef = useRef<HTMLButtonElement>(null)
+  const selectionStartedInsideRef = useRef(false)
+  const selectionUpdateFrameRef = useRef<number | null>(null)
   const addReference = useWorkspaceChatContextStore((state) => state.addReference)
   const [selectionMenu, setSelectionMenu] = useState<ChatSelectionState | null>(null)
   const t = useTranslation()
@@ -397,11 +411,50 @@ function SelectableChatMessage({
 
   useEffect(() => {
     setSelectionMenu(null)
+    selectionStartedInsideRef.current = false
   }, [content, messageId])
 
   const dismissSelectionMenu = useCallback(() => {
     setSelectionMenu(null)
   }, [])
+
+  const queueSelectionMenuUpdate = useCallback((pointer: SelectionPointer) => {
+    if (selectionUpdateFrameRef.current !== null) {
+      window.cancelAnimationFrame(selectionUpdateFrameRef.current)
+    }
+
+    selectionUpdateFrameRef.current = window.requestAnimationFrame(() => {
+      selectionUpdateFrameRef.current = null
+      setSelectionMenu(getChatSelectionFromContainer(rootRef.current, pointer))
+    })
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (selectionUpdateFrameRef.current !== null) {
+        window.cancelAnimationFrame(selectionUpdateFrameRef.current)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    const handlePointerUp = (event: PointerEvent) => {
+      if (!selectionStartedInsideRef.current) return
+      selectionStartedInsideRef.current = false
+      queueSelectionMenuUpdate(getSelectionPointer(event))
+    }
+
+    const handlePointerCancel = () => {
+      selectionStartedInsideRef.current = false
+    }
+
+    document.addEventListener('pointerup', handlePointerUp, true)
+    document.addEventListener('pointercancel', handlePointerCancel, true)
+    return () => {
+      document.removeEventListener('pointerup', handlePointerUp, true)
+      document.removeEventListener('pointercancel', handlePointerCancel, true)
+    }
+  }, [queueSelectionMenuUpdate])
 
   useSelectionPopoverDismiss({
     active: Boolean(selectionMenu),
@@ -426,8 +479,13 @@ function SelectableChatMessage({
   return (
     <div
       ref={rootRef}
+      onPointerDown={(event) => {
+        if (event.pointerType === 'mouse' && event.button !== 0) return
+        selectionStartedInsideRef.current = true
+      }}
       onMouseUp={(event) => {
-        setSelectionMenu(getChatSelectionFromContainer(rootRef.current, event))
+        selectionStartedInsideRef.current = false
+        queueSelectionMenuUpdate(getSelectionPointer(event))
       }}
       onKeyDown={(event) => {
         if (event.key === 'Escape') setSelectionMenu(null)

@@ -57,7 +57,20 @@ function findTextNodeContaining(container: Element, text: string) {
   throw new Error(`Unable to find text node containing ${text}`)
 }
 
-async function selectMessageText(element: Element, text: string) {
+async function waitForSelectionMenuUpdate() {
+  await act(async () => {
+    await Promise.resolve()
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => resolve())
+    })
+  })
+}
+
+function prepareMessageTextSelection(
+  element: Element,
+  text: string,
+  rect: Partial<DOMRect> = {},
+) {
   const textNode = findTextNodeContaining(element, text)
   const startOffset = textNode.textContent?.indexOf(text) ?? -1
   const range = document.createRange()
@@ -65,14 +78,14 @@ async function selectMessageText(element: Element, text: string) {
   range.setEnd(textNode, startOffset + text.length)
   Object.assign(range, {
     getBoundingClientRect: () => ({
-      left: 160,
-      top: 80,
-      right: 280,
-      bottom: 98,
-      width: 120,
-      height: 18,
-      x: 160,
-      y: 80,
+      left: rect.left ?? 160,
+      top: rect.top ?? 80,
+      right: rect.right ?? 280,
+      bottom: rect.bottom ?? 98,
+      width: rect.width ?? 120,
+      height: rect.height ?? 18,
+      x: rect.x ?? rect.left ?? 160,
+      y: rect.y ?? rect.top ?? 80,
       toJSON: () => ({}),
     }),
   })
@@ -95,10 +108,21 @@ async function selectMessageText(element: Element, text: string) {
   window.getSelection()?.removeAllRanges()
   window.getSelection()?.addRange(range)
 
+  return selectableRoot ?? element
+}
+
+async function selectMessageText(
+  element: Element,
+  text: string,
+  rect: Partial<DOMRect> = {},
+) {
+  prepareMessageTextSelection(element, text, rect)
+
   await act(async () => {
     fireEvent.mouseUp(element, { clientX: 260, clientY: 104 })
     await Promise.resolve()
   })
+  await waitForSelectionMenuUpdate()
 }
 
 describe('MessageList nested tool calls', () => {
@@ -1652,6 +1676,85 @@ describe('MessageList nested tool calls', () => {
       },
     ])
     expect(window.getSelection()?.toString()).toBe('')
+  })
+
+  it('shows the selected-message action when text selection ends outside the message', async () => {
+    useChatStore.setState({
+      sessions: {
+        [ACTIVE_TAB]: makeSessionState({
+          messages: [{
+            id: 'assistant-1',
+            type: 'assistant_text',
+            content: 'Drag selection gestures can finish outside the message bubble.',
+            timestamp: 1,
+          }],
+        }),
+      },
+    })
+
+    render(<MessageList />)
+
+    const assistantText = screen.getByText(/Drag selection gestures/)
+    prepareMessageTextSelection(assistantText, 'selection gestures')
+
+    await act(async () => {
+      fireEvent.pointerDown(assistantText, {
+        button: 0,
+        clientX: 172,
+        clientY: 88,
+        pointerId: 1,
+        pointerType: 'mouse',
+      })
+      fireEvent.pointerMove(document.body, {
+        clientX: 640,
+        clientY: 120,
+        pointerId: 1,
+        pointerType: 'mouse',
+      })
+      fireEvent.pointerUp(document.body, {
+        clientX: 640,
+        clientY: 120,
+        pointerId: 1,
+        pointerType: 'mouse',
+      })
+      await Promise.resolve()
+    })
+    await waitForSelectionMenuUpdate()
+
+    expect(screen.getByRole('button', { name: 'Add to chat' })).toBeTruthy()
+  })
+
+  it('places the selected-message action to the right when there is no room above', async () => {
+    useChatStore.setState({
+      sessions: {
+        [ACTIVE_TAB]: makeSessionState({
+          messages: [{
+            id: 'assistant-1',
+            type: 'assistant_text',
+            content: 'Top edge selections need a nearby right-side action.',
+            timestamp: 1,
+          }],
+        }),
+      },
+    })
+
+    render(<MessageList />)
+
+    const assistantText = screen.getByText(/Top edge selections/)
+    await selectMessageText(assistantText, 'right-side action', {
+      left: 160,
+      top: 18,
+      right: 280,
+      bottom: 36,
+      width: 120,
+      height: 18,
+      x: 160,
+      y: 18,
+    })
+    const floatingAddButton = screen.getByRole('button', { name: 'Add to chat' })
+
+    expect(floatingAddButton.style.left).toBe('290px')
+    expect(floatingAddButton.style.top).toBe('12px')
   })
 
   it('adds selected assistant reply text to the composer context', async () => {
