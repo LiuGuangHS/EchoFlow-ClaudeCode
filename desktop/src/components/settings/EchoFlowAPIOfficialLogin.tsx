@@ -2,9 +2,9 @@
 
 import { useState } from 'react'
 import { Eye, EyeOff, ExternalLink, LogIn, LogOut } from 'lucide-react'
-import { open as shellOpen } from '@tauri-apps/plugin-shell'
 import { useProviderStore } from '../../stores/providerStore'
 import { useTranslation } from '../../i18n'
+import { getDesktopHost } from '../../lib/desktopHost'
 
 const ECHOFLOW_BASE_URL = 'https://api.echoflow.cn'
 const ECHOFLOW_GET_TOKEN_URL = 'https://api.echoflow.cn/'
@@ -86,9 +86,9 @@ export function EchoFlowAPIOfficialLogin() {
 
   const handleGetToken = async () => {
     try {
-      await shellOpen(ECHOFLOW_GET_TOKEN_URL)
+      await getDesktopHost().shell.open(ECHOFLOW_GET_TOKEN_URL)
     } catch {
-      window.open(ECHOFLOW_GET_TOKEN_URL, '_blank')
+      window.open(ECHOFLOW_GET_TOKEN_URL, '_blank', 'noopener,noreferrer')
     }
   }
 
