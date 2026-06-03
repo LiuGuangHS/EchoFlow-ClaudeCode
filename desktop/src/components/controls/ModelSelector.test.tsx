@@ -97,11 +97,11 @@ describe('ModelSelector', () => {
 
     render(<ModelSelector runtimeKey="session-oauth-on-open" />)
 
-    await clickByRole(/alpha/i)
+    await clickByRole(/provider-main.*Provider A/i)
     await act(async () => {
       await Promise.resolve()
     })
-    await clickByRole(/alpha/i)
+    await clickByRole(/provider-main.*Provider A/i)
 
     expect(fetchClaudeStatus).toHaveBeenCalledTimes(1)
     expect(fetchOpenAIStatus).toHaveBeenCalledTimes(1)
@@ -249,12 +249,12 @@ describe('ModelSelector', () => {
 
     render(<ModelSelector runtimeKey="session-1" />)
 
-    await clickByRole(/alpha/i)
+    await clickByRole(/provider-main.*Provider A/i)
     await clickByRole(/^High$/)
 
     expect(useSessionRuntimeStore.getState().selections['session-1']).toEqual({
       providerId: 'provider-a',
-      modelId: 'alpha',
+      modelId: 'provider-main',
       effortLevel: 'high',
     })
     expect(useSessionRuntimeStore.getState().selections['session-2']).toEqual({
@@ -264,7 +264,7 @@ describe('ModelSelector', () => {
     })
     expect(setSessionRuntime).toHaveBeenCalledWith('session-1', {
       providerId: 'provider-a',
-      modelId: 'alpha',
+      modelId: 'provider-main',
       effortLevel: 'high',
     })
     expect(useSettingsStore.getState().effortLevel).toBe('max')
@@ -315,10 +315,12 @@ describe('ModelSelector', () => {
     expect(useSessionRuntimeStore.getState().selections['session-default']).toEqual({
       providerId: 'echoflowapi',
       modelId: 'claude-opus-4-7',
+      effortLevel: 'max',
     })
     expect(setSessionRuntime).toHaveBeenCalledWith('session-default', {
       providerId: 'echoflowapi',
       modelId: 'claude-opus-4-7',
+      effortLevel: 'max',
     })
   })
 
@@ -409,7 +411,7 @@ describe('ModelSelector', () => {
 
     render(<ModelSelector runtimeKey="session-hide" />)
 
-    await clickByRole(/alpha/i)
+    await clickByRole(/provider-main.*Provider A/i)
 
     const dropdown = screen.getByTestId('model-selector-dropdown')
     expect(dropdown.textContent).not.toContain('Claude Official')

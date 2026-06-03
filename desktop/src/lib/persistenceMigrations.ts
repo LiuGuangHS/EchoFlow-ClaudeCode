@@ -89,6 +89,7 @@ function migrateSessionRuntime(storage: StorageLike, report: DesktopMigrationRep
       Object.entries(parsed).filter(([, selection]) => (
         isRecord(selection) &&
         typeof selection.modelId === 'string' &&
+        selection.modelId.trim().length > 0 &&
         (selection.providerId === null || typeof selection.providerId === 'string') &&
         (
           selection.effortLevel === undefined ||

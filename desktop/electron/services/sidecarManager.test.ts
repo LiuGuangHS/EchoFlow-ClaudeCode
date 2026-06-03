@@ -20,6 +20,10 @@ function fakeChild(pid = 4321) {
   return { pid, kill: vi.fn() } as unknown as SidecarChild & { kill: ReturnType<typeof vi.fn> }
 }
 
+function posixPath(value: string | undefined): string | undefined {
+  return value?.replaceAll('\\', '/')
+}
+
 describe('Electron sidecar manager', () => {
   it('maps host platform to existing sidecar target triples', () => {
     expect(resolveHostTriple('darwin', 'arm64')).toBe('aarch64-apple-darwin')
@@ -58,9 +62,9 @@ describe('Electron sidecar manager', () => {
       env: {},
     })
 
-    expect(plan.command).toContain('/Applications/App.app/Contents/Resources/app.asar.unpacked/src-tauri/binaries/claude-sidecar-')
-    expect(plan.args).toContain('/Applications/App.app/Contents/Resources/app.asar')
-    expect(plan.env.CLAUDE_H5_DIST_DIR).toBe('/Applications/App.app/Contents/Resources/app.asar.unpacked/dist')
+    expect(posixPath(plan.command)).toContain('/Applications/App.app/Contents/Resources/app.asar.unpacked/src-tauri/binaries/claude-sidecar-')
+    expect(plan.args.map(posixPath)).toContain('/Applications/App.app/Contents/Resources/app.asar')
+    expect(posixPath(plan.env.CLAUDE_H5_DIST_DIR)).toBe('/Applications/App.app/Contents/Resources/app.asar.unpacked/dist')
   })
 
   it('passes portable config and adapter server URL through the sidecar env', () => {
