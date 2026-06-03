@@ -4,6 +4,7 @@ import {
   useWorkspacePanelStore,
   type WorkbenchMode,
 } from '../../stores/workspacePanelStore'
+import { useBrowserPanelStore } from '../../stores/browserPanelStore'
 import { WorkspacePanel } from '../workspace/WorkspacePanel'
 import { BrowserSurface } from '../browser/BrowserSurface'
 
@@ -30,6 +31,14 @@ export function WorkbenchPanel({ sessionId }: WorkbenchPanelProps) {
   const mode = useWorkspacePanelStore((state) => state.getMode(sessionId))
   const setMode = useWorkspacePanelStore((state) => state.setMode)
   const closePanel = useWorkspacePanelStore((state) => state.closePanel)
+  const ensureBlankBrowser = useBrowserPanelStore((state) => state.ensureBlank)
+
+  const handleModeSelect = (nextMode: WorkbenchMode) => {
+    if (nextMode === 'browser') {
+      ensureBlankBrowser(sessionId)
+    }
+    setMode(sessionId, nextMode)
+  }
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col bg-[var(--color-surface)]">
@@ -47,7 +56,7 @@ export function WorkbenchPanel({ sessionId }: WorkbenchPanelProps) {
                 type="button"
                 role="tab"
                 aria-selected={isActive}
-                onClick={() => setMode(sessionId, itemMode)}
+                onClick={() => handleModeSelect(itemMode)}
                 className={`inline-flex h-7 items-center gap-1.5 rounded-[6px] px-2.5 text-[12px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]/35 ${
                   isActive
                     ? 'bg-[var(--color-surface-selected)] text-[var(--color-text-primary)] shadow-[inset_0_0_0_1px_var(--color-border-focus)]'

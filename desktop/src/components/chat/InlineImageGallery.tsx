@@ -114,7 +114,7 @@ export function InlineImageGallery({ text, sessionId, workDir }: Props) {
               key={img.src}
               type="button"
               onClick={() => setActiveIndex(i)}
-              className="group relative overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-container-low)] text-left shadow-sm transition-all hover:shadow-md hover:border-[var(--color-brand)]/40"
+              className="group/image relative overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-container-low)] text-left shadow-sm transition-all hover:shadow-md hover:border-[var(--color-brand)]/40"
             >
               <img
                 src={img.src}
@@ -127,7 +127,7 @@ export function InlineImageGallery({ text, sessionId, workDir }: Props) {
                   (e.target as HTMLImageElement).closest('button')!.style.display = 'none'
                 }}
               />
-              <div className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-all group-hover:bg-black/20 group-hover:opacity-100">
+              <div className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-all group-hover/image:bg-black/20 group-hover/image:opacity-100">
                 <span className="material-symbols-outlined rounded-full bg-white/90 p-2 text-[20px] text-[var(--color-text-primary)] shadow-lg">
                   fullscreen
                 </span>

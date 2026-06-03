@@ -232,6 +232,26 @@ describe('anthropicToOpenaiChat', () => {
     expect(content[0].type).toBe('image_url')
     expect(content[0].image_url!.url).toBe('data:image/png;base64,abc123')
   })
+
+  test('text-only chat endpoints omit image payloads instead of emitting image_url parts', () => {
+    const req: AnthropicRequest = {
+      model: 'deepseek-v4-pro',
+      max_tokens: 100,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: 'What is in this screenshot?' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'abc123' } },
+        ],
+      }],
+    }
+    const result = anthropicToOpenaiChat(req, { imageContentMode: 'text_only' })
+    expect(result.messages[0].content).toBe(
+      'What is in this screenshot?\n[Image omitted: this OpenAI-compatible chat endpoint only supports text content.]',
+    )
+    expect(JSON.stringify(result)).not.toContain('image_url')
+    expect(JSON.stringify(result)).not.toContain('abc123')
+  })
 })
 
 // ─── openaiChatToAnthropic ──────────────────────────────────────

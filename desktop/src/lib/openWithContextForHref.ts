@@ -1,8 +1,7 @@
 import { classifyPreviewLink } from './previewLinkRouter'
+import { shouldOfferStaticHtmlPreview } from './htmlPreviewPolicy'
 import { isAbsoluteLocalPath, localFileUrl, previewFsUrl } from './handlePreviewLink'
 import type { OpenWithContext } from './openWithItems'
-
-const HTML_EXT = /\.(html?|xhtml)$/i
 
 /** Build an open-with context for a workspace file (we have both its relative + absolute path). */
 export function openWithContextForWorkspaceFile(
@@ -15,7 +14,7 @@ export function openWithContextForWorkspaceFile(
     absolutePath,
     relPath,
     previewable: true,
-    inAppBrowserUrl: HTML_EXT.test(relPath) ? previewFsUrl(opts.serverBaseUrl, opts.sessionId, relPath) : undefined,
+    inAppBrowserUrl: shouldOfferStaticHtmlPreview(relPath) ? previewFsUrl(opts.serverBaseUrl, opts.sessionId, relPath) : undefined,
   }
 }
 
@@ -38,10 +37,14 @@ export function openWithContextForHref(
   if (c.kind === 'browser-file' && c.path) {
     // Absolute paths may be outside the session workspace → serve via the
     // $HOME-sandboxed /local-file route; relative paths stay workspace-scoped.
-    const inAppBrowserUrl = isAbsoluteLocalPath(c.path)
-      ? localFileUrl(opts.serverBaseUrl, c.path)
-      : previewFsUrl(opts.serverBaseUrl, opts.sessionId, c.path)
-    return { kind: 'file', absolutePath: resolveAbsolute(opts.workDir, c.path), inAppBrowserUrl }
+    const absolutePath = resolveAbsolute(opts.workDir, c.path)
+    if (isAbsoluteLocalPath(c.path)) {
+      return { kind: 'file', absolutePath, inAppBrowserUrl: localFileUrl(opts.serverBaseUrl, c.path) }
+    }
+    if (shouldOfferStaticHtmlPreview(c.path)) {
+      return { kind: 'file', absolutePath, inAppBrowserUrl: previewFsUrl(opts.serverBaseUrl, opts.sessionId, c.path) }
+    }
+    return { kind: 'file', absolutePath, relPath: c.path, previewable: true }
   }
   return null
 }

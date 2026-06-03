@@ -9,23 +9,51 @@ import { describe, it, expect, beforeAll, afterAll } from 'bun:test'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
+import { fileURLToPath } from 'node:url'
 
 let server: ReturnType<typeof Bun.serve>
 let baseUrl: string
 let wsUrl: string
 let tmpDir: string
+const originalConfigDir = process.env.CLAUDE_CONFIG_DIR
+const originalCliPath = process.env.CLAUDE_CLI_PATH
+const originalDisableTerminalShellEnv = process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV
+const mockSdkCliPath = fileURLToPath(new URL('../fixtures/mock-sdk-cli.ts', import.meta.url))
+
+function restoreEnv() {
+  if (originalConfigDir !== undefined) {
+    process.env.CLAUDE_CONFIG_DIR = originalConfigDir
+  } else {
+    delete process.env.CLAUDE_CONFIG_DIR
+  }
+  if (originalCliPath !== undefined) {
+    process.env.CLAUDE_CLI_PATH = originalCliPath
+  } else {
+    delete process.env.CLAUDE_CLI_PATH
+  }
+  if (originalDisableTerminalShellEnv !== undefined) {
+    process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV = originalDisableTerminalShellEnv
+  } else {
+    delete process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV
+  }
+}
+
+afterAll(() => {
+  restoreEnv()
+})
 
 async function startTestServer() {
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'claude-biz-'))
   process.env.CLAUDE_CONFIG_DIR = tmpDir
+  process.env.CLAUDE_CLI_PATH = mockSdkCliPath
+  process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV = '1'
   await fs.mkdir(path.join(tmpDir, 'projects'), { recursive: true })
   await fs.mkdir(path.join(tmpDir, 'agents'), { recursive: true })
 
   const { startServer } = await import('../../index.js')
-  const port = 14000 + Math.floor(Math.random() * 1000)
-  server = startServer(port, '127.0.0.1')
-  baseUrl = `http://127.0.0.1:${port}`
-  wsUrl = `ws://127.0.0.1:${port}`
+  server = startServer(0, '127.0.0.1')
+  baseUrl = `http://127.0.0.1:${server.port}`
+  wsUrl = `ws://127.0.0.1:${server.port}`
 }
 
 async function api(method: string, urlPath: string, body?: unknown) {
@@ -377,19 +405,18 @@ describe('Business Flow: Models & Effort', () => {
     await fs.rm(tmpDir, { recursive: true, force: true })
   })
 
-  it('should return 4 available models', async () => {
+  it('should return available fallback models', async () => {
     const { data } = await api('GET', '/api/models')
-    expect(data.models.length).toBe(4)
+    expect(data.models.length).toBe(3)
     const names = data.models.map((m: any) => m.name)
     expect(names).toContain('Opus 4.7')
-    expect(names).toContain('Opus 4.7 1M')
     expect(names).toContain('Sonnet 4.6')
     expect(names).toContain('Haiku 4.5')
   })
 
-  it('should default to Sonnet model', async () => {
+  it('should default to Opus model', async () => {
     const { data } = await api('GET', '/api/models/current')
-    expect(data.model.id).toBe('claude-sonnet-4-6')
+    expect(data.model.id).toBe('claude-opus-4-7')
   })
 
   it('should switch to Opus 4.7', async () => {
@@ -468,8 +495,10 @@ describe('Business Flow: Sessions & CLI Interop', () => {
   let sessionId: string
 
   it('should create a session', async () => {
+    const workDir = path.join(tmpDir, 'my-project')
+    await fs.mkdir(workDir, { recursive: true })
     const { status, data } = await api('POST', '/api/sessions', {
-      workDir: '/Users/dev/my-project',
+      workDir,
     })
     expect(status).toBe(201)
     expect(data.sessionId).toMatch(/^[0-9a-f-]{36}$/)

@@ -1,7 +1,12 @@
-import { describe, expect, it } from 'vitest'
-import { pathToComposerAttachment } from './composerAttachments'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { browserHost } from './desktopHost/browserHost'
+import { pathToComposerAttachment, selectNativeFileAttachments } from './composerAttachments'
 
 describe('composer attachment payloads', () => {
+  afterEach(() => {
+    Reflect.deleteProperty(window, 'desktopHost')
+  })
+
   it('keeps many selected desktop project files as paths instead of request-body data', () => {
     const projectRoot = '/tmp/cc-haha-issue-444-regression'
     const files = Array.from({ length: 12 }, (_, index) => (
@@ -30,5 +35,30 @@ describe('composer attachment payloads', () => {
     expect(oldInlinePayload.length).toBeGreaterThan(3 * 1024 * 1024)
     expect(pathOnlyPayload.length).toBeLessThan(3 * 1024)
     expect(pathOnlyAttachments.every((attachment) => attachment.path && !attachment.data)).toBe(true)
+  })
+
+  it('selects native file attachments through the injected desktop host', async () => {
+    const open = vi.fn().mockResolvedValue(['/workspace/a.txt', '/workspace/b.log'])
+    window.desktopHost = {
+      ...browserHost,
+      kind: 'electron',
+      isDesktop: true,
+      capabilities: {
+        ...browserHost.capabilities,
+        dialogs: true,
+      },
+      dialogs: {
+        ...browserHost.dialogs,
+        open,
+      },
+    }
+
+    const attachments = await selectNativeFileAttachments()
+
+    expect(open).toHaveBeenCalledWith({ multiple: true, directory: false })
+    expect(attachments?.map((attachment) => attachment.path)).toEqual([
+      '/workspace/a.txt',
+      '/workspace/b.log',
+    ])
   })
 })

@@ -29,7 +29,8 @@ import { TerminalSettings } from './TerminalSettings'
 import type { SessionListItem } from '../types/session'
 import type { ActiveGoalState } from '../types/chat'
 import { useMobileViewport } from '../hooks/useMobileViewport'
-import { isTauriRuntime } from '../lib/desktopRuntime'
+import { isDesktopRuntime } from '../lib/desktopRuntime'
+import { publicAssetPath } from '../lib/publicAsset'
 
 const TASK_POLL_INTERVAL_MS = 1000
 const WORKSPACE_RESIZE_STEP = 32
@@ -256,7 +257,7 @@ function TerminalResizeHandle() {
 }
 
 export function ActiveSession() {
-  const isMobileLayout = useMobileViewport() && !isTauriRuntime()
+  const isMobileLayout = useMobileViewport() && !isDesktopRuntime()
   const activeTabId = useTabStore((s) => s.activeTabId)
   const activeTabType = useTabStore((s) => s.tabs.find((tab) => tab.sessionId === s.activeTabId)?.type ?? null)
   const sessions = useSessionStore((s) => s.sessions)
@@ -427,7 +428,7 @@ export function ActiveSession() {
                   </>
                 ) : (
                   <>
-                    <img src="/app-icon.png" alt="EchoFlowAI-Claude-Code" className="mb-6 h-24 w-24" />
+                    <img src={publicAssetPath('app-icon.png')} alt="Claude Code Haha" className="mb-6 h-24 w-24" />
                     <h1 className="mb-2 text-3xl font-extrabold tracking-tight text-[var(--color-text-primary)]" style={{ fontFamily: 'var(--font-headline)' }}>
                       {t('empty.title')}
                     </h1>

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import '@testing-library/jest-dom'
 import { fireEvent, render } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { AttachmentGallery } from './AttachmentGallery'
@@ -63,5 +64,30 @@ describe('AttachmentGallery', () => {
     fireEvent.click(view.getByRole('button', { name: 'Remove App.tsx' }))
 
     expect(onRemove).toHaveBeenCalledWith('selection-1')
+  })
+
+  it('shows a compact element chip for annotated selection images and exposes the note on hover', () => {
+    const view = render(
+      <AttachmentGallery
+        variant="message"
+        attachments={[{
+          id: 'preview-selection',
+          type: 'image',
+          name: '<h1>',
+          data: 'data:image/png;base64,AAAA',
+          note: '这个标题更轻一点',
+        }]}
+      />,
+    )
+
+    expect(view.getByRole('button', { name: 'Open <h1>' })).toBeTruthy()
+    const noteChip = view.getByLabelText('Selection note: 这个标题更轻一点')
+    const tooltip = view.getByRole('tooltip')
+    expect(noteChip.textContent).toContain('<h1>')
+    expect(noteChip.getAttribute('title')).toBe('这个标题更轻一点')
+    expect(noteChip).toHaveAttribute('aria-describedby', tooltip.id)
+    expect(tooltip).toHaveTextContent('修改内容')
+    expect(tooltip).toHaveTextContent('这个标题更轻一点')
+    expect(tooltip.className).toContain('group-hover/selection:visible')
   })
 })

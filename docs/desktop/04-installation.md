@@ -1,34 +1,51 @@
 # 安装指南
 
+桌面端基于 **Electron**，提供 macOS / Windows / Linux 安装包。当前版本暂未进行 Apple / Windows 代码签名，首次安装需要手动放行一次（不是文件损坏，按下方步骤操作即可）。
+
 ## 下载
 
 前往 [GitHub Releases](https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/releases) 下载对应平台的安装包：
 
 | 平台 | 文件 |
 |------|------|
-| macOS (Apple Silicon) | `EchoFlowAI-Claude-Code_x.x.x_aarch64.dmg` |
-| macOS (Intel) | `EchoFlowAI-Claude-Code_x.x.x_x64.dmg` |
-| Windows (x64) | `EchoFlowAI-Claude-Code_x.x.x_x64-setup.exe` |
+| macOS (Apple Silicon / M 系列) | `EchoFlowAI-Claude-Code-<版本>-mac-arm64.dmg` |
+| macOS (Intel) | `EchoFlowAI-Claude-Code-<版本>-mac-x64.dmg` |
+| Windows (x64) | `EchoFlowAI-Claude-Code-<版本>-win-x64.exe` |
+| Linux (x64) | `EchoFlowAI-Claude-Code-<版本>-linux-x86_64.AppImage` 或 `...-linux-amd64.deb` |
+| Linux (ARM64) | `EchoFlowAI-Claude-Code-<版本>-linux-arm64.AppImage` 或 `...-linux-arm64.deb` |
 
-> 不确定 Mac 架构？点击左上角  → 关于本机，芯片为 Apple M 开头选 aarch64，Intel 选 x64。
+> 不确定 Mac 架构？点击左上角  → 关于本机，芯片为「Apple M…」选 arm64，「Intel」选 x64。
 
 ## macOS 安装
 
-1. 双击 `.dmg` 文件，将应用拖入 `Applications` 文件夹
-2. 首次打开如果提示**"已损坏，无法打开"**，在终端执行：
+双击 DMG 把应用拖入 `Applications`。首次打开如果提示**"已损坏"**或**"无法验证开发者"**，在终端执行：
 
 ```bash
-xattr -cr /Applications/EchoFlowAI-Claude-Code.app
+xattr -cr /Applications/Claude\ Code\ Haha.app
 ```
 
-> 由于应用暂未进行 Apple 开发者签名，macOS 会阻止首次运行，执行上述命令移除隔离属性后即可正常使用。
+也可以在「系统设置 → 隐私与安全性」里点"仍要打开"。
 
 ## Windows 安装
 
-1. 双击 `.exe` 安装程序，按向导完成安装
-2. 首次运行如果 SmartScreen 弹出警告，点击 **「更多信息」** → **「仍要运行」**
+双击 `.exe` 安装。首次运行如果 SmartScreen 弹出 **"Windows 已保护你的电脑"**，点击 **「更多信息」** → **「仍要运行」**。
 
-> 应用暂未进行 Windows 代码签名，仅首次运行需要此操作。
+## Linux 安装
+
+AppImage：
+
+```bash
+chmod +x EchoFlowAI-Claude-Code-<版本>-linux-x86_64.AppImage
+./EchoFlowAI-Claude-Code-<版本>-linux-x86_64.AppImage
+```
+
+> 提示缺少 FUSE：Ubuntu 22.04 及更早 `sudo apt install libfuse2`，24.04+ `sudo apt install libfuse2t64`。
+
+deb：
+
+```bash
+sudo apt install ./EchoFlowAI-Claude-Code-<版本>-linux-amd64.deb
+```
 
 ## Web UI 模式
 
@@ -47,10 +64,6 @@ bun run dev --host 127.0.0.1 --port 2024
 
 ## 常见问题
 
-**Q: macOS 提示"来自身份不明的开发者"？**
+**Q: 这个版本会自动更新吗？**
 
-右键点击应用 → 选择「打开」→ 在弹窗中点击「打开」，仅需操作一次。
-
-**Q: Windows 提示缺少 WebView2？**
-
-从 [Microsoft 官方](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) 下载安装 WebView2 运行时。
+暂时不会。在拿到苹果签名前，请每次到 [GitHub Releases](https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/releases) 手动下载新版本覆盖安装。覆盖安装不会删除本地配置和会话数据（`~/.claude`）。

@@ -97,8 +97,8 @@ function coverageWarnings(files: string[]) {
 function riskNotes(files: string[]) {
   const notes: string[] = []
 
-  if (files.some((file) => file.startsWith('desktop/src-tauri/'))) {
-    notes.push('Tauri/native code changed: check sidecar build and cargo check output closely.')
+  if (files.some((file) => file.startsWith('desktop/src-tauri/') || file.startsWith('desktop/electron/'))) {
+    notes.push('Desktop native host code changed: check sidecar build, Electron IPC, packaging config, and runtime smoke output closely.')
   }
   if (files.some((file) => file.startsWith('desktop/src/stores/') || file.startsWith('desktop/src/api/'))) {
     notes.push('Desktop state/API layer changed: verify store persistence, WebSocket behavior, and startup errors.')

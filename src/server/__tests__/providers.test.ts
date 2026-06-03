@@ -1024,6 +1024,108 @@ describe('ProviderService', () => {
         else process.env.CLAUDE_CODE_ENTRYPOINT = originalEntrypoint
       }
     })
+
+    test('omits image_url parts for DeepSeek OpenAI Chat proxy requests', async () => {
+      const originalFetch = globalThis.fetch
+      const calls: Array<{ body: Record<string, unknown> }> = []
+      globalThis.fetch = mock(async (_url: string | URL | Request, init?: RequestInit) => {
+        calls.push({ body: JSON.parse(String(init?.body)) as Record<string, unknown> })
+        return new Response(JSON.stringify({
+          id: 'chatcmpl-1',
+          object: 'chat.completion',
+          created: 0,
+          model: 'deepseek-v4-pro',
+          choices: [{ index: 0, message: { role: 'assistant', content: 'I cannot view images.' }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }) as typeof fetch
+
+      try {
+        const svc = new ProviderService()
+        const provider = await svc.addProvider(sampleInput({
+          apiFormat: 'openai_chat',
+          baseUrl: 'https://api.deepseek.com',
+          models: {
+            main: 'deepseek-v4-pro',
+            haiku: 'deepseek-v4-pro',
+            sonnet: 'deepseek-v4-pro',
+            opus: 'deepseek-v4-pro',
+          },
+        }))
+        await svc.activateProvider(provider.id)
+
+        const req = new Request('http://localhost:3456/proxy/v1/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'deepseek-v4-pro',
+            max_tokens: 64,
+            messages: [{
+              role: 'user',
+              content: [
+                { type: 'text', text: 'What is in this screenshot?' },
+                { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'abc123' } },
+              ],
+            }],
+          }),
+        })
+
+        const res = await handleProxyRequest(req, new URL(req.url))
+        expect(res.status).toBe(200)
+
+        const serialized = JSON.stringify(calls[0].body)
+        expect(serialized).not.toContain('image_url')
+        expect(serialized).not.toContain('abc123')
+        expect(serialized).toContain('What is in this screenshot?')
+        expect(serialized).toContain('Image omitted')
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+
+    test('normalizes context-window suffixes before forwarding OpenAI Chat proxy requests', async () => {
+      const originalFetch = globalThis.fetch
+      const calls: Array<{ body: Record<string, unknown> }> = []
+      globalThis.fetch = mock(async (_url: string | URL | Request, init?: RequestInit) => {
+        calls.push({ body: JSON.parse(String(init?.body)) as Record<string, unknown> })
+        return new Response(JSON.stringify({
+          id: 'chatcmpl-1',
+          object: 'chat.completion',
+          created: 0,
+          model: 'mimo-v2.5-pro',
+          choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }) as typeof fetch
+
+      try {
+        const svc = new ProviderService()
+        const provider = await svc.addProvider(sampleInput({ apiFormat: 'openai_chat' }))
+        await svc.activateProvider(provider.id)
+
+        const req = new Request('http://localhost:3456/proxy/v1/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'mimo-v2.5-pro[1m]',
+            max_tokens: 64,
+            messages: [{ role: 'user', content: 'hello from proxy' }],
+          }),
+        })
+
+        const res = await handleProxyRequest(req, new URL(req.url))
+        expect(res.status).toBe(200)
+        expect(calls[0].body.model).toBe('mimo-v2.5-pro')
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
   })
 
   describe('testProvider', () => {
@@ -1116,6 +1218,77 @@ describe('ProviderService', () => {
         expect(calls[1].headers.Authorization).toBeUndefined()
         expect(calls[2].headers['x-api-key']).toBe('sk-dual')
         expect(calls[2].headers.Authorization).toBe('Bearer sk-dual')
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+
+    test('normalizes context-window suffixes for Anthropic-compatible connectivity tests', async () => {
+      const originalFetch = globalThis.fetch
+      const calls: Array<{ body: Record<string, unknown> }> = []
+      globalThis.fetch = mock(async (_url: string | URL | Request, init?: RequestInit) => {
+        calls.push({ body: JSON.parse(String(init?.body)) as Record<string, unknown> })
+        return new Response(JSON.stringify({
+          type: 'message',
+          model: 'mimo-v2.5-pro',
+          content: [],
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }) as typeof fetch
+
+      try {
+        const svc = new ProviderService()
+        const result = await svc.testProviderConfig({
+          baseUrl: 'https://api.xiaomimimo.com/anthropic',
+          apiKey: 'sk-api',
+          modelId: 'mimo-v2.5-pro[1m]',
+          authStrategy: 'auth_token',
+          apiFormat: 'anthropic',
+        })
+
+        expect(result.connectivity.success).toBe(true)
+        expect(result.connectivity.modelUsed).toBe('mimo-v2.5-pro')
+        expect(calls[0].body.model).toBe('mimo-v2.5-pro')
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+
+    test('normalizes context-window suffixes for provider proxy pipeline tests', async () => {
+      const originalFetch = globalThis.fetch
+      const calls: Array<{ body: Record<string, unknown> }> = []
+      globalThis.fetch = mock(async (_url: string | URL | Request, init?: RequestInit) => {
+        calls.push({ body: JSON.parse(String(init?.body)) as Record<string, unknown> })
+        return new Response(JSON.stringify({
+          id: 'chatcmpl-1',
+          object: 'chat.completion',
+          created: 0,
+          model: 'mimo-v2.5-pro',
+          choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }) as typeof fetch
+
+      try {
+        const svc = new ProviderService()
+        const result = await svc.testProviderConfig({
+          baseUrl: 'https://api.example.com',
+          apiKey: 'sk-api',
+          modelId: 'mimo-v2.5-pro[1m]',
+          authStrategy: 'api_key',
+          apiFormat: 'openai_chat',
+        })
+
+        expect(result.connectivity.success).toBe(true)
+        expect(result.proxy?.success).toBe(true)
+        expect(result.connectivity.modelUsed).toBe('mimo-v2.5-pro')
+        expect(result.proxy?.modelUsed).toBe('mimo-v2.5-pro')
+        expect(calls.map((call) => call.body.model)).toEqual(['mimo-v2.5-pro', 'mimo-v2.5-pro'])
       } finally {
         globalThis.fetch = originalFetch
       }

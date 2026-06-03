@@ -24,6 +24,10 @@ import type { AgentId } from 'src/types/ids.js'
 import { companionIntroText } from '../buddy/prompt.js'
 import { NO_CONTENT_MESSAGE } from '../constants/messages.js'
 import { OUTPUT_STYLE_CONFIG } from '../constants/outputStyles.js'
+import {
+  type BusinessErrorCode,
+  BUSINESS_ERROR_MEDIA_BLOCK_TYPES,
+} from '../constants/businessErrors.js'
 import { isAutoMemoryEnabled } from '../memdir/paths.js'
 import {
   checkStatsigFeatureGate_CACHED_MAY_BE_STALE,
@@ -359,6 +363,7 @@ function baseCreateAssistantMessage({
   apiError,
   error,
   errorDetails,
+  businessErrorCode,
   isVirtual,
   usage = {
     input_tokens: 0,
@@ -381,6 +386,7 @@ function baseCreateAssistantMessage({
   apiError?: AssistantMessage['apiError']
   error?: SDKAssistantMessageError
   errorDetails?: string
+  businessErrorCode?: BusinessErrorCode
   isVirtual?: true
   usage?: Usage
 }): AssistantMessage {
@@ -404,6 +410,7 @@ function baseCreateAssistantMessage({
     apiError,
     error,
     errorDetails,
+    businessErrorCode,
     isApiErrorMessage,
     isVirtual,
   }
@@ -438,11 +445,13 @@ export function createAssistantAPIErrorMessage({
   apiError,
   error,
   errorDetails,
+  businessErrorCode,
 }: {
   content: string
   apiError?: AssistantMessage['apiError']
   error?: SDKAssistantMessageError
   errorDetails?: string
+  businessErrorCode?: BusinessErrorCode
 }): AssistantMessage {
   return baseCreateAssistantMessage({
     content: [
@@ -455,6 +464,7 @@ export function createAssistantAPIErrorMessage({
     apiError,
     error,
     errorDetails,
+    businessErrorCode,
   })
 }
 
@@ -769,6 +779,9 @@ export function normalizeMessages(messages: Message[]): NormalizedMessage[] {
             uuid,
             error: message.error,
             isApiErrorMessage: message.isApiErrorMessage,
+            apiError: message.apiError,
+            errorDetails: message.errorDetails,
+            businessErrorCode: message.businessErrorCode,
             advisorModel: message.advisorModel,
           } as NormalizedAssistantMessage
         })
@@ -2001,7 +2014,9 @@ export function normalizeMessagesForAPI(
     m => !((m.type === 'user' || m.type === 'assistant') && m.isVirtual),
   )
 
-  // Build a map from error text → which block types to strip from the preceding user message.
+  // Build a fallback map from legacy error text → which block types to strip
+  // from the preceding user message. New synthetic errors use stable
+  // businessErrorCode values so translated display text cannot break recovery.
   const errorToBlockTypes: Record<string, Set<string>> = {
     [getPdfTooLargeErrorMessage()]: new Set(['document']),
     [getPdfPasswordProtectedErrorMessage()]: new Set(['document']),
@@ -2019,16 +2034,24 @@ export function normalizeMessagesForAPI(
     if (!isSyntheticApiErrorMessage(msg)) {
       continue
     }
-    // Determine which error this is
+    let blockTypesToStrip: Set<string> | undefined
+    const blockTypesFromCode =
+      typeof msg.businessErrorCode === 'string'
+        ? BUSINESS_ERROR_MEDIA_BLOCK_TYPES[msg.businessErrorCode as BusinessErrorCode]
+        : undefined
+    if (blockTypesFromCode) {
+      blockTypesToStrip = new Set(blockTypesFromCode)
+    }
+
+    // Determine which legacy text error this is.
     const errorText =
       Array.isArray(msg.message.content) &&
       msg.message.content[0]?.type === 'text'
         ? msg.message.content[0].text
         : undefined
-    if (!errorText) {
-      continue
+    if (!blockTypesToStrip && errorText) {
+      blockTypesToStrip = errorToBlockTypes[errorText]
     }
-    const blockTypesToStrip = errorToBlockTypes[errorText]
     if (!blockTypesToStrip) {
       continue
     }

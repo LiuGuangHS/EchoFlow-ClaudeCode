@@ -15,7 +15,7 @@ import type { SavedProvider } from '../../types/provider'
 import type { RuntimeSelection } from '../../types/runtime'
 import type { EffortLevel, ModelInfo } from '../../types/settings'
 import { useMobileViewport } from '../../hooks/useMobileViewport'
-import { isTauriRuntime } from '../../lib/desktopRuntime'
+import { isDesktopRuntime } from '../../lib/desktopRuntime'
 import { useHahaOAuthStore } from '../../stores/hahaOAuthStore'
 import { useHahaOpenAIOAuthStore } from '../../stores/hahaOpenAIOAuthStore'
 import { MobileBottomSheet } from '../shared/MobileBottomSheet'
@@ -172,7 +172,7 @@ export function ModelSelector({
   compact = false,
 }: Props = {}) {
   const t = useTranslation()
-  const isMobileBrowser = useMobileViewport() && !isTauriRuntime()
+  const isMobileBrowser = useMobileViewport() && !isDesktopRuntime()
   const {
     currentModel: storeModel,
     availableModels,
@@ -198,6 +198,7 @@ export function ModelSelector({
   const ref = useRef<HTMLDivElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
   const requestedProvidersRef = useRef(false)
+  const requestedOAuthStatusRef = useRef(false)
 
   const EFFORT_OPTIONS: { value: EffortLevel; label: string }[] = [
     { value: 'low', label: t('settings.general.effort.low') },
@@ -219,9 +220,11 @@ export function ModelSelector({
   }, [fetchProviders, isRuntimeScoped, providersLoading])
 
   useEffect(() => {
+    if (!isRuntimeScoped || !open || requestedOAuthStatusRef.current) return
+    requestedOAuthStatusRef.current = true
     void fetchClaudeOAuthStatus()
     void fetchOpenAIOAuthStatus()
-  }, [fetchClaudeOAuthStatus, fetchOpenAIOAuthStatus])
+  }, [fetchClaudeOAuthStatus, fetchOpenAIOAuthStatus, isRuntimeScoped, open])
 
   useEffect(() => {
     if (!open) return

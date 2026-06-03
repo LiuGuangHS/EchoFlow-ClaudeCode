@@ -44,6 +44,7 @@ import {
   compressImageBufferWithTokenLimit,
   createImageMetadataText,
   detectImageFormatFromBuffer,
+  downsampleImageBufferToVisionTokenBudget,
   type ImageDimensions,
   ImageResizeError,
   maybeResizeAndDownsampleImageBuffer,
@@ -798,6 +799,18 @@ function createImageResponse(
   }
 }
 
+function estimateVisionImageTokens(dimensions?: ImageDimensions): number | null {
+  const width = dimensions?.displayWidth
+  const height = dimensions?.displayHeight
+  if (!width || !height || width <= 0 || height <= 0) {
+    return null
+  }
+  // Claude vision charges approximately width * height / 750 image tokens.
+  // Image blocks are not base64 text blocks, so using base64 length here would
+  // massively over-compress ordinary screenshots before the model sees them.
+  return Math.ceil((width * height) / 750)
+}
+
 /**
  * Inner implementation of call, separated to allow ENOENT handling in the outer call.
  */
@@ -1133,10 +1146,31 @@ export async function readImageWithTokenBudget(
     result = createImageResponse(imageBuffer, detectedFormat, originalSize)
   }
 
-  // Check if it fits in token budget
-  const estimatedTokens = Math.ceil(result.file.base64.length * 0.125)
-  if (estimatedTokens > maxTokens) {
-    // Aggressive compression from the SAME buffer (no re-read)
+  // Check if it fits in vision token budget. This is intentionally based on
+  // image dimensions, not base64 payload length, because the tool result is an
+  // image content block rather than text.
+  const estimatedTokens = estimateVisionImageTokens(result.file.dimensions)
+  if (estimatedTokens !== null && estimatedTokens > maxTokens) {
+    // Downsample by vision pixel budget first. This preserves detail far better
+    // than the legacy base64-text token heuristic for image blocks.
+    try {
+      const downsampled = await downsampleImageBufferToVisionTokenBudget(
+        imageBuffer,
+        originalSize,
+        detectedFormat,
+        maxTokens,
+      )
+      return createImageResponse(
+        downsampled.buffer,
+        downsampled.mediaType,
+        originalSize,
+        downsampled.dimensions,
+      )
+    } catch (e) {
+      logError(e)
+    }
+
+    // Compatibility fallback from the SAME buffer (no re-read)
     try {
       const compressed = await compressImageBufferWithTokenLimit(
         imageBuffer,

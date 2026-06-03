@@ -235,8 +235,8 @@ function walkTestFiles(path: string, files: string[], excluded: Set<string>, roo
   }
 }
 
-function collectServerTestFiles(rootDir = ROOT_DIR) {
-  const excluded = quarantinedPathSet(loadQuarantineManifest(undefined, { enforceReviewDate: true }))
+export function collectServerTestFiles(rootDir = ROOT_DIR, quarantineManifest = loadQuarantineManifest()) {
+  const excluded = quarantinedPathSet(quarantineManifest)
   const files: string[] = []
   for (const root of ['src/server', 'src/tools', 'src/utils']) {
     walkTestFiles(join(rootDir, root), files, excluded, rootDir)

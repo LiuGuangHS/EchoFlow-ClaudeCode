@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import '@testing-library/jest-dom'
 import { BrowserAddressBar } from './BrowserAddressBar'
 
@@ -7,6 +7,10 @@ const baseProps = {
   url: 'http://localhost:5173/', canGoBack: false, canGoForward: false,
   onNavigate: vi.fn(), onBack: vi.fn(), onForward: vi.fn(), onReload: vi.fn(),
 }
+
+afterEach(() => {
+  cleanup()
+})
 
 describe('BrowserAddressBar', () => {
   it('shows the current url in the input', () => {
@@ -21,6 +25,36 @@ describe('BrowserAddressBar', () => {
     fireEvent.change(input, { target: { value: 'http://localhost:3000/x' } })
     fireEvent.submit(input.closest('form')!)
     expect(onNavigate).toHaveBeenCalledWith('http://localhost:3000/x')
+  })
+
+  it('submits an empty address as empty', () => {
+    const onNavigate = vi.fn()
+    render(<BrowserAddressBar {...baseProps} url="" onNavigate={onNavigate} />)
+    fireEvent.submit(screen.getByRole('textbox').closest('form')!)
+    expect(onNavigate).toHaveBeenCalledWith('')
+  })
+
+  it('normalizes localhost and bare domains before navigating', () => {
+    const onNavigate = vi.fn()
+    render(<BrowserAddressBar {...baseProps} url="" onNavigate={onNavigate} />)
+    const input = screen.getByRole('textbox')
+
+    fireEvent.change(input, { target: { value: 'localhost:3000' } })
+    fireEvent.submit(input.closest('form')!)
+    fireEvent.change(input, { target: { value: 'example.com' } })
+    fireEvent.submit(input.closest('form')!)
+
+    expect(onNavigate).toHaveBeenNthCalledWith(1, 'http://localhost:3000')
+    expect(onNavigate).toHaveBeenNthCalledWith(2, 'https://example.com')
+  })
+
+  it('preserves explicit URL schemes', () => {
+    const onNavigate = vi.fn()
+    render(<BrowserAddressBar {...baseProps} url="" onNavigate={onNavigate} />)
+    const input = screen.getByRole('textbox')
+    fireEvent.change(input, { target: { value: 'about:blank' } })
+    fireEvent.submit(input.closest('form')!)
+    expect(onNavigate).toHaveBeenCalledWith('about:blank')
   })
 
   it('disables back when cannot go back', () => {

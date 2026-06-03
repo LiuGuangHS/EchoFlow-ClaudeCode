@@ -19,45 +19,80 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  signing-preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      macos_signed: ${{ steps.validate.outputs.macos_signed }}
+    steps:
+      - name: Validate release signing and notarization secrets
+        id: validate
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.MACOS_CERTIFICATE }}
+          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          WIN_CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          # macOS signing + notarization is preferred: Squirrel.Mac auto-update and
+          # first-launch Gatekeeper approval work best with a notarized Developer ID build.
+          # A migration release may still ship unsigned while Apple Developer ID setup is pending.
+          missing=()
+          [ -n "$CSC_LINK" ] || missing+=("MACOS_CERTIFICATE")
+          [ -n "$CSC_KEY_PASSWORD" ] || missing+=("MACOS_CERTIFICATE_PASSWORD")
+          [ -n "$APPLE_ID" ] || missing+=("APPLE_ID")
+          [ -n "$APPLE_APP_SPECIFIC_PASSWORD" ] || missing+=("APPLE_APP_SPECIFIC_PASSWORD")
+          [ -n "$APPLE_TEAM_ID" ] || missing+=("APPLE_TEAM_ID")
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf '::warning::Missing macOS signing/notarization secrets (%s): macOS artifacts will be unsigned and users must use install-macos-unsigned.sh.\n' "${missing[*]}"
+            echo "macos_signed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "macos_signed=true" >> "$GITHUB_OUTPUT"
+          fi
+          # Windows signing is optional: an unsigned NSIS installer still auto-updates
+          # (electron-updater), it only triggers SmartScreen warnings. Warn, do not block,
+          # so releases can ship with an Apple Developer ID alone.
+          win_missing=()
+          [ -n "$WIN_CSC_LINK" ] || win_missing+=("WINDOWS_CERTIFICATE")
+          [ -n "$WIN_CSC_KEY_PASSWORD" ] || win_missing+=("WINDOWS_CERTIFICATE_PASSWORD")
+          if [ "${#win_missing[@]}" -gt 0 ]; then
+            printf '::warning::Windows signing secrets missing (%s): the Windows build will be unsigned. Auto-update still works, but users will see SmartScreen warnings.\n' "${win_missing[*]}"
+          fi
+
   build:
+    needs:
+      - signing-preflight
     strategy:
       fail-fast: false
       matrix:
         include:
-          # macOS Apple Silicon
           - platform: macos-latest
-            rust_target: aarch64-apple-darwin
-            tauri_args: '--target aarch64-apple-darwin'
+            target_triple: aarch64-apple-darwin
+            builder_args: --mac dmg zip --arm64
             label: macOS-ARM64
-            asset_name_pattern: 'EchoFlowAI-Claude-Code_[version]_macos_arm64_[bundle][ext]'
-
-          # macOS Intel
+            smoke_platform: macos
           - platform: macos-latest
-            rust_target: x86_64-apple-darwin
-            tauri_args: '--target x86_64-apple-darwin'
+            target_triple: x86_64-apple-darwin
+            builder_args: --mac dmg zip --x64
             label: macOS-x64
-            asset_name_pattern: 'EchoFlowAI-Claude-Code_[version]_macos_x64_[bundle][ext]'
-
-          # Linux x64
+            smoke_platform: macos
           - platform: ubuntu-22.04
-            rust_target: x86_64-unknown-linux-gnu
-            tauri_args: '--bundles deb'
+            target_triple: x86_64-unknown-linux-gnu
+            builder_args: --linux AppImage deb --x64
             label: Linux-x64
-            asset_name_pattern: 'EchoFlowAI-Claude-Code_[version]_linux_x64_[bundle][ext]'
-
-          # Linux ARM64
+            smoke_platform: linux
           - platform: ubuntu-22.04-arm
-            rust_target: aarch64-unknown-linux-gnu
-            tauri_args: '--bundles deb'
+            target_triple: aarch64-unknown-linux-gnu
+            builder_args: --linux AppImage deb --arm64
             label: Linux-ARM64
-            asset_name_pattern: 'EchoFlowAI-Claude-Code_[version]_linux_arm64_[bundle][ext]'
-
-          # Windows x64
+            smoke_platform: linux
           - platform: windows-latest
-            rust_target: x86_64-pc-windows-msvc
-            tauri_args: '--bundles nsis'
+            target_triple: x86_64-pc-windows-msvc
+            builder_args: --win nsis --x64
             label: Windows-x64
-            asset_name_pattern: 'EchoFlowAI-Claude-Code_[version]_windows_x64_[bundle][ext]'
+            smoke_platform: windows
 
     runs-on: ${{ matrix.platform }}
     name: Build (${{ matrix.label }})
@@ -70,7 +105,186 @@ jobs:
         id: version
         shell: bash
         run: |
-          VERSION=$(jq -r '.version' desktop/src-tauri/tauri.conf.json)
+          VERSION=$(node -p "require('./desktop/package.json').version")
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Validate tag matches version
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          EXPECTED_TAG="v${{ steps.version.outputs.value }}"
+          if [ "${GITHUB_REF_NAME}" != "$EXPECTED_TAG" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match app version ${EXPECTED_TAG}"
+            exit 1
+          fi
+
+      - name: Install Linux dependencies
+        if: contains(matrix.platform, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential curl wget file libfuse2
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install root dependencies
+        run: bun install
+
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: bun install
+
+      - name: Install adapter dependencies
+        working-directory: adapters
+        run: bun install
+
+      - name: Build sidecars
+        working-directory: desktop
+        env:
+          BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-install-cache
+          SIDECAR_TARGET_TRIPLE: ${{ matrix.target_triple }}
+        run: bun run build:sidecars
+
+      - name: Build renderer and Electron bundles
+        working-directory: desktop
+        run: |
+          bun run build
+          bun run build:electron
+
+      - name: Build Electron release artifacts
+        working-directory: desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 未签名发布：故意不传 CSC_LINK / APPLE_* / WIN_CSC_* 这些 env。
+          # 当对应 secret 缺失时它们会被渲染成空字符串，而 electron-builder 一旦看到
+          # CSC_LINK 这个 key 就会进入证书签名流程，把空路径当成证书去加载，最终报
+          # "<workdir> not a file" 而失败。拿到 Apple Developer ID / Windows 证书后，
+          # 再把对应签名 env 加回来即可开启签名 + 公证。
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: bunx electron-builder ${{ matrix.builder_args }} --publish never
+
+      - name: Verify packaged app structure
+        run: bun run test:package-smoke --platform ${{ matrix.smoke_platform }} --package-kind release --artifacts-dir desktop/build-artifacts/electron
+
+      - name: Verify macOS launch policy
+        if: matrix.smoke_platform == 'macos' && needs.signing-preflight.outputs.macos_signed == 'true'
+        run: bun run test:package-smoke --platform macos --package-kind release --artifacts-dir desktop/build-artifacts/electron --require-macos-gatekeeper
+
+      - name: Warn unsigned macOS launch policy skipped
+        if: matrix.smoke_platform == 'macos' && needs.signing-preflight.outputs.macos_signed != 'true'
+        run: echo "::warning::Skipping macOS Gatekeeper package-smoke because this release is unsigned. Ship install-macos-unsigned.sh with the DMG."
+
+      - name: Validate matrix release asset set
+        shell: bash
+        working-directory: desktop/build-artifacts/electron
+        env:
+          APP_VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          case "${{ matrix.label }}" in
+            macOS-ARM64)
+              expected=(
+                "EchoFlowAI-Claude-Code-${APP_VERSION}-mac-arm64.dmg"
+                "EchoFlowAI-Claude-Code-${APP_VERSION}-mac-arm64.dmg.blockmap"
+                "EchoFlowAI-Claude-Code-${APP_VERSION}-mac-arm64.zip"
+                "EchoFlowAI-Claude-Code-${APP_VERSION}-mac-arm64.zip.blockmap"
+                "latest-mac.yml"
+              )
+              ;;
+            macOS-x64)
+              expected=(
+                "EchoFlowAI-Claude-Code-${APP_VERSION}-mac-x64.dmg"
+                "EchoFlowAI-Claude-Code-${APP_VERSION}-mac-x64.dmg.blockmap"
+                "EchoFlowAI-Claude-Code-${APP_VERSION}-mac-x64.zip"
+                "EchoFlowAI-Claude-Code-${APP_VERSION}-mac-x64.zip.blockmap"
+                "latest-mac.yml"
+              )
+              ;;
+            Linux-x64)
+              expected=(
+                "EchoFlowAI-Claude-Code-${APP_VERSION}-linux-x86_64.AppImage"
+                "EchoFlowAI-Claude-Code-${APP_VERSION}-linux-amd64.deb"
+                "latest-linux.yml"
+              )
+              ;;
+            Linux-ARM64)
+              expected=(
+                "EchoFlowAI-Claude-Code-${APP_VERSION}-linux-arm64.AppImage"
+                "EchoFlowAI-Claude-Code-${APP_VERSION}-linux-arm64.deb"
+                "latest-linux-arm64.yml"
+              )
+              ;;
+            Windows-x64)
+              expected=(
+                "EchoFlowAI-Claude-Code-${APP_VERSION}-win-x64.exe"
+                "EchoFlowAI-Claude-Code-${APP_VERSION}-win-x64.exe.blockmap"
+                "latest.yml"
+              )
+              ;;
+            *)
+              echo "::error::No expected asset list for matrix label ${{ matrix.label }}"
+              exit 1
+              ;;
+          esac
+
+          missing=()
+          for file in "${expected[@]}"; do
+            [ -f "$file" ] || missing+=("$file")
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf '::error::Missing release assets for %s: %s\n' "${{ matrix.label }}" "${missing[*]}"
+            exit 1
+          fi
+
+      - name: Namespace update metadata assets
+        shell: bash
+        working-directory: desktop/build-artifacts/electron
+        run: |
+          shopt -s nullglob
+          for file in latest*.yml; do
+            mv "$file" "${file%.yml}-${{ matrix.label }}.yml"
+          done
+
+      - name: Upload update metadata for merge
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-update-metadata-${{ matrix.label }}
+          path: desktop/build-artifacts/electron/latest*.yml
+          if-no-files-found: ignore
+
+      - name: Upload release artifacts for final publish
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-release-artifacts-${{ matrix.label }}
+          path: |
+            desktop/build-artifacts/electron/*.dmg
+            desktop/build-artifacts/electron/*.zip
+            desktop/build-artifacts/electron/*.exe
+            desktop/build-artifacts/electron/*.AppImage
+            desktop/build-artifacts/electron/*.deb
+            desktop/build-artifacts/electron/*.blockmap
+            desktop/build-artifacts/electron/*.yml
+          if-no-files-found: error
+
+  publish-release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./desktop/package.json').version")
           echo "value=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Validate tag matches version
@@ -92,7 +306,6 @@ jobs:
             echo "::error::Missing release notes file: $NOTES_FILE"
             exit 1
           fi
-
           {
             echo 'body<<__RELEASE_NOTES__'
             cat "$NOTES_FILE"
@@ -100,85 +313,93 @@ jobs:
             echo '__RELEASE_NOTES__'
           } >> "$GITHUB_OUTPUT"
 
-      # ── System dependencies (Linux) ──────────────────────────
-      - name: Install Linux dependencies
-        if: contains(matrix.platform, 'ubuntu')
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            curl \
-            wget \
-            file \
-            libxdo-dev \
-            libssl-dev \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            libfuse2
-
-      # ── Bun ──────────────────────────────────────────────────
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
-      # ── Node.js (for tauri-action compatibility) ─────────────
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      # ── Rust ─────────────────────────────────────────────────
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.rust_target }}
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: 'desktop/src-tauri -> target'
-          shared-key: ${{ matrix.rust_target }}
-
-      # ── Install dependencies ─────────────────────────────────
       - name: Install root dependencies
         run: bun install
 
-      - name: Install desktop dependencies
-        working-directory: desktop
-        run: bun install
-
-      - name: Install adapter dependencies
-        working-directory: adapters
-        run: bun install
-
-      # ── Build sidecars ───────────────────────────────────────
-      - name: Build sidecars
-        working-directory: desktop
-        env:
-          BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-install-cache
-          TAURI_ENV_TARGET_TRIPLE: ${{ matrix.rust_target }}
-        run: bun run build:sidecars
-
-      # ── Build Tauri app ──────────────────────────────────────
-      - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
-        env:
-          BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-install-cache
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_ENV_TARGET_TRIPLE: ${{ matrix.rust_target }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
         with:
-          projectPath: desktop
-          tauriScript: bunx tauri
-          tagName: v__VERSION__
-          releaseName: 'EchoFlowAI-Claude-Code v__VERSION__'
-          releaseBody: ${{ steps.release_notes.outputs.body }}
-          releaseDraft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft || false }}
+          pattern: desktop-release-artifacts-*
+          path: artifacts/release-assets
+          merge-multiple: true
+
+      - name: Validate complete release asset set
+        shell: bash
+        env:
+          APP_VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          expected=(
+            "EchoFlowAI-Claude-Code-${APP_VERSION}-mac-arm64.dmg"
+            "EchoFlowAI-Claude-Code-${APP_VERSION}-mac-arm64.dmg.blockmap"
+            "EchoFlowAI-Claude-Code-${APP_VERSION}-mac-arm64.zip"
+            "EchoFlowAI-Claude-Code-${APP_VERSION}-mac-arm64.zip.blockmap"
+            "EchoFlowAI-Claude-Code-${APP_VERSION}-mac-x64.dmg"
+            "EchoFlowAI-Claude-Code-${APP_VERSION}-mac-x64.dmg.blockmap"
+            "EchoFlowAI-Claude-Code-${APP_VERSION}-mac-x64.zip"
+            "EchoFlowAI-Claude-Code-${APP_VERSION}-mac-x64.zip.blockmap"
+            "EchoFlowAI-Claude-Code-${APP_VERSION}-linux-x86_64.AppImage"
+            "EchoFlowAI-Claude-Code-${APP_VERSION}-linux-amd64.deb"
+            "EchoFlowAI-Claude-Code-${APP_VERSION}-linux-arm64.AppImage"
+            "EchoFlowAI-Claude-Code-${APP_VERSION}-linux-arm64.deb"
+            "EchoFlowAI-Claude-Code-${APP_VERSION}-win-x64.exe"
+            "EchoFlowAI-Claude-Code-${APP_VERSION}-win-x64.exe.blockmap"
+          )
+
+          missing=()
+          for file in "${expected[@]}"; do
+            [ -f "artifacts/release-assets/$file" ] || missing+=("$file")
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf '::error::Missing complete release assets: %s\n' "${missing[*]}"
+            exit 1
+          fi
+
+      - name: Download update metadata artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-update-metadata-*
+          path: artifacts/update-metadata
+          merge-multiple: true
+
+      - name: Merge standard update metadata
+        run: bun run scripts/release-update-metadata.ts --metadata-dir artifacts/update-metadata --out-dir artifacts/update-metadata-standard
+
+      - name: Validate standard update metadata set
+        shell: bash
+        run: |
+          expected=(
+            "latest-mac.yml"
+            "latest-linux.yml"
+            "latest-linux-arm64.yml"
+            "latest.yml"
+          )
+          missing=()
+          for file in "${expected[@]}"; do
+            [ -f "artifacts/update-metadata-standard/$file" ] || missing+=("$file")
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf '::error::Missing standard update metadata: %s\n' "${missing[*]}"
+            exit 1
+          fi
+
+      - name: Publish complete GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.value }}
+          name: EchoFlowAI-Claude-Code v${{ steps.version.outputs.value }}
+          body: ${{ steps.release_notes.outputs.body }}
+          draft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft || false }}
           prerelease: false
-          updaterJsonPreferNsis: true
-          assetNamePattern: ${{ matrix.asset_name_pattern }}
-          args: ${{ matrix.tauri_args }} --ci --config src-tauri/tauri.release-ci.json
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/release-assets/**/*.dmg
+            artifacts/release-assets/**/*.exe
+            artifacts/release-assets/**/*.AppImage
+            artifacts/release-assets/**/*.deb
+            artifacts/update-metadata-standard/*.yml
+            desktop/scripts/install-macos-unsigned.sh

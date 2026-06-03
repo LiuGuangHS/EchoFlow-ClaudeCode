@@ -1,4 +1,5 @@
 import { classifyPreviewLink } from './previewLinkRouter'
+import { shouldOfferStaticHtmlPreview } from './htmlPreviewPolicy'
 
 export type PreviewLinkDeps = {
   sessionId: string
@@ -61,6 +62,10 @@ export function handlePreviewLink(href: string, deps: PreviewLinkDeps): boolean 
       // Absolute paths (incl. file:// → absolute) may live OUTSIDE the session
       // workspace, so serve them via the $HOME-sandboxed /local-file route.
       // Relative paths stay workspace-scoped via /preview-fs.
+      if (!isAbsoluteLocalPath(filePath) && !shouldOfferStaticHtmlPreview(filePath)) {
+        deps.openFilePreview(deps.sessionId, filePath)
+        return true
+      }
       const url = isAbsoluteLocalPath(filePath)
         ? localFileUrl(deps.serverBaseUrl, filePath)
         : previewFsUrl(deps.serverBaseUrl, deps.sessionId, filePath)

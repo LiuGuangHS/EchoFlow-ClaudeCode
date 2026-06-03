@@ -7,6 +7,7 @@ import { InlineVideoGallery } from './InlineVideoGallery'
 import { AssistantOutputTargetCard } from './AssistantOutputTargetCard'
 import { handlePreviewLink } from '../../lib/handlePreviewLink'
 import { getServerBaseUrl } from '../../lib/desktopRuntime'
+import { getDesktopHost } from '../../lib/desktopHost'
 import { extractAssistantOutputTargets } from '../../lib/assistantOutputTargets'
 import { useBrowserPanelStore } from '../../stores/browserPanelStore'
 import { useWorkspacePanelStore } from '../../stores/workspacePanelStore'
@@ -37,8 +38,7 @@ export const AssistantMessage = memo(function AssistantMessage({ content, isStre
           void useWorkspacePanelStore.getState().openPreview(id, path, 'file')
         },
         openExternal: (url) => {
-          void import('@tauri-apps/plugin-shell')
-            .then((m) => m.open(url))
+          void getDesktopHost().shell.open(url)
             .catch(() => window.open(url, '_blank'))
         },
       })
@@ -68,7 +68,7 @@ export const AssistantMessage = memo(function AssistantMessage({ content, isStre
       <div
         data-message-shell="assistant"
         data-layout={documentLayout ? 'document' : 'bubble'}
-        className={`group flex min-w-0 flex-col items-start gap-2 ${
+        className={`group flex min-w-0 flex-col items-start ${
           documentLayout
             ? 'w-full max-w-full'
             : 'max-w-[88%] sm:max-w-[80%] lg:max-w-[72%]'

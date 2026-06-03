@@ -72,7 +72,7 @@ export type ServerMessage =
       errorType?: string
       errorMessage?: string
     }
-  | { type: 'error'; message: string; code: string; retryable?: boolean }
+  | { type: 'error'; message: string; code: string; retryable?: boolean; businessErrorCode?: string }
   | { type: 'system_notification'; subtype: string; message?: string; data?: unknown }
   | { type: 'pong' }
   | { type: 'team_update'; teamName: string; members: TeamMemberStatus[] }

@@ -67,7 +67,8 @@ describe('provider presets API', () => {
     const zhipu = PROVIDER_PRESETS.find((preset) => preset.id === 'zhipuglm')
     const kimi = PROVIDER_PRESETS.find((preset) => preset.id === 'kimi')
     const minimax = PROVIDER_PRESETS.find((preset) => preset.id === 'minimax')
-    const echoflowai = PROVIDER_PRESETS.find((preset) => preset.id === 'echoflowai')
+    const jiekouai = PROVIDER_PRESETS.find((preset) => preset.id === 'jiekouai')
+    const shengsuanyun = PROVIDER_PRESETS.find((preset) => preset.id === 'shengsuanyun')
 
     expect(lmstudio?.baseUrl).toBe('http://localhost:1234')
     expect(lmstudio?.apiFormat).toBe('anthropic')
@@ -96,20 +97,19 @@ describe('provider presets API', () => {
     expect(kimi?.defaultModels.main).toBe('kimi-k2.6')
     expect(kimi?.defaultEnv?.CC_HAHA_SEND_DISABLED_THINKING).toBe('1')
     expect(minimax?.authStrategy).toBe('auth_token')
-    expect(minimax?.defaultModels.main).toBe('MiniMax-M2.7')
-    expect(minimax?.modelContextWindows?.['MiniMax-M2.7']).toBe(204800)
-    expect(echoflowai?.name).toBe('EchoFlowAPI')
-    expect(echoflowai?.baseUrl).toBe('https://api.echoflow.cn')
-    expect(echoflowai?.authStrategy).toBe('auth_token')
-    expect(echoflowai?.defaultModels).toEqual({
-      main: 'claude-sonnet-4-6',
-      haiku: 'claude-haiku-4-5',
-      sonnet: 'claude-sonnet-4-6',
-      opus: 'claude-opus-4-7',
-    })
-    expect(echoflowai?.defaultEnv).toBeUndefined()
-    expect(echoflowai?.modelContextWindows?.['claude-opus-4-7']).toBe(1000000)
-    expect(PROVIDER_PRESETS.some((preset) => preset.id === 'shengsuanyun')).toBe(false)
+    expect(minimax?.defaultModels.main).toBe('MiniMax-M3')
+    expect(minimax?.modelContextWindows?.['MiniMax-M3']).toBe(1000000)
+    expect(jiekouai?.baseUrl).toBe('https://api.jiekou.ai/anthropic')
+    expect(jiekouai?.authStrategy).toBe('auth_token')
+    expect(jiekouai?.defaultModels.main).toBe('claude-sonnet-4-6')
+    expect(jiekouai?.defaultModels.opus).toBe('claude-opus-4-7')
+    expect(jiekouai?.defaultEnv?.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe('none')
+    expect(jiekouai?.modelContextWindows?.['claude-sonnet-4-6']).toBe(1000000)
+    expect(shengsuanyun?.baseUrl).toBe('https://router.shengsuanyun.com/api')
+    expect(shengsuanyun?.authStrategy).toBe('auth_token')
+    expect(shengsuanyun?.defaultModels.main).toBe('anthropic/claude-sonnet-4.6')
+    expect(shengsuanyun?.defaultModels.haiku).toBe('anthropic/claude-haiku-4.5:thinking')
+    expect(shengsuanyun?.modelContextWindows?.['anthropic/claude-sonnet-4.6']).toBe(1000000)
   })
 
   test('configured presets can expose optional API key and promo metadata', () => {
@@ -119,7 +119,8 @@ describe('provider presets API', () => {
     const zhipu = PROVIDER_PRESETS.find((preset) => preset.id === 'zhipuglm')
     const kimi = PROVIDER_PRESETS.find((preset) => preset.id === 'kimi')
     const minimax = PROVIDER_PRESETS.find((preset) => preset.id === 'minimax')
-    const echoflowai = PROVIDER_PRESETS.find((preset) => preset.id === 'echoflowai')
+    const jiekouai = PROVIDER_PRESETS.find((preset) => preset.id === 'jiekouai')
+    const shengsuanyun = PROVIDER_PRESETS.find((preset) => preset.id === 'shengsuanyun')
     const custom = PROVIDER_PRESETS.find((preset) => preset.id === 'custom')
 
     expect(lmstudio?.needsApiKey).toBe(false)
@@ -145,10 +146,18 @@ describe('provider presets API', () => {
     expect(kimi?.apiKeyUrl).toBe('https://platform.kimi.com/console/api-keys')
     expect(kimi?.modelContextWindows?.['kimi-k2.6']).toBe(262144)
     expect(minimax?.apiKeyUrl).toBe('https://platform.minimaxi.com/subscribe/token-plan?code=1TG2Cseab2&source=link')
-    expect(echoflowai?.apiKeyUrl).toBe('https://api.echoflow.cn/')
-    expect(echoflowai?.websiteUrl).toBe('https://api.echoflow.cn/')
-    expect(echoflowai?.promoText).toContain('EchoFlowAPI')
-    expect(echoflowai?.featured).toBe(true)
+    expect(jiekouai?.apiKeyUrl).toBe('https://jiekou.ai/referral?invited_code=OBNU3K')
+    expect(jiekouai?.promoText).toContain('官方 8 折')
+    expect(jiekouai?.featured).toBe(true)
+    expect(shengsuanyun?.apiKeyUrl).toBe('https://www.shengsuanyun.com/?from=CH_LEJ88KWR')
+    expect(shengsuanyun?.promoText).toContain('首充 10%')
+    expect(shengsuanyun?.featured).toBe(true)
+    expect(shengsuanyun?.defaultEnv).toEqual({
+      API_TIMEOUT_MS: '3000000',
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+      ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES: 'none',
+    })
+    expect(shengsuanyun?.modelContextWindows?.['anthropic/claude-opus-4.7']).toBe(1000000)
     expect(custom?.promoText).toBeUndefined()
     expect(custom?.authStrategy).toBe('auth_token')
     expect(custom?.defaultEnv).toBeUndefined()

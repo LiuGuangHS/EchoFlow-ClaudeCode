@@ -19,11 +19,13 @@ vi.mock('../browser/BrowserSurface', () => ({
 import { WorkbenchPanel } from './WorkbenchPanel'
 import { useWorkspacePanelStore } from '../../stores/workspacePanelStore'
 import { useSettingsStore } from '../../stores/settingsStore'
+import { useBrowserPanelStore } from '../../stores/browserPanelStore'
 
 const SESSION_ID = 'workbench-session'
 
 beforeEach(() => {
   useWorkspacePanelStore.setState(useWorkspacePanelStore.getInitialState(), true)
+  useBrowserPanelStore.setState(useBrowserPanelStore.getInitialState(), true)
   useSettingsStore.setState({ locale: 'en' })
   useWorkspacePanelStore.getState().openPanel(SESSION_ID)
 })
@@ -31,6 +33,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   useWorkspacePanelStore.setState(useWorkspacePanelStore.getInitialState(), true)
+  useBrowserPanelStore.setState(useBrowserPanelStore.getInitialState(), true)
 })
 
 describe('WorkbenchPanel', () => {
@@ -66,6 +69,13 @@ describe('WorkbenchPanel', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Browser' }))
 
     expect(useWorkspacePanelStore.getState().getMode(SESSION_ID)).toBe('browser')
+    expect(useBrowserPanelStore.getState().bySession[SESSION_ID]).toMatchObject({
+      isOpen: true,
+      url: '',
+      history: [],
+      historyIndex: -1,
+      loading: false,
+    })
   })
 
   it('switching to the files tab calls setMode("workspace")', () => {

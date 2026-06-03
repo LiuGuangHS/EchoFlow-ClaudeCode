@@ -52,7 +52,7 @@ describe('handlePreviewLink', () => {
     )
   })
 
-  it('routes a relative .html file to openBrowser with the preview-fs (workspace) url', () => {
+  it('routes a built relative .html file to openBrowser with the preview-fs (workspace) url', () => {
     const deps = makeDeps()
     const handled = handlePreviewLink('out/index.html', deps)
     expect(handled).toBe(true)
@@ -62,6 +62,14 @@ describe('handlePreviewLink', () => {
       'http://127.0.0.1:8787/preview-fs/s1/out/index.html',
     )
     expect(deps.openFilePreview).not.toHaveBeenCalled()
+  })
+
+  it('routes a frontend project index.html to workspace preview instead of static browser preview', () => {
+    const deps = makeDeps()
+    const handled = handlePreviewLink('todo-app/index.html', deps)
+    expect(handled).toBe(true)
+    expect(deps.openFilePreview).toHaveBeenCalledWith('s1', 'todo-app/index.html')
+    expect(deps.openBrowser).not.toHaveBeenCalled()
   })
 
   it('routes relative previewable docs to openFilePreview with the relative path', () => {

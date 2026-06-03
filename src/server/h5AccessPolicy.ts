@@ -4,11 +4,7 @@ export type H5RequestContext = {
 }
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1'])
-const LOCAL_ORIGINS = new Set([
-  'http://tauri.localhost',
-  'https://tauri.localhost',
-  'tauri://localhost',
-])
+const LOCAL_DESKTOP_ORIGINS = new Set(['file://'])
 
 export function normalizeHostname(hostname: string): string {
   return hostname.trim().replace(/^\[/, '').replace(/\]$/, '').toLowerCase()
@@ -22,15 +18,14 @@ export function isLoopbackHost(hostname: string): boolean {
   return LOCAL_HOSTS.has(normalized)
 }
 
-function isLocalOrigin(origin: string | null): boolean {
+function isLocalDesktopOrNavigationOrigin(origin: string | null): boolean {
   if (!origin) return true
-  if (LOCAL_ORIGINS.has(origin)) return true
+  return LOCAL_DESKTOP_ORIGINS.has(origin)
+}
 
-  try {
-    return isLoopbackHost(new URL(origin).hostname)
-  } catch {
-    return false
-  }
+function isFilesystemCapabilityPath(pathname: string): boolean {
+  return pathname.startsWith('/local-file/') ||
+    pathname.startsWith('/preview-fs/')
 }
 
 export function classifyH5Request(
@@ -38,9 +33,18 @@ export function classifyH5Request(
   url: URL,
   context: H5RequestContext,
 ): H5RequestKind {
+  const origin = request.headers.get('Origin')
+  if (isFilesystemCapabilityPath(url.pathname)) {
+    const localFilesystemTrusted = Boolean(context.clientAddress) &&
+      isLoopbackHost(context.clientAddress!) &&
+      isLocalDesktopOrNavigationOrigin(origin)
+
+    return localFilesystemTrusted ? 'local-trusted' : 'h5-browser'
+  }
+
   const localTrusted = Boolean(context.clientAddress) &&
     isLoopbackHost(context.clientAddress!) &&
-    isLocalOrigin(request.headers.get('Origin'))
+    isLocalDesktopOrNavigationOrigin(origin)
 
   if (url.pathname.startsWith('/sdk/') && localTrusted) {
     return 'internal-sdk'
@@ -101,6 +105,7 @@ export function shouldBlockDisabledH5Access({
 
 function isH5ProtectedCapabilityPath(pathname: string): boolean {
   return pathname.startsWith('/api/') ||
+    isFilesystemCapabilityPath(pathname) ||
     pathname.startsWith('/proxy/') ||
     pathname.startsWith('/ws/') ||
     pathname.startsWith('/sdk/')
@@ -108,6 +113,7 @@ function isH5ProtectedCapabilityPath(pathname: string): boolean {
 
 function isH5BrowserCapabilityPath(pathname: string): boolean {
   return pathname.startsWith('/api/') ||
+    isFilesystemCapabilityPath(pathname) ||
     pathname.startsWith('/proxy/') ||
     pathname.startsWith('/ws/')
 }

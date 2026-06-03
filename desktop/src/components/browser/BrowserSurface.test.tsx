@@ -1,13 +1,16 @@
 import '@testing-library/jest-dom'
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 beforeAll(() => {
-  globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver
+  Object.defineProperty(globalThis, 'ResizeObserver', {
+    configurable: true,
+    value: class { observe() {} unobserve() {} disconnect() {} },
+  })
 })
 
 const { bridge } = vi.hoisted(() => ({
-  bridge: { open: vi.fn(), navigate: vi.fn(), setBounds: vi.fn(), setVisible: vi.fn(), close: vi.fn(), eval: vi.fn() },
+  bridge: { open: vi.fn(), navigate: vi.fn(), setBounds: vi.fn(), setVisible: vi.fn(), close: vi.fn(), message: vi.fn() },
 }))
 vi.mock('../../lib/previewBridge', () => ({ previewBridge: bridge }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: () => Promise.resolve(() => {}) }))
@@ -18,6 +21,7 @@ import { useWorkspacePanelStore } from '../../stores/workspacePanelStore'
 import { useOverlayStore } from '../../stores/overlayStore'
 
 afterEach(() => {
+  cleanup()
   Object.values(bridge).forEach((f) => f.mockReset())
   useBrowserPanelStore.setState(useBrowserPanelStore.getInitialState(), true)
   // browserPanelStore.open() now also opens the unified workbench; keep it isolated.
@@ -32,6 +36,23 @@ describe('BrowserSurface', () => {
     expect(bridge.open).toHaveBeenCalledWith('http://localhost:5173/', expect.objectContaining({ width: expect.any(Number) }))
   })
 
+  it('renders an empty address bar without opening a preview for a blank session', () => {
+    useBrowserPanelStore.getState().ensureBlank('s1')
+    render(<BrowserSurface sessionId="s1" />)
+    expect(screen.getByRole('textbox')).toHaveValue('')
+    expect(bridge.open).not.toHaveBeenCalled()
+  })
+
+  it('first navigation from a blank session opens the native preview', () => {
+    useBrowserPanelStore.getState().ensureBlank('s1')
+    render(<BrowserSurface sessionId="s1" />)
+    const input = screen.getByRole('textbox')
+    fireEvent.change(input, { target: { value: 'localhost:3000' } })
+    fireEvent.submit(input.closest('form')!)
+    expect(bridge.open).toHaveBeenCalledWith('http://localhost:3000', expect.objectContaining({ width: expect.any(Number) }))
+    expect(bridge.navigate).not.toHaveBeenCalled()
+  })
+
   it('navigating via address bar calls store + bridge', () => {
     useBrowserPanelStore.getState().open('s1', 'http://localhost:5173/')
     render(<BrowserSurface sessionId="s1" />)
@@ -42,18 +63,29 @@ describe('BrowserSurface', () => {
     expect(useBrowserPanelStore.getState().bySession['s1']!.url).toBe('http://localhost:3000/')
   })
 
-  it('hides the native webview on unmount', () => {
+  it('closes the native webview on unmount', () => {
     useBrowserPanelStore.getState().open('s1', 'http://localhost:5173/')
     const { unmount } = render(<BrowserSurface sessionId="s1" />)
     unmount()
-    expect(bridge.setVisible).toHaveBeenLastCalledWith(false)
+    expect(bridge.close).toHaveBeenCalled()
   })
 
-  it('截图 button triggers a capture via preview_eval', () => {
+  it('截图 button triggers a structured capture message', () => {
     useBrowserPanelStore.getState().open('s1', 'http://localhost:5173/')
     render(<BrowserSurface sessionId="s1" />)
     fireEvent.click(screen.getByLabelText('截图'))
-    expect(bridge.eval).toHaveBeenCalledWith(expect.stringContaining('capture'))
+    expect(bridge.message).toHaveBeenCalledWith({ v: 1, type: 'capture', kind: 'full' })
+  })
+
+  it('places preview action buttons on the right side of the address toolbar', () => {
+    useBrowserPanelStore.getState().open('s1', 'http://localhost:5173/')
+    useBrowserPanelStore.getState().setReady('s1')
+    render(<BrowserSurface sessionId="s1" />)
+
+    const actions = screen.getByTestId('browser-toolbar-actions')
+    expect(actions).toContainElement(screen.getByLabelText('截图'))
+    expect(actions).toContainElement(screen.getByLabelText('选择元素'))
+    expect(screen.getByRole('textbox').closest('form')!.compareDocumentPosition(actions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
   it('选择元素 button toggles pickerActive and signals the bridge', () => {
@@ -61,10 +93,10 @@ describe('BrowserSurface', () => {
     render(<BrowserSurface sessionId="s1" />)
     fireEvent.click(screen.getByLabelText('选择元素'))
     expect(useBrowserPanelStore.getState().bySession['s1']!.pickerActive).toBe(true)
-    expect(bridge.eval).toHaveBeenCalledWith(expect.stringContaining('enter-picker'))
+    expect(bridge.message).toHaveBeenCalledWith({ v: 1, type: 'enter-picker' })
     fireEvent.click(screen.getByLabelText('选择元素'))
     expect(useBrowserPanelStore.getState().bySession['s1']!.pickerActive).toBe(false)
-    expect(bridge.eval).toHaveBeenLastCalledWith(expect.stringContaining('exit-picker'))
+    expect(bridge.message).toHaveBeenLastCalledWith({ v: 1, type: 'exit-picker' })
   })
 
   it('renders the loading indicator while the session is loading (open starts loading)', () => {

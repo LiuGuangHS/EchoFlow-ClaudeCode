@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { buildSelectionComposerText } from './selectionComposer'
+import { buildSelectionComposerText, buildSelectionDirectMessage } from './selectionComposer'
 
 it('renders only the user instruction + concrete changes (no selector/DOM/page noise)', () => {
   const text = buildSelectionComposerText({
@@ -23,4 +23,26 @@ it('returns empty text when there is no description or change (image alone is th
     element: { selector: '#t', tag: 'div', classes: [] } as never,
   })
   expect(text).toBe('')
+})
+
+it('builds a model prompt while keeping the visible selection label compact', () => {
+  const message = buildSelectionDirectMessage({
+    pageUrl: 'http://localhost:5174/',
+    sourceHint: 'Todo preview',
+    element: {
+      selector: '#todo-title',
+      tag: 'h1',
+      text: 'Todo 管理',
+      classes: ['title'],
+      boundingBox: { x: 10, y: 20, w: 300, h: 80 },
+    } as never,
+    change: { description: '这个标题更轻一点' } as never,
+  })
+
+  expect(message.modelText).toContain('截图中编号 1')
+  expect(message.modelText).toContain('<h1>')
+  expect(message.modelText).toContain('#todo-title')
+  expect(message.modelText).toContain('这个标题更轻一点')
+  expect(message.displayName).toBe('<h1>')
+  expect(message.note).toBe('这个标题更轻一点')
 })

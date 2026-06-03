@@ -13,6 +13,7 @@ import {
   type WorkspaceChatReference,
 } from '../../stores/workspaceChatContextStore'
 import { sessionsApi, type SessionGitInfo } from '../../api/sessions'
+import { agentsApi } from '../../api/agents'
 import { PermissionModeSelector } from '../controls/PermissionModeSelector'
 import { ModelSelector } from '../controls/ModelSelector'
 import type { AttachmentRef } from '../../types/chat'
@@ -24,6 +25,8 @@ import { FileSearchMenu, type FileSearchMenuHandle } from './FileSearchMenu'
 import { LocalSlashCommandPanel, type LocalSlashCommandName } from './LocalSlashCommandPanel'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
 import {
+  appendAgentSlashCommands,
+  buildAgentSlashCommands,
   getLocalizedFallbackCommands,
   filterSlashCommands,
   findSlashTrigger,
@@ -32,7 +35,7 @@ import {
   resolveSlashUiAction,
 } from './composerUtils'
 import { useMobileViewport } from '../../hooks/useMobileViewport'
-import { isTauriRuntime } from '../../lib/desktopRuntime'
+import { isDesktopRuntime } from '../../lib/desktopRuntime'
 import {
   filesToComposerAttachments,
   selectNativeFileAttachments,
@@ -83,7 +86,7 @@ function insertComposerTokenAtRange(value: string, start: number, end: number, t
 
 export function ChatInput({ variant = 'default', compact = false }: ChatInputProps) {
   const t = useTranslation()
-  const isMobileComposer = useMobileViewport() && !isTauriRuntime()
+  const isMobileComposer = useMobileViewport() && !isDesktopRuntime()
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [plusMenuOpen, setPlusMenuOpen] = useState(false)
@@ -94,6 +97,7 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
   const [atCursorPos, setAtCursorPos] = useState(-1)
   const [slashFilter, setSlashFilter] = useState('')
   const [slashSelectedIndex, setSlashSelectedIndex] = useState(0)
+  const [agentSlashCommands, setAgentSlashCommands] = useState<ReturnType<typeof buildAgentSlashCommands>>([])
   const [launchWorkDir, setLaunchWorkDir] = useState('')
   const [launchBranch, setLaunchBranch] = useState<string | null>(null)
   const [launchUseWorktree, setLaunchUseWorktree] = useState(false)
@@ -121,7 +125,7 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
       return next
     })
   }, [])
-  const { sendMessage, stopGeneration, clearComposerInsertion } = useChatStore()
+  const { sendMessage, stopGeneration, clearComposerPrefill, clearComposerInsertion } = useChatStore()
   const activeTabId = useTabStore((s) => s.activeTabId)
   const sessionState = useChatStore((s) => activeTabId ? s.sessions[activeTabId] : undefined)
   const chatState = sessionState?.chatState ?? 'idle'
@@ -232,21 +236,25 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
   }, [isActive])
 
   useEffect(() => {
-    if (!composerPrefill) return
+    if (!composerPrefill || !activeTabId) return
 
-    setComposerInput(composerPrefill.text)
-    setComposerAttachments(
-      (composerPrefill.attachments ?? [])
-        .filter((attachment) => attachment.type === 'image' || attachment.data)
-        .map((attachment, index) => ({
-          id: `rewind-prefill-${composerPrefill.nonce}-${index}`,
-          name: attachment.name,
-          type: attachment.type,
-          mimeType: attachment.mimeType,
-          previewUrl: attachment.type === 'image' ? attachment.data : undefined,
-          data: attachment.data,
-        })),
-    )
+    const nextAttachments = (composerPrefill.attachments ?? [])
+      .filter((attachment) => attachment.type === 'image' || attachment.data)
+      .map((attachment, index) => ({
+        id: `composer-prefill-${composerPrefill.nonce}-${index}`,
+        name: attachment.name,
+        type: attachment.type,
+        mimeType: attachment.mimeType,
+        previewUrl: attachment.type === 'image' ? attachment.data : undefined,
+        data: attachment.data,
+      }))
+
+    if (composerPrefill.mode === 'append') {
+      setComposerAttachments((previous) => [...previous, ...nextAttachments])
+    } else {
+      setComposerInput(composerPrefill.text)
+      setComposerAttachments(nextAttachments)
+    }
     setPlusMenuOpen(false)
     setSlashMenuOpen(false)
     setFileSearchOpen(false)
@@ -257,10 +265,19 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
     requestAnimationFrame(() => {
       const el = textareaRef.current
       el?.focus()
-      const cursor = composerPrefill.text.length
-      el?.setSelectionRange(cursor, cursor)
+      if (composerPrefill.mode !== 'append') {
+        const cursor = composerPrefill.text.length
+        el?.setSelectionRange(cursor, cursor)
+      }
     })
-  }, [composerPrefill, setComposerAttachments, setComposerInput])
+    clearComposerPrefill(activeTabId, composerPrefill.nonce)
+  }, [
+    activeTabId,
+    clearComposerPrefill,
+    composerPrefill,
+    setComposerAttachments,
+    setComposerInput,
+  ])
 
   useEffect(() => {
     if (!composerInsertion || !activeTabId || isMemberSession) return
@@ -323,6 +340,27 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
     setSlashMenuOpen(false)
     setFileSearchOpen(false)
   }, [isMemberSession, activeTabId])
+
+  useEffect(() => {
+    if (isMemberSession) {
+      setAgentSlashCommands([])
+      return
+    }
+
+    let cancelled = false
+    agentsApi.list(resolvedWorkDir)
+      .then(({ activeAgents }) => {
+        if (cancelled) return
+        setAgentSlashCommands(buildAgentSlashCommands(activeAgents))
+      })
+      .catch(() => {
+        if (!cancelled) setAgentSlashCommands([])
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [isMemberSession, resolvedWorkDir])
 
   useEffect(() => {
     if (!showLaunchControls) return
@@ -404,8 +442,11 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
   }, [fileSearchOpen])
 
   const allSlashCommands = useMemo(
-    () => mergeSlashCommands(slashCommands, getLocalizedFallbackCommands(t)),
-    [slashCommands, t],
+    () => appendAgentSlashCommands(
+      mergeSlashCommands(slashCommands, getLocalizedFallbackCommands(t)),
+      agentSlashCommands,
+    ),
+    [agentSlashCommands, slashCommands, t],
   )
 
   const filteredCommands = useMemo(() => {
@@ -698,8 +739,10 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
         return
       }
       if (event.key === 'Enter') {
+        const selected = filteredCommands[slashSelectedIndex]
         if (
           exactSlashCommand &&
+          selected?.name.toLowerCase() === exactSlashCommand.name.toLowerCase() &&
           slashFilter.trim().toLowerCase() === exactSlashCommand.name.toLowerCase() &&
           shouldSubmitOnEnter(event, chatSendBehavior)
         ) {
@@ -708,7 +751,6 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
           return
         }
         event.preventDefault()
-        const selected = filteredCommands[slashSelectedIndex]
         if (selected) selectSlashCommand(selected.name)
         return
       }
@@ -793,9 +835,9 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
   })
 
   const openAttachmentPicker = useCallback(() => {
-    if (!isTauriRuntime()) {
+    setPlusMenuOpen(false)
+    if (!isDesktopRuntime()) {
       fileInputRef.current?.click()
-      setPlusMenuOpen(false)
       return
     }
 
@@ -809,7 +851,6 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
         }
         fileInputRef.current?.click()
       })
-      .finally(() => setPlusMenuOpen(false))
   }, [setComposerAttachments])
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {

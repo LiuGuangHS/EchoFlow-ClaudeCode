@@ -20,6 +20,16 @@ describe('browserPanelStore', () => {
     expect(s.canGoBack).toBe(false)
   })
 
+  it('creates a blank browser session without navigating', () => {
+    useBrowserPanelStore.getState().ensureBlank('s1')
+    const s = useBrowserPanelStore.getState().bySession['s1']!
+    expect(s.url).toBe('')
+    expect(s.isOpen).toBe(true)
+    expect(s.history).toEqual([])
+    expect(s.historyIndex).toBe(-1)
+    expect(s.loading).toBe(false)
+  })
+
   it('navigate pushes history and truncates forward entries', () => {
     const st = useBrowserPanelStore.getState()
     st.open('s1', 'http://localhost/a')
@@ -65,6 +75,17 @@ describe('browserPanelStore', () => {
     expect(useBrowserPanelStore.getState().bySession['s1']!.loading).toBe(false)
     st.navigate('s1', 'http://localhost/b')
     expect(useBrowserPanelStore.getState().bySession['s1']!.loading).toBe(true)
+  })
+
+  it('navigate from a blank session records the first URL as the first history entry', () => {
+    const st = useBrowserPanelStore.getState()
+    st.ensureBlank('s1')
+    st.navigate('s1', 'http://localhost/a')
+    const s = useBrowserPanelStore.getState().bySession['s1']!
+    expect(s.url).toBe('http://localhost/a')
+    expect(s.history).toEqual(['http://localhost/a'])
+    expect(s.historyIndex).toBe(0)
+    expect(s.canGoBack).toBe(false)
   })
 
   it('setNavigated clears loading and updates url/title without growing history', () => {

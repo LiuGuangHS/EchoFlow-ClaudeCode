@@ -45,13 +45,19 @@ export function AttachmentGallery({ attachments, variant = 'message', onRemove }
         {attachments.map((attachment, index) => {
           if (attachment.type === 'image' && (attachment.previewUrl || attachment.data)) {
             const src = attachment.previewUrl || attachment.data || ''
+            const selectionNote = attachment.note?.trim()
+            const hasSelectionNote = !isComposer && !!selectionNote
+            const tooltipId = hasSelectionNote
+              ? `selection-note-${(attachment.id || `${attachment.name}-${index}`).replace(/[^a-zA-Z0-9_-]/g, '-')}`
+              : undefined
             return (
               <div
                 key={attachment.id || `${attachment.name}-${index}`}
-                className={isComposer ? 'group relative' : ''}
+                className={isComposer ? 'group relative' : 'group/selection relative flex max-w-full flex-col items-end gap-1.5'}
               >
                 <button
                   type="button"
+                  aria-label={`Open ${attachment.name}`}
                   onClick={() => setActiveImageIndex(images.findIndex((image) => image.src === src))}
                   className={
                     isComposer
@@ -69,6 +75,46 @@ export function AttachmentGallery({ attachments, variant = 'message', onRemove }
                     }
                   />
                 </button>
+                {hasSelectionNote && (
+                  <>
+                    <span
+                      aria-describedby={tooltipId}
+                      aria-label={`Selection note: ${selectionNote}`}
+                      title={selectionNote}
+                      tabIndex={0}
+                      className={[
+                        'inline-flex h-7 max-w-[260px] items-center gap-1.5 rounded-full border',
+                        'border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-2.5',
+                        'text-[12px] font-medium leading-none text-[var(--color-text-primary)] shadow-[0_1px_2px_rgba(0,0,0,0.04)]',
+                        'transition-colors hover:border-[var(--color-brand)]/45 hover:bg-[var(--color-surface-container)]',
+                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] focus-visible:ring-offset-2',
+                      ].join(' ')}
+                    >
+                      <span className="material-symbols-outlined text-[15px] text-[var(--color-text-tertiary)]">
+                        ads_click
+                      </span>
+                      <span className="min-w-0 truncate">{attachment.name}</span>
+                    </span>
+                    <span
+                      id={tooltipId}
+                      role="tooltip"
+                      className={[
+                        'pointer-events-none invisible absolute bottom-9 right-0 z-30 w-max max-w-[min(340px,calc(100vw-3rem))]',
+                        'translate-y-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-container-high)] px-3 py-2',
+                        'text-left text-[13px] leading-5 text-[var(--color-text-primary)] opacity-0 shadow-[var(--shadow-dropdown)]',
+                        'transition-all duration-150 group-hover/selection:visible group-hover/selection:translate-y-0 group-hover/selection:opacity-100',
+                        'group-focus-within/selection:visible group-focus-within/selection:translate-y-0 group-focus-within/selection:opacity-100',
+                      ].join(' ')}
+                    >
+                      <span className="block text-[11px] font-medium uppercase tracking-wide text-[var(--color-text-tertiary)]">
+                        修改内容
+                      </span>
+                      <span className="mt-1 block whitespace-pre-wrap break-words">
+                        {selectionNote}
+                      </span>
+                    </span>
+                  </>
+                )}
                 {onRemove && attachment.id && (
                   <button
                     type="button"

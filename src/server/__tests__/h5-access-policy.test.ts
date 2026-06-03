@@ -21,12 +21,24 @@ describe('h5AccessPolicy', () => {
     expect(isLoopbackHost('192.168.0.20')).toBe(false)
   })
 
-  test('keeps Tauri WebView requests to loopback tokenless', () => {
-    const request = req('http://127.0.0.1:3456/api/status', {
-      headers: { Origin: 'http://tauri.localhost' },
-    })
-    expect(classifyH5Request(request, new URL(request.url), localContext)).toBe('local-trusted')
-    expect(shouldRequireH5Token({ request, url: new URL(request.url), h5Enabled: true, context: localContext })).toBe(false)
+  test('keeps Electron desktop WebView requests to loopback tokenless', () => {
+    for (const origin of ['file://']) {
+      const request = req('http://127.0.0.1:3456/api/status', {
+        headers: { Origin: origin },
+      })
+      expect(classifyH5Request(request, new URL(request.url), localContext)).toBe('local-trusted')
+      expect(shouldRequireH5Token({ request, url: new URL(request.url), h5Enabled: true, context: localContext })).toBe(false)
+    }
+  })
+
+  test('does not keep retired Tauri origins trusted after Electron replacement', () => {
+    for (const origin of ['http://tauri.localhost', 'https://tauri.localhost', 'tauri://localhost']) {
+      const request = req('http://127.0.0.1:3456/api/status', {
+        headers: { Origin: origin },
+      })
+      expect(classifyH5Request(request, new URL(request.url), localContext)).toBe('h5-browser')
+      expect(shouldRequireH5Token({ request, url: new URL(request.url), h5Enabled: true, context: localContext })).toBe(true)
+    }
   })
 
   test('keeps local internal SDK websocket routes tokenless', () => {
@@ -47,9 +59,32 @@ describe('h5AccessPolicy', () => {
     expect(shouldRequireH5Token({ request, url: new URL(request.url), h5Enabled: true, context: localContext })).toBe(false)
   })
 
-  test('does not trust loopback adapter requests from non-local browser origins', () => {
+  test('does not trust loopback browser origins for H5 capability routes', () => {
+    for (const pathname of [
+      '/api/status',
+      '/proxy/openai/v1/chat/completions',
+      '/ws/session-1',
+      '/local-file/Users/alice/report.html',
+      '/preview-fs/session-1/index.html',
+    ]) {
+      const request = req(`http://127.0.0.1:3456${pathname}`, {
+        headers: { Origin: 'http://localhost:5173' },
+      })
+      expect(classifyH5Request(request, new URL(request.url), localContext)).toBe('h5-browser')
+      expect(shouldRequireH5Token({ request, url: new URL(request.url), h5Enabled: true, context: localContext })).toBe(true)
+      expect(shouldBlockDisabledH5Access({
+        request,
+        url: new URL(request.url),
+        h5Enabled: false,
+        explicitAuthRequired: false,
+        context: localContext,
+      })).toBe(true)
+    }
+  })
+
+  test('does not trust adapter requests from browser origins', () => {
     const request = req('http://127.0.0.1:3456/api/adapters', {
-      headers: { Origin: 'https://blocked.example.com' },
+      headers: { Origin: 'http://localhost:5173' },
     })
     expect(classifyH5Request(request, new URL(request.url), localContext)).toBe('h5-browser')
     expect(shouldRequireH5Token({ request, url: new URL(request.url), h5Enabled: true, context: localContext })).toBe(true)
@@ -70,7 +105,7 @@ describe('h5AccessPolicy', () => {
   })
 
   test('keeps local desktop chat websocket routes tokenless', () => {
-    for (const init of [{}, { headers: { Origin: 'http://tauri.localhost' } }]) {
+    for (const init of [{}, { headers: { Origin: 'file://' } }]) {
       const request = req('http://127.0.0.1:3456/ws/session-1', init)
       expect(classifyH5Request(request, new URL(request.url), localContext)).toBe('local-trusted')
       expect(shouldRequireH5Token({ request, url: new URL(request.url), h5Enabled: true, context: localContext })).toBe(false)
@@ -83,6 +118,8 @@ describe('h5AccessPolicy', () => {
       '/api/mcp',
       '/api/plugins',
       '/api/agents',
+      '/local-file/Users/alice/report.html',
+      '/preview-fs/session-1/index.html',
       '/proxy/openai/v1/chat/completions',
       '/ws/session-1',
     ]) {
@@ -100,6 +137,8 @@ describe('h5AccessPolicy', () => {
       '/api/mcp',
       '/api/plugins',
       '/api/agents',
+      '/local-file/Users/alice/report.html',
+      '/preview-fs/session-1/index.html',
       '/proxy/openai/v1/chat/completions',
       '/ws/session-1',
       '/sdk/session-1',
@@ -117,8 +156,27 @@ describe('h5AccessPolicy', () => {
     }
   })
 
-  test('keeps local capability routes and static bootstrap routes available while H5 access is disabled', () => {
-    for (const pathname of ['/api/status', '/proxy/openai/v1/chat/completions', '/ws/session-1', '/sdk/session-1']) {
+  test('keeps local non-filesystem capability routes and static bootstrap routes available while H5 access is disabled', () => {
+    for (const pathname of [
+      '/api/status',
+      '/proxy/openai/v1/chat/completions',
+      '/ws/session-1',
+      '/sdk/session-1',
+    ]) {
+      const request = req(`http://127.0.0.1:3456${pathname}`)
+      expect(shouldBlockDisabledH5Access({
+        request,
+        url: new URL(request.url),
+        h5Enabled: false,
+        explicitAuthRequired: false,
+        context: localContext,
+      })).toBe(false)
+    }
+
+    for (const pathname of [
+      '/local-file/Users/alice/report.html',
+      '/preview-fs/session-1/index.html',
+    ]) {
       const request = req(`http://127.0.0.1:3456${pathname}`)
       expect(shouldBlockDisabledH5Access({
         request,

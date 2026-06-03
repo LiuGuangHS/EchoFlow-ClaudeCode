@@ -8,6 +8,7 @@ import {
 } from '../api/desktopUiPreferences'
 import { type Locale, useTranslation } from '../i18n'
 import { useSettingsStore } from '../stores/settingsStore'
+import { publicAssetPath } from '../lib/publicAsset'
 
 type HeatmapDay = {
   date: string
@@ -57,6 +58,7 @@ const DEFAULT_PROFILE: DesktopProfilePreferences = {
   avatarFile: null,
   avatarUpdatedAt: null,
 }
+const DEFAULT_AVATAR_SRC = publicAssetPath('app-icon.png')
 
 function localDateKey(date: Date) {
   const year = date.getFullYear()
@@ -489,7 +491,7 @@ export function ActivitySettings() {
       detail: formatSessionCount(last30Usage.sessions, t),
     },
   ]
-  const avatarSrc = profile.avatarFile ? getProfileAvatarUrl(profile.avatarUpdatedAt) : '/app-icon.png'
+  const avatarSrc = profile.avatarFile ? getProfileAvatarUrl(profile.avatarUpdatedAt) : DEFAULT_AVATAR_SRC
   const avatarClassName = profile.avatarFile
     ? 'h-full w-full object-cover'
     : 'h-full w-full scale-[1.28] object-contain transition-transform'
@@ -568,18 +570,18 @@ export function ActivitySettings() {
             alt={`${profile.displayName} avatar`}
             className={avatarClassName}
             onError={(event) => {
-              event.currentTarget.src = '/app-icon.png'
+              event.currentTarget.src = DEFAULT_AVATAR_SRC
               event.currentTarget.className = 'h-full w-full scale-[1.28] object-contain transition-transform'
             }}
           />
         </div>
-        <div className="mt-6 flex max-w-full items-center justify-center gap-2">
+        <div className="group/activity-profile mt-6 flex max-w-full items-center justify-center gap-2">
           <h1 className="max-w-[min(720px,calc(100%-2.25rem))] truncate text-4xl font-semibold tracking-tight text-[var(--color-text-primary)] sm:text-[44px]">{profile.displayName}</h1>
           <button
             type="button"
             aria-label={t('settings.activity.editProfile')}
             title={t('settings.activity.editProfile')}
-            className="mt-1 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--color-text-tertiary)] transition-[background-color,color,transform] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-brand)] focus:ring-offset-2 focus:ring-offset-[var(--color-surface)] active:translate-y-[1px] disabled:opacity-50"
+            className="mt-1 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--color-text-tertiary)] opacity-0 transition-[background-color,color,opacity,transform] group-hover/activity-profile:opacity-100 hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-brand)] focus:ring-offset-2 focus:ring-offset-[var(--color-surface)] focus-visible:opacity-100 active:translate-y-[1px] disabled:pointer-events-none disabled:opacity-0"
             onClick={() => {
               setIsEditingProfile(true)
               setDraftDisplayName(profile.displayName)
@@ -606,26 +608,58 @@ export function ActivitySettings() {
         {profileError && !isEditingProfile && <div className="mt-3 text-xs text-[var(--color-error)]">{profileError}</div>}
       </section>
 
-      <section className="mx-auto mt-8 overflow-hidden rounded-[18px] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)]">
+      <section className="activity-summary-panel mx-auto mt-8 overflow-hidden rounded-[18px] border border-[var(--color-border)] bg-[var(--color-border)] p-px shadow-[0_18px_45px_-38px_rgba(15,23,42,0.65)]">
         {isLoading ? (
-          <div className="grid gap-0 sm:grid-cols-2 xl:grid-cols-5">
+          <div className="activity-summary-grid grid gap-px">
             {Array.from({ length: 5 }).map((_, index) => (
-              <div key={index} className="h-[88px] animate-pulse border-t border-[var(--color-border)] bg-[var(--color-surface)] sm:border-l sm:border-t-0 first:sm:border-l-0" />
+              <div
+                key={index}
+                className={`activity-summary-metric min-h-[112px] animate-pulse bg-[var(--color-surface)] px-5 py-4 ${
+                  index === 0 ? 'activity-summary-metric-primary' : ''
+                }`}
+              >
+                <div className="h-3 w-20 rounded bg-[var(--color-surface-container)]" />
+                <div className="mt-6 h-7 w-24 rounded bg-[var(--color-surface-container)]" />
+                <div className="mt-3 h-3 w-16 rounded bg-[var(--color-surface-container)]" />
+              </div>
             ))}
           </div>
         ) : (
-          <div className="grid gap-0 sm:grid-cols-2 xl:grid-cols-5">
-            {metrics.map((metric, index) => (
-              <div
-                key={metric.label}
-                className="min-w-0 border-t border-[var(--color-border)] px-5 py-5 text-center opacity-0 [animation:activity-reveal_420ms_cubic-bezier(0.16,1,0.3,1)_forwards] sm:border-l sm:border-t-0 first:sm:border-l-0"
-                style={{ animationDelay: `${index * 45}ms` }}
-              >
-                <div className="truncate text-2xl font-semibold tracking-tight text-[var(--color-text-primary)]">{metric.value}</div>
-                <div className="mt-1 truncate text-sm font-semibold text-[var(--color-text-secondary)]">{metric.label}</div>
-                {metric.detail && <div className="mt-0.5 truncate text-xs text-[var(--color-text-tertiary)]">{metric.detail}</div>}
-              </div>
-            ))}
+          <div className="activity-summary-grid grid gap-px">
+            {metrics.map((metric, index) => {
+              const isPrimary = index === 0
+              return (
+                <div
+                  key={metric.label}
+                  className={`activity-summary-metric min-w-0 bg-[var(--color-surface-container-lowest)] px-5 py-4 text-left opacity-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.48)] [animation:activity-reveal_420ms_cubic-bezier(0.16,1,0.3,1)_forwards] ${
+                    isPrimary ? 'activity-summary-metric-primary' : ''
+                  }`}
+                  style={{ animationDelay: `${index * 45}ms` }}
+                >
+                  <div className="flex min-h-[104px] flex-col justify-between gap-4">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span
+                        className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                          isPrimary ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-text-tertiary)] opacity-45'
+                        }`}
+                        aria-hidden="true"
+                      />
+                      <div className="min-w-0 truncate text-[13px] font-semibold text-[var(--color-text-secondary)]">
+                        {metric.label}
+                      </div>
+                    </div>
+                    <div className="min-w-0">
+                      <div className={`activity-summary-value max-w-full font-semibold leading-[1.08] tracking-tight text-[var(--color-text-primary)] tabular-nums ${
+                        isPrimary ? 'text-[32px] lg:text-[26px]' : 'text-[28px] lg:text-[26px]'
+                      }`}>
+                        {metric.value}
+                      </div>
+                      {metric.detail && <div className="mt-2 truncate text-sm text-[var(--color-text-tertiary)]">{metric.detail}</div>}
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
           </div>
         )}
       </section>

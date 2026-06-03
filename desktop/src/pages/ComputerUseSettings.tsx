@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { computerUseApi, type ComputerUseStatus, type SetupResult, type InstalledApp, type AuthorizedApp } from '../api/computerUse'
 import { useTranslation } from '../i18n'
+import { getDesktopHost } from '../lib/desktopHost'
 
 type CheckState = 'loading' | 'ready' | 'error'
 const PYTHON_DOWNLOAD_URLS: Record<string, string> = {
@@ -36,9 +37,9 @@ async function openSystemSettings(pane: 'Privacy_ScreenCapture' | 'Privacy_Acces
 }
 
 async function openExternalUrl(url: string) {
+  const host = getDesktopHost()
   try {
-    const { open } = await import('@tauri-apps/plugin-shell')
-    await open(url)
+    await host.shell.open(url)
   } catch {
     window.open(url, '_blank', 'noopener,noreferrer')
   }
@@ -215,9 +216,13 @@ export function ComputerUseSettings() {
   }
 
   const choosePythonPath = async () => {
+    const host = getDesktopHost()
+    if (!host.capabilities.dialogs) {
+      setPythonPathMessage(t('settings.computerUse.pythonPathDialogFailed'))
+      return
+    }
     try {
-      const { open } = await import('@tauri-apps/plugin-dialog')
-      const selected = await open({
+      const selected = await host.dialogs.open({
         multiple: false,
         directory: false,
         title: t('settings.computerUse.pythonPathDialogTitle'),

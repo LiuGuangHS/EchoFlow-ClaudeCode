@@ -14,6 +14,7 @@ export const en = {
   'common.enable': 'Enable',
   'common.disable': 'Disable',
   'common.active': 'ACTIVE',
+  'common.error': 'Error',
   'common.copyFailed': 'Copy failed.',
 
   // ─── Sidebar ──────────────────────────────────────
@@ -95,7 +96,6 @@ export const en = {
   'openWith.title': 'Open with',
   'openWith.inAppBrowser': 'In-app browser',
   'openWith.systemBrowser': 'System browser',
-  'openWith.systemDefault': 'Open with system default',
   'openWith.workspacePreview': 'Workspace preview',
   'openWith.openInTarget': 'Open in {target}',
   'openWith.revealInTarget': 'Reveal in {target}',
@@ -112,7 +112,6 @@ export const en = {
   'assistantOutputs.kind.localhost': 'Localhost',
   'assistantOutputs.moreOutputs': '+{count} more',
   'assistantOutputs.open': 'Open',
-  'assistantOutputs.copy': 'Copy path',
 
   // ─── Workspace Panel ───────────────────────────────
   'workspace.changedFiles': 'Changed files',
@@ -993,7 +992,7 @@ export const en = {
   'settings.general.networkProxyModeManual': 'Manual proxy',
   'settings.general.networkProxyModeManualDescription': 'Use the HTTP or HTTPS proxy URL entered below.',
   'settings.general.networkProxyUrl': 'Proxy URL',
-  'settings.general.networkProxyUrlHint': 'HTTP and HTTPS proxy URLs are supported, for example http://127.0.0.1:7890.',
+  'settings.general.networkProxyUrlHint': 'HTTP and HTTPS proxy URLs are supported. For authenticated proxies, use http://user:password@127.0.0.1:7890; the URL is saved with network settings.',
   'settings.general.networkProxyUrlInvalid': 'Enter an HTTP or HTTPS proxy URL.',
   'settings.general.networkProxyUrlRequired': 'Enter a proxy URL.',
   'settings.general.networkTimeout': 'AI request timeout',
@@ -1636,6 +1635,16 @@ export const en = {
   'error.NOT_FOUND': 'Resource not found.',
   'error.INTERNAL_ERROR': 'Internal server error.',
 
+  // ─── Business Errors ──────────────────────────────────────
+  'businessError.pdf_too_large': 'The PDF is too large for the selected model. Convert it to text or use a smaller PDF.',
+  'businessError.pdf_password_protected': 'The PDF is password protected. Unlock or convert it before sending it again.',
+  'businessError.pdf_invalid': 'The PDF file is not valid. Convert it to text or send a different file.',
+  'businessError.image_too_large': 'The image is too large for the selected model. Resize it or send a smaller image.',
+  'businessError.image_unsupported': 'This model does not support images. Continue with text, or switch to a vision-capable model and send the image again.',
+  'businessError.request_too_large': 'The request is too large for the selected model. Remove large files or retry with a smaller message.',
+  'businessError.prompt_too_long': 'The prompt is too long for the selected model. Compact the conversation or retry with less context.',
+  'businessError.auto_mode_unavailable': 'Auto mode is unavailable for your current plan.',
+
   // ─── Server Status Verbs ──────────────────────────────────────
   'serverVerb.Thinking': 'Thinking',
   'serverVerb.Compacting conversation': 'Compacting context',
@@ -1660,6 +1669,7 @@ export const en = {
   'tabs.closeConfirmMessage': 'This session is still running. What would you like to do?',
   'tabs.closeConfirmKeep': 'Keep Running',
   // ─── Slash Command Descriptions ──────────────────────────────────────
+  'slashCmd.agent.description': 'Run a prompt with a selected Agent',
   'slashCmd.mcp.description': 'Open available MCP tools for the current chat context',
   'slashCmd.skills.description': 'Browse user-invocable skills for the current chat context',
   'slashCmd.help.description': 'Show available desktop and agent commands',

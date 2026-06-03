@@ -23,6 +23,7 @@ import {
   logEvent,
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
 } from 'src/services/analytics/index.js'
+import { BUSINESS_ERROR_CODES } from './constants/businessErrors.js'
 import { ImageSizeError } from './utils/imageValidation.js'
 import { ImageResizeError } from './utils/imageResizer.js'
 import { findToolByName, type ToolUseContext } from './Tool.js'
@@ -643,6 +644,7 @@ async function* queryLoop(
         yield createAssistantAPIErrorMessage({
           content: PROMPT_TOO_LONG_ERROR_MESSAGE,
           error: 'invalid_request',
+          businessErrorCode: BUSINESS_ERROR_CODES.PROMPT_TOO_LONG,
         })
         return { reason: 'blocking_limit' }
       }
@@ -974,6 +976,7 @@ async function* queryLoop(
       ) {
         yield createAssistantAPIErrorMessage({
           content: error.message,
+          businessErrorCode: BUSINESS_ERROR_CODES.IMAGE_TOO_LARGE,
         })
         return { reason: 'image_error' }
       }

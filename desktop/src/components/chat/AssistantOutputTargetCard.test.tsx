@@ -93,12 +93,9 @@ describe('AssistantOutputTargetCard', () => {
     expect(openBrowser).toHaveBeenCalledWith('s1', 'http://localhost:5173/')
   })
 
-  it('copies the normalized path when Copy is clicked', () => {
-    const writeText = vi.fn().mockResolvedValue(undefined)
-    Object.assign(navigator, { clipboard: { writeText } })
+  it('does not render a copy button for output target cards', () => {
     render(<AssistantOutputTargetCard target={markdownTarget} sessionId="s1" />)
-    fireEvent.click(screen.getByLabelText('assistantOutputs.copy'))
-    expect(writeText).toHaveBeenCalledWith('docs/readme.md')
+    expect(screen.queryByLabelText('assistantOutputs.copy')).not.toBeInTheDocument()
   })
 
   it('opens the open-with menu with URL items for a localhost target', async () => {

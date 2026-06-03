@@ -84,7 +84,7 @@ export type ServerMessage =
       errorType?: string
       errorMessage?: string
     }
-  | { type: 'error'; message: string; code: string; retryable?: boolean }
+  | { type: 'error'; message: string; code: string; retryable?: boolean; businessErrorCode?: string }
   | { type: 'system_notification'; subtype: string; message?: string; data?: unknown }
   | { type: 'pong' }
   | { type: 'team_update'; teamName: string; members: TeamMemberStatus[] }
@@ -290,5 +290,5 @@ export type UIMessage =
       description?: string
       timestamp: number
     }
-  | { id: string; type: 'error'; message: string; code: string; timestamp: number }
+  | { id: string; type: 'error'; message: string; code: string; businessErrorCode?: string; timestamp: number }
   | { id: string; type: 'task_summary'; tasks: TaskSummaryItem[]; timestamp: number }

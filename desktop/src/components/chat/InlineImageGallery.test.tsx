@@ -64,6 +64,26 @@ describe('InlineImageGallery', () => {
     ])
   })
 
+  it('scopes image hover overlays to each image tile', () => {
+    render(
+      <div className="group">
+        <InlineImageGallery
+          text={'abs /Users/me/pics/photo.png and rel outputs/b/chart.png'}
+          sessionId="s1"
+          workDir="/w"
+        />
+      </div>,
+    )
+
+    const firstTile = screen.getByRole('button', { name: /photo\.png/i })
+    expect(firstTile).toHaveClass('group/image')
+    expect(firstTile).not.toHaveClass('group')
+
+    const overlay = firstTile.querySelector('.group-hover\\/image\\:opacity-100')
+    expect(overlay).not.toBeNull()
+    expect(firstTile.querySelector('.group-hover\\:opacity-100')).toBeNull()
+  })
+
   it('does not render an in-workspace absolute path twice (dedup by basename)', () => {
     // The absolute path is INSIDE workDir, so extractAssistantOutputTargets also
     // surfaces it as a relative target (frame.png). It must only render once.

@@ -10,7 +10,7 @@ bun run verify
 
 `bun run verify` 会一键检查 policy、desktop、server、adapters、native、docs、quarantine 和 coverage。非 0 退出就说明当前分支还不能提交 PR。
 
-已安装本地 hook 的仓库在 `git push` 前会自动运行快速门禁 `bun run quality:push`；它复用 PR 门禁但默认跳过耗时的 coverage lane，完整覆盖率仍以 `bun run verify` 为准。
+`git push` 不再自动运行本地质量门禁。需要质量检查时请手动运行 `bun run quality:push` 或 `bun run verify`；完整覆盖率仍以 `bun run verify` 为准。
 
 只改了某个模块时可以用窄命令快速迭代：
 
@@ -19,7 +19,7 @@ bun run verify
 | CLI / Server / 工具 | `bun run check:server` |
 | 桌面端 | `bun run check:desktop` |
 | IM Adapter | `bun run check:adapters` |
-| Tauri / 原生 | `bun run check:native` |
+| 桌面 Electron / 原生打包 | `bun run check:native` |
 | 文档 | `bun run check:docs` |
 
 门禁失败时，查看最新质量报告和对应 lane 日志定位问题：
@@ -31,7 +31,7 @@ artifacts/quality-runs/<timestamp>/logs/<lane>.log
 
 ## 2. 桌面端功能必须手工测试
 
-改动涉及 `desktop/` 的 UI、store、API 或 Tauri 原生层时，除了自动门禁外，还必须在真机上做手工测试：
+改动涉及 `desktop/` 的 UI、store、API、Electron host 或 native/packaging 层时，除了自动门禁外，还必须在真机上做手工测试：
 
 - 起本地服务 `SERVER_PORT=3456 bun run src/server/index.ts`
 - 起桌面端 `cd desktop && bun run dev`

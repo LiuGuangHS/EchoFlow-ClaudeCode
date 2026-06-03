@@ -1183,6 +1183,82 @@ describe('chatStore history mapping', () => {
     )
   })
 
+  it('can send a visual selection turn without rendering the full model prompt as user text', () => {
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: {
+          messages: [],
+          chatState: 'idle',
+          connectionState: 'connected',
+          streamingText: '',
+          streamingToolInput: '',
+          activeToolUseId: null,
+          activeToolName: null,
+          activeThinkingId: null,
+          pendingPermission: null,
+          pendingComputerUsePermission: null,
+          tokenUsage: { input_tokens: 0, output_tokens: 0 },
+          elapsedSeconds: 0,
+          statusVerb: '',
+          slashCommands: [],
+          agentTaskNotifications: {},
+          elapsedTimer: null,
+        },
+      },
+    })
+
+    useChatStore.getState().sendMessage(
+      TEST_SESSION_ID,
+      '请根据截图中编号 1 的 <h1> 修改：这个标题更轻一点',
+      [{
+        type: 'image',
+        name: '<h1>',
+        data: 'data:image/png;base64,AAAA',
+        mimeType: 'image/png',
+        note: '这个标题更轻一点',
+      }],
+      {
+        hideDisplayContent: true,
+        displayAttachments: [{
+          type: 'image',
+          name: '<h1>',
+          data: 'data:image/png;base64,AAAA',
+          mimeType: 'image/png',
+          note: '这个标题更轻一点',
+        }],
+      },
+    )
+
+    expect(useChatStore.getState().sessions[TEST_SESSION_ID]?.messages).toMatchObject([
+      {
+        type: 'user_text',
+        content: '',
+        modelContent: '请根据截图中编号 1 的 <h1> 修改：这个标题更轻一点',
+        attachments: [{
+          type: 'image',
+          name: '<h1>',
+          data: 'data:image/png;base64,AAAA',
+          mimeType: 'image/png',
+          note: '这个标题更轻一点',
+        }],
+      },
+    ])
+    expect(sendMock).toHaveBeenCalledWith(
+      TEST_SESSION_ID,
+      {
+        type: 'user_message',
+        content: '请根据截图中编号 1 的 <h1> 修改：这个标题更轻一点',
+        attachments: [{
+          type: 'image',
+          name: '<h1>',
+          data: 'data:image/png;base64,AAAA',
+          mimeType: 'image/png',
+          note: '这个标题更轻一点',
+        }],
+      },
+    )
+  })
+
   it('stores server-materialized attachment prefixes for rewind matching', () => {
     useChatStore.setState({
       sessions: {
@@ -2409,6 +2485,32 @@ describe('chatStore history mapping', () => {
     ])
     expect(session?.messages.some((message) => message.type === 'compact_summary' && message.phase === 'compacting')).toBe(false)
     expect(updateTabStatusMock).toHaveBeenLastCalledWith(TEST_SESSION_ID, 'error')
+  })
+
+  it('preserves business error codes from server error messages', () => {
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession({
+          messages: [],
+          chatState: 'streaming',
+        }),
+      },
+    })
+
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'error',
+      message: 'This model does not support images.',
+      code: 'invalid_request',
+      businessErrorCode: 'image_unsupported',
+    })
+
+    const session = useChatStore.getState().sessions[TEST_SESSION_ID]
+    expect(session?.messages[session.messages.length - 1]).toMatchObject({
+      type: 'error',
+      message: 'This model does not support images.',
+      code: 'invalid_request',
+      businessErrorCode: 'image_unsupported',
+    })
   })
 
   it('removes the transient compacting card when compacting status ends without a boundary', () => {

@@ -2,9 +2,11 @@
 import '@testing-library/jest-dom'
 import { render, fireEvent } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { browserHost } from '../../lib/desktopHost/browserHost'
 
 const openTarget = vi.hoisted(() => vi.fn())
 const shellOpen = vi.hoisted(() => vi.fn().mockResolvedValue(undefined))
+const hostOpenPath = vi.hoisted(() => vi.fn().mockResolvedValue(undefined))
 
 vi.mock('../../stores/openTargetStore', () => ({
   useOpenTargetStore: (sel: (s: unknown) => unknown) =>
@@ -30,22 +32,33 @@ import { WorkspaceFileOpenWith } from './WorkspaceFileOpenWith'
 describe('WorkspaceFileOpenWith', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    window.desktopHost = {
+      ...browserHost,
+      kind: 'electron',
+      isDesktop: true,
+      capabilities: {
+        ...browserHost.capabilities,
+        shell: true,
+      },
+      shell: {
+        ...browserHost.shell,
+        openPath: hostOpenPath,
+      },
+    }
   })
 
-  it('renders an item for the IDE target, the file_manager target, and a system-default item', () => {
+  it('renders only IDE and file-manager items', () => {
     const { getAllByRole } = render(
       <WorkspaceFileOpenWith absolutePath="/w/report.md" />,
     )
 
     const menuItems = getAllByRole('menuitem')
-    // IDE + file_manager + system = 3 items
-    expect(menuItems).toHaveLength(3)
+    expect(menuItems).toHaveLength(2)
 
     const labels = menuItems.map((el) => el.textContent)
     expect(labels.some((l) => l?.includes('VS Code'))).toBe(true)
     expect(labels.some((l) => l?.includes('Finder'))).toBe(true)
-    // system default item uses the 'openWith.systemDefault' key (returned as-is by mock)
-    expect(labels.some((l) => l?.includes('openWith.systemDefault'))).toBe(true)
+    expect(labels.some((l) => l?.includes('openWith.systemDefault'))).toBe(false)
   })
 
   it('clicking the IDE item calls openTarget and onAfterSelect', () => {
@@ -64,26 +77,9 @@ describe('WorkspaceFileOpenWith', () => {
     expect(onAfter).toHaveBeenCalledTimes(1)
   })
 
-  it('clicking the system-default item calls shellOpen and onAfterSelect', async () => {
-    const onAfter = vi.fn()
-    const { getAllByRole } = render(
-      <WorkspaceFileOpenWith absolutePath="/w/report.md" onAfterSelect={onAfter} />,
-    )
-
-    const menuItems = getAllByRole('menuitem')
-    const systemItem = menuItems.find((el) => el.textContent?.includes('openWith.systemDefault'))
-    if (!systemItem) throw new Error('System default menu item not found')
-
-    fireEvent.click(systemItem)
-
-    // onAfterSelect is synchronous (called before the dynamic import chain)
-    expect(onAfter).toHaveBeenCalledTimes(1)
-
-    // Flush the microtask queue for the dynamic import + .then chain
-    for (let i = 0; i < 10; i++) {
-      await Promise.resolve()
-    }
-
-    expect(shellOpen).toHaveBeenCalledWith('/w/report.md')
+  it('does not call shell open from the file open-with menu', () => {
+    render(<WorkspaceFileOpenWith absolutePath="/w/report.md" />)
+    expect(shellOpen).not.toHaveBeenCalled()
+    expect(hostOpenPath).not.toHaveBeenCalled()
   })
 })

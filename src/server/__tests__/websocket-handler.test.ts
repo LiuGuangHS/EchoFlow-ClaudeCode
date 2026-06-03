@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test'
 import type { ServerWebSocket } from 'bun'
 import {
+  __markPrewarmPendingForTests,
   __resetWebSocketHandlerStateForTests,
   closeSessionConnection,
   getActiveSessionIds,
@@ -134,5 +135,31 @@ describe('WebSocket handler session isolation', () => {
 
     expect(setTimeoutSpy).toHaveBeenCalled()
     expect(setTimeoutSpy.mock.calls[0]?.[1]).toBeGreaterThan(30_000)
+  })
+
+  it('does not forward prewarm startup status to a reconnecting client', async () => {
+    const sessionId = `prewarm-reconnect-${crypto.randomUUID()}`
+    const second = makeClientSocket(sessionId)
+    let outputCallback: ((cliMsg: any) => void) | null = null
+
+    __markPrewarmPendingForTests(sessionId)
+    spyOn(conversationService, 'hasSession').mockReturnValue(true)
+    spyOn(conversationService, 'getRecentSdkMessages').mockReturnValue([])
+    spyOn(conversationService, 'onOutput').mockImplementation((_sid, callback) => {
+      outputCallback = callback
+    })
+    spyOn(conversationService, 'removeOutputCallback').mockImplementation(() => {})
+    spyOn(conversationService, 'clearOutputCallbacks').mockImplementation(() => {
+      outputCallback = null
+    })
+
+    handleWebSocket.open(second)
+    outputCallback?.({
+      type: 'stream_event',
+      event: { type: 'message_start' },
+    })
+
+    const secondMessages = second.sent.map((payload) => JSON.parse(payload))
+    expect(secondMessages).not.toContainEqual({ type: 'status', state: 'thinking' })
   })
 })

@@ -7,6 +7,7 @@ import { Dropdown } from '../components/shared/Dropdown'
 import { Input } from '../components/shared/Input'
 import { Button } from '../components/shared/Button'
 import type { DesktopTerminalStartupShell } from '../types/settings'
+import { getDesktopHost } from '../lib/desktopHost'
 import {
   attachTerminalRuntime,
   createLocalTerminalRuntimeId,
@@ -632,9 +633,10 @@ function BashPathSettings({ isTauri }: { isTauri: boolean }) {
 
   const handleBrowse = async () => {
     if (!isTauri) return
+    const host = getDesktopHost()
+    if (!host.capabilities.dialogs) return
     try {
-      const { open } = await import('@tauri-apps/plugin-dialog')
-      const selected = await open({
+      const selected = await host.dialogs.open({
         title: t('settings.terminal.bashPathLabel'),
         multiple: false,
         filters: [{

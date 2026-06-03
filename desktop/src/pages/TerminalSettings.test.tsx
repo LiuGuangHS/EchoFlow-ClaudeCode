@@ -3,6 +3,7 @@ import '@testing-library/jest-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useSettingsStore } from '../stores/settingsStore'
 import { destroyTerminalRuntime } from '../lib/terminalRuntime'
+import { browserHost } from '../lib/desktopHost/browserHost'
 
 const terminalMocks = vi.hoisted(() => {
   const terminalInstance = {
@@ -98,6 +99,7 @@ describe('TerminalSettings', () => {
       shell: '/bin/zsh',
       cwd: '/Users/test',
     })
+    Reflect.deleteProperty(window, 'desktopHost')
     vi.stubGlobal('ResizeObserver', class {
       observe = vi.fn()
       disconnect = vi.fn()
@@ -274,5 +276,39 @@ describe('TerminalSettings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     expect(await screen.findByText('Path does not exist. Select a valid Bash executable.')).toBeInTheDocument()
+  })
+
+  it('selects a Windows bash path through the injected desktop host', async () => {
+    vi.spyOn(navigator, 'platform', 'get').mockReturnValue('Win32')
+    terminalMocks.available = true
+    const open = vi.fn().mockResolvedValue('C:\\Program Files\\Git\\bin\\bash.exe')
+    window.desktopHost = {
+      ...browserHost,
+      kind: 'electron',
+      isDesktop: true,
+      capabilities: {
+        ...browserHost.capabilities,
+        dialogs: true,
+      },
+      dialogs: {
+        ...browserHost.dialogs,
+        open,
+      },
+    }
+
+    render(<TerminalSettings showPreferences />)
+
+    await screen.findByPlaceholderText('Bash Path')
+    fireEvent.click(screen.getByText('folder_open').closest('button')!)
+
+    expect(await screen.findByDisplayValue('C:\\Program Files\\Git\\bin\\bash.exe')).toBeInTheDocument()
+    expect(open).toHaveBeenCalledWith({
+      title: 'Bash Path',
+      multiple: false,
+      filters: [{
+        name: 'Bash Executable',
+        extensions: ['exe', '', 'bat', 'cmd', 'ps1'],
+      }],
+    })
   })
 })

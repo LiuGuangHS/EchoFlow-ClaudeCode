@@ -3,6 +3,7 @@ import type { TranslationKey } from '../../i18n'
 
 /** Map from slash command name to its i18n description key */
 const SLASH_CMD_DESCRIPTION_KEYS: Record<string, TranslationKey> = {
+  agent: 'slashCmd.agent.description',
   mcp: 'slashCmd.mcp.description',
   skills: 'slashCmd.skills.description',
   help: 'slashCmd.help.description',
@@ -53,6 +54,7 @@ export const SLASH_COMMAND_ALIASES = [
 
 /** Static fallback with English descriptions (for non-React contexts) */
 export const FALLBACK_SLASH_COMMANDS: SlashCommandOption[] = [
+  { name: 'agent', description: 'Run a prompt with a selected Agent', argumentHint: '<agent> <prompt>' },
   { name: 'mcp', description: 'Open available MCP tools for the current chat context' },
   { name: 'skills', description: 'Browse user-invocable skills for the current chat context' },
   { name: 'help', description: 'Show available desktop and agent commands' },
@@ -113,6 +115,51 @@ export type SlashCommandOption = {
   name: string
   description: string
   argumentHint?: string
+}
+
+export type AgentSlashCommandSource = {
+  agentType: string
+  description?: string
+  modelDisplay?: string
+  source?: string
+}
+
+export function buildAgentSlashCommands(
+  agents: ReadonlyArray<AgentSlashCommandSource>,
+): SlashCommandOption[] {
+  const seen = new Set<string>()
+  const commands: SlashCommandOption[] = []
+
+  for (const agent of agents) {
+    const agentType = agent.agentType.trim()
+    if (!agentType || seen.has(agentType)) continue
+    seen.add(agentType)
+
+    const details = [agent.modelDisplay, agent.source].filter(Boolean).join(' - ')
+    const description = [
+      agent.description?.trim() || `Run with the ${agentType} Agent`,
+      details ? `(${details})` : '',
+    ].filter(Boolean).join(' ')
+
+    commands.push({
+      name: `agent ${agentType}`,
+      description,
+      argumentHint: '<prompt>',
+    })
+  }
+
+  return commands
+}
+
+export function appendAgentSlashCommands(
+  commands: ReadonlyArray<SlashCommandOption>,
+  agentCommands: ReadonlyArray<SlashCommandOption>,
+): SlashCommandOption[] {
+  const names = new Set(commands.map((command) => command.name))
+  return [
+    ...commands,
+    ...agentCommands.filter((command) => !names.has(command.name)),
+  ]
 }
 
 export type SlashUiAction =

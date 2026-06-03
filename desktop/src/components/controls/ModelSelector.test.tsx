@@ -34,13 +34,98 @@ afterEach(() => {
   useHahaOpenAIOAuthStore.setState(useHahaOpenAIOAuthStore.getInitialState(), true)
 })
 
-// Prevent real API calls from fetchStatus on mount
 beforeEach(() => {
   useHahaOAuthStore.setState({ fetchStatus: async () => {} })
   useHahaOpenAIOAuthStore.setState({ fetchStatus: async () => {} })
 })
 
 describe('ModelSelector', () => {
+  it('does not query official OAuth status when mounted', () => {
+    const fetchClaudeStatus = vi.fn(async () => {})
+    const fetchOpenAIStatus = vi.fn(async () => {})
+    useHahaOAuthStore.setState({ fetchStatus: fetchClaudeStatus })
+    useHahaOpenAIOAuthStore.setState({ fetchStatus: fetchOpenAIStatus })
+    useSettingsStore.setState({
+      locale: 'en',
+      availableModels: MODELS,
+      currentModel: MODELS[0],
+      activeProviderName: 'Provider A',
+    })
+    useProviderStore.setState({
+      providers: [],
+      activeId: 'provider-a',
+      hasLoadedProviders: true,
+      isLoading: true,
+    })
+
+    render(<ModelSelector runtimeKey="session-no-keychain-prompt" />)
+
+    expect(fetchClaudeStatus).not.toHaveBeenCalled()
+    expect(fetchOpenAIStatus).not.toHaveBeenCalled()
+  })
+
+  it('queries official OAuth status once when the runtime dropdown is opened', async () => {
+    const fetchClaudeStatus = vi.fn(async () => {})
+    const fetchOpenAIStatus = vi.fn(async () => {})
+    useHahaOAuthStore.setState({ fetchStatus: fetchClaudeStatus })
+    useHahaOpenAIOAuthStore.setState({ fetchStatus: fetchOpenAIStatus })
+    useSettingsStore.setState({
+      locale: 'en',
+      availableModels: MODELS,
+      currentModel: MODELS[0],
+      activeProviderName: 'Provider A',
+    })
+    useProviderStore.setState({
+      providers: [{
+        id: 'provider-a',
+        presetId: 'custom',
+        name: 'Provider A',
+        apiKey: '***',
+        baseUrl: 'https://api.example.com',
+        apiFormat: 'anthropic',
+        models: {
+          main: 'provider-main',
+          haiku: '',
+          sonnet: '',
+          opus: '',
+        },
+      }],
+      activeId: 'provider-a',
+      hasLoadedProviders: true,
+      isLoading: true,
+    })
+
+    render(<ModelSelector runtimeKey="session-oauth-on-open" />)
+
+    await clickByRole(/alpha/i)
+    await act(async () => {
+      await Promise.resolve()
+    })
+    await clickByRole(/alpha/i)
+
+    expect(fetchClaudeStatus).toHaveBeenCalledTimes(1)
+    expect(fetchOpenAIStatus).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not query official OAuth status for plain model dropdowns', async () => {
+    const fetchClaudeStatus = vi.fn(async () => {})
+    const fetchOpenAIStatus = vi.fn(async () => {})
+    useHahaOAuthStore.setState({ fetchStatus: fetchClaudeStatus })
+    useHahaOpenAIOAuthStore.setState({ fetchStatus: fetchOpenAIStatus })
+    useSettingsStore.setState({
+      locale: 'en',
+      availableModels: MODELS,
+      currentModel: MODELS[0],
+    })
+
+    render(<ModelSelector value="alpha" onChange={vi.fn()} />)
+
+    await clickByRole(/alpha/i)
+
+    expect(fetchClaudeStatus).not.toHaveBeenCalled()
+    expect(fetchOpenAIStatus).not.toHaveBeenCalled()
+  })
+
   it('uses controlled model selection without mutating settings directly', async () => {
     const onChange = vi.fn()
     useSettingsStore.setState({

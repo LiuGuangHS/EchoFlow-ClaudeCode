@@ -7,10 +7,8 @@ describe('corsHeaders', () => {
     expect(corsHeaders('http://localhost:3000')['Access-Control-Allow-Origin']).toBe('http://localhost:3000')
   })
 
-  it('allows tauri webview origins used in production builds', () => {
-    expect(corsHeaders('http://tauri.localhost')['Access-Control-Allow-Origin']).toBe('http://tauri.localhost')
-    expect(corsHeaders('https://tauri.localhost')['Access-Control-Allow-Origin']).toBe('https://tauri.localhost')
-    expect(corsHeaders('tauri://localhost')['Access-Control-Allow-Origin']).toBe('tauri://localhost')
+  it('echoes explicit origins for open H5 responses', () => {
+    expect(corsHeaders('https://example.com')['Access-Control-Allow-Origin']).toBe('https://example.com')
   })
 
   it('allows arbitrary origins while H5 access is open', () => {
@@ -74,7 +72,7 @@ describe('resolveCors', () => {
   })
 
   it('keeps trusted local desktop origins allowed when H5 token mode is active', async () => {
-    for (const origin of ['http://tauri.localhost', 'http://127.0.0.1:5179']) {
+    for (const origin of ['file://']) {
       const result = await resolveCors(origin, 'http://192.168.0.20:3456', {
         h5Enabled: true,
         isOriginAllowed: async () => false,
@@ -83,6 +81,32 @@ describe('resolveCors', () => {
       expect(result.allowed).toBe(true)
       expect(result.rejected).toBe(false)
       expect(result.headers['Access-Control-Allow-Origin']).toBe(origin)
+    }
+  })
+
+  it('does not keep loopback browser origins allowed when H5 token mode is active', async () => {
+    for (const origin of ['http://localhost:5173', 'http://127.0.0.1:5179']) {
+      const result = await resolveCors(origin, 'http://192.168.0.20:3456', {
+        h5Enabled: true,
+        isOriginAllowed: async () => false,
+      })
+
+      expect(result.allowed).toBe(false)
+      expect(result.rejected).toBe(true)
+      expect(result.headers['Access-Control-Allow-Origin']).toBeUndefined()
+    }
+  })
+
+  it('does not keep retired Tauri origins allowed when H5 token mode is active', async () => {
+    for (const origin of ['http://tauri.localhost', 'https://tauri.localhost', 'tauri://localhost']) {
+      const result = await resolveCors(origin, 'http://192.168.0.20:3456', {
+        h5Enabled: true,
+        isOriginAllowed: async () => false,
+      })
+
+      expect(result.allowed).toBe(false)
+      expect(result.rejected).toBe(true)
+      expect(result.headers['Access-Control-Allow-Origin']).toBeUndefined()
     }
   })
 

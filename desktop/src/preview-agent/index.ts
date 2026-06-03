@@ -8,8 +8,8 @@ import { createEditBubble } from './editBubble'
   ;(window as unknown as { __PREVIEW_AGENT__?: boolean }).__PREVIEW_AGENT__ = true
 
   const postToHost = (raw: string) => {
-    const internals = (window as unknown as { __TAURI_INTERNALS__?: { invoke?: (c: string, a: unknown) => void } }).__TAURI_INTERNALS__
-    if (internals?.invoke) internals.invoke('preview_message', { raw })
+    const post = (window as unknown as { __DESKTOP_PREVIEW_POST__?: (raw: string) => void }).__DESKTOP_PREVIEW_POST__
+    if (post) post(raw)
     // 回退（M1 证伪 IPC 时启用）：new WebSocket('ws://127.0.0.1:'+PORT+'/preview-agent') ...
   }
 

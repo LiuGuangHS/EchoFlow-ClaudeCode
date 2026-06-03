@@ -34,7 +34,7 @@ export function AdapterSettings() {
   const [activeIm, setActiveIm] = useState<ImTab>('feishu')
 
   // Server —— serverUrl 不再暴露在 UI 里（见下方 Server URL 注释），
-  // 桌面端用 Tauri env var 注入动态端口。
+  // 桌面端用 sidecar env var 注入动态端口。
   const [defaultProjectDir, setDefaultProjectDir] = useState('')
 
   // Telegram
@@ -468,7 +468,7 @@ export function AdapterSettings() {
         </div>
       </section>
 
-      {/* Server URL —— 之前是个手填字段，但桌面端 Tauri 启动 adapter sidecar
+      {/* Server URL —— 之前是个手填字段，但桌面端启动 adapter sidecar
           时已经把 server 的动态端口通过 ADAPTER_SERVER_URL env var 注进去了，
           loadConfig() 里 env 优先级高于这里的 file value，所以这个字段在桌面
           运行时完全不会被读到。用户也根本不知道该填什么端口（每次启动随机）。

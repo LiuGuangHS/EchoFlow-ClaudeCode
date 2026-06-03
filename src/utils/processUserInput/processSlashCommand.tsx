@@ -265,6 +265,8 @@ async function executeForkedSlashCommand(command: CommandBase & PromptCommand, a
         }
       }
     }
+  } catch (err) {
+    throw err;
   } finally {
     // Clear the progress display
     setToolJSX(null);
@@ -306,6 +308,7 @@ export function looksLikeCommand(commandName: string): boolean {
   // If it contains other characters, it's probably a file path or other input
   return !/[^a-zA-Z0-9:\-_]/.test(commandName);
 }
+
 export async function processSlashCommand(inputString: string, precedingInputBlocks: ContentBlockParam[], imageContentBlocks: ContentBlockParam[], attachmentMessages: AttachmentMessage[], context: ProcessUserInputContext, setToolJSX: SetToolJSXFn, uuid?: string, isAlreadyProcessing?: boolean, canUseTool?: CanUseToolFn): Promise<ProcessUserInputBaseResult> {
   const parsed = parseSlashCommand(inputString);
   if (!parsed) {
@@ -739,6 +742,18 @@ async function getMessagesForSlashCommand(commandName: string, args: string, set
                   })
                 }), createUserInterruptionMessage({
                   toolUse: false
+                })],
+                shouldQuery: false,
+                command
+              };
+            }
+            if (e instanceof MalformedCommandError) {
+              return {
+                messages: [createUserMessage({
+                  content: prepareUserContent({
+                    inputString: e.message,
+                    precedingInputBlocks
+                  })
                 })],
                 shouldQuery: false,
                 command

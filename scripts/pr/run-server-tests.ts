@@ -6,7 +6,7 @@ import { loadQuarantineManifest, quarantinedPathSet } from '../quality-gate/quar
 
 const root = process.cwd()
 const roots = ['src/server', 'src/tools', 'src/utils']
-const excludedFiles = quarantinedPathSet(loadQuarantineManifest(undefined, { enforceReviewDate: true }))
+const excludedFiles = quarantinedPathSet(loadQuarantineManifest())
 
 function normalize(path: string) {
   return relative(root, path).split(sep).join('/')

@@ -7,6 +7,7 @@ import { OpenWithMenu } from '../common/OpenWithMenu'
 import { buildOpenWithItems, describeFileType, isPreviewableChangedFile, type OpenWithItem } from '../../lib/openWithItems'
 import { openWithContextForWorkspaceFile } from '../../lib/openWithContextForHref'
 import { getServerBaseUrl } from '../../lib/desktopRuntime'
+import { getDesktopHost } from '../../lib/desktopHost'
 import { useOpenTargetStore } from '../../stores/openTargetStore'
 import { useBrowserPanelStore } from '../../stores/browserPanelStore'
 import { useWorkspacePanelStore } from '../../stores/workspacePanelStore'
@@ -42,10 +43,12 @@ export function CurrentTurnChangeCard({
   const [showAllFiles, setShowAllFiles] = useState(false)
 
   const files = useMemo<ChangedFileEntry[]>(
-    () => checkpoint.code.filesChanged.map((filePath) => ({
-      apiPath: filePath,
-      displayPath: relativizeWorkspacePath(filePath, workDir),
-    })),
+    () => checkpoint.code.filesChanged
+      .map((filePath) => ({
+        apiPath: filePath,
+        displayPath: relativizeWorkspacePath(filePath, workDir),
+      }))
+      .sort((a, b) => Number(isPreviewableChangedFile(b.displayPath)) - Number(isPreviewableChangedFile(a.displayPath))),
     [checkpoint.code.filesChanged, workDir],
   )
 
@@ -81,7 +84,7 @@ export function CurrentTurnChangeCard({
       })
       const items = buildOpenWithItems(ctx, targets, {
         openInAppBrowser: (url) => useBrowserPanelStore.getState().open(sessionId, url),
-        openSystem: (p) => { void import('@tauri-apps/plugin-shell').then((m) => m.open(p)).catch(() => {}) },
+        openSystem: (p) => { void getDesktopHost().shell.openPath(p).catch(() => {}) },
         openWorkspacePreview: (rel) => { void useWorkspacePanelStore.getState().openPreview(sessionId, rel, 'file') },
         openTarget: (id, abs) => { void useOpenTargetStore.getState().openTarget(id, abs) },
         t: (k, v) => t(k as TranslationKey, v),
@@ -157,7 +160,9 @@ export function CurrentTurnChangeCard({
                   <span className="block truncate text-sm font-medium text-[var(--color-text-primary)]">{fileName}</span>
                   <span className="block truncate text-xs text-[var(--color-text-tertiary)]">{`${t(typeInfo.categoryKey as Parameters<typeof t>[0])} · ${typeInfo.ext}`}</span>
                 </span>
-                <span className="material-symbols-outlined shrink-0 text-[18px] text-[var(--color-text-tertiary)]">chevron_right</span>
+                {!previewable && (
+                  <span className="material-symbols-outlined shrink-0 text-[18px] text-[var(--color-text-tertiary)]">chevron_right</span>
+                )}
               </button>
               {previewable && (
                 <button

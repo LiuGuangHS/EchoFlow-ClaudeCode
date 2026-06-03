@@ -89,38 +89,34 @@ Agent 应按这个顺序处理失败：
 - 不要为了过门禁随便降低 `coverage-baseline.json` 或 `coverage-thresholds.json`；确实要改时必须有 `allow-coverage-baseline-change` 和原因。历史低覆盖区域是技术债，新 PR 至少要让触达区域更好。
 - PR 描述必须写清楚：改了哪些文件、补了哪些测试、coverage 报告路径、E2E/live 报告路径或 blocker、剩余风险。
 
-## 本机 Push 前门禁
+## 本机 Push 前提醒
 
-Git hook 不能提交到远端自动生效，所以每个 clone 需要安装一次：
+push 不再自动运行本地质量门禁。需要质量检查时，请手动运行：
+
+```bash
+bun run quality:push
+```
+
+`bun run quality:push` 复用 PR gate 的 impact/policy/路径检查，但默认跳过耗时的 coverage lane；完整覆盖率仍保留在 `bun run verify`、`bun run quality:pr` 和 CI。
+
+仍然可以安装本机 pre-push hook，但它只打印非阻塞提醒，不会卡住 `git push`：
 
 ```bash
 bun run hooks:install
 ```
 
-安装后，每次 `git push` 都会先运行快速本地门禁（内部是 `bun run quality:push`）。它复用 PR gate 的 impact/policy/路径检查，但默认跳过耗时的 coverage lane；完整覆盖率仍保留在 `bun run verify`、`bun run quality:pr` 和 CI。如果单元测试、文档/native/adapter 等按路径选中的快速门禁失败，push 会被本机 hook 阻断。
-
-维护者或有模型额度的贡献者可以把真实 provider smoke 和桌面 agent-browser smoke 也纳入 push 前门禁：
+维护者或有模型额度的贡献者可以手动运行真实 provider smoke 和桌面 agent-browser smoke：
 
 ```bash
 bun run quality:providers
-bun run hooks:install -- --live-provider-model minimax:main:minimax-main
+bun run quality:smoke -- --provider-model minimax:main:minimax-main
 ```
 
-需要每次 push 前跑完整 live baseline 时使用：
+需要完整 live baseline 时使用：
 
 ```bash
-bun run hooks:install -- --live-provider-model minimax:main:minimax-main --live-mode baseline
+bun run quality:gate --mode baseline --allow-live --provider-model minimax:main:minimax-main
 ```
-
-这些选项写入本机 `.git/config` 的 `quality.prePush*` 配置，不会提交 provider selector 或密钥。`smoke` 模式覆盖真实 provider 连通性和桌面 UI 聊天 smoke；`baseline` 模式会额外跑全部真实 Coding Agent baseline case。
-
-维护者级 override 也必须显式写入本机配置，hook 才会传给 `quality:push`：
-
-```bash
-bun run hooks:install -- --allow-cli-core-change --allow-coverage-baseline-change
-```
-
-这只影响当前 clone，不会提交到仓库；PR 侧仍然需要对应 label。
 
 ## PR CI 合并门禁
 
@@ -136,7 +132,7 @@ bun run hooks:install -- --allow-cli-core-change --allow-coverage-baseline-chang
 bun run check:server      # 服务端 API、WebSocket、provider、会话等测试
 bun run check:desktop     # 桌面端 lint、Vitest、生产构建
 bun run check:adapters    # IM adapter 测试
-bun run check:native      # 桌面 sidecar 与 Tauri native 检查
+bun run check:native      # 桌面 sidecar、Electron host 与 package-smoke 检查
 bun run check:docs        # 文档构建，使用 npm ci + docs:build
 bun run check:quarantine  # quarantine owner、退出条件和复审日期
 bun run check:coverage    # root、desktop、adapters 覆盖率报告和 ratchet 门禁
@@ -226,7 +222,7 @@ bun run quality:gate --mode baseline --allow-live
 bun run quality:gate --mode release --allow-live --provider-model <selector>:main
 ```
 
-release 模式会组合 PR checks、baseline catalog、live baseline、desktop smoke 和 native checks。发版报告同样写入 `artifacts/quality-runs/<timestamp>/`。线上 release workflow 在打包矩阵前会先跑 `quality:gate --mode pr` 作为非 live 预检，并上传 `release-quality-gate` artifact；真实 live release gate 仍需要维护者用可用 provider 显式运行。
+release 模式会组合 PR checks、baseline catalog、live baseline、native checks，并用当前平台 canonical release artifact 跑 `package-smoke --package-kind release`。发版报告同样写入 `artifacts/quality-runs/<timestamp>/`。线上 release workflow 在打包矩阵前会先跑 `bun run verify` 作为非 live 预检；真实 live release gate 仍需要维护者用可用 provider 显式运行。
 
 release 模式下 live lane 不允许静默跳过。缺少 provider、真实模型额度或外部账号时，门禁会失败，并要求在发版记录里明确 blocker。
 

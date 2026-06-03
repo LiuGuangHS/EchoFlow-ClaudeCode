@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   getMessages: vi.fn(),
   getGitInfo: vi.fn(),
   getSlashCommands: vi.fn(),
+  listAgents: vi.fn(),
   getRepositoryContext: vi.fn(),
   getRecentProjects: vi.fn(),
   search: vi.fn(),
@@ -37,6 +38,12 @@ vi.mock('../../api/sessions', () => ({
   },
 }))
 
+vi.mock('../../api/agents', () => ({
+  agentsApi: {
+    list: mocks.listAgents,
+  },
+}))
+
 vi.mock('../../api/filesystem', () => ({
   filesystemApi: {
     search: mocks.search,
@@ -52,19 +59,6 @@ vi.mock('../../api/websocket', () => ({
     clearHandlers: vi.fn(),
     send: mocks.wsSend,
   },
-}))
-
-vi.mock('@tauri-apps/plugin-dialog', () => ({
-  open: mocks.dialogOpen,
-}))
-
-vi.mock('@tauri-apps/api/webview', () => ({
-  getCurrentWebview: () => ({
-    onDragDropEvent: vi.fn(async (handler: (event: { payload: unknown }) => void) => {
-      mocks.webviewDragHandlers.push(handler)
-      return mocks.webviewUnlisten
-    }),
-  }),
 }))
 
 vi.mock('../../hooks/useMobileViewport', () => ({
@@ -85,6 +79,7 @@ import { useSessionStore } from '../../stores/sessionStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useTabStore } from '../../stores/tabStore'
 import { useWorkspaceChatContextStore } from '../../stores/workspaceChatContextStore'
+import { browserHost } from '../../lib/desktopHost/browserHost'
 
 function okRepositoryContext() {
   return {
@@ -127,9 +122,33 @@ describe('ChatInput file mentions', () => {
   const initialTabState = useTabStore.getInitialState()
   const initialWorkspaceContextState = useWorkspaceChatContextStore.getInitialState()
 
+  const installElectronFileHost = () => {
+    window.desktopHost = {
+      ...browserHost,
+      kind: 'electron',
+      isDesktop: true,
+      capabilities: {
+        ...browserHost.capabilities,
+        dialogs: true,
+      },
+      dialogs: {
+        ...browserHost.dialogs,
+        open: mocks.dialogOpen,
+      },
+      webview: {
+        ...browserHost.webview,
+        onDragDropEvent: async (handler) => {
+          mocks.webviewDragHandlers.push(handler as (event: { payload: unknown }) => void)
+          return mocks.webviewUnlisten
+        },
+      },
+    }
+  }
+
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.webviewDragHandlers.length = 0
+    Reflect.deleteProperty(window, 'desktopHost')
     delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
     viewportMocks.isMobile = false
     useSettingsStore.setState({ locale: 'en' })
@@ -185,6 +204,7 @@ describe('ChatInput file mentions', () => {
     mocks.list.mockResolvedValue({ sessions: [], total: 0 })
     mocks.getMessages.mockResolvedValue({ messages: [] })
     mocks.getSlashCommands.mockResolvedValue({ commands: [] })
+    mocks.listAgents.mockResolvedValue({ activeAgents: [], allAgents: [] })
   })
 
   it('keeps unsent composer drafts isolated when switching between session tabs', async () => {
@@ -313,6 +333,72 @@ describe('ChatInput file mentions', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('textbox')).toHaveValue('keep this prompt while I inspect another tab')
+    })
+  })
+
+  it('appends a delayed browser screenshot without clearing an unsent draft after remount', async () => {
+    const { unmount } = render(<ChatInput compact />)
+
+    const input = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.change(input, {
+      target: { value: 'draft written while the agent is still running', selectionStart: 44 },
+    })
+    expect(input.value).toBe('draft written while the agent is still running')
+
+    unmount()
+
+    act(() => {
+      useChatStore.getState().queueComposerPrefill(sessionId, {
+        text: '',
+        mode: 'append',
+        attachments: [{
+          type: 'image',
+          name: 'screenshot-full.png',
+          mimeType: 'image/png',
+          data: 'data:image/png;base64,DELAYED',
+        }],
+      })
+    })
+
+    render(<ChatInput compact />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('textbox')).toHaveValue('draft written while the agent is still running')
+      expect(screen.getByAltText('screenshot-full.png')).toBeInTheDocument()
+    })
+  })
+
+  it('does not replay a handled browser screenshot after the composer remounts', async () => {
+    const { unmount } = render(<ChatInput compact />)
+
+    act(() => {
+      useChatStore.getState().queueComposerPrefill(sessionId, {
+        text: '',
+        mode: 'append',
+        attachments: [{
+          type: 'image',
+          name: 'screenshot-full.png',
+          mimeType: 'image/png',
+          data: 'data:image/png;base64,OLD',
+        }],
+      })
+    })
+
+    await waitFor(() => {
+      expect(screen.getByAltText('screenshot-full.png')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByLabelText('Remove screenshot-full.png'))
+
+    await waitFor(() => {
+      expect(screen.queryByAltText('screenshot-full.png')).not.toBeInTheDocument()
+    })
+
+    unmount()
+    render(<ChatInput compact />)
+
+    await waitFor(() => {
+      expect(screen.queryByAltText('screenshot-full.png')).not.toBeInTheDocument()
     })
   })
 
@@ -711,10 +797,7 @@ describe('ChatInput file mentions', () => {
   })
 
   it('uses native desktop file paths instead of inlining selected files', async () => {
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
+    installElectronFileHost()
     mocks.dialogOpen.mockResolvedValueOnce([
       '/Users/nanmi/tmp/large-a.log',
       'C:\\Users\\Nanmi\\Desktop\\large-b.zip',
@@ -758,10 +841,7 @@ describe('ChatInput file mentions', () => {
   })
 
   it('accepts native desktop file drops on the active session composer as path-only attachments', async () => {
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
+    installElectronFileHost()
 
     render(<ChatInput compact />)
 
@@ -988,6 +1068,87 @@ describe('ChatInput file mentions', () => {
         .getAllByRole('button')
         .filter((button) => button.textContent?.startsWith('/'))
       expect(commandButtons[0]).toHaveTextContent('/superpowers:brainstorming')
+    })
+  })
+
+  it('offers active agents as slash entries that insert /agent with the selected type', async () => {
+    mocks.listAgents.mockResolvedValue({
+      activeAgents: [
+        {
+          agentType: 'debugger',
+          description: 'Debug failures',
+          modelDisplay: 'OPUS',
+          source: 'userSettings',
+          isActive: true,
+        },
+      ],
+      allAgents: [],
+    })
+
+    render(<ChatInput />)
+
+    await waitFor(() => {
+      expect(mocks.listAgents).toHaveBeenCalledWith('/repo')
+    })
+
+    const input = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.change(input, {
+      target: { value: '/debug', selectionStart: 6 },
+    })
+
+    const agentOption = await screen.findByText('/agent debugger')
+    fireEvent.click(agentOption)
+
+    expect(input).toHaveValue('/agent debugger ')
+  })
+
+  it('selects a highlighted agent entry from /agent without sending until the configured send shortcut is used', async () => {
+    useSettingsStore.setState({
+      chatSendBehavior: 'modifierEnter',
+    })
+    mocks.listAgents.mockResolvedValue({
+      activeAgents: [
+        {
+          agentType: 'debugger',
+          description: 'Debug failures',
+          modelDisplay: 'OPUS',
+          source: 'userSettings',
+          isActive: true,
+        },
+      ],
+      allAgents: [],
+    })
+
+    render(<ChatInput />)
+
+    await waitFor(() => {
+      expect(mocks.listAgents).toHaveBeenCalledWith('/repo')
+    })
+
+    const input = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.change(input, {
+      target: { value: '/agent', selectionStart: 6 },
+    })
+
+    await screen.findByText('/agent debugger')
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(input).toHaveValue('/agent debugger ')
+    expect(mocks.wsSend).not.toHaveBeenCalled()
+
+    const prompt = '/agent debugger investigate this failure'
+    fireEvent.change(input, {
+      target: { value: prompt, selectionStart: prompt.length },
+    })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(mocks.wsSend).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true })
+    expect(mocks.wsSend).toHaveBeenCalledWith(sessionId, {
+      type: 'user_message',
+      content: prompt,
+      attachments: [],
     })
   })
 })

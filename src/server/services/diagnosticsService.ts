@@ -313,6 +313,7 @@ export class DiagnosticsService {
   sanitizeString(value: string, maxLength = MAX_STRING_LENGTH): string {
     let sanitized = value
       .replace(/(Bearer\s+)[A-Za-z0-9._~+/-]+/gi, '$1[REDACTED]')
+      .replace(/([a-z][a-z0-9+.-]*:\/\/)([^/?#\s:@]+(?::[^/?#\s@]*)?@)/gi, '$1[REDACTED]@')
       .replace(/((?:api[_-]?key|auth[_-]?token|access[_-]?token|refresh[_-]?token|session[_-]?token|token|secret|password)\s*[:=]\s*)[^\s,;"'}]+/gi, '$1[REDACTED]')
       .replace(/(ANTHROPIC_(?:API_KEY|AUTH_TOKEN)\s*[:=]\s*)[^\s,;"'}]+/gi, '$1[REDACTED]')
       .replace(/([?&](?:api[_-]?key|token|auth|access_token|refresh_token|key)=)[^&\s]+/gi, '$1[REDACTED]')

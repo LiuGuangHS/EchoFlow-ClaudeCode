@@ -27,7 +27,7 @@ This is a Bun-based Coding Agent product with a CLI, local server, desktop app, 
 
 - `bin/claude-haha` is the executable entrypoint; `bun run start` and `./bin/claude-haha` run the CLI locally.
 - `src/` contains the CLI/runtime surface: `entrypoints/` for startup paths, `screens/` and `components/` for the Ink TUI, `commands/` for slash commands, `services/` for API/MCP/OAuth logic, `tools/` for agent tools, `utils/` for shared runtime helpers, and `server/` for the local API/WebSocket service.
-- `desktop/` contains the desktop product: React UI in `desktop/src/`, API clients in `desktop/src/api/`, shared UI in `desktop/src/components/`, Tauri/Rust glue in `desktop/src-tauri/`, and desktop build scripts in `desktop/scripts/`.
+- `desktop/` contains the desktop product: React UI in `desktop/src/`, API clients in `desktop/src/api/`, shared UI in `desktop/src/components/`, Electron host code in `desktop/electron/`, legacy Tauri resources/sidecar assets in `desktop/src-tauri/`, and desktop build scripts in `desktop/scripts/`.
 - `adapters/` contains IM adapter sidecars for Telegram, Feishu, WeChat, DingTalk, and shared adapter utilities.
 - `docs/` and `docs/en/` are VitePress documentation. Root screenshots and `docs/images/` are reference assets unless a task explicitly updates docs media.
 - `release-notes/`, `scripts/release.ts`, and `.github/workflows/` define release and CI behavior. Treat workflow changes as product changes because they alter what future agents and contributors can safely ship.
@@ -54,11 +54,11 @@ Use the narrowest meaningful verification while iterating, then run the correct 
 | Desktop UI/store/API work | `bun run check:desktop` | Runs desktop lint, Vitest, and production build. For visible UI flows, also use browser/agent-browser smoke when unit tests cannot prove the workflow. |
 | Server/API/provider/runtime/MCP/OAuth/WebSocket work | `bun run check:server` | Covers `src/server`, `src/tools`, provider/runtime, MCP, OAuth, WebSocket, and API behavior. |
 | IM adapter work | `bun run check:adapters` | On a fresh checkout, run `cd adapters && bun install` first if dependencies are missing. |
-| Tauri/native/sidecar/packaging/version changes | `bun run check:native` | Runs sidecar build and `cargo check` for the desktop native surface. |
+| Electron/native/sidecar/packaging/version changes | `bun run check:native` | Runs sidecar build, Electron host checks, Electron `--dir` packaging, and current-platform package-smoke. |
 | Docs, README, release notes, or docs workflow changes | `bun run check:docs` | This runs `npm ci`; run it sequentially, not in parallel with commands that depend on root `node_modules`. |
 | Persistence shape changes | `bun run check:persistence-upgrade` | Required for local JSON, `localStorage`, app config migrations, and old-fixture upgrade behavior. |
 | Coverage during handoff | `bun run check:coverage` or `bun run verify` | Changed executable production lines must meet the changed-line threshold. |
-| Fast local pre-push hook | `bun run quality:push` | Path-aware PR mode with coverage skipped by default; useful for human push latency, not a substitute for PR-ready verification. |
+| Optional fast local check | `bun run quality:push` | Path-aware PR mode with coverage skipped by default; run manually when useful, not as a push-time blocker or substitute for PR-ready verification. |
 | PR-ready / final agent handoff for code changes | `bun run verify` | Unified local entrypoint: `bun run verify` is equivalent to `bun run quality:pr` and is the default non-live quality gate. |
 | Live agent/provider confidence | `bun run quality:providers`, then `bun run quality:smoke --provider-model <provider:model[:label]>` | Quick live provider/proxy and desktop agent-browser smoke when provider access exists. |
 | High-risk pre-merge confidence | `bun run quality:gate --mode baseline --allow-live --provider-model <provider:model[:label]>` | Use for agent-loop, provider routing, model selection, tool execution, session resume, desktop chat, or other core Coding Agent paths. |
@@ -97,10 +97,10 @@ Every feature, bugfix, and behavior change must ship with proof that matches the
 ## Release Workflow
 - **Fork versioning convention (EchoFlowAI 二开)**: Tags follow `vX.Y.Z-rc.N` format, where `X.Y.Z` tracks the upstream version and `N` is the fork release candidate number. Example: `v0.3.2-rc.1`, `v0.3.2-rc.2`. When upstream bumps to `v0.4.0`, the next fork tag becomes `v0.4.0-rc.1`.
 - Desktop releases are built remotely by GitHub Actions from tags matching `v*.*.*`; do not upload local build artifacts as the release source of truth.
-- The release workflow `.github/workflows/release-desktop.yml` validates that the tag matches `desktop/src-tauri/tauri.conf.json`, loads `release-notes/vX.Y.Z.md`, builds sidecars, and packages the desktop app across the matrix.
+- The release workflow `.github/workflows/release-desktop.yml` runs a non-live PR-quality preflight, validates that the tag matches `desktop/package.json`, loads `release-notes/vX.Y.Z.md`, builds sidecars, and packages the Electron desktop app across the matrix.
 - The hosted tag workflow is not a substitute for local release verification. Before tagging or calling a release ready, run `bun run scripts/release.ts <version> --dry`, then run `bun run verify`, and run `bun run quality:gate --mode release --allow-live --provider-model <provider:model[:label]>` when live provider access is available.
 - GitHub Release body is sourced from `release-notes/vX.Y.Z.md` in the tagged commit. Keep the filename, app version, and tag aligned exactly.
-- Use `bun run scripts/release.ts <version>` to cut a desktop release. The script updates version files, refreshes `desktop/src-tauri/Cargo.lock`, requires the matching release-notes file, commits it, and creates the annotated tag.
+- Use `bun run scripts/release.ts <version>` to cut a desktop release. The script updates Electron desktop version files, requires the matching release-notes file, commits it, and creates the annotated tag.
 - The normal release push is `git push origin main --tags`. If no live provider is configured, or a provider quota/key is unavailable, run the non-live gate anyway and report the live-release blocker explicitly.
 - For local macOS test packaging, `desktop/scripts/build-macos-arm64.sh` is the canonical Apple Silicon build entrypoint, with outputs under `desktop/build-artifacts/macos-arm64/`.
 

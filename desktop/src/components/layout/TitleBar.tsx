@@ -8,14 +8,14 @@ export function TitleBar() {
   return (
     <div
       className="h-[var(--titlebar-height)] flex items-center border-b border-[var(--color-border)] bg-[var(--color-surface)] select-none"
-      data-tauri-drag-region
+      data-desktop-drag-region
     >
       {/* macOS traffic light spacer */}
-      <div className="w-[78px] flex-shrink-0" data-tauri-drag-region />
+      <div className="w-[78px] flex-shrink-0" data-desktop-drag-region />
 
       {/* Logo */}
-      <div className="flex items-center gap-2 mr-4" data-tauri-drag-region>
-        <span className="text-xs font-bold tracking-wider text-[var(--color-brand)] uppercase">EchoFlowAI-Claude-Code</span>
+      <div className="flex items-center gap-2 mr-4" data-desktop-drag-region>
+        <span className="text-xs font-bold tracking-wider text-[var(--color-brand)] uppercase">Claude Code Companion</span>
       </div>
 
       {/* Navigation arrows */}
@@ -33,7 +33,7 @@ export function TitleBar() {
       </div>
 
       {/* Center tabs */}
-      <div className="flex-1 flex items-center justify-center gap-1" data-tauri-drag-region>
+      <div className="flex-1 flex items-center justify-center gap-1" data-desktop-drag-region>
         <TabButton
           active={activeView === 'code'}
           onClick={() => setActiveView('code')}

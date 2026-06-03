@@ -53,6 +53,19 @@ const SIGTERM = 143
 // so a stuck append loop can fill the disk. Poll file size and kill when exceeded.
 const SIZE_WATCHDOG_INTERVAL_MS = 5_000
 
+export function killDetachedProcessGroup(pid: number): boolean {
+  if (process.platform === 'win32') {
+    return false
+  }
+
+  try {
+    process.kill(-pid, 'SIGKILL')
+    return true
+  } catch {
+    return false
+  }
+}
+
 function prependStderr(prefix: string, stderr: string): string {
   return stderr ? `${prefix} ${stderr}` : prefix
 }
@@ -337,6 +350,9 @@ class ShellCommandImpl implements ShellCommand {
   #doKill(code?: number): void {
     this.#status = 'killed'
     if (this.#childProcess.pid) {
+      // Bash commands are spawned detached on POSIX, so npm/vite descendants
+      // share the shell's process group even if the CLI is exiting.
+      killDetachedProcessGroup(this.#childProcess.pid)
       treeKill(this.#childProcess.pid, 'SIGKILL')
     }
     this.#resolveExitCode(code ?? SIGKILL)

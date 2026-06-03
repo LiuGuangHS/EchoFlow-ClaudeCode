@@ -57,7 +57,23 @@ function findTextNodeContaining(container: Element, text: string) {
   throw new Error(`Unable to find text node containing ${text}`)
 }
 
-async function selectMessageText(element: Element, text: string) {
+async function waitForSelectionMenuUpdate() {
+  await act(async () => {
+    await Promise.resolve()
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => resolve())
+    })
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => resolve())
+    })
+  })
+}
+
+function prepareMessageTextSelection(
+  element: Element,
+  text: string,
+  rect: Partial<DOMRect> = {},
+) {
   const textNode = findTextNodeContaining(element, text)
   const startOffset = textNode.textContent?.indexOf(text) ?? -1
   const range = document.createRange()
@@ -65,14 +81,14 @@ async function selectMessageText(element: Element, text: string) {
   range.setEnd(textNode, startOffset + text.length)
   Object.assign(range, {
     getBoundingClientRect: () => ({
-      left: 160,
-      top: 80,
-      right: 280,
-      bottom: 98,
-      width: 120,
-      height: 18,
-      x: 160,
-      y: 80,
+      left: rect.left ?? 160,
+      top: rect.top ?? 80,
+      right: rect.right ?? 280,
+      bottom: rect.bottom ?? 98,
+      width: rect.width ?? 120,
+      height: rect.height ?? 18,
+      x: rect.x ?? rect.left ?? 160,
+      y: rect.y ?? rect.top ?? 80,
       toJSON: () => ({}),
     }),
   })
@@ -95,10 +111,104 @@ async function selectMessageText(element: Element, text: string) {
   window.getSelection()?.removeAllRanges()
   window.getSelection()?.addRange(range)
 
+  return selectableRoot ?? element
+}
+
+async function selectMessageText(
+  element: Element,
+  text: string,
+  rect: Partial<DOMRect> = {},
+) {
+  prepareMessageTextSelection(element, text, rect)
+
   await act(async () => {
+    fireEvent.pointerDown(element, {
+      button: 0,
+      clientX: rect.left ?? 160,
+      clientY: rect.top ?? 80,
+      pointerId: 1,
+      pointerType: 'mouse',
+    })
+    fireEvent.pointerUp(element, {
+      button: 0,
+      clientX: rect.right ?? 280,
+      clientY: rect.bottom ?? 98,
+      pointerId: 1,
+      pointerType: 'mouse',
+    })
     fireEvent.mouseUp(element, { clientX: 260, clientY: 104 })
     await Promise.resolve()
   })
+  await waitForSelectionMenuUpdate()
+  await waitFor(() => {
+    expect(screen.getByRole('button', { name: 'Add to chat' })).toBeTruthy()
+  })
+}
+
+async function selectAcrossMessageText(
+  startElement: Element,
+  startText: string,
+  endElement: Element,
+  endText: string,
+  rect: Partial<DOMRect> = {},
+) {
+  const startNode = findTextNodeContaining(startElement, startText)
+  const endNode = findTextNodeContaining(endElement, endText)
+  const startOffset = startNode.textContent?.indexOf(startText) ?? -1
+  const endOffset = (endNode.textContent?.indexOf(endText) ?? -1) + endText.length
+  const range = document.createRange()
+  range.setStart(startNode, startOffset)
+  range.setEnd(endNode, endOffset)
+  Object.assign(range, {
+    getBoundingClientRect: () => ({
+      left: rect.left ?? 160,
+      top: rect.top ?? 80,
+      right: rect.right ?? 520,
+      bottom: rect.bottom ?? 150,
+      width: rect.width ?? 360,
+      height: rect.height ?? 70,
+      x: rect.x ?? rect.left ?? 160,
+      y: rect.y ?? rect.top ?? 80,
+      toJSON: () => ({}),
+    }),
+  })
+
+  const selectableRoot = startElement.closest('[data-message-shell]')?.parentElement?.parentElement
+  Object.assign(selectableRoot ?? startElement, {
+    getBoundingClientRect: () => ({
+      left: 120,
+      top: 48,
+      right: 720,
+      bottom: 320,
+      width: 600,
+      height: 272,
+      x: 120,
+      y: 48,
+      toJSON: () => ({}),
+    }),
+  })
+
+  window.getSelection()?.removeAllRanges()
+  window.getSelection()?.addRange(range)
+
+  await act(async () => {
+    fireEvent.pointerDown(startElement, {
+      button: 0,
+      clientX: rect.left ?? 160,
+      clientY: rect.top ?? 80,
+      pointerId: 1,
+      pointerType: 'mouse',
+    })
+    fireEvent.pointerUp(endElement, {
+      button: 0,
+      clientX: rect.right ?? 520,
+      clientY: rect.bottom ?? 150,
+      pointerId: 1,
+      pointerType: 'mouse',
+    })
+    await Promise.resolve()
+  })
+  await waitForSelectionMenuUpdate()
 }
 
 describe('MessageList nested tool calls', () => {
@@ -1654,6 +1764,204 @@ describe('MessageList nested tool calls', () => {
     expect(window.getSelection()?.toString()).toBe('')
   })
 
+  it('shows the selected-message action when text selection ends outside the message', async () => {
+    useChatStore.setState({
+      sessions: {
+        [ACTIVE_TAB]: makeSessionState({
+          messages: [{
+            id: 'assistant-1',
+            type: 'assistant_text',
+            content: 'Drag selection gestures can finish outside the message bubble.',
+            timestamp: 1,
+          }],
+        }),
+      },
+    })
+
+    render(<MessageList />)
+
+    const assistantText = screen.getByText(/Drag selection gestures/)
+    prepareMessageTextSelection(assistantText, 'selection gestures')
+
+    await act(async () => {
+      fireEvent.pointerDown(assistantText, {
+        button: 0,
+        clientX: 172,
+        clientY: 88,
+        pointerId: 1,
+        pointerType: 'mouse',
+      })
+      fireEvent.pointerMove(document.body, {
+        clientX: 640,
+        clientY: 120,
+        pointerId: 1,
+        pointerType: 'mouse',
+      })
+      fireEvent.pointerUp(document.body, {
+        clientX: 640,
+        clientY: 120,
+        pointerId: 1,
+        pointerType: 'mouse',
+      })
+      await Promise.resolve()
+    })
+    await waitForSelectionMenuUpdate()
+
+    expect(screen.getByRole('button', { name: 'Add to chat' })).toBeTruthy()
+  })
+
+  it('places the selected-message action to the right when there is no room above', async () => {
+    useChatStore.setState({
+      sessions: {
+        [ACTIVE_TAB]: makeSessionState({
+          messages: [{
+            id: 'assistant-1',
+            type: 'assistant_text',
+            content: 'Top edge selections need a nearby right-side action.',
+            timestamp: 1,
+          }],
+        }),
+      },
+    })
+
+    render(<MessageList />)
+
+    const assistantText = screen.getByText(/Top edge selections/)
+    await selectMessageText(assistantText, 'right-side action', {
+      left: 160,
+      top: 18,
+      right: 280,
+      bottom: 36,
+      width: 120,
+      height: 18,
+      x: 160,
+      y: 18,
+    })
+    const floatingAddButton = screen.getByRole('button', { name: 'Add to chat' })
+
+    expect(floatingAddButton.style.left).toBe('290px')
+    expect(floatingAddButton.style.top).toBe('12px')
+  })
+
+  it('adds multi-line assistant reply selections across markdown blocks to the composer context', async () => {
+    useChatStore.setState({
+      sessions: {
+        [ACTIVE_TAB]: makeSessionState({
+          messages: [{
+            id: 'assistant-1',
+            type: 'assistant_text',
+            content: [
+              'First line can start the selection.',
+              '',
+              'Second paragraph should still belong to the same chat message.',
+              '',
+              '- Third block can finish the selection.',
+            ].join('\n'),
+            timestamp: 1,
+          }],
+        }),
+      },
+    })
+
+    render(<MessageList />)
+
+    const firstParagraph = screen.getByText('First line can start the selection.')
+    const listItem = screen.getByText('Third block can finish the selection.')
+    await selectAcrossMessageText(
+      firstParagraph,
+      'First line',
+      listItem,
+      'finish the selection',
+      { left: 160, top: 80, right: 520, bottom: 160, width: 360, height: 80 },
+    )
+    const floatingAddButton = screen.getByRole('button', { name: 'Add to chat' })
+
+    expect(floatingAddButton.style.left).toBe('530px')
+    expect(floatingAddButton.style.top).toBe('98px')
+
+    fireEvent.click(floatingAddButton)
+
+    expect(useWorkspaceChatContextStore.getState().referencesBySession[ACTIVE_TAB]).toMatchObject([
+      {
+        kind: 'chat-selection',
+        messageId: 'assistant-1',
+        sourceRole: 'assistant',
+      },
+    ])
+    expect(useWorkspaceChatContextStore.getState().referencesBySession[ACTIVE_TAB]?.[0]?.quote).toContain('First line')
+    expect(useWorkspaceChatContextStore.getState().referencesBySession[ACTIVE_TAB]?.[0]?.quote).toContain('finish the selection')
+  })
+
+  it('shows the selected-message action after browser selectionchange for multi-line replies', async () => {
+    useChatStore.setState({
+      sessions: {
+        [ACTIVE_TAB]: makeSessionState({
+          messages: [{
+            id: 'assistant-1',
+            type: 'assistant_text',
+            content: [
+              'Browser selection can settle after pointerup.',
+              '',
+              'The document selectionchange event should be enough to show the action.',
+            ].join('\n'),
+            timestamp: 1,
+          }],
+        }),
+      },
+    })
+
+    render(<MessageList />)
+
+    const firstParagraph = screen.getByText('Browser selection can settle after pointerup.')
+    const secondParagraph = screen.getByText('The document selectionchange event should be enough to show the action.')
+    const startNode = findTextNodeContaining(firstParagraph, 'Browser selection')
+    const endNode = findTextNodeContaining(secondParagraph, 'show the action')
+    const range = document.createRange()
+    range.setStart(startNode, startNode.textContent?.indexOf('Browser selection') ?? 0)
+    range.setEnd(
+      endNode,
+      (endNode.textContent?.indexOf('show the action') ?? 0) + 'show the action'.length,
+    )
+    Object.assign(range, {
+      getBoundingClientRect: () => ({
+        left: 150,
+        top: 76,
+        right: 500,
+        bottom: 140,
+        width: 350,
+        height: 64,
+        x: 150,
+        y: 76,
+        toJSON: () => ({}),
+      }),
+    })
+
+    const selectableRoot = firstParagraph.closest('[data-chat-selectable-message]')
+    Object.assign(selectableRoot ?? firstParagraph, {
+      getBoundingClientRect: () => ({
+        left: 120,
+        top: 48,
+        right: 720,
+        bottom: 280,
+        width: 600,
+        height: 232,
+        x: 120,
+        y: 48,
+        toJSON: () => ({}),
+      }),
+    })
+
+    window.getSelection()?.removeAllRanges()
+    window.getSelection()?.addRange(range)
+
+    await act(async () => {
+      document.dispatchEvent(new Event('selectionchange'))
+    })
+    await waitForSelectionMenuUpdate()
+
+    expect(screen.getByRole('button', { name: 'Add to chat' })).toBeTruthy()
+  })
+
   it('adds selected assistant reply text to the composer context', async () => {
     useChatStore.setState({
       sessions: {
@@ -1672,7 +1980,11 @@ describe('MessageList nested tool calls', () => {
 
     const assistantText = screen.getByText(/First inspect the file tree/)
     await selectMessageText(assistantText, 'quote the selected lines')
-    fireEvent.click(screen.getByRole('button', { name: 'Add to chat' }))
+    const floatingAddButton = screen.getByRole('button', { name: 'Add to chat' })
+
+    expect(floatingAddButton.closest('[data-chat-selectable-message]')).toBeNull()
+
+    fireEvent.click(floatingAddButton)
 
     expect(useWorkspaceChatContextStore.getState().referencesBySession[ACTIVE_TAB]).toMatchObject([
       {
@@ -1708,6 +2020,36 @@ describe('MessageList nested tool calls', () => {
 
     await act(async () => {
       fireEvent.pointerDown(document.body)
+      await Promise.resolve()
+    })
+
+    expect(screen.queryByRole('button', { name: 'Add to chat' })).toBeNull()
+    expect(window.getSelection()?.toString()).toBe('')
+  })
+
+  it('dismisses the selected-message action when the message list scrolls', async () => {
+    useChatStore.setState({
+      sessions: {
+        [ACTIVE_TAB]: makeSessionState({
+          messages: [{
+            id: 'assistant-1',
+            type: 'assistant_text',
+            content: 'Scrolling should clear this selected reply.',
+            timestamp: 1,
+          }],
+        }),
+      },
+    })
+
+    const { container } = render(<MessageList />)
+
+    const assistantText = screen.getByText(/Scrolling should clear/)
+    await selectMessageText(assistantText, 'selected reply')
+    expect(screen.getByRole('button', { name: 'Add to chat' })).toBeTruthy()
+
+    const scroller = container.querySelector('.overflow-y-auto') as HTMLDivElement
+    await act(async () => {
+      fireEvent.scroll(scroller)
       await Promise.resolve()
     })
 
@@ -2743,8 +3085,11 @@ describe('MessageList nested tool calls', () => {
     expect(assistantShell?.className).not.toContain('ml-10')
     expect(userActions?.getAttribute('data-align')).toBe('end')
     expect(assistantActions?.getAttribute('data-align')).toBe('start')
-    expect(userActions?.className).toContain('invisible')
-    expect(userActions?.className).toContain('group-hover:visible')
+    expect(userActions?.className).toContain('h-7')
+    expect(userActions?.className).toContain('mt-2')
+    expect(userActions?.className).not.toContain('h-0')
+    expect(userActions?.className).not.toContain('group-hover:h-7')
+    expect(userActions?.className).not.toContain('invisible')
     expect(within(userActions as HTMLElement).getByText('5m ago')).toBeTruthy()
     expect(within(assistantActions as HTMLElement).getByText('2h ago')).toBeTruthy()
   })
@@ -3633,5 +3978,36 @@ describe('MessageList nested tool calls', () => {
         'CLI exited during startup (code 1): Claude Code on Windows requires git-bash (https://git-scm.com/downloads/win).',
       ),
     ).toBeTruthy()
+  })
+
+  it('renders business API errors in the active locale without raw English fallback', () => {
+    useSettingsStore.setState({ locale: 'zh' })
+    useChatStore.setState({
+      sessions: {
+        [ACTIVE_TAB]: makeSessionState({
+          messages: [
+            {
+              id: 'error-1',
+              type: 'error',
+              code: 'invalid_request',
+              businessErrorCode: 'image_unsupported',
+              message:
+                'This model does not support images. Continue with text, or switch to a vision-capable model and send the image again.',
+              timestamp: 1,
+            },
+          ],
+        }),
+      },
+    })
+
+    render(<MessageList />)
+
+    expect(screen.getByText('错误:')).toBeTruthy()
+    expect(
+      screen.getByText(
+        '当前模型不支持图片。请继续使用文字，或切换到支持视觉的模型后重新发送图片。',
+      ),
+    ).toBeTruthy()
+    expect(screen.queryByText(/This model does not support images/)).toBeNull()
   })
 })

@@ -21,6 +21,7 @@ import { openaiResponsesStreamToAnthropic } from './streaming/openaiResponsesStr
 import type { AnthropicRequest } from './transform/types.js'
 import { getProxyFetchOptions } from '../../utils/proxy.js'
 import { getManualNetworkProxyUrl, loadNetworkSettings } from '../services/networkSettings.js'
+import { normalizeModelStringForAPI } from '../../utils/model/model.js'
 
 const providerService = new ProviderService()
 
@@ -127,7 +128,10 @@ export async function handleProxyRequest(req: Request, url: URL): Promise<Respon
     )
   }
 
-  body = ensureClaudeCodeAttribution(body)
+  body = ensureClaudeCodeAttribution({
+    ...body,
+    model: normalizeModelStringForAPI(body.model),
+  })
 
   const isStream = body.stream === true
   const baseUrl = config.baseUrl.replace(/\/+$/, '')
@@ -167,6 +171,7 @@ async function handleOpenaiChat(
   const transformed = anthropicToOpenaiChat(body, {
     roundTripReasoningContent: deepSeekCompatible,
     passThinkingToggle: deepSeekCompatible,
+    imageContentMode: shouldUseTextOnlyOpenAIChatContent(baseUrl) ? 'text_only' : 'vision',
   })
   const url = `${baseUrl}/v1/chat/completions`
   const proxyOptions = getProxyFetchOptions({ proxyUrl })
@@ -224,6 +229,10 @@ function shouldUseDeepSeekReasoningCompat(baseUrl: string): boolean {
     /(^|[./-])deepseek([./-]|$)/i.test(baseUrl) ||
     /(^|[./-])opencode\.ai([:/]|$)/i.test(baseUrl)
   )
+}
+
+function shouldUseTextOnlyOpenAIChatContent(baseUrl: string): boolean {
+  return shouldUseDeepSeekReasoningCompat(baseUrl)
 }
 
 async function handleOpenaiResponses(

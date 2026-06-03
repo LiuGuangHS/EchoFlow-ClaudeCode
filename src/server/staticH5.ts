@@ -53,8 +53,12 @@ export async function handleStaticH5Request(req: Request, url: URL): Promise<Res
 async function resolveH5DistDir(): Promise<string | null> {
   const candidates = [
     process.env.CLAUDE_H5_DIST_DIR,
+    unpackedAsarDistDir(process.env.CLAUDE_H5_DIST_DIR),
     process.env.CLAUDE_APP_ROOT
       ? path.resolve(process.env.CLAUDE_APP_ROOT, '..', 'Resources', '_up_', 'dist')
+      : undefined,
+    process.env.CLAUDE_APP_ROOT
+      ? unpackedAsarDistDir(path.resolve(process.env.CLAUDE_APP_ROOT, 'dist'))
       : undefined,
     process.env.CLAUDE_APP_ROOT
       ? path.resolve(process.env.CLAUDE_APP_ROOT, '..', 'Resources', 'dist')
@@ -78,6 +82,14 @@ async function resolveH5DistDir(): Promise<string | null> {
   }
 
   return null
+}
+
+function unpackedAsarDistDir(value: string | undefined): string | undefined {
+  if (!value || !value.includes('.asar')) {
+    return undefined
+  }
+
+  return value.replace(/\.asar(?=$|[/\\])/, '.asar.unpacked')
 }
 
 async function resolveStaticFilePath(distDir: string, pathname: string): Promise<string | null> {

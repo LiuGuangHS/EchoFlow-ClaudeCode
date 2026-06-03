@@ -35,6 +35,7 @@ vi.mock('../chat/clipboard', () => ({
 import { ChatGPTOfficialLogin } from './ChatGPTOfficialLogin'
 import { useHahaOpenAIOAuthStore } from '../../stores/hahaOpenAIOAuthStore'
 import { useSettingsStore } from '../../stores/settingsStore'
+import { browserHost } from '../../lib/desktopHost/browserHost'
 
 const initialOAuthState = useHahaOpenAIOAuthStore.getState()
 
@@ -46,6 +47,7 @@ describe('ChatGPTOfficialLogin', () => {
     logoutMock.mockReset()
     shellOpenMock.mockReset()
     copyTextToClipboardMock.mockReset()
+    Reflect.deleteProperty(window, 'desktopHost')
     useSettingsStore.setState({ locale: 'en' })
     useHahaOpenAIOAuthStore.setState({
       ...initialOAuthState,
@@ -68,9 +70,22 @@ describe('ChatGPTOfficialLogin', () => {
 
   it('keeps an actionable authorization link when shell open fails', async () => {
     const authorizeUrl = 'https://chatgpt.com/oauth/authorize?state=openai-state'
+    const hostOpen = vi.fn().mockRejectedValue(new Error('shell unavailable'))
+    window.desktopHost = {
+      ...browserHost,
+      kind: 'electron',
+      isDesktop: true,
+      capabilities: {
+        ...browserHost.capabilities,
+        shell: true,
+      },
+      shell: {
+        ...browserHost.shell,
+        open: hostOpen,
+      },
+    }
     statusMock.mockResolvedValue({ loggedIn: false })
     startMock.mockResolvedValue({ authorizeUrl, state: 'openai-state' })
-    shellOpenMock.mockRejectedValue(new Error('shell unavailable'))
     copyTextToClipboardMock.mockResolvedValue(true)
     const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
@@ -81,7 +96,8 @@ describe('ChatGPTOfficialLogin', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Sign in with ChatGPT' }))
     })
 
-    expect(shellOpenMock).toHaveBeenCalledWith(authorizeUrl)
+    expect(hostOpen).toHaveBeenCalledWith(authorizeUrl)
+    expect(shellOpenMock).not.toHaveBeenCalled()
     expect(consoleErrorSpy).toHaveBeenCalledWith('[ChatGPTOfficialLogin] shellOpen failed:', expect.any(Error))
     expect(screen.getByText(/Unable to open browser/)).toBeInTheDocument()
 
@@ -98,6 +114,19 @@ describe('ChatGPTOfficialLogin', () => {
 
   it('keeps the authorization link available when copy fails', async () => {
     const authorizeUrl = 'https://chatgpt.com/oauth/authorize?state=openai-state'
+    window.desktopHost = {
+      ...browserHost,
+      kind: 'electron',
+      isDesktop: true,
+      capabilities: {
+        ...browserHost.capabilities,
+        shell: true,
+      },
+      shell: {
+        ...browserHost.shell,
+        open: vi.fn().mockRejectedValue(new Error('shell unavailable')),
+      },
+    }
     statusMock.mockResolvedValue({ loggedIn: false })
     startMock.mockResolvedValue({ authorizeUrl, state: 'openai-state' })
     shellOpenMock.mockRejectedValue(new Error('shell unavailable'))

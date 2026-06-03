@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { lanesForMode } from './modes'
+import { currentPackageSmokePlatform, currentReleaseArtifactsDir, lanesForMode } from './modes'
 import { renderJUnitReport, renderMarkdownReport } from './reporter'
 import { runQualityGate, runQualityGateLanes } from './runner'
 import type { LaneDefinition, QualityGateReport } from './types'
@@ -36,15 +36,43 @@ describe('quality gate modes', () => {
   })
 
   test('release mode composes PR, baseline, and native lanes', () => {
-    const lanes = lanesForMode('release').map((lane) => lane.id)
+    const laneDefinitions = lanesForMode('release')
+    const lanes = laneDefinitions.map((lane) => lane.id)
+    const packageSmokePlatform = currentPackageSmokePlatform()
     expect(lanes).toContain('policy-checks')
+    expect(lanes).toContain('desktop-checks')
+    expect(lanes).toContain('server-checks')
+    expect(lanes).toContain('adapter-checks')
+    expect(lanes).toContain('docs-checks')
     expect(lanes).toContain('persistence-upgrade')
     expect(lanes).toContain('quarantine')
     expect(lanes).toContain('coverage')
     expect(lanes).toContain('baseline:failing-unit:current-runtime')
     expect(lanes).toContain('provider-smoke:current-runtime')
-    expect(lanes).toContain('desktop-smoke:agent-browser-chat:current-runtime')
+    expect(lanes).not.toContain('desktop-smoke:agent-browser-chat:current-runtime')
+    if (packageSmokePlatform) {
+      expect(lanes).toContain(`desktop-package-smoke:${packageSmokePlatform}`)
+      const packageSmokeLane = laneDefinitions.find((lane) => lane.id === `desktop-package-smoke:${packageSmokePlatform}`)
+      expect(packageSmokeLane?.command).toContain('--package-kind')
+      expect(packageSmokeLane?.command).toContain('release')
+      expect(packageSmokeLane?.command).toContain('--artifacts-dir')
+      if (packageSmokePlatform === 'macos') {
+        expect(packageSmokeLane?.command).toContain('--require-macos-gatekeeper')
+      }
+    }
     expect(lanes).toContain('native-checks')
+  })
+
+  test('maps host platforms to package-smoke platform names', () => {
+    expect(currentPackageSmokePlatform('darwin')).toBe('macos')
+    expect(currentPackageSmokePlatform('win32')).toBe('windows')
+    expect(currentPackageSmokePlatform('linux')).toBe('linux')
+    expect(currentPackageSmokePlatform('freebsd')).toBeNull()
+    expect(currentReleaseArtifactsDir('darwin', 'arm64')).toBe('desktop/build-artifacts/macos-arm64')
+    expect(currentReleaseArtifactsDir('darwin', 'x64')).toBe('desktop/build-artifacts/macos-x64')
+    expect(currentReleaseArtifactsDir('win32', 'x64')).toBe('desktop/build-artifacts/windows-x64')
+    expect(currentReleaseArtifactsDir('linux', 'arm64')).toBe('desktop/build-artifacts/linux-arm64')
+    expect(currentReleaseArtifactsDir('freebsd', 'x64')).toBeNull()
   })
 
   test('baseline mode expands cases across explicit provider/model targets', () => {

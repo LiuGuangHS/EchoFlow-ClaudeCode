@@ -76,6 +76,5 @@ export function buildOpenWithItems(ctx: OpenWithContext, targets: OpenTarget[], 
   for (const target of targets.filter((x) => x.kind === 'file_manager')) {
     items.push({ id: `fm:${target.id}`, label: deps.t('openWith.revealInTarget', { target: target.label }), icon: 'file-manager', target, onSelect: () => deps.openTarget(target.id, ctx.absolutePath) })
   }
-  items.push({ id: 'system', label: deps.t('openWith.systemDefault'), icon: 'system', onSelect: () => deps.openSystem(ctx.absolutePath) })
   return items
 }

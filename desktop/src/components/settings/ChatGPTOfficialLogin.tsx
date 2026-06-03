@@ -1,11 +1,11 @@
 // desktop/src/components/settings/ChatGPTOfficialLogin.tsx
 
 import { useEffect, useState } from 'react'
-import { open as shellOpen } from '@tauri-apps/plugin-shell'
 import { Copy, LogIn, LogOut } from 'lucide-react'
 import { useHahaOpenAIOAuthStore } from '../../stores/hahaOpenAIOAuthStore'
 import { useTranslation } from '../../i18n'
 import { copyTextToClipboard } from '../chat/clipboard'
+import { getDesktopHost } from '../../lib/desktopHost'
 
 export function ChatGPTOfficialLogin() {
   const t = useTranslation()
@@ -38,7 +38,7 @@ export function ChatGPTOfficialLogin() {
       const { authorizeUrl } = await login()
       setManualAuthorizeUrl(authorizeUrl)
       try {
-        await shellOpen(authorizeUrl)
+        await getDesktopHost().shell.open(authorizeUrl)
         setManualAuthorizeUrl(null)
         startPolling()
       } catch (err) {

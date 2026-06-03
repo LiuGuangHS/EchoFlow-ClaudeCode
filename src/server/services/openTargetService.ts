@@ -1,7 +1,7 @@
 import { execFile as execFileCallback, spawn } from 'node:child_process'
 import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
-import { extname, join, posix as posixPath, resolve, win32 as winPath } from 'node:path'
+import { dirname, extname, join, posix as posixPath, resolve, win32 as winPath } from 'node:path'
 import { promisify } from 'node:util'
 import { ApiError } from '../middleware/errorHandler.js'
 
@@ -57,6 +57,11 @@ type Runtime = {
 type LaunchPlan = {
   command: string
   args: string[]
+}
+
+type ResolvedOpenPath = {
+  path: string
+  isDirectory: boolean
 }
 
 type TargetDefinition = {
@@ -557,20 +562,27 @@ async function isDetected(definition: TargetDefinition, runtime: Runtime): Promi
 async function resolveLaunchPlan(
   definition: TargetDefinition,
   runtime: Runtime,
-  targetPath: string,
+  target: ResolvedOpenPath,
 ): Promise<LaunchPlan | null> {
   if (!isSupportedOnPlatform(definition, runtime.platform)) {
     return null
   }
 
+  const targetPath = target.path
   if (definition.fallback) {
     switch (runtime.platform) {
       case 'darwin':
+        if (definition.kind === 'file_manager' && !target.isDirectory) {
+          return { command: 'open', args: ['-R', targetPath] }
+        }
         return { command: 'open', args: [targetPath] }
       case 'win32':
+        if (definition.kind === 'file_manager' && !target.isDirectory) {
+          return { command: 'explorer.exe', args: [`/select,${targetPath}`] }
+        }
         return { command: 'cmd.exe', args: ['/d', '/c', 'start', '', targetPath] }
       case 'linux':
-        return { command: 'xdg-open', args: [targetPath] }
+        return { command: 'xdg-open', args: [target.isDirectory ? targetPath : dirname(targetPath)] }
       default:
         return null
     }
@@ -598,7 +610,7 @@ async function resolveLaunchPlan(
   return null
 }
 
-async function validateDirectory(targetPath: string): Promise<string> {
+async function validateOpenPath(targetPath: string): Promise<ResolvedOpenPath> {
   const resolvedPath = resolve(targetPath)
   let entry
   try {
@@ -606,20 +618,23 @@ async function validateDirectory(targetPath: string): Promise<string> {
   } catch {
     throw openTargetError(
       400,
-      `Directory does not exist: ${resolvedPath}`,
+      `Path does not exist: ${resolvedPath}`,
       'OPEN_TARGET_PATH_MISSING',
     )
   }
 
-  if (!entry.isDirectory()) {
+  if (!entry.isDirectory() && !entry.isFile()) {
     throw openTargetError(
       400,
-      `Path is not a directory: ${resolvedPath}`,
-      'OPEN_TARGET_PATH_NOT_DIRECTORY',
+      `Path is not a file or directory: ${resolvedPath}`,
+      'OPEN_TARGET_PATH_UNSUPPORTED',
     )
   }
 
-  return resolvedPath
+  return {
+    path: resolvedPath,
+    isDirectory: entry.isDirectory(),
+  }
 }
 
 function normalizeIconFileName(iconFile: string): string {
@@ -957,7 +972,7 @@ export function createOpenTargetService(overrides: Partial<Runtime> = {}) {
       )
     }
 
-    const resolvedPath = await validateDirectory(input.path)
+    const resolvedPath = await validateOpenPath(input.path)
     const launchPlan = await resolveLaunchPlan(definition, runtime, resolvedPath)
     if (!launchPlan) {
       throw openTargetError(
@@ -979,7 +994,7 @@ export function createOpenTargetService(overrides: Partial<Runtime> = {}) {
     return {
       ok: true as const,
       targetId: target.id,
-      path: resolvedPath,
+      path: resolvedPath.path,
     }
   }
 

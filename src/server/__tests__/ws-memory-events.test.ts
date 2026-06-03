@@ -6,6 +6,26 @@ import {
 import { parseSlashCommand } from '../../utils/slashCommandParsing.js'
 
 describe('WebSocket memory events', () => {
+  it('forwards assistant business error codes to the desktop client', () => {
+    expect(translateCliMessage({
+      type: 'assistant',
+      error: 'invalid_request',
+      isApiErrorMessage: true,
+      businessErrorCode: 'image_unsupported',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'This model does not support images.' }],
+      },
+    }, 'session-1')).toEqual([
+      {
+        type: 'error',
+        message: 'This model does not support images.',
+        code: 'invalid_request',
+        businessErrorCode: 'image_unsupported',
+      },
+    ])
+  })
+
   it('forwards CLI memory_saved system messages to the desktop client', () => {
     const messages = translateCliMessage(
       {
@@ -374,6 +394,7 @@ describe('WebSocket goal command events', () => {
       content: 'late unrelated output',
     })).toBe(false)
   })
+
 })
 
 describe('WebSocket stream event translation', () => {

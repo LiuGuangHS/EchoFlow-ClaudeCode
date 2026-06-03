@@ -114,11 +114,11 @@ describe('buildOpenWithItems – url context', () => {
 })
 
 describe('buildOpenWithItems – file context with targets', () => {
-  it('returns [preview, ide:code, fm:finder, system] ids', () => {
+  it('returns preview/open targets without a system-default fallback', () => {
     const deps = makeDeps()
     const ctx: OpenWithContext = { kind: 'file', absolutePath: '/w/a.md', relPath: 'a.md', previewable: true }
     const items = buildOpenWithItems(ctx, [ideTarget, fmTarget], deps)
-    expect(items.map((i) => i.id)).toEqual(['preview', 'ide:code', 'fm:finder', 'system'])
+    expect(items.map((i) => i.id)).toEqual(['preview', 'ide:code', 'fm:finder'])
   })
 
   it('preview calls openWorkspacePreview with relPath', () => {
@@ -139,13 +139,12 @@ describe('buildOpenWithItems – file context with targets', () => {
     expect(deps.openTarget).toHaveBeenCalledWith('code', '/w/a.md')
   })
 
-  it('system calls openSystem with absolutePath', () => {
+  it('does not include a system-default item for files', () => {
     const deps = makeDeps()
     const ctx: OpenWithContext = { kind: 'file', absolutePath: '/w/a.md', relPath: 'a.md', previewable: true }
     const items = buildOpenWithItems(ctx, [ideTarget, fmTarget], deps)
-    const sys = items.find((i) => i.id === 'system')!
-    sys.onSelect()
-    expect(deps.openSystem).toHaveBeenCalledWith('/w/a.md')
+    expect(items.some((i) => i.id === 'system')).toBe(false)
+    expect(deps.openSystem).not.toHaveBeenCalled()
   })
 
   it('ide item carries the target object', () => {
@@ -158,7 +157,7 @@ describe('buildOpenWithItems – file context with targets', () => {
 })
 
 describe('buildOpenWithItems – file context with inAppBrowserUrl (no previewable)', () => {
-  it('returns [in-app, system] ids for no targets + inAppBrowserUrl', () => {
+  it('returns only the browser preview item for no targets + inAppBrowserUrl', () => {
     const deps = makeDeps()
     const ctx: OpenWithContext = {
       kind: 'file',
@@ -166,7 +165,7 @@ describe('buildOpenWithItems – file context with inAppBrowserUrl (no previewab
       inAppBrowserUrl: 'http://127.0.0.1:4321/preview-fs/s1/page.html',
     }
     const items = buildOpenWithItems(ctx, [], deps)
-    expect(items.map((i) => i.id)).toEqual(['in-app', 'system'])
+    expect(items.map((i) => i.id)).toEqual(['in-app'])
   })
 
   it('in-app calls openInAppBrowser with inAppBrowserUrl', () => {

@@ -16,6 +16,7 @@ export const zh: Record<TranslationKey, string> = {
   'common.enable': '启用',
   'common.disable': '禁用',
   'common.active': '已激活',
+  'common.error': '错误',
   'common.copyFailed': '复制失败。',
 
   // ─── Sidebar ──────────────────────────────────────
@@ -97,7 +98,6 @@ export const zh: Record<TranslationKey, string> = {
   'openWith.title': '打开方式',
   'openWith.inAppBrowser': '应用内浏览器',
   'openWith.systemBrowser': '系统浏览器',
-  'openWith.systemDefault': '系统默认打开',
   'openWith.workspacePreview': '工作台预览',
   'openWith.openInTarget': '用 {target} 打开',
   'openWith.revealInTarget': '在 {target} 中显示',
@@ -114,7 +114,6 @@ export const zh: Record<TranslationKey, string> = {
   'assistantOutputs.kind.localhost': '本地服务',
   'assistantOutputs.moreOutputs': '+{count} 个输出',
   'assistantOutputs.open': '打开',
-  'assistantOutputs.copy': '复制路径',
 
   // ─── Workspace Panel ───────────────────────────────
   'workspace.changedFiles': '已更改文件',
@@ -995,7 +994,7 @@ export const zh: Record<TranslationKey, string> = {
   'settings.general.networkProxyModeManual': '手动代理',
   'settings.general.networkProxyModeManualDescription': '使用下方填写的 HTTP 或 HTTPS 代理地址。',
   'settings.general.networkProxyUrl': '代理地址',
-  'settings.general.networkProxyUrlHint': '支持 HTTP 和 HTTPS 代理，例如 http://127.0.0.1:7890。',
+  'settings.general.networkProxyUrlHint': '支持 HTTP 和 HTTPS 代理。需要认证时可填写 http://user:password@127.0.0.1:7890；该 URL 会随网络设置保存。',
   'settings.general.networkProxyUrlInvalid': '请输入 HTTP 或 HTTPS 代理地址。',
   'settings.general.networkProxyUrlRequired': '请输入代理地址。',
   'settings.general.networkTimeout': 'AI 请求超时',
@@ -1638,6 +1637,16 @@ export const zh: Record<TranslationKey, string> = {
   'error.NOT_FOUND': '资源未找到。',
   'error.INTERNAL_ERROR': '内部服务器错误。',
 
+  // ─── 业务错误 ──────────────────────────────────────
+  'businessError.pdf_too_large': '这个 PDF 超出了当前模型可处理的大小。请先转成文本，或换一个更小的 PDF。',
+  'businessError.pdf_password_protected': '这个 PDF 有密码保护。请先解锁或转换后再发送。',
+  'businessError.pdf_invalid': '这个 PDF 文件无效。请先转成文本，或换一个文件发送。',
+  'businessError.image_too_large': '这张图片超出了当前模型可处理的大小。请压缩图片，或换一张更小的图片。',
+  'businessError.image_unsupported': '当前模型不支持图片。请继续使用文字，或切换到支持视觉的模型后重新发送图片。',
+  'businessError.request_too_large': '这次请求超出了当前模型可处理的大小。请移除大文件，或缩短消息后重试。',
+  'businessError.prompt_too_long': '当前上下文超出了模型限制。请先压缩会话，或减少上下文后重试。',
+  'businessError.auto_mode_unavailable': '当前套餐不支持自动模式。',
+
   // ─── Server Status Verbs ──────────────────────────────────────
   'serverVerb.Thinking': '思考中',
   'serverVerb.Compacting conversation': '正在压缩上下文',
@@ -1664,6 +1673,7 @@ export const zh: Record<TranslationKey, string> = {
   'tabs.closeConfirmStop': '停止并关闭',
   'tabs.closeAllConfirmTitle': '多个会话运行中',
   // ─── Slash Command Descriptions ──────────────────────────────────────
+  'slashCmd.agent.description': '使用指定 Agent 执行提示',
   'slashCmd.mcp.description': '打开当前聊天上下文中可用的 MCP 工具',
   'slashCmd.skills.description': '浏览当前上下文中可直接调用的技能',
   'slashCmd.help.description': '查看可用的桌面端与 Agent 命令',

@@ -72,6 +72,7 @@ describe('DiagnosticsService', () => {
       details: {
         apiKey: 'sk-secret',
         url: 'https://api.example.com?api_key=secret-value',
+        proxyUrl: 'https://proxy-user:p%40ss@example.com:8443/api',
         nested: { message: `home=${os.homedir()}` },
       },
     })
@@ -79,7 +80,10 @@ describe('DiagnosticsService', () => {
     const raw = await fs.readFile(path.join(tmpDir, 'cc-haha', 'diagnostics', 'diagnostics.jsonl'), 'utf-8')
     expect(raw).toContain('cli_start_failed')
     expect(raw).toContain('[REDACTED]')
+    expect(raw).toContain('https://[REDACTED]@example.com:8443/api')
     expect(raw).not.toContain('sk-secret')
+    expect(raw).not.toContain('proxy-user')
+    expect(raw).not.toContain('p%40ss')
     expect(raw).not.toContain(os.homedir())
 
     const runtime = await fs.readFile(path.join(tmpDir, 'cc-haha', 'diagnostics', 'runtime-errors.log'), 'utf-8')

@@ -8,6 +8,7 @@ import type {
   BetaStopReason,
 } from '@anthropic-ai/sdk/resources/beta/messages/messages.mjs'
 import { AFK_MODE_BETA_HEADER } from 'src/constants/betas.js'
+import { BUSINESS_ERROR_CODES } from 'src/constants/businessErrors.js'
 import type { SDKAssistantMessageError } from 'src/entrypoints/agentSdkTypes.js'
 import type {
   AssistantMessage,
@@ -430,6 +431,9 @@ export function extractUnknownErrorFormat(value: unknown): string | undefined {
 export function isUnsupportedImageInputErrorMessage(message: string): boolean {
   const raw = message.toLowerCase()
   if (!raw.includes('image')) return false
+  if (isOpenAIImageUrlTextOnlySchemaError(raw)) {
+    return true
+  }
   return (
     raw.includes('not support') ||
     raw.includes('not supported') ||
@@ -438,6 +442,31 @@ export function isUnsupportedImageInputErrorMessage(message: string): boolean {
     raw.includes('multimodal') ||
     raw.includes('multi-modal') ||
     raw.includes('modality')
+  )
+}
+
+function isOpenAIImageUrlTextOnlySchemaError(raw: string): boolean {
+  if (!raw.includes('image_url')) return false
+  if (
+    raw.includes('not allowed') ||
+    raw.includes('not permitted') ||
+    raw.includes('disallowed') ||
+    raw.includes('forbidden')
+  ) {
+    return true
+  }
+  if (!raw.includes('text')) return false
+  return (
+    raw.includes('expected') ||
+    raw.includes('input should be') ||
+    raw.includes('not one of') ||
+    raw.includes('permitted') ||
+    raw.includes('received') ||
+    raw.includes('unknown variant') ||
+    raw.includes('invalid value') ||
+    raw.includes('invalid type') ||
+    raw.includes('valid enumeration') ||
+    raw.includes('only text')
   )
 }
 
@@ -467,6 +496,7 @@ export function getAssistantMessageFromError(
   if (error instanceof ImageSizeError || error instanceof ImageResizeError) {
     return createAssistantAPIErrorMessage({
       content: getImageTooLargeErrorMessage(),
+      businessErrorCode: BUSINESS_ERROR_CODES.IMAGE_TOO_LARGE,
     })
   }
 
@@ -483,6 +513,7 @@ export function getAssistantMessageFromError(
       content: getImageUnsupportedErrorMessage(),
       error: 'invalid_request',
       errorDetails: error.message,
+      businessErrorCode: BUSINESS_ERROR_CODES.IMAGE_UNSUPPORTED,
     })
   }
 
@@ -605,6 +636,7 @@ export function getAssistantMessageFromError(
       content: PROMPT_TOO_LONG_ERROR_MESSAGE,
       error: 'invalid_request',
       errorDetails: error.message,
+      businessErrorCode: BUSINESS_ERROR_CODES.PROMPT_TOO_LONG,
     })
   }
 
@@ -617,6 +649,7 @@ export function getAssistantMessageFromError(
       content: getPdfTooLargeErrorMessage(),
       error: 'invalid_request',
       errorDetails: error.message,
+      businessErrorCode: BUSINESS_ERROR_CODES.PDF_TOO_LARGE,
     })
   }
 
@@ -628,6 +661,7 @@ export function getAssistantMessageFromError(
     return createAssistantAPIErrorMessage({
       content: getPdfPasswordProtectedErrorMessage(),
       error: 'invalid_request',
+      businessErrorCode: BUSINESS_ERROR_CODES.PDF_PASSWORD_PROTECTED,
     })
   }
 
@@ -641,6 +675,7 @@ export function getAssistantMessageFromError(
     return createAssistantAPIErrorMessage({
       content: getPdfInvalidErrorMessage(),
       error: 'invalid_request',
+      businessErrorCode: BUSINESS_ERROR_CODES.PDF_INVALID,
     })
   }
 
@@ -654,6 +689,7 @@ export function getAssistantMessageFromError(
     return createAssistantAPIErrorMessage({
       content: getImageTooLargeErrorMessage(),
       errorDetails: error.message,
+      businessErrorCode: BUSINESS_ERROR_CODES.IMAGE_TOO_LARGE,
     })
   }
 
@@ -670,6 +706,7 @@ export function getAssistantMessageFromError(
         : 'An image in the conversation exceeds the dimension limit for many-image requests (2000px). Run /compact to remove old images from context, or start a new session.',
       error: 'invalid_request',
       errorDetails: error.message,
+      businessErrorCode: BUSINESS_ERROR_CODES.IMAGE_TOO_LARGE,
     })
   }
 
@@ -686,6 +723,7 @@ export function getAssistantMessageFromError(
     return createAssistantAPIErrorMessage({
       content: 'Auto mode is unavailable for your plan',
       error: 'invalid_request',
+      businessErrorCode: BUSINESS_ERROR_CODES.AUTO_MODE_UNAVAILABLE,
     })
   }
 
@@ -695,6 +733,7 @@ export function getAssistantMessageFromError(
     return createAssistantAPIErrorMessage({
       content: getRequestTooLargeErrorMessage(),
       error: 'invalid_request',
+      businessErrorCode: BUSINESS_ERROR_CODES.REQUEST_TOO_LARGE,
     })
   }
 

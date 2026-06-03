@@ -16,6 +16,7 @@ export type BrowserSessionState = {
 type BrowserPanelState = {
   bySession: Record<string, BrowserSessionState>
   open: (sessionId: string, url: string) => void
+  ensureBlank: (sessionId: string) => void
   navigate: (sessionId: string, url: string) => void
   goBack: (sessionId: string) => void
   goForward: (sessionId: string) => void
@@ -26,14 +27,21 @@ type BrowserPanelState = {
   setReady: (sessionId: string) => void
 }
 
-const empty = (url: string): BrowserSessionState => ({
-  isOpen: true, url, title: '', history: [url], historyIndex: 0,
-  loading: false, pickerActive: false, canGoBack: false, canGoForward: false,
+const empty = (url = ''): BrowserSessionState => ({
+  isOpen: true,
+  url,
+  title: '',
+  history: url ? [url] : [],
+  historyIndex: url ? 0 : -1,
+  loading: false,
+  pickerActive: false,
+  canGoBack: false,
+  canGoForward: false,
 })
 
 const withNav = (s: BrowserSessionState): BrowserSessionState => ({
   ...s,
-  url: s.history[s.historyIndex]!,
+  url: s.history[s.historyIndex] ?? s.url,
   canGoBack: s.historyIndex > 0,
   canGoForward: s.historyIndex < s.history.length - 1,
 })
@@ -51,9 +59,16 @@ export const useBrowserPanelStore = create<BrowserPanelState>((set) => ({
     workspacePanel.openPanel(sessionId)
     workspacePanel.setMode(sessionId, 'browser')
   },
+  ensureBlank: (sessionId) => set((st) => {
+    const cur = st.bySession[sessionId]
+    if (cur) {
+      return { bySession: { ...st.bySession, [sessionId]: { ...cur, isOpen: true } } }
+    }
+    return { bySession: { ...st.bySession, [sessionId]: empty() } }
+  }),
   navigate: (sessionId, url) => set((st) => {
     const cur = st.bySession[sessionId] ?? empty(url)
-    const history = [...cur.history.slice(0, cur.historyIndex + 1), url]
+    const history = [...cur.history.slice(0, Math.max(0, cur.historyIndex + 1)), url]
     return { bySession: { ...st.bySession, [sessionId]: withNav({ ...cur, isOpen: true, loading: true, history, historyIndex: history.length - 1 }) } }
   }),
   goBack: (sessionId) => set((st) => {

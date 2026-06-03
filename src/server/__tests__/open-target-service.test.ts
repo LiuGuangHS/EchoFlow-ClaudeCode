@@ -196,7 +196,7 @@ describe('openTargetService', () => {
     }
   })
 
-  it('rejects non-directory paths', async () => {
+  it('opens file paths in IDE targets', async () => {
     const dir = await makeDir()
     const file = join(dir, 'note.txt')
     await writeFile(file, 'not a directory')
@@ -206,7 +206,7 @@ describe('openTargetService', () => {
 
     try {
       await expect(service.openTarget({ targetId: 'vscode', path: file }))
-        .rejects.toMatchObject({ code: 'OPEN_TARGET_PATH_NOT_DIRECTORY' })
+        .resolves.toMatchObject({ ok: true, targetId: 'vscode', path: file })
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
@@ -245,6 +245,21 @@ describe('openTargetService', () => {
     }
   })
 
+  it('reveals files in Finder instead of opening them with the default app', async () => {
+    const dir = await makeDir()
+    const file = join(dir, 'note.txt')
+    await writeFile(file, 'contents')
+    const { service, launched } = createService('darwin')
+
+    try {
+      await service.openTarget({ targetId: 'finder', path: file })
+
+      expect(launched).toEqual([{ command: 'open', args: ['-R', file] }])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
   it('opens Windows command-shim targets through the resolved executable', async () => {
     const dir = await makeDir()
     const commandPath = 'C:\\Users\\nanmi\\AppData\\Local\\Programs\\Microsoft VS Code\\bin\\code.cmd'
@@ -275,6 +290,38 @@ describe('openTargetService', () => {
       await service.openTarget({ targetId: 'explorer', path: dir })
 
       expect(launched).toEqual([{ command: 'cmd.exe', args: ['/d', '/c', 'start', '', dir] }])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('selects files in Windows Explorer through the file-manager fallback', async () => {
+    const dir = await makeDir()
+    const file = join(dir, 'note.txt')
+    await writeFile(file, 'contents')
+    const { service, launched } = createService('win32')
+
+    try {
+      await service.openTarget({ targetId: 'explorer', path: file })
+
+      expect(launched).toEqual([{ command: 'explorer.exe', args: [`/select,${file}`] }])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('opens a file parent directory through the Linux file-manager fallback', async () => {
+    const dir = await makeDir()
+    const file = join(dir, 'note.txt')
+    await writeFile(file, 'contents')
+    const { service, launched } = createService('linux', {
+      commands: { 'xdg-open': true },
+    })
+
+    try {
+      await service.openTarget({ targetId: 'file-manager', path: file })
+
+      expect(launched).toEqual([{ command: 'xdg-open', args: [dir] }])
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

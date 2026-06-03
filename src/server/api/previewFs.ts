@@ -52,6 +52,7 @@ const PREFIX = '/preview-fs/'
  * against pathological / runaway files — not as a memory limit.
  */
 const MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024
+const ROOT_RELATIVE_HTML_ATTR_RE = /\b(src|href)=(["'])\/(?!\/)([^"']*)\2/gi
 
 export interface ParsedRange {
   start: number
@@ -149,7 +150,71 @@ export async function handlePreviewFs(
     return new Response('forbidden', { status: 403 })
   }
 
-  return serveFileWithRange(target, reqHeaders)
+  return servePreviewFsFile(target, url.pathname, reqHeaders)
+}
+
+function previewHtmlBasePath(pathname: string): string {
+  const slash = pathname.lastIndexOf('/')
+  if (slash < 0) return '/'
+  return pathname.slice(0, slash + 1)
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+export function rewritePreviewHtml(content: string, basePath: string): string {
+  const normalizedBase = basePath.endsWith('/') ? basePath : `${basePath}/`
+  const rewrittenRootAssets = content.replace(
+    ROOT_RELATIVE_HTML_ATTR_RE,
+    (_match, attr: string, quote: string, value: string) =>
+      `${attr}=${quote}${normalizedBase}${value}${quote}`,
+  )
+
+  if (/<base\b/i.test(rewrittenRootAssets)) {
+    return rewrittenRootAssets
+  }
+
+  return rewrittenRootAssets.replace(
+    /<head\b[^>]*>/i,
+    (head) => `${head}<base href="${escapeHtmlAttribute(normalizedBase)}">`,
+  )
+}
+
+async function servePreviewFsFile(
+  target: string,
+  requestPathname: string,
+  reqHeaders?: Headers,
+): Promise<Response> {
+  const ext = path.extname(target).toLowerCase()
+  if ((ext !== '.html' && ext !== '.htm') || reqHeaders?.has('range')) {
+    return serveFileWithRange(target, reqHeaders)
+  }
+
+  let stat: fs.Stats
+  try {
+    stat = fs.statSync(target)
+  } catch {
+    return new Response('not found', { status: 404 })
+  }
+  if (!stat.isFile()) return new Response('not a file', { status: 404 })
+  if (stat.size > MAX_FILE_BYTES) return new Response('too large', { status: 413 })
+
+  const content = fs.readFileSync(target, 'utf8')
+  const transformed = rewritePreviewHtml(content, previewHtmlBasePath(requestPathname))
+
+  return new Response(transformed, {
+    status: 200,
+    headers: {
+      'Content-Type': contentTypeForPath(target),
+      'Content-Length': String(Buffer.byteLength(transformed)),
+      'Cache-Control': 'no-cache',
+    },
+  })
 }
 
 /**

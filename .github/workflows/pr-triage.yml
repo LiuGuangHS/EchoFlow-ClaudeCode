@@ -70,9 +70,10 @@ jobs:
               'scripts/pr/check-pr.ts',
               'scripts/pr/run-server-tests.ts',
               'scripts/release.ts',
-              'desktop/src-tauri/tauri.conf.json',
-              'desktop/src-tauri/Cargo.toml',
-              'desktop/src-tauri/Cargo.lock',
+              'desktop/electron/tsconfig.json',
+              'desktop/scripts/build-linux.sh',
+              'desktop/scripts/build-macos-arm64.sh',
+              'desktop/scripts/build-windows-x64.ps1',
             ])
 
             for (const filename of filenames) {
@@ -145,7 +146,7 @@ jobs:
                 file.startsWith('desktop/') ||
                 file.startsWith('adapters/') ||
                 file.startsWith('src/server/') ||
-                ['bun.lock', 'package.json', 'desktop/bun.lock', 'desktop/package.json', 'desktop/package-lock.json', 'desktop/src-tauri/Cargo.lock', 'desktop/src-tauri/Cargo.toml', 'desktop/src-tauri/tauri.conf.json'].includes(file)
+                ['bun.lock', 'package.json', 'desktop/bun.lock', 'desktop/package.json', 'desktop/package-lock.json', 'desktop/electron/tsconfig.json', 'desktop/scripts/build-linux.sh', 'desktop/scripts/build-macos-arm64.sh', 'desktop/scripts/build-windows-x64.ps1'].includes(file)
               )
             ) requiredChecks.push('desktop-native-checks')
             if (areas.has('area:docs')) requiredChecks.push('docs-checks')
@@ -172,7 +173,7 @@ jobs:
 
             const riskNotes = []
             if (filenames.some((file) => file.startsWith('desktop/src-tauri/'))) {
-              riskNotes.push('Tauri/native code changed: inspect sidecar build and cargo check.')
+              riskNotes.push('Legacy native resources changed: inspect Electron sidecar/package output and package-smoke results.')
             }
             if (filenames.some((file) => file.startsWith('desktop/src/stores/') || file.startsWith('desktop/src/api/'))) {
               riskNotes.push('Desktop state/API layer changed: verify store persistence, WebSocket behavior, and startup errors.')

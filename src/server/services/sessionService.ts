@@ -19,7 +19,12 @@ import {
   MODEL_CONTEXT_WINDOW_DEFAULT,
   getContextWindowForModel,
   getModelMaxOutputTokens,
+  is1mContextDisabled,
 } from '../../utils/context.js'
+import {
+  MODEL_CONTEXT_WINDOWS_ENV_KEY,
+  getModelContextWindowFromEnvValue,
+} from '../../utils/model/modelContextWindows.js'
 import {
   calculateContextBudget,
   getProviderUsageTrust,
@@ -36,6 +41,7 @@ import { registerFilesystemAccessRoot } from './filesystemAccessRoots.js'
 import { normalizeDriveRootPathForPlatform } from './windowsDrivePath.js'
 import { cleanSessionTitleSource } from '../../utils/sessionTitleText.js'
 import { roughTokenCountEstimationForMessages } from '../../services/tokenEstimation.js'
+import { ProviderService } from './providerService.js'
 
 // ============================================================================
 // Types
@@ -269,6 +275,8 @@ const TASK_NOTIFICATION_BLOCK_RE = /<task-notification>\s*[\s\S]*?<\/task-notifi
 // ============================================================================
 
 export class SessionService {
+  private providerService = new ProviderService()
+
   private readonly sessionListCacheTtlMs = 5_000
   private readonly sessionListCache = new Map<string, {
     expiresAt: number
@@ -1288,7 +1296,43 @@ export class SessionService {
     return `$${cost > 0.5 ? (Math.round(cost * 100) / 100).toFixed(2) : cost.toFixed(4)}`
   }
 
-  private getTranscriptContextWindow(model: string): number {
+  private async getProviderContextWindowForSession(
+    sessionId: string,
+    model: string,
+  ): Promise<number | undefined> {
+    const launchInfo = await this.getSessionLaunchInfo(sessionId).catch(() => null)
+    const providerIds: string[] = []
+
+    if (typeof launchInfo?.runtimeProviderId === 'string') {
+      providerIds.push(launchInfo.runtimeProviderId)
+    } else if (launchInfo?.runtimeProviderId !== null) {
+      const { activeId } = await this.providerService.listProviders().catch(() => ({ activeId: null }))
+      if (activeId) providerIds.push(activeId)
+    }
+
+    for (const providerId of providerIds) {
+      const env = await this.providerService.getProviderRuntimeEnv(providerId).catch(() => null)
+      const contextWindow = getModelContextWindowFromEnvValue(
+        model,
+        env?.[MODEL_CONTEXT_WINDOWS_ENV_KEY],
+      )
+      if (contextWindow !== undefined) {
+        if (contextWindow > MODEL_CONTEXT_WINDOW_DEFAULT && is1mContextDisabled()) {
+          return MODEL_CONTEXT_WINDOW_DEFAULT
+        }
+        return contextWindow
+      }
+    }
+
+    return undefined
+  }
+
+  private async getTranscriptContextWindow(sessionId: string, model: string): Promise<number> {
+    const providerContextWindow = await this.getProviderContextWindowForSession(sessionId, model)
+    if (providerContextWindow !== undefined) {
+      return providerContextWindow
+    }
+
     try {
       return getContextWindowForModel(model)
     } catch (err) {
@@ -1362,7 +1406,7 @@ export class SessionService {
 
     if (!latest) return null
 
-    const rawMaxTokens = this.getTranscriptContextWindow(latest.model)
+    const rawMaxTokens = await this.getTranscriptContextWindow(sessionId, latest.model)
     const promptTokens = latest.inputTokens + latest.cacheReadInputTokens + latest.cacheCreationInputTokens
     const transcriptMessages = entries.filter(entry =>
       entry.type === 'user' || entry.type === 'assistant' || entry.type === 'attachment',
@@ -1502,7 +1546,7 @@ export class SessionService {
           webSearchRequests: 0,
           costUSD: 0,
           costDisplay: '$0.0000',
-          contextWindow: this.getTranscriptContextWindow(model),
+          contextWindow: await this.getTranscriptContextWindow(sessionId, model),
           maxOutputTokens: getModelMaxOutputTokens(model).default,
         }
         models.set(model, modelUsage)

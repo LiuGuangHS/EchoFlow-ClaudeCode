@@ -35,6 +35,13 @@ function setupWorkspace() {
   writeFileSync(path.join(root, 'index.html'), '<h1>ok</h1>')
   mkdirSync(path.join(root, 'assets'))
   writeFileSync(path.join(root, 'assets', 'a.css'), 'body{}')
+  mkdirSync(path.join(root, 'dist', 'assets'), { recursive: true })
+  writeFileSync(
+    path.join(root, 'dist', 'index.html'),
+    '<!doctype html><html><head><link rel="stylesheet" href="/assets/app.css"></head><body><script type="module" src="/assets/app.js"></script></body></html>',
+  )
+  writeFileSync(path.join(root, 'dist', 'assets', 'app.css'), 'body{color:red}')
+  writeFileSync(path.join(root, 'dist', 'assets', 'app.js'), 'console.log("ok")')
   writeFileSync(path.join(root, 'clip.mp4'), VIDEO_BYTES)
   return root
 }
@@ -85,6 +92,17 @@ describe('handlePreviewFs', () => {
     const res = await handlePreviewFs(new URL('http://127.0.0.1/preview-fs/s1/assets/a.css'), resolve)
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toBe('text/css; charset=utf-8')
+  })
+
+  it('rewrites root-relative HTML assets to stay under the preview-fs file directory', async () => {
+    const root = setupWorkspace()
+    const resolve = async () => root
+    const res = await handlePreviewFs(new URL('http://127.0.0.1/preview-fs/s1/dist/index.html'), resolve)
+    expect(res.status).toBe(200)
+    const body = await res.text()
+    expect(body).toContain('<base href="/preview-fs/s1/dist/">')
+    expect(body).toContain('href="/preview-fs/s1/dist/assets/app.css"')
+    expect(body).toContain('src="/preview-fs/s1/dist/assets/app.js"')
   })
 
   it('blocks path traversal with 403', async () => {

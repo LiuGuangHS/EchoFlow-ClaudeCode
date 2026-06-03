@@ -222,6 +222,7 @@ mod webview_panel;
 const SERVER_STARTUP_LOG_LIMIT: usize = 80;
 const SERVER_BIND_HOST: &str = "0.0.0.0";
 const SERVER_CONTROL_HOST: &str = "127.0.0.1";
+const CLAUDE_CODE_POWERSHELL_PATH_ENV: &str = "CLAUDE_CODE_POWERSHELL_PATH";
 const MAIN_WINDOW_LABEL: &str = "main";
 const TRAY_SHOW_ID: &str = "tray_show";
 const TRAY_QUIT_ID: &str = "tray_quit";
@@ -231,6 +232,9 @@ const APP_MODE_FILE: &str = "app-mode.json";
 const MIN_WINDOW_WIDTH: u32 = 960;
 const MIN_WINDOW_HEIGHT: u32 = 640;
 const MIN_VISIBLE_PIXELS: i64 = 64;
+// Keep this above the server's CLI shutdown wait. The server gives each CLI
+// session enough time to run gracefulShutdown cleanup before it escalates.
+const SIDECAR_GRACEFUL_TERMINATION_TIMEOUT: Duration = Duration::from_millis(8_000);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -1383,6 +1387,11 @@ fn resolved_terminal_shell(app: &AppHandle) -> Result<String, String> {
     Ok(override_shell.unwrap_or(system_default))
 }
 
+fn read_agent_powershell_path_override() -> Option<String> {
+    let configured = read_desktop_terminal_config();
+    resolve_agent_powershell_path_override(current_terminal_host_platform(), configured.as_ref())
+}
+
 fn current_terminal_host_platform() -> TerminalHostPlatform {
     #[cfg(target_os = "windows")]
     {
@@ -1426,6 +1435,42 @@ fn resolve_desktop_terminal_shell(
             Ok(Some(path.to_string()))
         }
         _ => Ok(None),
+    }
+}
+
+fn is_powershell_executable_path(path: &str) -> bool {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let file_name = trimmed.rsplit(['/', '\\']).next().unwrap_or(trimmed);
+    let lowercase = file_name.to_ascii_lowercase();
+    let base = lowercase.strip_suffix(".exe").unwrap_or(&lowercase);
+    matches!(base, "pwsh" | "powershell")
+}
+
+fn resolve_agent_powershell_path_override(
+    platform: TerminalHostPlatform,
+    config: Option<&DesktopTerminalConfig>,
+) -> Option<String> {
+    if platform != TerminalHostPlatform::Windows {
+        return None;
+    }
+
+    let startup_shell = config?.startup_shell.as_deref()?.trim();
+    match startup_shell {
+        "pwsh" => Some("pwsh.exe".to_string()),
+        "powershell" => Some("powershell.exe".to_string()),
+        "custom" => {
+            let custom_path = config?.custom_shell_path.as_deref()?.trim();
+            if is_powershell_executable_path(custom_path) {
+                Some(custom_path.to_string())
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }
 
@@ -1589,6 +1634,9 @@ fn start_server_sidecar(app: &AppHandle) -> Result<ServerRuntime, String> {
         .map_err(|err| format!("resolve sidecar: {err}"))?;
     for (key, value) in terminal_environment(&default_shell(None)) {
         sidecar = sidecar.env(key, value);
+    }
+    if let Some(powershell_path) = read_agent_powershell_path_override() {
+        sidecar = sidecar.env(CLAUDE_CODE_POWERSHELL_PATH_ENV, powershell_path);
     }
     // Pass through CLAUDE_CONFIG_DIR so the sidecar (Node.js) uses the same
     // portable config directory. Also set XDG_CACHE_HOME to redirect the
@@ -1819,7 +1867,51 @@ fn kill_sidecar_child(child: CommandChild) {
         }
     }
 
+    #[cfg(unix)]
+    {
+        terminate_unix_sidecar_child(child);
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = child.kill();
+    }
+}
+
+#[cfg(unix)]
+fn terminate_unix_sidecar_child(child: CommandChild) {
+    let pid = child.pid();
+    let pid_text = pid.to_string();
+
+    // tauri-plugin-shell's CommandChild::kill() maps to SIGKILL on Unix.
+    // Give bundled sidecars a SIGTERM window first so the server can stop
+    // CLI sessions it spawned before the native app exits.
+    let _ = StdCommand::new("kill")
+        .args(["-TERM", &pid_text])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+
+    let deadline = Instant::now() + SIDECAR_GRACEFUL_TERMINATION_TIMEOUT;
+    while Instant::now() < deadline {
+        if !is_unix_process_running(pid) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
     let _ = child.kill();
+}
+
+#[cfg(unix)]
+fn is_unix_process_running(pid: u32) -> bool {
+    StdCommand::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 #[cfg(unix)]
@@ -1873,12 +1965,11 @@ fn kill_windows_sidecars() {
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_terminal_output, default_utf8_locale, ensure_utf8_locale,
-        dir_has_portable_data, has_meaningful_intersection, is_persistable_window_state,
-        normalize_terminal_bash_path, parse_env_block, resolve_desktop_terminal_shell,
-        resolve_terminal_cwd, run_notification_bridge,
-        select_h5_dist_dir, DesktopTerminalConfig, StoredWindowState, TerminalHostPlatform,
-        SERVER_BIND_HOST, SERVER_CONTROL_HOST,
+        decode_terminal_output, default_utf8_locale, dir_has_portable_data, ensure_utf8_locale,
+        has_meaningful_intersection, is_persistable_window_state, normalize_terminal_bash_path,
+        parse_env_block, resolve_agent_powershell_path_override, resolve_desktop_terminal_shell,
+        resolve_terminal_cwd, run_notification_bridge, select_h5_dist_dir, DesktopTerminalConfig,
+        StoredWindowState, TerminalHostPlatform, SERVER_BIND_HOST, SERVER_CONTROL_HOST,
     };
     use std::{collections::HashMap, fs};
 
@@ -2127,6 +2218,57 @@ mod tests {
             )
             .expect("custom resolution should succeed"),
             Some("/tmp/custom-shell".to_string())
+        );
+    }
+
+    #[test]
+    fn agent_powershell_override_uses_windows_power_shell_preferences() {
+        let pwsh = DesktopTerminalConfig {
+            startup_shell: Some("pwsh".to_string()),
+            custom_shell_path: None,
+        };
+        assert_eq!(
+            resolve_agent_powershell_path_override(TerminalHostPlatform::Windows, Some(&pwsh)),
+            Some("pwsh.exe".to_string())
+        );
+
+        let powershell = DesktopTerminalConfig {
+            startup_shell: Some("powershell".to_string()),
+            custom_shell_path: None,
+        };
+        assert_eq!(
+            resolve_agent_powershell_path_override(
+                TerminalHostPlatform::Windows,
+                Some(&powershell),
+            ),
+            Some("powershell.exe".to_string())
+        );
+    }
+
+    #[test]
+    fn agent_powershell_override_accepts_only_custom_power_shell_paths() {
+        let custom_pwsh = DesktopTerminalConfig {
+            startup_shell: Some("custom".to_string()),
+            custom_shell_path: Some(r"C:\Program Files\PowerShell\7\pwsh.exe".to_string()),
+        };
+        assert_eq!(
+            resolve_agent_powershell_path_override(
+                TerminalHostPlatform::Windows,
+                Some(&custom_pwsh),
+            ),
+            Some(r"C:\Program Files\PowerShell\7\pwsh.exe".to_string())
+        );
+
+        let custom_bash = DesktopTerminalConfig {
+            startup_shell: Some("custom".to_string()),
+            custom_shell_path: Some(r"C:\Program Files\Git\bin\bash.exe".to_string()),
+        };
+        assert_eq!(
+            resolve_agent_powershell_path_override(
+                TerminalHostPlatform::Windows,
+                Some(&custom_bash),
+            ),
+            None
         );
     }
 

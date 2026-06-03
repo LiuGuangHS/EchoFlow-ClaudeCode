@@ -58,14 +58,24 @@ describe('openWithContextForWorkspaceFile', () => {
     expect(result).toEqual({ kind: 'file', absolutePath: '/w/proj/README.md', relPath: 'README.md', previewable: true })
   })
 
-  it('index.html rel path → also has inAppBrowserUrl equal to previewFsUrl', () => {
-    const result = openWithContextForWorkspaceFile('index.html', '/w/proj/index.html', { sessionId: SESSION, serverBaseUrl: BASE })
+  it('frontend project index.html rel path → no inAppBrowserUrl because it needs a dev server', () => {
+    const result = openWithContextForWorkspaceFile('todo-app/index.html', '/w/proj/todo-app/index.html', { sessionId: SESSION, serverBaseUrl: BASE })
     expect(result).toEqual({
       kind: 'file',
-      absolutePath: '/w/proj/index.html',
-      relPath: 'index.html',
+      absolutePath: '/w/proj/todo-app/index.html',
+      relPath: 'todo-app/index.html',
       previewable: true,
-      inAppBrowserUrl: previewFsUrl(BASE, SESSION, 'index.html'),
+    })
+  })
+
+  it('built dist index.html rel path → has inAppBrowserUrl equal to previewFsUrl', () => {
+    const result = openWithContextForWorkspaceFile('todo-app/dist/index.html', '/w/proj/todo-app/dist/index.html', { sessionId: SESSION, serverBaseUrl: BASE })
+    expect(result).toEqual({
+      kind: 'file',
+      absolutePath: '/w/proj/todo-app/dist/index.html',
+      relPath: 'todo-app/dist/index.html',
+      previewable: true,
+      inAppBrowserUrl: previewFsUrl(BASE, SESSION, 'todo-app/dist/index.html'),
     })
   })
 

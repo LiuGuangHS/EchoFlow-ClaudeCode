@@ -134,10 +134,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential curl wget file \
-            libxdo-dev libssl-dev \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev patchelf \
+            libxdo-dev libssl-dev patchelf \
             libfuse2
 
       - name: Setup Bun
@@ -145,23 +142,11 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: 'desktop/src-tauri -> target'
-
       - name: Install root dependencies
         run: bun install
 
       - name: Install desktop dependencies
         working-directory: desktop
-        run: bun install
-
-      - name: Install adapter dependencies
-        working-directory: adapters
         run: bun install
 
       - name: Run desktop native checks

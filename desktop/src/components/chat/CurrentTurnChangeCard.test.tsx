@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom'
-import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
+import { render, screen, fireEvent, cleanup } from '@testing-library/react'
 import { act } from 'react'
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -126,6 +126,10 @@ function renderCard(filesChanged: string[]) {
 // ──────────────────────────────────────────────────────────────────────────────
 // Tests
 // ──────────────────────────────────────────────────────────────────────────────
+afterEach(() => {
+  cleanup()
+})
+
 describe('CurrentTurnChangeCard – rich file row (icon / name / type)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -137,6 +141,25 @@ describe('CurrentTurnChangeCard – rich file row (icon / name / type)', () => {
     renderCard(['/w/proj/README.md', '/w/proj/src/index.ts'])
     expect(screen.getByText('README.md')).toBeInTheDocument()
     expect(screen.getByText('index.ts')).toBeInTheDocument()
+  })
+
+  it('sorts previewable changed files before source-only files', () => {
+    renderCard([
+      '/w/proj/package.json',
+      '/w/proj/preview.md',
+      '/w/proj/src/main.ts',
+      '/w/proj/index.html',
+      '/w/proj/style.css',
+    ])
+
+    const rows = screen.getAllByRole('button', { name: /turnChangesOpenInWorkspaceAria/ })
+    expect(rows.map((row) => row.textContent)).toEqual([
+      expect.stringContaining('preview.md'),
+      expect.stringContaining('index.html'),
+      expect.stringContaining('package.json'),
+      expect.stringContaining('main.ts'),
+      expect.stringContaining('style.css'),
+    ])
   })
 
   it('renders the extension badge for a markdown file', () => {
@@ -222,6 +245,13 @@ describe('CurrentTurnChangeCard – open-with buttons', () => {
     expect(screen.getAllByRole('button', { name: 'openWith.title' })).toHaveLength(2)
   })
 
+  it('hides the workspace chevron on rows that already show an open-with button', () => {
+    renderCard(['/w/proj/README.md', '/w/proj/index.html', '/w/proj/src/main.ts'])
+
+    expect(screen.getAllByRole('button', { name: 'openWith.title' })).toHaveLength(2)
+    expect(screen.getAllByText('chevron_right')).toHaveLength(1)
+  })
+
   it('clicking README.md open-with opens menu with workspace preview item', async () => {
     renderCard(['/w/proj/README.md'])
     const [openWithBtn] = screen.getAllByRole('button', { name: 'openWith.title' })
@@ -250,8 +280,20 @@ describe('CurrentTurnChangeCard – open-with buttons', () => {
     expect(openPreviewSpy).toHaveBeenCalledWith('s1', 'README.md', 'file')
   })
 
-  it('clicking index.html open-with opens menu with in-app browser item', async () => {
+  it('clicking project index.html open-with opens menu with workspace preview item', async () => {
     renderCard(['/w/proj/index.html'])
+    const [openWithBtn] = screen.getAllByRole('button', { name: 'openWith.title' })
+
+    await act(async () => {
+      fireEvent.click(openWithBtn!)
+    })
+
+    expect(await screen.findByText('openWith.workspacePreview')).toBeInTheDocument()
+    expect(screen.queryByText('openWith.inAppBrowser')).not.toBeInTheDocument()
+  })
+
+  it('clicking built dist index.html open-with opens menu with in-app browser item', async () => {
+    renderCard(['/w/proj/dist/index.html'])
     const [openWithBtn] = screen.getAllByRole('button', { name: 'openWith.title' })
 
     await act(async () => {

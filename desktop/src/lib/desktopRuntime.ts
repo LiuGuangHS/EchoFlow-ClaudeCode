@@ -6,6 +6,7 @@ import {
   setAuthToken,
   setBaseUrl,
 } from '../api/client'
+import { getDesktopHost } from './desktopHost'
 
 export const H5_SERVER_URL_STORAGE_KEY = 'cc-haha-h5-server-url'
 export const H5_TOKEN_STORAGE_KEY = 'cc-haha-h5-token'
@@ -33,13 +34,16 @@ export class H5ConnectionRequiredError extends Error {
   }
 }
 
-export function isTauriRuntime() {
-  if (typeof window === 'undefined') return false
-  return '__TAURI_INTERNALS__' in window || '__TAURI__' in window
+function getDetectedDesktopHost() {
+  return getDesktopHost()
+}
+
+export function isDesktopRuntime() {
+  return getDetectedDesktopHost().isDesktop
 }
 
 export function isBrowserH5Runtime() {
-  return typeof window !== 'undefined' && !isTauriRuntime()
+  return typeof window !== 'undefined' && !isDesktopRuntime()
 }
 
 /**
@@ -124,14 +128,14 @@ export function isH5ConnectionRequiredError(error: unknown): error is H5Connecti
 
 export async function initializeDesktopServerUrl() {
   const fallbackUrl = getDefaultBaseUrl()
+  const host = getDetectedDesktopHost()
 
-  if (!isTauriRuntime()) {
+  if (!host.isDesktop) {
     return initializeBrowserServerUrl(fallbackUrl)
   }
 
   try {
-    const { invoke } = await import('@tauri-apps/api/core')
-    const serverUrl = await invoke<string>('get_server_url')
+    const serverUrl = await host.runtime.getServerUrl()
     setBaseUrl(serverUrl)
     setAuthToken(null)
     await waitForHealth(serverUrl)

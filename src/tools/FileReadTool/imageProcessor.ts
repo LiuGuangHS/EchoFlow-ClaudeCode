@@ -14,7 +14,7 @@ export type SharpInstance = {
     palette?: boolean
     colors?: number
   }): SharpInstance
-  webp(options?: { quality?: number }): SharpInstance
+  webp(options?: { quality?: number; lossless?: boolean }): SharpInstance
   toBuffer(): Promise<Buffer>
 }
 

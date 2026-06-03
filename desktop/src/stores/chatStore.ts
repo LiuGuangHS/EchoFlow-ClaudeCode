@@ -53,6 +53,8 @@ export type ComposerReferenceInsertion = {
   nonce: number
 }
 
+export type ComposerPrefillMode = 'replace' | 'append'
+
 export type PerSessionState = {
   messages: UIMessage[]
   chatState: ChatState
@@ -87,6 +89,7 @@ export type PerSessionState = {
   composerPrefill?: {
     text: string
     attachments?: UIAttachment[]
+    mode?: ComposerPrefillMode
     nonce: number
   } | null
   composerInsertion?: ComposerReferenceInsertion | null
@@ -134,7 +137,7 @@ type ChatStore = {
     sessionId: string,
     content: string,
     attachments?: AttachmentRef[],
-    options?: { displayContent?: string; displayAttachments?: AttachmentRef[] },
+    options?: { displayContent?: string; displayAttachments?: AttachmentRef[]; hideDisplayContent?: boolean },
   ) => void
   respondToPermission: (
     sessionId: string,
@@ -157,8 +160,9 @@ type ChatStore = {
   reloadHistory: (sessionId: string) => Promise<void>
   queueComposerPrefill: (
     sessionId: string,
-    prefill: { text: string; attachments?: UIAttachment[] },
+    prefill: { text: string; attachments?: UIAttachment[]; mode?: ComposerPrefillMode },
   ) => void
+  clearComposerPrefill: (sessionId: string, nonce?: number) => void
   queueComposerInsertion: (
     sessionId: string,
     insertion: Omit<ComposerReferenceInsertion, 'nonce'>,
@@ -878,10 +882,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   sendMessage: (sessionId, content, attachments, options) => {
-    const userFacingContent =
-      options?.displayContent?.trim() || content.trim()
-    const modelFacingContent = buildModelContent(content, attachments)
     const isMemberSession = !!useTeamStore.getState().getMemberBySessionId(sessionId)
+    const hideDisplayContent = !isMemberSession && options?.hideDisplayContent === true
+    const userFacingContent =
+      hideDisplayContent
+        ? ''
+        : options?.displayContent?.trim() || content.trim()
+    const modelFacingContent = buildModelContent(content, attachments)
     const visibleAttachments = options?.displayAttachments ?? attachments
     const uiAttachments: UIAttachment[] | undefined =
       visibleAttachments && visibleAttachments.length > 0
@@ -910,7 +917,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }
 
     if (!isMemberSession) {
-      updateOptimisticSessionTitle(sessionId, userFacingContent)
+      updateOptimisticSessionTitle(sessionId, userFacingContent || content.trim())
     }
 
     set((s) => {
@@ -1200,9 +1207,19 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         composerPrefill: {
           text: prefill.text,
           attachments: prefill.attachments,
+          mode: prefill.mode,
           nonce: Date.now(),
         },
       })),
+    }))
+  },
+
+  clearComposerPrefill: (sessionId, nonce) => {
+    set((state) => ({
+      sessions: updateSessionIn(state.sessions, sessionId, (session) => {
+        if (nonce !== undefined && session.composerPrefill?.nonce !== nonce) return {}
+        return { composerPrefill: null }
+      }),
     }))
   },
 
@@ -1649,7 +1666,17 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             newMessages = appendAssistantTextMessage(newMessages, pendingText, Date.now())
           }
           newMessages = dropTailCompactingCompactSummary(newMessages)
-          newMessages = [...newMessages, { id: nextId(), type: 'error', message: msg.message, code: msg.code, timestamp: Date.now() }]
+          newMessages = [
+            ...newMessages,
+            {
+              id: nextId(),
+              type: 'error',
+              message: msg.message,
+              code: msg.code,
+              ...(msg.businessErrorCode ? { businessErrorCode: msg.businessErrorCode } : {}),
+              timestamp: Date.now(),
+            },
+          ]
           return {
             messages: newMessages,
             chatState: 'idle',

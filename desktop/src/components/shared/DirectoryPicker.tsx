@@ -4,6 +4,7 @@ import { sessionsApi, type RecentProject } from '../../api/sessions'
 import { filesystemApi } from '../../api/filesystem'
 import { useTranslation } from '../../i18n'
 import { useMobileViewport } from '../../hooks/useMobileViewport'
+import { getDesktopHost } from '../../lib/desktopHost'
 import { MobileBottomSheet } from './MobileBottomSheet'
 
 type Props = {
@@ -24,8 +25,8 @@ const DROPDOWN_WIDTH = 400
 const DROPDOWN_VIEWPORT_MARGIN = 12
 const DROPDOWN_HEIGHT = 380 // approximate max height
 
-function isTauriRuntime() {
-  return typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window)
+function isDesktopRuntime() {
+  return typeof window !== 'undefined' && getDesktopHost().isDesktop
 }
 
 function projectNameFromPath(filePath: string) {
@@ -47,7 +48,7 @@ export function DirectoryPicker({ value, onChange, variant = 'chip', isGitProjec
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number; direction: 'up' | 'down' } | null>(null)
   const ref = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
-  const isMobileBrowser = useMobileViewport() && !isTauriRuntime()
+  const isMobileBrowser = useMobileViewport() && !isDesktopRuntime()
 
   const dropdownRef = useRef<HTMLDivElement>(null)
 
@@ -132,17 +133,17 @@ export function DirectoryPicker({ value, onChange, variant = 'chip', isGitProjec
   }
 
   const handleChooseFolder = async () => {
-    if (isTauriRuntime()) {
+    const host = getDesktopHost()
+    if (host.isDesktop && host.capabilities.dialogs) {
       // Desktop: native OS folder dialog
       setIsOpen(false)
       try {
-        const { open } = await import('@tauri-apps/plugin-dialog')
-        const selected = await open({
+        const selected = await host.dialogs.open({
           directory: true,
           multiple: false,
           title: t('dirPicker.chooseProjectFolder'),
         })
-        if (selected) onChange(selected)
+        if (typeof selected === 'string' && selected.length > 0) onChange(selected)
       } catch (err) {
         console.error('[DirectoryPicker] Failed to open folder dialog:', err)
       }

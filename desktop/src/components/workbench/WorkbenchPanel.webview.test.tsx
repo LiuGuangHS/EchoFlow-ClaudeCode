@@ -1,6 +1,6 @@
-// Integration test: proves the native child webview is torn down (hidden) when
+// Integration test: proves the native child webview is torn down when
 // the unified workbench switches from browser mode to file mode. Uses the REAL
-// BrowserSurface so the unmount-cleanup path that hides the webview is exercised.
+// BrowserSurface so the unmount-cleanup path that closes the webview is exercised.
 import '@testing-library/jest-dom'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -67,15 +67,15 @@ describe('WorkbenchPanel native webview lifecycle', () => {
     )
     expect(bridge.setVisible).toHaveBeenCalledWith(true)
 
-    bridge.setVisible.mockClear()
+    bridge.close.mockClear()
 
-    // Switch to the file tab: BrowserSurface unmounts, hiding the webview overlay.
+    // Switch to the file tab: BrowserSurface unmounts, closing the webview overlay.
     act(() => {
       fireEvent.click(screen.getByRole('tab', { name: 'Files' }))
     })
 
     expect(screen.queryByTestId('preview-host')).not.toBeInTheDocument()
     expect(screen.getByTestId('workspace-panel')).toBeInTheDocument()
-    expect(bridge.setVisible).toHaveBeenCalledWith(false)
+    expect(bridge.close).toHaveBeenCalled()
   })
 })

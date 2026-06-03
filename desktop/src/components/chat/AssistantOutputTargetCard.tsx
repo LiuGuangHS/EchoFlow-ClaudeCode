@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
-import { ChevronDown, Copy, ExternalLink, Globe } from 'lucide-react'
+import { ChevronDown, ExternalLink, Globe } from 'lucide-react'
 import type { AssistantOutputTarget } from '../../lib/assistantOutputTargets'
 import { useTranslation, type TranslationKey } from '../../i18n'
 import { OpenWithMenu } from '../common/OpenWithMenu'
@@ -8,10 +8,10 @@ import { buildOpenWithItems, describeFileType, type OpenWithItem } from '../../l
 import { openWithContextForHref } from '../../lib/openWithContextForHref'
 import { handlePreviewLink } from '../../lib/handlePreviewLink'
 import { getServerBaseUrl } from '../../lib/desktopRuntime'
+import { getDesktopHost } from '../../lib/desktopHost'
 import { useOpenTargetStore } from '../../stores/openTargetStore'
 import { useBrowserPanelStore } from '../../stores/browserPanelStore'
 import { useWorkspacePanelStore } from '../../stores/workspacePanelStore'
-import { copyTextToClipboard } from './clipboard'
 
 type Props = {
   target: AssistantOutputTarget
@@ -46,17 +46,11 @@ export function AssistantOutputTargetCard({ target, sessionId, workDir }: Props)
         void useWorkspacePanelStore.getState().openPreview(id, path, 'file')
       },
       openExternal: (url) => {
-        void import('@tauri-apps/plugin-shell')
-          .then((m) => m.open(url))
+        void getDesktopHost().shell.open(url)
           .catch(() => window.open(url, '_blank'))
       },
     })
   }, [sessionId, target.href])
-
-  const handleCopy = useCallback((event: ReactMouseEvent<HTMLButtonElement>) => {
-    event.stopPropagation()
-    void copyTextToClipboard(target.normalizedPath ?? target.href)
-  }, [target.href, target.normalizedPath])
 
   const handleOpenWith = useCallback((event: ReactMouseEvent<HTMLButtonElement>) => {
     event.stopPropagation()
@@ -80,7 +74,7 @@ export function AssistantOutputTargetCard({ target, sessionId, workDir }: Props)
       if (!ctx) return
       const items = buildOpenWithItems(ctx, targets, {
         openInAppBrowser: (url) => useBrowserPanelStore.getState().open(sessionId, url),
-        openSystem: (p) => { void import('@tauri-apps/plugin-shell').then((m) => m.open(p)).catch(() => window.open(p, '_blank')) },
+        openSystem: (p) => { void getDesktopHost().shell.openPath(p).catch(() => window.open(p, '_blank')) },
         openWorkspacePreview: (relPath) => { void useWorkspacePanelStore.getState().openPreview(sessionId, relPath, 'file') },
         openTarget: (id, abs) => { void useOpenTargetStore.getState().openTarget(id, abs) },
         t: (k, v) => t(k as TranslationKey, v),
@@ -124,15 +118,6 @@ export function AssistantOutputTargetCard({ target, sessionId, workDir }: Props)
           className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[var(--color-border)]/70 bg-[var(--color-surface)] text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-brand)]/35 hover:text-[var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]/35"
         >
           <ExternalLink size={14} strokeWidth={2.2} aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          onClick={handleCopy}
-          aria-label={t('assistantOutputs.copy')}
-          title={t('assistantOutputs.copy')}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[var(--color-border)]/70 bg-[var(--color-surface)] text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-brand)]/35 hover:text-[var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]/35"
-        >
-          <Copy size={14} strokeWidth={2.2} aria-hidden="true" />
         </button>
         <button
           type="button"

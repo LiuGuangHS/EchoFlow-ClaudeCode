@@ -17,10 +17,10 @@
 
 </div>
 
-A Claude Code build repaired from the source leaked from Anthropic's npm registry on 2026-03-31. EchoFlowAI-Claude-Code is now primarily a **desktop Claude Code workspace** for macOS and Windows: sessions, projects, branch / Worktree launch, right-side file changes, code diffs, permission review, provider setup, Computer Use, H5 remote access, IM integration, and scheduled tasks in one app.
+A Claude Code build repaired from the source leaked from Anthropic's npm registry on 2026-03-31. EchoFlowAI-Claude-Code is now primarily a **desktop Claude Code workspace** for macOS, Windows, and Linux: sessions, projects, branch / Worktree launch, right-side file changes, code diffs, permission review, provider setup, Computer Use, H5 remote access, IM integration, and scheduled tasks in one app.
 
 <p align="center">
-  <a href="#desktop-preview">Desktop Preview</a> · <a href="#install-the-desktop-app">Install</a> · <a href="#desktop-highlights">Highlights</a> · <a href="#feedback--sponsorship">Feedback</a> · <a href="#more-documentation">More Docs</a>
+  <a href="#desktop-preview">Desktop Preview</a> · <a href="#install-the-desktop-app">Install</a> · <a href="#desktop-highlights">Highlights</a> · <a href="#sponsorship--partnership">Sponsorship</a> · <a href="#more-documentation">More Docs</a>
 </p>
 
 ---
@@ -30,7 +30,7 @@ A Claude Code build repaired from the source leaked from Anthropic's npm registr
 The EchoFlowAI-Claude-Code desktop app brings sessions, multi-project navigation, branch / Worktree controls, right-side file changes, code diffs, permission review, provider setup, and remote access into one graphical workspace for daily development flows beyond the terminal.
 
 <p align="center">
-  <a href="https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/releases"><img src="https://img.shields.io/badge/⬇_Download_Desktop-macOS_%7C_Windows-FF7A00?style=for-the-badge" alt="Download Desktop"></a>
+  <a href="https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/releases"><img src="https://img.shields.io/badge/⬇_Download_Desktop-macOS_%7C_Windows_%7C_Linux-FF7A00?style=for-the-badge" alt="Download Desktop"></a>
   &nbsp;
   <a href="docs/desktop/04-installation.md"><img src="https://img.shields.io/badge/📖_Install_Guide-Guide-gray?style=for-the-badge" alt="Install Guide"></a>
 </p>
@@ -54,9 +54,9 @@ The EchoFlowAI-Claude-Code desktop app brings sessions, multi-project navigation
 
 ## Install the Desktop App
 
-1. Download the macOS or Windows desktop installer from [Releases](https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/releases).
+1. Download the macOS / Windows / Linux desktop installer from [Releases](https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/releases).
 2. On first launch, configure your model provider, API key, and default model in Settings.
-3. If macOS blocks the app on first open, follow the [desktop installation guide](docs/desktop/04-installation.md) for Gatekeeper steps.
+3. This build is currently unsigned, so the first launch needs a one-time manual approval (clear quarantine on macOS, click "Run anyway" on Windows). See the [desktop installation guide](docs/desktop/04-installation.md).
 
 ## Run the CLI from Source
 
@@ -99,7 +99,7 @@ See [environment variables](docs/en/guide/env-vars.md) and [global usage](docs/e
 | [Skills System](docs/skills/01-usage-guide.md) | Extensible capability plugins, custom workflows and conditional activation |
 | [IM Integration](docs/im/) | Remote chat, project switching, and permission approval via Telegram / Feishu / WeChat / DingTalk |
 | [Computer Use](docs/en/features/computer-use.md) | Desktop control (screenshots, mouse, keyboard) — [Architecture](docs/en/features/computer-use-architecture.md) |
-| [Desktop App](docs/desktop/) | Tauri 2 + React GUI client — [Quick Start](docs/desktop/01-quick-start.md) \| [Architecture](docs/desktop/02-architecture.md) \| [Installation](docs/desktop/04-installation.md) |
+| [Desktop App](docs/desktop/) | Electron + React GUI client — [Quick Start](docs/desktop/01-quick-start.md) \| [Architecture](docs/desktop/02-architecture.md) \| [Installation](docs/desktop/04-installation.md) |
 | [Global Usage](docs/en/guide/global-usage.md) | Run claude-haha from any directory |
 | [FAQ](docs/en/guide/faq.md) | Common error troubleshooting |
 | [Source Fixes](docs/en/reference/fixes.md) | Fixes compared with the original leaked source |
@@ -107,40 +107,68 @@ See [environment variables](docs/en/guide/env-vars.md) and [global usage](docs/e
 
 ---
 
-## Feedback & Sponsorship
+## Sponsorship & Partnership
 
-EchoFlowAI-Claude-Code improves around real user workflows. Installation, provider setup, desktop usage, fork customization, and enterprise integration feedback are all welcome. Feature suggestions, case studies, sponsorship, custom integration, and business collaboration are welcome too.
+This project is maintained in the author's spare time. Corporate or individual sponsorships are welcome to support ongoing development. Custom features, integrations, and business partnerships are also open for discussion.
 
 <table>
+  <thead>
+    <tr>
+      <th width="220">Sponsor</th>
+      <th align="left">Description</th>
+    </tr>
+  </thead>
   <tbody>
     <tr>
-      <td width="34%" align="center" valign="top">
-        <img src="docs/images/community/wechat-contact.png" width="180" alt="WeChat contact QR code"><br>
-        <strong>Feedback, Sponsorship, Collaboration</strong><br>
-        <sub>Feature ideas / sponsorship / custom integration / business</sub>
+      <td align="center" valign="middle">
+        <a href="https://jiekou.ai/referral?invited_code=OBNU3K">
+          <img src="docs/images/sponsors/jiekou-logo.svg" width="72" alt="JieKou AI"><br>
+          <strong>接口AI</strong>
+        </a>
       </td>
-      <td width="33%" align="center" valign="top">
-        <img src="docs/images/community/qingyun-vibecoding-group.png" width="230" alt="Qingyun AI VibeCoding community QR code"><br>
-        <strong>Qingyun AI VibeCoding Community</strong><br>
-        <sub>AI Coding / Claude Code forks / engineering automation</sub>
+      <td valign="middle">
+        Thanks to <a href="https://jiekou.ai/referral?invited_code=OBNU3K">JieKou AI</a> for sponsoring this project. JieKou AI provides official model resources with stable, high-performance API access. Subscription bundles are priced at 20% off the official rate; new users who register through <a href="https://jiekou.ai/referral?invited_code=OBNU3K">this link</a> and bind GitHub can claim a $3 coupon.
       </td>
-      <td width="33%" align="center" valign="top">
-        <img src="docs/images/community/qingyun-aigc-group.png" width="230" alt="Qingyun AIGC community QR code"><br>
-        <strong>Qingyun AIGC Community</strong><br>
-        <sub>AIGC tools / model apps / content workflows / industry cases</sub>
+    </tr>
+    <tr>
+      <td align="center" valign="middle">
+        <a href="https://www.shengsuanyun.com/?from=CH_LEJ88KWR">
+          <img src="docs/images/sponsors/shengsuanyun-logo.svg" width="180" alt="ShengSuanYun">
+        </a>
+      </td>
+      <td valign="middle">
+        Thanks to <a href="https://www.shengsuanyun.com/?from=CH_LEJ88KWR">ShengSuanYun</a> for sponsoring this project. ShengSuanYun is an industrial-grade AI task parallel execution platform for AI Native Teams, aggregating Claude, ChatGPT, Gemini, and other LLM, image, and video model capacity through direct, non-reverse-engineered access. Its platform SLA reaches 99.7%, with <a href="https://watch.shengsuanyun.com/status/shengsuanyun">service status</a> available online. It also supports dedicated enterprise gateways, cost and permission controls, smart routing, security protection, BYOK, usage-based billing, upcoming tokens plans, and invoicing. New users registering through <a href="https://www.shengsuanyun.com/?from=CH_LEJ88KWR">this link</a> can receive 10 yuan in model credits plus a 10% first top-up bonus.
       </td>
     </tr>
   </tbody>
 </table>
 
-| What you get in the groups | Best for |
-|---|---|
-| Faster feedback loop | Installation failures, provider setup, model calls, and desktop issues with screenshots or logs |
-| Forking experience | White-labeling, private API providers, internal distribution, Tauri packaging, releases |
-| Update signals | Important fixes, prereleases, configuration changes, and practical cases |
-| Peer learning | AI Coding, AIGC toolchains, automation workflows, and enterprise adoption |
+📧 **Contact**: zhijun2003@users.noreply.github.com
 
-You can also file reproducible issues on GitHub. Clear steps, logs, OS version, and expected behavior make issues easier to resolve.
+---
+
+## ☕ Buy Me a Coffee
+
+If this project helps you, consider buying me a coffee — every bit of support keeps this project going ❤️
+
+<table>
+<tr>
+<td align="center" width="33%">
+<img src="docs/images/donate/wechat_pay.jpeg" width="250" alt="WeChat Pay"><br>
+<b>WeChat Pay</b>
+</td>
+<td align="center" width="33%">
+<img src="docs/images/donate/zfb_pay.png" width="250" alt="Alipay"><br>
+<b>Alipay</b>
+</td>
+<td align="center" width="33%">
+<a href="https://buymeacoffee.com/relakkes" target="_blank">
+<img src="docs/images/donate/bmc_button.png" width="250" alt="Buy Me a Coffee">
+</a><br>
+<b>Buy Me a Coffee</b>
+</td>
+</tr>
+</table>
 
 ---
 
@@ -149,7 +177,7 @@ You can also file reproducible issues on GitHub. Clear steps, logs, OS version, 
 | Category | Technology |
 |------|------|
 | Language | TypeScript |
-| Desktop app | Tauri 2 |
+| Desktop app | Electron |
 | Desktop UI | React + Vite |
 | Local runtime | [Bun](https://bun.sh) |
 | Terminal UI | React + [Ink](https://github.com/vadimdemedes/ink) |
@@ -159,15 +187,11 @@ You can also file reproducible issues on GitHub. Clear steps, logs, OS version, 
 
 ## Thanks
 
-Thanks to the original project, open-source projects, and community practices that made this work possible:
+Thanks to the following open-source projects and community practices for reference and inspiration:
 
-- [Anthropic Claude Code](https://www.anthropic.com/claude-code): this repository is a learning-oriented repair and fork based on Claude Code source leaked from the Anthropic npm registry on 2026-03-31. The original source code, trademarks, and related copyrights belong to Anthropic and their respective rights holders.
-- [cc-haha](https://github.com/NanmiCoder/cc-haha): thanks to the cc-haha project for its continued work on the desktop workspace, provider management, documentation structure, and engineering practices. This fork builds on it with EchoFlowAI-Claude-Code branding and customization.
 - [React](https://github.com/facebook/react): frontend engineering and component-based UI ecosystem.
-- [Tauri](https://github.com/tauri-apps/tauri): cross-platform desktop app capabilities and engineering practices.
+- [Electron](https://github.com/electron/electron): cross-platform desktop app capabilities and engineering practices.
 - [cc-switch](https://github.com/farion1231/cc-switch): reference for model provider configuration.
-
-EchoFlowAI-Claude-Code is provided for learning, research, and internal engineering practice. If any content in this repository affects your rights, please contact us through the channels above.
 
 ---
 

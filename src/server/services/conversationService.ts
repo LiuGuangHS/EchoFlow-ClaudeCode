@@ -43,6 +43,7 @@ const MAX_CAPTURED_SDK_MESSAGES = 40
 const MAX_CAPTURED_SDK_SUMMARY = 20
 const CONTROL_READY_POLL_MS = 50
 const AUTO_MEMORY_DIRNAME = 'memory'
+export const DESKTOP_CLI_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 6_000
 
 type AttachmentRef = {
   type: 'file' | 'image'
@@ -76,6 +77,8 @@ type SessionProcess = {
   outputDrain: Promise<void>
   sdkMessages: any[]
   initMessage: any | null
+  usesOfficialOAuth: boolean
+  officialOAuthToken: string | null
   pendingPermissionRequests: Map<
     string,
     {
@@ -260,6 +263,7 @@ export class ConversationService {
     // chdir 后落到正确目录。
     //
     const childEnv = await this.buildChildEnv(launchWorkDir, sdkUrl, options)
+    const usesOfficialOAuth = this.shouldMarkManagedOAuth(options?.providerId)
 
     let proc: ReturnType<typeof Bun.spawn>
     try {
@@ -307,6 +311,8 @@ export class ConversationService {
       outputDrain: Promise.resolve(),
       sdkMessages: [],
       initMessage: null,
+      usesOfficialOAuth,
+      officialOAuthToken: childEnv.CLAUDE_CODE_OAUTH_TOKEN ?? null,
       pendingPermissionRequests: new Map(),
     }
     this.sessions.set(sessionId, session)
@@ -411,6 +417,10 @@ export class ConversationService {
     content: string,
     attachments?: AttachmentRef[],
   ): Promise<boolean> {
+    const session = this.sessions.get(sessionId)
+    if (session) {
+      await this.refreshOfficialOAuthTokenBeforeTurn(sessionId, session)
+    }
     const userContent = await this.buildUserContent(content, sessionId, attachments)
     return this.sendSdkMessage(sessionId, {
       type: 'user',
@@ -733,24 +743,78 @@ export class ConversationService {
 
   stopSession(sessionId: string): void {
     const session = this.sessions.get(sessionId)
-    if (session) {
-      session.proc.kill()
-      this.sessions.delete(sessionId)
-    }
+    if (!session) return
+
+    this.sessions.delete(sessionId)
+    this.killProcess(sessionId, session)
   }
 
-  async stopSessionAndWait(sessionId: string, timeoutMs = 2_000): Promise<void> {
+  async stopSessionAndWait(
+    sessionId: string,
+    timeoutMs = DESKTOP_CLI_GRACEFUL_SHUTDOWN_TIMEOUT_MS,
+  ): Promise<void> {
     const session = this.sessions.get(sessionId)
     if (!session) return
 
     this.sessions.delete(sessionId)
-    session.proc.kill()
+    await this.stopProcessAndWait(sessionId, session, timeoutMs)
+  }
 
-    await Promise.race([
-      session.proc.exited.catch(() => undefined),
-      new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
+  stopAllSessions(): void {
+    for (const sessionId of this.getActiveSessions()) {
+      this.stopSession(sessionId)
+    }
+  }
+
+  async stopAllSessionsAndWait(
+    timeoutMs = DESKTOP_CLI_GRACEFUL_SHUTDOWN_TIMEOUT_MS,
+  ): Promise<void> {
+    const activeSessions = Array.from(this.sessions.entries())
+    if (activeSessions.length === 0) return
+
+    this.sessions.clear()
+    await Promise.all(
+      activeSessions.map(([sessionId, session]) =>
+        this.stopProcessAndWait(sessionId, session, timeoutMs),
+      ),
+    )
+  }
+
+  private async stopProcessAndWait(
+    sessionId: string,
+    session: SessionProcess,
+    timeoutMs: number,
+  ): Promise<void> {
+    this.killProcess(sessionId, session, 'SIGTERM')
+
+    const exited = await Promise.race([
+      session.proc.exited.then(() => true, () => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
     ])
+    if (!exited) {
+      this.killProcess(sessionId, session, 'SIGKILL')
+      await Promise.race([
+        session.proc.exited.catch(() => undefined),
+        new Promise<void>((resolve) => setTimeout(resolve, 500)),
+      ])
+    }
     await this.waitForProcessOutputDrain(session, timeoutMs)
+  }
+
+  private killProcess(
+    sessionId: string,
+    session: SessionProcess,
+    signal?: NodeJS.Signals,
+  ): void {
+    try {
+      session.proc.kill(signal)
+    } catch (error) {
+      console.warn(
+        `[ConversationService] Failed to kill CLI subprocess for ${sessionId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      )
+    }
   }
 
   markSessionDeleted(sessionId: string): void {
@@ -1082,6 +1146,33 @@ export class ConversationService {
       )
     }
     return env
+  }
+
+  private async refreshOfficialOAuthTokenBeforeTurn(
+    sessionId: string,
+    session: SessionProcess,
+  ): Promise<void> {
+    if (!session.usesOfficialOAuth) return
+
+    let token: string | null = null
+    try {
+      const { hahaOAuthService } = await import('./hahaOAuthService.js')
+      token = await hahaOAuthService.ensureFreshAccessToken()
+    } catch (err) {
+      console.error(
+        '[conversationService] refresh official OAuth token before turn failed:',
+        err instanceof Error ? err.message : err,
+      )
+      return
+    }
+
+    if (!token || token === session.officialOAuthToken) return
+
+    session.officialOAuthToken = token
+    this.sendSdkMessage(sessionId, {
+      type: 'update_environment_variables',
+      variables: { CLAUDE_CODE_OAUTH_TOKEN: token },
+    })
   }
 
   private shouldStripInheritedProviderEnv(providerId?: string | null): boolean {

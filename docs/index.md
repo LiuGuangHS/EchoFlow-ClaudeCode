@@ -46,6 +46,6 @@ features:
     link: /features/computer-use
   - icon: "\U0001F5A5"
     title: 桌面端
-    details: 基于 Tauri 2 + React 的图形化客户端，多标签、多会话、IM 适配器接入，支持 macOS 和 Windows
+    details: 基于 Electron + React 的图形化客户端，多标签、多会话、IM 适配器接入，支持 macOS、Windows 和 Linux
     link: /desktop/
 ---
