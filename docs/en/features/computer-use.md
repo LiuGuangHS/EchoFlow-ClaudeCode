@@ -1,7 +1,7 @@
 # Computer Use Guide
 
 
-> **Modified Version**: This feature is a **heavily modified version** of the Computer Use (internal codename "Chicago") found in the leaked Claude Code source. The official implementation relies on Anthropic's private native modules (`@ant/computer-use-swift`, `@ant/computer-use-input`) that are not publicly available. We **replaced the entire underlying operation layer** with a Python bridge: macOS uses `pyautogui` + `mss` + `pyobjc`, and Windows uses `pyautogui` + `mss` + `win32gui` + `psutil`.
+> **Implementation note**: EchoFlow Code provides local Computer Use through a Python Bridge. macOS uses `pyautogui` + `mss` + `pyobjc`, and Windows uses `pyautogui` + `mss` + `win32gui` + `psutil`, wrapping screenshots, mouse, keyboard, and app management as auditable local MCP tools.
 
 ---
 
@@ -177,7 +177,7 @@ The desktop Settings > Computer Use switch writes the same config. Once disabled
 | **Clipboard guard** | Original clipboard content is saved and restored when typing via clipboard |
 | **Sensitive action gates** | System keyboard shortcuts require additional authorization |
 
-> Note: Since we replaced the native modules with Python bridge, the global Escape hotkey abort and auto-hide features from the original implementation are not available. Use `Ctrl+C` to abort instead.
+> Note: The Python Bridge currently does not provide a global Escape hotkey abort or automatic window hiding. Use `Ctrl+C` to abort instead.
 
 ---
 
@@ -195,16 +195,16 @@ The desktop Settings > Computer Use switch writes the same config. Once disabled
 
 ## Technical Architecture
 
-### Gate Bypass
+### Capability Enablement
 
-The official Claude Code gates Computer Use behind three layers:
+EchoFlow Code controls Computer Use through local configuration and startup flags instead of remote feature flags. The related switches are centralized in `gates.ts` and config files so CLI, desktop, and tests share the same behavior.
 
-| Layer | Original Mechanism | Our Approach |
-|-------|-------------------|--------------|
-| Compile-time | `feature('CHICAGO_MCP')` (Bun macro) | Replaced with `true` |
-| Subscription | `hasRequiredSubscription()` (Max/Pro only) | `getChicagoEnabled()` returns `true` directly |
-| Remote config | GrowthBook `tengu_malort_pedway` | Same — no remote dependency |
-| Default-disabled | `isDefaultDisabledBuiltin('computer-use')` | Returns `false` |
+| Layer | Current Strategy |
+|-------|------------------|
+| Build config | Computer Use tools are injected when enabled |
+| Local config | `CLAUDE_COMPUTER_USE_ENABLED` and `computer-use-config.json` control availability |
+| Remote config | No remote feature flag dependency |
+| Session safety | App allowlists, OS permissions, and sensitive-action checks remain active |
 
 ### Python Bridge
 
@@ -250,7 +250,7 @@ Replaced all native module calls with Python subprocess calls via `callPythonHel
 | [wimi321/macos-computer-use-skill](https://github.com/wimi321/macos-computer-use-skill) | MIT | Python bridge architecture, `mac_helper.py` runtime, executor adaptation |
 | [domdomegg/computer-use-mcp](https://github.com/domdomegg/computer-use-mcp) | MIT | Independent Computer Use MCP server (nut.js based), used as reference |
 | [paoloanzn/free-code](https://github.com/paoloanzn/free-code) | - | Feature flag system analysis |
-| [oboard/claude-code-rev](https://github.com/oboard/claude-code-rev) | - | Early leaked source restoration, stub package reference |
+| [oboard/claude-code-rev](https://github.com/oboard/claude-code-rev) | - | Early compatibility research and stub package reference |
 
 ### Underlying Libraries
 

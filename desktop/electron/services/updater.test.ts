@@ -9,10 +9,12 @@ function fakeUpdater(): ElectronUpdaterLike & {
   checkForUpdates: ReturnType<typeof vi.fn>
   downloadUpdate: ReturnType<typeof vi.fn>
   quitAndInstall: ReturnType<typeof vi.fn>
+  setFeedURL: ReturnType<typeof vi.fn>
 } {
   let progressHandler: ((progress: { transferred?: number, total?: number }) => void) | null = null
   const updater = {
     autoDownload: true,
+    setFeedURL: vi.fn(),
     checkForUpdates: vi.fn(),
     downloadUpdate: vi.fn(),
     quitAndInstall: vi.fn(),
@@ -32,6 +34,7 @@ function fakeUpdater(): ElectronUpdaterLike & {
     checkForUpdates: ReturnType<typeof vi.fn>
     downloadUpdate: ReturnType<typeof vi.fn>
     quitAndInstall: ReturnType<typeof vi.fn>
+    setFeedURL: ReturnType<typeof vi.fn>
   }
   return updater
 }
@@ -125,6 +128,16 @@ describe('Electron updater service', () => {
     )
 
     await expect(service.checkForUpdates()).resolves.toBeNull()
+  })
+
+  it('uses a custom update feed URL when configured', () => {
+    const localUpdater = fakeUpdater()
+
+    new ElectronUpdaterService(localUpdater, undefined, {
+      feedUrl: ' https://gh-proxy.example/https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/releases/latest/download/ ',
+    })
+
+    expect(localUpdater.setFeedURL).toHaveBeenCalledWith('https://gh-proxy.example/https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/releases/latest/download/')
   })
 
   it('applies manual updater proxy before checking and clears it when returning to system proxy', async () => {

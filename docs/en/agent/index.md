@@ -58,7 +58,7 @@ Deconstructing the architecture behind Claude Code's agent framework from source
 
 ## Illustration Notes
 
-All diagrams use a dark background (#1a1a2e) with EchoFlowAI-Claude-Code orange-blue accent (#FF7A00), consistent with Claude Code's official documentation style.
+All diagrams use a dark background (#1a1a2e) with EchoFlow Code orange-blue accent (#FF7A00), optimized for technical documentation.
 
 | Image | Description | Document |
 |-------|-------------|----------|
@@ -121,7 +121,7 @@ All diagrams use a dark background (#1a1a2e) with EchoFlowAI-Claude-Code orange-
 
 ## Related Resources
 
-- [EchoFlowAI-Claude-Code Home](/)
+- [EchoFlow Code Home](/en/)
 - [Memory System Documentation](/en/memory/01-usage-guide)
 - [Agent Tool Source Code](https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/tree/main/src/tools/AgentTool/)
 - [Swarm Infrastructure](https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/tree/main/src/utils/swarm/)

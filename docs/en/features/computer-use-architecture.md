@@ -1,9 +1,9 @@
 # Computer Use Architecture Deep Dive
 
-> A deep dive into the Computer Use implementation: from MCP tool definitions to Python Bridge, from 9-layer security gates to feature flag bypasses.
+> A deep dive into the Computer Use implementation: from MCP tool definitions to Python Bridge, from 9-layer security gates to local capability enablement.
 
 <p align="center">
-<a href="#1-patch-environment-overview">Patch Environment</a> ·
+<a href="#1-local-implementation-overview">Local Implementation</a> ·
 <a href="#2-layered-architecture">Layered Architecture</a> ·
 <a href="#3-mcp-tool-layer">MCP Tool Layer</a> ·
 <a href="#4-security-gate-system">Security Gates</a> ·
@@ -16,31 +16,29 @@
 
 ---
 
-## 1. Patch Environment Overview
+## 1. Local Implementation Overview
 
-The original Claude Code's Computer Use feature (internal codename **Chicago**) depends on three components that are not publicly available:
+The upstream Computer Use interaction model depends on platform-specific execution layers and remote configuration. EchoFlow Code localizes these capabilities through a Python Bridge and local configuration.
 
-| Component | Purpose | Availability |
-|-----------|---------|-------------|
-| `@ant/computer-use-swift` | Screenshots, display enumeration | Anthropic private npm package |
-| `@ant/computer-use-input` | Mouse/keyboard simulation | Anthropic private npm package |
-| GrowthBook remote config | Feature flags, kill switch | Anthropic internal service |
+| Component | Purpose | EchoFlow Code implementation |
+|-----------|---------|-----------------------------|
+| Screenshots and display enumeration | Read screen/display state | Python Bridge + `mss` / `pyobjc` |
+| Mouse/keyboard simulation | Execute local input actions | Python Bridge + `pyautogui` |
+| Capability switch | Control Computer Use availability | Local config and startup flags |
 
-Our approach: **preserve the original MCP tool definitions and security mechanisms, only replace the execution layer and feature flag controls**.
+Our approach: **preserve the MCP tool definitions and security mechanisms, implement the execution layer with publicly installable Python dependencies, and control availability through local configuration**.
 
 ![Patch Environment Comparison](./images/04-computer-use-patch.jpg)
 
 ### What We Changed
 
 ```
-Original Claude Code                     EchoFlowAI-Claude-Code (Patched)
-────────────────────                     ─────────────────────────────────
-@ant/computer-use-swift  ──replaced──→   Python Bridge (mac_helper.py)
-@ant/computer-use-input  ──replaced──→   pyautogui + pyobjc
-GrowthBook feature flags ──bypassed──→   gates.ts hardcoded return true
-Subscription check (Max/Pro) ──bypassed──→ getChicagoEnabled() = true
-Build macro CHICAGO_MCP  ──replaced──→   true
-isDefaultDisabledBuiltin ──modified──→   returns false
+Upstream interaction model              EchoFlow Code local implementation
+────────────────────                    ─────────────────────────────────
+Platform screenshots/display state ──localized──→ Python Bridge (mac_helper.py)
+Platform mouse/keyboard input      ──localized──→ pyautogui + pyobjc
+Remote feature flags               ──localized──→ local config controls availability
+Session safety checks              ──preserved──→ app allowlists, OS permissions, sensitive-action checks
 ```
 
 ### What We Kept Intact
@@ -51,32 +49,18 @@ isDefaultDisabledBuiltin ──modified──→   returns false
 - **Session context management** (global lock, screenshot cache, state synchronization)
 - **Keyboard shortcut blocklist** (system-level dangerous operation interception)
 
-### Feature Flag Bypass Details
+### Capability Enablement
 
-The original code uses three layers of gating to restrict Computer Use access:
+The current implementation controls Computer Use availability through local configuration:
 
 ```typescript
-// Original code (simplified)
-function getChicagoEnabled(): boolean {
-  // Layer 1: GrowthBook remote config
-  const config = getDynamicConfig('tengu_malort_pedway')
-  // Layer 2: Subscription check
-  const hasSubscription = hasRequiredSubscription() // Max/Pro
-  // Layer 3: Build-time macro
-  return feature('CHICAGO_MCP') && config.enabled && hasSubscription
+// gates.ts (simplified)
+function getComputerUseEnabled(): boolean {
+  return readLocalConfig() && !isDisabledByStartupFlag()
 }
 ```
 
-Our modification:
-
-```typescript
-// gates.ts — our change
-export function getChicagoEnabled(): boolean {
-  return true  // ← all three gate layers bypassed
-}
-```
-
-**Note**: Sub-gates (pixelValidation, mouseAnimation, etc.) still retain the original logic and can be controlled via configuration.
+Sub-switches such as pixelValidation and mouseAnimation remain configurable; session-level safety checks stay active.
 
 ---
 
@@ -101,19 +85,19 @@ Computer Use uses a **6-layer architecture** with clear responsibilities and bou
 │  Layer 4 — CLI Integration                                  │
 │  wrapper.tsx: permission dialogs + state read/write         │
 │  setup.ts: MCP config initialization                        │
-│  gates.ts: feature flags (bypassed)                         │
+│  gates.ts: local capability enablement                        │
 ├─────────────────────────────────────────────────────────────┤
-│  Layer 5 — Python Bridge IPC                        [PATCH] │
+│  Layer 5 — Python Bridge IPC                         [LOCAL] │
 │  pythonBridge.ts: venv mgmt + JSON RPC + error handling     │
 │  callPythonHelper<T>(command, payload) → T                  │
 ├─────────────────────────────────────────────────────────────┤
-│  Layer 6 — Python Runtime Execution                 [PATCH] │
+│  Layer 6 — Python Runtime Execution                  [LOCAL] │
 │  mac_helper.py: pyautogui + mss + pyobjc                    │
 │  660 lines of Python implementing all system interactions   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-Layers marked **[PATCH]** are our replaced/new code. **All other layers** are preserved from the original Claude Code.
+Layers marked **[LOCAL]** are EchoFlow Code's local execution layers. The other layers preserve MCP tools and safety mechanisms.
 
 ### Why This Layering?
 
@@ -212,7 +196,7 @@ Every input action (click, keyboard, drag) must pass through **9 security gates*
 ```typescript
 if (adapter.isDisabled()) return errorResult("Computer Use is disabled")
 ```
-Reads `getChicagoEnabled()` — always returns `true` in patched version.
+Reads the local enabled state; if disabled through environment variables or config, Computer Use is not injected.
 
 #### Gate 2: TCC Permission Check
 ```typescript
@@ -552,7 +536,7 @@ bindSessionContext closure
 | `executor.ts` | 231 | ComputerExecutor Python bridge implementation | Yes, rewritten |
 | `pythonBridge.ts` | 111 | Python subprocess management, venv bootstrap, JSON RPC | Yes, new |
 | `hostAdapter.ts` | 54 | HostAdapter implementation (permission checks, flag reading) | Partially |
-| `gates.ts` | 51 | GrowthBook feature flags (`getChicagoEnabled` bypass) | Yes, modified |
+| `gates.ts` | 51 | Local capability enablement | Yes, modified |
 | `wrapper.tsx` | 300+ | Session context construction, permission dialogs, lock management | Unchanged |
 | `setup.ts` | 54 | MCP config initialization | Unchanged |
 | `computerUseLock.ts` | 216 | Global file lock (`~/.claude/computer-use.lock`) | Unchanged |

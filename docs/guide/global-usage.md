@@ -3,16 +3,18 @@
 
 如果你希望在任意项目目录直接运行 `claude-haha`，可以通过以下方式配置。配置完成后，`claude-haha` 会自动识别你当前所在的工作目录。
 
+> 说明：`claude-haha` 是为兼容已有脚本、配置和用户数据路径保留的 CLI 名称；公开产品名为 EchoFlow Code。
+
 ## macOS / Linux
 
 在 `~/.bashrc` 或 `~/.zshrc` 中添加：
 
 ```bash
 # 方式一：添加 PATH（推荐）
-export PATH="$HOME/path/to/claude-code-haha/bin:$PATH"
+export PATH="$HOME/path/to/EchoFlowAI-Claude-Code/bin:$PATH"
 
 # 方式二：alias
-alias claude-haha="$HOME/path/to/claude-code-haha/bin/claude-haha"
+alias claude-haha="$HOME/path/to/EchoFlowAI-Claude-Code/bin/claude-haha"
 ```
 
 然后重新加载配置：
@@ -26,7 +28,7 @@ source ~/.bashrc  # 或 source ~/.zshrc
 在 `~/.bashrc` 中添加：
 
 ```bash
-export PATH="$HOME/path/to/claude-code-haha/bin:$PATH"
+export PATH="$HOME/path/to/EchoFlowAI-Claude-Code/bin:$PATH"
 ```
 
 ### Windows + WSL 工具链

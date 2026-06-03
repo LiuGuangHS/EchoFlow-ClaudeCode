@@ -35,6 +35,8 @@ See [Environment Variables](./env-vars.md) for the full reference.
 ./bin/claude-haha --help                   # Show all options
 ```
 
+> Note: the current CLI binary remains `claude-haha` for compatibility with existing scripts, configuration, and user-data paths. The public product name is EchoFlow Code.
+
 ### Windows
 
 > **Prerequisite**: [Git for Windows](https://git-scm.com/download/win) must be installed.
@@ -52,7 +54,7 @@ bun --env-file=.env ./src/entrypoints/cli.tsx
 Add `bin/` to your PATH to run from any directory. See [Global Usage Guide](./global-usage.md):
 
 ```bash
-export PATH="$HOME/path/to/claude-code-haha/bin:$PATH"
+export PATH="$HOME/path/to/EchoFlowAI-Claude-Code/bin:$PATH"
 ```
 
 ## 5. Recovery Mode

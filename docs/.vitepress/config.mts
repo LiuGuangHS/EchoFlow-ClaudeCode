@@ -185,8 +185,8 @@ const enSidebar = [
 ]
 
 export default withMermaid(defineConfig({
-  title: 'Claude Code Haha',
-  description: '基于 Claude Code 泄露源码修复的本地可运行版本，支持接入任意 Anthropic 兼容 API',
+  title: 'EchoFlow Code',
+  description: '本地可运行的 Coding Agent，支持 Anthropic 兼容 API、多 Agent、记忆系统、桌面端与 Computer Use。',
   lastUpdated: true,
   base: '/',
 
@@ -228,10 +228,10 @@ export default withMermaid(defineConfig({
     en: {
       label: 'English',
       lang: 'en-US',
-      description: 'A locally runnable version repaired from the leaked Claude Code source, with support for any Anthropic-compatible API endpoint.',
+      description: 'EchoFlow Code is a locally runnable coding agent with Anthropic-compatible API support, multi-agent workflows, memory, desktop, and Computer Use.',
       themeConfig: {
         editLink: {
-          pattern: 'https://github.com/NanmiCoder/cc-haha/edit/main/docs/:path',
+          pattern: 'https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/edit/main/docs/:path',
           text: 'Edit this page on GitHub',
         },
         nav: [
@@ -245,18 +245,18 @@ export default withMermaid(defineConfig({
 
   themeConfig: {
     editLink: {
-      pattern: 'https://github.com/NanmiCoder/cc-haha/edit/main/docs/:path',
+      pattern: 'https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/edit/main/docs/:path',
       text: '在 GitHub 上编辑此页',
     },
     search: {
       provider: 'local',
     },
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/NanmiCoder/cc-haha' },
+      { icon: 'github', link: 'https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code' },
     ],
     footer: {
       message: 'Released under the MIT License.',
-      copyright: 'Copyright 2026 Claude Code Haha Contributors',
+      copyright: 'Copyright 2026 EchoFlow Code Contributors',
     },
   },
 }))

@@ -5,7 +5,7 @@ This project communicates with LLMs via the Anthropic protocol. By using a proto
 ## How It Works
 
 ```
-claude-code-haha ──Anthropic protocol──▶ LiteLLM Proxy ──OpenAI protocol──▶ Target Model API
+EchoFlow Code ──Anthropic protocol──▶ LiteLLM Proxy ──OpenAI protocol──▶ Target Model API
                                           (translation)
 ```
 

@@ -1,9 +1,9 @@
 # Computer Use 架构深度解析
 
-> 深入解析 Computer Use 功能的底层实现：从 MCP 工具定义到 Python Bridge，从 9 层安全关卡到灰度控制绕过。
+> 深入解析 Computer Use 功能的底层实现：从 MCP 工具定义到 Python Bridge，从 9 层安全关卡到本地功能启用策略。
 
 <p align="center">
-<a href="#一补丁环境总览">补丁环境</a> ·
+<a href="#一本地实现总览">本地实现</a> ·
 <a href="#二分层架构">分层架构</a> ·
 <a href="#三mcp-工具层">MCP 工具层</a> ·
 <a href="#四安全关卡体系">安全关卡</a> ·
@@ -16,31 +16,29 @@
 
 ---
 
-## 一、补丁环境总览
+## 一、本地实现总览
 
-Claude Code 原版的 Computer Use 功能（内部代号 **Chicago**）依赖三个不可公开获取的组件：
+上游 Computer Use 交互模型依赖平台专用执行层和远程配置。EchoFlow Code 的实现将这些能力收敛为本地 Python Bridge 和本地配置。
 
-| 组件 | 作用 | 获取方式 |
-|------|------|----------|
-| `@ant/computer-use-swift` | 屏幕截图、显示器枚举 | Anthropic 私有 npm 包 |
-| `@ant/computer-use-input` | 鼠标/键盘模拟 | Anthropic 私有 npm 包 |
-| GrowthBook 远程配置 | 灰度控制、功能开关 | Anthropic 内部服务 |
+| 组件 | 作用 | EchoFlow Code 实现 |
+|------|------|------------------|
+| 截图与显示器枚举 | 读取屏幕和显示信息 | Python Bridge + `mss` / `pyobjc` |
+| 鼠标/键盘模拟 | 执行本地输入操作 | Python Bridge + `pyautogui` |
+| 功能开关 | 控制 Computer Use 是否启用 | 本地配置与启动参数 |
 
-我们的方案是：**保留原始 MCP 工具定义和安全机制不变，仅替换底层执行层和灰度控制**。
+我们的方案是：**保留 MCP 工具定义和安全机制，使用公开可安装的 Python 依赖实现底层执行层，并通过本地配置控制功能启停**。
 
 ![补丁环境对比](./images/04-computer-use-patch.jpg)
 
 ### 我们做了什么
 
 ```
-原始 Claude Code                         EchoFlowAI-Claude-Code (补丁版)
-─────────────────                        ─────────────────────────────────
-@ant/computer-use-swift  ──替换为──→     Python Bridge (mac_helper.py)
-@ant/computer-use-input  ──替换为──→     pyautogui + pyobjc
-GrowthBook 灰度控制      ──绕过──→      gates.ts 硬编码 return true
-订阅检查 (Max/Pro)       ──绕过──→      getChicagoEnabled() = true
-编译宏 CHICAGO_MCP       ──替换为──→     true
-isDefaultDisabledBuiltin ──修改──→      返回 false
+上游交互模型                         EchoFlow Code 本地实现
+─────────────────                    ─────────────────────────────────
+平台截图/显示枚举       ──本地化──→  Python Bridge (mac_helper.py)
+平台鼠标/键盘输入       ──本地化──→  pyautogui + pyobjc
+远程 feature flag       ──本地化──→  本地配置控制启停
+会话安全检查            ──保留──→    应用白名单、TCC 权限、敏感操作检查
 ```
 
 ### 我们没有改什么
@@ -51,32 +49,18 @@ isDefaultDisabledBuiltin ──修改──→      返回 false
 - **会话上下文管理**（全局锁、截图缓存、状态同步）
 - **键盘快捷键阻止列表**（系统级危险操作拦截）
 
-### 灰度绕过细节
+### 功能启用策略
 
-原始代码通过三层门控限制 Computer Use 的访问：
+当前实现通过本地配置控制 Computer Use 是否可用：
 
 ```typescript
-// 原始代码（简化）
-function getChicagoEnabled(): boolean {
-  // 层1：GrowthBook 远程配置
-  const config = getDynamicConfig('tengu_malort_pedway')
-  // 层2：订阅检查
-  const hasSubscription = hasRequiredSubscription() // Max/Pro
-  // 层3：编译时宏
-  return feature('CHICAGO_MCP') && config.enabled && hasSubscription
+// gates.ts（简化）
+function getComputerUseEnabled(): boolean {
+  return readLocalConfig() && !isDisabledByStartupFlag()
 }
 ```
 
-我们的处理：
-
-```typescript
-// gates.ts — 我们的修改
-export function getChicagoEnabled(): boolean {
-  return true  // ← 三层门控全部绕过
-}
-```
-
-**注意**：子开关（pixelValidation、mouseAnimation 等）仍然保留原始逻辑，可通过配置控制。
+相关子开关（pixelValidation、mouseAnimation 等）仍可通过配置控制；会话级安全检查始终保留。
 
 ---
 
@@ -101,19 +85,19 @@ Computer Use 采用 **6 层架构**，每层职责清晰、边界明确：
 │  Layer 4 — CLI 集成层                                        │
 │  wrapper.tsx: 权限对话框 + 状态读写                          │
 │  setup.ts: MCP 配置初始化                                    │
-│  gates.ts: 灰度控制（已绕过）                                │
+│  gates.ts: 本地功能启用策略                                    │
 ├─────────────────────────────────────────────────────────────┤
-│  Layer 5 — Python Bridge 进程通信层                  [补丁]  │
+│  Layer 5 — Python Bridge 进程通信层              [本地实现]  │
 │  pythonBridge.ts: venv 管理 + JSON RPC + 错误处理           │
 │  callPythonHelper<T>(command, payload) → T                  │
 ├─────────────────────────────────────────────────────────────┤
-│  Layer 6 — Python 运行时执行层                       [补丁]  │
+│  Layer 6 — Python 运行时执行层                   [本地实现]  │
 │  mac_helper.py: pyautogui + mss + pyobjc                    │
 │  660 行 Python 实现所有系统交互                              │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**标 `[补丁]` 的层**是我们替换/新增的代码，**其余层完全保留**原始 Claude Code 的逻辑。
+**标 `[本地实现]` 的层**是 EchoFlow Code 的本地执行层，**其余层保留 MCP 工具和安全机制。**
 
 ### 为什么这样分层？
 
@@ -212,7 +196,7 @@ Netflix, Spotify, Apple Music, Kindle...
 ```typescript
 if (adapter.isDisabled()) return errorResult("Computer Use is disabled")
 ```
-读取 `getChicagoEnabled()` — 在补丁版中永远返回 `true`。
+读取本地启用状态；如果通过环境变量或配置关闭，Computer Use 不会注入。
 
 #### Gate 2：TCC 权限检查
 ```typescript
@@ -557,7 +541,7 @@ bindSessionContext 闭包
 | `executor.ts` | 231 | ComputerExecutor 的 Python bridge 实现 | ✅ 重写 |
 | `pythonBridge.ts` | 111 | Python 子进程管理、venv 引导、JSON RPC | ✅ 新增 |
 | `hostAdapter.ts` | 54 | HostAdapter 实现（权限检查、灰度读取） | 部分修改 |
-| `gates.ts` | 51 | GrowthBook 灰度控制（`getChicagoEnabled` 绕过） | ✅ 修改 |
+| `gates.ts` | 51 | 本地功能启用策略 | ✅ 修改 |
 | `wrapper.tsx` | 300+ | 会话上下文构建、权限对话框、锁管理 | 未修改 |
 | `setup.ts` | 54 | MCP 配置初始化 | 未修改 |
 | `computerUseLock.ts` | 216 | 全局文件锁（`~/.claude/computer-use.lock`） | 未修改 |

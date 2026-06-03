@@ -52,6 +52,30 @@ let previewService: ElectronPreviewService | null = null
 let isQuitting = false
 let trayController: TrayController | null = null
 
+const DEFAULT_GITHUB_RELEASE_FEED_URL = 'https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/releases/latest/download/'
+const DEFAULT_UPDATE_FEED_URL = `https://gh-proxy.org/${DEFAULT_GITHUB_RELEASE_FEED_URL}`
+
+function normalizeUpdateFeedBaseUrl(value: string): string | null {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+
+  try {
+    const url = new URL(trimmed)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
+    return url.toString().endsWith('/') ? url.toString() : `${url.toString()}/`
+  } catch {
+    return null
+  }
+}
+
+function resolveCustomUpdateFeedUrl(env: NodeJS.ProcessEnv): string | null {
+  const explicitFeedUrl = normalizeUpdateFeedBaseUrl(env.ECHOFLOW_UPDATE_FEED_URL ?? '')
+  if (explicitFeedUrl) return explicitFeedUrl
+
+  const githubProxyBase = normalizeUpdateFeedBaseUrl(env.ECHOFLOW_UPDATE_GITHUB_PROXY_BASE ?? '')
+  return githubProxyBase ? `${githubProxyBase}${DEFAULT_GITHUB_RELEASE_FEED_URL}` : DEFAULT_UPDATE_FEED_URL
+}
+
 installMacOsChromiumKeychainPromptGuard(app)
 
 function appRoot() {
@@ -108,6 +132,7 @@ function getUpdaterService() {
     },
   }, {
     updateConfigPath: !smokeUpdater && app.isPackaged ? path.join(process.resourcesPath, 'app-update.yml') : undefined,
+    feedUrl: smokeUpdater ? null : resolveCustomUpdateFeedUrl(process.env),
   })
   return updaterService
 }

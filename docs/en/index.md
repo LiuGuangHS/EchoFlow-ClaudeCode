@@ -2,12 +2,12 @@
 layout: home
 
 hero:
-  name: EchoFlowAI-Claude-Code
-  text: Locally Runnable Claude Code
-  tagline: Repaired from leaked source, supports any Anthropic-compatible API endpoint (MiniMax, OpenRouter, etc.)
+  name: EchoFlow Code
+  text: Locally Runnable Coding Agent
+  tagline: Supports Anthropic-compatible APIs, multi-agent workflows, memory, desktop, and Computer Use
   image:
     src: /images/logo-horizontal.png
-    alt: EchoFlowAI-Claude-Code
+    alt: EchoFlow Code
   actions:
     - theme: brand
       text: Quick Start
@@ -19,7 +19,7 @@ hero:
 features:
   - icon: "\U0001F5A5"
     title: Full TUI Experience
-    details: Ink terminal UI matching the official Claude Code interface, with --print headless mode
+    details: Ink terminal UI compatible with Claude Code workflows, with --print headless mode
   - icon: "\U0001F9E0"
     title: Memory System
     details: Cross-session persistent memory with auto-extraction, smart retrieval, and AutoDream consolidation

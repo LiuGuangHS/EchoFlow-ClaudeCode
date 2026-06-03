@@ -5,7 +5,7 @@
 ## 原理
 
 ```
-claude-code-haha ──Anthropic协议──▶ LiteLLM Proxy ──OpenAI协议──▶ 目标模型 API
+EchoFlow Code ──Anthropic协议──▶ LiteLLM Proxy ──OpenAI协议──▶ 目标模型 API
                                       (协议转换)
 ```
 

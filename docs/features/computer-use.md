@@ -1,7 +1,7 @@
 # Computer Use 功能指南
 
 
-> **魔改说明**：本功能是基于 Claude Code 泄露源码中的 Computer Use（内部代号 "Chicago"）进行的**深度改造版本**。官方实现依赖 Anthropic 内部私有原生模块（`@ant/computer-use-swift`、`@ant/computer-use-input`），无法公开获取。我们**替换了整个底层操作层**，使用 Python bridge 实现所有系统交互——macOS 使用 `pyautogui` + `mss` + `pyobjc`，Windows 使用 `pyautogui` + `mss` + `win32gui` + `psutil`，使得任何人都可以在 macOS 和 Windows 上运行 Computer Use 功能。
+> **实现说明**：EchoFlow Code 通过 Python Bridge 提供本地 Computer Use 能力。macOS 使用 `pyautogui` + `mss` + `pyobjc`，Windows 使用 `pyautogui` + `mss` + `win32gui` + `psutil`，将截图、鼠标、键盘和应用管理统一封装为可审计的本地 MCP 工具。
 
 ---
 
@@ -191,7 +191,7 @@ CLAUDE_COMPUTER_USE_ENABLED=0 claude-haha
 | **剪贴板保护** | 通过剪贴板输入文本时会自动保存和恢复原始剪贴板内容 |
 | **操作确认** | 敏感操作（如系统快捷键）需要额外授权 |
 
-> 注意：由于底层改为 Python bridge，原生方案中的全局 Escape 快捷键中止和操作前自动隐藏应用功能暂不可用。可使用 `Ctrl+C` 中止。
+> 注意：由于底层使用 Python Bridge，全局 Escape 快捷键中止和操作前自动隐藏应用功能暂不可用。可使用 `Ctrl+C` 中止。
 
 ---
 
@@ -224,7 +224,7 @@ src/
 │   ├── executor.ts              ← 执行器（调用 Python bridge）
 │   ├── pythonBridge.ts          ← Python 子进程管理
 │   ├── hostAdapter.ts           ← 权限检查适配器
-│   ├── gates.ts                 ← 功能开关（已绕过灰度）
+│   ├── gates.ts                 ← 功能启用策略
 │   ├── wrapper.tsx              ← MCP 工具覆写层
 │   ├── setup.ts                 ← MCP 配置初始化
 │   └── ...
@@ -235,16 +235,16 @@ src/
     └── requirements-win.txt     ← Windows Python 依赖
 ```
 
-### 灰度控制绕过
+### 功能启用策略
 
-官方 Claude Code 中 Computer Use 通过三层门控限制访问：
+EchoFlow Code 的 Computer Use 由本地配置和启动参数控制，不依赖远程 feature flag。相关开关集中在 `gates.ts` 和配置文件中，便于在 CLI、桌面端和测试环境中保持一致。
 
-| 层级 | 原始机制 | 我们的处理 |
-|------|----------|-----------|
-| 编译时 | `feature('CHICAGO_MCP')` (Bun 编译宏) | 替换为 `true` |
-| 订阅检查 | `hasRequiredSubscription()` (Max/Pro) | `getChicagoEnabled()` 直接返回 `true` |
-| 远程配置 | GrowthBook `tengu_malort_pedway` | 同上，不再依赖远程配置 |
-| 默认禁用 | `isDefaultDisabledBuiltin('computer-use')` | `isDefaultDisabledBuiltin()` 返回 `false` |
+| 层级 | 当前策略 |
+|------|----------|
+| 构建配置 | Computer Use 工具按需注入 |
+| 本地配置 | `CLAUDE_COMPUTER_USE_ENABLED` 和 `computer-use-config.json` 控制启停 |
+| 远程配置 | 不依赖远程 feature flag |
+| 会话安全 | 仍保留应用白名单、TCC 权限和敏感操作检查 |
 
 ### Python Bridge 工作机制
 
@@ -272,18 +272,17 @@ async function callPythonHelper<T>(command: string, payload: object): Promise<T>
 
 ## 我们尝试过的方案
 
-### 方案一：从 Claude Code 二进制提取原生 .node 模块 ❌
+### 方案一：复用原生 .node 模块 ❌
 
-**思路**：从已安装的 Claude Code 二进制 (`~/.local/share/claude/versions/2.1.91`，189MB Mach-O) 中定位并提取嵌入的原生 NAPI 模块。
+**思路**：调研原生 NAPI 模块在本地运行时中的复用可行性。
 
 **实施**：
-- 成功从 Bun `$bunfs` 虚拟文件系统中提取了 `computer-use-swift.node` (ARM64 424KB + x64 430KB) 和 `computer-use-input.node` (ARM64 836KB + x64 821KB)
-- 同步方法（TCC 权限检查、显示枚举）正常工作
+- 原生模块的同步方法（TCC 权限检查、显示枚举）在早期调研中可工作
 - 创建了 npm 包装包并通过 workspace 注册
 
 **失败原因**：
 - Swift 异步方法（`screenshot.captureExcluding`）的 continuation 永远不会 resume
-- 根因：提取的 .node 文件是针对 Claude Code 内置的 Bun 运行时编译的，与用户系统的 Bun 版本的 N-API 异步实现不兼容
+- 根因：原生模块与用户系统的 Bun 版本存在 N-API 异步实现兼容性问题
 - 错误信息：`SWIFT TASK CONTINUATION MISUSE: captureScreenWithExclusion leaked its continuation without resuming it`
 
 ### 方案二：创建空 Stub 包 ❌
@@ -322,10 +321,10 @@ async function callPythonHelper<T>(command: string, payload: object): Promise<T>
 
 | 项目 | 许可证 | 贡献 |
 |------|--------|------|
-| [wimi321/macos-computer-use-skill](https://github.com/wimi321/macos-computer-use-skill) | MIT | Python bridge 架构、`mac_helper.py` 运行时、`executor.ts` 适配方案。该项目从 Claude Code 工作流中提取了可复用的 TypeScript 逻辑，并用完全公开的 Python 库替代了私有原生模块 |
+| [wimi321/macos-computer-use-skill](https://github.com/wimi321/macos-computer-use-skill) | MIT | Python bridge 架构、`mac_helper.py` 运行时、`executor.ts` 适配方案。该项目整理了可复用的 Computer Use TypeScript 逻辑，并用公开 Python 库实现本地桌面交互 |
 | [domdomegg/computer-use-mcp](https://github.com/domdomegg/computer-use-mcp) | MIT | 独立的 Computer Use MCP 服务器实现（基于 nut.js），跨平台可用。在方案调研阶段提供了参考 |
 | [paoloanzn/free-code](https://github.com/paoloanzn/free-code) | - | Feature flag 系统分析和构建系统参考 |
-| [oboard/claude-code-rev](https://github.com/oboard/claude-code-rev) | - | 泄露源码的早期恢复工作，提供了 stub 包的参考实现 |
+| [oboard/claude-code-rev](https://github.com/oboard/claude-code-rev) | - | 早期兼容性研究，提供了 stub 包的参考实现 |
 
 ### 底层依赖
 

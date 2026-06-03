@@ -1,7 +1,7 @@
-# Fixes Compared with the Original Leaked Source
+# Compatibility and Local Runtime Fixes
 
 
-The leaked source could not run directly. This repository mainly fixes the following issues:
+An early non-runnable code snapshot required local runtime compatibility fixes. This repository mainly fixes the following issues:
 
 | Issue | Root cause | Fix |
 |------|------|------|

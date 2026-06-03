@@ -18,6 +18,7 @@ export type ElectronUpdateCheckOptions = {
 export type ElectronUpdaterLike = {
   autoDownload: boolean
   logger?: unknown
+  setFeedURL?(options: string): void
   checkForUpdates(): Promise<ElectronUpdateCheckResult>
   downloadUpdate(): Promise<unknown>
   quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void
@@ -36,6 +37,7 @@ export type ElectronUpdaterProxyController = {
 
 export type ElectronUpdaterRuntimeOptions = {
   updateConfigPath?: string
+  feedUrl?: string | null
 }
 
 export function normalizeUpdateInfo(info: ElectronUpdateInfo | undefined): ElectronUpdateMetadata | null {
@@ -87,6 +89,14 @@ export class ElectronUpdaterService {
     this.updateConfigPath = runtimeOptions.updateConfigPath
     this.updater.autoDownload = false
     this.updater.logger = null
+
+    const feedUrl = runtimeOptions.feedUrl?.trim()
+    if (feedUrl) {
+      if (!this.updater.setFeedURL) {
+        throw new Error('Electron updater does not support custom update feed URLs')
+      }
+      this.updater.setFeedURL(feedUrl)
+    }
   }
 
   private async applyProxy(options?: ElectronUpdateCheckOptions) {
