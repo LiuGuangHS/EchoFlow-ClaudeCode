@@ -349,6 +349,13 @@ export const kr: Record<TranslationKey, string> = {
   'settings.chatgptOfficialLogin.copyLinkFailed': '승인 링크를 복사할 수 없습니다.',
   'settings.chatgptOfficialLogin.errorPrefix': 'ChatGPT OAuth 오류: ',
 
+  // Settings > EchoFlow API Login
+  'settings.echoflowAPIOfficialLogin.tokenPlaceholder': 'Token 입력',
+  'settings.echoflowAPIOfficialLogin.getToken': 'Token 받기',
+  'settings.echoflowAPIOfficialLogin.connect': '연결',
+  'settings.echoflowAPIOfficialLogin.connected': '연결됨',
+  'settings.echoflowAPIOfficialLogin.disconnect': '연결 해제',
+
   // Settings > Providers
   'settings.providers.title': '공급자',
   'settings.providers.description': '모델 액세스를 위한 API 공급자를 관리합니다.',
@@ -357,6 +364,8 @@ export const kr: Record<TranslationKey, string> = {
   'settings.providers.officialDesc': 'Anthropic 네이티브 — API 키 불필요',
   'settings.providers.openaiOfficialName': 'ChatGPT 공식',
   'settings.providers.openaiOfficialDesc': 'ChatGPT 계정을 통한 OpenAI OAuth — API 키 불필요',
+  'settings.providers.echoflowAPIOfficialName': 'EchoFlowAPI',
+  'settings.providers.echoflowAPIOfficialDesc': 'EchoFlow API 사전 설정 — 등록 후 Key를 받아 바로 사용할 수 있습니다',
   'settings.providers.connected': '연결됨 ({latency}ms)',
   'settings.providers.failed': '실패: {error}',
   'settings.providers.connectivityOk': '① 연결 ({latency}ms)',

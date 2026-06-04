@@ -365,7 +365,7 @@ export const zh: Record<TranslationKey, string> = {
   'settings.providers.openaiOfficialName': 'ChatGPT 官方',
   'settings.providers.openaiOfficialDesc': '通过 ChatGPT 账号完成 OpenAI OAuth — 无需 API 密钥',
   'settings.providers.echoflowAPIOfficialName': 'EchoFlowAPI',
-  'settings.providers.echoflowAPIOfficialDesc': '输入 Token 即可使用 — 无需其他配置',
+  'settings.providers.echoflowAPIOfficialDesc': 'EchoFlow API 预制接入 — 注册后获取 Key 即可使用',
   'settings.providers.connected': '已连接 ({latency}ms)',
   'settings.providers.failed': '失败: {error}',
   'settings.providers.connectivityOk': '① 连通 ({latency}ms)',

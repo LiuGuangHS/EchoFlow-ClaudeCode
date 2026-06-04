@@ -7,7 +7,7 @@ import { useTranslation } from '../../i18n'
 import { getDesktopHost } from '../../lib/desktopHost'
 
 const ECHOFLOW_BASE_URL = 'https://api.echoflow.cn'
-const ECHOFLOW_GET_TOKEN_URL = 'https://api.echoflow.cn/'
+const ECHOFLOW_GET_TOKEN_URL = 'https://api.echoflow.cn/register?channel=c_fe4eotyx'
 const ECHOFLOW_PROVIDER_NAME = 'EchoFlowAPI'
 const ECHOFLOW_PRESET_ID = 'echoflowai'
 

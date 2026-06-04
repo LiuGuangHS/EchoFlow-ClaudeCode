@@ -32,6 +32,7 @@ import { ActivitySettings } from './ActivitySettings'
 import { MemorySettings } from './MemorySettings'
 import { useUIStore, type SettingsTab } from '../stores/uiStore'
 import { ClaudeOfficialLogin } from '../components/settings/ClaudeOfficialLogin'
+import { EchoFlowAPIOfficialLogin } from '../components/settings/EchoFlowAPIOfficialLogin'
 import { ChatGPTOfficialLogin } from '../components/settings/ChatGPTOfficialLogin'
 import { OPENAI_OFFICIAL_PROVIDER_ID } from '../constants/openaiOfficialProvider'
 import { useUpdateStore } from '../stores/updateStore'
@@ -233,6 +234,7 @@ function ProviderSettings() {
   const [editingProvider, setEditingProvider] = useState<SavedProvider | null>(null)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [pendingDeleteProvider, setPendingDeleteProvider] = useState<SavedProvider | null>(null)
+  const [showEchoFlowAPILogin, setShowEchoFlowAPILogin] = useState(false)
   const [isDeletingProvider, setIsDeletingProvider] = useState(false)
   const [testResults, setTestResults] = useState<Record<string, { loading: boolean; result?: ProviderTestResult }>>({})
 
@@ -284,6 +286,11 @@ function ProviderSettings() {
     await fetchSettings()
   }
 
+  const echoflowAPIProvider = providers.find(
+    (provider) => provider.presetId === 'echoflowai' && provider.name === 'EchoFlowAPI',
+  )
+  const isEchoFlowAPIActive = !!echoflowAPIProvider && activeId === echoflowAPIProvider.id
+  const showEchoFlowAPIOfficialLogin = showEchoFlowAPILogin || isEchoFlowAPIActive || !echoflowAPIProvider
   const isClaudeOfficialActive = hasLoadedProviders && activeId === null
   const isOpenAIOfficialActive = hasLoadedProviders && activeId === OPENAI_OFFICIAL_PROVIDER_ID
 
@@ -300,7 +307,43 @@ function ProviderSettings() {
         </Button>
       </div>
 
-      {/* Official provider — always visible at top */}
+      {/* Official providers — always visible at top */}
+      <div
+        data-testid="echoflow-api-official-provider"
+        className={`relative flex flex-col rounded-xl border transition-all mb-2 ${
+          isEchoFlowAPIActive
+            ? 'border-[var(--color-brand)] bg-[var(--color-surface-container)] shadow-[var(--shadow-focus-ring)]'
+            : 'border-[var(--color-border)] hover:border-[var(--color-border-focus)] cursor-pointer'
+        }`}
+      >
+        <div
+          className="flex items-center gap-4 px-4 py-3.5"
+          onClick={() => {
+            if (!isEchoFlowAPIActive && echoflowAPIProvider) {
+              void handleActivate(echoflowAPIProvider.id)
+            }
+            setShowEchoFlowAPILogin(true)
+          }}
+        >
+          <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${isEchoFlowAPIActive ? 'bg-[var(--color-success)]' : 'bg-[var(--color-text-tertiary)]'}`} />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold text-[var(--color-text-primary)]">{t('settings.providers.echoflowAPIOfficialName')}</span>
+              {isEchoFlowAPIActive && (
+                <span className="px-1.5 py-0.5 text-[10px] font-bold rounded border border-[var(--color-brand)]/18 bg-[var(--color-brand)]/14 text-[var(--color-brand)] leading-none">{t('settings.providers.default')}</span>
+              )}
+            </div>
+            <div className="text-xs text-[var(--color-text-tertiary)] mt-0.5">{t('settings.providers.echoflowAPIOfficialDesc')}</div>
+          </div>
+        </div>
+
+        {showEchoFlowAPIOfficialLogin && (
+          <div className="px-4 pb-4 pt-3 border-t border-[var(--color-border-separator)]">
+            <EchoFlowAPIOfficialLogin />
+          </div>
+        )}
+      </div>
+
       <div
         data-testid="claude-official-provider"
         className={`relative flex flex-col rounded-xl border transition-all mb-2 ${
@@ -370,7 +413,7 @@ function ProviderSettings() {
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          {providers.map((provider) => {
+          {providers.filter((provider) => provider.id !== echoflowAPIProvider?.id).map((provider) => {
             const isActive = activeId === provider.id
             const test = testResults[provider.id]
             const preset = presetMap.get(provider.presetId)

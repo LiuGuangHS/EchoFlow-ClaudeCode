@@ -363,7 +363,7 @@ export const en = {
   'settings.providers.openaiOfficialName': 'ChatGPT Official',
   'settings.providers.openaiOfficialDesc': 'OpenAI OAuth via your ChatGPT account — no API key required',
   'settings.providers.echoflowAPIOfficialName': 'EchoFlowAPI',
-  'settings.providers.echoflowAPIOfficialDesc': 'Enter your token to connect — no other setup required',
+  'settings.providers.echoflowAPIOfficialDesc': 'EchoFlow API preset — register to get a key and start using it',
   'settings.providers.connected': 'Connected ({latency}ms)',
   'settings.providers.failed': 'Failed: {error}',
   'settings.providers.connectivityOk': '① Connectivity ({latency}ms)',

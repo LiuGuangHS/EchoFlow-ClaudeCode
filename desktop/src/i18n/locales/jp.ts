@@ -349,6 +349,13 @@ export const jp: Record<TranslationKey, string> = {
   'settings.chatgptOfficialLogin.copyLinkFailed': '承認リンクをコピーできません。',
   'settings.chatgptOfficialLogin.errorPrefix': 'ChatGPT OAuth エラー: ',
 
+  // Settings > EchoFlow API Login
+  'settings.echoflowAPIOfficialLogin.tokenPlaceholder': 'Token を入力',
+  'settings.echoflowAPIOfficialLogin.getToken': 'Token を取得',
+  'settings.echoflowAPIOfficialLogin.connect': '接続',
+  'settings.echoflowAPIOfficialLogin.connected': '接続済み',
+  'settings.echoflowAPIOfficialLogin.disconnect': '切断',
+
   // Settings > Providers
   'settings.providers.title': 'プロバイダー',
   'settings.providers.description': 'モデルにアクセスするための API プロバイダーを管理します。',
@@ -357,6 +364,8 @@ export const jp: Record<TranslationKey, string> = {
   'settings.providers.officialDesc': 'Anthropic ネイティブ — API キー不要',
   'settings.providers.openaiOfficialName': 'ChatGPT 公式',
   'settings.providers.openaiOfficialDesc': 'ChatGPT アカウントによる OpenAI OAuth — API キー不要',
+  'settings.providers.echoflowAPIOfficialName': 'EchoFlowAPI',
+  'settings.providers.echoflowAPIOfficialDesc': 'EchoFlow API プリセット — 登録して Key を取得すれば利用できます',
   'settings.providers.connected': '接続済み ({latency}ms)',
   'settings.providers.failed': '失敗: {error}',
   'settings.providers.connectivityOk': '① 接続 ({latency}ms)',

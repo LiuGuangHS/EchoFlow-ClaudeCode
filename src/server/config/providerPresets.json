@@ -26,7 +26,7 @@
     },
     "needsApiKey": true,
     "websiteUrl": "https://api.echoflow.cn/",
-    "apiKeyUrl": "https://api.echoflow.cn/",
+    "apiKeyUrl": "https://api.echoflow.cn/register?channel=c_fe4eotyx",
     "promoText": "EchoFlowAPI 提供 Anthropic Messages 兼容协议，可直接用于 Claude Code。",
     "featured": true,
     "authStrategy": "auth_token",
