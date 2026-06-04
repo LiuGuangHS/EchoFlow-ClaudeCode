@@ -187,6 +187,7 @@ This project is maintained in the author's spare time. Corporate or individual s
 
 Thanks to the following open-source projects and community practices for reference and inspiration:
 
+- [NanmiCoder/cc-haha](https://github.com/NanmiCoder/cc-haha): the original upstream project that laid the foundation for EchoFlow-ClaudeCode's ongoing iteration.
 - [React](https://github.com/facebook/react): frontend engineering and component-based UI ecosystem.
 - [Electron](https://github.com/electron/electron): cross-platform desktop app capabilities and engineering practices.
 - [cc-switch](https://github.com/farion1231/cc-switch): reference for model provider configuration.
