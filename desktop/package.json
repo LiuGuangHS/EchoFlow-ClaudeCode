@@ -1,7 +1,7 @@
 {
   "name": "claude-code-desktop",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.4.1-rc.1",
   "description": "Desktop coding agent workbench for EchoFlow-ClaudeCode.",
   "homepage": "https://github.com/LiuGuangHS/EchoFlow-ClaudeCode",
   "author": {

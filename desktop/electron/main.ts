@@ -69,12 +69,19 @@ function normalizeUpdateFeedBaseUrl(value: string): string | null {
   }
 }
 
-function resolveCustomUpdateFeedUrl(env: NodeJS.ProcessEnv): string | null {
+function dedupeUpdateFeedUrls(feedUrls: string[]): string[] {
+  return feedUrls.filter((feedUrl, index) => feedUrls.indexOf(feedUrl) === index)
+}
+
+function resolveUpdateFeedUrls(env: NodeJS.ProcessEnv): string[] {
   const explicitFeedUrl = normalizeUpdateFeedBaseUrl(env.ECHOFLOW_UPDATE_FEED_URL ?? '')
-  if (explicitFeedUrl) return explicitFeedUrl
+  if (explicitFeedUrl) return [explicitFeedUrl]
 
   const githubProxyBase = normalizeUpdateFeedBaseUrl(env.ECHOFLOW_UPDATE_GITHUB_PROXY_BASE ?? '')
-  return githubProxyBase ? `${githubProxyBase}${DEFAULT_GITHUB_RELEASE_FEED_URL}` : DEFAULT_UPDATE_FEED_URL
+  const primaryFeedUrl = githubProxyBase
+    ? `${githubProxyBase}${DEFAULT_GITHUB_RELEASE_FEED_URL}`
+    : DEFAULT_UPDATE_FEED_URL
+  return dedupeUpdateFeedUrls([primaryFeedUrl, DEFAULT_GITHUB_RELEASE_FEED_URL])
 }
 
 installMacOsChromiumKeychainPromptGuard(app)
@@ -133,7 +140,8 @@ function getUpdaterService() {
     },
   }, {
     updateConfigPath: !smokeUpdater && app.isPackaged ? path.join(process.resourcesPath, 'app-update.yml') : undefined,
-    feedUrl: smokeUpdater ? null : resolveCustomUpdateFeedUrl(process.env),
+    feedUrls: smokeUpdater ? [] : resolveUpdateFeedUrls(process.env),
+    currentVersion: app.getVersion(),
   })
   return updaterService
 }
