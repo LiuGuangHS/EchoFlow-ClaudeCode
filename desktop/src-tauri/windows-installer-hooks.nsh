@@ -1,5 +1,5 @@
 !macro NSIS_HOOK_PREINSTALL
-  DetailPrint "Stopping running EchoFlowAI-Claude-Code sidecars..."
+  DetailPrint "Stopping running EchoFlow-ClaudeCode sidecars..."
   nsExec::ExecToLog 'taskkill /F /T /IM claude-sidecar-x86_64-pc-windows-msvc.exe'
   Pop $0
   nsExec::ExecToLog 'taskkill /F /T /IM claude-sidecar-aarch64-pc-windows-msvc.exe'
@@ -10,7 +10,7 @@
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
-  DetailPrint "Stopping running EchoFlowAI-Claude-Code processes..."
+  DetailPrint "Stopping running EchoFlow-ClaudeCode processes..."
   nsExec::ExecToLog 'taskkill /F /T /IM claude-code-desktop.exe'
   Pop $0
   nsExec::ExecToLog 'taskkill /F /T /IM claude-sidecar-x86_64-pc-windows-msvc.exe'

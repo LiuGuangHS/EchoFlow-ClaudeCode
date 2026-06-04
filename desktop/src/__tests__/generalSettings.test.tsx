@@ -248,7 +248,7 @@ describe('Settings > General tab', () => {
       appMode: {
         mode: 'default',
         portableDir: null,
-        defaultPortableDir: '/Applications/EchoFlowAI-Claude-Code/CLAUDE_CONFIG_DIR',
+        defaultPortableDir: '/Applications/EchoFlow-ClaudeCode/CLAUDE_CONFIG_DIR',
         activeConfigDir: null,
         configDirSource: 'system',
       },
@@ -258,9 +258,9 @@ describe('Settings > General tab', () => {
         useSettingsStore.setState({
           appMode: {
             mode,
-            portableDir: mode === 'portable' ? portableDir ?? '/Applications/EchoFlowAI-Claude-Code/CLAUDE_CONFIG_DIR' : null,
-            defaultPortableDir: '/Applications/EchoFlowAI-Claude-Code/CLAUDE_CONFIG_DIR',
-            activeConfigDir: mode === 'portable' ? portableDir ?? '/Applications/EchoFlowAI-Claude-Code/CLAUDE_CONFIG_DIR' : null,
+            portableDir: mode === 'portable' ? portableDir ?? '/Applications/EchoFlow-ClaudeCode/CLAUDE_CONFIG_DIR' : null,
+            defaultPortableDir: '/Applications/EchoFlow-ClaudeCode/CLAUDE_CONFIG_DIR',
+            activeConfigDir: mode === 'portable' ? portableDir ?? '/Applications/EchoFlow-ClaudeCode/CLAUDE_CONFIG_DIR' : null,
             configDirSource: mode === 'portable' ? 'portable' : 'system',
           },
           appModeRequiresRestart: true,
@@ -481,7 +481,7 @@ describe('Settings > General tab', () => {
       appMode: {
         mode: 'portable',
         portableDir: '/Users/test/cc-haha-data',
-        defaultPortableDir: '/Applications/EchoFlowAI-Claude-Code/CLAUDE_CONFIG_DIR',
+        defaultPortableDir: '/Applications/EchoFlow-ClaudeCode/CLAUDE_CONFIG_DIR',
         activeConfigDir: '/Users/test/cc-haha-data',
         configDirSource: 'portable',
       },
@@ -513,7 +513,7 @@ describe('Settings > General tab', () => {
     expect(screen.getByText('Choose or enter a portable data directory first.')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Use the default portable folder beside the app' }))
-    expect(input).toHaveValue('/Applications/EchoFlowAI-Claude-Code/CLAUDE_CONFIG_DIR')
+    expect(input).toHaveValue('/Applications/EchoFlow-ClaudeCode/CLAUDE_CONFIG_DIR')
     expect(screen.queryByText('Choose or enter a portable data directory first.')).not.toBeInTheDocument()
   })
 
@@ -533,7 +533,7 @@ describe('Settings > General tab', () => {
       appMode: {
         mode: 'portable',
         portableDir: '/env/claude-data',
-        defaultPortableDir: '/Applications/EchoFlowAI-Claude-Code/CLAUDE_CONFIG_DIR',
+        defaultPortableDir: '/Applications/EchoFlow-ClaudeCode/CLAUDE_CONFIG_DIR',
         activeConfigDir: '/env/claude-data',
         configDirSource: 'environment',
       },
@@ -726,7 +726,7 @@ describe('Settings > General tab', () => {
       expect(desktopNotificationsMock.requestDesktopNotificationPermission).toHaveBeenCalledTimes(1)
     })
     expect(desktopNotificationsMock.notifyDesktop).toHaveBeenCalledWith({
-      title: 'EchoFlowAI-Claude-Code notifications are enabled',
+      title: 'EchoFlow-ClaudeCode notifications are enabled',
       body: 'Permission prompts and completed agent replies will now use system notifications.',
     })
   })
@@ -1405,7 +1405,7 @@ describe('Settings > About tab', () => {
     useUpdateStore.setState({
       status: 'available',
       availableVersion: '0.1.5',
-      releaseNotes: '# EchoFlowAI-Claude-Code v0.1.5\n\n- Fixed updater rendering\n- Added markdown support',
+      releaseNotes: '# EchoFlow-ClaudeCode v0.1.5\n\n- Fixed updater rendering\n- Added markdown support',
       progressPercent: 0,
       downloadedBytes: 0,
       totalBytes: null,
@@ -1422,7 +1422,7 @@ describe('Settings > About tab', () => {
   it('renders release notes with markdown formatting', async () => {
     render(<Settings />)
 
-    expect(await screen.findByRole('heading', { name: 'EchoFlowAI-Claude-Code v0.1.5' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'EchoFlow-ClaudeCode v0.1.5' })).toBeInTheDocument()
     expect(screen.getByText('Fixed updater rendering')).toBeInTheDocument()
     expect(screen.getByText('Added markdown support')).toBeInTheDocument()
   })
@@ -1431,7 +1431,7 @@ describe('Settings > About tab', () => {
     useUpdateStore.setState({
       status: 'downloading',
       availableVersion: '0.1.5',
-      releaseNotes: '# EchoFlowAI-Claude-Code v0.1.5',
+      releaseNotes: '# EchoFlow-ClaudeCode v0.1.5',
       progressPercent: 0,
       downloadedBytes: 1536,
       totalBytes: null,

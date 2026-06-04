@@ -34,7 +34,7 @@ const HTML_SUCCESS = `<!doctype html>
   <body>
     <div class="container">
       <h1>Authorization Successful</h1>
-      <p>You can close this window and return to EchoFlowAI-Claude-Code.</p>
+      <p>You can close this window and return to EchoFlow-ClaudeCode.</p>
     </div>
     <script>setTimeout(() => window.close(), 2000)</script>
   </body>
@@ -48,7 +48,7 @@ const HTML_ERROR = `<!doctype html>
   </head>
   <body>
     <h1>Authorization Failed</h1>
-    <p>You can close this window and return to EchoFlowAI-Claude-Code.</p>
+    <p>You can close this window and return to EchoFlow-ClaudeCode.</p>
   </body>
 </html>`
 

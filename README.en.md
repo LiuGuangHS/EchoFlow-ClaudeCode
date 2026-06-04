@@ -1,36 +1,36 @@
-# EchoFlowAI-Claude-Code
+# EchoFlow-ClaudeCode
 
 <p align="center">
-  <img src="docs/images/logo-horizontal.png" alt="EchoFlowAI-Claude-Code" width="480">
+  <img src="docs/images/app-icon.png" alt="EchoFlow-ClaudeCode" width="480">
 </p>
 
 <div align="center">
 
-[![GitHub Stars](https://img.shields.io/github/stars/LiuGuangHS/EchoFlowAI-Claude-Code?style=social)](https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/stargazers)
-[![GitHub Forks](https://img.shields.io/github/forks/LiuGuangHS/EchoFlowAI-Claude-Code?style=social)](https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/network/members)
-[![GitHub Issues](https://img.shields.io/github/issues/LiuGuangHS/EchoFlowAI-Claude-Code)](https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/issues)
-[![GitHub Pull Requests](https://img.shields.io/github/issues-pr/LiuGuangHS/EchoFlowAI-Claude-Code)](https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/pulls)
-[![License](https://img.shields.io/github/license/LiuGuangHS/EchoFlowAI-Claude-Code)](https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/blob/main/LICENSE)
+[![GitHub Stars](https://img.shields.io/github/stars/LiuGuangHS/EchoFlow-ClaudeCode?style=social)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/stargazers)
+[![GitHub Forks](https://img.shields.io/github/forks/LiuGuangHS/EchoFlow-ClaudeCode?style=social)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/network/members)
+[![GitHub Issues](https://img.shields.io/github/issues/LiuGuangHS/EchoFlow-ClaudeCode)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/issues)
+[![GitHub Pull Requests](https://img.shields.io/github/issues-pr/LiuGuangHS/EchoFlow-ClaudeCode)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/pulls)
+[![License](https://img.shields.io/github/license/LiuGuangHS/EchoFlow-ClaudeCode)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/LICENSE)
 [![中文](https://img.shields.io/badge/🇨🇳_中文-Available-green)](README.md)
 [![English](https://img.shields.io/badge/🇺🇸_English-当前-blue)](README.en.md)
-[![Docs](https://img.shields.io/badge/📖_Documentation-Visit-FF7A00)](https://liuguanghs.github.io/EchoFlowAI-Claude-Code/)
+[![Docs](https://img.shields.io/badge/📖_Documentation-Visit-FF7A00)](https://code.echoflow.cn)
 
 </div>
 
-A Claude Code build repaired from the source leaked from Anthropic's npm registry on 2026-03-31. EchoFlowAI-Claude-Code is now primarily a **desktop Claude Code workspace** for macOS, Windows, and Linux: sessions, projects, branch / Worktree launch, right-side file changes, code diffs, permission review, provider setup, Computer Use, H5 remote access, IM integration, and scheduled tasks in one app.
+A Claude Code build repaired from the source leaked from Anthropic's npm registry on 2026-03-31. EchoFlow-ClaudeCode is now primarily a **desktop Claude Code workspace** for macOS, Windows, and Linux: sessions, projects, branch / Worktree launch, right-side file changes, code diffs, permission review, provider setup, Computer Use, H5 remote access, IM integration, and scheduled tasks in one app.
 
 <p align="center">
-  <a href="#desktop-preview">Desktop Preview</a> · <a href="#install-the-desktop-app">Install</a> · <a href="#desktop-highlights">Highlights</a> · <a href="#sponsorship--partnership">Sponsorship</a> · <a href="#more-documentation">More Docs</a>
+  <a href="#desktop-preview">Desktop Preview</a> · <a href="#install-the-desktop-app">Install</a> · <a href="#desktop-highlights">Highlights</a> · <a href="#community--contact">Community</a> · <a href="#sponsorship--partnership">Sponsorship</a> · <a href="#more-documentation">More Docs</a>
 </p>
 
 ---
 
 ## Desktop Preview
 
-The EchoFlowAI-Claude-Code desktop app brings sessions, multi-project navigation, branch / Worktree controls, right-side file changes, code diffs, permission review, provider setup, and remote access into one graphical workspace for daily development flows beyond the terminal.
+The EchoFlow-ClaudeCode desktop app brings sessions, multi-project navigation, branch / Worktree controls, right-side file changes, code diffs, permission review, provider setup, and remote access into one graphical workspace for daily development flows beyond the terminal.
 
 <p align="center">
-  <a href="https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/releases"><img src="https://img.shields.io/badge/⬇_Download_Desktop-macOS_%7C_Windows_%7C_Linux-FF7A00?style=for-the-badge" alt="Download Desktop"></a>
+  <a href="https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases"><img src="https://img.shields.io/badge/⬇_Download_Desktop-macOS_%7C_Windows_%7C_Linux-FF7A00?style=for-the-badge" alt="Download Desktop"></a>
   &nbsp;
   <a href="docs/desktop/04-installation.md"><img src="https://img.shields.io/badge/📖_Install_Guide-Guide-gray?style=for-the-badge" alt="Install Guide"></a>
 </p>
@@ -54,7 +54,7 @@ The EchoFlowAI-Claude-Code desktop app brings sessions, multi-project navigation
 
 ## Install the Desktop App
 
-1. Download the macOS / Windows / Linux desktop installer from [Releases](https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/releases).
+1. Download the macOS / Windows / Linux desktop installer from [Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases).
 2. On first launch, configure your model provider, API key, and default model in Settings.
 3. This build is currently unsigned, so the first launch needs a one-time manual approval (clear quarantine on macOS, click "Run anyway" on Windows). See the [desktop installation guide](docs/desktop/04-installation.md).
 
@@ -107,6 +107,29 @@ See [environment variables](docs/en/guide/env-vars.md) and [global usage](docs/e
 
 ---
 
+## Community & Contact
+
+Scan a QR code to join the community groups or contact the maintainer on WeChat.
+
+<table>
+<tr>
+<td align="center" width="33%">
+<img src="docs/images/community/echoflow-aigc-group.png" width="220" alt="EchoFlow AIGC community group QR code"><br>
+<b>EchoFlow AIGC Group</b>
+</td>
+<td align="center" width="33%">
+<img src="docs/images/community/echoflow-vibecoding-group.png" width="220" alt="EchoFlow Vibecoding community group QR code"><br>
+<b>EchoFlow Vibecoding Group</b>
+</td>
+<td align="center" width="33%">
+<img src="docs/images/community/wechat-contact.png" width="220" alt="WeChat contact QR code"><br>
+<b>WeChat Contact</b>
+</td>
+</tr>
+</table>
+
+---
+
 ## Sponsorship & Partnership
 
 This project is maintained in the author's spare time. Corporate or individual sponsorships are welcome to support ongoing development. Custom features, integrations, and business partnerships are also open for discussion.
@@ -147,31 +170,6 @@ This project is maintained in the author's spare time. Corporate or individual s
 
 ---
 
-## ☕ Buy Me a Coffee
-
-If this project helps you, consider buying me a coffee — every bit of support keeps this project going ❤️
-
-<table>
-<tr>
-<td align="center" width="33%">
-<img src="docs/images/donate/wechat_pay.jpeg" width="250" alt="WeChat Pay"><br>
-<b>WeChat Pay</b>
-</td>
-<td align="center" width="33%">
-<img src="docs/images/donate/zfb_pay.png" width="250" alt="Alipay"><br>
-<b>Alipay</b>
-</td>
-<td align="center" width="33%">
-<a href="https://buymeacoffee.com/relakkes" target="_blank">
-<img src="docs/images/donate/bmc_button.png" width="250" alt="Buy Me a Coffee">
-</a><br>
-<b>Buy Me a Coffee</b>
-</td>
-</tr>
-</table>
-
----
-
 ## Tech Stack
 
 | Category | Technology |
@@ -197,13 +195,13 @@ Thanks to the following open-source projects and community practices for referen
 
 ## ⭐ Star History
 
-If this project helps you, please support it with a ⭐ Star so more people can discover EchoFlowAI-Claude-Code.
+If this project helps you, please support it with a ⭐ Star so more people can discover EchoFlow-ClaudeCode.
 
-<a href="https://www.star-history.com/#LiuGuangHS/EchoFlowAI-Claude-Code&Date">
+<a href="https://www.star-history.com/#LiuGuangHS/EchoFlow-ClaudeCode&Date">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=LiuGuangHS/EchoFlowAI-Claude-Code&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=LiuGuangHS/EchoFlowAI-Claude-Code&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=LiuGuangHS/EchoFlowAI-Claude-Code&type=Date" />
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=LiuGuangHS/EchoFlow-ClaudeCode&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=LiuGuangHS/EchoFlow-ClaudeCode&type=Date" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=LiuGuangHS/EchoFlow-ClaudeCode&type=Date" />
   </picture>
 </a>
 

@@ -3,7 +3,7 @@
 
 If you want to run `claude-haha` directly from any project directory, set up one of the following. Once configured, `claude-haha` will automatically recognize your current working directory.
 
-> Note: `claude-haha` is the CLI name retained for compatibility with existing scripts, configuration, and user-data paths. The public product name is EchoFlow Code.
+> Note: `claude-haha` is the CLI name retained for compatibility with existing scripts, configuration, and user-data paths. The public product name is EchoFlow-ClaudeCode.
 
 ## macOS / Linux
 
@@ -11,10 +11,10 @@ Add to `~/.bashrc` or `~/.zshrc`:
 
 ```bash
 # Option 1: Add to PATH (recommended)
-export PATH="$HOME/path/to/EchoFlowAI-Claude-Code/bin:$PATH"
+export PATH="$HOME/path/to/EchoFlow-ClaudeCode/bin:$PATH"
 
 # Option 2: Alias
-alias claude-haha="$HOME/path/to/EchoFlowAI-Claude-Code/bin/claude-haha"
+alias claude-haha="$HOME/path/to/EchoFlow-ClaudeCode/bin/claude-haha"
 ```
 
 Then reload the config:
@@ -28,7 +28,7 @@ source ~/.bashrc  # or source ~/.zshrc
 Add to `~/.bashrc`:
 
 ```bash
-export PATH="$HOME/path/to/EchoFlowAI-Claude-Code/bin:$PATH"
+export PATH="$HOME/path/to/EchoFlow-ClaudeCode/bin:$PATH"
 ```
 
 ### Windows + WSL Toolchains

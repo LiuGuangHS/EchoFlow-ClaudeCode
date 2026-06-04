@@ -18,9 +18,9 @@
 
 ## 1. Local Implementation Overview
 
-The upstream Computer Use interaction model depends on platform-specific execution layers and remote configuration. EchoFlow Code localizes these capabilities through a Python Bridge and local configuration.
+The upstream Computer Use interaction model depends on platform-specific execution layers and remote configuration. EchoFlow-ClaudeCode localizes these capabilities through a Python Bridge and local configuration.
 
-| Component | Purpose | EchoFlow Code implementation |
+| Component | Purpose | EchoFlow-ClaudeCode implementation |
 |-----------|---------|-----------------------------|
 | Screenshots and display enumeration | Read screen/display state | Python Bridge + `mss` / `pyobjc` |
 | Mouse/keyboard simulation | Execute local input actions | Python Bridge + `pyautogui` |
@@ -33,7 +33,7 @@ Our approach: **preserve the MCP tool definitions and security mechanisms, imple
 ### What We Changed
 
 ```
-Upstream interaction model              EchoFlow Code local implementation
+Upstream interaction model              EchoFlow-ClaudeCode local implementation
 ────────────────────                    ─────────────────────────────────
 Platform screenshots/display state ──localized──→ Python Bridge (mac_helper.py)
 Platform mouse/keyboard input      ──localized──→ pyautogui + pyobjc
@@ -97,7 +97,7 @@ Computer Use uses a **6-layer architecture** with clear responsibilities and bou
 └─────────────────────────────────────────────────────────────┘
 ```
 
-Layers marked **[LOCAL]** are EchoFlow Code's local execution layers. The other layers preserve MCP tools and safety mechanisms.
+Layers marked **[LOCAL]** are EchoFlow-ClaudeCode's local execution layers. The other layers preserve MCP tools and safety mechanisms.
 
 ### Why This Layering?
 

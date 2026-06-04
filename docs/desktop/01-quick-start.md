@@ -25,7 +25,7 @@
 
 侧边栏是你与 Claude Code 交互的导航中心：
 
-- **品牌区域**：显示「EchoFlowAI-Claude-Code」标识，点击 GitHub 图标跳转仓库
+- **品牌区域**：显示「EchoFlow-ClaudeCode」标识，点击 GitHub 图标跳转仓库
 - **操作按钮**：
   - `+` 新建会话
   - 时钟图标 → 定时任务管理

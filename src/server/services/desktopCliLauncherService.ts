@@ -17,8 +17,8 @@ import { getUserBinDir } from '../../utils/xdg.js'
 
 const DESKTOP_CLI_NAME = 'claude-haha'
 const DESKTOP_CLI_WINDOWS_LEGACY_EXE = `${DESKTOP_CLI_NAME}.exe`
-const PATH_BLOCK_START = '# >>> EchoFlowAI-Claude-Code PATH >>>'
-const PATH_BLOCK_END = '# <<< EchoFlowAI-Claude-Code PATH <<<'
+const PATH_BLOCK_START = '# >>> EchoFlow-ClaudeCode PATH >>>'
+const PATH_BLOCK_END = '# <<< EchoFlow-ClaudeCode PATH <<<'
 const WINDOWS_PATH_TARGET = 'Windows User PATH'
 const WINDOWS_USER_BIN_EXPR = '%USERPROFILE%\\.local\\bin'
 

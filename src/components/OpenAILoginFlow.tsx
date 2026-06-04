@@ -149,7 +149,7 @@ export function OpenAILoginFlow({
       setStatus({ state: 'success', warning })
       void sendNotification(
         {
-          message: 'EchoFlowAI-Claude-Code OpenAI login successful',
+          message: 'EchoFlow-ClaudeCode OpenAI login successful',
           notificationType: 'auth_success',
         },
         terminal,

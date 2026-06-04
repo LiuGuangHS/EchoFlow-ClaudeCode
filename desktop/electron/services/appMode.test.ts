@@ -22,7 +22,7 @@ function tempDir() {
 }
 
 function app(root = tempDir()): AppModeAppLike & { root: string } {
-  const exe = path.join(root, 'Claude Code Haha.app', 'Contents', 'MacOS', 'Claude Code Haha')
+  const exe = path.join(root, 'EchoFlow-ClaudeCode.app', 'Contents', 'MacOS', 'EchoFlow-ClaudeCode')
   const userData = path.join(root, 'user-data')
   fs.mkdirSync(path.dirname(exe), { recursive: true })
   fs.writeFileSync(exe, '')

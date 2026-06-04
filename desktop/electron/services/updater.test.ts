@@ -105,7 +105,7 @@ describe('Electron updater service', () => {
   it('treats missing GitHub channel metadata as no update', async () => {
     const service = new ElectronUpdaterService(updater)
     updater.checkForUpdates.mockRejectedValueOnce(Object.assign(
-      new Error('Cannot find latest-mac.yml in the latest release artifacts (https://github.com/NanmiCoder/cc-haha/releases/download/v0.3.2/latest-mac.yml): HttpError: 404'),
+      new Error('Cannot find latest-mac.yml in the latest release artifacts (https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/download/v0.3.2/latest-mac.yml): HttpError: 404'),
       { code: 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND' },
     ))
 
@@ -115,7 +115,7 @@ describe('Electron updater service', () => {
   it('treats missing GitHub channel metadata as no update even without an error code', async () => {
     const service = new ElectronUpdaterService(updater)
     updater.checkForUpdates.mockRejectedValueOnce(
-      new Error('Cannot find latest-mac.yml in the latest release artifacts (https://github.com/NanmiCoder/cc-haha/releases/download/v0.3.2/latest-mac.yml): HttpError: 404'),
+      new Error('Cannot find latest-mac.yml in the latest release artifacts (https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/download/v0.3.2/latest-mac.yml): HttpError: 404'),
     )
 
     await expect(service.checkForUpdates()).resolves.toBeNull()
@@ -124,7 +124,7 @@ describe('Electron updater service', () => {
   it('treats stringified missing GitHub channel metadata as no update', async () => {
     const service = new ElectronUpdaterService(updater)
     updater.checkForUpdates.mockRejectedValueOnce(
-      'Error: Cannot find latest-mac.yml in the latest release artifacts (https://github.com/NanmiCoder/cc-haha/releases/download/v0.3.2/latest-mac.yml): HttpError: 404',
+      'Error: Cannot find latest-mac.yml in the latest release artifacts (https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/download/v0.3.2/latest-mac.yml): HttpError: 404',
     )
 
     await expect(service.checkForUpdates()).resolves.toBeNull()
@@ -134,10 +134,10 @@ describe('Electron updater service', () => {
     const localUpdater = fakeUpdater()
 
     new ElectronUpdaterService(localUpdater, undefined, {
-      feedUrl: ' https://gh-proxy.example/https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/releases/latest/download/ ',
+      feedUrl: ' https://gh-proxy.example/https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest/download/ ',
     })
 
-    expect(localUpdater.setFeedURL).toHaveBeenCalledWith('https://gh-proxy.example/https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/releases/latest/download/')
+    expect(localUpdater.setFeedURL).toHaveBeenCalledWith('https://gh-proxy.example/https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest/download/')
   })
 
   it('applies manual updater proxy before checking and clears it when returning to system proxy', async () => {

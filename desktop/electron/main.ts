@@ -53,7 +53,7 @@ let previewService: ElectronPreviewService | null = null
 let isQuitting = false
 let trayController: TrayController | null = null
 
-const DEFAULT_GITHUB_RELEASE_FEED_URL = 'https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code/releases/latest/download/'
+const DEFAULT_GITHUB_RELEASE_FEED_URL = 'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest/download/'
 const DEFAULT_UPDATE_FEED_URL = `https://gh-proxy.org/${DEFAULT_GITHUB_RELEASE_FEED_URL}`
 
 function normalizeUpdateFeedBaseUrl(value: string): string | null {

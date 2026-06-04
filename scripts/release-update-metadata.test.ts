@@ -21,20 +21,20 @@ describe('release update metadata merge', () => {
     writeYaml(join(inputDir, 'latest-mac-macOS-ARM64.yml'), `
       version: 0.3.2
       files:
-        - url: Claude-Code-Haha-0.3.2-arm64.zip
+        - url: EchoFlow-ClaudeCode-0.3.2-arm64.zip
           sha512: arm64-checksum
           size: 222
-      path: Claude-Code-Haha-0.3.2-arm64.zip
+      path: EchoFlow-ClaudeCode-0.3.2-arm64.zip
       sha512: arm64-checksum
       releaseDate: '2026-06-01T02:00:00.000Z'
     `)
     writeYaml(join(inputDir, 'latest-mac-macOS-x64.yml'), `
       version: 0.3.2
       files:
-        - url: Claude-Code-Haha-0.3.2-x64.zip
+        - url: EchoFlow-ClaudeCode-0.3.2-x64.zip
           sha512: x64-checksum
           size: 111
-      path: Claude-Code-Haha-0.3.2-x64.zip
+      path: EchoFlow-ClaudeCode-0.3.2-x64.zip
       sha512: x64-checksum
       releaseDate: '2026-06-01T01:00:00.000Z'
     `)
@@ -50,10 +50,10 @@ describe('release update metadata merge', () => {
     }
 
     expect(merged.files.map(file => file.url)).toEqual([
-      'Claude-Code-Haha-0.3.2-x64.zip',
-      'Claude-Code-Haha-0.3.2-arm64.zip',
+      'EchoFlow-ClaudeCode-0.3.2-x64.zip',
+      'EchoFlow-ClaudeCode-0.3.2-arm64.zip',
     ])
-    expect(merged.path).toBe('Claude-Code-Haha-0.3.2-x64.zip')
+    expect(merged.path).toBe('EchoFlow-ClaudeCode-0.3.2-x64.zip')
     expect(merged.sha512).toBe('x64-checksum')
     expect(merged.releaseDate).toBe('2026-06-01T02:00:00.000Z')
   })
@@ -65,25 +65,25 @@ describe('release update metadata merge', () => {
     writeYaml(join(inputDir, 'latest-mac-macOS-ARM64.yml'), `
       version: 0.3.2
       files:
-        - url: Claude-Code-Haha-0.3.2-arm64.dmg
+        - url: EchoFlow-ClaudeCode-0.3.2-arm64.dmg
           sha512: arm64-dmg-checksum
           size: 444
-        - url: Claude-Code-Haha-0.3.2-arm64.zip
+        - url: EchoFlow-ClaudeCode-0.3.2-arm64.zip
           sha512: arm64-zip-checksum
           size: 333
-      path: Claude-Code-Haha-0.3.2-arm64.zip
+      path: EchoFlow-ClaudeCode-0.3.2-arm64.zip
       sha512: arm64-zip-checksum
     `)
     writeYaml(join(inputDir, 'latest-mac-macOS-x64.yml'), `
       version: 0.3.2
       files:
-        - url: Claude-Code-Haha-0.3.2-x64.dmg
+        - url: EchoFlow-ClaudeCode-0.3.2-x64.dmg
           sha512: x64-dmg-checksum
           size: 222
-        - url: Claude-Code-Haha-0.3.2-x64.zip
+        - url: EchoFlow-ClaudeCode-0.3.2-x64.zip
           sha512: x64-zip-checksum
           size: 111
-      path: Claude-Code-Haha-0.3.2-x64.zip
+      path: EchoFlow-ClaudeCode-0.3.2-x64.zip
       sha512: x64-zip-checksum
     `)
 
@@ -96,12 +96,12 @@ describe('release update metadata merge', () => {
     }
 
     expect(merged.files.map(file => file.url)).toEqual([
-      'Claude-Code-Haha-0.3.2-x64.zip',
-      'Claude-Code-Haha-0.3.2-x64.dmg',
-      'Claude-Code-Haha-0.3.2-arm64.zip',
-      'Claude-Code-Haha-0.3.2-arm64.dmg',
+      'EchoFlow-ClaudeCode-0.3.2-x64.zip',
+      'EchoFlow-ClaudeCode-0.3.2-x64.dmg',
+      'EchoFlow-ClaudeCode-0.3.2-arm64.zip',
+      'EchoFlow-ClaudeCode-0.3.2-arm64.dmg',
     ])
-    expect(merged.path).toBe('Claude-Code-Haha-0.3.2-x64.zip')
+    expect(merged.path).toBe('EchoFlow-ClaudeCode-0.3.2-x64.zip')
     expect(merged.sha512).toBe('x64-zip-checksum')
   })
 
@@ -112,19 +112,19 @@ describe('release update metadata merge', () => {
     writeYaml(join(inputDir, 'latest-linux-Linux-x64.yml'), `
       version: 0.3.2
       files:
-        - url: Claude-Code-Haha-0.3.2-x64.AppImage
+        - url: EchoFlow-ClaudeCode-0.3.2-x64.AppImage
           sha512: linux-x64-checksum
           size: 111
-      path: Claude-Code-Haha-0.3.2-x64.AppImage
+      path: EchoFlow-ClaudeCode-0.3.2-x64.AppImage
       sha512: linux-x64-checksum
     `)
     writeYaml(join(inputDir, 'latest-linux-Linux-ARM64.yml'), `
       version: 0.3.2
       files:
-        - url: Claude-Code-Haha-0.3.2-arm64.AppImage
+        - url: EchoFlow-ClaudeCode-0.3.2-arm64.AppImage
           sha512: linux-arm64-checksum
           size: 222
-      path: Claude-Code-Haha-0.3.2-arm64.AppImage
+      path: EchoFlow-ClaudeCode-0.3.2-arm64.AppImage
       sha512: linux-arm64-checksum
     `)
 
@@ -132,8 +132,8 @@ describe('release update metadata merge', () => {
 
     const x64 = parse(readFileSync(join(outputDir, 'latest-linux.yml'), 'utf8')) as { path: string }
     const arm64 = parse(readFileSync(join(outputDir, 'latest-linux-arm64.yml'), 'utf8')) as { path: string }
-    expect(x64.path).toBe('Claude-Code-Haha-0.3.2-x64.AppImage')
-    expect(arm64.path).toBe('Claude-Code-Haha-0.3.2-arm64.AppImage')
+    expect(x64.path).toBe('EchoFlow-ClaudeCode-0.3.2-x64.AppImage')
+    expect(arm64.path).toBe('EchoFlow-ClaudeCode-0.3.2-arm64.AppImage')
   })
 
   test('rejects metadata groups with mixed app versions', () => {
@@ -143,13 +143,13 @@ describe('release update metadata merge', () => {
     writeYaml(join(inputDir, 'latest-mac-macOS-x64.yml'), `
       version: 0.3.2
       files:
-        - url: Claude-Code-Haha-0.3.2-x64.zip
+        - url: EchoFlow-ClaudeCode-0.3.2-x64.zip
           sha512: x64-checksum
     `)
     writeYaml(join(inputDir, 'latest-mac-macOS-ARM64.yml'), `
       version: 0.3.3
       files:
-        - url: Claude-Code-Haha-0.3.3-arm64.zip
+        - url: EchoFlow-ClaudeCode-0.3.3-arm64.zip
           sha512: arm64-checksum
     `)
 

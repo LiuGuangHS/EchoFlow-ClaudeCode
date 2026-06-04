@@ -1,7 +1,7 @@
 # Computer Use Guide
 
 
-> **Implementation note**: EchoFlow Code provides local Computer Use through a Python Bridge. macOS uses `pyautogui` + `mss` + `pyobjc`, and Windows uses `pyautogui` + `mss` + `win32gui` + `psutil`, wrapping screenshots, mouse, keyboard, and app management as auditable local MCP tools.
+> **Implementation note**: EchoFlow-ClaudeCode provides local Computer Use through a Python Bridge. macOS uses `pyautogui` + `mss` + `pyobjc`, and Windows uses `pyautogui` + `mss` + `win32gui` + `psutil`, wrapping screenshots, mouse, keyboard, and app management as auditable local MCP tools.
 
 ---
 
@@ -197,7 +197,7 @@ The desktop Settings > Computer Use switch writes the same config. Once disabled
 
 ### Capability Enablement
 
-EchoFlow Code controls Computer Use through local configuration and startup flags instead of remote feature flags. The related switches are centralized in `gates.ts` and config files so CLI, desktop, and tests share the same behavior.
+EchoFlow-ClaudeCode controls Computer Use through local configuration and startup flags instead of remote feature flags. The related switches are centralized in `gates.ts` and config files so CLI, desktop, and tests share the same behavior.
 
 | Layer | Current Strategy |
 |-------|------------------|

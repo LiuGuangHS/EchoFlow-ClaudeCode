@@ -876,13 +876,13 @@ fn show_main_window(app: &AppHandle) {
 
 fn setup_system_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let menu = MenuBuilder::new(app)
-        .text(TRAY_SHOW_ID, "Show EchoFlowAI-Claude-Code")
+        .text(TRAY_SHOW_ID, "Show EchoFlow-ClaudeCode")
         .separator()
-        .text(TRAY_QUIT_ID, "Quit EchoFlowAI-Claude-Code")
+        .text(TRAY_QUIT_ID, "Quit EchoFlow-ClaudeCode")
         .build()?;
 
     let mut tray = TrayIconBuilder::with_id("main-tray")
-        .tooltip("EchoFlowAI-Claude-Code")
+        .tooltip("EchoFlow-ClaudeCode")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -2360,12 +2360,12 @@ pub fn run() {
     let builder = builder
         .menu(|app| {
             let about_item =
-                MenuItemBuilder::with_id("nav_about", "关于 EchoFlowAI-Claude-Code").build(app)?;
+                MenuItemBuilder::with_id("nav_about", "关于 EchoFlow-ClaudeCode").build(app)?;
             let settings_item = MenuItemBuilder::with_id("nav_settings", "设置...")
                 .accelerator("CmdOrCtrl+,")
                 .build(app)?;
 
-            let app_submenu = SubmenuBuilder::new(app, "EchoFlowAI-Claude-Code")
+            let app_submenu = SubmenuBuilder::new(app, "EchoFlow-ClaudeCode")
                 .item(&about_item)
                 .separator()
                 .item(&settings_item)

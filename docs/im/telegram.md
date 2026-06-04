@@ -20,13 +20,13 @@ Telegram 方案适合个人私聊远程使用。当前实现只处理 `private c
 
 按提示走完三步：
 
-- **取一个机器人名称**，例如 `ClaudeCodeHaha机器人`
+- **取一个机器人名称**，例如 `EchoFlowCode机器人`
 - **取一个机器人用户名**，要求全英文字母，且必须以 `_bot` 结尾，例如 `jiang_cc_hah_bot`
 - 创建成功后，复制 BotFather 返回的 **Bot Token**
 
 ![复制 Bot Token](../images/im/telegram/03-bot-token.png)
 
-## 2. 在 EchoFlowAI-Claude-Code 桌面端填写
+## 2. 在 EchoFlow-ClaudeCode 桌面端填写
 
 ### 2.1 填写 Bot Token
 
@@ -42,7 +42,7 @@ Telegram 方案适合个人私聊远程使用。当前实现只处理 `private c
 
 ## 3. 机器人与桌面端配对
 
-随便给刚才创建的机器人发送一条消息，按提示输入配对码。看到下面的配对成功提示，就可以从手机 Telegram 远程驱动桌面端 EchoFlowAI-Claude-Code 了：
+随便给刚才创建的机器人发送一条消息，按提示输入配对码。看到下面的配对成功提示，就可以从手机 Telegram 远程驱动桌面端 EchoFlow-ClaudeCode 了：
 
 ![配对成功](../images/im/telegram/06-pair-success.png)
 

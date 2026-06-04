@@ -11,7 +11,7 @@ const MAX_PROJECT_PREFERENCE_ENTRIES = 2_000
 const MAX_PROFILE_DISPLAY_NAME_LENGTH = 80
 const MAX_PROFILE_SUBTITLE_LENGTH = 160
 const MAX_PROFILE_AVATAR_BYTES = 2_000_000
-const DEFAULT_PROFILE_SUBTITLE = 'github.com/NanmiCoder/cc-haha'
+const DEFAULT_PROFILE_SUBTITLE = 'github.com/LiuGuangHS/EchoFlow-ClaudeCode'
 
 const AVATAR_CONTENT_TYPES = {
   'image/png': { extension: 'png', mediaType: 'image/png' },
@@ -55,7 +55,7 @@ const DEFAULT_SIDEBAR_PROJECT_PREFERENCES: SidebarProjectPreferences = {
 }
 
 const DEFAULT_PROFILE_PREFERENCES: DesktopProfilePreferences = {
-  displayName: 'cc-haha',
+  displayName: 'EchoFlow-ClaudeCode',
   subtitle: DEFAULT_PROFILE_SUBTITLE,
   avatarFile: null,
   avatarUpdatedAt: null,

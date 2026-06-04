@@ -618,7 +618,7 @@ export function Sidebar({ isMobile = false, onRequestClose }: SidebarProps) {
           </div>
           <div className={`flex items-center ${expanded ? 'gap-1.5' : 'flex-col gap-2'}`}>
             <a
-              href="https://github.com/LiuGuangHS/EchoFlowAI-Claude-Code"
+              href="https://github.com/LiuGuangHS/EchoFlow-ClaudeCode"
               target="_blank"
               rel="noopener noreferrer"
               className={`sidebar-copy ${expanded ? 'sidebar-copy--visible' : 'sidebar-copy--hidden'} inline-flex items-center justify-center rounded-md p-1 text-[var(--color-text-tertiary)] transition-colors hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-hover)]`}

@@ -2,7 +2,7 @@
   "app": {
     "windows": [
       {
-        "title": "EchoFlowAI-Claude-Code",
+        "title": "EchoFlow-ClaudeCode",
         "width": 1440,
         "height": 960,
         "minWidth": 960,

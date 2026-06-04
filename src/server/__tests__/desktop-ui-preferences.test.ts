@@ -58,8 +58,8 @@ describe('DesktopUiPreferencesService', () => {
     expect(result.preferences).toEqual({
       schemaVersion: 2,
       profile: {
-        displayName: 'cc-haha',
-        subtitle: 'github.com/NanmiCoder/cc-haha',
+        displayName: 'EchoFlow-ClaudeCode',
+        subtitle: 'github.com/LiuGuangHS/EchoFlow-ClaudeCode',
         avatarFile: null,
         avatarUpdatedAt: null,
       },
@@ -101,8 +101,8 @@ describe('DesktopUiPreferencesService', () => {
       schemaVersion: 2,
       futureField: { keep: true },
       profile: {
-        displayName: 'cc-haha',
-        subtitle: 'github.com/NanmiCoder/cc-haha',
+        displayName: 'EchoFlow-ClaudeCode',
+        subtitle: 'github.com/LiuGuangHS/EchoFlow-ClaudeCode',
         avatarFile: null,
         avatarUpdatedAt: null,
       },
@@ -118,8 +118,8 @@ describe('DesktopUiPreferencesService', () => {
       schemaVersion: 2,
       futureField: { keep: true },
       profile: {
-        displayName: 'cc-haha',
-        subtitle: 'github.com/NanmiCoder/cc-haha',
+        displayName: 'EchoFlow-ClaudeCode',
+        subtitle: 'github.com/LiuGuangHS/EchoFlow-ClaudeCode',
         avatarFile: null,
         avatarUpdatedAt: null,
       },
@@ -144,7 +144,7 @@ describe('DesktopUiPreferencesService', () => {
 
     expect(result.exists).toBe(false)
     expect(result.preferences.sidebar.hiddenProjects).toEqual([])
-    expect(result.preferences.profile.displayName).toBe('cc-haha')
+    expect(result.preferences.profile.displayName).toBe('EchoFlow-ClaudeCode')
     expect(files.some((name) => name.startsWith('desktop-ui.json.invalid-'))).toBe(true)
   })
 
@@ -230,8 +230,8 @@ describe('desktop UI preferences API', () => {
       preferences: {
         schemaVersion: 2,
         profile: {
-          displayName: 'cc-haha',
-          subtitle: 'github.com/NanmiCoder/cc-haha',
+          displayName: 'EchoFlow-ClaudeCode',
+          subtitle: 'github.com/LiuGuangHS/EchoFlow-ClaudeCode',
           avatarFile: null,
           avatarUpdatedAt: null,
         },
@@ -255,8 +255,8 @@ describe('desktop UI preferences API', () => {
       preferences: {
         schemaVersion: 2,
         profile: {
-          displayName: 'cc-haha',
-          subtitle: 'github.com/NanmiCoder/cc-haha',
+          displayName: 'EchoFlow-ClaudeCode',
+          subtitle: 'github.com/LiuGuangHS/EchoFlow-ClaudeCode',
           avatarFile: null,
           avatarUpdatedAt: null,
         },

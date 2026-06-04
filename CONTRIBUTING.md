@@ -1,6 +1,6 @@
 # 贡献指南
 
-感谢你帮助改进 EchoFlowAI-Claude-Code。
+感谢你帮助改进 EchoFlow-ClaudeCode。
 
 ## 1. 运行本地门禁
 

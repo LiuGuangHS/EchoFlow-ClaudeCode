@@ -35,7 +35,7 @@ cp .env.example .env
 ./bin/claude-haha --help                   # 查看所有选项
 ```
 
-> 说明：当前 CLI 可执行文件名仍为 `claude-haha`，用于兼容已有脚本、配置和用户数据路径；公开产品名为 EchoFlow Code。
+> 说明：当前 CLI 可执行文件名仍为 `claude-haha`，用于兼容已有脚本、配置和用户数据路径；公开产品名为 EchoFlow-ClaudeCode。
 
 ### Windows
 
@@ -54,7 +54,7 @@ bun --env-file=.env ./src/entrypoints/cli.tsx
 将 `bin/` 加入 PATH 后可在任意目录启动，详见 [全局使用指南](./global-usage.md)：
 
 ```bash
-export PATH="$HOME/path/to/EchoFlowAI-Claude-Code/bin:$PATH"
+export PATH="$HOME/path/to/EchoFlow-ClaudeCode/bin:$PATH"
 ```
 
 ## 5. 降级模式

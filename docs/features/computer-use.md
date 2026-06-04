@@ -1,7 +1,7 @@
 # Computer Use 功能指南
 
 
-> **实现说明**：EchoFlow Code 通过 Python Bridge 提供本地 Computer Use 能力。macOS 使用 `pyautogui` + `mss` + `pyobjc`，Windows 使用 `pyautogui` + `mss` + `win32gui` + `psutil`，将截图、鼠标、键盘和应用管理统一封装为可审计的本地 MCP 工具。
+> **实现说明**：EchoFlow-ClaudeCode 通过 Python Bridge 提供本地 Computer Use 能力。macOS 使用 `pyautogui` + `mss` + `pyobjc`，Windows 使用 `pyautogui` + `mss` + `win32gui` + `psutil`，将截图、鼠标、键盘和应用管理统一封装为可审计的本地 MCP 工具。
 
 ---
 
@@ -237,7 +237,7 @@ src/
 
 ### 功能启用策略
 
-EchoFlow Code 的 Computer Use 由本地配置和启动参数控制，不依赖远程 feature flag。相关开关集中在 `gates.ts` 和配置文件中，便于在 CLI、桌面端和测试环境中保持一致。
+EchoFlow-ClaudeCode 的 Computer Use 由本地配置和启动参数控制，不依赖远程 feature flag。相关开关集中在 `gates.ts` 和配置文件中，便于在 CLI、桌面端和测试环境中保持一致。
 
 | 层级 | 当前策略 |
 |------|----------|

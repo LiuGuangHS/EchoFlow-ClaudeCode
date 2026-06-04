@@ -92,8 +92,8 @@ describe('ActivitySettings', () => {
       preferences: {
         schemaVersion: 2,
         profile: {
-          displayName: 'cc-haha',
-          subtitle: 'github.com/NanmiCoder/cc-haha',
+          displayName: 'EchoFlow-ClaudeCode',
+          subtitle: 'github.com/LiuGuangHS/EchoFlow-ClaudeCode',
           avatarFile: null,
           avatarUpdatedAt: null,
         },
@@ -130,8 +130,8 @@ describe('ActivitySettings', () => {
       preferences: {
         schemaVersion: 2,
         profile: {
-          displayName: 'cc-haha',
-          subtitle: 'github.com/NanmiCoder/cc-haha',
+          displayName: 'EchoFlow-ClaudeCode',
+          subtitle: 'github.com/LiuGuangHS/EchoFlow-ClaudeCode',
           avatarFile: 'profile/avatar.png',
           avatarUpdatedAt: '2026-05-09T12:00:00.000Z',
         },
@@ -149,8 +149,8 @@ describe('ActivitySettings', () => {
       preferences: {
         schemaVersion: 2,
         profile: {
-          displayName: 'cc-haha',
-          subtitle: 'github.com/NanmiCoder/cc-haha',
+          displayName: 'EchoFlow-ClaudeCode',
+          subtitle: 'github.com/LiuGuangHS/EchoFlow-ClaudeCode',
           avatarFile: null,
           avatarUpdatedAt: null,
         },
@@ -178,11 +178,11 @@ describe('ActivitySettings', () => {
     expect(getStatsMock).toHaveBeenCalledWith('all')
 
     expect(screen.getByText('cc-haha')).toBeInTheDocument()
-    expect(screen.getByAltText('cc-haha avatar')).toHaveAttribute('src', '/app-icon.png')
-    expect(screen.getByAltText('cc-haha avatar')).toHaveClass('scale-[1.28]')
-    expect(screen.getByRole('link', { name: 'github.com/NanmiCoder/cc-haha' })).toHaveAttribute(
+    expect(screen.getByAltText('EchoFlow-ClaudeCode avatar')).toHaveAttribute('src', '/app-icon.png')
+    expect(screen.getByAltText('EchoFlow-ClaudeCode avatar')).toHaveClass('scale-[1.28]')
+    expect(screen.getByRole('link', { name: 'github.com/LiuGuangHS/EchoFlow-ClaudeCode' })).toHaveAttribute(
       'href',
-      'https://github.com/NanmiCoder/cc-haha',
+      'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode',
     )
     expect(screen.getByText('Token Activity')).toBeInTheDocument()
     expect(screen.getByText('Total tokens')).toBeInTheDocument()
@@ -352,7 +352,7 @@ describe('ActivitySettings', () => {
     await flushActivityLoad()
 
     expect(deleteProfileAvatarMock).toHaveBeenCalled()
-    expect(screen.getByAltText('cc-haha avatar')).toHaveAttribute('src', '/app-icon.png')
+    expect(screen.getByAltText('EchoFlow-ClaudeCode avatar')).toHaveAttribute('src', '/app-icon.png')
   })
 
   it('shows localized duration details and the empty usage state', async () => {

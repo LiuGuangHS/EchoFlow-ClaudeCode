@@ -571,7 +571,7 @@ export function EmptySession() {
         }`}>
           <img
             src={publicAssetPath('app-icon.png')}
-            alt="Claude Code Haha"
+            alt="EchoFlow-ClaudeCode"
             className={isMobileComposer ? 'mb-4 h-16 w-16' : 'mb-6 h-24 w-24'}
           />
           <h1
