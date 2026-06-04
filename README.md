@@ -147,6 +147,7 @@ cp .env.example .env
 
 感谢以下开源项目和社区实践为本项目提供参考与启发：
 
+- [NanmiCoder/cc-haha](https://github.com/NanmiCoder/cc-haha)：原上游项目，为 EchoFlow-ClaudeCode 的持续迭代奠定基础。
 - [React](https://github.com/facebook/react)：前端工程与组件化 UI 生态。
 - [Electron](https://github.com/electron/electron)：跨端桌面应用能力与工程实践。
 - [cc-switch](https://github.com/farion1231/cc-switch)：模型供应商配置能力参考。
