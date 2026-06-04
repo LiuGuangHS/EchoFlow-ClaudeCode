@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicegui/nicegui/main/nicegui/static/tauri-schema-v2.json",
   "productName": "EchoFlow-ClaudeCode",
-  "version": "0.3.2",
+  "version": "0.4.1-rc.1",
   "identifier": "com.echoflowai-claude-code.desktop",
   "build": {
     "frontendDist": "../dist",

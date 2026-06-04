@@ -3497,9 +3497,8 @@ const GITHUB_ISSUES = `${GITHUB_REPO}/issues`
 const GITHUB_RELEASES = `${GITHUB_REPO}/releases`
 const AUTHOR_GITHUB = 'https://github.com/LiuGuangHS'
 const SOCIAL_LINKS = [
-  { name: 'Bilibili', icon: '/icons/bilibili.svg', url: 'https://space.bilibili.com/434377496', label: '程序员阿江-Relakkes' },
-  { name: 'Douyin', icon: '/icons/douyin.svg', url: 'https://www.douyin.com/user/MS4wLjABAAAATJPY7LAlaa5X-c8uNdWkvz0jUGgpw4eeXIwu_8BhvqE', label: '程序员阿江-Relakkes' },
-  { name: 'Xiaohongshu', icon: '/icons/xiaohongshu.svg', url: 'https://www.xiaohongshu.com/user/profile/5f58bd990000000001003753', label: '程序员阿江-Relakkes' },
+  { name: 'Bilibili', icon: '/icons/bilibili.svg', url: 'https://space.bilibili.com/2095003664', label: '清云AI' },
+  { name: 'Douyin', icon: '/icons/douyin.svg', url: 'https://www.douyin.com/user/MS4wLjABAAAAexLOuNgktpQZWZCsVXvAtA7-kCOA8sAlavNcFU_7EdA', label: '清云AI' },
 ] as const
 
 function isValidHttpProxyUrl(value: string) {
@@ -3862,7 +3861,7 @@ function AboutSettings() {
           className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer"
         >
           <img src={publicAssetPath('icons/github.svg')} alt="GitHub" className="w-4 h-4 opacity-60" />
-          <span className="text-sm text-[var(--color-text-primary)]">程序员阿江-Relakkes</span>
+          <span className="text-sm text-[var(--color-text-primary)]">清云AI</span>
           <span className="text-xs text-[var(--color-text-tertiary)] ml-auto">GitHub</span>
         </button>
       </div>

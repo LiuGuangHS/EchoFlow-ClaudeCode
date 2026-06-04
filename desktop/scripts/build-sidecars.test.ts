@@ -13,7 +13,7 @@ function extractWindowsX64BunTarget(source: string) {
 }
 
 describe('build-sidecars Windows x64 target mapping', () => {
-  it('uses the baseline Bun runtime so older CPUs do not crash with Illegal Instruction', () => {
-    expect(extractWindowsX64BunTarget(readBuildScript())).toBe('bun-windows-x64-baseline')
+  it('uses the standard Bun runtime for the default Windows release/update path', () => {
+    expect(extractWindowsX64BunTarget(readBuildScript())).toBe('bun-windows-x64')
   })
 })

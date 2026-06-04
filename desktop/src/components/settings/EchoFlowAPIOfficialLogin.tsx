@@ -127,6 +127,14 @@ export function EchoFlowAPIOfficialLogin() {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={handleGetToken}
+          className="inline-flex items-center gap-2 rounded-lg bg-[var(--color-brand)] px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:brightness-105 focus:outline-none focus:ring-2 focus:ring-[var(--color-brand)]/30"
+        >
+          <ExternalLink className="h-4 w-4" aria-hidden="true" />
+          {t('settings.echoflowAPIOfficialLogin.getToken')}
+        </button>
         <div className="relative flex-1">
           <input
             type={showToken ? 'text' : 'password'}
@@ -160,14 +168,6 @@ export function EchoFlowAPIOfficialLogin() {
             : t('settings.echoflowAPIOfficialLogin.connect')}
         </button>
       </div>
-      <button
-        type="button"
-        onClick={handleGetToken}
-        className="inline-flex items-center gap-1.5 self-start text-xs text-[var(--color-brand)] hover:underline"
-      >
-        <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-        {t('settings.echoflowAPIOfficialLogin.getToken')}
-      </button>
       {error && (
         <div className="text-xs text-[var(--color-error)]">{error}</div>
       )}
