@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   APP_ZOOM_STORAGE_KEY,
-  LEGACY_UI_ZOOM_STORAGE_KEY,
   applyAppZoomLevel,
   getAppZoomKeyboardAction,
   initializeAppZoom,
@@ -44,13 +43,14 @@ describe('appZoom', () => {
     expect(window.localStorage.getItem(APP_ZOOM_STORAGE_KEY)).toBe('1.2')
   })
 
-  it('reads the legacy UI zoom key when the app zoom key is absent', async () => {
-    window.localStorage.setItem(LEGACY_UI_ZOOM_STORAGE_KEY, '1.25')
+  it('does not auto-read legacy UI zoom storage', async () => {
+    window.localStorage.setItem('cc-haha-ui-zoom', '1.25')
 
     await initializeAppZoom()
 
-    expect(document.documentElement.getAttribute('data-app-zoom-percent')).toBe('125')
+    expect(document.documentElement.getAttribute('data-app-zoom-percent')).toBe('100')
     expect(window.localStorage.getItem(APP_ZOOM_STORAGE_KEY)).toBeNull()
+    expect(window.localStorage.getItem('cc-haha-ui-zoom')).toBe('1.25')
   })
 
   it('persists app zoom changes', async () => {

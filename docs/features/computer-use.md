@@ -1,7 +1,7 @@
 # Computer Use 功能指南
 
 
-> **实现说明**：EchoFlow-ClaudeCode 通过 Python Bridge 提供本地 Computer Use 能力。macOS 使用 `pyautogui` + `mss` + `pyobjc`，Windows 使用 `pyautogui` + `mss` + `win32gui` + `psutil`，将截图、鼠标、键盘和应用管理统一封装为可审计的本地 MCP 工具。
+> **实现说明**：EchoFlow Code 通过 Python Bridge 提供本地 Computer Use 能力。macOS 使用 `pyautogui` + `mss` + `pyobjc`，Windows 使用 `pyautogui` + `mss` + `win32gui` + `psutil`，将截图、鼠标、键盘和应用管理统一封装为可审计的本地 MCP 工具。
 
 ---
 
@@ -138,7 +138,7 @@ open "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapt
 ### 4. 启动
 
 ```bash
-./bin/claude-haha
+./bin/echoflow-code
 ```
 
 ### 5. 使用
@@ -166,11 +166,11 @@ open "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapt
 如果你只想使用普通 Coding Agent，不希望暴露 `computer-use` MCP 工具，可以使用任一方式禁用：
 
 ```bash
-claude-haha --no-computer-use
-CLAUDE_COMPUTER_USE_ENABLED=0 claude-haha
+echoflow-code --no-computer-use
+CLAUDE_COMPUTER_USE_ENABLED=0 echoflow-code
 ```
 
-也可以写入全局配置文件 `~/.claude/cc-haha/computer-use-config.json`：
+也可以写入 EchoFlow Code 数据根目录下的 `echoflow/computer-use-config.json`（Windows 默认 `%LOCALAPPDATA%\EchoFlow Code`，macOS 默认 `~/Library/Application Support/EchoFlow Code`，Linux 默认 `${XDG_DATA_HOME:-~/.local/share}/echoflow-code`）：
 
 ```json
 {
@@ -237,7 +237,7 @@ src/
 
 ### 功能启用策略
 
-EchoFlow-ClaudeCode 的 Computer Use 由本地配置和启动参数控制，不依赖远程 feature flag。相关开关集中在 `gates.ts` 和配置文件中，便于在 CLI、桌面端和测试环境中保持一致。
+EchoFlow Code 的 Computer Use 由本地配置和启动参数控制，不依赖远程 feature flag。相关开关集中在 `gates.ts` 和配置文件中，便于在 CLI、桌面端和测试环境中保持一致。
 
 | 层级 | 当前策略 |
 |------|----------|

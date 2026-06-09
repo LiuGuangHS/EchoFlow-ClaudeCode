@@ -229,6 +229,9 @@ const TRAY_QUIT_ID: &str = "tray_quit";
 const WINDOW_STATE_FILE: &str = "window-state.json";
 const TERMINAL_CONFIG_FILE: &str = "terminal-config.json";
 const APP_MODE_FILE: &str = "app-mode.json";
+const ECHOFLOW_DEFAULT_CONFIG_ENV: &str = "ECHOFLOW_CODE_DEFAULT_CONFIG_DIR";
+const ECHOFLOW_PORTABLE_ENV: &str = "ECHOFLOW_CODE_APP_PORTABLE_DIR";
+const LEGACY_PORTABLE_ENV: &str = "CC_HAHA_APP_PORTABLE_DIR";
 const MIN_WINDOW_WIDTH: u32 = 960;
 const MIN_WINDOW_HEIGHT: u32 = 640;
 const MIN_VISIBLE_PIXELS: i64 = 64;
@@ -307,7 +310,6 @@ fn dir_has_portable_data(dir: &Path) -> bool {
         || dir.join("skills").is_dir()
         || dir.join("plugins").is_dir()
         || dir.join("cowork_plugins").is_dir()
-        || dir.join("cc-haha").is_dir()
 }
 
 /// Resolve the default portable config directory: exe_dir/CLAUDE_CONFIG_DIR.
@@ -544,8 +546,13 @@ fn get_app_mode(app: AppHandle) -> serde_json::Value {
     let active_config_dir = env_config_dir
         .clone()
         .or_else(|| app.path().app_config_dir().ok());
+    let is_echoflow_default_config_dir = std::env::var_os(ECHOFLOW_DEFAULT_CONFIG_ENV).is_some();
+    let is_portable_config_dir = std::env::var_os(ECHOFLOW_PORTABLE_ENV).is_some()
+        || std::env::var_os(LEGACY_PORTABLE_ENV).is_some();
     let config_dir_source = if env_config_dir.is_some() {
-        if std::env::var_os("CC_HAHA_APP_PORTABLE_DIR").is_some() {
+        if is_echoflow_default_config_dir {
+            "system"
+        } else if is_portable_config_dir {
             "portable"
         } else {
             "environment"
@@ -553,11 +560,18 @@ fn get_app_mode(app: AppHandle) -> serde_json::Value {
     } else {
         "system"
     };
-    let config_dir = env_config_dir.clone().or_else(get_default_portable_dir);
+    let portable_dir = if env_config_dir.is_some()
+        && !is_echoflow_default_config_dir
+        && is_portable_config_dir
+    {
+        env_config_dir.clone()
+    } else {
+        get_default_portable_dir()
+    };
 
     serde_json::json!({
-        "mode": if env_config_dir.is_some() { "portable" } else { "default" },
-        "portableDir": config_dir.as_ref().and_then(|p| p.to_str()),
+        "mode": if is_portable_config_dir { "portable" } else { "default" },
+        "portableDir": portable_dir.as_ref().and_then(|p| p.to_str()),
         "defaultPortableDir": get_default_portable_dir().as_ref().and_then(|p| p.to_str()),
         "activeConfigDir": active_config_dir.as_ref().and_then(|p| p.to_str()),
         "configDirSource": config_dir_source,
@@ -876,13 +890,13 @@ fn show_main_window(app: &AppHandle) {
 
 fn setup_system_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let menu = MenuBuilder::new(app)
-        .text(TRAY_SHOW_ID, "Show EchoFlow-ClaudeCode")
+        .text(TRAY_SHOW_ID, "Show EchoFlow Code")
         .separator()
-        .text(TRAY_QUIT_ID, "Quit EchoFlow-ClaudeCode")
+        .text(TRAY_QUIT_ID, "Quit EchoFlow Code")
         .build()?;
 
     let mut tray = TrayIconBuilder::with_id("main-tray")
-        .tooltip("EchoFlow-ClaudeCode")
+        .tooltip("EchoFlow Code")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -2360,12 +2374,12 @@ pub fn run() {
     let builder = builder
         .menu(|app| {
             let about_item =
-                MenuItemBuilder::with_id("nav_about", "关于 EchoFlow-ClaudeCode").build(app)?;
+                MenuItemBuilder::with_id("nav_about", "关于 EchoFlow Code").build(app)?;
             let settings_item = MenuItemBuilder::with_id("nav_settings", "设置...")
                 .accelerator("CmdOrCtrl+,")
                 .build(app)?;
 
-            let app_submenu = SubmenuBuilder::new(app, "EchoFlow-ClaudeCode")
+            let app_submenu = SubmenuBuilder::new(app, "EchoFlow Code")
                 .item(&about_item)
                 .separator()
                 .item(&settings_item)

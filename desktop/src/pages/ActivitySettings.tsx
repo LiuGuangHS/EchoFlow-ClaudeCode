@@ -56,8 +56,8 @@ const DATE_LOCALES: Record<Locale, string> = {
   kr: 'ko-KR',
 }
 const DEFAULT_PROFILE: DesktopProfilePreferences = {
-  displayName: 'EchoFlow-ClaudeCode',
-  subtitle: 'github.com/LiuGuangHS/EchoFlow-ClaudeCode',
+  displayName: 'EchoFlow Code',
+  subtitle: 'EchoFlow Code',
   avatarFile: null,
   avatarUpdatedAt: null,
 }

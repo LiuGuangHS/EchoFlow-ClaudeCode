@@ -7,18 +7,24 @@ import { installTray, resolveTrayIconPath, shouldInstallTray } from './tray'
 const trayMocksKey = '__electronTrayMocks'
 
 vi.mock('electron', () => {
-  const mocks = (globalThis as Record<string, unknown>)[trayMocksKey] as ReturnType<typeof createElectronTrayMocks> | undefined
-  if (!mocks) {
-    throw new Error('Electron tray mocks were not initialized for this test')
+  const getMocks = () => {
+    const globalMocks = globalThis as Record<string, unknown>
+    return (globalMocks[trayMocksKey] ??= createElectronTrayMocks()) as ReturnType<typeof createElectronTrayMocks>
   }
 
   return {
     Menu: {
-      buildFromTemplate: mocks.buildFromTemplate,
+      buildFromTemplate: (...args: Parameters<ReturnType<typeof createElectronTrayMocks>['buildFromTemplate']>) =>
+        getMocks().buildFromTemplate(...args),
     },
-    Tray: mocks.Tray.mockImplementation(() => mocks.tray),
+    Tray: function MockTray(...args: unknown[]) {
+      const mocks = getMocks()
+      mocks.Tray(...args)
+      return mocks.tray
+    },
     nativeImage: {
-      createFromPath: mocks.createFromPath,
+      createFromPath: (...args: Parameters<ReturnType<typeof createElectronTrayMocks>['createFromPath']>) =>
+        getMocks().createFromPath(...args),
     },
   }
 })
@@ -86,7 +92,7 @@ describe('Electron tray service', () => {
       const quit = vi.fn()
 
       const controller = await installTray({
-        app: { name: 'EchoFlow-ClaudeCode' } as never,
+        app: { name: 'EchoFlow Code' } as never,
         desktopRoot: root,
         show,
         quit,
@@ -94,14 +100,14 @@ describe('Electron tray service', () => {
 
       expect(trayMocks.createFromPath).toHaveBeenCalledWith(iconPath)
       expect(trayMocks.Tray).toHaveBeenCalledTimes(1)
-      expect(trayMocks.tray.setToolTip).toHaveBeenCalledWith('EchoFlow-ClaudeCode')
+      expect(trayMocks.tray.setToolTip).toHaveBeenCalledWith('EchoFlow Code')
       expect(trayMocks.buildFromTemplate).toHaveBeenCalledTimes(1)
 
       const template = trayMocks.buildFromTemplate.mock.calls[0]?.[0] as Array<{ label?: string, click?: () => void, type?: string }>
       expect(template.map(item => item.label ?? item.type)).toEqual([
-        'Show EchoFlow-ClaudeCode',
+        'Show EchoFlow Code',
         'separator',
-        'Quit EchoFlow-ClaudeCode',
+        'Quit EchoFlow Code',
       ])
 
       template[0]?.click?.()

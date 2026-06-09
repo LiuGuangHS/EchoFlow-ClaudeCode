@@ -185,20 +185,24 @@ describe('WebSocket compact events', () => {
 })
 
 describe('WebSocket permission mode restart policy', () => {
-  it('restarts the CLI only when entering bypassPermissions', () => {
+  it('restarts the CLI when entering bypassPermissions', () => {
     // 进入 bypass 需要带 --dangerously-skip-permissions 重启子进程。
     expect(shouldRestartForPermissionMode('default', 'bypassPermissions')).toBe(true)
     expect(shouldRestartForPermissionMode('plan', 'bypassPermissions')).toBe(true)
     expect(shouldRestartForPermissionMode('acceptEdits', 'bypassPermissions')).toBe(true)
   })
 
-  it('does NOT restart when leaving bypassPermissions for a stricter mode', () => {
-    // 从 bypass 切出不重启——否则会冲掉进程内 prePlanMode，导致 ExitPlanMode 后
-    // 恢复成 default 而非进入 plan 前的 bypassPermissions。这正是桌面端退出 plan
-    // 权限回不到 bypass 的根因。
+  it('restarts when leaving bypassPermissions for a stable stricter mode', () => {
+    // 离开 bypass 到稳定模式必须重启，避免继续沿用带 --dangerously-skip-permissions 的进程。
+    expect(shouldRestartForPermissionMode('bypassPermissions', 'default')).toBe(true)
+    expect(shouldRestartForPermissionMode('bypassPermissions', 'acceptEdits')).toBe(true)
+    expect(shouldRestartForPermissionMode('bypassPermissions', 'dontAsk')).toBe(true)
+  })
+
+  it('does not restart for bypassPermissions to plan so ExitPlanMode can restore bypass', () => {
+    // bypass→plan 不重启，否则会冲掉进程内 prePlanMode，导致 ExitPlanMode 后
+    // 恢复成 default 而非进入 plan 前的 bypassPermissions。
     expect(shouldRestartForPermissionMode('bypassPermissions', 'plan')).toBe(false)
-    expect(shouldRestartForPermissionMode('bypassPermissions', 'default')).toBe(false)
-    expect(shouldRestartForPermissionMode('bypassPermissions', 'acceptEdits')).toBe(false)
   })
 
   it('does not restart for non-bypass transitions or no-op changes', () => {

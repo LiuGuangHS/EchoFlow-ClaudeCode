@@ -1,16 +1,15 @@
 /**
- * HahaOAuthService — 桌面端自管 Claude OAuth token
+ * EchoFlowOAuthService — desktop-managed Claude OAuth token
  *
  * 为什么存在: macOS Keychain ACL 在 .app 被打上 quarantine 属性后
  * 对无 UI sidecar 静默拒绝,导致 CLI 读不到 OAuth token → 403。
- * 这个 service 把 token 存到 haha 自己的目录,并通过 env 注入给 CLI。
+ * This service stores tokens in EchoFlow-owned AppData and injects them into the CLI env.
  *
  * 复用 src/services/oauth/{crypto,client}.ts 里的 PKCE + token exchange 逻辑,
  * 不复制粘贴 —— 保证跟 CLI 走同一套协议实现。
  */
 
 import * as fs from 'fs/promises'
-import * as os from 'os'
 import * as path from 'path'
 import { logTokenRefreshFailure } from './oauthRefreshLog.js'
 import {
@@ -31,6 +30,7 @@ import type {
   SubscriptionType,
 } from '../../services/oauth/types.js'
 import { getOauthConfig } from '../../constants/oauth.js'
+import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 
 export type StoredOAuthTokens = {
   accessToken: string
@@ -70,9 +70,7 @@ export class HahaOAuthService {
   }
 
   private getOAuthFilePath(): string {
-    const configDir =
-      process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
-    return path.join(configDir, 'cc-haha', 'oauth.json')
+    return path.join(getEchoFlowInternalDir(getEchoFlowConfigDir()), 'oauth.json')
   }
 
   async loadTokens(): Promise<StoredOAuthTokens | null> {

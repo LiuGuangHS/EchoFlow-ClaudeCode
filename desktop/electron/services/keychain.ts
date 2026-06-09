@@ -6,7 +6,7 @@ type ElectronAppWithCommandLine = {
 
 /**
  * Chromium creates a per-app "Safe Storage" key in macOS Keychain for browser
- * profile encryption. EchoFlow-ClaudeCode does not rely on Chromium cookies or
+ * profile encryption. EchoFlow Code does not rely on Chromium cookies or
  * password storage for auth secrets; OAuth tokens live in the desktop sidecar
  * files instead. Using Chromium's mock keychain avoids repeated macOS password
  * prompts when dev/unsigned Electron builds cannot reuse the old Keychain ACL.

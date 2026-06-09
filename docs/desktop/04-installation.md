@@ -8,11 +8,11 @@
 
 | 平台 | 文件 |
 |------|------|
-| macOS (Apple Silicon / M 系列) | `EchoFlow-ClaudeCode-<版本>-mac-arm64.dmg` |
-| macOS (Intel) | `EchoFlow-ClaudeCode-<版本>-mac-x64.dmg` |
-| Windows (x64) | `EchoFlow-ClaudeCode-<版本>-win-x64.exe` |
-| Linux (x64) | `EchoFlow-ClaudeCode-<版本>-linux-x86_64.AppImage` 或 `...-linux-amd64.deb` |
-| Linux (ARM64) | `EchoFlow-ClaudeCode-<版本>-linux-arm64.AppImage` 或 `...-linux-arm64.deb` |
+| macOS (Apple Silicon / M 系列) | `EchoFlow-Code-<版本>-mac-arm64.dmg` |
+| macOS (Intel) | `EchoFlow-Code-<版本>-mac-x64.dmg` |
+| Windows (x64) | `EchoFlow-Code-<版本>-win-x64.exe` |
+| Linux (x64) | `EchoFlow-Code-<版本>-linux-x86_64.AppImage` 或 `...-linux-amd64.deb` |
+| Linux (ARM64) | `EchoFlow-Code-<版本>-linux-arm64.AppImage` 或 `...-linux-arm64.deb` |
 
 > 不确定 Mac 架构？点击左上角  → 关于本机，芯片为「Apple M…」选 arm64，「Intel」选 x64。
 
@@ -21,7 +21,7 @@
 双击 DMG 把应用拖入 `Applications`。首次打开如果提示**"已损坏"**或**"无法验证开发者"**，在终端执行：
 
 ```bash
-xattr -cr /Applications/EchoFlow-ClaudeCode.app
+xattr -cr "/Applications/EchoFlow Code.app"
 ```
 
 也可以在「系统设置 → 隐私与安全性」里点"仍要打开"。
@@ -35,8 +35,8 @@ xattr -cr /Applications/EchoFlow-ClaudeCode.app
 AppImage：
 
 ```bash
-chmod +x EchoFlow-ClaudeCode-<版本>-linux-x86_64.AppImage
-./EchoFlow-ClaudeCode-<版本>-linux-x86_64.AppImage
+chmod +x EchoFlow-Code-<版本>-linux-x86_64.AppImage
+./EchoFlow-Code-<版本>-linux-x86_64.AppImage
 ```
 
 > 提示缺少 FUSE：Ubuntu 22.04 及更早 `sudo apt install libfuse2`，24.04+ `sudo apt install libfuse2t64`。
@@ -44,7 +44,7 @@ chmod +x EchoFlow-ClaudeCode-<版本>-linux-x86_64.AppImage
 deb：
 
 ```bash
-sudo apt install ./EchoFlow-ClaudeCode-<版本>-linux-amd64.deb
+sudo apt install ./EchoFlow-Code-<版本>-linux-amd64.deb
 ```
 
 ## Web UI 模式
@@ -66,4 +66,4 @@ bun run dev --host 127.0.0.1 --port 2024
 
 **Q: 这个版本会自动更新吗？**
 
-暂时不会。在拿到苹果签名前，请每次到 [GitHub Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases) 手动下载新版本覆盖安装。覆盖安装不会删除本地配置和会话数据（`~/.claude`）。
+暂时不会。在拿到苹果签名前，请每次到 [GitHub Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases) 手动下载新版本覆盖安装。覆盖安装不会删除 EchoFlow Code AppData 中的本地配置和会话数据。

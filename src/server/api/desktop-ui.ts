@@ -1,7 +1,7 @@
 /**
  * Desktop UI Preferences REST API
  *
- * GET  /api/desktop-ui/preferences          — read cc-haha UI preferences
+ * GET  /api/desktop-ui/preferences          — read EchoFlow UI preferences
  * PUT  /api/desktop-ui/preferences/sidebar  — persist sidebar project preferences
  * PUT  /api/desktop-ui/preferences/profile  — persist local profile preferences
  * GET  /api/desktop-ui/preferences/profile/avatar — read local profile avatar

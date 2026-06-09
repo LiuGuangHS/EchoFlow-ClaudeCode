@@ -1,7 +1,7 @@
 # Computer Use Guide
 
 
-> **Implementation note**: EchoFlow-ClaudeCode provides local Computer Use through a Python Bridge. macOS uses `pyautogui` + `mss` + `pyobjc`, and Windows uses `pyautogui` + `mss` + `win32gui` + `psutil`, wrapping screenshots, mouse, keyboard, and app management as auditable local MCP tools.
+> **Implementation note**: EchoFlow Code provides local Computer Use through a Python Bridge. macOS uses `pyautogui` + `mss` + `pyobjc`, and Windows uses `pyautogui` + `mss` + `win32gui` + `psutil`, wrapping screenshots, mouse, keyboard, and app management as auditable local MCP tools.
 
 ---
 
@@ -134,7 +134,7 @@ Add your terminal app as well. You may need to **restart your terminal** after g
 ### 4. Start
 
 ```bash
-./bin/claude-haha
+./bin/echoflow-code
 ```
 
 ### 5. Use
@@ -152,11 +152,11 @@ Just ask in natural language:
 If you only want the regular Coding Agent and do not want to expose `computer-use` MCP tools, disable it with either command:
 
 ```bash
-claude-haha --no-computer-use
-CLAUDE_COMPUTER_USE_ENABLED=0 claude-haha
+echoflow-code --no-computer-use
+CLAUDE_COMPUTER_USE_ENABLED=0 echoflow-code
 ```
 
-You can also write the global config file at `~/.claude/cc-haha/computer-use-config.json`:
+You can also write `echoflow/computer-use-config.json` under the EchoFlow Code data root (Windows defaults to `%LOCALAPPDATA%\EchoFlow Code`, macOS to `~/Library/Application Support/EchoFlow Code`, and Linux to `${XDG_DATA_HOME:-~/.local/share}/echoflow-code`):
 
 ```json
 {
@@ -197,7 +197,7 @@ The desktop Settings > Computer Use switch writes the same config. Once disabled
 
 ### Capability Enablement
 
-EchoFlow-ClaudeCode controls Computer Use through local configuration and startup flags instead of remote feature flags. The related switches are centralized in `gates.ts` and config files so CLI, desktop, and tests share the same behavior.
+EchoFlow Code controls Computer Use through local configuration and startup flags instead of remote feature flags. The related switches are centralized in `gates.ts` and config files so CLI, desktop, and tests share the same behavior.
 
 | Layer | Current Strategy |
 |-------|------------------|

@@ -456,15 +456,15 @@ export async function executeDesktopSmoke(
       timeoutMs: 30_000,
     }, browserStepContext)
     const browserSetup = [
-      `localStorage.setItem('cc-haha-open-tabs', ${JSON.stringify(JSON.stringify({
+      `localStorage.setItem('echoflow-code-open-tabs', ${JSON.stringify(JSON.stringify({
         openTabs: [{ sessionId: session.sessionId, title: 'Desktop Smoke', type: 'session' }],
         activeTabId: session.sessionId,
       }))})`,
       runtimeSelection
-        ? `localStorage.setItem('cc-haha-session-runtime', ${JSON.stringify(JSON.stringify({
+        ? `localStorage.setItem('echoflow-code-session-runtime', ${JSON.stringify(JSON.stringify({
           [session.sessionId]: runtimeSelection,
         }))})`
-        : `localStorage.removeItem('cc-haha-session-runtime')`,
+        : `localStorage.removeItem('echoflow-code-session-runtime')`,
     ]
     await runBrowserStep('eval', ['eval', browserSetup.join(';')], {
       cwd: rootDir,

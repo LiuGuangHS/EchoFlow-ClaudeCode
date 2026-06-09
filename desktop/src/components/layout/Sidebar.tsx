@@ -18,11 +18,11 @@ const canUseNativeDialogs = desktopHost.capabilities.dialogs
 const isWindows = typeof navigator !== 'undefined' && /Win/.test(navigator.platform)
 const SESSION_LIST_AUTO_REFRESH_MS = 30_000
 const SESSION_LIST_FOCUS_REFRESH_MIN_MS = 5_000
-const PROJECT_ORDER_STORAGE_KEY = 'cc-haha-sidebar-project-order'
-const PROJECT_PINNED_STORAGE_KEY = 'cc-haha-sidebar-pinned-projects'
-const PROJECT_HIDDEN_STORAGE_KEY = 'cc-haha-sidebar-hidden-projects'
-const PROJECT_ORGANIZATION_STORAGE_KEY = 'cc-haha-sidebar-project-organization'
-const PROJECT_SORT_STORAGE_KEY = 'cc-haha-sidebar-project-sort'
+const PROJECT_ORDER_STORAGE_KEY = 'echoflow-code-sidebar-project-order'
+const PROJECT_PINNED_STORAGE_KEY = 'echoflow-code-sidebar-pinned-projects'
+const PROJECT_HIDDEN_STORAGE_KEY = 'echoflow-code-sidebar-hidden-projects'
+const PROJECT_ORGANIZATION_STORAGE_KEY = 'echoflow-code-sidebar-project-organization'
+const PROJECT_SORT_STORAGE_KEY = 'echoflow-code-sidebar-project-sort'
 const PROJECT_GROUP_VISIBLE_COUNT = 6
 const PROJECT_GROUP_SCROLL_COUNT = 12
 

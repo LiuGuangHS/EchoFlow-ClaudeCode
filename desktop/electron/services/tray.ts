@@ -38,11 +38,12 @@ export async function installTray({
   const { Menu, Tray, nativeImage } = await import('electron')
   const icon = nativeImage.createFromPath(resolveTrayIconPath(desktopRoot))
   const tray = new Tray(icon)
-  tray.setToolTip(app.name || 'EchoFlow-ClaudeCode')
+  const appName = app.name || 'EchoFlow Code'
+  tray.setToolTip(appName)
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: 'Show EchoFlow-ClaudeCode', click: show },
+    { label: `Show ${appName}`, click: show },
     { type: 'separator' },
-    { label: 'Quit EchoFlow-ClaudeCode', click: quit },
+    { label: `Quit ${appName}`, click: quit },
   ]))
   tray.on('click', show)
 

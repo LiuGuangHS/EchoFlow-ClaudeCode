@@ -30,4 +30,21 @@ describe('tauri security config', () => {
     expect(cargoToml).toContain('reqwest = { version = "0.13"')
     expect(cargoToml).toContain('features = ["system-proxy"]')
   })
+
+  it('keeps the legacy Tauri updater on gh-proxy with direct GitHub fallback', () => {
+    const config = JSON.parse(
+      readFileSync(join(currentDir, 'tauri.conf.json'), 'utf8'),
+    ) as {
+      plugins?: {
+        updater?: {
+          endpoints?: string[]
+        }
+      }
+    }
+
+    expect(config.plugins?.updater?.endpoints).toEqual([
+      'https://gh-proxy.org/https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest/download/latest.json',
+      'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest/download/latest.json',
+    ])
+  })
 })

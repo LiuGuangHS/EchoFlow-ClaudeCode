@@ -402,7 +402,7 @@ async function defaultConvertIconToPng(iconPath: string, size: number): Promise<
     return await readFile(iconPath)
   }
 
-  const tmpDir = await mkdtemp(join(tmpdir(), 'cc-haha-open-target-icon-'))
+  const tmpDir = await mkdtemp(join(tmpdir(), 'echoflow-code-open-target-icon-'))
   const outputPath = join(tmpDir, 'icon.png')
   try {
     if (process.platform === 'win32') {

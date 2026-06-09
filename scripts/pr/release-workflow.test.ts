@@ -208,23 +208,23 @@ describe('release desktop workflow', () => {
       }
     }
     const version = desktopPackage.version
-    expect(desktopPackage.build.artifactName).toBe('EchoFlow-ClaudeCode-${version}-${os}-${arch}.${ext}')
+    expect(desktopPackage.build.artifactName).toBe('EchoFlow-Code-${version}-${os}-${arch}.${ext}')
 
     const expectedReleaseAssets = [
-      `EchoFlow-ClaudeCode-${version}-mac-arm64.dmg`,
-      `EchoFlow-ClaudeCode-${version}-mac-arm64.dmg.blockmap`,
-      `EchoFlow-ClaudeCode-${version}-mac-arm64.zip`,
-      `EchoFlow-ClaudeCode-${version}-mac-arm64.zip.blockmap`,
-      `EchoFlow-ClaudeCode-${version}-mac-x64.dmg`,
-      `EchoFlow-ClaudeCode-${version}-mac-x64.dmg.blockmap`,
-      `EchoFlow-ClaudeCode-${version}-mac-x64.zip`,
-      `EchoFlow-ClaudeCode-${version}-mac-x64.zip.blockmap`,
-      `EchoFlow-ClaudeCode-${version}-linux-x86_64.AppImage`,
-      `EchoFlow-ClaudeCode-${version}-linux-amd64.deb`,
-      `EchoFlow-ClaudeCode-${version}-linux-arm64.AppImage`,
-      `EchoFlow-ClaudeCode-${version}-linux-arm64.deb`,
-      `EchoFlow-ClaudeCode-${version}-win-x64.exe`,
-      `EchoFlow-ClaudeCode-${version}-win-x64.exe.blockmap`,
+      `EchoFlow-Code-${version}-mac-arm64.dmg`,
+      `EchoFlow-Code-${version}-mac-arm64.dmg.blockmap`,
+      `EchoFlow-Code-${version}-mac-arm64.zip`,
+      `EchoFlow-Code-${version}-mac-arm64.zip.blockmap`,
+      `EchoFlow-Code-${version}-mac-x64.dmg`,
+      `EchoFlow-Code-${version}-mac-x64.dmg.blockmap`,
+      `EchoFlow-Code-${version}-mac-x64.zip`,
+      `EchoFlow-Code-${version}-mac-x64.zip.blockmap`,
+      `EchoFlow-Code-${version}-linux-x86_64.AppImage`,
+      `EchoFlow-Code-${version}-linux-amd64.deb`,
+      `EchoFlow-Code-${version}-linux-arm64.AppImage`,
+      `EchoFlow-Code-${version}-linux-arm64.deb`,
+      `EchoFlow-Code-${version}-win-x64.exe`,
+      `EchoFlow-Code-${version}-win-x64.exe.blockmap`,
     ]
     const namespacedMetadata = [
       'latest-mac-macOS-ARM64.yml',
@@ -268,15 +268,15 @@ describe('release desktop workflow', () => {
     const buildJob = extractJob(workflow, 'build')
     const publishJob = extractJob(workflow, 'publish-release')
     const expectedFiles = [
-      'EchoFlow-ClaudeCode-${APP_VERSION}-mac-arm64.dmg',
-      'EchoFlow-ClaudeCode-${APP_VERSION}-mac-arm64.zip',
-      'EchoFlow-ClaudeCode-${APP_VERSION}-mac-x64.dmg',
-      'EchoFlow-ClaudeCode-${APP_VERSION}-mac-x64.zip',
-      'EchoFlow-ClaudeCode-${APP_VERSION}-linux-x86_64.AppImage',
-      'EchoFlow-ClaudeCode-${APP_VERSION}-linux-amd64.deb',
-      'EchoFlow-ClaudeCode-${APP_VERSION}-linux-arm64.AppImage',
-      'EchoFlow-ClaudeCode-${APP_VERSION}-linux-arm64.deb',
-      'EchoFlow-ClaudeCode-${APP_VERSION}-win-x64.exe',
+      'EchoFlow-Code-${APP_VERSION}-mac-arm64.dmg',
+      'EchoFlow-Code-${APP_VERSION}-mac-arm64.zip',
+      'EchoFlow-Code-${APP_VERSION}-mac-x64.dmg',
+      'EchoFlow-Code-${APP_VERSION}-mac-x64.zip',
+      'EchoFlow-Code-${APP_VERSION}-linux-x86_64.AppImage',
+      'EchoFlow-Code-${APP_VERSION}-linux-amd64.deb',
+      'EchoFlow-Code-${APP_VERSION}-linux-arm64.AppImage',
+      'EchoFlow-Code-${APP_VERSION}-linux-arm64.deb',
+      'EchoFlow-Code-${APP_VERSION}-win-x64.exe',
     ]
 
     for (const file of expectedFiles) {

@@ -29,7 +29,7 @@ ELECTRON_OUTPUT_DIR="${DESKTOP_DIR}/build-artifacts/electron"
 
 usage() {
   cat <<'EOF'
-Build EchoFlow-ClaudeCode desktop for Linux with Electron Builder.
+Build EchoFlow Code desktop for Linux with Electron Builder.
 
 Usage:
   ./desktop/scripts/build-linux.sh [extra electron-builder args...]

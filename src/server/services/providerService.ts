@@ -1,14 +1,13 @@
 /**
  * Provider Service — preset-based provider configuration
  *
- * Storage: ~/.claude/cc-haha/providers.json (lightweight index)
- * Active provider env vars written to ~/.claude/cc-haha/settings.json
+ * Storage: <EchoFlow AppData>/echoflow/providers.json (lightweight index)
+ * Active provider env vars written to <EchoFlow AppData>/echoflow/settings.json
  * (isolated from the original Claude Code's ~/.claude/settings.json)
  */
 
 import * as fs from 'fs/promises'
 import * as path from 'path'
-import * as os from 'os'
 import { ApiError } from '../middleware/errorHandler.js'
 import { readRecoverableJsonFile } from './recoverableJsonFile.js'
 import { ManagedSettingsService } from './managedSettingsService.js'
@@ -21,6 +20,7 @@ import {
   OPENAI_OFFICIAL_PROVIDER,
   isOpenAIOfficialProviderId,
 } from './openaiOfficialProvider.js'
+import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 import { hahaOpenAIOAuthService } from './hahaOpenAIOAuthService.js'
 import {
   CURRENT_PROVIDER_INDEX_SCHEMA_VERSION,
@@ -72,15 +72,15 @@ export class ProviderService {
     return ProviderService.serverPort
   }
   private getConfigDir(): string {
-    return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
+    return getEchoFlowConfigDir()
   }
 
-  private getCcHahaDir(): string {
-    return path.join(this.getConfigDir(), 'cc-haha')
+  private getEchoFlowDir(): string {
+    return getEchoFlowInternalDir(this.getConfigDir())
   }
 
   private getIndexPath(): string {
-    return path.join(this.getCcHahaDir(), 'providers.json')
+    return path.join(this.getEchoFlowDir(), 'providers.json')
   }
 
   private async readIndex(): Promise<ProvidersIndex> {
@@ -311,17 +311,17 @@ export class ProviderService {
 
   /**
    * Check whether any usable auth exists:
-   *  1. A cc-haha provider is active → has auth
-   *  2. Original ~/.claude/settings.json has ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY → has auth
-   *  3. process.env already has ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN → has auth
+   *  1. An EchoFlow provider is active → has auth
+   *  2. process.env already has ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN → has auth
+   *  3. EchoFlow Code settings.json has ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY → has auth
    *  4. None of the above → needs setup
    */
   async checkAuthStatus(): Promise<{
     hasAuth: boolean
-    source: 'cc-haha-provider' | 'openai-oauth' | 'original-settings' | 'env' | 'none'
+    source: 'echoflow-provider' | 'openai-oauth' | 'echoflow-settings' | 'env' | 'none'
     activeProvider?: string
   }> {
-    // 1. Check cc-haha active provider
+    // 1. Check EchoFlow active provider
     const index = await this.readIndex()
     if (index.activeId) {
       if (isOpenAIOfficialProviderId(index.activeId)) {
@@ -346,7 +346,7 @@ export class ProviderService {
         const needsProxy = provider.apiFormat != null && provider.apiFormat !== 'anthropic'
         const authEnv = buildProviderAuthEnv(provider, presetDefaultEnv, needsProxy)
         if (Object.values(authEnv).some(value => value.length > 0)) {
-          return { hasAuth: true, source: 'cc-haha-provider', activeProvider: provider.name }
+          return { hasAuth: true, source: 'echoflow-provider', activeProvider: provider.name }
         }
       }
     }
@@ -356,14 +356,14 @@ export class ProviderService {
       return { hasAuth: true, source: 'env' }
     }
 
-    // 3. Check original ~/.claude/settings.json
+    // 3. Check EchoFlow Code settings.json
     try {
-      const originalPath = path.join(this.getConfigDir(), 'settings.json')
-      const raw = await fs.readFile(originalPath, 'utf-8')
+      const settingsPath = path.join(this.getEchoFlowDir(), 'settings.json')
+      const raw = await fs.readFile(settingsPath, 'utf-8')
       const settings = JSON.parse(raw) as { env?: Record<string, string> }
       const env = settings.env ?? {}
       if (env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_API_KEY) {
-        return { hasAuth: true, source: 'original-settings' }
+        return { hasAuth: true, source: 'echoflow-settings' }
       }
     } catch {
       // File doesn't exist or invalid

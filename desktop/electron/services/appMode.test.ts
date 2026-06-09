@@ -12,17 +12,18 @@ import {
   setAppMode,
   type AppModeAppLike,
 } from './appMode'
+import { ECHOFLOW_DEFAULT_CONFIG_ENV } from './echoFlowDataRoot'
 
 const tempDirs: string[] = []
 
 function tempDir() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-haha-app-mode-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'echoflow-code-app-mode-'))
   tempDirs.push(dir)
   return dir
 }
 
 function app(root = tempDir()): AppModeAppLike & { root: string } {
-  const exe = path.join(root, 'EchoFlow-ClaudeCode.app', 'Contents', 'MacOS', 'EchoFlow-ClaudeCode')
+  const exe = path.join(root, 'EchoFlow Code.app', 'Contents', 'MacOS', 'EchoFlow Code')
   const userData = path.join(root, 'user-data')
   fs.mkdirSync(path.dirname(exe), { recursive: true })
   fs.writeFileSync(exe, '')
@@ -51,14 +52,27 @@ describe('Electron app mode service', () => {
     expect(dirHasPortableData(root)).toBe(true)
   })
 
-  it('resolves startup portable mode from default portable data or app-mode config', () => {
+  it('does not auto-enable portable mode just because default portable data exists', () => {
     const fakeApp = app()
     const defaultDir = defaultPortableDir(fakeApp)
     fs.mkdirSync(defaultDir, { recursive: true })
     fs.writeFileSync(path.join(defaultDir, 'settings.json'), '{}')
 
-    expect(determineStartupPortableDir(fakeApp, {})).toBe(defaultDir)
+    expect(determineStartupPortableDir(fakeApp, {})).toBeNull()
+    expect(determineStartupPortableDir(fakeApp, {
+      CLAUDE_CONFIG_DIR: fakeApp.getPath('userData'),
+      [ECHOFLOW_DEFAULT_CONFIG_ENV]: '1',
+    })).toBeNull()
     expect(determineStartupPortableDir(fakeApp, { CLAUDE_CONFIG_DIR: '/external' })).toBeNull()
+  })
+
+  it('resolves startup portable mode from an explicit app-mode config', () => {
+    const fakeApp = app()
+    const defaultDir = defaultPortableDir(fakeApp)
+    fs.mkdirSync(defaultDir, { recursive: true })
+    fs.writeFileSync(path.join(defaultDir, 'app-mode.json'), JSON.stringify({ mode: 'portable' }))
+
+    expect(determineStartupPortableDir(fakeApp, {})).toBe(defaultDir)
 
     fs.writeFileSync(path.join(defaultDir, 'app-mode.json'), JSON.stringify({ mode: 'default' }))
     expect(determineStartupPortableDir(fakeApp, {})).toBeNull()
@@ -69,11 +83,13 @@ describe('Electron app mode service', () => {
     const env: NodeJS.ProcessEnv = {}
     const defaultDir = defaultPortableDir(fakeApp)
     fs.mkdirSync(defaultDir, { recursive: true })
-    fs.writeFileSync(path.join(defaultDir, 'settings.json'), '{}')
+    fs.writeFileSync(path.join(defaultDir, 'app-mode.json'), JSON.stringify({ mode: 'portable' }))
 
     expect(applyStartupPortableMode(fakeApp, env)).toBe(defaultDir)
     expect(env.CLAUDE_CONFIG_DIR).toBe(defaultDir)
-    expect(env.CC_HAHA_APP_PORTABLE_DIR).toBe('1')
+    expect(env.ECHOFLOW_CODE_APP_PORTABLE_DIR).toBe('1')
+    expect(env[ECHOFLOW_DEFAULT_CONFIG_ENV]).toBeUndefined()
+    expect(env.CC_HAHA_APP_PORTABLE_DIR).toBeUndefined()
     expect(env.WEBVIEW2_USER_DATA_FOLDER).toBe(path.join(defaultDir, 'EBWebView'))
   })
 
@@ -87,14 +103,35 @@ describe('Electron app mode service', () => {
       activeConfigDir: fakeApp.getPath('userData'),
       configDirSource: 'system',
     })
-    expect(getAppMode(fakeApp, { CLAUDE_CONFIG_DIR: '/portable', CC_HAHA_APP_PORTABLE_DIR: '1' })).toMatchObject({
+    expect(getAppMode(fakeApp, { CLAUDE_CONFIG_DIR: '/portable', ECHOFLOW_CODE_APP_PORTABLE_DIR: '1' })).toMatchObject({
       mode: 'portable',
       portableDir: '/portable',
       activeConfigDir: '/portable',
       configDirSource: 'portable',
     })
+    expect(getAppMode(fakeApp, { CLAUDE_CONFIG_DIR: '/legacy-portable', CC_HAHA_APP_PORTABLE_DIR: '1' })).toMatchObject({
+      mode: 'portable',
+      portableDir: '/legacy-portable',
+      activeConfigDir: '/legacy-portable',
+      configDirSource: 'portable',
+    })
     expect(getAppMode(fakeApp, { CLAUDE_CONFIG_DIR: '/external' })).toMatchObject({
       configDirSource: 'environment',
+    })
+  })
+
+  it('treats the EchoFlow default CLAUDE_CONFIG_DIR as the system data source', () => {
+    const fakeApp = app()
+    const env = {
+      CLAUDE_CONFIG_DIR: fakeApp.getPath('userData'),
+      [ECHOFLOW_DEFAULT_CONFIG_ENV]: '1',
+    }
+
+    expect(getAppMode(fakeApp, env)).toMatchObject({
+      mode: 'default',
+      activeConfigDir: fakeApp.getPath('userData'),
+      configDirSource: 'system',
+      portableDir: defaultPortableDir(fakeApp),
     })
   })
 

@@ -1,6 +1,6 @@
-# EchoFlow-ClaudeCode Desktop
+# EchoFlow Code Desktop
 
-基于 Tauri 2 + React 的桌面客户端。
+基于 Electron + React 的桌面客户端。
 
 ## 开发
 
@@ -26,5 +26,5 @@ bun run tauri dev
 ### macOS 提示"已损坏，无法打开"
 
 ```bash
-xattr -cr /Applications/EchoFlow-ClaudeCode.app
+xattr -cr "/Applications/EchoFlow Code.app"
 ```

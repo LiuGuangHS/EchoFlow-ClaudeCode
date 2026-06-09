@@ -7,6 +7,7 @@ import {
   mergeActiveProviderManagedEnv,
   readActiveProviderManagedEnv,
 } from '../services/providerRuntimeEnv.js'
+import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 
 let tmpDir: string
 
@@ -25,7 +26,7 @@ describe('providerRuntimeEnv', () => {
   })
 
   test('derives native Anthropic provider env from the active provider index', async () => {
-    await writeJson(path.join(tmpDir, 'cc-haha', 'providers.json'), {
+    await writeJson(path.join(getEchoFlowInternalDir(tmpDir), 'providers.json'), {
       activeId: 'provider-1',
       providers: [
         {
@@ -60,7 +61,7 @@ describe('providerRuntimeEnv', () => {
   })
 
   test('active provider env overrides stale proxy settings while preserving unrelated env', async () => {
-    await writeJson(path.join(tmpDir, 'cc-haha', 'providers.json'), {
+    await writeJson(path.join(getEchoFlowInternalDir(tmpDir), 'providers.json'), {
       activeId: 'provider-1',
       providers: [
         {
@@ -86,6 +87,8 @@ describe('providerRuntimeEnv', () => {
         ANTHROPIC_BASE_URL: 'http://127.0.0.1:3456/proxy',
         ANTHROPIC_API_KEY: 'proxy-managed',
         ANTHROPIC_MODEL: 'deepseek-v4-pro',
+        API_TIMEOUT_MS: '3000000',
+        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
         DISABLE_AUTOUPDATER: '1',
       },
       tmpDir,
@@ -101,5 +104,7 @@ describe('providerRuntimeEnv', () => {
       ANTHROPIC_DEFAULT_OPUS_MODEL: 'gpt-5.5',
       DISABLE_AUTOUPDATER: '1',
     })
+    expect(env.API_TIMEOUT_MS).toBeUndefined()
+    expect(env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBeUndefined()
   })
 })

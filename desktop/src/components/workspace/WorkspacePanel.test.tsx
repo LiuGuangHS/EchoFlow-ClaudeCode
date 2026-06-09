@@ -81,10 +81,10 @@ async function flushReactWork() {
   })
 }
 
-async function renderPanel(sessionId: string) {
+async function renderPanel(sessionId: string, options: { previewLineLimit?: number } = {}) {
   let view!: ReturnType<typeof render>
   await act(async () => {
-    view = render(<WorkspacePanel sessionId={sessionId} />)
+    view = render(<WorkspacePanel sessionId={sessionId} previewLineLimit={options.previewLineLimit} />)
     await Promise.resolve()
   })
   return view
@@ -831,7 +831,7 @@ describe('WorkspacePanel', () => {
   })
 
   it('can expand long diff previews beyond the default rendered line cap', async () => {
-    const longDiff = Array.from({ length: 2300 }, (_, index) => `+line ${index + 1}`).join('\n')
+    const longDiff = Array.from({ length: 2001 }, (_, index) => `+line ${index + 1}`).join('\n')
 
     await setWorkspaceState((state) => ({
       ...state,
@@ -880,7 +880,7 @@ describe('WorkspacePanel', () => {
     await clickElement(view.getByRole('button', { name: 'Show all loaded lines' }))
 
     await waitFor(() => {
-      expect(view.getByTestId('workspace-code').textContent).toContain('+line 2300')
+      expect(view.getByTestId('workspace-code').textContent).toContain('+line 2001')
     })
     expect(view.getByRole('button', { name: 'Collapse preview' })).toBeTruthy()
   })
@@ -937,7 +937,12 @@ describe('WorkspacePanel', () => {
   })
 
   it('can expand long file previews beyond the default rendered line cap', async () => {
-    const longFile = Array.from({ length: 2300 }, (_, index) => `const line${index + 1} = ${index + 1}`).join('\n')
+    const previewLineLimit = 20
+    const hiddenLineNumber = previewLineLimit + 1
+    const longFile = Array.from(
+      { length: hiddenLineNumber },
+      (_, index) => `const line${index + 1} = ${index + 1}`,
+    ).join('\n')
 
     await setWorkspaceState((state) => ({
       ...state,
@@ -967,19 +972,19 @@ describe('WorkspacePanel', () => {
       },
     }))
 
-    const view = await renderPanel('session-large-file-preview')
+    const view = await renderPanel('session-large-file-preview', { previewLineLimit })
     const highlightedCode = view.getByTestId('workspace-code').textContent ?? ''
 
     expect(highlightedCode).toContain('const line1 = 1')
-    expect(highlightedCode).toContain('const line2000 = 2000')
-    expect(highlightedCode).not.toContain('const line2001 = 2001')
+    expect(highlightedCode).toContain(`const line${previewLineLimit} = ${previewLineLimit}`)
+    expect(highlightedCode).not.toContain(`const line${hiddenLineNumber} = ${hiddenLineNumber}`)
     await clickElement(view.getByRole('button', { name: 'Show all loaded lines' }))
 
     await waitFor(() => {
-      expect(view.getByTestId('workspace-code').textContent).toContain('const line2300 = 2300')
+      expect(view.getByTestId('workspace-code').textContent).toContain(`const line${hiddenLineNumber} = ${hiddenLineNumber}`)
     })
     expect(view.getByRole('button', { name: 'Collapse preview' })).toBeTruthy()
-  }, 20_000)
+  })
 
   it('renders image previews from workspace files', async () => {
     await setWorkspaceState((state) => ({

@@ -16,8 +16,8 @@ BASE_URL="http://127.0.0.1:${API_PORT}"
 WEB_URL="http://127.0.0.1:${WEB_PORT}/?serverUrl=${BASE_URL}"
 
 RUN_ID="$(date +%s)-$RANDOM"
-SESSION_NAME="cc-haha-install-e2e-${RUN_ID}"
-ARTIFACT_DIR="$(mktemp -d "/tmp/cc-haha-install-e2e-${RUN_ID}-XXXX")"
+SESSION_NAME="echoflow-code-install-e2e-${RUN_ID}"
+ARTIFACT_DIR="$(mktemp -d "/tmp/echoflow-code-install-e2e-${RUN_ID}-XXXX")"
 SERVER_LOG="${ARTIFACT_DIR}/server.log"
 WEB_LOG="${ARTIFACT_DIR}/web.log"
 

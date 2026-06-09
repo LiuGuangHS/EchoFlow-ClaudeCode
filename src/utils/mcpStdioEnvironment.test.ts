@@ -71,6 +71,12 @@ describe('MCP stdio environment', () => {
   })
 
   it('adds PATH entries sourced from the user zshrc when MCP env has no explicit PATH', async () => {
+    if (process.platform === 'win32') {
+      const env = await getMcpStdioEnvironment({})
+      expect(env.NVM_DIR).toBeUndefined()
+      return
+    }
+
     const shellPath = path.join(tmpDir, 'zsh')
     const nodeBin = path.join(tmpDir, 'node-bin')
     await mkdir(nodeBin, { recursive: true })
@@ -108,7 +114,9 @@ describe('MCP stdio environment', () => {
 
     process.env.HOME = tmpDir
     process.env.SHELL = shellPath
-    process.env.PATH = '/usr/bin:/bin'
+    if (process.platform !== 'win32') {
+      process.env.PATH = '/usr/bin:/bin'
+    }
 
     const env = await getMcpStdioEnvironment({ PATH: '/custom/bin' })
 

@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicegui/nicegui/main/nicegui/static/tauri-schema-v2.json",
-  "productName": "EchoFlow-ClaudeCode",
-  "version": "0.4.1-rc.1",
+  "productName": "EchoFlow Code",
+  "version": "0.4.1",
   "identifier": "com.echoflowai-claude-code.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "EchoFlow-ClaudeCode",
+        "title": "EchoFlow Code",
         "width": 1440,
         "height": 960,
         "minWidth": 960,
@@ -31,6 +31,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDlCOUIwRDExQTc5RTFGMzYKUldRMkg1Nm5FUTJibTJ2cGlHY0pkL0dGemxXMUlzc01pVTVMM1U3WGpmWUtrUC8wK2ErSXhLKzEK",
       "endpoints": [
+        "https://gh-proxy.org/https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest/download/latest.json",
         "https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest/download/latest.json"
       ],
       "windows": {

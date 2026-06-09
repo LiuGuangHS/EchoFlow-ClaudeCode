@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { BaselineTarget } from './types'
+import { getEchoFlowInternalDir } from '../../src/server/services/echoFlowConfigRoot'
 
 type ProviderModels = {
   main?: string
@@ -26,7 +27,7 @@ const DEFAULT_INDEX: ProviderIndex = { activeId: null, providers: [] }
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 export function getProviderIndexPath(configDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude')) {
-  return join(configDir, 'cc-haha', 'providers.json')
+  return join(getEchoFlowInternalDir(configDir), 'providers.json')
 }
 
 export function slugifyProviderName(value: string) {

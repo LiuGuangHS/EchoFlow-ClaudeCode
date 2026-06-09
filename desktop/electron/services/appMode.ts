@@ -2,8 +2,11 @@ import fs from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
 import type { AppModeConfig, AppModeSetInput } from '../../src/lib/desktopHost/types'
+import { ECHOFLOW_DEFAULT_CONFIG_ENV } from './echoFlowDataRoot'
 
 const APP_MODE_FILE = 'app-mode.json'
+const ECHOFLOW_PORTABLE_ENV = 'ECHOFLOW_CODE_APP_PORTABLE_DIR'
+const LEGACY_PORTABLE_ENV = 'CC_HAHA_APP_PORTABLE_DIR'
 
 export type AppModeAppLike = {
   getPath(name: 'exe' | 'userData'): string
@@ -39,8 +42,17 @@ export function dirHasPortableData(dir: string): boolean {
       'skills',
       'plugins',
       'cowork_plugins',
-      'cc-haha',
+      'echoflow',
     ].some(file => fs.existsSync(path.join(dir, file)) && fs.statSync(path.join(dir, file)).isDirectory())
+}
+
+function isDefaultEchoFlowConfigDir(
+  app: AppModeAppLike,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return !!env.CLAUDE_CONFIG_DIR &&
+    env[ECHOFLOW_DEFAULT_CONFIG_ENV] === '1' &&
+    env.CLAUDE_CONFIG_DIR === app.getPath('userData')
 }
 
 export function readAppModeConfig(configDir: string): PersistedAppModeConfig | null {
@@ -64,13 +76,13 @@ export function determineStartupPortableDir(
   app: AppModeAppLike,
   env: NodeJS.ProcessEnv = process.env,
 ): string | null {
-  if (env.CLAUDE_CONFIG_DIR) return null
+  if (env.CLAUDE_CONFIG_DIR && !isDefaultEchoFlowConfigDir(app, env)) return null
 
   const defaultDir = defaultPortableDir(app)
   const defaultMode = readAppModeConfig(defaultDir)
   if (defaultMode) {
     if (defaultMode.mode === 'portable') {
-      return dirHasPortableData(defaultDir) ? defaultDir : defaultMode.portable_dir ?? defaultDir
+      return defaultMode.portable_dir ?? defaultDir
     }
     return null
   }
@@ -81,7 +93,7 @@ export function determineStartupPortableDir(
     return null
   }
 
-  return dirHasPortableData(defaultDir) ? defaultDir : null
+  return null
 }
 
 export function applyStartupPortableMode(
@@ -91,7 +103,8 @@ export function applyStartupPortableMode(
   const portableDir = determineStartupPortableDir(app, env)
   if (!portableDir) return null
   env.CLAUDE_CONFIG_DIR = portableDir
-  env.CC_HAHA_APP_PORTABLE_DIR = '1'
+  delete env[ECHOFLOW_DEFAULT_CONFIG_ENV]
+  env[ECHOFLOW_PORTABLE_ENV] = '1'
   env.WEBVIEW2_USER_DATA_FOLDER = path.join(portableDir, 'EBWebView')
   fs.mkdirSync(env.WEBVIEW2_USER_DATA_FOLDER, { recursive: true })
   return portableDir
@@ -102,15 +115,21 @@ export function getAppMode(
   env: NodeJS.ProcessEnv = process.env,
 ): AppModeConfig {
   const envConfigDir = env.CLAUDE_CONFIG_DIR || null
+  const isDefaultEchoFlowConfig =
+    envConfigDir !== null &&
+    env[ECHOFLOW_DEFAULT_CONFIG_ENV] === '1' &&
+    envConfigDir === app.getPath('userData')
   const activeConfigDir = envConfigDir || app.getPath('userData')
-  const portableDir = envConfigDir || defaultPortableDir(app)
+  const portableDir = envConfigDir && !isDefaultEchoFlowConfig ? envConfigDir : defaultPortableDir(app)
   return {
-    mode: envConfigDir ? 'portable' : 'default',
+    mode: envConfigDir && !isDefaultEchoFlowConfig ? 'portable' : 'default',
     portableDir,
     defaultPortableDir: defaultPortableDir(app),
     activeConfigDir,
     configDirSource: envConfigDir
-      ? env.CC_HAHA_APP_PORTABLE_DIR ? 'portable' : 'environment'
+      ? isDefaultEchoFlowConfig
+        ? 'system'
+        : env[ECHOFLOW_PORTABLE_ENV] || env[LEGACY_PORTABLE_ENV] ? 'portable' : 'environment'
       : 'system',
   }
 }

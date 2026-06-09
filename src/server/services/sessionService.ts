@@ -42,6 +42,7 @@ import { normalizeDriveRootPathForPlatform } from './windowsDrivePath.js'
 import { cleanSessionTitleSource } from '../../utils/sessionTitleText.js'
 import { roughTokenCountEstimationForMessages } from '../../services/tokenEstimation.js'
 import { ProviderService } from './providerService.js'
+import { getEchoFlowConfigDir } from './echoFlowConfigRoot.js'
 
 // ============================================================================
 // Types
@@ -311,7 +312,7 @@ export class SessionService {
   // --------------------------------------------------------------------------
 
   private getConfigDir(): string {
-    return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
+    return getEchoFlowConfigDir()
   }
 
   private getProjectsDir(): string {

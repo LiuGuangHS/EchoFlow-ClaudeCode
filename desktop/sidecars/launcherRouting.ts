@@ -3,21 +3,28 @@ import path from 'node:path'
 export type SidecarMode = 'server' | 'cli' | 'adapters'
 
 const EXPLICIT_MODES = new Set<SidecarMode>(['server', 'cli', 'adapters'])
-const DESKTOP_CLI_NAMES = new Set(['claude-haha', 'claude-haha.exe'])
+const DESKTOP_CLI_NAMES = new Set<string>([
+  'echoflow-code',
+  'echoflow-code.exe',
+  'claude-haha',
+  'claude-haha.exe',
+])
+
+type SidecarInvocation = {
+  mode: SidecarMode | null
+  restArgs: string[]
+  defaultAppRoot: string | null
+}
 
 export function resolveSidecarInvocation(
   rawArgs: string[],
   execPath: string = process.execPath,
   envAppRoot: string | null = process.env.CLAUDE_APP_ROOT ?? null,
-): {
-  mode: SidecarMode | null
-  restArgs: string[]
-  defaultAppRoot: string | null
-} {
+): SidecarInvocation {
   const explicitMode = rawArgs[0]
-  if (explicitMode && EXPLICIT_MODES.has(explicitMode as SidecarMode)) {
+  if (isExplicitMode(explicitMode)) {
     return {
-      mode: explicitMode as SidecarMode,
+      mode: explicitMode,
       restArgs: rawArgs.slice(1),
       defaultAppRoot: envAppRoot,
     }
@@ -37,6 +44,10 @@ export function resolveSidecarInvocation(
     restArgs: rawArgs,
     defaultAppRoot: envAppRoot,
   }
+}
+
+function isExplicitMode(value: string | undefined): value is SidecarMode {
+  return value !== undefined && EXPLICIT_MODES.has(value as SidecarMode)
 }
 
 export function parseLauncherArgs(

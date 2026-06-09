@@ -113,11 +113,16 @@ import { useTabStore } from '../../stores/tabStore'
 import { useUIStore } from '../../stores/uiStore'
 import type { SessionListItem } from '../../types/session'
 
-const PROJECT_ORDER_STORAGE_KEY = 'cc-haha-sidebar-project-order'
-const PROJECT_PINNED_STORAGE_KEY = 'cc-haha-sidebar-pinned-projects'
-const PROJECT_HIDDEN_STORAGE_KEY = 'cc-haha-sidebar-hidden-projects'
-const PROJECT_ORGANIZATION_STORAGE_KEY = 'cc-haha-sidebar-project-organization'
-const PROJECT_SORT_STORAGE_KEY = 'cc-haha-sidebar-project-sort'
+const PROJECT_ORDER_STORAGE_KEY = 'echoflow-code-sidebar-project-order'
+const PROJECT_PINNED_STORAGE_KEY = 'echoflow-code-sidebar-pinned-projects'
+const PROJECT_HIDDEN_STORAGE_KEY = 'echoflow-code-sidebar-hidden-projects'
+const PROJECT_ORGANIZATION_STORAGE_KEY = 'echoflow-code-sidebar-project-organization'
+const PROJECT_SORT_STORAGE_KEY = 'echoflow-code-sidebar-project-sort'
+const LEGACY_PROJECT_ORDER_STORAGE_KEY = 'cc-haha-sidebar-project-order'
+const LEGACY_PROJECT_PINNED_STORAGE_KEY = 'cc-haha-sidebar-pinned-projects'
+const LEGACY_PROJECT_HIDDEN_STORAGE_KEY = 'cc-haha-sidebar-hidden-projects'
+const LEGACY_PROJECT_ORGANIZATION_STORAGE_KEY = 'cc-haha-sidebar-project-organization'
+const LEGACY_PROJECT_SORT_STORAGE_KEY = 'cc-haha-sidebar-project-sort'
 
 function makeSession(
   id: string,
@@ -201,6 +206,11 @@ describe('Sidebar', () => {
     window.localStorage.removeItem(PROJECT_HIDDEN_STORAGE_KEY)
     window.localStorage.removeItem(PROJECT_ORGANIZATION_STORAGE_KEY)
     window.localStorage.removeItem(PROJECT_SORT_STORAGE_KEY)
+    window.localStorage.removeItem(LEGACY_PROJECT_ORDER_STORAGE_KEY)
+    window.localStorage.removeItem(LEGACY_PROJECT_PINNED_STORAGE_KEY)
+    window.localStorage.removeItem(LEGACY_PROJECT_HIDDEN_STORAGE_KEY)
+    window.localStorage.removeItem(LEGACY_PROJECT_ORGANIZATION_STORAGE_KEY)
+    window.localStorage.removeItem(LEGACY_PROJECT_SORT_STORAGE_KEY)
 
     useTabStore.setState({ tabs: [], activeTabId: null })
     useSessionStore.setState({
@@ -234,6 +244,11 @@ describe('Sidebar', () => {
     window.localStorage.removeItem(PROJECT_HIDDEN_STORAGE_KEY)
     window.localStorage.removeItem(PROJECT_ORGANIZATION_STORAGE_KEY)
     window.localStorage.removeItem(PROJECT_SORT_STORAGE_KEY)
+    window.localStorage.removeItem(LEGACY_PROJECT_ORDER_STORAGE_KEY)
+    window.localStorage.removeItem(LEGACY_PROJECT_PINNED_STORAGE_KEY)
+    window.localStorage.removeItem(LEGACY_PROJECT_HIDDEN_STORAGE_KEY)
+    window.localStorage.removeItem(LEGACY_PROJECT_ORGANIZATION_STORAGE_KEY)
+    window.localStorage.removeItem(LEGACY_PROJECT_SORT_STORAGE_KEY)
   })
 
   it('opens a new tab when creating a session from the sidebar', async () => {
@@ -361,6 +376,41 @@ describe('Sidebar', () => {
     render(<Sidebar />)
 
     expect(projectGroupNames().slice(0, 3)).toEqual(['beta', 'alpha', 'gamma'])
+  })
+
+  it('does not auto-read or migrate legacy cc-haha sidebar storage', () => {
+    window.localStorage.setItem(LEGACY_PROJECT_ORDER_STORAGE_KEY, JSON.stringify([
+      '/workspace/beta',
+      '/workspace/alpha',
+    ]))
+    window.localStorage.setItem(LEGACY_PROJECT_PINNED_STORAGE_KEY, JSON.stringify(['/workspace/beta']))
+    window.localStorage.setItem(LEGACY_PROJECT_HIDDEN_STORAGE_KEY, JSON.stringify(['/workspace/beta']))
+    window.localStorage.setItem(LEGACY_PROJECT_ORGANIZATION_STORAGE_KEY, 'project')
+    window.localStorage.setItem(LEGACY_PROJECT_SORT_STORAGE_KEY, 'createdAt')
+    const base = new Date('2026-05-15T10:00:00.000Z').getTime()
+    useSessionStore.setState({
+      sessions: [
+        {
+          ...makeSession('alpha-1', 'Alpha Session', '/workspace/alpha', new Date(base).toISOString()),
+          createdAt: new Date(base - 20_000).toISOString(),
+        },
+        {
+          ...makeSession('beta-1', 'Beta Session', '/workspace/beta', new Date(base - 10_000).toISOString()),
+          createdAt: new Date(base + 20_000).toISOString(),
+        },
+      ],
+    })
+
+    render(<Sidebar />)
+
+    expect(projectGroupNames().slice(0, 2)).toEqual(['alpha', 'beta'])
+    expect(screen.getByText('beta')).toBeInTheDocument()
+    expect(window.localStorage.getItem(PROJECT_ORDER_STORAGE_KEY)).toBeNull()
+    expect(window.localStorage.getItem(PROJECT_PINNED_STORAGE_KEY)).toBeNull()
+    expect(window.localStorage.getItem(PROJECT_HIDDEN_STORAGE_KEY)).toBeNull()
+    expect(window.localStorage.getItem(PROJECT_ORGANIZATION_STORAGE_KEY)).toBeNull()
+    expect(window.localStorage.getItem(PROJECT_SORT_STORAGE_KEY)).toBeNull()
+    expect(window.localStorage.getItem(LEGACY_PROJECT_HIDDEN_STORAGE_KEY)).toBe(JSON.stringify(['/workspace/beta']))
   })
 
   it('collapses a project group without removing the project header', () => {

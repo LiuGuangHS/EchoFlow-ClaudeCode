@@ -1,9 +1,9 @@
 import * as fs from 'node:fs/promises'
-import * as os from 'node:os'
 import * as path from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { ApiError } from '../middleware/errorHandler.js'
 import { readRecoverableJsonFile } from './recoverableJsonFile.js'
+import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 import { ensurePersistentStorageUpgraded } from './persistentStorageMigrations.js'
 
 const CURRENT_DESKTOP_UI_PREFERENCES_SCHEMA_VERSION = 2
@@ -11,7 +11,7 @@ const MAX_PROJECT_PREFERENCE_ENTRIES = 2_000
 const MAX_PROFILE_DISPLAY_NAME_LENGTH = 80
 const MAX_PROFILE_SUBTITLE_LENGTH = 160
 const MAX_PROFILE_AVATAR_BYTES = 2_000_000
-const DEFAULT_PROFILE_SUBTITLE = 'github.com/LiuGuangHS/EchoFlow-ClaudeCode'
+const DEFAULT_PROFILE_SUBTITLE = 'EchoFlow Code'
 
 const AVATAR_CONTENT_TYPES = {
   'image/png': { extension: 'png', mediaType: 'image/png' },
@@ -55,7 +55,7 @@ const DEFAULT_SIDEBAR_PROJECT_PREFERENCES: SidebarProjectPreferences = {
 }
 
 const DEFAULT_PROFILE_PREFERENCES: DesktopProfilePreferences = {
-  displayName: 'EchoFlow-ClaudeCode',
+  displayName: 'EchoFlow Code',
   subtitle: DEFAULT_PROFILE_SUBTITLE,
   avatarFile: null,
   avatarUpdatedAt: null,
@@ -165,15 +165,19 @@ export class DesktopUiPreferencesService {
   private static writeLocks = new Map<string, Promise<void>>()
 
   private getConfigDir(): string {
-    return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
+    return getEchoFlowConfigDir()
+  }
+
+  private getEchoFlowDir(): string {
+    return getEchoFlowInternalDir(this.getConfigDir())
   }
 
   private getPreferencesPath(): string {
-    return path.join(this.getConfigDir(), 'cc-haha', 'desktop-ui.json')
+    return path.join(this.getEchoFlowDir(), 'desktop-ui.json')
   }
 
   private getProfileDir(): string {
-    return path.join(this.getConfigDir(), 'cc-haha', 'profile')
+    return path.join(this.getEchoFlowDir(), 'profile')
   }
 
   private getProfileAvatarPath(avatarFile: string): string {
@@ -181,7 +185,7 @@ export class DesktopUiPreferencesService {
     if (!normalized) {
       throw ApiError.badRequest('Invalid avatar file path')
     }
-    return path.join(this.getConfigDir(), 'cc-haha', normalized)
+    return path.join(this.getEchoFlowDir(), normalized)
   }
 
   private async fileExists(filePath: string): Promise<boolean> {
@@ -236,7 +240,7 @@ export class DesktopUiPreferencesService {
     const existedBeforeRead = await this.fileExists(filePath)
     const preferences = await readRecoverableJsonFile({
       filePath,
-      label: 'cc-haha desktop UI preferences',
+      label: 'EchoFlow desktop UI preferences',
       defaultValue: defaultPreferences(),
       normalize: normalizeDesktopUiPreferences,
     })

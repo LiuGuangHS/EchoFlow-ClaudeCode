@@ -18,9 +18,9 @@
 
 ## 一、本地实现总览
 
-上游 Computer Use 交互模型依赖平台专用执行层和远程配置。EchoFlow-ClaudeCode 的实现将这些能力收敛为本地 Python Bridge 和本地配置。
+上游 Computer Use 交互模型依赖平台专用执行层和远程配置。EchoFlow Code 的实现将这些能力收敛为本地 Python Bridge 和本地配置。
 
-| 组件 | 作用 | EchoFlow-ClaudeCode 实现 |
+| 组件 | 作用 | EchoFlow Code 实现 |
 |------|------|------------------|
 | 截图与显示器枚举 | 读取屏幕和显示信息 | Python Bridge + `mss` / `pyobjc` |
 | 鼠标/键盘模拟 | 执行本地输入操作 | Python Bridge + `pyautogui` |
@@ -33,7 +33,7 @@
 ### 我们做了什么
 
 ```
-上游交互模型                         EchoFlow-ClaudeCode 本地实现
+上游交互模型                         EchoFlow Code 本地实现
 ─────────────────                    ─────────────────────────────────
 平台截图/显示枚举       ──本地化──→  Python Bridge (mac_helper.py)
 平台鼠标/键盘输入       ──本地化──→  pyautogui + pyobjc
@@ -97,7 +97,7 @@ Computer Use 采用 **6 层架构**，每层职责清晰、边界明确：
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**标 `[本地实现]` 的层**是 EchoFlow-ClaudeCode 的本地执行层，**其余层保留 MCP 工具和安全机制。**
+**标 `[本地实现]` 的层**是 EchoFlow Code 的本地执行层，**其余层保留 MCP 工具和安全机制。**
 
 ### 为什么这样分层？
 

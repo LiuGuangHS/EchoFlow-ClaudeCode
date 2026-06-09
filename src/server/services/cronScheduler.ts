@@ -23,6 +23,7 @@ import {
 } from '../../utils/desktopBundledCli.js'
 import { getProcessEnvWithTerminalShellEnvironment } from '../../utils/terminalShellEnvironment.js'
 import { attributionHeaderEnvForModel } from './attributionHeaderPolicy.js'
+import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -173,9 +174,7 @@ export function cronMatches(cronExpr: string, date: Date): boolean {
 type RunsFile = { runs: TaskRun[] }
 
 function getLogFilePath(): string {
-  const configDir =
-    process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
-  return path.join(configDir, 'scheduled_tasks_log.json')
+  return path.join(getEchoFlowConfigDir(), 'scheduled_tasks_log.json')
 }
 
 async function readRunsFile(): Promise<RunsFile> {
@@ -719,7 +718,7 @@ export class CronScheduler {
   }
 
   private getConfigDir(): string {
-    return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
+    return getEchoFlowConfigDir()
   }
 
   private shouldStripInheritedProviderEnv(providerId?: string | null): boolean {
@@ -727,13 +726,13 @@ export class CronScheduler {
       return true
     }
 
-    const ccHahaDir = path.join(this.getConfigDir(), 'cc-haha')
-    if (existsSync(path.join(ccHahaDir, 'providers.json'))) {
+    const echoFlowDir = getEchoFlowInternalDir(this.getConfigDir())
+    if (existsSync(path.join(echoFlowDir, 'providers.json'))) {
       return true
     }
 
     try {
-      const raw = readFileSync(path.join(ccHahaDir, 'settings.json'), 'utf-8')
+      const raw = readFileSync(path.join(echoFlowDir, 'settings.json'), 'utf-8')
       const parsed = JSON.parse(raw) as { env?: Record<string, string> }
       const env = parsed.env ?? {}
       return Object.entries(env).some(
@@ -757,7 +756,7 @@ export class CronScheduler {
 
     try {
       const raw = readFileSync(
-        path.join(this.getConfigDir(), 'cc-haha', 'settings.json'),
+        path.join(getEchoFlowInternalDir(this.getConfigDir()), 'settings.json'),
         'utf-8',
       )
       const parsed = JSON.parse(raw) as { env?: Record<string, string> }

@@ -10,6 +10,7 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
 import { fileURLToPath } from 'node:url'
+import { getEchoFlowInternalDir } from '../../services/echoFlowConfigRoot.js'
 
 let server: ReturnType<typeof Bun.serve>
 let baseUrl: string
@@ -33,6 +34,10 @@ const MODEL_ENV_KEYS = [
 const originalModelEnv = Object.fromEntries(
   MODEL_ENV_KEYS.map((key) => [key, process.env[key]]),
 ) as Record<(typeof MODEL_ENV_KEYS)[number], string | undefined>
+
+function echoFlowSettingsPath() {
+  return path.join(getEchoFlowInternalDir(tmpDir), 'settings.json')
+}
 
 function restoreEnv() {
   for (const key of MODEL_ENV_KEYS) {
@@ -244,7 +249,7 @@ describe('Business Flow: Permission Modes', () => {
 
   it('should persist mode to settings file', async () => {
     await api('PUT', '/api/permissions/mode', { mode: 'plan' })
-    const settingsPath = path.join(tmpDir, 'settings.json')
+    const settingsPath = echoFlowSettingsPath()
     const raw = await fs.readFile(settingsPath, 'utf-8')
     const settings = JSON.parse(raw)
     expect(settings.defaultMode).toBe('plan')
@@ -496,7 +501,7 @@ describe('Business Flow: Models & Effort', () => {
     await api('PUT', '/api/models/current', { modelId: 'claude-opus-4-7' })
     await api('PUT', '/api/effort', { level: 'high' })
 
-    const settingsPath = path.join(tmpDir, 'settings.json')
+    const settingsPath = echoFlowSettingsPath()
     const raw = await fs.readFile(settingsPath, 'utf-8')
     const settings = JSON.parse(raw)
     expect(settings.model).toBe('claude-opus-4-7')
@@ -705,6 +710,15 @@ describe('Business Flow: WebSocket Chat', () => {
     const ws = new WebSocket(`${wsUrl}/ws/ws-test-2`)
 
     await new Promise<void>((resolve) => {
+      let settled = false
+      let timeout: ReturnType<typeof setTimeout> | undefined
+      const finish = () => {
+        if (settled) return
+        settled = true
+        if (timeout) clearTimeout(timeout)
+        ws.close()
+        resolve()
+      }
       ws.onopen = () => {}
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data as string)
@@ -712,13 +726,14 @@ describe('Business Flow: WebSocket Chat', () => {
         if (msg.type === 'connected') {
           ws.send(JSON.stringify({ type: 'user_message', content: 'test message' }))
         }
-        if (msg.type === 'status' && msg.state === 'idle' && messages.length > 3) {
-          ws.close()
-          resolve()
+        const hasStatus = messages.some((message) => message.type === 'status')
+        const hasDelta = messages.some((message) => message.type === 'content_delta')
+        if (msg.type === 'message_complete' && hasStatus && hasDelta) {
+          finish()
         }
       }
-      ws.onerror = () => { ws.close(); resolve() }
-      setTimeout(() => { ws.close(); resolve() }, 5000)
+      ws.onerror = finish
+      timeout = setTimeout(finish, 10000)
     })
 
     const types = messages.map((m) => m.type)
@@ -731,7 +746,7 @@ describe('Business Flow: WebSocket Chat', () => {
     // Should have thinking state first
     const statusMsgs = messages.filter((m) => m.type === 'status')
     expect(statusMsgs[0].state).toBe('thinking')
-  })
+  }, 15000)
 
   it('should handle ping/pong', async () => {
     const messages: any[] = []

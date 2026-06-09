@@ -7,10 +7,10 @@
  * GET /api/status/user         — 用户信息
  */
 
-import * as os from 'os'
 import * as path from 'path'
 import * as fs from 'fs/promises'
 import { ApiError, errorResponse } from '../middleware/errorHandler.js'
+import { getEchoFlowConfigDir } from '../services/echoFlowConfigRoot.js'
 
 // 服务器启动时间（用于计算 uptime）
 const startedAt = Date.now()
@@ -117,7 +117,7 @@ async function handleUser(): Promise<Response> {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function getConfigDir(): string {
-  return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
+  return getEchoFlowConfigDir()
 }
 
 function getVersion(): string {

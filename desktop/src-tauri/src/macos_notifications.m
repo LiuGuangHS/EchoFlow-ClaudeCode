@@ -194,7 +194,7 @@ bool cchh_send_user_notification(const char *title, const char *body, const char
 
         if (@available(macOS 10.14, *)) {
             UNMutableNotificationContent *content = [[UNMutableNotificationContent alloc] init];
-            content.title = title != NULL ? [NSString stringWithUTF8String:title] : @"EchoFlow-ClaudeCode";
+            content.title = title != NULL ? [NSString stringWithUTF8String:title] : @"EchoFlow Code";
             if (body != NULL && strlen(body) > 0) {
                 content.body = [NSString stringWithUTF8String:body];
             }
@@ -229,7 +229,7 @@ bool cchh_send_user_notification(const char *title, const char *body, const char
         }
 
         NSUserNotification *notification = [[NSUserNotification alloc] init];
-        notification.title = title != NULL ? [NSString stringWithUTF8String:title] : @"EchoFlow-ClaudeCode";
+        notification.title = title != NULL ? [NSString stringWithUTF8String:title] : @"EchoFlow Code";
         if (body != NULL && strlen(body) > 0) {
             notification.informativeText = [NSString stringWithUTF8String:body];
         }

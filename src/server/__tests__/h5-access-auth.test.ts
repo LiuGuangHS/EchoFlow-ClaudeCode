@@ -725,7 +725,7 @@ describe('remote H5 auth and CORS integration', () => {
     const token = await enableH5Access({
       allowedOrigins: [PHONE_ORIGIN],
     })
-    const localFile = localFileUrl(baseUrl, path.join(process.cwd(), 'package.json'))
+    const localFile = localFileUrl(baseUrl, path.join(tmpDir, 'dist', 'index.html'))
 
     const missingLocalFileToken = await fetch(localFile, {
       headers: {
@@ -749,7 +749,7 @@ describe('remote H5 auth and CORS integration', () => {
       },
     })
     expect(validLocalFileToken.status).toBe(200)
-    await expect(validLocalFileToken.text()).resolves.toContain('"name"')
+    await expect(validLocalFileToken.text()).resolves.toContain('H5 Shell')
 
     const missingPreviewToken = await fetch(`${baseUrl}/preview-fs/h5-auth-test/index.html`, {
       headers: {
@@ -764,7 +764,7 @@ describe('remote H5 auth and CORS integration', () => {
     const token = await enableH5Access({
       allowedOrigins: [loopbackBrowserOrigin],
     })
-    const localFile = localFileUrl(baseUrl, path.join(process.cwd(), 'package.json'))
+    const localFile = localFileUrl(baseUrl, path.join(tmpDir, 'dist', 'index.html'))
 
     const missingLocalFileToken = await fetch(localFile, {
       headers: {
@@ -780,7 +780,7 @@ describe('remote H5 auth and CORS integration', () => {
       },
     })
     expect(validLocalFileToken.status).toBe(200)
-    await expect(validLocalFileToken.text()).resolves.toContain('"name"')
+    await expect(validLocalFileToken.text()).resolves.toContain('H5 Shell')
 
     const missingPreviewToken = await fetch(`${baseUrl}/preview-fs/h5-auth-test/index.html`, {
       headers: {
@@ -901,10 +901,10 @@ describe('remote H5 auth and CORS integration', () => {
   test('keeps local loopback local-file navigations tokenless when H5 access is enabled', async () => {
     await enableH5Access()
 
-    const response = await fetch(localFileUrl(baseUrl, path.join(process.cwd(), 'package.json')))
+    const response = await fetch(localFileUrl(baseUrl, path.join(tmpDir, 'dist', 'index.html')))
 
     expect(response.status).toBe(200)
-    await expect(response.text()).resolves.toContain('"name"')
+    await expect(response.text()).resolves.toContain('H5 Shell')
   })
 
   test('blocks adapter requests from non-local browser origins when H5 access is enabled', async () => {

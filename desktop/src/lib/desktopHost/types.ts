@@ -70,9 +70,17 @@ export type DesktopUpdateDownloadEvent =
 export type DesktopUpdate = {
   version: string
   body?: string | null
+  feedUrl?: string | null
+  feedAttempts?: DesktopUpdateFeedAttempt[]
   download(onEvent?: (event: DesktopUpdateDownloadEvent) => void): Promise<void>
   install(): Promise<void>
   close(): Promise<void>
+}
+
+export type DesktopUpdateFeedAttempt = {
+  feedUrl: string | null
+  result: 'selected' | 'no-update' | 'missing-metadata' | 'error'
+  error?: string
 }
 
 export type DesktopUpdateCheckOptions = {

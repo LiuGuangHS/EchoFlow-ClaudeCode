@@ -7,7 +7,7 @@ type OutputFormat = 'text' | 'json'
 function printHelp(): void {
   process.stdout.write(
     [
-      'Usage: claude-haha [options] [prompt]',
+      'Usage: echoflow-code [options] [prompt]',
       '',
       'Local recovery mode for this leaked source tree.',
       '',
@@ -240,7 +240,7 @@ async function runInteractive(parsed: {
   })
 
   process.stdout.write(
-    `Claude Haha local interactive mode\nmodel: ${model}\ncommands: /exit, /clear\n\n`,
+    `EchoFlow Code local interactive mode\nmodel: ${model}\ncommands: /exit, /clear\n\n`,
   )
   rl.prompt()
 

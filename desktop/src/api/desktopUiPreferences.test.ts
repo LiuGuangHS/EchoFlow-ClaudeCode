@@ -5,8 +5,8 @@ import { desktopUiPreferencesApi, getProfileAvatarUrl } from './desktopUiPrefere
 const preferences = {
   schemaVersion: 2,
   profile: {
-    displayName: 'EchoFlow-ClaudeCode',
-    subtitle: 'github.com/LiuGuangHS/EchoFlow-ClaudeCode',
+    displayName: 'EchoFlow Code',
+    subtitle: 'EchoFlow Code',
     avatarFile: null,
     avatarUpdatedAt: null,
   },

@@ -60,7 +60,7 @@
 - `/new`：开启新对话
 - `/clear`：清空当前会话上下文
 
-## 3. 在 EchoFlow-ClaudeCode 桌面端填写
+## 3. 在 EchoFlow Code 桌面端填写
 
 ### 3.1 填写 App ID / App Secret
 
@@ -84,7 +84,7 @@
 
 ![在飞书里发配对码](../images/im/feishu/13-send-code-in-feishu.png)
 
-看到配对成功提示后，就可以用飞书在手机上远程驱动桌面端 EchoFlow-ClaudeCode 了：
+看到配对成功提示后，就可以用飞书在手机上远程驱动桌面端 EchoFlow Code 了：
 
 ![配对成功](../images/im/feishu/14-pair-success.png)
 

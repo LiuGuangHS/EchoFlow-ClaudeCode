@@ -58,7 +58,7 @@
 
 ## 🖼️ 配图说明
 
-所有配图采用深色背景（#1a1a2e）+ EchoFlow-ClaudeCode 橙蓝品牌色（#FF7A00）风格，面向技术文档阅读场景优化。
+所有配图采用深色背景（#1a1a2e）+ EchoFlow Code 橙蓝品牌色（#FF7A00）风格，面向技术文档阅读场景优化。
 
 | 图片 | 说明 | 所属文档 |
 |------|------|----------|
@@ -121,7 +121,7 @@
 
 ## 🔗 相关资源
 
-- [EchoFlow-ClaudeCode 主页](/)
+- [EchoFlow Code 主页](/)
 - [记忆系统文档](/memory/01-usage-guide)
 - [Agent Tool 源码](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/tree/main/src/tools/AgentTool/)
 - [Swarm 基础设施](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/tree/main/src/utils/swarm/)

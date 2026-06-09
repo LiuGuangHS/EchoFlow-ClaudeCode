@@ -1,14 +1,13 @@
 import { doctorApi, type DoctorReportRepairResponse } from '../api/doctor'
-import { APP_ZOOM_STORAGE_KEY, LEGACY_UI_ZOOM_STORAGE_KEY } from './appZoom'
+import { APP_ZOOM_STORAGE_KEY } from './appZoom'
 import { DESKTOP_PERSISTENCE_VERSION_KEY } from './persistenceMigrations'
 
 export const SAFE_DOCTOR_STORAGE_KEYS = [
-  'cc-haha-open-tabs',
-  'cc-haha-session-runtime',
-  'cc-haha-theme',
-  'cc-haha-locale',
+  'echoflow-code-open-tabs',
+  'echoflow-code-session-runtime',
+  'echoflow-code-theme',
+  'echoflow-code-locale',
   APP_ZOOM_STORAGE_KEY,
-  LEGACY_UI_ZOOM_STORAGE_KEY,
   DESKTOP_PERSISTENCE_VERSION_KEY,
 ] as const
 

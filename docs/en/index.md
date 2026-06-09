@@ -2,12 +2,12 @@
 layout: home
 
 hero:
-  name: EchoFlow-ClaudeCode
+  name: EchoFlow Code
   text: Locally Runnable Coding Agent
-  tagline: Supports Anthropic-compatible APIs, multi-agent workflows, memory, desktop, and Computer Use
+  tagline: Built in with EchoFlowAPI; supports Anthropic-compatible APIs, multi-agent workflows, memory, desktop, and Computer Use
   image:
     src: /images/app-icon.png
-    alt: EchoFlow-ClaudeCode
+    alt: EchoFlow Code
   actions:
     - theme: brand
       text: Quick Start

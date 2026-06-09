@@ -25,7 +25,7 @@ describe('chat blocks', () => {
   it('does not animate inactive historical thinking blocks', () => {
     const { container } = render(<ThinkingBlock content="old reasoning" isActive={false} />)
 
-    fireEvent.click(screen.getByRole('button', { name: /Thinking/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Thought/ }))
 
     expect(container.textContent).toContain('old reasoning')
     expect(container.querySelector('.thinking-cursor')).toBeNull()
@@ -38,7 +38,7 @@ describe('chat blocks', () => {
     expect(container.querySelector('strong')).toBeNull()
     expect(container.querySelector('li')).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: /Thinking/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Thought/ }))
 
     expect(container.querySelector('strong')?.textContent).toBe('important')
     expect(container.querySelector('li')?.textContent).toBe('item one')
@@ -51,7 +51,7 @@ describe('chat blocks', () => {
     expect(container.textContent).not.toContain('line-1')
     expect(container.textContent).not.toContain('line-11')
 
-    fireEvent.click(screen.getByRole('button', { name: /Thinking/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Thought/ }))
 
     expect(container.textContent).toContain('line-1')
     expect(container.textContent).toContain('line-11')

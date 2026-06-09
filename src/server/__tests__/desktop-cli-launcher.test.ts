@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -7,6 +7,8 @@ import {
   buildWindowsLauncherWrapper,
   ensureDesktopCliLauncherInstalled,
   getDesktopCliCommandName,
+  removeLegacyWindowsBinaryLauncher,
+  upsertManagedPathBlock,
 } from '../services/desktopCliLauncherService.js'
 
 const isWindows = process.platform === 'win32'
@@ -29,7 +31,6 @@ describe('ensureDesktopCliLauncherInstalled', () => {
     process.env.HOME = tempHome
     process.env.USERPROFILE = tempHome
     process.env.SHELL = '/bin/zsh'
-    process.env.PATH = ''
     delete process.env.CLAUDE_CONFIG_DIR
   })
 
@@ -81,12 +82,12 @@ describe('ensureDesktopCliLauncherInstalled', () => {
     process.env.CLAUDE_CLI_PATH = sourcePath
 
     const status = await ensureDesktopCliLauncherInstalled()
-    const launcherPath = join(tempHome, '.local', 'bin', 'claude-haha')
+    const launcherPath = join(tempHome, '.local', 'bin', 'echoflow-code')
     const shellConfigPath = join(tempHome, '.zshrc')
 
     expect(status.supported).toBe(true)
     expect(status.installed).toBe(true)
-    expect(status.command).toBe('claude-haha')
+    expect(status.command).toBe('echoflow-code')
     expect(status.launcherPath).toBe(launcherPath)
     expect(status.availableInNewTerminals).toBe(true)
     expect(status.needsTerminalRestart).toBe(true)
@@ -99,6 +100,32 @@ describe('ensureDesktopCliLauncherInstalled', () => {
     expect(await readFile(shellConfigPath, 'utf8')).toContain(
       'export PATH="$HOME/.local/bin:$PATH"',
     )
+    expect(await readFile(shellConfigPath, 'utf8')).toContain(
+      '# >>> EchoFlow Code PATH >>>',
+    )
+  })
+
+  it('replaces the legacy EchoFlow-ClaudeCode PATH block with the EchoFlow Code marker', () => {
+    const next = upsertManagedPathBlock(
+      [
+        'before',
+        '# >>> EchoFlow-ClaudeCode PATH >>>',
+        'export PATH="$HOME/.local/bin:$PATH"',
+        '# <<< EchoFlow-ClaudeCode PATH <<<',
+        'after',
+      ].join('\n'),
+      [
+        '# >>> EchoFlow Code PATH >>>',
+        'export PATH="$HOME/.local/bin:$PATH"',
+        '# <<< EchoFlow Code PATH <<<',
+      ].join('\n'),
+    )
+
+    expect(next).toContain('# >>> EchoFlow Code PATH >>>')
+    expect(next).toContain('# <<< EchoFlow Code PATH <<<')
+    expect(next).not.toContain('EchoFlow-ClaudeCode PATH')
+    expect(next).toContain('before')
+    expect(next).toContain('after')
   })
 
   unixOnly('pins portable config dir in the installed launcher wrapper', async () => {
@@ -111,12 +138,12 @@ describe('ensureDesktopCliLauncherInstalled', () => {
 
     await ensureDesktopCliLauncherInstalled()
 
-    const launcher = await readFile(join(tempHome, '.local', 'bin', 'claude-haha'), 'utf8')
+    const launcher = await readFile(join(tempHome, '.local', 'bin', 'echoflow-code'), 'utf8')
     expect(launcher).toContain(`export CLAUDE_CONFIG_DIR='${portableDir}'`)
   })
 
   it('uses a Windows cmd launcher so portable env can be injected', () => {
-    expect(getDesktopCliCommandName('win32')).toBe('claude-haha.cmd')
+    expect(getDesktopCliCommandName('win32')).toBe('echoflow-code.cmd')
 
     process.env.CLAUDE_CONFIG_DIR = 'C:\\Portable\\ClaudeConfig'
     const wrapper = buildWindowsLauncherWrapper('C:\\Apps\\cc-haha\\claude-sidecar.exe')
@@ -125,6 +152,17 @@ describe('ensureDesktopCliLauncherInstalled', () => {
     expect(wrapper).toContain(
       '"%SIDECAR%" cli --app-root "%APP_ROOT%" %*',
     )
+  })
+
+  it('removes stale legacy Windows binary launchers so the cmd shim can resolve', async () => {
+    const binDir = join(tempHome, '.local', 'bin')
+    const legacyExePath = join(binDir, 'claude-haha.exe')
+    await mkdir(binDir, { recursive: true })
+    await writeFile(legacyExePath, 'old-binary', 'utf8')
+
+    await removeLegacyWindowsBinaryLauncher(binDir)
+
+    await expect(readFile(legacyExePath, 'utf8')).rejects.toThrow()
   })
 
   it('reports unsupported status when the current launcher is not a bundled sidecar', async () => {
@@ -136,6 +174,6 @@ describe('ensureDesktopCliLauncherInstalled', () => {
 
     expect(status.supported).toBe(false)
     expect(status.installed).toBe(false)
-    expect(status.command).toBe('claude-haha')
+    expect(status.command).toBe('echoflow-code')
   })
 })

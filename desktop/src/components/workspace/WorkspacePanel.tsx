@@ -38,6 +38,7 @@ type WorkspacePanelProps = {
    * button so the panel header doesn't render a duplicate close control.
    */
   embedded?: boolean
+  previewLineLimit?: number
 }
 
 type TreeNodeProps = {
@@ -446,11 +447,13 @@ function CodeSurface({
   language,
   onAddLineComment,
   onAddSelection,
+  lineLimit = WORKSPACE_PREVIEW_LINE_LIMIT,
 }: {
   value: string
   language: string
   onAddLineComment: (line: number, note: string, quote: string) => void
   onAddSelection: (selection: WorkspaceTextSelection) => void
+  lineLimit?: number
 }) {
   const t = useTranslation()
   const surfaceRef = useRef<HTMLDivElement>(null)
@@ -460,9 +463,9 @@ function CodeSurface({
   const [showAllLines, setShowAllLines] = useState(false)
   const [selectionMenu, setSelectionMenu] = useState<FloatingSelectionMenuState | null>(null)
   const lines = value.split('\n')
-  const visibleLines = showAllLines ? lines : lines.slice(0, WORKSPACE_PREVIEW_LINE_LIMIT)
+  const visibleLines = showAllLines ? lines : lines.slice(0, lineLimit)
   const activeQuote = commentLine ? visibleLines[commentLine - 1] ?? '' : ''
-  const usePlainLargePreview = showAllLines && lines.length > WORKSPACE_PREVIEW_LINE_LIMIT
+  const usePlainLargePreview = lines.length > lineLimit
   const visibleCode = usePlainLargePreview ? '' : visibleLines.join('\n')
 
   useEffect(() => {
@@ -646,7 +649,7 @@ function CodeSurface({
             )}
           </Highlight>
         )}
-        {lines.length > WORKSPACE_PREVIEW_LINE_LIMIT && (
+        {lines.length > lineLimit && (
           <div className="sticky bottom-0 flex items-center gap-3 border-t border-[var(--color-border)] bg-[var(--color-surface-glass)] px-3 py-2 text-xs text-[var(--color-text-tertiary)] backdrop-blur">
             <span>
               {showAllLines
@@ -912,7 +915,7 @@ function TreeNode({
   )
 }
 
-export function WorkspacePanel({ sessionId, embedded = false }: WorkspacePanelProps) {
+export function WorkspacePanel({ sessionId, embedded = false, previewLineLimit = WORKSPACE_PREVIEW_LINE_LIMIT }: WorkspacePanelProps) {
   const t = useTranslation()
   const addToast = useUIStore((state) => state.addToast)
   const [filterQuery, setFilterQuery] = useState('')
@@ -1265,6 +1268,7 @@ export function WorkspacePanel({ sessionId, embedded = false }: WorkspacePanelPr
             language={activePreviewTab.language ?? 'text'}
             onAddLineComment={(line, note, quote) => addLineCommentToChat(activePreviewTab.path, line, note, quote)}
             onAddSelection={(selection) => addSelectionToChat(activePreviewTab.path, selection)}
+            lineLimit={previewLineLimit}
           />
         ) : (
           <PanelMessage

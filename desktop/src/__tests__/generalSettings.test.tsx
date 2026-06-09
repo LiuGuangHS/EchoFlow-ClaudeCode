@@ -726,7 +726,7 @@ describe('Settings > General tab', () => {
       expect(desktopNotificationsMock.requestDesktopNotificationPermission).toHaveBeenCalledTimes(1)
     })
     expect(desktopNotificationsMock.notifyDesktop).toHaveBeenCalledWith({
-      title: 'EchoFlow-ClaudeCode notifications are enabled',
+      title: 'EchoFlow Code notifications are enabled',
       body: 'Permission prompts and completed agent replies will now use system notifications.',
     })
   })

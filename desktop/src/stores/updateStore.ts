@@ -20,7 +20,7 @@ type CheckOptions = {
   autoDownload?: boolean
 }
 
-const DISMISSED_UPDATE_VERSION_KEY = 'cc-haha-dismissed-update-version'
+const DISMISSED_UPDATE_VERSION_KEY = 'echoflow-code-dismissed-update-version'
 
 type UpdateStore = {
   status: UpdateStatus

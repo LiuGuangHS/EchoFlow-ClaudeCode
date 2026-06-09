@@ -12,7 +12,7 @@ ELECTRON_OUTPUT_DIR="${DESKTOP_DIR}/build-artifacts/electron"
 
 usage() {
   cat <<'EOF'
-Build EchoFlow-ClaudeCode desktop for macOS Apple Silicon with Electron Builder.
+Build EchoFlow Code desktop for macOS Apple Silicon with Electron Builder.
 
 Usage:
   ./desktop/scripts/build-macos-arm64.sh [extra electron-builder args...]

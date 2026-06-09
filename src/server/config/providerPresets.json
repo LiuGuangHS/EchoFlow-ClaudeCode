@@ -27,7 +27,7 @@
     "needsApiKey": true,
     "websiteUrl": "https://api.echoflow.cn/",
     "apiKeyUrl": "https://api.echoflow.cn/register?channel=c_fe4eotyx",
-    "promoText": "EchoFlowAPI 提供 Anthropic Messages 兼容协议，可直接用于 Claude Code。",
+    "promoText": "推荐使用 EchoFlowAPI：兼容性更佳，原生支持 Claude Code 生态能力，国内访问更稳定。",
     "featured": true,
     "authStrategy": "auth_token",
     "modelContextWindows": {
@@ -77,7 +77,7 @@
     "needsApiKey": true,
     "websiteUrl": "https://open.bigmodel.cn",
     "apiKeyUrl": "https://www.bigmodel.cn/invite?icode=d41B2qi8Z5xNwTGLNPPF3OZLO2QH3C0EBTSr%2BArzMw4%3D",
-    "promoText": "智谱 GLM 为 EchoFlow-ClaudeCode 用户准备了专属邀请福利，使用此链接注册后可领取新用户权益。",
+    "promoText": "智谱 GLM 为 EchoFlow Code 用户准备了专属邀请福利，使用此链接注册后可领取新用户权益。",
     "authStrategy": "auth_token",
     "defaultEnv": {
       "CC_HAHA_SEND_DISABLED_THINKING": "1"

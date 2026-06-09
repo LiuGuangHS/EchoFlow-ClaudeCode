@@ -15,6 +15,7 @@ import { installApplicationMenu } from './services/menu'
 import { acquireSingleInstanceLock } from './services/singleInstance'
 import { installTray, shouldInstallTray, type TrayController } from './services/tray'
 import { ElectronUpdaterService } from './services/updater'
+import { resolveUpdateFeedUrls } from './services/updateFeed'
 import { createUpdateSmokeUpdaterFromEnv } from './services/updateSmoke'
 import { ElectronTerminalService, type TerminalSpawnInput } from './services/terminal'
 import { ElectronPreviewService, type PreviewBounds } from './services/preview'
@@ -32,6 +33,7 @@ import { installPreviewCleanupOnRendererNavigation } from './services/previewLif
 import { logNotificationSmokeRendererAck, scheduleNotificationSmoke } from './services/notificationSmoke'
 import { normalizeZoomFactor } from './services/zoom'
 import { resolveRendererEntry } from './services/rendererEntry'
+import { applyDefaultEchoFlowDataRoot, ECHOFLOW_DEFAULT_CONFIG_ENV } from './services/echoFlowDataRoot'
 import { writeWindowSmokeSnapshot } from './services/windowSmoke'
 import {
   installWindowLifecycle,
@@ -53,38 +55,12 @@ let previewService: ElectronPreviewService | null = null
 let isQuitting = false
 let trayController: TrayController | null = null
 
-const DEFAULT_GITHUB_RELEASE_FEED_URL = 'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest/download/'
-const DEFAULT_UPDATE_FEED_URL = `https://gh-proxy.org/${DEFAULT_GITHUB_RELEASE_FEED_URL}`
-
-function normalizeUpdateFeedBaseUrl(value: string): string | null {
-  const trimmed = value.trim()
-  if (!trimmed) return null
-
-  try {
-    const url = new URL(trimmed)
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
-    return url.toString().endsWith('/') ? url.toString() : `${url.toString()}/`
-  } catch {
-    return null
-  }
-}
-
-function dedupeUpdateFeedUrls(feedUrls: string[]): string[] {
-  return feedUrls.filter((feedUrl, index) => feedUrls.indexOf(feedUrl) === index)
-}
-
-function resolveUpdateFeedUrls(env: NodeJS.ProcessEnv): string[] {
-  const explicitFeedUrl = normalizeUpdateFeedBaseUrl(env.ECHOFLOW_UPDATE_FEED_URL ?? '')
-  if (explicitFeedUrl) return [explicitFeedUrl]
-
-  const githubProxyBase = normalizeUpdateFeedBaseUrl(env.ECHOFLOW_UPDATE_GITHUB_PROXY_BASE ?? '')
-  const primaryFeedUrl = githubProxyBase
-    ? `${githubProxyBase}${DEFAULT_GITHUB_RELEASE_FEED_URL}`
-    : DEFAULT_UPDATE_FEED_URL
-  return dedupeUpdateFeedUrls([primaryFeedUrl, DEFAULT_GITHUB_RELEASE_FEED_URL])
-}
-
 installMacOsChromiumKeychainPromptGuard(app)
+
+const echoFlowDataRoot = applyDefaultEchoFlowDataRoot(process.env)
+if (process.env[ECHOFLOW_DEFAULT_CONFIG_ENV] === '1') {
+  app.setPath('userData', echoFlowDataRoot)
+}
 
 function appRoot() {
   return app.isPackaged ? app.getAppPath() : process.cwd()
@@ -141,7 +117,6 @@ function getUpdaterService() {
   }, {
     updateConfigPath: !smokeUpdater && app.isPackaged ? path.join(process.resourcesPath, 'app-update.yml') : undefined,
     feedUrls: smokeUpdater ? [] : resolveUpdateFeedUrls(process.env),
-    currentVersion: app.getVersion(),
   })
   return updaterService
 }

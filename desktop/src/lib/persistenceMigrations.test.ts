@@ -10,8 +10,8 @@ describe('desktop persistence migrations', () => {
     window.localStorage.clear()
   })
 
-  test('migrates legacy open-tab arrays into the current tab persistence shape', () => {
-    window.localStorage.setItem('cc-haha-open-tabs', JSON.stringify([
+  test('migrates existing EchoFlow open-tab arrays into the current tab persistence shape', () => {
+    window.localStorage.setItem('echoflow-code-open-tabs', JSON.stringify([
       { sessionId: 'session-1', title: 'Old tab' },
       { sessionId: '__terminal__legacy', title: 'Terminal 1', type: 'terminal' },
       { sessionId: 123, title: 'bad' },
@@ -19,8 +19,8 @@ describe('desktop persistence migrations', () => {
 
     const report = runDesktopPersistenceMigrations()
 
-    expect(report.migratedKeys).toContain('cc-haha-open-tabs')
-    expect(JSON.parse(window.localStorage.getItem('cc-haha-open-tabs') || '{}')).toEqual({
+    expect(report.migratedKeys).toContain('echoflow-code-open-tabs')
+    expect(JSON.parse(window.localStorage.getItem('echoflow-code-open-tabs') || '{}')).toEqual({
       openTabs: [{ sessionId: 'session-1', title: 'Old tab', type: 'session' }],
       activeTabId: 'session-1',
     })
@@ -29,7 +29,7 @@ describe('desktop persistence migrations', () => {
 
   test('filters stale session runtime selections without clearing unrelated keys', () => {
     window.localStorage.setItem('unrelated-user-key', 'keep')
-    window.localStorage.setItem('cc-haha-session-runtime', JSON.stringify({
+    window.localStorage.setItem('echoflow-code-session-runtime', JSON.stringify({
       good: { providerId: null, modelId: 'claude-sonnet' },
       alsoGood: { providerId: 'provider-1', modelId: 'gpt-5.4' },
       badOfficial: { providerId: null, modelId: '' },
@@ -39,7 +39,7 @@ describe('desktop persistence migrations', () => {
 
     runDesktopPersistenceMigrations()
 
-    expect(JSON.parse(window.localStorage.getItem('cc-haha-session-runtime') || '{}')).toEqual({
+    expect(JSON.parse(window.localStorage.getItem('echoflow-code-session-runtime') || '{}')).toEqual({
       alsoGood: { providerId: 'provider-1', modelId: 'gpt-5.4' },
       good: { providerId: null, modelId: 'claude-sonnet' },
     })
@@ -47,53 +47,51 @@ describe('desktop persistence migrations', () => {
   })
 
   test('removes malformed known keys without throwing during startup', () => {
-    window.localStorage.setItem('cc-haha-open-tabs', '{"openTabs":')
-    window.localStorage.setItem('cc-haha-theme', 'sepia')
+    window.localStorage.setItem('echoflow-code-open-tabs', '{"openTabs":')
+    window.localStorage.setItem('echoflow-code-theme', 'sepia')
 
     const report = runDesktopPersistenceMigrations()
 
-    expect(report.migratedKeys).toContain('cc-haha-open-tabs')
-    expect(report.migratedKeys).toContain('cc-haha-theme')
-    expect(window.localStorage.getItem('cc-haha-open-tabs')).toBeNull()
-    expect(window.localStorage.getItem('cc-haha-theme')).toBeNull()
+    expect(report.migratedKeys).toContain('echoflow-code-open-tabs')
+    expect(report.migratedKeys).toContain('echoflow-code-theme')
+    expect(window.localStorage.getItem('echoflow-code-open-tabs')).toBeNull()
+    expect(window.localStorage.getItem('echoflow-code-theme')).toBeNull()
   })
 
   test('preserves the pure white theme as a valid persisted theme', () => {
-    window.localStorage.setItem('cc-haha-theme', 'white')
+    window.localStorage.setItem('echoflow-code-theme', 'white')
 
     const report = runDesktopPersistenceMigrations()
 
-    expect(report.migratedKeys).not.toContain('cc-haha-theme')
-    expect(window.localStorage.getItem('cc-haha-theme')).toBe('white')
+    expect(report.migratedKeys).not.toContain('echoflow-code-theme')
+    expect(window.localStorage.getItem('echoflow-code-theme')).toBe('white')
   })
 
   test('preserves valid app zoom and removes invalid app zoom values', () => {
-    window.localStorage.setItem('cc-haha-app-zoom', '1.2')
+    window.localStorage.setItem('echoflow-code-app-zoom', '1.2')
 
     const validReport = runDesktopPersistenceMigrations()
 
-    expect(validReport.migratedKeys).not.toContain('cc-haha-app-zoom')
-    expect(window.localStorage.getItem('cc-haha-app-zoom')).toBe('1.2')
+    expect(validReport.migratedKeys).not.toContain('echoflow-code-app-zoom')
+    expect(window.localStorage.getItem('echoflow-code-app-zoom')).toBe('1.2')
 
-    window.localStorage.setItem('cc-haha-app-zoom', '4')
+    window.localStorage.setItem('echoflow-code-app-zoom', '4')
 
     const invalidReport = runDesktopPersistenceMigrations()
 
-    expect(invalidReport.migratedKeys).toContain('cc-haha-app-zoom')
-    expect(window.localStorage.getItem('cc-haha-app-zoom')).toBeNull()
+    expect(invalidReport.migratedKeys).toContain('echoflow-code-app-zoom')
+    expect(window.localStorage.getItem('echoflow-code-app-zoom')).toBeNull()
   })
 
-  test('migrates the legacy UI zoom key into app zoom storage', () => {
+  test('does not auto-migrate legacy cc-haha UI zoom storage', () => {
     window.localStorage.setItem('cc-haha-ui-zoom', '1.25')
 
     const report = runDesktopPersistenceMigrations()
 
-    expect(report.migratedKeys).toEqual(expect.arrayContaining([
-      'cc-haha-app-zoom',
-      'cc-haha-ui-zoom',
-    ]))
-    expect(window.localStorage.getItem('cc-haha-app-zoom')).toBe('1.25')
-    expect(window.localStorage.getItem('cc-haha-ui-zoom')).toBeNull()
+    expect(report.migratedKeys).not.toContain('cc-haha-ui-zoom')
+    expect(report.migratedKeys).not.toContain('echoflow-code-app-zoom')
+    expect(window.localStorage.getItem('echoflow-code-app-zoom')).toBeNull()
+    expect(window.localStorage.getItem('cc-haha-ui-zoom')).toBe('1.25')
   })
 
   test('does not throw if schema version persistence is blocked', () => {
@@ -128,11 +126,11 @@ describe('desktop persistence migrations', () => {
     const report = runDesktopPersistenceMigrations(storage)
 
     expect(report.migratedKeys).toEqual(expect.arrayContaining([
-      'cc-haha-open-tabs',
-      'cc-haha-session-runtime',
-      'cc-haha-theme',
-      'cc-haha-locale',
-      'cc-haha-app-zoom',
+      'echoflow-code-open-tabs',
+      'echoflow-code-session-runtime',
+      'echoflow-code-theme',
+      'echoflow-code-locale',
+      'echoflow-code-app-zoom',
       DESKTOP_PERSISTENCE_VERSION_KEY,
     ]))
   })

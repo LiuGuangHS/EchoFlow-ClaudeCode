@@ -4,25 +4,41 @@
 use std::fs;
 use std::path::PathBuf;
 
+const ECHOFLOW_APP_NAME: &str = "EchoFlow Code";
+const ECHOFLOW_DEFAULT_CONFIG_ENV: &str = "ECHOFLOW_CODE_DEFAULT_CONFIG_DIR";
+const ECHOFLOW_PORTABLE_ENV: &str = "ECHOFLOW_CODE_APP_PORTABLE_DIR";
+
+enum StartupConfigDir {
+    Portable(PathBuf),
+    Default(PathBuf),
+}
+
 fn main() {
-    // Determine if we should start in portable mode and set CLAUDE_CONFIG_DIR
-    // before any Tauri/WebView2 initialization.
+    // Resolve CLAUDE_CONFIG_DIR before any Tauri/WebView2 initialization so
+    // the legacy host uses the same EchoFlow data root as Electron.
     //
     // Mode resolution order:
     //   1. External CLAUDE_CONFIG_DIR env var (batch script etc.) — always respected
     //   2. Persisted app-mode.json saying "portable"
-    //   3. Auto-detect: default portable dir already has data files
+    //   3. EchoFlow default app data directory
     //
-    // In "default" mode the app does NOT set CLAUDE_CONFIG_DIR itself.
-    // It relies on the env var (if set externally) or falls back to system dirs.
-    // All existing std::env::var("CLAUDE_CONFIG_DIR") checks in lib.rs handle this.
-
-    if let Some(portable_dir) = determine_startup_portable_dir() {
-        std::env::set_var(
-            "CLAUDE_CONFIG_DIR",
-            portable_dir.to_string_lossy().to_string(),
-        );
-        std::env::set_var("CC_HAHA_APP_PORTABLE_DIR", "1");
+    if let Some(config_dir) = determine_startup_config_dir() {
+        match config_dir {
+            StartupConfigDir::Portable(portable_dir) => {
+                std::env::set_var(
+                    "CLAUDE_CONFIG_DIR",
+                    portable_dir.to_string_lossy().to_string(),
+                );
+                std::env::set_var(ECHOFLOW_PORTABLE_ENV, "1");
+            }
+            StartupConfigDir::Default(default_dir) => {
+                std::env::set_var(
+                    "CLAUDE_CONFIG_DIR",
+                    default_dir.to_string_lossy().to_string(),
+                );
+                std::env::set_var(ECHOFLOW_DEFAULT_CONFIG_ENV, "1");
+            }
+        }
     }
 
     // If CLAUDE_CONFIG_DIR is set (either from env or from our startup logic above),
@@ -36,6 +52,60 @@ fn main() {
     }
 
     claude_code_desktop_lib::run()
+}
+
+fn determine_startup_config_dir() -> Option<StartupConfigDir> {
+    if std::env::var("CLAUDE_CONFIG_DIR").is_ok() {
+        return None;
+    }
+
+    determine_startup_portable_dir()
+        .map(StartupConfigDir::Portable)
+        .or_else(|| default_echoflow_data_root().map(StartupConfigDir::Default))
+}
+
+fn default_echoflow_data_root() -> Option<PathBuf> {
+    default_echoflow_data_root_with(|key| std::env::var(key).ok())
+}
+
+fn default_echoflow_data_root_with<F>(env_var: F) -> Option<PathBuf>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    #[cfg(target_os = "windows")]
+    {
+        let base = env_var("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .or_else(|| {
+                env_var("USERPROFILE")
+                    .map(|home| PathBuf::from(home).join("AppData").join("Local"))
+            })?;
+        return Some(base.join(ECHOFLOW_APP_NAME));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let home = PathBuf::from(env_var("HOME")?);
+        return Some(
+            home.join("Library")
+                .join("Application Support")
+                .join(ECHOFLOW_APP_NAME),
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(data_home) = env_var("XDG_DATA_HOME") {
+            return Some(PathBuf::from(data_home).join("echoflow-code"));
+        }
+        let home = PathBuf::from(env_var("HOME")?);
+        return Some(home.join(".local").join("share").join("echoflow-code"));
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        None
+    }
 }
 
 /// Determine if we should start in portable mode.
@@ -109,7 +179,6 @@ fn determine_startup_portable_dir() -> Option<PathBuf> {
         }
     }
 
-    // 4. 自动检测：如果默认便携目录中已经存在数据文件，则自动进入便携模式
     fn dir_has_portable_data(dir: &std::path::Path) -> bool {
         if !dir.is_dir() {
             return false;
@@ -129,12 +198,95 @@ fn determine_startup_portable_dir() -> Option<PathBuf> {
             || dir.join("skills").is_dir()
             || dir.join("plugins").is_dir()
             || dir.join("cowork_plugins").is_dir()
-            || dir.join("cc-haha").is_dir()
-    }
-
-    if dir_has_portable_data(&default_portable) {
-        return Some(default_portable);
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::default_echoflow_data_root_with;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    fn env_lookup(vars: HashMap<&'static str, &'static str>) -> impl Fn(&str) -> Option<String> {
+        move |key| vars.get(key).map(|value| value.to_string())
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn default_echoflow_root_uses_local_app_data_on_windows() {
+        let root = default_echoflow_data_root_with(env_lookup(HashMap::from([(
+            "LOCALAPPDATA",
+            r"C:\Users\tester\AppData\Local",
+        )])))
+        .expect("windows root should resolve");
+
+        assert_eq!(
+            root,
+            PathBuf::from(r"C:\Users\tester\AppData\Local").join("EchoFlow Code")
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn default_echoflow_root_falls_back_to_user_profile_on_windows() {
+        let root = default_echoflow_data_root_with(env_lookup(HashMap::from([(
+            "USERPROFILE",
+            r"C:\Users\tester",
+        )])))
+        .expect("windows root should resolve");
+
+        assert_eq!(
+            root,
+            PathBuf::from(r"C:\Users\tester")
+                .join("AppData")
+                .join("Local")
+                .join("EchoFlow Code")
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn default_echoflow_root_uses_application_support_on_macos() {
+        let root =
+            default_echoflow_data_root_with(env_lookup(HashMap::from([("HOME", "/Users/tester")])))
+                .expect("macos root should resolve");
+
+        assert_eq!(
+            root,
+            PathBuf::from("/Users/tester")
+                .join("Library")
+                .join("Application Support")
+                .join("EchoFlow Code")
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn default_echoflow_root_uses_xdg_data_home_on_linux() {
+        let root = default_echoflow_data_root_with(env_lookup(HashMap::from([(
+            "XDG_DATA_HOME",
+            "/tmp/data",
+        )])))
+        .expect("linux root should resolve");
+
+        assert_eq!(root, PathBuf::from("/tmp/data").join("echoflow-code"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn default_echoflow_root_falls_back_to_local_share_on_linux() {
+        let root =
+            default_echoflow_data_root_with(env_lookup(HashMap::from([("HOME", "/home/tester")])))
+                .expect("linux root should resolve");
+
+        assert_eq!(
+            root,
+            PathBuf::from("/home/tester")
+                .join(".local")
+                .join("share")
+                .join("echoflow-code")
+        );
+    }
 }

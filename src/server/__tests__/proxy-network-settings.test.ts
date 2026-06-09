@@ -5,6 +5,7 @@ import * as path from 'path'
 import { handleProxyRequest, withStreamIdleTimeout } from '../proxy/handler.js'
 import { ProviderService } from '../services/providerService.js'
 import { resetSettingsCache } from '../../utils/settings/settingsCache.js'
+import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 
 let tmpDir: string
 let originalConfigDir: string | undefined
@@ -26,21 +27,23 @@ async function teardown() {
   await fs.rm(tmpDir, { recursive: true, force: true })
 }
 
+async function writeEchoFlowSettings(settings: Record<string, unknown>): Promise<void> {
+  const settingsPath = path.join(getEchoFlowInternalDir(tmpDir), 'settings.json')
+  await fs.mkdir(path.dirname(settingsPath), { recursive: true })
+  await fs.writeFile(settingsPath, JSON.stringify(settings), 'utf-8')
+}
+
 describe('proxy network settings', () => {
   beforeEach(setup)
   afterEach(teardown)
 
   test('uses configured AI request timeout for non-stream upstream requests', async () => {
-    await fs.writeFile(
-      path.join(tmpDir, 'settings.json'),
-      JSON.stringify({
-        network: {
-          aiRequestTimeoutMs: 45_000,
-          proxy: { mode: 'system', url: '' },
-        },
-      }),
-      'utf-8',
-    )
+    await writeEchoFlowSettings({
+      network: {
+        aiRequestTimeoutMs: 45_000,
+        proxy: { mode: 'system', url: '' },
+      },
+    })
 
     const svc = new ProviderService()
     const provider = await svc.addProvider({
@@ -107,16 +110,12 @@ describe('proxy network settings', () => {
   })
 
   test('uses configured AI request timeout for non-stream Responses upstream requests', async () => {
-    await fs.writeFile(
-      path.join(tmpDir, 'settings.json'),
-      JSON.stringify({
-        network: {
-          aiRequestTimeoutMs: 45_000,
-          proxy: { mode: 'system', url: '' },
-        },
-      }),
-      'utf-8',
-    )
+    await writeEchoFlowSettings({
+      network: {
+        aiRequestTimeoutMs: 45_000,
+        proxy: { mode: 'system', url: '' },
+      },
+    })
 
     const svc = new ProviderService()
     const provider = await svc.addProvider({
@@ -181,16 +180,12 @@ describe('proxy network settings', () => {
   })
 
   test('uses configured AI request timeout while opening and reading streaming upstream requests', async () => {
-    await fs.writeFile(
-      path.join(tmpDir, 'settings.json'),
-      JSON.stringify({
-        network: {
-          aiRequestTimeoutMs: 180_000,
-          proxy: { mode: 'system', url: '' },
-        },
-      }),
-      'utf-8',
-    )
+    await writeEchoFlowSettings({
+      network: {
+        aiRequestTimeoutMs: 180_000,
+        proxy: { mode: 'system', url: '' },
+      },
+    })
 
     const svc = new ProviderService()
     const provider = await svc.addProvider({

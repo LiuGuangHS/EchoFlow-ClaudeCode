@@ -209,6 +209,9 @@ async function selectAcrossMessageText(
     await Promise.resolve()
   })
   await waitForSelectionMenuUpdate()
+  await waitFor(() => {
+    expect(screen.getByRole('button', { name: 'Add to chat' })).toBeTruthy()
+  })
 }
 
 describe('MessageList nested tool calls', () => {

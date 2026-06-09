@@ -2,7 +2,7 @@
  * Settings Service — 读写用户级和项目级设置文件
  *
  * 设置文件为 JSON 格式：
- *   - 用户级: ~/.claude/settings.json
+ *   - 用户级: <EchoFlow AppData>/echoflow/settings.json
  *   - 项目级: {projectRoot}/.claude/settings.json
  *
  * 合并策略：Object.assign({}, userSettings, projectSettings)
@@ -11,11 +11,11 @@
 import * as fs from 'fs/promises'
 import { randomBytes } from 'node:crypto'
 import * as path from 'path'
-import * as os from 'os'
 import { ApiError } from '../middleware/errorHandler.js'
 import { normalizeJsonObject, readRecoverableJsonFile } from './recoverableJsonFile.js'
 import { ensurePersistentStorageUpgraded } from './persistentStorageMigrations.js'
 import { resetSettingsCache } from '../../utils/settings/settingsCache.js'
+import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 
 const VALID_PERMISSION_MODES = [
   'default',
@@ -37,12 +37,12 @@ export class SettingsService {
 
   /** 配置目录，支持通过环境变量覆盖（便于测试） */
   private getConfigDir(): string {
-    return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
+    return getEchoFlowConfigDir()
   }
 
   /** 用户级设置文件路径 */
   private getUserSettingsPath(): string {
-    return path.join(this.getConfigDir(), 'settings.json')
+    return path.join(getEchoFlowInternalDir(this.getConfigDir()), 'settings.json')
   }
 
   /** 项目级设置文件路径 */

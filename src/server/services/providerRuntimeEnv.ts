@@ -13,6 +13,7 @@ import {
   ATTRIBUTION_HEADER_ENV_KEY,
   attributionHeaderEnvForModel,
 } from './attributionHeaderPolicy.js'
+import { getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 import {
   OPENAI_CODEX_OAUTH_FILE_ENV_KEY,
   OPENAI_OAUTH_PROVIDER_ENV_KEY,
@@ -32,6 +33,8 @@ export const MANAGED_PROVIDER_ENV_KEYS = [
   'ANTHROPIC_DEFAULT_OPUS_MODEL',
   'ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES',
   'CLAUDE_CODE_AUTO_COMPACT_WINDOW',
+  'API_TIMEOUT_MS',
+  'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
   ATTRIBUTION_HEADER_ENV_KEY,
   MODEL_CONTEXT_WINDOWS_ENV_KEY,
   OPENAI_OAUTH_PROVIDER_ENV_KEY,
@@ -234,7 +237,7 @@ export function readActiveProviderManagedEnv(
   options?: { serverPort?: number },
 ): Record<string, string> | null {
   try {
-    const raw = fs.readFileSync(path.join(configDir, 'cc-haha', 'providers.json'), 'utf-8')
+    const raw = fs.readFileSync(path.join(getEchoFlowInternalDir(configDir), 'providers.json'), 'utf-8')
     const index = normalizeProvidersIndex(JSON.parse(raw))
     if (!index?.activeId) return null
 

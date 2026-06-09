@@ -11,6 +11,7 @@ import {
   validateH5PublicBaseUrl,
 } from '../services/h5AccessService.js'
 import { ProviderService } from '../services/providerService.js'
+import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 
 let tmpDir: string
 let originalConfigDir: string | undefined
@@ -18,7 +19,7 @@ let originalH5PublicBaseUrl: string | undefined
 let originalH5AutoPublicUrl: string | undefined
 
 function getManagedSettingsPath(): string {
-  return path.join(tmpDir, 'cc-haha', 'settings.json')
+  return path.join(getEchoFlowInternalDir(tmpDir), 'settings.json')
 }
 
 beforeEach(async () => {

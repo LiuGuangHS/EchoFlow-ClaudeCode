@@ -6,7 +6,6 @@
  *   POST /api/computer-use/setup   — 创建 venv 并安装依赖
  */
 
-import { homedir } from 'os'
 import { join } from 'path'
 import { access, readFile, mkdir, writeFile, rm } from 'fs/promises'
 import { createHash } from 'crypto'
@@ -16,6 +15,7 @@ import type { CuPermissionRequest } from '../../vendor/computer-use-mcp/types.js
 import { computerUseApprovalService } from '../services/computerUseApprovalService.js'
 import { detectPythonRuntime, isPythonVersionAtLeast } from './computer-use-python.js'
 import { buildPipInstallAttempts } from '../../utils/computerUse/pipInstall.js'
+import { getEchoFlowConfigDir } from '../../utils/echoFlowConfigRoot.js'
 import {
   DEFAULT_DESKTOP_GRANT_FLAGS,
   loadStoredComputerUseConfig,
@@ -35,7 +35,7 @@ import REQUIREMENTS_WIN32 from '../../../runtime/requirements-win.txt' with { ty
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const projectRoot = path.resolve(__dirname, '../../..')
 const devRuntimeRoot = join(projectRoot, 'runtime')
-const claudeHome = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
+const claudeHome = getEchoFlowConfigDir()
 const runtimeStateRoot = join(claudeHome, '.runtime')
 const venvRoot = join(runtimeStateRoot, 'venv')
 const installStampPath = join(runtimeStateRoot, 'requirements.sha256')
@@ -458,7 +458,7 @@ async function runSetup(): Promise<SetupResult> {
 }
 
 // ============================================================================
-// Authorized Apps configuration — stored in ~/.claude/cc-haha/computer-use-config.json
+// Authorized Apps configuration — stored in EchoFlow-owned AppData.
 // ============================================================================
 
 type AuthorizedApp = {

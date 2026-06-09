@@ -16,8 +16,8 @@ BASE_URL="http://127.0.0.1:${API_PORT}"
 WEB_URL="http://127.0.0.1:${WEB_PORT}/?serverUrl=${BASE_URL}"
 
 RUN_ID="$(date +%s)-$RANDOM"
-SESSION_NAME="cc-haha-rewind-complex-e2e-${RUN_ID}"
-ARTIFACT_DIR="$(mktemp -d "/tmp/cc-haha-rewind-complex-e2e-${RUN_ID}-XXXX")"
+SESSION_NAME="echoflow-code-rewind-complex-e2e-${RUN_ID}"
+ARTIFACT_DIR="$(mktemp -d "/tmp/echoflow-code-rewind-complex-e2e-${RUN_ID}-XXXX")"
 PROJECT_DIR="${ARTIFACT_DIR}/project"
 SERVER_LOG="${ARTIFACT_DIR}/server.log"
 WEB_LOG="${ARTIFACT_DIR}/web.log"
@@ -146,7 +146,7 @@ AB="agent-browser --session ${SESSION_NAME}"
 
 ${AB} open "${WEB_URL}"
 ${AB} wait 2000
-${AB} eval "localStorage.setItem('cc-haha-locale', 'en'); location.reload();"
+${AB} eval "localStorage.setItem('echoflow-code-locale', 'en'); location.reload();"
 ${AB} wait 2000
 ${AB} screenshot "${ARTIFACT_DIR}/01-home.png" >/dev/null
 

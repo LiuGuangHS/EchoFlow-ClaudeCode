@@ -157,7 +157,7 @@ describe('Electron terminal service', () => {
       expect(fs.statSync(cache).mode & 0o077).toBe(0)
       expect(fs.statSync(path.join(cache, 'prebuilds', 'darwin-arm64', 'spawn-helper')).mode & 0o777).toBe(0o500)
     }
-    expect(fs.existsSync(path.join(cache, '.cc-haha-node-pty-manifest.json'))).toBe(true)
+    expect(fs.existsSync(path.join(cache, '.echoflow-code-node-pty-manifest.json'))).toBe(true)
   })
 
   it('rebuilds the packaged node-pty runtime cache when cached files are tampered', () => {

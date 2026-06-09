@@ -3,6 +3,7 @@ import type {
   DesktopHostUnlisten,
   DesktopUpdate,
   DesktopUpdateDownloadEvent,
+  DesktopUpdateFeedAttempt,
 } from './types'
 import {
   ELECTRON_EVENT_CHANNELS,
@@ -23,6 +24,8 @@ export type ElectronHostBridge = {
 type ElectronUpdateMetadata = {
   version: string
   body?: string | null
+  feedUrl?: string | null
+  feedAttempts?: DesktopUpdateFeedAttempt[]
 }
 
 function safeInvoke<T>(
@@ -44,6 +47,8 @@ export function createElectronHost(bridge: ElectronHostBridge): DesktopHost {
   const createUpdate = (metadata: ElectronUpdateMetadata): DesktopUpdate => ({
     version: metadata.version,
     body: metadata.body ?? null,
+    feedUrl: metadata.feedUrl ?? null,
+    feedAttempts: metadata.feedAttempts,
     async download(onEvent) {
       const unlisten = onEvent
         ? await subscribe<DesktopUpdateDownloadEvent>(ELECTRON_EVENT_CHANNELS.updateDownloadEvent, onEvent)

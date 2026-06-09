@@ -8,8 +8,8 @@ import {
 } from '../api/client'
 import { getDesktopHost } from './desktopHost'
 
-export const H5_SERVER_URL_STORAGE_KEY = 'cc-haha-h5-server-url'
-export const H5_TOKEN_STORAGE_KEY = 'cc-haha-h5-token'
+export const H5_SERVER_URL_STORAGE_KEY = 'echoflow-code-h5-server-url'
+export const H5_TOKEN_STORAGE_KEY = 'echoflow-code-h5-token'
 
 type H5ConnectionFailureReason =
   | 'missing-token'

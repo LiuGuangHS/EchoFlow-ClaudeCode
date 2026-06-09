@@ -25,7 +25,7 @@ These rules are adapted from Karpathy-style coding-agent guidelines. They bias t
 ## Project Structure & Module Organization
 This is a Bun-based Coding Agent product with a CLI, local server, desktop app, IM adapters, docs, and release automation.
 
-- `bin/claude-haha` is the executable entrypoint; `bun run start` and `./bin/claude-haha` run the CLI locally.
+- `bin/echoflow-code` is the executable entrypoint; `bun run start` and `./bin/echoflow-code` run the CLI locally. `bin/claude-haha` is a legacy compatibility shim only; do not use it in new docs or scripts.
 - `src/` contains the CLI/runtime surface: `entrypoints/` for startup paths, `screens/` and `components/` for the Ink TUI, `commands/` for slash commands, `services/` for API/MCP/OAuth logic, `tools/` for agent tools, `utils/` for shared runtime helpers, and `server/` for the local API/WebSocket service.
 - `desktop/` contains the desktop product: React UI in `desktop/src/`, API clients in `desktop/src/api/`, shared UI in `desktop/src/components/`, Electron host code in `desktop/electron/`, legacy/shared assets in `desktop/src-tauri/`, and desktop build scripts in `desktop/scripts/`.
 - Desktop is Electron-first. `desktop/src-tauri/` is retained for icons, sidecar binaries, preview-agent resources, and compatibility assets. Do not treat `desktop/src-tauri/tauri.conf.json` as the release source of truth unless a task explicitly revives Tauri packaging.
@@ -36,7 +36,7 @@ This is a Bun-based Coding Agent product with a CLI, local server, desktop app, 
 ## Build, Test, and Development Commands
 Install root dependencies with `bun install`. Install desktop dependencies in `desktop/` when touching desktop UI/native code, and adapter dependencies in `adapters/` when touching IM adapters.
 
-- `./bin/claude-haha` or `bun run start`: run the CLI locally.
+- `./bin/echoflow-code` or `bun run start`: run the CLI locally.
 - `SERVER_PORT=3456 bun run src/server/index.ts`: start the local API/WebSocket server used by `desktop/`.
 - `cd desktop && bun run dev`: run the desktop frontend in Vite.
 - `cd desktop && bun run electron:dev`: build Electron main/preload bundles, start Vite, and launch the Electron shell for host-level desktop behavior.
@@ -87,7 +87,7 @@ Every feature, bugfix, and behavior change must ship with proof that matches the
 - Run `bun run check:persistence-upgrade` for storage-shape changes. The change is blocked until migration tests, old fixtures, backup behavior, and unknown-field preservation pass.
 - `~/.claude/settings.json` is user-owned shared state: preserve unknown fields on read/write, merge additively, and never write a repo-owned global `schemaVersion` into it.
 - Desktop Doctor and any automatic repair path must be deny-by-default. One-click repair may only mutate allowlisted, regenerable desktop UI state such as `cc-haha-*` `localStorage` keys or native window state.
-- Public desktop and release branding is `EchoFlow-ClaudeCode`. Internal CLI names and persistence paths such as `claude-haha`, `cc-haha-*`, and `~/.claude/cc-haha/**` are legacy compatibility surfaces; do not rename them without a migration task, forward/backward compatibility tests, and explicit user-data preservation.
+- Public desktop and release branding is `EchoFlow Code`; the local executable is `echoflow-code`. Keep official upstream terminology such as `Claude Code`, `Claude CLI`, `claude-code-*`, and `CLAUDE_CODE_*` when it refers to the upstream product, compatibility contracts, or package/runtime semantics. Internal persistence paths such as `cc-haha-*` and `~/.claude/cc-haha/**` are legacy storage surfaces; do not rename them without a migration task, forward/backward compatibility tests, and explicit user-data preservation.
 - Windows AppUserModelID must stay equal to `desktop/package.json` `build.appId`; it controls toast attribution and taskbar identity. Branding changes must update Electron identity tests.
 - Doctor and repair flows must never mutate chat transcripts, model/provider config, Skills, MCP config, plugin state, IM bindings, adapter sessions, OAuth tokens, or team/session records unless a future task explicitly adds a reviewed, backup-first manual repair flow.
 - Protected files include `~/.claude/projects/**/*.jsonl`, `~/.claude/settings.json`, project `.claude/settings.json`, `~/.claude/cc-haha/providers.json`, `~/.claude/cc-haha/settings.json`, `~/.claude/adapters.json`, `~/.claude/adapter-sessions.json`, `~/.claude/skills`, project `.claude/skills`, `.mcp.json`, managed MCP config, `~/.claude/plugins/**`, `~/.claude/teams/**`, and `~/.claude/cc-haha/*oauth*.json`. Diagnose these paths only with redaction by default.

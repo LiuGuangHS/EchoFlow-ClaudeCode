@@ -15,7 +15,7 @@ describe('settingsStore locale defaults', () => {
   })
 
   it('keeps a stored locale override', async () => {
-    window.localStorage.setItem('cc-haha-locale', 'en')
+    window.localStorage.setItem('echoflow-code-locale', 'en')
 
     const { useSettingsStore } = await import('./settingsStore')
 
@@ -33,7 +33,7 @@ describe('settingsStore UI zoom', () => {
   })
 
   it('hydrates from the app zoom storage key', async () => {
-    window.localStorage.setItem('cc-haha-app-zoom', '1.25')
+    window.localStorage.setItem('echoflow-code-app-zoom', '1.25')
 
     const { useSettingsStore } = await import('./settingsStore')
 
@@ -46,7 +46,7 @@ describe('settingsStore UI zoom', () => {
     useSettingsStore.getState().setUiZoom(1.25)
 
     await vi.waitFor(() => {
-      expect(window.localStorage.getItem('cc-haha-app-zoom')).toBe('1.25')
+      expect(window.localStorage.getItem('echoflow-code-app-zoom')).toBe('1.25')
     })
     expect(useSettingsStore.getState().uiZoom).toBe(1.25)
     expect(document.documentElement.getAttribute('data-app-zoom-percent')).toBe('125')
@@ -58,7 +58,7 @@ describe('settingsStore UI zoom', () => {
     useSettingsStore.getState().setUiZoom(9)
 
     await vi.waitFor(() => {
-      expect(window.localStorage.getItem('cc-haha-app-zoom')).toBe('2')
+      expect(window.localStorage.getItem('echoflow-code-app-zoom')).toBe('2')
     })
     expect(useSettingsStore.getState().uiZoom).toBe(2)
   })

@@ -30,12 +30,12 @@ cp .env.example .env
 ### macOS / Linux
 
 ```bash
-./bin/claude-haha                          # 交互 TUI 模式
-./bin/claude-haha -p "your prompt here"    # 无头模式
-./bin/claude-haha --help                   # 查看所有选项
+./bin/echoflow-code                          # 交互 TUI 模式
+./bin/echoflow-code -p "your prompt here"    # 无头模式
+./bin/echoflow-code --help                   # 查看所有选项
 ```
 
-> 说明：当前 CLI 可执行文件名仍为 `claude-haha`，用于兼容已有脚本、配置和用户数据路径；公开产品名为 EchoFlow-ClaudeCode。
+> `claude-haha` 旧命令仅作为兼容旧脚本和旧安装路径的转发入口保留，新用法请使用 `echoflow-code`。
 
 ### Windows
 
@@ -46,7 +46,7 @@ cp .env.example .env
 bun --env-file=.env ./src/entrypoints/cli.tsx
 
 # 或在 Git Bash 中运行
-./bin/claude-haha
+./bin/echoflow-code
 ```
 
 ## 4. 全局使用（可选）
@@ -54,7 +54,7 @@ bun --env-file=.env ./src/entrypoints/cli.tsx
 将 `bin/` 加入 PATH 后可在任意目录启动，详见 [全局使用指南](./global-usage.md)：
 
 ```bash
-export PATH="$HOME/path/to/EchoFlow-ClaudeCode/bin:$PATH"
+export PATH="$HOME/path/to/echoflow-code/bin:$PATH"
 ```
 
 ## 5. 降级模式
@@ -62,5 +62,5 @@ export PATH="$HOME/path/to/EchoFlow-ClaudeCode/bin:$PATH"
 如果 Ink TUI 出现问题，可以使用降级 Recovery CLI 模式：
 
 ```bash
-CLAUDE_CODE_FORCE_RECOVERY_CLI=1 ./bin/claude-haha
+CLAUDE_CODE_FORCE_RECOVERY_CLI=1 ./bin/echoflow-code
 ```

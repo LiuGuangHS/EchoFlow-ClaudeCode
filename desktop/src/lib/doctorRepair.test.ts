@@ -52,13 +52,13 @@ describe('doctorRepair', () => {
 
   it('keeps local repair successful when the server doctor endpoint is unavailable', async () => {
     window.localStorage.clear()
-    window.localStorage.setItem('cc-haha-theme', 'dark')
+    window.localStorage.setItem('echoflow-code-theme', 'dark')
     doctorApiMock.reportAndRepair.mockRejectedValueOnce(new Error('Failed to fetch'))
 
     const result = await runDoctorRepair({ storage: window.localStorage })
 
     expect(doctorApiMock.reportAndRepair).toHaveBeenCalled()
-    expect(result.local.removedKeys).toContain('cc-haha-theme')
+    expect(result.local.removedKeys).toContain('echoflow-code-theme')
     expect(result.server).toBeNull()
     expect(result.serverError).toBe('Failed to fetch')
   })

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 import { isRemoteManagedSettingsEligible } from '../services/remoteManagedSettings/syncCache.js'
 import { mergeActiveProviderManagedEnv } from '../server/services/providerRuntimeEnv.js'
 import { clearCACertsCache } from './caCerts.js'
@@ -95,15 +96,15 @@ function filterSettingsEnv(
 }
 
 /**
- * Read env vars from ~/.claude/cc-haha/settings.json (Haha-specific provider
- * config). This file is written by ProviderService.syncToSettings() and
+ * Read env vars from EchoFlow-managed provider settings.
+ * This file is written by ProviderService sync and
  * contains ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, model defaults, etc.
  * Returns an empty object if the file doesn't exist or is invalid.
  */
-function getCcHahaSettingsEnv(): Record<string, string> {
+function getEchoFlowSettingsEnv(): Record<string, string> {
   try {
-    const ccHahaSettings = join(getClaudeConfigHomeDir(), 'cc-haha', 'settings.json')
-    const raw = readFileSync(ccHahaSettings, 'utf-8')
+    const echoFlowSettings = join(getEchoFlowInternalDir(getClaudeConfigHomeDir()), 'settings.json')
+    const raw = readFileSync(echoFlowSettings, 'utf-8')
     const parsed = JSON.parse(raw) as { env?: Record<string, string> }
     const settingsEnv = normalizeLegacyDeepSeekManagedEnv(parsed.env ?? {}).env
     return mergeActiveProviderManagedEnv(settingsEnv, getClaudeConfigHomeDir())
@@ -170,11 +171,10 @@ export function applySafeConfigEnvironmentVariables(): void {
     )
   }
 
-  // cc-haha provider isolation: apply env from ~/.claude/cc-haha/settings.json
-  // AFTER userSettings so Haha-specific provider config takes priority over
-  // the original Claude Code's settings. This prevents Haha from polluting
-  // ~/.claude/settings.json while still allowing it to override provider vars.
-  Object.assign(process.env, filterSettingsEnv(getCcHahaSettingsEnv()))
+  // EchoFlow provider isolation: apply env from EchoFlow-managed settings
+  // AFTER userSettings so provider config takes priority without touching
+  // the original Claude Code's settings.
+  Object.assign(process.env, filterSettingsEnv(getEchoFlowSettingsEnv()))
 
   // Compute remote-managed-settings eligibility now, with userSettings and
   // flagSettings env applied. Eligibility reads CLAUDE_CODE_USE_BEDROCK,
@@ -217,9 +217,9 @@ export function applyConfigEnvironmentVariables(): void {
 
   Object.assign(process.env, filterSettingsEnv(getSettings_DEPRECATED()?.env))
 
-  // cc-haha provider isolation: same as in applySafeConfigEnvironmentVariables,
-  // apply Haha-specific env last so it overrides the original settings.
-  Object.assign(process.env, filterSettingsEnv(getCcHahaSettingsEnv()))
+  // EchoFlow provider isolation: same as in applySafeConfigEnvironmentVariables,
+  // apply EchoFlow-specific env last so it overrides the original settings.
+  Object.assign(process.env, filterSettingsEnv(getEchoFlowSettingsEnv()))
 
   // Clear caches so agents are rebuilt with the new env vars
   clearCACertsCache()

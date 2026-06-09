@@ -30,12 +30,12 @@ See [Environment Variables](./env-vars.md) for the full reference.
 ### macOS / Linux
 
 ```bash
-./bin/claude-haha                          # Interactive TUI mode
-./bin/claude-haha -p "your prompt here"    # Headless mode
-./bin/claude-haha --help                   # Show all options
+./bin/echoflow-code                          # Interactive TUI mode
+./bin/echoflow-code -p "your prompt here"    # Headless mode
+./bin/echoflow-code --help                   # Show all options
 ```
 
-> Note: the current CLI binary remains `claude-haha` for compatibility with existing scripts, configuration, and user-data paths. The public product name is EchoFlow-ClaudeCode.
+> The legacy `claude-haha` command is kept only as a compatibility shim for older scripts and installs. Use `echoflow-code` for new usage.
 
 ### Windows
 
@@ -46,7 +46,7 @@ See [Environment Variables](./env-vars.md) for the full reference.
 bun --env-file=.env ./src/entrypoints/cli.tsx
 
 # Or run inside Git Bash
-./bin/claude-haha
+./bin/echoflow-code
 ```
 
 ## 4. Global Usage (Optional)
@@ -54,7 +54,7 @@ bun --env-file=.env ./src/entrypoints/cli.tsx
 Add `bin/` to your PATH to run from any directory. See [Global Usage Guide](./global-usage.md):
 
 ```bash
-export PATH="$HOME/path/to/EchoFlow-ClaudeCode/bin:$PATH"
+export PATH="$HOME/path/to/echoflow-code/bin:$PATH"
 ```
 
 ## 5. Recovery Mode
@@ -62,5 +62,5 @@ export PATH="$HOME/path/to/EchoFlow-ClaudeCode/bin:$PATH"
 If the Ink TUI has issues, use the fallback Recovery CLI mode:
 
 ```bash
-CLAUDE_CODE_FORCE_RECOVERY_CLI=1 ./bin/claude-haha
+CLAUDE_CODE_FORCE_RECOVERY_CLI=1 ./bin/echoflow-code
 ```

@@ -1,17 +1,17 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test'
 import * as fs from 'node:fs/promises'
-import { createServer } from 'node:net'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { gunzipSync } from 'node:zlib'
 import { handleDiagnosticsApi } from '../api/diagnostics.js'
 import { DiagnosticsService, diagnosticsService } from '../services/diagnosticsService.js'
+import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 
 let tmpDir: string
 let originalConfigDir: string | undefined
 
 beforeEach(async () => {
-  tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cc-haha-diagnostics-test-'))
+  tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'echoflow-diagnostics-test-'))
   originalConfigDir = process.env.CLAUDE_CONFIG_DIR
   process.env.CLAUDE_CONFIG_DIR = tmpDir
 })
@@ -30,35 +30,8 @@ function makeRequest(method: string, urlStr: string): { req: Request; url: URL; 
   return { req, url, segments }
 }
 
-async function getPort(): Promise<number> {
-  return await new Promise((resolve, reject) => {
-    const server = createServer()
-    server.on('error', reject)
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address()
-      if (!address || typeof address === 'string') {
-        server.close(() => reject(new Error('Failed to allocate a local port')))
-        return
-      }
-      server.close(() => resolve(address.port))
-    })
-  })
-}
-
-async function waitForHttp(url: string, timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs
-  let lastError = ''
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(url)
-      if (response.ok) return
-      lastError = `HTTP ${response.status}`
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : String(error)
-    }
-    await Bun.sleep(100)
-  }
-  throw new Error(`Timed out waiting for ${url}${lastError ? ` (${lastError})` : ''}`)
+function echoFlowPath(...segments: string[]): string {
+  return path.join(getEchoFlowInternalDir(tmpDir), ...segments)
 }
 
 describe('DiagnosticsService', () => {
@@ -77,7 +50,7 @@ describe('DiagnosticsService', () => {
       },
     })
 
-    const raw = await fs.readFile(path.join(tmpDir, 'cc-haha', 'diagnostics', 'diagnostics.jsonl'), 'utf-8')
+    const raw = await fs.readFile(echoFlowPath('diagnostics', 'diagnostics.jsonl'), 'utf-8')
     expect(raw).toContain('cli_start_failed')
     expect(raw).toContain('[REDACTED]')
     expect(raw).toContain('https://[REDACTED]@example.com:8443/api')
@@ -86,7 +59,7 @@ describe('DiagnosticsService', () => {
     expect(raw).not.toContain('p%40ss')
     expect(raw).not.toContain(os.homedir())
 
-    const runtime = await fs.readFile(path.join(tmpDir, 'cc-haha', 'diagnostics', 'runtime-errors.log'), 'utf-8')
+    const runtime = await fs.readFile(echoFlowPath('diagnostics', 'runtime-errors.log'), 'utf-8')
     expect(runtime).toContain('cli_start_failed')
     expect(runtime).toContain('"nested"')
     expect(runtime).toContain('[REDACTED]')
@@ -97,13 +70,13 @@ describe('DiagnosticsService', () => {
     const service = new DiagnosticsService()
     await service.recordEvent({ type: 'some_unclassified_event', summary: 'no severity given' })
 
-    const raw = await fs.readFile(path.join(tmpDir, 'cc-haha', 'diagnostics', 'diagnostics.jsonl'), 'utf-8')
+    const raw = await fs.readFile(echoFlowPath('diagnostics', 'diagnostics.jsonl'), 'utf-8')
     const event = JSON.parse(raw.trim().split('\n').at(-1)!)
     expect(event.severity).toBe('info')
 
     // info events stay out of the warning/error runtime log
     await expect(
-      fs.readFile(path.join(tmpDir, 'cc-haha', 'diagnostics', 'runtime-errors.log'), 'utf-8'),
+      fs.readFile(echoFlowPath('diagnostics', 'runtime-errors.log'), 'utf-8'),
     ).rejects.toThrow()
   })
 
@@ -124,9 +97,9 @@ describe('DiagnosticsService', () => {
 
   test('exports a single diagnostics tarball without provider secrets', async () => {
     const service = new DiagnosticsService()
-    await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+    await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
     await fs.writeFile(
-      path.join(tmpDir, 'cc-haha', 'providers.json'),
+      echoFlowPath('providers.json'),
       JSON.stringify({
         activeId: 'provider-1',
         providers: [{
@@ -148,8 +121,9 @@ describe('DiagnosticsService', () => {
       summary: 'provider failed with token=provider-secret',
       details: { accessToken: 'provider-secret' },
     })
+    await fs.mkdir(echoFlowPath('diagnostics'), { recursive: true })
     await fs.writeFile(
-      path.join(tmpDir, 'cc-haha', 'diagnostics', 'cli-diagnostics.jsonl'),
+      echoFlowPath('diagnostics', 'cli-diagnostics.jsonl'),
       '{"event":"cli_streaming_idle_timeout","data":{"authorization":"Bearer provider-secret"}}\n',
       'utf-8',
     )
@@ -170,50 +144,39 @@ describe('DiagnosticsService', () => {
   })
 
   test('keeps fatal startup errors visible on stderr while recording diagnostics', async () => {
-    const port = await getPort()
-    const serverArgs = ['bun', 'run', 'src/server/index.ts', '--host', '127.0.0.1', '--port', String(port)]
-    // This spawns a *real* server, not the in-process test runner. Strip the
-    // inherited NODE_ENV=test so it installs console/process capture the way a
-    // production server does (capture is intentionally skipped under test).
+    const fatalMessage = 'fatal diagnostics smoke'
+    const childScript = [
+      "import { diagnosticsService } from './src/server/services/diagnosticsService.ts'",
+      'diagnosticsService.installProcessCapture()',
+      `process.emit('uncaughtException', new Error(${JSON.stringify(fatalMessage)}))`,
+      'setTimeout(() => {}, 10_000)',
+    ].join('\n')
     const env = {
       ...process.env,
       CLAUDE_CONFIG_DIR: tmpDir,
     }
     delete (env as Record<string, string | undefined>).NODE_ENV
-    const server = Bun.spawn(serverArgs, {
+    const child = Bun.spawn([process.execPath, '-e', childScript], {
       cwd: process.cwd(),
       env,
-      stdout: 'ignore',
-      stderr: 'ignore',
+      stdout: 'pipe',
+      stderr: 'pipe',
     })
 
-    try {
-      await waitForHttp(`http://127.0.0.1:${port}/health`, 10_000)
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ])
 
-      const duplicate = Bun.spawn(serverArgs, {
-        cwd: process.cwd(),
-        env,
-        stdout: 'pipe',
-        stderr: 'pipe',
-      })
-      const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(duplicate.stdout).text(),
-        new Response(duplicate.stderr).text(),
-        duplicate.exited,
-      ])
+    expect(exitCode).toBe(1)
+    expect(stdout).toBe('')
+    expect(stderr).toContain('[Server] Uncaught exception:')
+    expect(stderr).toContain(fatalMessage)
 
-      expect(exitCode).toBe(1)
-      expect(stdout).toBe('')
-      expect(stderr).toContain('[Server] Uncaught exception:')
-      expect(stderr).toContain(`Failed to start server. Is port ${port} in use?`)
-
-      const raw = await fs.readFile(path.join(tmpDir, 'cc-haha', 'diagnostics', 'diagnostics.jsonl'), 'utf-8')
-      expect(raw).toContain('server_uncaught_exception')
-      expect(raw).toContain(`Failed to start server. Is port ${port} in use?`)
-    } finally {
-      server.kill()
-      await server.exited.catch(() => undefined)
-    }
+    const raw = await fs.readFile(echoFlowPath('diagnostics', 'diagnostics.jsonl'), 'utf-8')
+    expect(raw).toContain('server_uncaught_exception')
+    expect(raw).toContain(fatalMessage)
   })
 })
 
@@ -230,7 +193,7 @@ describe('diagnostics API', () => {
     const statusRes = await handleDiagnosticsApi(statusReq.req, statusReq.url, statusReq.segments)
     expect(statusRes.status).toBe(200)
     const status = await statusRes.json() as { logDir: string; cliDiagnosticsPath: string; recentErrorCount: number }
-    expect(status.logDir).toContain(path.join('cc-haha', 'diagnostics'))
+    expect(status.logDir).toContain(path.join('echoflow', 'diagnostics'))
     expect(status.cliDiagnosticsPath).toContain('cli-diagnostics.jsonl')
     expect(status.recentErrorCount).toBe(1)
 

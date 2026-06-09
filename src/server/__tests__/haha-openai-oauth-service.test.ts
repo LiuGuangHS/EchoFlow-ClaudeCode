@@ -12,6 +12,7 @@ import {
   getHahaOpenAIOAuthFilePath,
   type StoredOpenAIOAuthTokens,
 } from '../services/hahaOpenAIOAuthService.js'
+import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 import { resetSettingsCache } from '../../utils/settings/settingsCache.js'
 
 let tmpDir: string
@@ -255,8 +256,10 @@ describe('HahaOpenAIOAuthService — session management', () => {
 
   test('callback listener uses saved manual network proxy for token exchange', async () => {
     const originalFetch = globalThis.fetch
+    const echoFlowDir = getEchoFlowInternalDir(tmpDir)
+    await fs.mkdir(echoFlowDir, { recursive: true })
     await fs.writeFile(
-      path.join(tmpDir, 'settings.json'),
+      path.join(echoFlowDir, 'settings.json'),
       JSON.stringify({
         network: {
           aiRequestTimeoutMs: 45_000,

@@ -1,16 +1,15 @@
 /**
- * HahaOpenAIOAuthService — 桌面端自管 OpenAI OAuth token
+ * EchoFlowOpenAIOAuthService — desktop-managed OpenAI OAuth token
  *
  * 为什么存在: macOS Keychain ACL 在 .app 被打上 quarantine 属性后
  * 对无 UI sidecar 静默拒绝,导致 CLI 读不到 OAuth token → 403。
- * 这个 service 把 token 存到 haha 自己的目录,并通过 env 注入给 CLI。
+ * This service stores tokens in EchoFlow-owned AppData and injects them into the CLI env.
  *
  * 复用 src/services/openaiAuth/client.ts 里的 PKCE + token exchange 逻辑,
  * 不复制粘贴 —— 保证跟 CLI 走同一套协议实现。
  */
 
 import * as fs from 'fs/promises'
-import * as os from 'os'
 import * as path from 'path'
 import { logTokenRefreshFailure } from './oauthRefreshLog.js'
 import { AuthCodeListener } from '../../services/oauth/auth-code-listener.js'
@@ -32,6 +31,7 @@ import {
   getManualNetworkProxyUrl,
   loadNetworkSettings,
 } from './networkSettings.js'
+import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 
 export type StoredOpenAIOAuthTokens = {
   accessToken: string
@@ -63,7 +63,7 @@ const SESSION_TTL_MS = 5 * 60 * 1000
 const HTML_SUCCESS = `<!doctype html>
 <html><head><meta charset="utf-8"><title>OpenAI Login Success</title>
 <style>body{font-family:-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#fafafa;color:#333}.card{text-align:center;padding:40px;background:white;border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,.06)}h1{color:#16a34a;margin:0 0 12px}p{color:#666}</style>
-</head><body><div class="card"><h1>OpenAI Login Successful</h1><p>You can close this window and return to EchoFlow-ClaudeCode.</p></div>
+</head><body><div class="card"><h1>OpenAI Login Successful</h1><p>You can close this window and return to EchoFlow Code.</p></div>
 <script>setTimeout(() => window.close(), 1500)</script>
 </body></html>`
 
@@ -85,9 +85,7 @@ function escapeHtml(s: string): string {
 }
 
 export function getHahaOpenAIOAuthFilePath(): string {
-  const configDir =
-    process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
-  return path.join(configDir, 'cc-haha', 'openai-oauth.json')
+  return path.join(getEchoFlowInternalDir(getEchoFlowConfigDir()), 'openai-oauth.json')
 }
 
 export class HahaOpenAIOAuthService {

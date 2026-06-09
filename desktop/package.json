@@ -1,8 +1,8 @@
 {
   "name": "claude-code-desktop",
   "private": true,
-  "version": "0.4.1-rc.1",
-  "description": "Desktop coding agent workbench for EchoFlow-ClaudeCode.",
+  "version": "0.4.1",
+  "description": "Desktop coding agent workbench for EchoFlow Code.",
   "homepage": "https://github.com/LiuGuangHS/EchoFlow-ClaudeCode",
   "author": {
     "name": "LiuGuangHS",
@@ -12,14 +12,14 @@
   "main": "electron-dist/main.cjs",
   "build": {
     "appId": "com.echoflowai-claude-code.desktop",
-    "productName": "EchoFlow-ClaudeCode",
+    "productName": "EchoFlow Code",
     "asar": true,
     "asarUnpack": [
       "dist/**",
       "node_modules/node-pty/**",
       "src-tauri/binaries/**"
     ],
-    "artifactName": "EchoFlow-ClaudeCode-${version}-${os}-${arch}.${ext}",
+    "artifactName": "EchoFlow-Code-${version}-${os}-${arch}.${ext}",
     "npmRebuild": false,
     "directories": {
       "output": "build-artifacts/electron"

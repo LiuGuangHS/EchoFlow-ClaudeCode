@@ -1,8 +1,9 @@
-import { afterAll, describe, expect, it } from 'bun:test'
+import { afterAll, beforeEach, describe, expect, it } from 'bun:test'
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import * as path from 'node:path'
 import { handleLocalFile, reconstructAbsolutePath } from '../localFile'
+import { clearFilesystemAccessRootsForTests } from '../../services/filesystemAccessRoots'
 
 // Deterministic 256-byte payload (bytes 0..255) so range slices are checkable.
 const VIDEO_BYTES = Uint8Array.from({ length: 256 }, (_, i) => i)
@@ -15,6 +16,10 @@ const SANDBOX_ROOTS = mkdtempSync(path.join(homedir(), '.lf-test-'))
 
 afterAll(() => {
   rmSync(SANDBOX_ROOTS, { recursive: true, force: true })
+})
+
+beforeEach(() => {
+  clearFilesystemAccessRootsForTests()
 })
 
 function setupFiles() {

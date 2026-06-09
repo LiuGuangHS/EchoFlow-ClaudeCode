@@ -2,12 +2,12 @@
 layout: home
 
 hero:
-  name: EchoFlow-ClaudeCode
+  name: EchoFlow Code
   text: 本地可运行的 Coding Agent
-  tagline: 支持 Anthropic 兼容 API、多 Agent、记忆系统、桌面端与 Computer Use
+  tagline: 内置 EchoFlowAPI，支持 Anthropic 兼容 API、多 Agent、记忆系统、桌面端与 Computer Use
   image:
     src: /images/app-icon.png
-    alt: EchoFlow-ClaudeCode
+    alt: EchoFlow Code
   actions:
     - theme: brand
       text: 快速开始
@@ -38,7 +38,7 @@ features:
     link: /guide/third-party-models
   - icon: "\U0001F4AC"
     title: IM 接入
-    details: 在桌面端 webapp 配置 Telegram / 飞书，并通过独立 adapter 进程远程对话 EchoFlow-ClaudeCode
+    details: 在桌面端 webapp 配置 Telegram / 飞书，并通过独立 adapter 进程远程对话 EchoFlow Code
     link: /im/
   - icon: "\U0001F4BB"
     title: Computer Use

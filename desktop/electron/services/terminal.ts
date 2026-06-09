@@ -10,7 +10,7 @@ import { ELECTRON_EVENT_CHANNELS } from '../ipc/channels'
 const TERMINAL_CONFIG_FILE = 'terminal-config.json'
 const MIN_TERMINAL_COLS = 20
 const MIN_TERMINAL_ROWS = 8
-const NODE_PTY_MANIFEST_FILE = '.cc-haha-node-pty-manifest.json'
+const NODE_PTY_MANIFEST_FILE = '.echoflow-code-node-pty-manifest.json'
 
 export type TerminalSpawnInput = {
   cols?: number

@@ -532,22 +532,21 @@ async function handleSetPermissionMode(
 /**
  * 决定一次权限模式切换是否需要重启 CLI 子进程。
  *
- * 只有"进入 bypassPermissions"才需要重启：CLI 必须带 --dangerously-skip-permissions
- * 启动，否则运行时的 set_permission_mode → bypassPermissions 会被拒绝，所以重启子进程
- * 带上该 flag。
+ * 进入 bypassPermissions 需要重启：CLI 必须带 --dangerously-skip-permissions
+ * 启动，否则运行时的 set_permission_mode → bypassPermissions 会被拒绝。
  *
- * 反过来"从 bypassPermissions 切到更严格的模式"**不要**重启：此时进程已带 flag，运行时
- * 降级即可。更关键的是——重启会把进程内的 prePlanMode 记忆冲掉：若 bypass→plan 走重启，
- * 新 CLI 直接以 plan 启动、prePlanMode 为空，ExitPlanMode 只能恢复成 default 而非进入前的
- * bypassPermissions。保持进程不变、走 setPermissionMode 做进程内 transition，CLI 才会像 TUI
- * 一样栈存 prePlanMode='bypassPermissions'，退出 plan 时正确恢复 bypass。
+ * 从 bypassPermissions 切到 default / acceptEdits / dontAsk 也需要重启，确保新进程不再
+ * 带危险跳过权限的启动 flag。唯一例外是 bypass→plan：重启会冲掉进程内 prePlanMode
+ * 记忆，导致 ExitPlanMode 只能恢复成 default，而非进入 plan 前的 bypassPermissions。
+ * 所以 bypass→plan 保持进程不变，走运行时 setPermissionMode。
  */
 export function shouldRestartForPermissionMode(
   currentMode: string,
   mode: string,
 ): boolean {
   if (currentMode === mode) return false
-  return mode === 'bypassPermissions'
+  if (mode === 'bypassPermissions') return true
+  return currentMode === 'bypassPermissions' && mode !== 'plan'
 }
 
 async function applyPermissionModeToActiveSession(
@@ -2203,7 +2202,7 @@ async function getDefaultRuntimeSettings(): Promise<RuntimeSettings> {
 
   let model: string | undefined
   if (resolvedActiveId) {
-    // Provider is active — only consult provider-managed cc-haha settings.
+    // Provider is active — only consult provider-managed EchoFlow settings.
     // Global ~/.claude/settings.json model values must not bleed into provider mode.
     const baseModel =
       typeof modelSettings.model === 'string' && modelSettings.model.trim()

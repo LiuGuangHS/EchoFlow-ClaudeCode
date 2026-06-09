@@ -190,40 +190,40 @@ jobs:
           case "${{ matrix.label }}" in
             macOS-ARM64)
               expected=(
-                "EchoFlow-ClaudeCode-${APP_VERSION}-mac-arm64.dmg"
-                "EchoFlow-ClaudeCode-${APP_VERSION}-mac-arm64.dmg.blockmap"
-                "EchoFlow-ClaudeCode-${APP_VERSION}-mac-arm64.zip"
-                "EchoFlow-ClaudeCode-${APP_VERSION}-mac-arm64.zip.blockmap"
+                "EchoFlow-Code-${APP_VERSION}-mac-arm64.dmg"
+                "EchoFlow-Code-${APP_VERSION}-mac-arm64.dmg.blockmap"
+                "EchoFlow-Code-${APP_VERSION}-mac-arm64.zip"
+                "EchoFlow-Code-${APP_VERSION}-mac-arm64.zip.blockmap"
                 "latest-mac.yml"
               )
               ;;
             macOS-x64)
               expected=(
-                "EchoFlow-ClaudeCode-${APP_VERSION}-mac-x64.dmg"
-                "EchoFlow-ClaudeCode-${APP_VERSION}-mac-x64.dmg.blockmap"
-                "EchoFlow-ClaudeCode-${APP_VERSION}-mac-x64.zip"
-                "EchoFlow-ClaudeCode-${APP_VERSION}-mac-x64.zip.blockmap"
+                "EchoFlow-Code-${APP_VERSION}-mac-x64.dmg"
+                "EchoFlow-Code-${APP_VERSION}-mac-x64.dmg.blockmap"
+                "EchoFlow-Code-${APP_VERSION}-mac-x64.zip"
+                "EchoFlow-Code-${APP_VERSION}-mac-x64.zip.blockmap"
                 "latest-mac.yml"
               )
               ;;
             Linux-x64)
               expected=(
-                "EchoFlow-ClaudeCode-${APP_VERSION}-linux-x86_64.AppImage"
-                "EchoFlow-ClaudeCode-${APP_VERSION}-linux-amd64.deb"
+                "EchoFlow-Code-${APP_VERSION}-linux-x86_64.AppImage"
+                "EchoFlow-Code-${APP_VERSION}-linux-amd64.deb"
                 "latest-linux.yml"
               )
               ;;
             Linux-ARM64)
               expected=(
-                "EchoFlow-ClaudeCode-${APP_VERSION}-linux-arm64.AppImage"
-                "EchoFlow-ClaudeCode-${APP_VERSION}-linux-arm64.deb"
+                "EchoFlow-Code-${APP_VERSION}-linux-arm64.AppImage"
+                "EchoFlow-Code-${APP_VERSION}-linux-arm64.deb"
                 "latest-linux-arm64.yml"
               )
               ;;
             Windows-x64)
               expected=(
-                "EchoFlow-ClaudeCode-${APP_VERSION}-win-x64.exe"
-                "EchoFlow-ClaudeCode-${APP_VERSION}-win-x64.exe.blockmap"
+                "EchoFlow-Code-${APP_VERSION}-win-x64.exe"
+                "EchoFlow-Code-${APP_VERSION}-win-x64.exe.blockmap"
                 "latest.yml"
               )
               ;;
@@ -334,20 +334,20 @@ jobs:
           APP_VERSION: ${{ steps.version.outputs.value }}
         run: |
           expected=(
-            "EchoFlow-ClaudeCode-${APP_VERSION}-mac-arm64.dmg"
-            "EchoFlow-ClaudeCode-${APP_VERSION}-mac-arm64.dmg.blockmap"
-            "EchoFlow-ClaudeCode-${APP_VERSION}-mac-arm64.zip"
-            "EchoFlow-ClaudeCode-${APP_VERSION}-mac-arm64.zip.blockmap"
-            "EchoFlow-ClaudeCode-${APP_VERSION}-mac-x64.dmg"
-            "EchoFlow-ClaudeCode-${APP_VERSION}-mac-x64.dmg.blockmap"
-            "EchoFlow-ClaudeCode-${APP_VERSION}-mac-x64.zip"
-            "EchoFlow-ClaudeCode-${APP_VERSION}-mac-x64.zip.blockmap"
-            "EchoFlow-ClaudeCode-${APP_VERSION}-linux-x86_64.AppImage"
-            "EchoFlow-ClaudeCode-${APP_VERSION}-linux-amd64.deb"
-            "EchoFlow-ClaudeCode-${APP_VERSION}-linux-arm64.AppImage"
-            "EchoFlow-ClaudeCode-${APP_VERSION}-linux-arm64.deb"
-            "EchoFlow-ClaudeCode-${APP_VERSION}-win-x64.exe"
-            "EchoFlow-ClaudeCode-${APP_VERSION}-win-x64.exe.blockmap"
+            "EchoFlow-Code-${APP_VERSION}-mac-arm64.dmg"
+            "EchoFlow-Code-${APP_VERSION}-mac-arm64.dmg.blockmap"
+            "EchoFlow-Code-${APP_VERSION}-mac-arm64.zip"
+            "EchoFlow-Code-${APP_VERSION}-mac-arm64.zip.blockmap"
+            "EchoFlow-Code-${APP_VERSION}-mac-x64.dmg"
+            "EchoFlow-Code-${APP_VERSION}-mac-x64.dmg.blockmap"
+            "EchoFlow-Code-${APP_VERSION}-mac-x64.zip"
+            "EchoFlow-Code-${APP_VERSION}-mac-x64.zip.blockmap"
+            "EchoFlow-Code-${APP_VERSION}-linux-x86_64.AppImage"
+            "EchoFlow-Code-${APP_VERSION}-linux-amd64.deb"
+            "EchoFlow-Code-${APP_VERSION}-linux-arm64.AppImage"
+            "EchoFlow-Code-${APP_VERSION}-linux-arm64.deb"
+            "EchoFlow-Code-${APP_VERSION}-win-x64.exe"
+            "EchoFlow-Code-${APP_VERSION}-win-x64.exe.blockmap"
           )
 
           missing=()
@@ -391,7 +391,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.version.outputs.value }}
-          name: EchoFlow-ClaudeCode v${{ steps.version.outputs.value }}
+          name: EchoFlow Code v${{ steps.version.outputs.value }}
           body: ${{ steps.release_notes.outputs.body }}
           draft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft || false }}
           prerelease: false

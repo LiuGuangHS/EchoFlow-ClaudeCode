@@ -1,13 +1,11 @@
 import { THEME_MODES } from '../types/settings'
 import {
   APP_ZOOM_STORAGE_KEY,
-  LEGACY_UI_ZOOM_STORAGE_KEY,
   isValidStoredAppZoomLevel,
-  normalizeAppZoomLevel,
 } from './appZoom'
 
 export const CURRENT_DESKTOP_PERSISTENCE_SCHEMA_VERSION = 1
-export const DESKTOP_PERSISTENCE_VERSION_KEY = 'cc-haha.persistence.schemaVersion'
+export const DESKTOP_PERSISTENCE_VERSION_KEY = 'echoflow-code.persistence.schemaVersion'
 
 type DesktopMigrationReport = {
   migratedKeys: string[]
@@ -15,10 +13,10 @@ type DesktopMigrationReport = {
 
 type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 
-const TAB_STORAGE_KEY = 'cc-haha-open-tabs'
-const SESSION_RUNTIME_STORAGE_KEY = 'cc-haha-session-runtime'
-const THEME_STORAGE_KEY = 'cc-haha-theme'
-const LOCALE_STORAGE_KEY = 'cc-haha-locale'
+const TAB_STORAGE_KEY = 'echoflow-code-open-tabs'
+const SESSION_RUNTIME_STORAGE_KEY = 'echoflow-code-session-runtime'
+const THEME_STORAGE_KEY = 'echoflow-code-theme'
+const LOCALE_STORAGE_KEY = 'echoflow-code-locale'
 const EFFORT_LEVELS = ['low', 'medium', 'high', 'max']
 
 function readJson(storage: StorageLike, key: string): unknown {
@@ -134,17 +132,6 @@ function normalizeAppZoomKey(storage: StorageLike, report: DesktopMigrationRepor
   if (!isValidStoredAppZoomLevel(value)) {
     storage.removeItem(APP_ZOOM_STORAGE_KEY)
     report.migratedKeys.push(APP_ZOOM_STORAGE_KEY)
-  }
-
-  const currentValue = storage.getItem(APP_ZOOM_STORAGE_KEY)
-  const legacyValue = storage.getItem(LEGACY_UI_ZOOM_STORAGE_KEY)
-  if (currentValue === null && legacyValue !== null && isValidStoredAppZoomLevel(legacyValue)) {
-    storage.setItem(APP_ZOOM_STORAGE_KEY, String(normalizeAppZoomLevel(legacyValue)))
-    report.migratedKeys.push(APP_ZOOM_STORAGE_KEY)
-  }
-  if (legacyValue !== null) {
-    storage.removeItem(LEGACY_UI_ZOOM_STORAGE_KEY)
-    report.migratedKeys.push(LEGACY_UI_ZOOM_STORAGE_KEY)
   }
 }
 

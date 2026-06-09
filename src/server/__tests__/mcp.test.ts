@@ -7,6 +7,7 @@ import * as mcpClient from '../../services/mcp/client.js'
 import * as mcpConfig from '../../services/mcp/config.js'
 import { _setGlobalConfigCacheForTesting, getProjectPathForConfig } from '../../utils/config.js'
 import { getGlobalClaudeFile } from '../../utils/env.js'
+import { normalizePathForConfigKey } from '../../utils/path.js'
 import * as mcpHostPreflight from '../services/mcpHostPreflight.js'
 import { handleMcpApi } from '../api/mcp.js'
 import { conversationService } from '../services/conversationService.js'
@@ -144,13 +145,16 @@ describe('MCP API', () => {
         await fs.readFile(path.join(tmpDir, '.claude.json'), 'utf8'),
       )
 
-      expect(rawConfig.projects?.[projectA]?.mcpServers?.['scoped-server']).toBeUndefined()
-      expect(rawConfig.projects?.[projectA]?.disabledMcpServers ?? []).not.toContain('scoped-server')
-      expect(rawConfig.projects?.[projectB]?.mcpServers?.['scoped-server']).toMatchObject({
+      const projectAKey = normalizePathForConfigKey(projectA)
+      const projectBKey = normalizePathForConfigKey(projectB)
+
+      expect(rawConfig.projects?.[projectAKey]?.mcpServers?.['scoped-server']).toBeUndefined()
+      expect(rawConfig.projects?.[projectAKey]?.disabledMcpServers ?? []).not.toContain('scoped-server')
+      expect(rawConfig.projects?.[projectBKey]?.mcpServers?.['scoped-server']).toMatchObject({
         type: 'stdio',
         command: 'node',
       })
-      expect(rawConfig.projects?.[projectB]?.disabledMcpServers).toContain('scoped-server')
+      expect(rawConfig.projects?.[projectBKey]?.disabledMcpServers).toContain('scoped-server')
     } finally {
       if (previousNodeEnv === undefined) {
         delete process.env.NODE_ENV
@@ -224,7 +228,7 @@ describe('MCP API', () => {
       expect(projectPathsRes.status).toBe(200)
       const body = await projectPathsRes.json()
 
-      expect(body.projectPaths).toEqual([projectB])
+      expect(body.projectPaths).toEqual([normalizePathForConfigKey(projectB)])
     } finally {
       if (previousNodeEnv === undefined) {
         delete process.env.NODE_ENV

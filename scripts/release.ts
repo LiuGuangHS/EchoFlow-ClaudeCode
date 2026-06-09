@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Release script for EchoFlow-ClaudeCode Desktop
+ * Release script for EchoFlow Code Desktop
  *
  * Usage:
  *   bun run scripts/release.ts patch       # 0.1.0 → 0.1.1
