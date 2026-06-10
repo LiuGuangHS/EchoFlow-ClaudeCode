@@ -9,7 +9,7 @@ import { ConfirmDialog } from '../components/shared/ConfirmDialog'
 import { Input } from '../components/shared/Input'
 import { Button } from '../components/shared/Button'
 import { Dropdown } from '../components/shared/Dropdown'
-import type { ThemeMode, UpdateProxyMode, NetworkProxyMode, WebSearchMode, AppMode, ChatSendBehavior } from '../types/settings'
+import { isThemeMode, type ThemeMode, type UpdateProxyMode, type NetworkProxyMode, type WebSearchMode, type AppMode, type ChatSendBehavior } from '../types/settings'
 import type { Locale } from '../i18n'
 import type { SavedProvider, UpdateProviderInput, ProviderTestResult, ModelMapping, ApiFormat, ProviderAuthStrategy } from '../types/provider'
 import type { ProviderPreset } from '../types/providerPreset'
@@ -37,10 +37,13 @@ import { ChatGPTOfficialLogin } from '../components/settings/ChatGPTOfficialLogi
 import { OPENAI_OFFICIAL_PROVIDER_ID } from '../constants/openaiOfficialProvider'
 import { useUpdateStore } from '../stores/updateStore'
 import { getBaseUrl } from '../api/client'
+import { legacyMigrationApi, type LegacyMigrationResult } from '../api/legacyMigration'
+import { desktopUiPreferencesApi } from '../api/desktopUiPreferences'
 import { formatBytes } from '../lib/formatBytes'
 import { isDesktopRuntime } from '../lib/desktopRuntime'
 import { getDesktopHost } from '../lib/desktopHost'
 import { publicAssetPath } from '../lib/publicAsset'
+import { LEGACY_LOCAL_STORAGE_TARGET_KEYS, runLegacyLocalStorageMigration } from '../lib/legacyLocalStorageMigration'
 import {
   getDesktopNotificationPermission,
   notifyDesktop,
@@ -1497,10 +1500,12 @@ function GeneralSettings() {
     appMode,
     appModeRequiresRestart,
     fetchAppMode,
+    fetchAll,
     setAppMode: setAppModeAction,
     uiZoom,
     setUiZoom,
   } = useSettingsStore()
+  const { fetchProviders } = useProviderStore()
   const t = useTranslation()
   const [webSearchDraft, setWebSearchDraft] = useState(webSearch)
   const [networkDraft, setNetworkDraft] = useState(network)
@@ -1515,6 +1520,11 @@ function GeneralSettings() {
   const [portableDirDraft, setPortableDirDraft] = useState('')
   const [modeActionRunning, setModeActionRunning] = useState(false)
   const [modeError, setModeError] = useState<string | null>(null)
+  const [legacyMigrationResult, setLegacyMigrationResult] = useState<LegacyMigrationResult | null>(null)
+  const [legacyMigrationChecking, setLegacyMigrationChecking] = useState(false)
+  const [legacyMigrationRunning, setLegacyMigrationRunning] = useState(false)
+  const [legacyMigrationError, setLegacyMigrationError] = useState<string | null>(null)
+  const [legacyMigrationConfirmOpen, setLegacyMigrationConfirmOpen] = useState(false)
   const [uiZoomDraft, setUiZoomDraft] = useState(uiZoom)
   const [isUiZoomDragging, setIsUiZoomDragging] = useState(false)
   const isUiZoomDraggingRef = useRef(false)
@@ -1525,6 +1535,11 @@ function GeneralSettings() {
   const activeConfigDir = appMode.activeConfigDir ?? (appMode.mode === 'portable' ? appMode.portableDir : null)
   const configDirSource = appMode.configDirSource ?? (appMode.mode === 'portable' ? 'portable' : 'system')
   const isEnvironmentConfigDir = configDirSource === 'environment'
+  const legacyMigrationSummary = legacyMigrationResult?.summary ?? null
+  const legacyMigrationReadyCount = legacyMigrationSummary?.ready ?? 0
+  const legacyMigrationExistsCount = legacyMigrationSummary?.['target-exists'] ?? 0
+  const legacyMigrationMissingCount = legacyMigrationSummary?.missing ?? 0
+  const legacyMigrationFailedCount = (legacyMigrationSummary?.failed ?? 0) + (legacyMigrationSummary?.invalid ?? 0)
 
   useEffect(() => {
     setWebSearchDraft(webSearch)
@@ -1828,6 +1843,89 @@ function GeneralSettings() {
       setPendingMode(null)
       setPendingPortableDir(null)
       setModeActionRunning(false)
+    }
+  }
+
+  const applyLegacyLocalStoragePreferences = (copiedKeys: string[]) => {
+    const copied = new Set(copiedKeys)
+    try {
+      if (copied.has(LEGACY_LOCAL_STORAGE_TARGET_KEYS.theme)) {
+        const importedTheme = localStorage.getItem(LEGACY_LOCAL_STORAGE_TARGET_KEYS.theme)
+        if (isThemeMode(importedTheme)) {
+          useSettingsStore.setState({ theme: importedTheme })
+          useUIStore.getState().setTheme(importedTheme)
+        }
+      }
+
+      if (copied.has(LEGACY_LOCAL_STORAGE_TARGET_KEYS.locale)) {
+        const importedLocale = localStorage.getItem(LEGACY_LOCAL_STORAGE_TARGET_KEYS.locale)
+        if (LANGUAGES.some(({ value }) => value === importedLocale)) {
+          setLocale(importedLocale as Locale)
+        }
+      }
+
+      if (copied.has(LEGACY_LOCAL_STORAGE_TARGET_KEYS.appZoom)) {
+        const importedZoom = localStorage.getItem(LEGACY_LOCAL_STORAGE_TARGET_KEYS.appZoom)
+        if (importedZoom !== null) {
+          setUiZoom(Number(importedZoom))
+        }
+      }
+    } catch {
+      // localStorage can be unavailable; migration itself already reports key-level failures.
+    }
+  }
+
+  const checkLegacyMigration = async () => {
+    setLegacyMigrationChecking(true)
+    setLegacyMigrationError(null)
+    try {
+      const result = await legacyMigrationApi.getStatus()
+      setLegacyMigrationResult(result)
+      if ((result.summary.ready ?? 0) === 0) {
+        addToast({
+          type: 'info',
+          message: t('settings.general.legacyMigrationNoData'),
+        })
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setLegacyMigrationError(message)
+      addToast({
+        type: 'error',
+        message: t('settings.general.legacyMigrationFailed', { error: message }),
+      })
+    } finally {
+      setLegacyMigrationChecking(false)
+    }
+  }
+
+  const confirmLegacyMigration = async () => {
+    setLegacyMigrationRunning(true)
+    setLegacyMigrationError(null)
+    try {
+      const result = await legacyMigrationApi.run()
+      setLegacyMigrationResult(result)
+      await Promise.all([
+        fetchProviders(),
+        fetchAll(),
+        desktopUiPreferencesApi.getPreferences().catch(() => undefined),
+      ])
+      const localStorageReport = runLegacyLocalStorageMigration()
+      applyLegacyLocalStoragePreferences(localStorageReport.copiedKeys)
+      setLegacyMigrationConfirmOpen(false)
+      addToast({
+        type: 'success',
+        message: t('settings.general.legacyMigrationSuccess'),
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setLegacyMigrationError(message)
+      addToast({
+        type: 'error',
+        message: t('settings.general.legacyMigrationFailed', { error: message }),
+      })
+    } finally {
+      setLegacyMigrationRunning(false)
     }
   }
 
@@ -2488,6 +2586,61 @@ function GeneralSettings() {
               {t('settings.general.storageMoveHint')}
             </div>
 
+            <div className="mt-4 rounded-lg border border-[var(--color-border)]/70 bg-[var(--color-surface)] px-3 py-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t('settings.general.legacyMigrationTitle')}</div>
+                  <div className="mt-1 text-xs leading-5 text-[var(--color-text-tertiary)]">{t('settings.general.legacyMigrationDescription')}</div>
+                </div>
+                <div className="flex flex-shrink-0 items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    loading={legacyMigrationChecking}
+                    disabled={legacyMigrationRunning}
+                    onClick={() => void checkLegacyMigration()}
+                  >
+                    {t('settings.general.legacyMigrationCheck')}
+                  </Button>
+                  {legacyMigrationResult && legacyMigrationReadyCount > 0 && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      loading={legacyMigrationRunning}
+                      disabled={legacyMigrationChecking}
+                      onClick={() => setLegacyMigrationConfirmOpen(true)}
+                    >
+                      {t('settings.general.legacyMigrationImport')}
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              {legacyMigrationResult && (
+                <div className="mt-3 grid gap-2 sm:grid-cols-4">
+                  <div className="rounded-md bg-[var(--color-surface-container-low)] px-2.5 py-2 text-xs text-[var(--color-text-secondary)]">
+                    {t('settings.general.legacyMigrationReadyCount', { count: legacyMigrationReadyCount })}
+                  </div>
+                  <div className="rounded-md bg-[var(--color-surface-container-low)] px-2.5 py-2 text-xs text-[var(--color-text-secondary)]">
+                    {t('settings.general.legacyMigrationExistsCount', { count: legacyMigrationExistsCount })}
+                  </div>
+                  <div className="rounded-md bg-[var(--color-surface-container-low)] px-2.5 py-2 text-xs text-[var(--color-text-secondary)]">
+                    {t('settings.general.legacyMigrationMissingCount', { count: legacyMigrationMissingCount })}
+                  </div>
+                  <div className="rounded-md bg-[var(--color-surface-container-low)] px-2.5 py-2 text-xs text-[var(--color-text-secondary)]">
+                    {t('settings.general.legacyMigrationFailedCount', { count: legacyMigrationFailedCount })}
+                  </div>
+                </div>
+              )}
+
+              {legacyMigrationError && (
+                <div className="mt-3 text-xs text-[var(--color-error)]">
+                  {legacyMigrationError}
+                </div>
+              )}
+            </div>
+
             {modeError && (
               <div className="mt-3 text-xs text-[var(--color-error)]">
                 {modeError}
@@ -2522,6 +2675,23 @@ function GeneralSettings() {
         cancelLabel={t('common.cancel')}
         confirmVariant="primary"
         loading={modeActionRunning}
+      />
+      <ConfirmDialog
+        open={legacyMigrationConfirmOpen}
+        onClose={() => {
+          if (!legacyMigrationRunning) setLegacyMigrationConfirmOpen(false)
+        }}
+        onConfirm={() => void confirmLegacyMigration()}
+        title={t('settings.general.legacyMigrationConfirmTitle')}
+        body={(
+          <div className="space-y-3 text-sm leading-6 text-[var(--color-text-secondary)]">
+            <p>{t('settings.general.legacyMigrationConfirmBody')}</p>
+          </div>
+        )}
+        confirmLabel={t('settings.general.legacyMigrationImport')}
+        cancelLabel={t('common.cancel')}
+        confirmVariant="primary"
+        loading={legacyMigrationRunning}
       />
     </div>
   )

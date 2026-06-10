@@ -67,6 +67,24 @@ describe('desktop persistence migrations', () => {
     expect(window.localStorage.getItem('echoflow-code-theme')).toBe('white')
   })
 
+  test('preserves every supported locale and removes unknown locale values', () => {
+    for (const locale of ['en', 'zh', 'zh-TW', 'jp', 'kr']) {
+      window.localStorage.setItem('echoflow-code-locale', locale)
+
+      const report = runDesktopPersistenceMigrations()
+
+      expect(report.migratedKeys).not.toContain('echoflow-code-locale')
+      expect(window.localStorage.getItem('echoflow-code-locale')).toBe(locale)
+    }
+
+    window.localStorage.setItem('echoflow-code-locale', 'fr')
+
+    const report = runDesktopPersistenceMigrations()
+
+    expect(report.migratedKeys).toContain('echoflow-code-locale')
+    expect(window.localStorage.getItem('echoflow-code-locale')).toBeNull()
+  })
+
   test('preserves valid app zoom and removes invalid app zoom values', () => {
     window.localStorage.setItem('echoflow-code-app-zoom', '1.2')
 

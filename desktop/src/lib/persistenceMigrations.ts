@@ -18,6 +18,7 @@ const SESSION_RUNTIME_STORAGE_KEY = 'echoflow-code-session-runtime'
 const THEME_STORAGE_KEY = 'echoflow-code-theme'
 const LOCALE_STORAGE_KEY = 'echoflow-code-locale'
 const EFFORT_LEVELS = ['low', 'medium', 'high', 'max']
+const VALID_LOCALES = ['en', 'zh', 'zh-TW', 'jp', 'kr']
 
 function readJson(storage: StorageLike, key: string): unknown {
   const raw = storage.getItem(key)
@@ -162,7 +163,7 @@ export function runDesktopPersistenceMigrations(storage: StorageLike | null = ge
   runMigrationStep(report, TAB_STORAGE_KEY, () => migrateTabs(storage, report))
   runMigrationStep(report, SESSION_RUNTIME_STORAGE_KEY, () => migrateSessionRuntime(storage, report))
   runMigrationStep(report, THEME_STORAGE_KEY, () => normalizeEnumKey(storage, THEME_STORAGE_KEY, [...THEME_MODES], report))
-  runMigrationStep(report, LOCALE_STORAGE_KEY, () => normalizeEnumKey(storage, LOCALE_STORAGE_KEY, ['zh', 'en'], report))
+  runMigrationStep(report, LOCALE_STORAGE_KEY, () => normalizeEnumKey(storage, LOCALE_STORAGE_KEY, VALID_LOCALES, report))
   runMigrationStep(report, APP_ZOOM_STORAGE_KEY, () => normalizeAppZoomKey(storage, report))
   try {
     storage.setItem(DESKTOP_PERSISTENCE_VERSION_KEY, String(CURRENT_DESKTOP_PERSISTENCE_SCHEMA_VERSION))

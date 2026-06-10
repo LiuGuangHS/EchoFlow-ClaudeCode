@@ -14,6 +14,24 @@ import { browserHost } from '../lib/desktopHost/browserHost'
 const MOCK_DELETE_PROVIDER = vi.fn()
 const MOCK_GET_SETTINGS = vi.fn()
 const MOCK_UPDATE_SETTINGS = vi.fn()
+const legacyMigrationApiMock = vi.hoisted(() => ({
+  getStatus: vi.fn(),
+  run: vi.fn(),
+}))
+const legacyLocalStorageMigrationMock = vi.hoisted(() => ({
+  LEGACY_LOCAL_STORAGE_TARGET_KEYS: {
+    openTabs: 'echoflow-code-open-tabs',
+    sessionRuntime: 'echoflow-code-session-runtime',
+    theme: 'echoflow-code-theme',
+    locale: 'echoflow-code-locale',
+    appZoom: 'echoflow-code-app-zoom',
+    dismissedUpdateVersion: 'echoflow-code-dismissed-update-version',
+  },
+  runLegacyLocalStorageMigration: vi.fn(),
+}))
+const desktopUiPreferencesApiMock = vi.hoisted(() => ({
+  getPreferences: vi.fn(),
+}))
 const desktopNotificationsMock = vi.hoisted(() => ({
   getDesktopNotificationPermission: vi.fn(),
   notifyDesktop: vi.fn(),
@@ -65,6 +83,16 @@ vi.mock('../api/providers', () => ({
     getSettings: MOCK_GET_SETTINGS,
     updateSettings: MOCK_UPDATE_SETTINGS,
   },
+}))
+
+vi.mock('../api/legacyMigration', () => ({
+  legacyMigrationApi: legacyMigrationApiMock,
+}))
+
+vi.mock('../lib/legacyLocalStorageMigration', () => legacyLocalStorageMigrationMock)
+
+vi.mock('../api/desktopUiPreferences', () => ({
+  desktopUiPreferencesApi: desktopUiPreferencesApiMock,
 }))
 
 vi.mock('../lib/desktopNotifications', () => desktopNotificationsMock)
@@ -181,6 +209,59 @@ describe('Settings > General tab', () => {
     installElectronDesktopHost()
     MOCK_GET_SETTINGS.mockResolvedValue({})
     MOCK_UPDATE_SETTINGS.mockResolvedValue({})
+    legacyMigrationApiMock.getStatus.mockReset()
+    legacyMigrationApiMock.getStatus.mockResolvedValue({
+      summary: {
+        ready: 0,
+        'target-exists': 0,
+        missing: 0,
+        invalid: 0,
+        failed: 0,
+        migrated: 0,
+        skipped: 0,
+      },
+      items: [],
+    })
+    legacyMigrationApiMock.run.mockReset()
+    legacyMigrationApiMock.run.mockResolvedValue({
+      summary: {
+        ready: 0,
+        'target-exists': 0,
+        missing: 0,
+        invalid: 0,
+        failed: 0,
+        migrated: 1,
+        skipped: 0,
+      },
+      items: [],
+    })
+    legacyLocalStorageMigrationMock.runLegacyLocalStorageMigration.mockReset()
+    legacyLocalStorageMigrationMock.runLegacyLocalStorageMigration.mockReturnValue({
+      copiedKeys: [],
+      skippedKeys: [],
+      missingKeys: [],
+      failedKeys: [],
+    })
+    desktopUiPreferencesApiMock.getPreferences.mockReset()
+    desktopUiPreferencesApiMock.getPreferences.mockResolvedValue({
+      exists: false,
+      preferences: {
+        schemaVersion: 1,
+        sidebar: {
+          projectOrder: [],
+          pinnedProjects: [],
+          hiddenProjects: [],
+          projectOrganization: 'project',
+          projectSortBy: 'updatedAt',
+        },
+        profile: {
+          displayName: '',
+          subtitle: '',
+          avatarFile: null,
+          avatarUpdatedAt: null,
+        },
+      },
+    })
     providerStoreState.providers = []
     providerStoreState.activeId = null
     providerStoreState.hasLoadedProviders = true
@@ -254,6 +335,7 @@ describe('Settings > General tab', () => {
       },
       appModeRequiresRestart: false,
       fetchAppMode: vi.fn().mockResolvedValue(undefined),
+      fetchAll: vi.fn().mockResolvedValue(undefined),
       setAppMode: vi.fn().mockImplementation(async (mode: AppMode, portableDir?: string | null) => {
         useSettingsStore.setState({
           appMode: {
@@ -453,6 +535,93 @@ describe('Settings > General tab', () => {
 
     expect((webSearchHeading.compareDocumentPosition(storageHeading) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0).toBe(true)
     expect(screen.getByText(/Switching directories does not migrate existing data/)).toBeInTheDocument()
+  })
+
+  it('checks and manually imports legacy data from General storage settings', async () => {
+    legacyMigrationApiMock.getStatus.mockResolvedValueOnce({
+      summary: {
+        ready: 2,
+        'target-exists': 1,
+        missing: 3,
+        invalid: 1,
+        failed: 0,
+        migrated: 0,
+        skipped: 0,
+      },
+      items: [
+        {
+          id: 'current-cc-haha:providers',
+          label: 'current-cc-haha providers',
+          source: 'current-cc-haha',
+          target: 'providers',
+          status: 'ready',
+        },
+      ],
+    })
+    legacyMigrationApiMock.run.mockResolvedValueOnce({
+      summary: {
+        ready: 0,
+        'target-exists': 1,
+        missing: 3,
+        invalid: 0,
+        failed: 0,
+        migrated: 2,
+        skipped: 0,
+      },
+      items: [],
+    })
+    legacyLocalStorageMigrationMock.runLegacyLocalStorageMigration.mockReturnValueOnce({
+      copiedKeys: [
+        'echoflow-code-theme',
+        'echoflow-code-locale',
+        'echoflow-code-app-zoom',
+      ],
+      skippedKeys: [],
+      missingKeys: [],
+      failedKeys: [],
+    })
+    window.localStorage.setItem('echoflow-code-theme', 'dark')
+    window.localStorage.setItem('echoflow-code-locale', 'zh-TW')
+    window.localStorage.setItem('echoflow-code-app-zoom', '1.25')
+
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Check Legacy Data' }))
+    })
+
+    expect(legacyMigrationApiMock.getStatus).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('2 ready to import')).toBeInTheDocument()
+    expect(screen.getByText('1 already exist')).toBeInTheDocument()
+    expect(screen.getByText('3 not found')).toBeInTheDocument()
+    expect(screen.getByText('1 abnormal')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Import Legacy Data' }))
+    expect(screen.getByText('Import legacy data?')).toBeInTheDocument()
+
+    const providerFetchCallsBeforeImport = providerStoreState.fetchProviders.mock.calls.length
+    const fetchAllMock = useSettingsStore.getState().fetchAll as ReturnType<typeof vi.fn>
+    const settingsFetchCallsBeforeImport = fetchAllMock.mock.calls.length
+
+    await act(async () => {
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Import Legacy Data' }))
+    })
+
+    await waitFor(() => {
+      expect(legacyMigrationApiMock.run).toHaveBeenCalledTimes(1)
+      expect(legacyLocalStorageMigrationMock.runLegacyLocalStorageMigration).toHaveBeenCalledTimes(1)
+      expect(providerStoreState.fetchProviders).toHaveBeenCalledTimes(providerFetchCallsBeforeImport + 1)
+      expect(fetchAllMock).toHaveBeenCalledTimes(settingsFetchCallsBeforeImport + 1)
+    })
+    expect(desktopUiPreferencesApiMock.getPreferences).toHaveBeenCalledTimes(1)
+    expect(useUIStore.getState().toasts[useUIStore.getState().toasts.length - 1]).toMatchObject({
+      type: 'success',
+      message: 'Legacy data imported. New sessions will use the imported provider configuration; running sessions are not affected.',
+    })
+    expect(useUIStore.getState().theme).toBe('dark')
+    expect(useSettingsStore.getState().locale).toBe('zh-TW')
+    expect(useSettingsStore.getState().uiZoom).toBe(1.25)
   })
 
   it('lets desktop users choose a portable data directory and relaunch immediately', async () => {
