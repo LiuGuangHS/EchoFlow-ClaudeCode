@@ -277,6 +277,20 @@ describe('Electron updater service', () => {
     await expect(service.checkForUpdates()).rejects.toThrow('feed unavailable')
   })
 
+  it('includes feed attempt diagnostics when every configured feed fails', async () => {
+    const updater = fakeUpdater()
+    updater.checkForUpdates
+      .mockRejectedValueOnce(new Error('proxy feed unavailable'))
+      .mockRejectedValueOnce(new Error('direct feed unavailable'))
+    const service = new ElectronUpdaterService(updater, undefined, {
+      feedUrls: [PROXY_FEED, DIRECT_FEED],
+    })
+
+    await expect(service.checkForUpdates()).rejects.toThrow(
+      `direct feed unavailable (update feeds tried: error ${PROXY_FEED}: proxy feed unavailable; error ${DIRECT_FEED}: direct feed unavailable)`,
+    )
+  })
+
   it('does not fallback during download when the selected feed download fails', async () => {
     const updater = fakeUpdater()
     updater.checkForUpdates.mockResolvedValueOnce({ updateInfo: { version: '1.2.7' } })

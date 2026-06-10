@@ -14,6 +14,10 @@ type ResolveOptions = {
   homeDir?: string
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
 export type EchoFlowOwnershipMarker = {
   owner: typeof ECHOFLOW_APP_NAME
   appId: typeof ECHOFLOW_APP_ID
@@ -60,10 +64,16 @@ export function buildEchoFlowOwnershipMarker(): EchoFlowOwnershipMarker {
 export async function ensureEchoFlowConfigRoot(configDir = getEchoFlowConfigDir()): Promise<void> {
   await fs.mkdir(configDir, { recursive: true })
   const markerPath = getEchoFlowMarkerPath(configDir)
+  const marker = buildEchoFlowOwnershipMarker()
   try {
-    await fs.access(markerPath)
+    const raw = await fs.readFile(markerPath, 'utf-8')
+    const parsed = JSON.parse(raw) as unknown
+    const existing = isRecord(parsed) ? parsed : {}
+    const next = { ...existing, ...marker }
+    if (JSON.stringify(existing) === JSON.stringify(next)) return
+    await fs.writeFile(markerPath, JSON.stringify(next, null, 2) + '\n', 'utf-8')
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-    await fs.writeFile(markerPath, JSON.stringify(buildEchoFlowOwnershipMarker(), null, 2) + '\n', 'utf-8')
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error
+    await fs.writeFile(markerPath, JSON.stringify(marker, null, 2) + '\n', 'utf-8')
   }
 }

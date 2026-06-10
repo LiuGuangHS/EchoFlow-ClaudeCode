@@ -91,6 +91,27 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+function formatFeedAttempt(attempt: ElectronUpdateFeedAttempt): string {
+  const feedUrl = attempt.feedUrl ?? 'default feed'
+  return attempt.error
+    ? `${attempt.result} ${feedUrl}: ${attempt.error}`
+    : `${attempt.result} ${feedUrl}`
+}
+
+function withFeedAttemptErrorMessage(
+  error: unknown,
+  attempts: ElectronUpdateFeedAttempt[],
+): Error {
+  const message = getErrorMessage(error)
+  if (!attempts.length) return error instanceof Error ? error : new Error(message)
+  const diagnostics = attempts.map(formatFeedAttempt).join('; ')
+  const nextError = new Error(`${message} (update feeds tried: ${diagnostics})`)
+  if (error instanceof Error) {
+    nextError.name = error.name
+  }
+  return nextError
+}
+
 function withFeedDiagnostics(
   update: ElectronUpdateMetadata,
   feedUrl: string,
@@ -220,9 +241,9 @@ export class ElectronUpdaterService {
       }
     }
 
-    if (lastRealError) throw lastRealError
+    if (lastRealError) throw withFeedAttemptErrorMessage(lastRealError, this.lastFeedAttempts)
     if (lastError instanceof MissingUpdateMetadataError) return null
-    if (lastError) throw lastError
+    if (lastError) throw withFeedAttemptErrorMessage(lastError, this.lastFeedAttempts)
     return null
   }
 

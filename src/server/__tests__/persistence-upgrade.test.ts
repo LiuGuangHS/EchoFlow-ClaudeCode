@@ -58,6 +58,53 @@ describe('persistent storage upgrade migrations', () => {
     })
   })
 
+  test('repairs a stale EchoFlow ownership marker while preserving unknown fields', async () => {
+    await fs.writeFile(
+      path.join(tempDir, 'app.json'),
+      JSON.stringify({
+        owner: ECHOFLOW_APP_NAME,
+        appId: 'com.old.echo.desktop',
+        schemaVersion: 1,
+        userNote: 'keep-me',
+      }, null, 2),
+      'utf-8',
+    )
+
+    const report = await ensurePersistentStorageUpgraded()
+
+    expect(report.failures).toEqual([])
+    const marker = JSON.parse(await fs.readFile(path.join(tempDir, 'app.json'), 'utf-8')) as {
+      owner?: string
+      appId?: string
+      schemaVersion?: number
+      userNote?: string
+    }
+    expect(marker).toEqual({
+      owner: ECHOFLOW_APP_NAME,
+      appId: ECHOFLOW_APP_ID,
+      schemaVersion: 1,
+      userNote: 'keep-me',
+    })
+  })
+
+  test('rewrites a malformed EchoFlow ownership marker instead of blocking startup', async () => {
+    await fs.writeFile(path.join(tempDir, 'app.json'), '{"owner":', 'utf-8')
+
+    const report = await ensurePersistentStorageUpgraded()
+
+    expect(report.failures).toEqual([])
+    const marker = JSON.parse(await fs.readFile(path.join(tempDir, 'app.json'), 'utf-8')) as {
+      owner?: string
+      appId?: string
+      schemaVersion?: number
+    }
+    expect(marker).toEqual({
+      owner: ECHOFLOW_APP_NAME,
+      appId: ECHOFLOW_APP_ID,
+      schemaVersion: 1,
+    })
+  })
+
   test('migrates current EchoFlow providers index and writes a backup before changing it', async () => {
     const currentDir = echoFlowDir()
     await fs.mkdir(currentDir, { recursive: true })
