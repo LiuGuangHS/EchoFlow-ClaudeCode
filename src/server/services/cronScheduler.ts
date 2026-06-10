@@ -248,6 +248,10 @@ function trimRuns(data: RunsFile): void {
 // ─── Scheduler ─────────────────────────────────────────────────────────────────
 
 const TASK_TIMEOUT_MS = 10 * 60 * 1000 // 10 minutes
+const CRON_BRIDGE_ENV_KEYS = [
+  'ECHOFLOW_SKIP_DOTENV',
+  'CC_HAHA_SKIP_DOTENV',
+] as const
 
 type CronCliResolutionOptions = {
   cliPath?: string | null
@@ -285,7 +289,7 @@ export function resolveCronProjectRoot(
   options: CronCliResolutionOptions = {},
 ): string {
   const env = options.env ?? process.env
-  const explicitRoot = env.CC_HAHA_ROOT?.trim()
+  const explicitRoot = env.ECHOFLOW_ROOT?.trim() || env.CC_HAHA_ROOT?.trim()
   if (explicitRoot && isSourceProjectRoot(path.resolve(explicitRoot))) {
     return path.resolve(explicitRoot)
   }
@@ -674,6 +678,9 @@ export class CronScheduler {
   ): Promise<Record<string, string | undefined>> {
     const cleanEnv = await getProcessEnvWithTerminalShellEnvironment()
     delete cleanEnv.CLAUDE_CODE_OAUTH_TOKEN
+    for (const key of CRON_BRIDGE_ENV_KEYS) {
+      delete cleanEnv[key]
+    }
 
     if (this.shouldStripInheritedProviderEnv(task.providerId)) {
       for (const key of Object.keys(cleanEnv)) {
@@ -702,7 +709,7 @@ export class CronScheduler {
       CLAUDE_CODE_ENTRYPOINT: 'sdk-cli',
       CALLER_DIR: workDir,
       PWD: workDir,
-      CC_HAHA_SKIP_DOTENV: '1',
+      ECHOFLOW_SKIP_DOTENV: '1',
       ...(explicitProviderEnv
         ? {
             CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: '1',

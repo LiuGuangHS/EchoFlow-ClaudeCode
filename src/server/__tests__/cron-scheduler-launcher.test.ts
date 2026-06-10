@@ -23,6 +23,7 @@ const originalHome = process.env.HOME
 const originalShell = process.env.SHELL
 const originalZdotdir = process.env.ZDOTDIR
 const originalDisableTerminalShellEnv = process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV
+const originalLegacySkipDotenv = process.env.CC_HAHA_SKIP_DOTENV
 
 const isWindows = process.platform === 'win32'
 const unixOnly = isWindows ? it.skip : it
@@ -106,6 +107,11 @@ function restoreEnv(): void {
   } else {
     delete process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV
   }
+  if (originalLegacySkipDotenv) {
+    process.env.CC_HAHA_SKIP_DOTENV = originalLegacySkipDotenv
+  } else {
+    delete process.env.CC_HAHA_SKIP_DOTENV
+  }
   resetTerminalShellEnvironmentCacheForTests()
 }
 
@@ -146,7 +152,20 @@ describe('cron scheduler launcher resolution', () => {
     ])
   })
 
-  it('prefers an explicit CC_HAHA_ROOT when it points at a source checkout', async () => {
+  it('prefers an explicit ECHOFLOW_ROOT when it points at a source checkout', async () => {
+    const sourceRoot = path.join(tmpDir, 'source')
+    await createSourceRoot(sourceRoot)
+
+    expect(
+      resolveCronProjectRoot({
+        cwd: path.join(tmpDir, 'other'),
+        moduleDir: path.join(tmpDir, 'broken', 'src', 'server', 'services'),
+        env: { ECHOFLOW_ROOT: sourceRoot },
+      }),
+    ).toBe(sourceRoot)
+  })
+
+  it('keeps legacy CC_HAHA_ROOT compatible for source checkout resolution', async () => {
     const sourceRoot = path.join(tmpDir, 'source')
     await createSourceRoot(sourceRoot)
 
@@ -157,6 +176,36 @@ describe('cron scheduler launcher resolution', () => {
         env: { CC_HAHA_ROOT: sourceRoot },
       }),
     ).toBe(sourceRoot)
+  })
+
+  it('builds scheduled task env with EchoFlow dotenv skip marker only', async () => {
+    process.env.CC_HAHA_SKIP_DOTENV = '1'
+    process.env.ANTHROPIC_BASE_URL = 'https://parent.example'
+    process.env.ANTHROPIC_MODEL = 'parent-model'
+
+    const scheduler = new CronScheduler(new CronService()) as unknown as {
+      buildTaskChildEnv: (
+        workDir: string,
+        task: {
+          id: string
+          cron: string
+          prompt: string
+          createdAt: number
+          model?: string
+        },
+      ) => Promise<Record<string, string | undefined>>
+    }
+    const env = await scheduler.buildTaskChildEnv(tmpDir, {
+      id: 'task-1',
+      cron: '* * * * *',
+      prompt: 'run',
+      createdAt: Date.now(),
+      model: 'task-model',
+    })
+
+    expect(env.ECHOFLOW_SKIP_DOTENV).toBe('1')
+    expect(env.CC_HAHA_SKIP_DOTENV).toBeUndefined()
+    expect(env.ANTHROPIC_MODEL).toBe('parent-model')
   })
 
   it('falls back to the nearest source checkout from cwd before module dir', async () => {
@@ -273,6 +322,7 @@ describe('cron scheduler launcher resolution', () => {
     process.env.ANTHROPIC_BASE_URL = 'https://stale-parent.example'
     process.env.ANTHROPIC_MODEL = 'stale-parent-model'
     process.env.CLAUDE_CODE_ENTRYPOINT = 'stale-parent-entrypoint'
+    process.env.CC_HAHA_SKIP_DOTENV = '1'
 
     const provider = await new ProviderService().addProvider({
       presetId: 'custom',
@@ -328,6 +378,8 @@ describe('cron scheduler launcher resolution', () => {
     expect(env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST).toBe('1')
     expect(env.CLAUDE_CODE_ATTRIBUTION_HEADER).toBe('0')
     expect(env.CLAUDE_CODE_ENTRYPOINT).toBe('sdk-cli')
+    expect(env.ECHOFLOW_SKIP_DOTENV).toBe('1')
+    expect(env.CC_HAHA_SKIP_DOTENV).toBeUndefined()
   })
 
   unixOnly('executeTask launches scheduled tasks with full permissions', async () => {

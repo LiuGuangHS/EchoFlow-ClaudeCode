@@ -50,6 +50,18 @@ const MAX_CAPTURED_SDK_SUMMARY = 20
 const CONTROL_READY_POLL_MS = 50
 const AUTO_MEMORY_DIRNAME = 'memory'
 export const DESKTOP_CLI_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 6_000
+const DESKTOP_BRIDGE_ENV_KEYS = [
+  'ECHOFLOW_COMPUTER_USE_HOST_BUNDLE_ID',
+  'CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID',
+  'ECHOFLOW_DESKTOP_SERVER_URL',
+  'CC_HAHA_DESKTOP_SERVER_URL',
+  'ECHOFLOW_DESKTOP_AWAIT_MCP',
+  'CC_HAHA_DESKTOP_AWAIT_MCP',
+  'ECHOFLOW_DESKTOP_AWAIT_MCP_TIMEOUT_MS',
+  'CC_HAHA_DESKTOP_AWAIT_MCP_TIMEOUT_MS',
+  'ECHOFLOW_SKIP_DOTENV',
+  'CC_HAHA_SKIP_DOTENV',
+] as const
 
 /**
  * Severity for a CLI subprocess exit, by exit code.
@@ -1050,6 +1062,9 @@ export class ConversationService {
 
     const cleanEnv = await getProcessEnvWithTerminalShellEnvironment()
     delete cleanEnv.CLAUDE_CODE_OAUTH_TOKEN
+    for (const key of DESKTOP_BRIDGE_ENV_KEYS) {
+      delete cleanEnv[key]
+    }
     if (this.shouldStripInheritedProviderEnv(options?.providerId)) {
       for (const key of PROVIDER_ENV_KEYS) {
         delete cleanEnv[key]
@@ -1098,21 +1113,21 @@ export class ConversationService {
       CALLER_DIR: workDir,
       PWD: workDir,
       ...(sdkUrl
-        ? { CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID: 'com.echoflowai-claude-code.desktop' }
+        ? { ECHOFLOW_COMPUTER_USE_HOST_BUNDLE_ID: 'com.echoflowai-claude-code.desktop' }
         : {}),
       ...(desktopServerUrl
-        ? { CC_HAHA_DESKTOP_SERVER_URL: desktopServerUrl }
+        ? { ECHOFLOW_DESKTOP_SERVER_URL: desktopServerUrl }
         : {}),
       ...(sdkUrl
         ? {
-            CC_HAHA_DESKTOP_AWAIT_MCP: '1',
-            CC_HAHA_DESKTOP_AWAIT_MCP_TIMEOUT_MS: '5000',
+            ECHOFLOW_DESKTOP_AWAIT_MCP: '1',
+            ECHOFLOW_DESKTOP_AWAIT_MCP_TIMEOUT_MS: '5000',
           }
         : {}),
       // Tell the CLI entrypoint to skip project .env loading. Provider env
       // should come from Desktop-managed config or inherited launch env, not
       // be reintroduced from the repo's .env file.
-      CC_HAHA_SKIP_DOTENV: '1',
+      ECHOFLOW_SKIP_DOTENV: '1',
       ...(explicitProviderEnv
         ? { CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: '1' }
         : {}),

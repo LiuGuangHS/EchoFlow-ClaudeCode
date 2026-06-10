@@ -27,6 +27,11 @@ describe('ConversationService', () => {
   let originalShell: string | undefined
   let originalZdotdir: string | undefined
   let originalDisableTerminalShellEnv: string | undefined
+  let originalLegacyComputerUseHostBundleId: string | undefined
+  let originalLegacyDesktopServerUrl: string | undefined
+  let originalLegacyDesktopAwaitMcp: string | undefined
+  let originalLegacyDesktopAwaitMcpTimeoutMs: string | undefined
+  let originalLegacySkipDotenv: string | undefined
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cc-haha-conversation-service-'))
@@ -45,6 +50,11 @@ describe('ConversationService', () => {
     originalShell = process.env.SHELL
     originalZdotdir = process.env.ZDOTDIR
     originalDisableTerminalShellEnv = process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV
+    originalLegacyComputerUseHostBundleId = process.env.CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID
+    originalLegacyDesktopServerUrl = process.env.CC_HAHA_DESKTOP_SERVER_URL
+    originalLegacyDesktopAwaitMcp = process.env.CC_HAHA_DESKTOP_AWAIT_MCP
+    originalLegacyDesktopAwaitMcpTimeoutMs = process.env.CC_HAHA_DESKTOP_AWAIT_MCP_TIMEOUT_MS
+    originalLegacySkipDotenv = process.env.CC_HAHA_SKIP_DOTENV
 
     process.env.CLAUDE_CONFIG_DIR = tmpDir
     process.env.ANTHROPIC_API_KEY = 'stale-parent-api-key'
@@ -58,6 +68,11 @@ describe('ConversationService', () => {
     delete process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST
     delete process.env.CLAUDE_CODE_DIAGNOSTICS_FILE
     delete process.env.CLAUDE_CODE_ATTRIBUTION_HEADER
+    delete process.env.CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID
+    delete process.env.CC_HAHA_DESKTOP_SERVER_URL
+    delete process.env.CC_HAHA_DESKTOP_AWAIT_MCP
+    delete process.env.CC_HAHA_DESKTOP_AWAIT_MCP_TIMEOUT_MS
+    delete process.env.CC_HAHA_SKIP_DOTENV
     process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV = '1'
     resetTerminalShellEnvironmentCacheForTests()
   })
@@ -107,6 +122,21 @@ describe('ConversationService', () => {
 
     if (originalDisableTerminalShellEnv === undefined) delete process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV
     else process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV = originalDisableTerminalShellEnv
+
+    if (originalLegacyComputerUseHostBundleId === undefined) delete process.env.CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID
+    else process.env.CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID = originalLegacyComputerUseHostBundleId
+
+    if (originalLegacyDesktopServerUrl === undefined) delete process.env.CC_HAHA_DESKTOP_SERVER_URL
+    else process.env.CC_HAHA_DESKTOP_SERVER_URL = originalLegacyDesktopServerUrl
+
+    if (originalLegacyDesktopAwaitMcp === undefined) delete process.env.CC_HAHA_DESKTOP_AWAIT_MCP
+    else process.env.CC_HAHA_DESKTOP_AWAIT_MCP = originalLegacyDesktopAwaitMcp
+
+    if (originalLegacyDesktopAwaitMcpTimeoutMs === undefined) delete process.env.CC_HAHA_DESKTOP_AWAIT_MCP_TIMEOUT_MS
+    else process.env.CC_HAHA_DESKTOP_AWAIT_MCP_TIMEOUT_MS = originalLegacyDesktopAwaitMcpTimeoutMs
+
+    if (originalLegacySkipDotenv === undefined) delete process.env.CC_HAHA_SKIP_DOTENV
+    else process.env.CC_HAHA_SKIP_DOTENV = originalLegacySkipDotenv
 
     resetTerminalShellEnvironmentCacheForTests()
     await fs.rm(tmpDir, { recursive: true, force: true })
@@ -560,17 +590,22 @@ describe('ConversationService', () => {
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined()
   })
 
-  test('buildChildEnv injects desktop Computer Use host bundle id for sdk sessions', async () => {
+  test('buildChildEnv injects EchoFlow desktop bridge env for sdk sessions', async () => {
+    process.env.CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID = 'legacy-host'
+    process.env.CC_HAHA_DESKTOP_SERVER_URL = 'http://127.0.0.1:9999'
+
     const service = new ConversationService() as any
     const env = (await service.buildChildEnv(
       '/tmp',
       'ws://127.0.0.1:3456/sdk/test-session?token=test-token',
     )) as Record<string, string>
 
-    expect(env.CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID).toBe(
+    expect(env.ECHOFLOW_COMPUTER_USE_HOST_BUNDLE_ID).toBe(
       'com.echoflowai-claude-code.desktop',
     )
-    expect(env.CC_HAHA_DESKTOP_SERVER_URL).toBe('http://127.0.0.1:3456')
+    expect(env.CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID).toBeUndefined()
+    expect(env.ECHOFLOW_DESKTOP_SERVER_URL).toBe('http://127.0.0.1:3456')
+    expect(env.CC_HAHA_DESKTOP_SERVER_URL).toBeUndefined()
     expect(env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING).toBe('1')
   })
 
@@ -603,14 +638,22 @@ describe('ConversationService', () => {
   })
 
   test('buildChildEnv asks desktop SDK sessions to wait briefly for MCP tools', async () => {
+    process.env.CC_HAHA_DESKTOP_AWAIT_MCP = 'legacy'
+    process.env.CC_HAHA_DESKTOP_AWAIT_MCP_TIMEOUT_MS = '9999'
+    process.env.CC_HAHA_SKIP_DOTENV = '1'
+
     const service = new ConversationService() as any
     const env = (await service.buildChildEnv(
       '/tmp',
       'ws://127.0.0.1:3456/sdk/test-session?token=test-token',
     )) as Record<string, string>
 
-    expect(env.CC_HAHA_DESKTOP_AWAIT_MCP).toBe('1')
-    expect(env.CC_HAHA_DESKTOP_AWAIT_MCP_TIMEOUT_MS).toBe('5000')
+    expect(env.ECHOFLOW_DESKTOP_AWAIT_MCP).toBe('1')
+    expect(env.ECHOFLOW_DESKTOP_AWAIT_MCP_TIMEOUT_MS).toBe('5000')
+    expect(env.CC_HAHA_DESKTOP_AWAIT_MCP).toBeUndefined()
+    expect(env.CC_HAHA_DESKTOP_AWAIT_MCP_TIMEOUT_MS).toBeUndefined()
+    expect(env.ECHOFLOW_SKIP_DOTENV).toBe('1')
+    expect(env.CC_HAHA_SKIP_DOTENV).toBeUndefined()
   })
 
   test('buildChildEnv enables stream idle watchdog for desktop CLI sessions', async () => {

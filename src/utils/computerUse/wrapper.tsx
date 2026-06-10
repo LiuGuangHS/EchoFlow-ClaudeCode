@@ -49,7 +49,9 @@ type Binding = {
  */
 let binding: Binding | undefined;
 let currentToolUseContext: ToolUseContext | undefined;
-const desktopServerUrl = process.env.CC_HAHA_DESKTOP_SERVER_URL;
+const desktopServerUrl =
+  process.env.ECHOFLOW_DESKTOP_SERVER_URL ||
+  process.env.CC_HAHA_DESKTOP_SERVER_URL;
 function tuc(): ToolUseContext {
   // Safe: `binding` is only populated when `currentToolUseContext` is set.
   // Called only from within `ctx` callbacks, which only fire during dispatch.
