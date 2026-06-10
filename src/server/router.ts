@@ -27,6 +27,7 @@ import { handleActivityStatsApi } from './api/activityStats.js'
 import { handleOpenTargetsApi } from './api/open-targets.js'
 import { handleMemoryApi } from './api/memory.js'
 import { handleDesktopUiApi } from './api/desktop-ui.js'
+import { handleLegacyMigrationApi } from './api/legacy-migration.js'
 
 export async function handleApiRequest(req: Request, url: URL): Promise<Response> {
   const path = url.pathname
@@ -118,6 +119,9 @@ export async function handleApiRequest(req: Request, url: URL): Promise<Response
 
     case 'desktop-ui':
       return handleDesktopUiApi(req, url, segments)
+
+    case 'legacy-migration':
+      return handleLegacyMigrationApi(req, url, segments)
 
     case 'filesystem':
       return handleFilesystemRoute(url.pathname, url)
