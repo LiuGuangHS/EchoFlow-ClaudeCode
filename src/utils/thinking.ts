@@ -13,6 +13,9 @@ export type ThinkingConfig =
   | { type: 'enabled'; budgetTokens: number }
   | { type: 'disabled' }
 
+export const ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY = 'ECHOFLOW_SEND_DISABLED_THINKING'
+export const LEGACY_CC_HAHA_SEND_DISABLED_THINKING_ENV_KEY = 'CC_HAHA_SEND_DISABLED_THINKING'
+
 /**
  * Build-time gate (feature) + runtime gate (GrowthBook). The build flag
  * controls code inclusion in external builds; the GB flag controls rollout.
@@ -181,5 +184,8 @@ export function shouldEnableThinkingByDefault(): boolean {
 }
 
 export function shouldSendExplicitDisabledThinking(): boolean {
-  return isEnvTruthy(process.env.CC_HAHA_SEND_DISABLED_THINKING)
+  return (
+    isEnvTruthy(process.env[ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY]) ||
+    isEnvTruthy(process.env[LEGACY_CC_HAHA_SEND_DISABLED_THINKING_ENV_KEY])
+  )
 }

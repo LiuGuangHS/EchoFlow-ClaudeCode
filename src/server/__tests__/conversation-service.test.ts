@@ -529,7 +529,8 @@ describe('ConversationService', () => {
       providerId: 'openai-official',
     })) as Record<string, string>
 
-    expect(env.CC_HAHA_OPENAI_OAUTH_PROVIDER).toBe('1')
+    expect(env.ECHOFLOW_OPENAI_OAUTH_PROVIDER).toBe('1')
+    expect(env.CC_HAHA_OPENAI_OAUTH_PROVIDER).toBeUndefined()
     expect(env.OPENAI_CODEX_OAUTH_FILE).toBe(
       echoFlowPath('openai-oauth.json'),
     )

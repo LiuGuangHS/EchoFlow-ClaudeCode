@@ -53,6 +53,18 @@ describe('resolveAnthropicClientApiKey', () => {
 })
 
 describe('shouldUseOpenAICodexTransport', () => {
+  test('detects current and legacy ChatGPT Official provider markers', async () => {
+    const { shouldForceOpenAICodexProvider } = await import('./client.js')
+
+    expect(shouldForceOpenAICodexProvider({
+      ECHOFLOW_OPENAI_OAUTH_PROVIDER: '1',
+    })).toBe(true)
+    expect(shouldForceOpenAICodexProvider({
+      CC_HAHA_OPENAI_OAUTH_PROVIDER: '1',
+    })).toBe(true)
+    expect(shouldForceOpenAICodexProvider({})).toBe(false)
+  })
+
   test('lets ChatGPT Official marker override a saved Claude subscriber login', async () => {
     const { shouldUseOpenAICodexTransport } = await import('./client.js')
 

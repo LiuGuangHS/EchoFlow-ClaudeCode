@@ -11,6 +11,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { ProviderService } from './providerService.js'
 import {
+  LEGACY_OPENAI_OAUTH_PROVIDER_ENV_KEY,
   OPENAI_CODEX_OAUTH_FILE_ENV_KEY,
   OPENAI_OAUTH_PROVIDER_ENV_KEY,
 } from './openaiOfficialProvider.js'
@@ -34,6 +35,10 @@ import { attributionHeaderEnvForModel } from './attributionHeaderPolicy.js'
 import { buildNetworkEnvironment, loadNetworkSettings } from './networkSettings.js'
 import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 import { logError } from '../../utils/log.js'
+import {
+  ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
+  LEGACY_CC_HAHA_SEND_DISABLED_THINKING_ENV_KEY,
+} from '../../utils/thinking.js'
 import {
   createImageMetadataText,
   maybeResizeAndDownsampleImageBuffer,
@@ -1033,11 +1038,13 @@ export class ConversationService {
       'ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES',
       'ANTHROPIC_DEFAULT_OPUS_MODEL',
       'ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES',
-      'CC_HAHA_SEND_DISABLED_THINKING',
+      ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
+      LEGACY_CC_HAHA_SEND_DISABLED_THINKING_ENV_KEY,
       'CLAUDE_CODE_AUTO_COMPACT_WINDOW',
       'CLAUDE_CODE_ATTRIBUTION_HEADER',
       'CLAUDE_CODE_MODEL_CONTEXT_WINDOWS',
       OPENAI_OAUTH_PROVIDER_ENV_KEY,
+      LEGACY_OPENAI_OAUTH_PROVIDER_ENV_KEY,
       OPENAI_CODEX_OAUTH_FILE_ENV_KEY,
     ] as const
 
@@ -1222,11 +1229,13 @@ export class ConversationService {
         'ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES',
         'ANTHROPIC_DEFAULT_OPUS_MODEL',
         'ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES',
-        'CC_HAHA_SEND_DISABLED_THINKING',
+        ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
+        LEGACY_CC_HAHA_SEND_DISABLED_THINKING_ENV_KEY,
         'CLAUDE_CODE_AUTO_COMPACT_WINDOW',
         'CLAUDE_CODE_ATTRIBUTION_HEADER',
         'CLAUDE_CODE_MODEL_CONTEXT_WINDOWS',
         OPENAI_OAUTH_PROVIDER_ENV_KEY,
+        LEGACY_OPENAI_OAUTH_PROVIDER_ENV_KEY,
         OPENAI_CODEX_OAUTH_FILE_ENV_KEY,
       ].some((key) => typeof env[key] === 'string' && env[key]!.trim().length > 0)
     } catch {
@@ -1256,7 +1265,10 @@ export class ConversationService {
       const raw = fs.readFileSync(settingsPath, 'utf-8')
       const parsed = JSON.parse(raw) as { env?: Record<string, string> }
       const env = parsed.env ?? {}
-      if (env[OPENAI_OAUTH_PROVIDER_ENV_KEY] === '1') {
+      if (
+        env[OPENAI_OAUTH_PROVIDER_ENV_KEY] === '1' ||
+        env[LEGACY_OPENAI_OAUTH_PROVIDER_ENV_KEY] === '1'
+      ) {
         return false
       }
       const hasProviderEnv = [

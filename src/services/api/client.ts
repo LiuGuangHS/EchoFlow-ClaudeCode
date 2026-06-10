@@ -36,6 +36,9 @@ import {
   isEnvTruthy,
 } from '../../utils/envUtils.js'
 
+export const ECHOFLOW_OPENAI_OAUTH_PROVIDER_ENV_KEY = 'ECHOFLOW_OPENAI_OAUTH_PROVIDER'
+export const LEGACY_CC_HAHA_OPENAI_OAUTH_PROVIDER_ENV_KEY = 'CC_HAHA_OPENAI_OAUTH_PROVIDER'
+
 /**
  * Environment variables for different client types:
  *
@@ -135,6 +138,15 @@ export function shouldUseOpenAICodexTransport({
   )
 }
 
+export function shouldForceOpenAICodexProvider(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return (
+    isEnvTruthy(env[ECHOFLOW_OPENAI_OAUTH_PROVIDER_ENV_KEY]) ||
+    isEnvTruthy(env[LEGACY_CC_HAHA_OPENAI_OAUTH_PROVIDER_ENV_KEY])
+  )
+}
+
 export async function getAnthropicClient({
   apiKey,
   maxRetries,
@@ -184,7 +196,7 @@ export async function getAnthropicClient({
 
   const isOpenAIModel = model ? isOpenAIResponsesModel(model) : false
   const isClaudeSubscriber = isClaudeAISubscriber()
-  const forceOpenAICodex = isEnvTruthy(process.env.CC_HAHA_OPENAI_OAUTH_PROVIDER)
+  const forceOpenAICodex = shouldForceOpenAICodexProvider(process.env)
   const hasOpenAIAuth = shouldUseOpenAICodexAuth()
   const hasFallbackApiKey = hasOpenAIAuth &&
     !process.env.ANTHROPIC_AUTH_TOKEN &&

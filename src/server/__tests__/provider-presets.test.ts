@@ -97,6 +97,7 @@ describe('provider presets API', () => {
     expect(deepseek.defaultModels.sonnet).toBe('deepseek-v4-pro')
     expect(deepseek.defaultModels.opus).toBe('deepseek-v4-pro')
     expect(deepseek.defaultEnv?.CC_HAHA_SEND_DISABLED_THINKING).toBeUndefined()
+    expect(deepseek.defaultEnv?.ECHOFLOW_SEND_DISABLED_THINKING).toBeUndefined()
     expect(deepseek.defaultEnv?.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe(
       'thinking,effort,adaptive_thinking,max_effort',
     )
@@ -108,7 +109,8 @@ describe('provider presets API', () => {
     expect(kimi.baseUrl).toBe('https://api.kimi.com/coding')
     expect(kimi.authStrategy).toBe('auth_token')
     expect(kimi.defaultModels.main).toBe('kimi-k2.6')
-    expect(kimi.defaultEnv?.CC_HAHA_SEND_DISABLED_THINKING).toBe('1')
+    expect(kimi.defaultEnv?.CC_HAHA_SEND_DISABLED_THINKING).toBeUndefined()
+    expect(kimi.defaultEnv?.ECHOFLOW_SEND_DISABLED_THINKING).toBe('1')
     expect(minimax.authStrategy).toBe('auth_token')
     expect(minimax.defaultModels.main).toBe('MiniMax-M3')
     expect(minimax.modelContextWindows?.['MiniMax-M3']).toBe(1000000)
@@ -144,7 +146,8 @@ describe('provider presets API', () => {
     expect(deepseek.modelContextWindows?.['deepseek-v4-flash']).toBe(1000000)
     expect(zhipu.apiKeyUrl).toBe('https://www.bigmodel.cn/invite?icode=d41B2qi8Z5xNwTGLNPPF3OZLO2QH3C0EBTSr%2BArzMw4%3D')
     expect(zhipu.promoText).toContain('EchoFlow Code')
-    expect(zhipu.defaultEnv?.CC_HAHA_SEND_DISABLED_THINKING).toBe('1')
+    expect(zhipu.defaultEnv?.CC_HAHA_SEND_DISABLED_THINKING).toBeUndefined()
+    expect(zhipu.defaultEnv?.ECHOFLOW_SEND_DISABLED_THINKING).toBe('1')
     expect(zhipu.modelContextWindows?.['glm-5.1']).toBe(200000)
     expect(zhipu.modelContextWindows?.['glm-4.5-air']).toBe(128000)
     expect(kimi.apiKeyUrl).toBe('https://platform.kimi.com/console/api-keys')

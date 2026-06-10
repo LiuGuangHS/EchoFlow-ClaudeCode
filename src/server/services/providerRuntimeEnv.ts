@@ -2,6 +2,10 @@ import * as fs from 'fs'
 import * as path from 'path'
 
 import { MODEL_CONTEXT_WINDOWS_ENV_KEY } from '../../utils/model/modelContextWindows.js'
+import {
+  ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
+  LEGACY_CC_HAHA_SEND_DISABLED_THINKING_ENV_KEY,
+} from '../../utils/thinking.js'
 import { PROVIDER_PRESETS } from '../config/providerPresets.js'
 import type {
   ApiFormat,
@@ -15,6 +19,7 @@ import {
 } from './attributionHeaderPolicy.js'
 import { getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 import {
+  LEGACY_OPENAI_OAUTH_PROVIDER_ENV_KEY,
   OPENAI_CODEX_OAUTH_FILE_ENV_KEY,
   OPENAI_OAUTH_PROVIDER_ENV_KEY,
   buildOpenAIOfficialRuntimeEnv,
@@ -37,7 +42,10 @@ export const MANAGED_PROVIDER_ENV_KEYS = [
   'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
   ATTRIBUTION_HEADER_ENV_KEY,
   MODEL_CONTEXT_WINDOWS_ENV_KEY,
+  ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
+  LEGACY_CC_HAHA_SEND_DISABLED_THINKING_ENV_KEY,
   OPENAI_OAUTH_PROVIDER_ENV_KEY,
+  LEGACY_OPENAI_OAUTH_PROVIDER_ENV_KEY,
   OPENAI_CODEX_OAUTH_FILE_ENV_KEY,
 ] as const
 
