@@ -1106,9 +1106,11 @@ describe('Settings > General tab', () => {
 
 describe('Settings > Providers tab', () => {
   beforeEach(() => {
+    vi.useRealTimers()
     MOCK_DELETE_PROVIDER.mockReset()
     MOCK_GET_SETTINGS.mockResolvedValue({})
     MOCK_UPDATE_SETTINGS.mockResolvedValue({})
+    useUIStore.setState({ pendingSettingsTab: null, toasts: [] })
     useSettingsStore.setState({
       locale: 'en',
       fetchAll: vi.fn().mockResolvedValue(undefined),
@@ -1132,6 +1134,17 @@ describe('Settings > Providers tab', () => {
     ]
     providerStoreState.activeId = null
     providerStoreState.hasLoadedProviders = true
+    providerStoreState.presets = []
+    providerStoreState.isLoading = false
+    providerStoreState.isPresetsLoading = false
+    providerStoreState.fetchProviders = vi.fn()
+    providerStoreState.fetchPresets = vi.fn()
+    providerStoreState.activateProvider = vi.fn()
+    providerStoreState.activateOfficial = vi.fn()
+    providerStoreState.testProvider = vi.fn()
+    providerStoreState.createProvider = vi.fn()
+    providerStoreState.updateProvider = vi.fn()
+    providerStoreState.testConfig = vi.fn()
   })
 
   it('does not query official OAuth status before providers finish loading', () => {

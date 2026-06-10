@@ -447,8 +447,11 @@ describe('H5AccessService', () => {
     expect(diag.storedHostStaleness).toBe('proxy')
     expect(diag.storedPublicBaseUrl).toBe('https://h5.mydomain.com')
 
-    // ok: stored URL host is on local interfaces
-    const localHost = collectLocalIPv4Hosts()[0]
+    // ok: stored URL host is on local interfaces. Some machines expose
+    // public or non-private IPv4 addresses first, which are intentionally
+    // classified as proxy URLs rather than directly reachable LAN URLs.
+    const localHost = collectLocalIPv4Hosts()
+      .find((host) => classifyH5PublicBaseUrl(`http://${host}:55379`) === 'plain-lan')
     if (localHost) {
       await service.updateSettings({ publicBaseUrl: `http://${localHost}:55379` })
       diag = await service.getDiagnostics()
