@@ -1,12 +1,14 @@
-import { useEffect, useMemo } from 'react'
-import { usePluginStore } from '../../stores/pluginStore'
+import { useEffect, useMemo, useState } from 'react'
+import { usePluginStore, type PluginActionTarget } from '../../stores/pluginStore'
 import { useSessionStore } from '../../stores/sessionStore'
 import { useTranslation } from '../../i18n'
 import { useUIStore } from '../../stores/uiStore'
 import { Button } from '../shared/Button'
+import { ConfirmDialog } from '../shared/ConfirmDialog'
 import type { PluginSummary } from '../../types/plugin'
 
 type PluginBucket = 'attention' | 'enabled' | 'disabled'
+type BatchAction = 'enable' | 'disable'
 
 export function PluginList() {
   const {
@@ -20,11 +22,15 @@ export function PluginList() {
     fetchPlugins,
     fetchPluginDetail,
     reloadPlugins,
+    bulkEnablePlugins,
+    bulkDisablePlugins,
   } = usePluginStore()
   const sessions = useSessionStore((s) => s.sessions)
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
   const addToast = useUIStore((s) => s.addToast)
   const t = useTranslation()
+  const [selectedPluginIds, setSelectedPluginIds] = useState<Set<string>>(() => new Set())
+  const [confirmBatchAction, setConfirmBatchAction] = useState<BatchAction | null>(null)
   const activeSession = sessions.find((session) => session.id === activeSessionId)
   const currentWorkDir = activeSession?.workDir || undefined
 
@@ -52,6 +58,32 @@ export function PluginList() {
     return buckets
   }, [plugins])
 
+  useEffect(() => {
+    setSelectedPluginIds((current) => {
+      const selectableIds = new Set(plugins.filter(canMutatePlugin).map((plugin) => plugin.id))
+      const next = new Set([...current].filter((id) => selectableIds.has(id)))
+      return next.size === current.size ? current : next
+    })
+  }, [plugins])
+
+  const selectedPlugins = useMemo(
+    () => plugins.filter((plugin) => selectedPluginIds.has(plugin.id) && canMutatePlugin(plugin)),
+    [plugins, selectedPluginIds],
+  )
+  const enableCandidates = useMemo(
+    () => selectedPlugins.filter((plugin) => !plugin.enabled),
+    [selectedPlugins],
+  )
+  const disableCandidates = useMemo(
+    () => selectedPlugins.filter((plugin) => plugin.enabled),
+    [selectedPlugins],
+  )
+  const confirmBatchPlugins = confirmBatchAction === 'enable' ? enableCandidates : disableCandidates
+  const confirmBatchNames = useMemo(
+    () => formatPluginNames(confirmBatchPlugins),
+    [confirmBatchPlugins],
+  )
+
   const handleReload = async () => {
     try {
       const reloadSummary = await reloadPlugins(currentWorkDir, activeSessionId || undefined)
@@ -64,6 +96,63 @@ export function PluginList() {
         }),
       })
     } catch (err) {
+      addToast({
+        type: 'error',
+        message: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
+  const togglePluginSelection = (pluginId: string, selected: boolean) => {
+    setSelectedPluginIds((current) => {
+      const next = new Set(current)
+      if (selected) {
+        next.add(pluginId)
+      } else {
+        next.delete(pluginId)
+      }
+      return next
+    })
+  }
+
+  const clearSelection = () => {
+    setSelectedPluginIds(new Set())
+  }
+
+  const toActionTargets = (items: PluginSummary[]): PluginActionTarget[] =>
+    items.map((plugin) => ({ id: plugin.id, scope: plugin.scope }))
+
+  const handleBatchConfirm = async () => {
+    if (!confirmBatchAction) return
+
+    const action = confirmBatchAction
+    const targets = action === 'enable' ? enableCandidates : disableCandidates
+    if (targets.length === 0) {
+      setConfirmBatchAction(null)
+      return
+    }
+
+    try {
+      const changed = action === 'enable'
+        ? await bulkEnablePlugins(toActionTargets(targets), currentWorkDir, activeSessionId || undefined)
+        : await bulkDisablePlugins(toActionTargets(targets), currentWorkDir, activeSessionId || undefined)
+
+      setSelectedPluginIds((current) => {
+        const next = new Set(current)
+        for (const plugin of targets) {
+          next.delete(plugin.id)
+        }
+        return next
+      })
+      setConfirmBatchAction(null)
+      addToast({
+        type: 'success',
+        message: t(action === 'enable' ? 'settings.plugins.bulkEnableToast' : 'settings.plugins.bulkDisableToast', {
+          count: String(changed),
+        }),
+      })
+    } catch (err) {
+      setConfirmBatchAction(null)
       addToast({
         type: 'error',
         message: err instanceof Error ? err.message : String(err),
@@ -176,6 +265,45 @@ export function PluginList() {
             </p>
           )}
         </div>
+
+        <div className="flex flex-col gap-3 border-t border-[var(--color-border)] px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-center gap-2 text-xs text-[var(--color-text-secondary)]">
+            <span className="material-symbols-outlined text-[16px] text-[var(--color-text-tertiary)]">
+              checklist
+            </span>
+            <span className="font-medium text-[var(--color-text-primary)]">
+              {t('settings.plugins.selectionCount', { count: String(selectedPlugins.length) })}
+            </span>
+            {selectedPlugins.length > 0 && (
+              <button
+                type="button"
+                onClick={clearSelection}
+                className="rounded-md px-2 py-1 text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]"
+              >
+                {t('settings.plugins.clearSelection')}
+              </button>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2 sm:justify-end">
+            <Button
+              size="sm"
+              disabled={enableCandidates.length === 0 || isApplying}
+              onClick={() => setConfirmBatchAction('enable')}
+            >
+              <span className="material-symbols-outlined text-[16px]" aria-hidden="true">toggle_on</span>
+              {t('settings.plugins.enableSelected')}
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={disableCandidates.length === 0 || isApplying}
+              onClick={() => setConfirmBatchAction('disable')}
+            >
+              <span className="material-symbols-outlined text-[16px]" aria-hidden="true">toggle_off</span>
+              {t('settings.plugins.disableSelected')}
+            </Button>
+          </div>
+        </div>
       </section>
 
       {marketplaces.length > 0 && (
@@ -223,19 +351,65 @@ export function PluginList() {
         </section>
       )}
 
-      {renderGroup('attention', grouped.attention, fetchPluginDetail, currentWorkDir, t)}
-      {renderGroup('enabled', grouped.enabled, fetchPluginDetail, currentWorkDir, t)}
-      {renderGroup('disabled', grouped.disabled, fetchPluginDetail, currentWorkDir, t)}
+      {renderGroup('attention', grouped.attention, {
+        fetchPluginDetail,
+        cwd: currentWorkDir,
+        t,
+        selectedPluginIds,
+        onToggleSelection: togglePluginSelection,
+      })}
+      {renderGroup('enabled', grouped.enabled, {
+        fetchPluginDetail,
+        cwd: currentWorkDir,
+        t,
+        selectedPluginIds,
+        onToggleSelection: togglePluginSelection,
+      })}
+      {renderGroup('disabled', grouped.disabled, {
+        fetchPluginDetail,
+        cwd: currentWorkDir,
+        t,
+        selectedPluginIds,
+        onToggleSelection: togglePluginSelection,
+      })}
+
+      <ConfirmDialog
+        open={confirmBatchAction !== null}
+        onClose={() => setConfirmBatchAction(null)}
+        onConfirm={handleBatchConfirm}
+        title={confirmBatchAction === 'enable'
+          ? t('settings.plugins.bulkEnableTitle', { count: String(confirmBatchPlugins.length) })
+          : t('settings.plugins.bulkDisableTitle', { count: String(confirmBatchPlugins.length) })}
+        body={confirmBatchAction === 'enable'
+          ? t('settings.plugins.bulkEnableBody', { names: confirmBatchNames })
+          : t('settings.plugins.bulkDisableBody', { names: confirmBatchNames })}
+        confirmLabel={confirmBatchAction === 'enable' ? t('settings.plugins.enable') : t('settings.plugins.disable')}
+        cancelLabel={t('common.cancel')}
+        confirmVariant={confirmBatchAction === 'disable' ? 'danger' : 'primary'}
+        loading={isApplying}
+      />
     </div>
   )
+}
+
+type RenderGroupOptions = {
+  fetchPluginDetail: (id: string, cwd?: string) => Promise<void>
+  cwd: string | undefined
+  t: ReturnType<typeof useTranslation>
+  selectedPluginIds: Set<string>
+  onToggleSelection: (pluginId: string, selected: boolean) => void
 }
 
 function renderGroup(
   bucket: PluginBucket,
   items: PluginSummary[],
-  fetchPluginDetail: (id: string, cwd?: string) => Promise<void>,
-  cwd: string | undefined,
-  t: ReturnType<typeof useTranslation>,
+  {
+    fetchPluginDetail,
+    cwd,
+    t,
+    selectedPluginIds,
+    onToggleSelection,
+  }: RenderGroupOptions,
 ) {
   if (items.length === 0) return null
 
@@ -264,58 +438,88 @@ function renderGroup(
       </div>
       <div className="flex flex-col p-2">
         {items.map((plugin) => (
-          <button
+          <div
             key={plugin.id}
-            onClick={() => void fetchPluginDetail(plugin.id, cwd)}
-            className="group rounded-xl border border-transparent px-3 py-3 text-left transition-all hover:border-[var(--color-border-focus)] hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
+            className={`group rounded-xl border px-3 py-3 transition-all hover:border-[var(--color-border-focus)] hover:bg-[var(--color-surface-hover)] ${
+              selectedPluginIds.has(plugin.id)
+                ? 'border-[var(--color-brand)]/45 bg-[var(--color-surface-selected)]'
+                : 'border-transparent'
+            }`}
           >
             <div className="flex items-start gap-3">
-              <span className="mt-0.5 material-symbols-outlined text-[18px] text-[var(--color-text-tertiary)]">
-                {plugin.hasErrors ? 'warning' : plugin.enabled ? 'extension' : 'extension_off'}
-              </span>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm font-semibold text-[var(--color-text-primary)] break-all">
-                    {plugin.name}
-                  </span>
-                  <StatusPill plugin={plugin} />
-                  <ScopePill scope={plugin.scope} />
-                  {plugin.version && (
-                    <span className="rounded-full bg-[var(--color-surface-container-high)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-tertiary)]">
-                      v{plugin.version}
+              {canMutatePlugin(plugin) ? (
+                <label className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-surface-container-high)]">
+                  <input
+                    type="checkbox"
+                    aria-label={t('settings.plugins.selectPlugin', { name: plugin.name })}
+                    checked={selectedPluginIds.has(plugin.id)}
+                    onChange={(event) => onToggleSelection(plugin.id, event.currentTarget.checked)}
+                    className="h-4 w-4 rounded border-[var(--color-border)] accent-[var(--color-brand)]"
+                  />
+                </label>
+              ) : (
+                <span className="mt-0.5 h-6 w-6 shrink-0" aria-hidden="true" />
+              )}
+              <button
+                type="button"
+                onClick={() => void fetchPluginDetail(plugin.id, cwd)}
+                className="flex min-w-0 flex-1 items-start gap-3 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
+              >
+                <span className="mt-0.5 material-symbols-outlined text-[18px] text-[var(--color-text-tertiary)]">
+                  {plugin.hasErrors ? 'warning' : plugin.enabled ? 'extension' : 'extension_off'}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-semibold text-[var(--color-text-primary)] break-all">
+                      {plugin.name}
                     </span>
-                  )}
+                    <StatusPill plugin={plugin} />
+                    <ScopePill scope={plugin.scope} />
+                    {plugin.version && (
+                      <span className="rounded-full bg-[var(--color-surface-container-high)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-tertiary)]">
+                        v{plugin.version}
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)] break-words">
+                    {plugin.description || t('settings.plugins.noDescription')}
+                  </p>
+                  <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--color-text-tertiary)]">
+                    <span>{plugin.marketplace}</span>
+                    {plugin.componentCounts.skills > 0 && (
+                      <span>{t('settings.plugins.capability.skills', { count: String(plugin.componentCounts.skills) })}</span>
+                    )}
+                    {plugin.componentCounts.agents > 0 && (
+                      <span>{t('settings.plugins.capability.agents', { count: String(plugin.componentCounts.agents) })}</span>
+                    )}
+                    {plugin.componentCounts.mcpServers > 0 && (
+                      <span>{t('settings.plugins.capability.mcpServers', { count: String(plugin.componentCounts.mcpServers) })}</span>
+                    )}
+                    {plugin.errors.length > 0 && (
+                      <span className="text-[var(--color-error)]">
+                        {t('settings.plugins.errorCount', { count: String(plugin.errors.length) })}
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <p className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)] break-words">
-                  {plugin.description || t('settings.plugins.noDescription')}
-                </p>
-                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--color-text-tertiary)]">
-                  <span>{plugin.marketplace}</span>
-                  {plugin.componentCounts.skills > 0 && (
-                    <span>{t('settings.plugins.capability.skills', { count: String(plugin.componentCounts.skills) })}</span>
-                  )}
-                  {plugin.componentCounts.agents > 0 && (
-                    <span>{t('settings.plugins.capability.agents', { count: String(plugin.componentCounts.agents) })}</span>
-                  )}
-                  {plugin.componentCounts.mcpServers > 0 && (
-                    <span>{t('settings.plugins.capability.mcpServers', { count: String(plugin.componentCounts.mcpServers) })}</span>
-                  )}
-                  {plugin.errors.length > 0 && (
-                    <span className="text-[var(--color-error)]">
-                      {t('settings.plugins.errorCount', { count: String(plugin.errors.length) })}
-                    </span>
-                  )}
-                </div>
-              </div>
-              <span className="material-symbols-outlined text-[18px] text-[var(--color-text-tertiary)] opacity-60 transition-transform group-hover:translate-x-0.5 group-hover:opacity-100">
-                chevron_right
-              </span>
+                <span className="material-symbols-outlined text-[18px] text-[var(--color-text-tertiary)] opacity-60 transition-transform group-hover:translate-x-0.5 group-hover:opacity-100">
+                  chevron_right
+                </span>
+              </button>
             </div>
-          </button>
+          </div>
         ))}
       </div>
     </section>
   )
+}
+
+function canMutatePlugin(plugin: PluginSummary) {
+  return plugin.scope !== 'managed' && plugin.scope !== 'builtin'
+}
+
+function formatPluginNames(plugins: PluginSummary[]) {
+  return plugins.map((plugin) => plugin.name).join(', ')
 }
 
 function SummaryCard({

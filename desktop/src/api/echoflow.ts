@@ -7,13 +7,15 @@ export interface EchoFlowModelOption {
   owned_by?: string
 }
 
+export type EchoFlowValidationError = 'missing_token' | 'token_invalid' | 'service_unavailable' | 'invalid_response'
+
 export interface EchoFlowValidationResult {
   valid: boolean
   balance?: number
   userGroup?: string
   username?: string
   models?: EchoFlowModelOption[]
-  error?: string
+  error?: EchoFlowValidationError
 }
 
 export const echoflowApi = {

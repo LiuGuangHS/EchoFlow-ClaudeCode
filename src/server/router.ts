@@ -29,6 +29,7 @@ import { handleMemoryApi } from './api/memory.js'
 import { handleDesktopUiApi } from './api/desktop-ui.js'
 import { handleLegacyMigrationApi } from './api/legacy-migration.js'
 import { handleEchoFlowApi } from './api/echoflow.js'
+import { handleTracesApi } from './api/traces.js'
 
 export async function handleApiRequest(req: Request, url: URL): Promise<Response> {
   const path = url.pathname
@@ -126,6 +127,9 @@ export async function handleApiRequest(req: Request, url: URL): Promise<Response
 
     case 'echoflow':
       return handleEchoFlowApi(req, url, segments)
+
+    case 'traces':
+      return handleTracesApi(req, url, segments)
 
     case 'filesystem':
       return handleFilesystemRoute(url.pathname, url)

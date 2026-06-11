@@ -76,11 +76,20 @@ const sessionTitleState = new Map<string, {
   generationSeq: number
 }>()
 
-const runtimeOverrides = new Map<string, {
+type RuntimeOverride = {
   providerId: string | null
   modelId: string
   effort?: string
-}>()
+}
+
+type ActiveUserTurnState = {
+  messageSent: boolean
+}
+
+const runtimeOverrides = new Map<string, RuntimeOverride>()
+const activeUserTurns = new Map<string, ActiveUserTurnState>()
+const deferredRuntimeRestarts = new Map<string, RuntimeOverride>()
+const deferredPermissionModes = new Map<string, string>()
 
 const runtimeTransitionPromises = new Map<string, Promise<void>>()
 const sessionStartupPromises = new Map<string, Promise<void>>()
@@ -306,8 +315,14 @@ async function handleUserMessage(
   // Send thinking status
   sendMessage(ws, { type: 'status', state: 'thinking', verb: 'Thinking' })
 
+  const activeTurn: ActiveUserTurnState = { messageSent: false }
+  activeUserTurns.set(sessionId, activeTurn)
+
   const initialRuntimeTransition = await waitForRuntimeTransitionBeforeUserTurn(ws, sessionId)
-  if (!initialRuntimeTransition.ok) return
+  if (!initialRuntimeTransition.ok) {
+    clearActiveUserTurn(sessionId, activeTurn)
+    return
+  }
   if (initialRuntimeTransition.waited) {
     sendMessage(ws, { type: 'status', state: 'thinking', verb: 'Thinking' })
   }
@@ -357,6 +372,7 @@ async function handleUserMessage(
         err instanceof ConversationStartupError ? err.retryable : false,
     })
     sendMessage(ws, { type: 'status', state: 'idle' })
+    clearActiveUserTurn(sessionId, activeTurn)
     return
   }
 
@@ -366,6 +382,7 @@ async function handleUserMessage(
       sendMessage(ws, { type: 'status', state: 'thinking', verb: 'Thinking' })
     }
   } else {
+    clearActiveUserTurn(sessionId, activeTurn)
     return
   }
 
@@ -387,6 +404,7 @@ async function handleUserMessage(
       return shouldForwardCurrentTurnLocalCommand(cliMsg)
     },
   })
+  const removeActiveTurnOutputCallback = bindActiveUserTurnCompletion(ws, sessionId, activeTurn)
 
   const sent = await conversationService.sendMessage(
     sessionId,
@@ -394,6 +412,8 @@ async function handleUserMessage(
     message.attachments
   )
   if (!sent) {
+    removeActiveTurnOutputCallback()
+    clearActiveUserTurn(sessionId, activeTurn)
     removeTitleOutputCallback?.()
     discardActiveTitleTurn(sessionId, titleTurnNumber)
     sendMessage(ws, {
@@ -406,6 +426,72 @@ async function handleUserMessage(
   }
 
   userMessageSent = true
+  activeTurn.messageSent = true
+}
+
+function clearActiveUserTurn(sessionId: string, activeTurn: ActiveUserTurnState): void {
+  if (activeUserTurns.get(sessionId) === activeTurn) {
+    activeUserTurns.delete(sessionId)
+  }
+}
+
+function bindActiveUserTurnCompletion(
+  ws: ServerWebSocket<WebSocketData>,
+  sessionId: string,
+  activeTurn: ActiveUserTurnState,
+): () => void {
+  const callback = (cliMsg: any) => {
+    if (!activeTurn.messageSent || cliMsg?.type !== 'result') return
+
+    conversationService.removeOutputCallback(sessionId, callback)
+    clearActiveUserTurn(sessionId, activeTurn)
+    applyDeferredPermissionModeAfterActiveTurn(ws, sessionId)
+    applyDeferredRuntimeRestartAfterActiveTurn(ws, sessionId)
+  }
+
+  conversationService.onOutput(sessionId, callback)
+  return () => conversationService.removeOutputCallback(sessionId, callback)
+}
+
+function shouldDeferRuntimeRestartForActiveTurn(sessionId: string): boolean {
+  return activeUserTurns.get(sessionId)?.messageSent === true
+}
+
+function applyDeferredPermissionModeAfterActiveTurn(
+  ws: ServerWebSocket<WebSocketData>,
+  sessionId: string,
+): void {
+  const deferredMode = deferredPermissionModes.get(sessionId)
+  if (!deferredMode) return
+
+  deferredPermissionModes.delete(sessionId)
+  void enqueueRuntimeTransition(sessionId, async () => {
+    if (!conversationService.hasSession(sessionId)) return
+    await applyPermissionModeToActiveSession(ws, sessionId, deferredMode)
+  })
+}
+
+function applyDeferredRuntimeRestartAfterActiveTurn(
+  ws: ServerWebSocket<WebSocketData>,
+  sessionId: string,
+): void {
+  const deferred = deferredRuntimeRestarts.get(sessionId)
+  if (!deferred) return
+
+  deferredRuntimeRestarts.delete(sessionId)
+  void enqueueRuntimeTransition(sessionId, async () => {
+    const currentOverride = runtimeOverrides.get(sessionId)
+    if (
+      !currentOverride ||
+      currentOverride.providerId !== deferred.providerId ||
+      currentOverride.modelId !== deferred.modelId ||
+      currentOverride.effort !== deferred.effort ||
+      !conversationService.hasSession(sessionId)
+    ) {
+      return
+    }
+    await restartSessionWithRuntimeConfig(ws, sessionId)
+  })
 }
 
 async function handleDesktopClearCommand(
@@ -555,8 +641,13 @@ async function applyPermissionModeToActiveSession(
   mode: string,
 ): Promise<void> {
   const currentMode = conversationService.getSessionPermissionMode(sessionId)
-  if (currentMode === mode) return
+  if (shouldDeferRuntimeRestartForActiveTurn(sessionId)) {
+    deferredPermissionModes.set(sessionId, mode)
+    await persistSessionPermissionMode(sessionId, mode)
+    return
+  }
 
+  if (currentMode === mode) return
   const needsRestart = shouldRestartForPermissionMode(currentMode, mode)
 
   if (needsRestart) {
@@ -619,6 +710,12 @@ async function handleSetRuntimeConfig(
     sessionId,
     (runtimeOverrideVersions.get(sessionId) ?? 0) + 1,
   )
+
+  if (shouldDeferRuntimeRestartForActiveTurn(sessionId)) {
+    deferredRuntimeRestarts.set(sessionId, nextOverride)
+    await persistSessionRuntimeConfig(sessionId, nextOverride)
+    return
+  }
 
   if (conversationService.hasSession(sessionId)) {
     await enqueueRuntimeTransition(sessionId, async () => {
@@ -1080,6 +1177,9 @@ function cleanupSessionRuntimeState(sessionId: string) {
   sessionSlashCommands.delete(sessionId)
   sessionTitleState.delete(sessionId)
   runtimeOverrides.delete(sessionId)
+  activeUserTurns.delete(sessionId)
+  deferredRuntimeRestarts.delete(sessionId)
+  deferredPermissionModes.delete(sessionId)
   runtimeTransitionPromises.delete(sessionId)
   sessionStartupPromises.delete(sessionId)
   lastResolvedStartupWorkDirs.delete(sessionId)
@@ -1231,12 +1331,15 @@ async function ensureCliSessionStarted(
     const workDir = await resolveSessionWorkDir(sessionId)
     lastResolvedStartupWorkDirs.set(sessionId, workDir)
     const runtimeSettings = await getRuntimeSettings(sessionId)
+    const startupSettings = reason === 'prewarm_session'
+      ? { ...runtimeSettings, resumeInterruptedTurn: false }
+      : runtimeSettings
     const sdkUrl =
       `ws://${ws.data.serverHost}:${ws.data.serverPort}/sdk/${sessionId}` +
       `?token=${encodeURIComponent(crypto.randomUUID())}`
     await sendRepositoryStartupStatus(ws, sessionId, reason)
     console.log(`[WS] Starting CLI for ${sessionId} due to ${reason}`)
-    await conversationService.startSession(sessionId, workDir, sdkUrl, runtimeSettings)
+    await conversationService.startSession(sessionId, workDir, sdkUrl, startupSettings)
   })()
 
   sessionStartupPromises.set(sessionId, startup)

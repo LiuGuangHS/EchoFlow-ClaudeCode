@@ -1,4 +1,4 @@
-import { EchoFlowApiService } from '../services/echoflowApiService.js'
+import { EchoFlowApiError, EchoFlowApiService } from '../services/echoflowApiService.js'
 import { errorResponse } from '../middleware/errorHandler.js'
 
 const service = new EchoFlowApiService()
@@ -16,8 +16,12 @@ export async function handleEchoFlowApi(req: Request, _url: URL, segments: strin
         const userInfo = await service.validateManagementToken(token)
         const models = await service.listModels(token).catch(() => [])
         return Response.json({ valid: true, ...userInfo, models })
-      } catch {
-        return Response.json({ valid: false, error: 'token_invalid' })
+      } catch (error) {
+        if (error instanceof EchoFlowApiError) {
+          const status = error.code === 'token_invalid' ? 200 : 502
+          return Response.json({ valid: false, error: error.code }, { status })
+        }
+        return Response.json({ valid: false, error: 'service_unavailable' }, { status: 502 })
       }
     }
 

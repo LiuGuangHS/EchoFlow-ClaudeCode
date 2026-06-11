@@ -27,7 +27,7 @@
     "needsApiKey": true,
     "websiteUrl": "https://api.echoflow.cn/",
     "apiKeyUrl": "https://api.echoflow.cn/register?channel=c_fe4eotyx",
-    "promoText": "官方一站式接入 500+ 模型，支持 Claude / OpenAI 兼容协议与代理转换，国内访问稳定。新用户可先注册 EchoFlowAPI，再使用系统访问令牌完成余额查询、模型选择和接入配置。"
+    "promoText": "官方一站式接入 500+ 模型，支持 Claude / OpenAI 兼容协议与代理转换，国内访问稳定。新用户可先注册 EchoFlowAPI，再使用系统访问令牌完成余额查询、模型选择和接入配置。",
     "featured": true,
     "authStrategy": "auth_token",
     "modelContextWindows": {

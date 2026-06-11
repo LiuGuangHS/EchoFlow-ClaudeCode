@@ -176,6 +176,9 @@ export type DesktopHost = {
     open(target: string): Promise<void>
     openPath(path: string): Promise<void>
   }
+  trace?: {
+    openWindow(sessionId: string): Promise<void>
+  }
   dialogs: {
     open(options?: DialogOpenOptions): Promise<string | string[] | null>
     save(options?: DialogSaveOptions): Promise<string | null>

@@ -20,6 +20,14 @@ const DEFAULT_MODELS = {
 
 type ConnectMode = 'management_token' | 'manual_key'
 
+function getDefaultModelSelection(chatModels: EchoFlowModelOption[]) {
+  const main = chatModels.find((m) => m.id === DEFAULT_MODELS.main)?.id ?? chatModels[0]?.id ?? DEFAULT_MODELS.main
+  const haiku = chatModels.find((m) => m.id.toLowerCase().includes('haiku'))?.id ??
+    chatModels.find((m) => m.id === DEFAULT_MODELS.haiku)?.id ??
+    main
+  return { main, haiku }
+}
+
 export function EchoFlowAPIOfficialLogin() {
   const t = useTranslation()
   const { providers, activeId, createProvider, updateProvider, activateProvider, activateOfficial, fetchProviders } = useProviderStore()
@@ -58,20 +66,29 @@ export function EchoFlowAPIOfficialLogin() {
     try {
       const result = await echoflowApi.validateManagementToken(trimmed)
       if (!result.valid) {
-        setValidationError(t('settings.echoflowAPIOfficialLogin.tokenInvalid'))
+        setValidationError(result.error === 'token_invalid'
+          ? t('settings.echoflowAPIOfficialLogin.tokenInvalid')
+          : t('settings.echoflowAPIOfficialLogin.serviceUnavailable'))
         return
       }
       const chatModels = (result.models ?? []).filter((m) => m.type === 'chat')
+      const selection = getDefaultModelSelection(chatModels)
+      setSelectedMainModel(selection.main)
+      setSelectedHaikuModel(selection.haiku)
       setValidationInfo({ balance: result.balance ?? 0, userGroup: result.userGroup ?? 'default', models: chatModels })
-      const haikuMatch = chatModels.find((m) => m.id.toLowerCase().includes('haiku'))
-      if (haikuMatch) setSelectedHaikuModel(haikuMatch.id)
-      const defaultMain = chatModels.find((m) => m.id === DEFAULT_MODELS.main)
-      if (!defaultMain && chatModels[0]) setSelectedMainModel(chatModels[0].id)
     } catch {
-      setValidationError(t('settings.echoflowAPIOfficialLogin.tokenInvalid'))
+      setValidationError(t('settings.echoflowAPIOfficialLogin.serviceUnavailable'))
     } finally {
       setIsValidating(false)
     }
+  }
+
+  const handleManagementTokenChange = (value: string) => {
+    setMgmtToken(value)
+    setValidationInfo(null)
+    setValidationError(null)
+    setSelectedMainModel(DEFAULT_MODELS.main)
+    setSelectedHaikuModel(DEFAULT_MODELS.haiku)
   }
 
   const handleConnect = async () => {
@@ -81,6 +98,7 @@ export function EchoFlowAPIOfficialLogin() {
       let apiKey: string
       let models: typeof DEFAULT_MODELS
       if (connectMode === 'management_token') {
+        // Temporary compatibility path: save the management token as the call credential until EchoFlowAPI exposes stable scoped project-key creation.
         apiKey = mgmtToken.trim()
         const main = selectedMainModel || DEFAULT_MODELS.main
         const haiku = selectedHaikuModel || main
@@ -196,9 +214,14 @@ export function EchoFlowAPIOfficialLogin() {
 
       {connectMode === 'management_token' ? (
         <>
-          <p className="text-[11px] leading-5 text-[var(--color-text-secondary)]">
-            {t('settings.echoflowAPIOfficialLogin.managementTokenGuide')}
-          </p>
+          <div className="space-y-1">
+            <p className="text-[11px] leading-5 text-[var(--color-text-secondary)]">
+              {t('settings.echoflowAPIOfficialLogin.managementTokenGuide')}
+            </p>
+            <p className="text-[11px] leading-5 text-[var(--color-text-tertiary)]">
+              {t('settings.echoflowAPIOfficialLogin.compatibilityNote')}
+            </p>
+          </div>
 
           <div className="flex items-center gap-2">
             <div className="flex shrink-0 items-center gap-1.5">
@@ -223,7 +246,7 @@ export function EchoFlowAPIOfficialLogin() {
               <input
                 type={showMgmtToken ? 'text' : 'password'}
                 value={mgmtToken}
-                onChange={(e) => { setMgmtToken(e.target.value); setValidationInfo(null); setValidationError(null) }}
+                onChange={(e) => handleManagementTokenChange(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter' && mgmtToken.trim()) void handleValidate() }}
                 placeholder={t('settings.echoflowAPIOfficialLogin.managementTokenPlaceholder')}
                 className={`${inputBase} pr-9`}

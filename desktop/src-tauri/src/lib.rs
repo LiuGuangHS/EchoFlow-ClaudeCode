@@ -1780,6 +1780,7 @@ fn start_adapters_sidecars(app: &AppHandle) -> Result<Vec<CommandChild>, String>
         ("telegram", "--telegram"),
         ("wechat", "--wechat"),
         ("dingtalk", "--dingtalk"),
+        ("whatsapp", "--whatsapp"),
     ] {
         let mut sidecar = app
             .shell()
