@@ -118,17 +118,29 @@
 
 在设置 → Providers 标签页管理 AI 提供商。
 
+### EchoFlowAPI 官方入口
+
+Providers 页顶部展示「清云（EchoFlow）API 官方」快捷接入卡片：
+
+- 注册入口：跳转到 EchoFlowAPI 注册页
+- 系统访问令牌入口：跳转到控制台个人安全设置
+- 检测令牌：用用户 ID + 系统访问令牌读取账户信息和模型列表
+- 连接：创建或更新 `EchoFlowAPI` Provider，并设为当前默认 Provider
+
+默认配置为 `https://api.echoflow.cn` + `anthropic` API 格式 + `auth_token` 鉴权；默认模型映射为 `claude-sonnet-4-6` / `claude-haiku-4-5` / `claude-opus-4-7`。
+
 ### 预设
 
-点击「添加提供商」从预设快速创建：Anthropic、OpenAI、OpenRouter、Ollama、Azure OpenAI、Google AI 等。预设自动填充 Base URL 和 API 格式。
+点击「添加提供商」从预设快速创建：EchoFlowAPI、Anthropic、OpenAI、OpenRouter、Ollama、Azure OpenAI、Google AI 等。预设自动填充 Base URL 和 API 格式。
 
 ### 配置项
 
 | 字段 | 说明 |
 |------|------|
-| API Key | 密钥（密码输入） |
+| API Key | 密钥或调用令牌（密码输入） |
 | Base URL | API 地址 |
 | API 格式 | `anthropic` / `openai_chat` / `openai_responses` |
+| 鉴权方式 | `auth_token` 使用 `Authorization: Bearer`；`api_key` 使用 `x-api-key` |
 | 模型映射 | main / haiku / sonnet / opus 对应的实际模型名 |
 
 ### 连接测试
@@ -182,13 +194,19 @@
 
 ![IM 适配器设置](../images/desktop_ui/07_im.png)
 
-设置 → Adapters 标签页，配置 Telegram / 飞书接入。
+设置 → Adapters 标签页，配置 Telegram / 飞书 / WhatsApp / 微信 / 钉钉接入。
 
 ### 配置
 
 **Telegram**: Bot Token + 允许的用户 ID
 
 **飞书**: App ID + App Secret + 加密密钥 + 验证 Token + 允许的用户 open_id + 流式卡片开关
+
+**WhatsApp**: 扫码绑定 linked device（Baileys），auth state 保存到 `~/.claude/whatsapp-auth/`
+
+**微信**: 扫码绑定个人账号
+
+**钉钉**: 扫码写入 Stream 凭据
 
 ### 用户配对
 
@@ -203,7 +221,27 @@
 | `/projects` 或 `项目列表` | 查看最近项目 |
 | `/stop` 或 `停止` | 停止生成 |
 
-权限请求在 IM 中以按钮形式展示（Telegram Inline Keyboard / 飞书 Interactive Card）。
+权限请求在 IM 中以按钮形式展示（Telegram Inline Keyboard / 飞书 Interactive Card；WhatsApp/微信/钉钉使用文本命令回复）。
+
+详见 [IM 接入文档](../im/index.md)。
+
+---
+
+## Session Trace
+
+设置 → Trace 标签页，查看历史会话的 LLM 请求、工具调用、消息详情、耗时与 token 用量。
+
+### 功能
+
+- **Trace 列表**：按会话分组，支持关键词搜索和分页加载（每页 50 条，5 秒轮询刷新）
+- **Trace 详情**：LangSmith 风格双栏布局，左侧树状调用链，右侧详情面板
+- **调用类型**：LLM call（含请求/响应消息、token 统计）、Tool call（含输入/输出）、Session overview（含耗时统计）
+- **实时状态**：当前进行中的 session 自动 1.5 秒轮询刷新
+- **开关控制**：`/api/traces/settings` 可启用 / 禁用 trace capture
+
+### 存储
+
+Trace 数据按 session 存储在本地，随 session 生命周期管理，不上传到外部服务。
 
 ---
 

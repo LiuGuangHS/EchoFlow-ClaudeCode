@@ -63,6 +63,7 @@ import { copyTextToClipboard } from '../components/chat/clipboard'
 const NETWORK_TIMEOUT_MIN_SECONDS = 5
 const NETWORK_TIMEOUT_MAX_SECONDS = 600
 const NETWORK_TIMEOUT_STEP_SECONDS = 30
+const ECHOFLOW_REGISTER_URL = 'https://api.echoflow.cn/register?channel=c_fe4eotyx'
 
 function buildH5LaunchUrl(baseUrl: string | null, token: string | null): string | null {
   if (!baseUrl) return null
@@ -293,9 +294,8 @@ function ProviderSettings() {
     await fetchSettings()
   }
 
-  const echoflowAPIProvider = providers.find((provider) => provider.presetId === 'echoflowai')
-  const isEchoFlowAPIActive = !!echoflowAPIProvider && activeId === echoflowAPIProvider.id
-  const showEchoFlowAPIOfficialLogin = showEchoFlowAPILogin || isEchoFlowAPIActive || !echoflowAPIProvider
+  const hasEchoFlowAPIProvider = providers.some((provider) => provider.presetId === 'echoflowai')
+  const showEchoFlowAPIOfficialLogin = showEchoFlowAPILogin || !hasEchoFlowAPIProvider
   const isClaudeOfficialActive = hasLoadedProviders && activeId === null
   const isOpenAIOfficialActive = hasLoadedProviders && activeId === OPENAI_OFFICIAL_PROVIDER_ID
 
@@ -315,28 +315,27 @@ function ProviderSettings() {
       {/* Official providers — always visible at top */}
       <div
         data-testid="echoflow-api-official-provider"
-        className={`relative flex flex-col rounded-xl border transition-all mb-2 ${
-          isEchoFlowAPIActive
-            ? 'border-[var(--color-brand)] bg-[var(--color-surface-container)] shadow-[var(--shadow-focus-ring)]'
-            : 'border-[var(--color-border)] hover:border-[var(--color-border-focus)] cursor-pointer'
-        }`}
+        className="relative flex flex-col rounded-xl border border-[var(--color-border)] transition-all mb-2 hover:border-[var(--color-border-focus)] cursor-pointer"
       >
         <div
           className="flex items-center gap-4 px-4 py-3.5"
-          onClick={() => {
-            if (!isEchoFlowAPIActive && echoflowAPIProvider) {
-              void handleActivate(echoflowAPIProvider.id)
-            }
-            setShowEchoFlowAPILogin(true)
-          }}
+          onClick={() => setShowEchoFlowAPILogin(true)}
         >
-          <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${isEchoFlowAPIActive ? 'bg-[var(--color-success)]' : 'bg-[var(--color-text-tertiary)]'}`} />
+          <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${hasEchoFlowAPIProvider ? 'bg-[var(--color-success)]' : 'bg-[var(--color-text-tertiary)]'}`} />
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
               <span className="text-sm font-semibold text-[var(--color-text-primary)]">{t('settings.providers.echoflowAPIOfficialName')}</span>
-              {isEchoFlowAPIActive && (
-                <span className="px-1.5 py-0.5 text-[10px] font-bold rounded border border-[var(--color-brand)]/18 bg-[var(--color-brand)]/14 text-[var(--color-brand)] leading-none">{t('settings.providers.default')}</span>
-              )}
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  openExternalUrl(ECHOFLOW_REGISTER_URL)
+                }}
+                className="inline-flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-1.5 py-0.5 text-[10px] font-medium leading-none text-[var(--color-brand)] transition-colors hover:border-[var(--color-border-focus)] hover:bg-[var(--color-surface-hover)]"
+              >
+                {t('settings.echoflowAPIOfficialLogin.goRegister')}
+                <span className="material-symbols-outlined text-[12px]">open_in_new</span>
+              </button>
             </div>
             <div className="text-xs text-[var(--color-text-tertiary)] mt-0.5">{t('settings.providers.echoflowAPIOfficialDesc')}</div>
           </div>
@@ -344,7 +343,10 @@ function ProviderSettings() {
 
         {showEchoFlowAPIOfficialLogin && (
           <div className="px-4 pb-4 pt-3 border-t border-[var(--color-border-separator)]">
-            <EchoFlowAPIOfficialLogin />
+            <EchoFlowAPIOfficialLogin onOpenConfigModal={() => {
+              setCreateInitialPresetId('echoflowai')
+              setShowCreateModal(true)
+            }} />
           </div>
         )}
       </div>
@@ -418,7 +420,7 @@ function ProviderSettings() {
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          {providers.filter((provider) => provider.id !== echoflowAPIProvider?.id).map((provider) => {
+          {providers.map((provider) => {
             const isActive = activeId === provider.id
             const test = testResults[provider.id]
             const preset = presetMap.get(provider.presetId)
@@ -450,6 +452,21 @@ function ProviderSettings() {
                   <div className="text-xs text-[var(--color-text-tertiary)] truncate mt-0.5">
                     {provider.baseUrl} &middot; {provider.models.main}
                   </div>
+                  {provider.presetId === 'echoflowai' && provider.echoflowToken && (
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--color-text-tertiary)]">
+                      <span className="rounded bg-[var(--color-surface-container-high)] px-1.5 py-0.5 text-[var(--color-text-secondary)]">
+                        {provider.echoflowToken.name}
+                      </span>
+                      <span>
+                        {provider.echoflowToken.unlimitedQuota
+                          ? t('settings.echoflowAPIOfficialLogin.unlimitedQuota')
+                          : typeof provider.echoflowToken.remainQuota === 'number'
+                            ? t('settings.echoflowAPIOfficialLogin.remainingQuota', { quota: String(provider.echoflowToken.remainQuota) })
+                            : t('settings.echoflowAPIOfficialLogin.quotaUnknown')}
+                      </span>
+                      {provider.echoflowToken.status && <span>{provider.echoflowToken.status}</span>}
+                    </div>
+                  )}
                   {test && !test.loading && test.result && (
                     <div className="text-xs mt-1 flex flex-col gap-0.5">
                       <span className={test.result.connectivity.success ? 'text-[var(--color-success)]' : 'text-[var(--color-error)]'}>
@@ -795,7 +812,7 @@ function openExternalUrl(url: string) {
     .catch(() => window.open(url, '_blank', 'noopener,noreferrer'))
 }
 
-function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderFormProps) {
+function ProviderFormModal({ open, onClose, mode, provider, presets, initialPresetId }: ProviderFormProps) {
   const { createProvider, updateProvider, testConfig } = useProviderStore()
   const fetchSettings = useSettingsStore((s) => s.fetchAll)
   const t = useTranslation()
@@ -813,7 +830,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
   const initialPreset = requirePreset(
     provider
       ? availablePresets.find((p) => p.id === provider.presetId) ?? fallbackPreset
-      : availablePresets[0] ?? fallbackPreset,
+      : (initialPresetId ? availablePresets.find((p) => p.id === initialPresetId) : null) ?? availablePresets[0] ?? fallbackPreset,
   )
 
   const [selectedPreset, setSelectedPreset] = useState<ProviderPreset>(initialPreset)
@@ -1154,7 +1171,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
         <Input label={t('settings.providers.baseUrl')} required value={baseUrl} onChange={(e) => handleBaseUrlChange(e.target.value)} placeholder={t('settings.providers.baseUrlPlaceholder')} />
 
         {/* API Format */}
-        {(isCustom || mode === 'edit') ? (
+        {(isCustom || selectedPreset.id === 'echoflowai' || mode === 'edit') ? (
           <div>
             <label className="text-sm font-medium text-[var(--color-text-primary)] mb-1 block">{t('settings.providers.apiFormat')}</label>
             <Dropdown<ApiFormat>
@@ -3830,10 +3847,14 @@ const GITHUB_REPO = 'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode'
 const GITHUB_ISSUES = `${GITHUB_REPO}/issues`
 const GITHUB_RELEASES = `${GITHUB_REPO}/releases`
 const AUTHOR_GITHUB = 'https://github.com/LiuGuangHS'
+const ECHOFLOW_API_SITE = 'https://api.echoflow.cn/'
+const ECHOFLOW_CODE_SITE = 'https://code.echoflow.cn/'
 const SOCIAL_LINKS = [
   { name: 'Bilibili', icon: '/icons/bilibili.svg', url: 'https://space.bilibili.com/2095003664', label: '清云AI' },
   { name: 'Douyin', icon: '/icons/douyin.svg', url: 'https://www.douyin.com/user/MS4wLjABAAAAexLOuNgktpQZWZCsVXvAtA7-kCOA8sAlavNcFU_7EdA', label: '清云AI' },
 ] as const
+
+const WECHAT_MP_ID = 'QingYunAPI'
 
 function isValidHttpProxyUrl(value: string) {
   try {
@@ -3992,6 +4013,30 @@ function AboutSettings() {
           <div className="flex-1 text-left">
             <div className="text-sm font-medium text-[var(--color-text-primary)]">EchoFlow Code</div>
             <div className="text-xs text-[var(--color-text-tertiary)]">{t('settings.about.starHint')}</div>
+          </div>
+        </button>
+      </div>
+
+      {/* Official sites */}
+      <div className="mt-3 w-full flex gap-2">
+        <button
+          onClick={() => openUrl(ECHOFLOW_API_SITE)}
+          className="flex-1 flex items-center gap-2 px-3 py-2.5 rounded-xl border border-[var(--color-border)] hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer"
+        >
+          <span className="material-symbols-outlined text-[18px] text-[var(--color-brand)] opacity-80">api</span>
+          <div className="flex-1 text-left">
+            <div className="text-xs font-medium text-[var(--color-text-primary)]">{t('settings.about.officialSite')}</div>
+            <div className="text-[11px] text-[var(--color-text-tertiary)]">api.echoflow.cn</div>
+          </div>
+        </button>
+        <button
+          onClick={() => openUrl(ECHOFLOW_CODE_SITE)}
+          className="flex-1 flex items-center gap-2 px-3 py-2.5 rounded-xl border border-[var(--color-border)] hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer"
+        >
+          <span className="material-symbols-outlined text-[18px] text-[var(--color-brand)] opacity-80">menu_book</span>
+          <div className="flex-1 text-left">
+            <div className="text-xs font-medium text-[var(--color-text-primary)]">{t('settings.about.docsAndLanding')}</div>
+            <div className="text-[11px] text-[var(--color-text-tertiary)]">code.echoflow.cn</div>
           </div>
         </button>
       </div>
@@ -4215,6 +4260,12 @@ function AboutSettings() {
               <span className="text-xs text-[var(--color-text-tertiary)] ml-auto">{link.name}</span>
             </button>
           ))}
+          {/* WeChat MP — display ID only, no URL */}
+          <div className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg">
+            <img src={publicAssetPath('icons/wechat-mp.svg')} alt="微信公众号" className="w-4 h-4 opacity-60" />
+            <span className="text-sm text-[var(--color-text-primary)]">清云AI实战大本营</span>
+            <span className="text-xs text-[var(--color-text-tertiary)] ml-auto">微信号: {WECHAT_MP_ID}</span>
+          </div>
         </div>
       </div>
 

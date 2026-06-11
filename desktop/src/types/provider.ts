@@ -20,6 +20,19 @@ export type ModelMapping = {
 
 export type ModelContextWindows = Record<string, number>
 
+export type EchoFlowManagement = {
+  userId: string
+  managementToken: string
+}
+
+export type EchoFlowTokenMetadata = {
+  id: string
+  name: string
+  status?: string
+  remainQuota?: number
+  unlimitedQuota?: boolean
+}
+
 export type SavedProvider = {
   id: string
   presetId: string
@@ -32,6 +45,8 @@ export type SavedProvider = {
   models: ModelMapping
   autoCompactWindow?: number
   modelContextWindows?: ModelContextWindows
+  echoflowManagement?: EchoFlowManagement
+  echoflowToken?: EchoFlowTokenMetadata
   notes?: string
 }
 
@@ -46,6 +61,8 @@ export type CreateProviderInput = {
   models: ModelMapping
   autoCompactWindow?: number
   modelContextWindows?: ModelContextWindows
+  echoflowManagement?: EchoFlowManagement
+  echoflowToken?: EchoFlowTokenMetadata
   notes?: string
 }
 
@@ -59,6 +76,8 @@ export type UpdateProviderInput = {
   models?: ModelMapping
   autoCompactWindow?: number | null
   modelContextWindows?: ModelContextWindows | null
+  echoflowManagement?: EchoFlowManagement | null
+  echoflowToken?: EchoFlowTokenMetadata | null
   notes?: string
 }
 

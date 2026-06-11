@@ -66,6 +66,22 @@ function isProviderModels(value: unknown): value is SavedProvider['models'] {
   )
 }
 
+function isEchoFlowManagement(value: unknown): value is NonNullable<SavedProvider['echoflowManagement']> {
+  return (
+    isRecord(value) &&
+    typeof value.userId === 'string' &&
+    typeof value.managementToken === 'string'
+  )
+}
+
+function isEchoFlowToken(value: unknown): value is NonNullable<SavedProvider['echoflowToken']> {
+  return (
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    typeof value.name === 'string'
+  )
+}
+
 function isSavedProvider(value: unknown): value is SavedProvider {
   if (!isRecord(value)) return false
   const runtimeKind = value.runtimeKind
@@ -95,11 +111,28 @@ export function normalizeModelMapping(models: SavedProvider['models']): SavedPro
 }
 
 export function normalizeSavedProvider(provider: SavedProvider): SavedProvider {
+  const echoflowManagement = isEchoFlowManagement(provider.echoflowManagement)
+    ? {
+        userId: provider.echoflowManagement.userId.trim(),
+        managementToken: provider.echoflowManagement.managementToken.trim(),
+      }
+    : undefined
+  const echoflowToken = isEchoFlowToken(provider.echoflowToken)
+    ? {
+        id: provider.echoflowToken.id.trim(),
+        name: provider.echoflowToken.name.trim(),
+        ...(provider.echoflowToken.status ? { status: provider.echoflowToken.status } : {}),
+        ...(typeof provider.echoflowToken.remainQuota === 'number' ? { remainQuota: provider.echoflowToken.remainQuota } : {}),
+        ...(typeof provider.echoflowToken.unlimitedQuota === 'boolean' ? { unlimitedQuota: provider.echoflowToken.unlimitedQuota } : {}),
+      }
+    : undefined
   return {
     ...provider,
     apiFormat: provider.apiFormat ?? 'anthropic',
     runtimeKind: provider.runtimeKind ?? 'anthropic_compatible',
     models: normalizeModelMapping(provider.models),
+    ...(echoflowManagement?.userId && echoflowManagement.managementToken ? { echoflowManagement } : {}),
+    ...(echoflowToken?.id && echoflowToken.name ? { echoflowToken } : {}),
   }
 }
 

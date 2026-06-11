@@ -48,13 +48,21 @@ Telegram 方案适合个人私聊远程使用。当前实现只处理 `private c
 
 ## 支持的命令
 
-- `/start` — 显示帮助和可用命令
+通用命令（所有 IM 适配器共用）：
+
+- `/start` 或 `/help` — 显示帮助和可用命令
 - `/projects` — 切换项目，重新显示最近项目列表
 - `/status` — 查看当前会话的项目、模型、运行状态和任务摘要
 - `/clear` — 清空当前会话上下文，保留项目绑定
-- `/new` — 清空当前 chat 绑定的 session，并重新选择项目
-- `/help` — 显示当前可用命令
+- `/new [项目]` — 清空当前 chat 绑定的 session，并重新选择项目
 - `/stop` — 向当前 session 发送 `stop_generation`
+
+Telegram 扩展命令：
+
+- `/resume` — 从列表中恢复一个历史会话
+- `/provider` — 切换当前使用的 Provider
+- `/model [model]` — 查看或切换当前模型；不带参数时展示可选列表
+- `/skills` — 查看当前项目可用的 Skills 列表
 
 ## 权限审批
 

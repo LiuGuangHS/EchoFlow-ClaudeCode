@@ -1,7 +1,7 @@
 # Channel 源码研究
 
 > 这里讲的是 Claude Code 原生的 Channel / MCP 体系。  
-> 如果你要配置当前桌面版的 Telegram / 飞书接入，请先看 [IM 接入文档](../im/)。
+> 如果你要配置当前桌面版的 Telegram / 飞书 / WhatsApp / 微信 / 钉钉接入，请先看 [IM 接入文档](../im/)。
 
 ## 这组文档是干什么的
 
@@ -39,6 +39,9 @@
 - [IM 接入总览](../im/)
 - [Telegram 接入](../im/telegram)
 - [飞书接入](../im/feishu)
+- [WhatsApp 接入](../im/whatsapp)
+- [微信接入](../im/wechat)
+- [钉钉接入](../im/dingtalk)
 
 ## 适合谁看
 

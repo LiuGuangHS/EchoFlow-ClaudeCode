@@ -65,7 +65,7 @@
 │  └─────────────────────────────┘    │
 │                                     │
 │  ┌─────────────────────────────┐    │
-│  │   Adapter Sidecar (可选)    │    │  ← Telegram/飞书接入
+│  │   Adapter Sidecar (可选)    │    │  ← Telegram/飞书/WhatsApp/微信/钉钉接入
 │  └─────────────────────────────┘    │
 └─────────────────────────────────────┘
 ```
@@ -290,7 +290,7 @@ Server 内置代理层（`src/server/proxy/`），统一不同 AI 提供商的 A
 
 | 格式 | 典型提供商 |
 |------|-----------|
-| `anthropic` | Anthropic、OpenRouter、MiniMax |
+| `anthropic` | EchoFlowAPI、Anthropic、OpenRouter、MiniMax |
 | `openai_chat` | OpenAI、DeepSeek、Ollama |
 | `openai_responses` | OpenAI Responses API |
 
@@ -302,7 +302,7 @@ Server 内置代理层（`src/server/proxy/`），统一不同 AI 提供商的 A
 
 ## 适配器架构
 
-适配器系统让 Telegram/飞书等 IM 平台接入 Claude Code。
+适配器系统让 Telegram、飞书、WhatsApp、微信、钉钉等 IM 平台接入 EchoFlow Code。
 
 ```
 IM 平台 → Adapter 进程 → HTTP + WebSocket → Server → CLI
@@ -324,6 +324,7 @@ IM 平台 → Adapter 进程 → HTTP + WebSocket → Server → CLI
 ### 分片限制
 
 - Telegram: 4000 字符/消息
+- WhatsApp: 约 4000 字符/消息
 - 飞书: 30000 字符/消息
 
 ---

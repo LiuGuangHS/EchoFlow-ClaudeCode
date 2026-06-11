@@ -42,6 +42,19 @@ export const ModelContextWindowsSchema = z.record(
   z.number().int().min(16000).max(10000000),
 )
 
+export const EchoFlowManagementSchema = z.object({
+  userId: z.string().min(1),
+  managementToken: z.string().min(1),
+})
+
+export const EchoFlowTokenSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  status: z.string().optional(),
+  remainQuota: z.number().optional(),
+  unlimitedQuota: z.boolean().optional(),
+})
+
 export const SavedProviderSchema = z.object({
   id: z.string(),
   presetId: z.string(),
@@ -54,6 +67,8 @@ export const SavedProviderSchema = z.object({
   models: ModelMappingSchema,
   autoCompactWindow: AutoCompactWindowSchema.optional(),
   modelContextWindows: ModelContextWindowsSchema.optional(),
+  echoflowManagement: EchoFlowManagementSchema.optional(),
+  echoflowToken: EchoFlowTokenSchema.optional(),
   notes: z.string().optional(),
 })
 
@@ -74,6 +89,8 @@ export const CreateProviderSchema = z.object({
   models: ModelMappingSchema,
   autoCompactWindow: AutoCompactWindowSchema.optional(),
   modelContextWindows: ModelContextWindowsSchema.optional(),
+  echoflowManagement: EchoFlowManagementSchema.optional(),
+  echoflowToken: EchoFlowTokenSchema.optional(),
   notes: z.string().optional(),
 })
 
@@ -87,6 +104,8 @@ export const UpdateProviderSchema = z.object({
   models: ModelMappingSchema.optional(),
   autoCompactWindow: AutoCompactWindowSchema.nullable().optional(),
   modelContextWindows: ModelContextWindowsSchema.nullable().optional(),
+  echoflowManagement: EchoFlowManagementSchema.nullable().optional(),
+  echoflowToken: EchoFlowTokenSchema.nullable().optional(),
   notes: z.string().optional(),
 })
 

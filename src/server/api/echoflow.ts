@@ -8,14 +8,17 @@ export async function handleEchoFlowApi(req: Request, _url: URL, segments: strin
     const action = segments[2]
 
     if (action === 'validate-management-token' && req.method === 'POST') {
-      const body = await req.json() as { managementToken?: string }
+      const body = await req.json() as { managementToken?: string; userId?: string }
       const token = body.managementToken?.trim()
-      if (!token) return Response.json({ valid: false, error: 'missing_token' }, { status: 400 })
+      const userId = body.userId?.trim()
+      if (!token || !userId) return Response.json({ valid: false, error: 'missing_token' }, { status: 400 })
 
       try {
-        const userInfo = await service.validateManagementToken(token)
-        const models = await service.listModels(token).catch(() => [])
-        return Response.json({ valid: true, ...userInfo, models })
+        const userInfo = await service.validateManagementToken(userId, token)
+        const tokens = await service.listTokens(userId, token).catch(() => [])
+        const selectedToken = tokens[0]?.key ?? token
+        const models = await service.listModels(selectedToken).catch(() => [])
+        return Response.json({ valid: true, ...userInfo, tokens, models })
       } catch (error) {
         if (error instanceof EchoFlowApiError) {
           const status = error.code === 'token_invalid' ? 200 : 502

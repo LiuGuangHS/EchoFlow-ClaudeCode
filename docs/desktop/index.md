@@ -18,7 +18,7 @@
 
 ### [功能详解](./03-features.md)
 
-深入每个功能模块：聊天引擎、代码展示、工具调用、Agent Teams、提供商管理、技能/Agent、定时任务、IM 适配器、设计系统。
+深入每个功能模块：聊天引擎、代码展示、工具调用、Agent Teams、提供商管理、技能/Agent、定时任务、IM 适配器、Session Trace、设计系统。
 
 ### [安装指南](./04-installation.md)
 
@@ -76,5 +76,5 @@
 | **Session** | 一次对话会话，绑定工作目录，通过 WebSocket 通信 |
 | **Tab** | 标签页，对应一个 Session 或特殊页面 |
 | **Provider** | AI 模型提供商，支持 Anthropic/OpenAI 兼容接口 |
-| **Adapter** | IM 适配器，Telegram/飞书接入 Claude Code |
+| **Adapter** | IM 适配器，支持 Telegram / 飞书 / WhatsApp / 微信 / 钉钉接入 |
 | **Store** | Zustand 状态容器，按领域拆分管理 |

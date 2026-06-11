@@ -156,6 +156,8 @@ export class ProviderService {
       models: normalizeModelMapping(input.models),
       ...(input.autoCompactWindow !== undefined && { autoCompactWindow: input.autoCompactWindow }),
       ...(input.modelContextWindows !== undefined && { modelContextWindows: input.modelContextWindows }),
+      ...(input.echoflowManagement !== undefined && { echoflowManagement: input.echoflowManagement }),
+      ...(input.echoflowToken !== undefined && { echoflowToken: input.echoflowToken }),
       ...(input.notes !== undefined && { notes: input.notes }),
     }
 
@@ -181,6 +183,8 @@ export class ProviderService {
       ...(input.models !== undefined && { models: normalizeModelMapping(input.models) }),
       ...(typeof input.autoCompactWindow === 'number' && { autoCompactWindow: input.autoCompactWindow }),
       ...(input.modelContextWindows !== undefined && input.modelContextWindows !== null && { modelContextWindows: input.modelContextWindows }),
+      ...(input.echoflowManagement !== undefined && input.echoflowManagement !== null && { echoflowManagement: input.echoflowManagement }),
+      ...(input.echoflowToken !== undefined && input.echoflowToken !== null && { echoflowToken: input.echoflowToken }),
       ...(input.notes !== undefined && { notes: input.notes }),
     }
     if (input.autoCompactWindow === null) {
@@ -188,6 +192,12 @@ export class ProviderService {
     }
     if (input.modelContextWindows === null) {
       delete updated.modelContextWindows
+    }
+    if (input.echoflowManagement === null) {
+      delete updated.echoflowManagement
+    }
+    if (input.echoflowToken === null) {
+      delete updated.echoflowToken
     }
 
     index.providers[idx] = updated
