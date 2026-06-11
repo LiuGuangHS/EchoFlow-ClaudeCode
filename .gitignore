@@ -26,6 +26,8 @@ e2e-*.png
 # Quality gate reports
 artifacts/quality-runs/
 artifacts/coverage/
+artifacts/tmp-desktop-coverage/
+artifacts/local-checks/
 
 # Desktop build output
 desktop/dist/

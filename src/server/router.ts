@@ -28,6 +28,7 @@ import { handleOpenTargetsApi } from './api/open-targets.js'
 import { handleMemoryApi } from './api/memory.js'
 import { handleDesktopUiApi } from './api/desktop-ui.js'
 import { handleLegacyMigrationApi } from './api/legacy-migration.js'
+import { handleEchoFlowApi } from './api/echoflow.js'
 
 export async function handleApiRequest(req: Request, url: URL): Promise<Response> {
   const path = url.pathname
@@ -122,6 +123,9 @@ export async function handleApiRequest(req: Request, url: URL): Promise<Response
 
     case 'legacy-migration':
       return handleLegacyMigrationApi(req, url, segments)
+
+    case 'echoflow':
+      return handleEchoFlowApi(req, url, segments)
 
     case 'filesystem':
       return handleFilesystemRoute(url.pathname, url)
