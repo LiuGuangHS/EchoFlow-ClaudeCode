@@ -71,6 +71,25 @@ describe('resolveCors', () => {
     })
   })
 
+  it('allows the CodeMobile WebView origin when H5 token mode is active', async () => {
+    const result = await resolveCors('https://localhost', 'http://192.168.0.20:3456', {
+      h5Enabled: true,
+      isOriginAllowed: async () => false,
+    })
+
+    expect(result).toEqual({
+      allowed: true,
+      rejected: false,
+      headers: {
+        'Access-Control-Allow-Origin': 'https://localhost',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Max-Age': '86400',
+        Vary: 'Origin',
+      },
+    })
+  })
+
   it('keeps trusted local desktop origins allowed when H5 token mode is active', async () => {
     for (const origin of ['file://']) {
       const result = await resolveCors(origin, 'http://192.168.0.20:3456', {

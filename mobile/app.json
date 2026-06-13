@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "EchoFlow Code",
+    "slug": "codemobile",
+    "scheme": "codemobile",
+    "version": "0.1.0",
+    "orientation": "default",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": false,
+    "icon": "./assets/icon.png",
+    "assetBundlePatterns": ["**/*"],
+    "android": {
+      "package": "com.echoflowai.codemobile",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0f172a"
+      },
+      "usesCleartextTraffic": true,
+      "permissions": ["INTERNET", "CAMERA"]
+    },
+    "plugins": ["./plugins/withAndroidCleartext", "expo-secure-store", "expo-camera"]
+  }
+}
