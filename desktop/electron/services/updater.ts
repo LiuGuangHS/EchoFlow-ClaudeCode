@@ -253,7 +253,10 @@ export class ElectronUpdaterService {
 
   async downloadUpdate(emit: (event: DesktopUpdateDownloadEvent) => void): Promise<void> {
     if (!this.pendingUpdate) {
-      throw new Error('No Electron update is available to download')
+      await this.checkForUpdates()
+      if (!this.pendingUpdate) {
+        throw new Error('No Electron update is available to download')
+      }
     }
     if (this.downloaded) {
       emit({ event: 'Finished' })

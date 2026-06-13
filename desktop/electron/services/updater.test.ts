@@ -325,6 +325,18 @@ describe('Electron updater service', () => {
     expect(updater.checkForUpdates).toHaveBeenCalledTimes(3)
   })
 
+  it('rechecks before downloading when the pending update was not primed', async () => {
+    const updater = fakeUpdater()
+    const service = new ElectronUpdaterService(updater)
+    updater.checkForUpdates.mockResolvedValue({ updateInfo: { version: '1.2.4' } })
+    updater.downloadUpdate.mockResolvedValue(undefined)
+
+    await service.downloadUpdate(() => {})
+
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(1)
+    expect(updater.downloadUpdate).toHaveBeenCalledTimes(1)
+  })
+
   it('stages then installs through quitAndInstall only after an update has downloaded', async () => {
     const updater = fakeUpdater()
     const service = new ElectronUpdaterService(updater)
