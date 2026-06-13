@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
+import { t } from './i18n'
 import {
   H5VerificationError,
   isPlainHttp,
@@ -27,7 +28,7 @@ describe('normalizeServerUrl', () => {
 
   test('rejects empty and non-http urls with typed errors', () => {
     expect(() => normalizeServerUrl('')).toThrow(H5VerificationError)
-    expect(() => normalizeServerUrl('ftp://example.com')).toThrow('Server URL must start with http:// or https://.')
+    expect(() => normalizeServerUrl('ftp://example.com')).toThrow(t('h5.error.unsupportedProtocol'))
   })
 })
 

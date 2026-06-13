@@ -53,7 +53,7 @@ export default function App() {
     return (
       <SafeAreaView style={styles.loadingContainer}>
         <ActivityIndicator color="#2563eb" size="large" />
-        <Text style={styles.loadingText}>Loading EchoFlow CodeMobile...</Text>
+        <Text style={styles.loadingText}>{t('connect.loading')}</Text>
       </SafeAreaView>
     )
   }

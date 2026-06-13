@@ -34,7 +34,7 @@ export function PermissionModal({ request, onAllow, onDeny }: PermissionModalPro
 
           {command ? (
             <View style={styles.commandBox}>
-              <Text style={styles.commandLabel}>Command</Text>
+              <Text style={styles.commandLabel}>{t('permission.command')}</Text>
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
@@ -47,7 +47,7 @@ export function PermissionModal({ request, onAllow, onDeny }: PermissionModalPro
 
           {inputKeys.length > 0 ? (
             <View style={styles.inputsBox}>
-              <Text style={styles.commandLabel}>Details</Text>
+              <Text style={styles.commandLabel}>{t('permission.details')}</Text>
               {inputKeys.map((key) => (
                 <View key={key} style={styles.inputRow}>
                   <Text style={styles.inputKey}>{key}</Text>
@@ -61,18 +61,18 @@ export function PermissionModal({ request, onAllow, onDeny }: PermissionModalPro
 
           <View style={styles.actions}>
             <Pressable
-              accessibilityLabel="Deny permission"
+              accessibilityLabel={t('permission.deny')}
               onPress={onDeny}
               style={styles.denyButton}
             >
-              <Text style={styles.denyButtonText}>Deny</Text>
+              <Text style={styles.denyButtonText}>{t('permission.deny')}</Text>
             </Pressable>
             <Pressable
-              accessibilityLabel="Allow permission"
+              accessibilityLabel={t('permission.allow')}
               onPress={onAllow}
               style={styles.allowButton}
             >
-              <Text style={styles.allowButtonText}>Allow</Text>
+              <Text style={styles.allowButtonText}>{t('permission.allow')}</Text>
             </Pressable>
           </View>
         </View>
