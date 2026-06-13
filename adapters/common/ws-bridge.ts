@@ -129,8 +129,7 @@ export class WsBridge {
     const session = this.sessions.get(chatId)
     if (session) {
       if (session.reconnectTimer) clearTimeout(session.reconnectTimer)
-      session.ws.removeAllListeners()
-      session.ws.close(1000, 'session reset')
+      this.disposeWebSocket(session.ws, 1000, 'session reset')
       this.sessions.delete(chatId)
     }
     this.handlers.delete(chatId)
@@ -151,8 +150,7 @@ export class WsBridge {
     }
     for (const [, session] of this.sessions) {
       if (session.reconnectTimer) clearTimeout(session.reconnectTimer)
-      session.ws.removeAllListeners()
-      session.ws.close(1000, 'bridge destroyed')
+      this.disposeWebSocket(session.ws, 1000, 'bridge destroyed')
     }
     this.sessions.clear()
     this.handlers.clear()
@@ -169,7 +167,7 @@ export class WsBridge {
     const prev = this.sessions.get(chatId)
     if (prev) {
       if (prev.reconnectTimer) clearTimeout(prev.reconnectTimer)
-      prev.ws.removeAllListeners()
+      this.disposeWebSocket(prev.ws, 1000, 'session replaced')
     }
 
     const session: Session = {
@@ -264,6 +262,21 @@ export class WsBridge {
     }
     session.ws.send(JSON.stringify(message))
     return true
+  }
+
+  private disposeWebSocket(ws: WebSocket, code: number, reason: string): void {
+    const wasConnecting = ws.readyState === WebSocket.CONNECTING
+    ws.removeAllListeners()
+    if (wasConnecting) {
+      ws.on('error', () => {})
+      ws.terminate()
+      return
+    }
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.close(code, reason)
+    } else if (ws.readyState === WebSocket.CLOSING) {
+      ws.terminate()
+    }
   }
 
   private scheduleReconnect(chatId: string, sessionId: string): void {
