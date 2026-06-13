@@ -5,12 +5,10 @@ use std::fs;
 use std::path::PathBuf;
 
 const ECHOFLOW_APP_NAME: &str = "EchoFlow Code";
-const ECHOFLOW_DEFAULT_CONFIG_ENV: &str = "ECHOFLOW_CODE_DEFAULT_CONFIG_DIR";
 const ECHOFLOW_PORTABLE_ENV: &str = "ECHOFLOW_CODE_APP_PORTABLE_DIR";
 
 enum StartupConfigDir {
     Portable(PathBuf),
-    Default(PathBuf),
 }
 
 fn main() {
@@ -20,7 +18,6 @@ fn main() {
     // Mode resolution order:
     //   1. External CLAUDE_CONFIG_DIR env var (batch script etc.) — always respected
     //   2. Persisted app-mode.json saying "portable"
-    //   3. EchoFlow default app data directory
     //
     if let Some(config_dir) = determine_startup_config_dir() {
         match config_dir {
@@ -30,13 +27,6 @@ fn main() {
                     portable_dir.to_string_lossy().to_string(),
                 );
                 std::env::set_var(ECHOFLOW_PORTABLE_ENV, "1");
-            }
-            StartupConfigDir::Default(default_dir) => {
-                std::env::set_var(
-                    "CLAUDE_CONFIG_DIR",
-                    default_dir.to_string_lossy().to_string(),
-                );
-                std::env::set_var(ECHOFLOW_DEFAULT_CONFIG_ENV, "1");
             }
         }
     }
@@ -61,7 +51,6 @@ fn determine_startup_config_dir() -> Option<StartupConfigDir> {
 
     determine_startup_portable_dir()
         .map(StartupConfigDir::Portable)
-        .or_else(|| default_echoflow_data_root().map(StartupConfigDir::Default))
 }
 
 fn default_echoflow_data_root() -> Option<PathBuf> {
@@ -198,6 +187,7 @@ fn determine_startup_portable_dir() -> Option<PathBuf> {
             || dir.join("skills").is_dir()
             || dir.join("plugins").is_dir()
             || dir.join("cowork_plugins").is_dir()
+            || dir.join("echoflow").is_dir()
     }
 
     None

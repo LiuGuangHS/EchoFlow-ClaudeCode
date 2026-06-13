@@ -9,7 +9,7 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 import YAML from 'yaml'
 import { ApiError } from '../middleware/errorHandler.js'
-import { getEchoFlowConfigDir } from './echoFlowConfigRoot.js'
+import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
 
 export type AgentDefinition = {
   name: string
@@ -23,8 +23,7 @@ export type AgentDefinition = {
 export class AgentService {
   /** Agent 定义目录 */
   private getAgentsDir(): string {
-    const configDir =
-      getEchoFlowConfigDir()
+    const configDir = getClaudeConfigHomeDir()
     return path.join(configDir, 'agents')
   }
 

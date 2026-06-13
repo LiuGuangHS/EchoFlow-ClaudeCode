@@ -12,7 +12,7 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 import { ApiError } from '../middleware/errorHandler.js'
 import { writeToMailbox } from '../../utils/teammateMailbox.js'
-import { getEchoFlowConfigDir } from './echoFlowConfigRoot.js'
+import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -81,7 +81,7 @@ type TeamFileRaw = {
 
 export class TeamService {
   private getConfigDir(): string {
-    return getEchoFlowConfigDir()
+    return getClaudeConfigHomeDir()
   }
 
   private getTeamsDir(): string {

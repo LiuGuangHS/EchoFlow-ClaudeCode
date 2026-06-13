@@ -4,6 +4,7 @@ import type { Readable } from 'node:stream'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
+import { defaultEchoFlowDataRoot } from './echoFlowDataRoot'
 
 export const SERVER_BIND_HOST = '0.0.0.0'
 export const SERVER_CONTROL_HOST = '127.0.0.1'
@@ -104,6 +105,10 @@ export function claudeConfigDir(env: NodeJS.ProcessEnv = process.env): string {
   return env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
 }
 
+export function echoFlowDataRoot(env: NodeJS.ProcessEnv = process.env): string {
+  return env.CLAUDE_CONFIG_DIR || defaultEchoFlowDataRoot(env)
+}
+
 /** Parse h5Access.fixedPort out of cc-haha/settings.json contents. */
 export function parseH5FixedPort(contents: string): number | null {
   let value: unknown
@@ -121,12 +126,19 @@ export function parseH5FixedPort(contents: string): number | null {
 }
 
 export function readH5FixedPort(env: NodeJS.ProcessEnv = process.env): number | null {
-  try {
-    const settingsPath = path.join(claudeConfigDir(env), 'cc-haha', 'settings.json')
-    return parseH5FixedPort(readFileSync(settingsPath, 'utf-8'))
-  } catch {
-    return null
+  const settingsPaths = [
+    path.join(echoFlowDataRoot(env), 'echoflow', 'settings.json'),
+    path.join(claudeConfigDir(env), 'cc-haha', 'settings.json'),
+  ]
+  for (const settingsPath of settingsPaths) {
+    try {
+      const fixedPort = parseH5FixedPort(readFileSync(settingsPath, 'utf-8'))
+      if (fixedPort !== null) return fixedPort
+    } catch {
+      // Try the next compatibility path.
+    }
   }
+  return null
 }
 
 export function readLastServerPort(env: NodeJS.ProcessEnv = process.env): number | null {

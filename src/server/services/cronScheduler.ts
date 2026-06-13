@@ -24,6 +24,7 @@ import {
 import { getProcessEnvWithTerminalShellEnvironment } from '../../utils/terminalShellEnvironment.js'
 import { attributionHeaderEnvForModel } from './attributionHeaderPolicy.js'
 import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
+import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -188,7 +189,7 @@ export function cronMatches(cronExpr: string, date: Date): boolean {
 type RunsFile = { runs: TaskRun[] }
 
 function getLogFilePath(): string {
-  return path.join(getEchoFlowConfigDir(), 'scheduled_tasks_log.json')
+  return path.join(getClaudeConfigHomeDir(), 'scheduled_tasks_log.json')
 }
 
 async function readRunsFile(): Promise<RunsFile> {

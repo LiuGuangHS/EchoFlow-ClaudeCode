@@ -13,12 +13,12 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { sendToSession, getActiveSessionIds } from '../ws/handler.js'
 import type { ServerMessage, TeamMemberStatus } from '../ws/events.js'
-import { getEchoFlowConfigDir } from './echoFlowConfigRoot.js'
+import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
 function getTeamsDir(): string {
-  const configDir = getEchoFlowConfigDir()
+  const configDir = getClaudeConfigHomeDir()
   return path.join(configDir, 'teams')
 }
 

@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
 import type { AppModeConfig, AppModeSetInput } from '../../src/lib/desktopHost/types'
@@ -24,6 +25,10 @@ export type PortableDetection = {
 
 export function defaultPortableDir(app: AppModeAppLike): string {
   return path.join(path.dirname(app.getPath('exe')), 'CLAUDE_CONFIG_DIR')
+}
+
+export function defaultClaudeConfigDir(homeDir: string = os.homedir()): string {
+  return path.join(homeDir, '.claude')
 }
 
 export function dirHasPortableData(dir: string): boolean {
@@ -119,7 +124,9 @@ export function getAppMode(
     envConfigDir !== null &&
     env[ECHOFLOW_DEFAULT_CONFIG_ENV] === '1' &&
     envConfigDir === app.getPath('userData')
-  const activeConfigDir = envConfigDir || app.getPath('userData')
+  const activeConfigDir = envConfigDir && !isDefaultEchoFlowConfig
+    ? envConfigDir
+    : defaultClaudeConfigDir()
   const portableDir = envConfigDir && !isDefaultEchoFlowConfig ? envConfigDir : defaultPortableDir(app)
   return {
     mode: envConfigDir && !isDefaultEchoFlowConfig ? 'portable' : 'default',

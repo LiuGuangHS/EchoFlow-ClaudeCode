@@ -33,7 +33,7 @@ import { installPreviewCleanupOnRendererNavigation } from './services/previewLif
 import { logNotificationSmokeRendererAck, scheduleNotificationSmoke } from './services/notificationSmoke'
 import { normalizeZoomFactor } from './services/zoom'
 import { resolveRendererEntry } from './services/rendererEntry'
-import { applyDefaultEchoFlowDataRoot, ECHOFLOW_DEFAULT_CONFIG_ENV } from './services/echoFlowDataRoot'
+import { applyDefaultEchoFlowDataRoot } from './services/echoFlowDataRoot'
 import { writeWindowSmokeSnapshot } from './services/windowSmoke'
 import {
   installWindowLifecycle,
@@ -59,9 +59,7 @@ let trayController: TrayController | null = null
 installMacOsChromiumKeychainPromptGuard(app)
 
 const echoFlowDataRoot = applyDefaultEchoFlowDataRoot(process.env)
-if (process.env[ECHOFLOW_DEFAULT_CONFIG_ENV] === '1') {
-  app.setPath('userData', echoFlowDataRoot)
-}
+app.setPath('userData', echoFlowDataRoot)
 
 function appRoot() {
   return app.isPackaged ? app.getAppPath() : process.cwd()

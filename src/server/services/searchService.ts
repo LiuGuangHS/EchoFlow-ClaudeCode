@@ -8,7 +8,7 @@ import { spawn } from 'child_process'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import { ApiError } from '../middleware/errorHandler.js'
-import { getEchoFlowConfigDir } from './echoFlowConfigRoot.js'
+import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
 
 export type SearchResult = {
   file: string
@@ -78,8 +78,7 @@ export class SearchService {
       throw ApiError.badRequest('Search query is required')
     }
 
-    const configDir =
-      getEchoFlowConfigDir()
+    const configDir = getClaudeConfigHomeDir()
     const projectsDir = path.join(configDir, 'projects')
 
     const results: SessionSearchResult[] = []

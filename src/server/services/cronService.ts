@@ -9,7 +9,7 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as crypto from 'crypto'
 import { ApiError } from '../middleware/errorHandler.js'
-import { getEchoFlowConfigDir } from './echoFlowConfigRoot.js'
+import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
 
 export type TaskNotificationConfig = {
   enabled: boolean
@@ -44,8 +44,7 @@ const TASKS_FILE_WRITE_ATTEMPTS = 2
 export class CronService {
   /** 任务文件路径 */
   private getTasksFilePath(): string {
-    const configDir =
-      getEchoFlowConfigDir()
+    const configDir = getClaudeConfigHomeDir()
     return path.join(configDir, 'scheduled_tasks.json')
   }
 

@@ -3,7 +3,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import type { Dirent } from 'node:fs'
 import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
-import { getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
+import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 import { diagnosticsService } from './diagnosticsService.js'
 
 export type DoctorItemKind = 'json' | 'jsonl' | 'directory'
@@ -159,7 +159,8 @@ export class DoctorService {
   }
 
   private async buildTargets(): Promise<DoctorTarget[]> {
-    const echoFlowDir = getEchoFlowInternalDir(this.configDir)
+    const echoFlowConfigDir = this.usesConfigDirOverride ? this.configDir : getEchoFlowConfigDir()
+    const echoFlowDir = getEchoFlowInternalDir(echoFlowConfigDir)
     const targets: DoctorTarget[] = [
       this.jsonTarget('user-settings', 'User settings', 'user', path.join(this.configDir, 'settings.json')),
       this.jsonTarget(

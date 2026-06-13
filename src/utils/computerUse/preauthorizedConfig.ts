@@ -1,8 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { CuGrantFlags } from '../../vendor/computer-use-mcp/types.js'
-import { getClaudeConfigHomeDir } from '../envUtils.js'
-import { getEchoFlowInternalDir } from '../echoFlowConfigRoot.js'
+import { getEchoFlowConfigDir, getEchoFlowInternalDir } from '../echoFlowConfigRoot.js'
 
 export type StoredAuthorizedApp = {
   bundleId: string
@@ -26,7 +25,7 @@ export const DEFAULT_DESKTOP_GRANT_FLAGS: CuGrantFlags = {
 }
 
 export function getComputerUseConfigPath(): string {
-  return join(getEchoFlowInternalDir(getClaudeConfigHomeDir()), 'computer-use-config.json')
+  return join(getEchoFlowInternalDir(getEchoFlowConfigDir()), 'computer-use-config.json')
 }
 
 export function resolveStoredComputerUseConfig(

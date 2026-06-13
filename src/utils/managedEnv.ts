@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
+import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 import { isRemoteManagedSettingsEligible } from '../services/remoteManagedSettings/syncCache.js'
 import { mergeActiveProviderManagedEnv } from '../server/services/providerRuntimeEnv.js'
 import { clearCACertsCache } from './caCerts.js'
@@ -103,7 +103,7 @@ function filterSettingsEnv(
  */
 function getEchoFlowSettingsEnv(): Record<string, string> {
   try {
-    const echoFlowSettings = join(getEchoFlowInternalDir(getClaudeConfigHomeDir()), 'settings.json')
+    const echoFlowSettings = join(getEchoFlowInternalDir(getEchoFlowConfigDir()), 'settings.json')
     const raw = readFileSync(echoFlowSettings, 'utf-8')
     const parsed = JSON.parse(raw) as { env?: Record<string, string> }
     const settingsEnv = normalizeLegacyDeepSeekManagedEnv(parsed.env ?? {}).env

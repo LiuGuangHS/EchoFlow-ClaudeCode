@@ -7,7 +7,7 @@
 
 import * as fs from 'fs/promises'
 import * as path from 'path'
-import { getEchoFlowConfigDir } from './echoFlowConfigRoot.js'
+import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
 
 export type TaskStatus = 'pending' | 'in_progress' | 'completed'
 
@@ -34,7 +34,7 @@ export type TaskListSummary = {
 
 export class TaskService {
   private getConfigDir(): string {
-    return getEchoFlowConfigDir()
+    return getClaudeConfigHomeDir()
   }
 
   private getTasksDir(): string {

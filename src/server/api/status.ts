@@ -10,7 +10,7 @@
 import * as path from 'path'
 import * as fs from 'fs/promises'
 import { ApiError, errorResponse } from '../middleware/errorHandler.js'
-import { getEchoFlowConfigDir } from '../services/echoFlowConfigRoot.js'
+import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
 
 // 服务器启动时间（用于计算 uptime）
 const startedAt = Date.now()
@@ -117,7 +117,7 @@ async function handleUser(): Promise<Response> {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function getConfigDir(): string {
-  return getEchoFlowConfigDir()
+  return getClaudeConfigHomeDir()
 }
 
 function getVersion(): string {

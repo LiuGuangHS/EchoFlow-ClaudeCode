@@ -4,6 +4,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   applyStartupPortableMode,
+  defaultClaudeConfigDir,
   defaultPortableDir,
   detectPortableDir,
   determineStartupPortableDir,
@@ -100,7 +101,7 @@ describe('Electron app mode service', () => {
       mode: 'default',
       portableDir: defaultPortableDir(fakeApp),
       defaultPortableDir: defaultPortableDir(fakeApp),
-      activeConfigDir: fakeApp.getPath('userData'),
+      activeConfigDir: defaultClaudeConfigDir(),
       configDirSource: 'system',
     })
     expect(getAppMode(fakeApp, { CLAUDE_CONFIG_DIR: '/portable', ECHOFLOW_CODE_APP_PORTABLE_DIR: '1' })).toMatchObject({
@@ -120,7 +121,7 @@ describe('Electron app mode service', () => {
     })
   })
 
-  it('treats the EchoFlow default CLAUDE_CONFIG_DIR as the system data source', () => {
+  it('treats the legacy EchoFlow default CLAUDE_CONFIG_DIR as the system data source', () => {
     const fakeApp = app()
     const env = {
       CLAUDE_CONFIG_DIR: fakeApp.getPath('userData'),
@@ -129,7 +130,7 @@ describe('Electron app mode service', () => {
 
     expect(getAppMode(fakeApp, env)).toMatchObject({
       mode: 'default',
-      activeConfigDir: fakeApp.getPath('userData'),
+      activeConfigDir: defaultClaudeConfigDir(),
       configDirSource: 'system',
       portableDir: defaultPortableDir(fakeApp),
     })

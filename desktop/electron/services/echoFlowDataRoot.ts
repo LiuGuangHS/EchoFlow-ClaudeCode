@@ -21,10 +21,5 @@ export function defaultEchoFlowDataRoot(
 }
 
 export function applyDefaultEchoFlowDataRoot(env: NodeJS.ProcessEnv = process.env): string {
-  const root = env.CLAUDE_CONFIG_DIR || defaultEchoFlowDataRoot(env)
-  if (!env.CLAUDE_CONFIG_DIR) {
-    env.CLAUDE_CONFIG_DIR = root
-    env[ECHOFLOW_DEFAULT_CONFIG_ENV] = '1'
-  }
-  return root
+  return defaultEchoFlowDataRoot(env)
 }

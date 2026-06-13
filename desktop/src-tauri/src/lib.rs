@@ -311,6 +311,7 @@ fn dir_has_portable_data(dir: &Path) -> bool {
         || dir.join("skills").is_dir()
         || dir.join("plugins").is_dir()
         || dir.join("cowork_plugins").is_dir()
+        || dir.join("echoflow").is_dir()
 }
 
 /// Resolve the default portable config directory: exe_dir/CLAUDE_CONFIG_DIR.

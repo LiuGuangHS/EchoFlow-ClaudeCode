@@ -8,7 +8,7 @@
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import { ApiError } from '../middleware/errorHandler.js'
-import { getEchoFlowConfigDir } from './echoFlowConfigRoot.js'
+import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
 
 export type PairedUser = {
   userId: string | number
@@ -70,7 +70,7 @@ export type AdapterFileConfig = {
 }
 
 function getConfigPath(): string {
-  const configDir = getEchoFlowConfigDir()
+  const configDir = getClaudeConfigHomeDir()
   return path.join(configDir, 'adapters.json')
 }
 
