@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, type CSSProperties, type ReactNode } from 'react'
 import QRCode from 'qrcode'
-import { Copy, Eye, EyeOff, PowerOff, QrCode, RotateCw } from 'lucide-react'
+import { Copy, Download, Eye, EyeOff, PowerOff, QrCode, RotateCw, Smartphone } from 'lucide-react'
 import { useSettingsStore, UI_ZOOM_DEFAULT, UI_ZOOM_MIN, UI_ZOOM_MAX, UI_ZOOM_STEP } from '../stores/settingsStore'
 import { useProviderStore } from '../stores/providerStore'
 import { useTranslation, type TranslationKey } from '../i18n'
@@ -64,6 +64,7 @@ const NETWORK_TIMEOUT_MIN_SECONDS = 5
 const NETWORK_TIMEOUT_MAX_SECONDS = 600
 const NETWORK_TIMEOUT_STEP_SECONDS = 30
 const ECHOFLOW_REGISTER_URL = 'https://api.echoflow.cn/register?channel=c_fe4eotyx'
+const MOBILE_APP_DOWNLOAD_URL = 'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest'
 
 function buildH5LaunchUrl(baseUrl: string | null, token: string | null): string | null {
   if (!baseUrl) return null
@@ -3027,6 +3028,33 @@ function H5AccessSettings() {
         </div>
 
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-4 py-4">
+          <div className="mb-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex min-w-0 items-start gap-3">
+                <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--color-brand)]/10 text-[var(--color-brand)]">
+                  <Smartphone className="h-4 w-4" aria-hidden="true" />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-[var(--color-text-primary)]">
+                    {t('settings.general.h5AccessMobileDownloadTitle')}
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-[var(--color-text-tertiary)]">
+                    {t('settings.general.h5AccessMobileDownloadDescription')}
+                  </p>
+                </div>
+              </div>
+              <Button
+                size="sm"
+                variant="secondary"
+                className="shrink-0 self-start sm:self-center"
+                icon={<Download className="h-3.5 w-3.5" aria-hidden="true" />}
+                onClick={() => openExternalUrl(MOBILE_APP_DOWNLOAD_URL)}
+              >
+                {t('settings.general.h5AccessMobileDownloadAction')}
+              </Button>
+            </div>
+          </div>
+
           <div className="flex items-start justify-between gap-4">
             <label className="flex min-w-0 items-start gap-3">
               <input
