@@ -1,7 +1,7 @@
 {
   "name": "claude-code-desktop",
   "private": true,
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Desktop coding agent workbench for EchoFlow Code.",
   "homepage": "https://github.com/LiuGuangHS/EchoFlow-ClaudeCode",
   "author": {
@@ -66,6 +66,10 @@
       "target": "nsis",
       "icon": "src-tauri/icons/icon.ico"
     },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
     "linux": {
       "target": [
         "AppImage",
@@ -97,8 +101,8 @@
     "build:linux-arm64": "LINUX_ARCH=arm64 bash ./scripts/build-linux.sh",
     "electron:dev": "bun run build:electron && bun run ./scripts/electron-dev.ts",
     "electron:build": "bun run build:sidecars && bun run build && bun run build:electron",
-    "electron:package": "bun run clean:electron-output && bun run electron:build && bunx electron-builder --publish never",
-    "electron:package:dir": "bun run clean:electron-output && bun run electron:build && bunx electron-builder --dir --publish never",
+    "electron:package": "bun run clean:electron-output && bun run electron:build && node ./node_modules/electron-builder/out/cli/cli.js --publish never",
+    "electron:package:dir": "bun run clean:electron-output && bun run electron:build && node ./node_modules/electron-builder/out/cli/cli.js --dir --publish never",
     "check:electron": "node ./node_modules/typescript/bin/tsc -p electron/tsconfig.json && bun test electron && bun run build:electron",
     "preview": "vite preview",
     "test": "vitest",
@@ -106,6 +110,9 @@
     "lint": "node ./node_modules/typescript/bin/tsc --noEmit"
   },
   "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
     "@tailwindcss/typography": "^0.5.19",
     "@types/dompurify": "^3.2.0",
     "@xterm/addon-fit": "^0.11.0",

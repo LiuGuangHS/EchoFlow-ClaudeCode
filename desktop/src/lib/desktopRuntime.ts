@@ -185,11 +185,17 @@ async function initializeBrowserServerUrl(fallbackUrl: string) {
   const queryToken = normalizeToken(query?.get('h5Token') ?? query?.get('token'))
   const stored = readStoredH5Connection()
   const configuredUrl = getConfiguredBrowserServerUrl(fallbackUrl)
+  const sameOriginUrl = getSameOriginServerUrl()
   const requestedUrl =
     normalizeServerUrl(queryUrl) ??
     configuredUrl ??
     stored.serverUrl ??
     fallbackUrl
+  const requestedImplicitSameOrigin =
+    !queryUrl &&
+    !hasExplicitDefaultBaseUrl() &&
+    !!sameOriginUrl &&
+    requestedUrl === sameOriginUrl
   const token = queryToken ?? stored.token
   const browserH5Runtime = requiresH5AuthForServerUrl(requestedUrl)
 
@@ -202,6 +208,20 @@ async function initializeBrowserServerUrl(fallbackUrl: string) {
   try {
     await waitForHealth(requestedUrl)
   } catch (error) {
+    if (shouldFallbackFromLoopbackDevOrigin({
+      error,
+      requestedUrl,
+      fallbackUrl,
+      requestedImplicitSameOrigin,
+    })) {
+      setBaseUrl(fallbackUrl)
+      setAuthToken(null)
+      await waitForHealth(fallbackUrl)
+      await ensureBrowserApiAccessibleWithoutH5(fallbackUrl)
+      markDesktopServerReady()
+      return fallbackUrl
+    }
+
     if (browserH5Runtime) {
       clearStoredH5Token()
       throw normalizeBrowserH5Error(error, requestedUrl)
@@ -255,6 +275,7 @@ async function waitForHealth(serverUrl: string) {
         const contentType = response.headers.get('content-type') ?? ''
         if (!contentType.toLowerCase().includes('application/json')) {
           lastError = new Error(`healthcheck returned non-JSON response from ${serverUrl}/health`)
+          break
         } else {
           const body = await response.json().catch(() => null)
           if (body && typeof body === 'object' && 'status' in body && body.status === 'ok') {
@@ -332,9 +353,56 @@ function getConfiguredBrowserServerUrl(fallbackUrl: string) {
   return getSameOriginServerUrl()
 }
 
+function shouldFallbackFromLoopbackDevOrigin({
+  error,
+  requestedUrl,
+  fallbackUrl,
+  requestedImplicitSameOrigin,
+}: {
+  error: unknown
+  requestedUrl: string
+  fallbackUrl: string
+  requestedImplicitSameOrigin: boolean
+}) {
+  if (!requestedImplicitSameOrigin || requestedUrl === fallbackUrl) {
+    return false
+  }
+
+  if (!isLoopbackServerUrl(requestedUrl) || !isLoopbackServerUrl(fallbackUrl)) {
+    return false
+  }
+
+  return error instanceof Error &&
+    error.message.includes('healthcheck returned non-JSON response')
+}
+
 export function isLoopbackHostname(hostname: string) {
   const normalized = hostname.trim().replace(/^\[/, '').replace(/\]$/, '').toLowerCase()
-  return normalized === '127.0.0.1' || normalized === 'localhost' || normalized === '::1'
+  return normalized === 'localhost' || normalized === '::1' || isLoopbackIPv4(normalized)
+}
+
+function isLoopbackServerUrl(serverUrl: string) {
+  try {
+    return isLoopbackHostname(new URL(serverUrl).hostname)
+  } catch {
+    return false
+  }
+}
+
+function isLoopbackIPv4(hostname: string) {
+  const parts = hostname.split('.')
+  if (parts.length !== 4 || parts[0] !== '127') {
+    return false
+  }
+
+  return parts.every((part) => {
+    if (!/^\d+$/.test(part)) {
+      return false
+    }
+
+    const value = Number(part)
+    return value >= 0 && value <= 255
+  })
 }
 
 export function requiresH5AuthForServerUrl(serverUrl: string, browserHostname = getBrowserHostname()) {

@@ -80,6 +80,20 @@ export function cliExitSeverity(code: number | null): 'info' | 'error' {
   return 'error'
 }
 
+export function buildConversationCliSpawnOptions(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+) {
+  return {
+    cwd,
+    env,
+    stdin: 'pipe',
+    stdout: 'pipe',
+    stderr: 'pipe',
+    windowsHide: true,
+  } as const
+}
+
 type AttachmentRef = {
   type: 'file' | 'image'
   name?: string
@@ -303,13 +317,7 @@ export class ConversationService {
 
     let proc: ReturnType<typeof Bun.spawn>
     try {
-      proc = Bun.spawn(args, {
-        cwd: launchWorkDir,
-        env: childEnv,
-        stdin: 'pipe',
-        stdout: 'pipe',
-        stderr: 'pipe',
-      })
+      proc = Bun.spawn(args, buildConversationCliSpawnOptions(launchWorkDir, childEnv))
     } catch (spawnErr) {
       void diagnosticsService.recordEvent({
         type: 'cli_spawn_failed',
@@ -475,6 +483,8 @@ export class ConversationService {
     allowed: boolean,
     rule?: string,
     updatedInput?: Record<string, unknown>,
+    denyMessage?: string,
+    permissionUpdates?: unknown[],
   ): boolean {
     const session = this.sessions.get(sessionId)
     const pendingRequest = session?.pendingPermissionRequests.get(requestId)
@@ -491,7 +501,9 @@ export class ConversationService {
           ? {
               behavior: 'allow',
               updatedInput: updatedInput ?? {},
-              ...(rule === 'always' && pendingRequest
+              ...(Array.isArray(permissionUpdates) && permissionUpdates.length > 0
+                ? { updatedPermissions: permissionUpdates }
+                : rule === 'always' && pendingRequest
                 ? {
                     updatedPermissions: [
                       ...normalizeSessionPermissionUpdates(
@@ -502,7 +514,7 @@ export class ConversationService {
                   }
                 : {}),
             }
-          : { behavior: 'deny', message: 'User denied via UI' },
+          : { behavior: 'deny', message: denyMessage || 'User denied via UI' },
       },
     })
   }
@@ -1120,6 +1132,18 @@ export class ConversationService {
       CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1',
       // Desktop must fail stuck provider streams instead of leaving the UI running forever.
       CLAUDE_ENABLE_STREAM_WATCHDOG: cleanEnv.CLAUDE_ENABLE_STREAM_WATCHDOG || '1',
+      // Third-party providers can stay silent for minutes mid-stream (thinking
+      // phases emit no SSE bytes, and many gateways never send pings), so the
+      // CLI's 90s idle default kills healthy streams (#766). 240s still frees
+      // a truly dead connection without shooting slow ones.
+      CLAUDE_STREAM_IDLE_TIMEOUT_MS: cleanEnv.CLAUDE_STREAM_IDLE_TIMEOUT_MS || '240000',
+      // When a stream does get aborted, retry as streaming instead of falling
+      // back to non-streaming: a non-streaming request must wait for the FULL
+      // generation before the first response byte, so slow providers can never
+      // finish inside API_TIMEOUT_MS — the fallback loops 5-minute aborts
+      // forever while the UI shows "running" (#766). It can also double-run
+      // tools (upstream inc-4258).
+      CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK: cleanEnv.CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK || '1',
       CLAUDE_CODE_DIAGNOSTICS_FILE: cliDiagnosticsPath,
       CLAUDE_COWORK_MEMORY_PATH_OVERRIDE: this.resolveDesktopAutoMemoryPath(workDir),
       CALLER_DIR: workDir,

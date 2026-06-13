@@ -7,6 +7,13 @@
 
 import { z } from 'zod'
 
+export const CLAUDE_OFFICIAL_PROVIDER_ID = 'claude-official'
+export const OPENAI_OFFICIAL_PROVIDER_ID = 'openai-official'
+export const BUILT_IN_PROVIDER_IDS = [
+  CLAUDE_OFFICIAL_PROVIDER_ID,
+  OPENAI_OFFICIAL_PROVIDER_ID,
+] as const
+
 export const ApiFormatSchema = z.enum([
   'anthropic',         // Native Anthropic Messages API (passthrough, no proxy)
   'openai_chat',       // OpenAI Chat Completions /v1/chat/completions
@@ -76,6 +83,7 @@ export const ProvidersIndexSchema = z.object({
   schemaVersion: z.number().int().positive().optional(),
   activeId: z.string().nullable(),
   providers: z.array(SavedProviderSchema),
+  providerOrder: z.array(z.string()).default([]),
 })
 
 export const CreateProviderSchema = z.object({
@@ -117,6 +125,12 @@ export const TestProviderSchema = z.object({
   apiFormat: ApiFormatSchema.default('anthropic'),
 })
 
+export const ReorderProvidersSchema = z.object({
+  // A permutation of the display provider ids, including built-in official providers.
+  // The legacy saved-provider-only permutation is still accepted by ProviderService.
+  orderedIds: z.array(z.string().min(1)).min(1),
+})
+
 // TypeScript types
 export type ModelMapping = z.infer<typeof ModelMappingSchema>
 export type SavedProvider = z.infer<typeof SavedProviderSchema>
@@ -124,6 +138,7 @@ export type ProvidersIndex = z.infer<typeof ProvidersIndexSchema>
 export type CreateProviderInput = z.infer<typeof CreateProviderSchema>
 export type UpdateProviderInput = z.infer<typeof UpdateProviderSchema>
 export type TestProviderInput = z.infer<typeof TestProviderSchema>
+export type ReorderProvidersInput = z.infer<typeof ReorderProvidersSchema>
 
 export interface ProviderTestStepResult {
   success: boolean

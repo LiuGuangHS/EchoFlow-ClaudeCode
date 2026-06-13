@@ -47,6 +47,7 @@ import type {
   Message,
   StreamEvent,
   SystemAPIErrorMessage,
+  SystemStreamingFallbackMessage,
   UserMessage,
 } from "../../types/message.js";
 import {
@@ -74,6 +75,7 @@ import { computeFingerprintFromMessages } from "../../utils/fingerprint.js";
 import { captureAPIRequest, logError } from "../../utils/log.js";
 import {
   createAssistantAPIErrorMessage,
+  createSystemStreamingFallbackMessage,
   createUserMessage,
   ensureToolResultPairing,
   normalizeContentFromAPI,
@@ -767,7 +769,7 @@ export async function* queryModelWithStreaming({
   signal: AbortSignal;
   options: Options;
 }): AsyncGenerator<
-  StreamEvent | AssistantMessage | SystemAPIErrorMessage,
+  StreamEvent | AssistantMessage | SystemAPIErrorMessage | SystemStreamingFallbackMessage,
   void
 > {
   return yield* withStreamingVCR(messages, async function* () {
@@ -1025,7 +1027,7 @@ async function* queryModel(
   signal: AbortSignal,
   options: Options,
 ): AsyncGenerator<
-  StreamEvent | AssistantMessage | SystemAPIErrorMessage,
+  StreamEvent | AssistantMessage | SystemAPIErrorMessage | SystemStreamingFallbackMessage,
   void
 > {
   if (getAPIProvider() === "azureOpenAI") {
@@ -2574,6 +2576,13 @@ async function* queryModel(
       if (options.onStreamingFallback) {
         options.onStreamingFallback();
       }
+      // Surface the mode switch to consumers (SDK stream → desktop status
+      // bar): the non-streaming response arrives in one piece after a
+      // potentially long silent wait, so without this signal the UI shows a
+      // bare spinner the whole time.
+      yield createSystemStreamingFallbackMessage(
+        streamIdleAborted ? "watchdog" : "stream_error",
+      );
 
       logEvent("tengu_streaming_fallback_to_non_streaming", {
         model:
@@ -2695,6 +2704,7 @@ async function* queryModel(
       if (options.onStreamingFallback) {
         options.onStreamingFallback();
       }
+      yield createSystemStreamingFallbackMessage("404_stream_creation");
 
       logEvent("tengu_streaming_fallback_to_non_streaming", {
         model:

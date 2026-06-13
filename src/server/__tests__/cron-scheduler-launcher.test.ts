@@ -5,6 +5,7 @@ import * as path from 'path'
 
 import {
   buildCronCliArgs,
+  buildCronTaskSpawnOptions,
   CronScheduler,
   resolveCronProjectRoot,
 } from '../services/cronScheduler.js'
@@ -165,7 +166,20 @@ describe('cron scheduler launcher resolution', () => {
     ).toBe(sourceRoot)
   })
 
-  it('keeps legacy CC_HAHA_ROOT compatible for source checkout resolution', async () => {
+  it('builds hidden CLI spawn options for scheduled task subprocesses', () => {
+    const env = { CLAUDECODE: '1' }
+
+    expect(buildCronTaskSpawnOptions('/workspace/project', env)).toEqual({
+      stdin: 'pipe',
+      stdout: 'pipe',
+      stderr: 'pipe',
+      cwd: '/workspace/project',
+      env,
+      windowsHide: true,
+    })
+  })
+
+  it('prefers an explicit CC_HAHA_ROOT when it points at a source checkout', async () => {
     const sourceRoot = path.join(tmpDir, 'source')
     await createSourceRoot(sourceRoot)
 

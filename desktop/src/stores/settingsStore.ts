@@ -60,6 +60,7 @@ type SettingsStore = {
   currentModel: ModelInfo | null
   effortLevel: EffortLevel
   thinkingEnabled: boolean
+  autoDreamEnabled: boolean
   availableModels: ModelInfo[]
   activeProviderName: string | null
   locale: Locale
@@ -95,6 +96,7 @@ type SettingsStore = {
   setModel: (modelId: string) => Promise<void>
   setEffort: (level: EffortLevel) => Promise<void>
   setThinkingEnabled: (enabled: boolean) => Promise<void>
+  setAutoDreamEnabled: (enabled: boolean) => Promise<void>
   setLocale: (locale: Locale) => void
   setTheme: (theme: ThemeMode) => Promise<void>
   setChatSendBehavior: (behavior: ChatSendBehavior) => Promise<void>
@@ -113,6 +115,8 @@ type SettingsStore = {
   updateH5AccessSettings: (input: {
     allowedOrigins?: string[]
     publicBaseUrl?: string | null
+    fixedPort?: number | null
+    disconnectGraceSeconds?: number | null
   }) => Promise<void>
   setResponseLanguage: (language: string) => Promise<void>
   fetchAppMode: () => Promise<void>
@@ -126,9 +130,12 @@ type NetworkSettingsInput = Partial<Omit<NetworkSettings, 'proxy'>> & {
 
 const DEFAULT_H5_ACCESS_SETTINGS: H5AccessSettings = {
   enabled: false,
+  token: null,
   tokenPreview: null,
   allowedOrigins: [],
   publicBaseUrl: null,
+  fixedPort: null,
+  disconnectGraceSeconds: null,
 }
 
 const DEFAULT_DESKTOP_TERMINAL_SETTINGS: DesktopTerminalSettings = {
@@ -142,7 +149,7 @@ const DEFAULT_UPDATE_PROXY_SETTINGS: UpdateProxySettings = {
 }
 
 const DEFAULT_NETWORK_SETTINGS: NetworkSettings = {
-  aiRequestTimeoutMs: 120_000,
+  aiRequestTimeoutMs: 600_000,
   proxy: {
     mode: 'system',
     url: '',
@@ -169,6 +176,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   currentModel: null,
   effortLevel: 'max',
   thinkingEnabled: true,
+  autoDreamEnabled: false,
   availableModels: [],
   activeProviderName: null,
   locale: getStoredLocale(),
@@ -231,6 +239,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         currentModel: model,
         effortLevel: level,
         thinkingEnabled: userSettings.alwaysThinkingEnabled !== false,
+        autoDreamEnabled: userSettings.autoDreamEnabled === true,
         theme,
         chatSendBehavior: normalizeChatSendBehavior(userSettings.chatSendBehavior),
         outputStyle: normalizeOutputStyle(userSettings.outputStyle),
@@ -298,6 +307,17 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       await settingsApi.updateUser({ alwaysThinkingEnabled: enabled })
     } catch {
       set({ thinkingEnabled: prev })
+    }
+  },
+
+  setAutoDreamEnabled: async (enabled) => {
+    const prev = get().autoDreamEnabled
+    set({ autoDreamEnabled: enabled })
+    try {
+      await settingsApi.updateUser({ autoDreamEnabled: enabled })
+    } catch (error) {
+      set({ autoDreamEnabled: prev })
+      throw error
     }
   },
 
@@ -635,7 +655,7 @@ function normalizeNetworkSettings(
   settings: NetworkSettingsInput | undefined,
 ): NetworkSettings {
   const timeout = typeof settings?.aiRequestTimeoutMs === 'number' && Number.isFinite(settings.aiRequestTimeoutMs)
-    ? Math.min(Math.max(Math.round(settings.aiRequestTimeoutMs), 5_000), 600_000)
+    ? Math.min(Math.max(Math.round(settings.aiRequestTimeoutMs), 30_000), 1_800_000)
     : DEFAULT_NETWORK_SETTINGS.aiRequestTimeoutMs
   const proxyMode = settings?.proxy?.mode === 'manual' ? 'manual' : 'system'
 
@@ -675,9 +695,12 @@ function normalizeDesktopTerminalSettings(
 function normalizeH5AccessSettings(settings: H5AccessSettings | undefined): H5AccessSettings {
   return {
     enabled: settings?.enabled === true,
+    token: typeof settings?.token === 'string' && settings.token ? settings.token : null,
     tokenPreview: settings?.tokenPreview ?? null,
     allowedOrigins: Array.isArray(settings?.allowedOrigins) ? settings.allowedOrigins : [],
     publicBaseUrl: settings?.publicBaseUrl ?? null,
+    fixedPort: typeof settings?.fixedPort === 'number' ? settings.fixedPort : null,
+    disconnectGraceSeconds: typeof settings?.disconnectGraceSeconds === 'number' ? settings.disconnectGraceSeconds : null,
   }
 }
 

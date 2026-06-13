@@ -40,7 +40,7 @@ import {
   createSessionBranch,
   SessionBranchingError,
 } from '../../utils/sessionBranching.js'
-import { registerFilesystemAccessRoot } from '../services/filesystemAccessRoots.js'
+import { registerChangedFileAccessRoot, registerFilesystemAccessRoot } from '../services/filesystemAccessRoots.js'
 import { traceCaptureService, trimTraceCallPreviews } from '../services/traceCaptureService.js'
 
 const workspaceService = new WorkspaceService(
@@ -851,6 +851,14 @@ async function branchSession(req: Request, sessionId: string): Promise<Response>
 
 async function getTurnCheckpoints(sessionId: string): Promise<Response> {
   const checkpoints = await listSessionTurnCheckpoints(sessionId)
+  // Make this turn's real changed files previewable even when they live outside
+  // the session workdir (e.g. the user told the model to write to an absolute
+  // path on another drive). Writing them was authorized, so previewing is too.
+  for (const checkpoint of checkpoints) {
+    for (const filePath of checkpoint.code.filesChanged) {
+      registerChangedFileAccessRoot(filePath, checkpoint.workDir)
+    }
+  }
   return Response.json({ checkpoints })
 }
 

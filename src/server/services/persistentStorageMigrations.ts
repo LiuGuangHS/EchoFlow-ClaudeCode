@@ -4,8 +4,9 @@ import { randomBytes } from 'node:crypto'
 import { normalizeLegacyDeepSeekManagedEnv } from '../../utils/providerManagedEnvCompat.js'
 import { getEchoFlowConfigDir, getEchoFlowInternalDir, ensureEchoFlowConfigRoot } from './echoFlowConfigRoot.js'
 import { isOpenAIOfficialProviderId } from './openaiOfficialProvider.js'
+import { BUILT_IN_PROVIDER_IDS } from '../types/provider.js'
 
-export const CURRENT_PROVIDER_INDEX_SCHEMA_VERSION = 1
+export const CURRENT_PROVIDER_INDEX_SCHEMA_VERSION = 2
 
 type MigrationReport = {
   migratedEntries: string[]
@@ -13,6 +14,19 @@ type MigrationReport = {
 }
 
 type JsonObject = Record<string, unknown>
+type LegacyProviderModel = {
+  id: string
+  name?: string
+}
+type LegacyRootProvider = {
+  id: string
+  name: string
+  baseUrl: string
+  apiKey: string
+  models: LegacyProviderModel[]
+  isActive?: boolean
+  notes?: string
+}
 
 let migrationPromise: Promise<MigrationReport> | null = null
 let migrationConfigDir: string | null = null
@@ -41,6 +55,52 @@ function isSavedProvider(value: unknown): value is JsonObject {
     typeof value.baseUrl === 'string' &&
     isProviderModels(value.models)
   )
+}
+
+function isLegacyProviderModel(value: unknown): value is LegacyProviderModel {
+  return isRecord(value) && typeof value.id === 'string'
+}
+
+function isLegacyRootProvider(value: unknown): value is LegacyRootProvider {
+  return (
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    typeof value.name === 'string' &&
+    typeof value.baseUrl === 'string' &&
+    typeof value.apiKey === 'string' &&
+    Array.isArray(value.models) &&
+    value.models.every(isLegacyProviderModel)
+  )
+}
+
+function defaultProviderOrder(providers: JsonObject[]): string[] {
+  return [
+    ...providers
+      .map((provider) => provider.id)
+      .filter((id): id is string => typeof id === 'string'),
+    ...BUILT_IN_PROVIDER_IDS,
+  ]
+}
+
+function normalizeProviderOrder(value: unknown, providers: JsonObject[]): string[] {
+  const knownIds = new Set<string>(defaultProviderOrder(providers))
+  const source = Array.isArray(value) ? value : defaultProviderOrder(providers)
+  const seen = new Set<string>()
+  const order: string[] = []
+
+  for (const id of source) {
+    if (typeof id !== 'string' || !knownIds.has(id) || seen.has(id)) continue
+    seen.add(id)
+    order.push(id)
+  }
+
+  for (const id of defaultProviderOrder(providers)) {
+    if (seen.has(id)) continue
+    seen.add(id)
+    order.push(id)
+  }
+
+  return order
 }
 
 function errnoCode(error: unknown): string | undefined {
@@ -93,10 +153,15 @@ function migrateProvidersIndex(value: unknown): JsonObject {
       schemaVersion: CURRENT_PROVIDER_INDEX_SCHEMA_VERSION,
       activeId: null,
       providers: [],
+      providerOrder: [...BUILT_IN_PROVIDER_IDS],
     }
   }
 
-  const { activeProviderId: _legacyActiveProviderId, ...rest } = value
+  const {
+    activeProviderId: _legacyActiveProviderId,
+    providerOrder: rawProviderOrder,
+    ...rest
+  } = value
   const providers = value.providers.filter(isSavedProvider)
   const rawActiveId =
     typeof value.activeId === 'string'
@@ -116,6 +181,7 @@ function migrateProvidersIndex(value: unknown): JsonObject {
     schemaVersion: CURRENT_PROVIDER_INDEX_SCHEMA_VERSION,
     activeId,
     providers,
+    providerOrder: normalizeProviderOrder(rawProviderOrder, providers),
   }
 }
 
@@ -164,11 +230,147 @@ async function migrateJsonEntry(
   }
 }
 
+function legacyProviderModelId(
+  provider: LegacyRootProvider,
+  preferredModelId: unknown,
+): string {
+  if (
+    typeof preferredModelId === 'string' &&
+    provider.models.some((model) => model.id === preferredModelId)
+  ) {
+    return preferredModelId
+  }
+
+  return provider.models[0]?.id ?? ''
+}
+
+function migrateLegacyRootProvidersConfig(value: unknown): JsonObject | null {
+  if (!isRecord(value) || !Array.isArray(value.providers)) {
+    return null
+  }
+
+  const providers = value.providers
+    .filter(isLegacyRootProvider)
+    .map((provider) => {
+      const main = legacyProviderModelId(provider, value.activeModel)
+      return {
+        id: provider.id,
+        presetId: 'custom',
+        name: provider.name,
+        apiKey: provider.apiKey,
+        baseUrl: provider.baseUrl,
+        apiFormat: 'anthropic',
+        models: {
+          main,
+          haiku: main,
+          sonnet: main,
+          opus: main,
+        },
+        ...(provider.notes !== undefined && { notes: provider.notes }),
+      }
+    })
+
+  if (providers.length === 0) {
+    return null
+  }
+
+  const activeLegacyProvider = value.providers
+    .filter(isLegacyRootProvider)
+    .find((provider) =>
+      provider.isActive === true ||
+      (typeof value.activeModel === 'string' &&
+        provider.models.some((model) => model.id === value.activeModel)),
+    )
+  const activeId =
+    activeLegacyProvider && providers.some((provider) => provider.id === activeLegacyProvider.id)
+      ? activeLegacyProvider.id
+      : null
+
+  return {
+    schemaVersion: CURRENT_PROVIDER_INDEX_SCHEMA_VERSION,
+    activeId,
+    providers,
+    providerOrder: normalizeProviderOrder(undefined, providers),
+  }
+}
+
+function buildManagedSettingsForMigratedProvider(provider: JsonObject | undefined): JsonObject | null {
+  if (!provider || !isProviderModels(provider.models)) return null
+  const apiKey = typeof provider.apiKey === 'string' ? provider.apiKey : ''
+  const baseUrl = typeof provider.baseUrl === 'string' ? provider.baseUrl : ''
+  if (!apiKey || !baseUrl) return null
+
+  return {
+    env: {
+      ANTHROPIC_BASE_URL: baseUrl,
+      ANTHROPIC_AUTH_TOKEN: apiKey,
+      ANTHROPIC_MODEL: provider.models.main,
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: provider.models.haiku,
+      ANTHROPIC_DEFAULT_SONNET_MODEL: provider.models.sonnet,
+      ANTHROPIC_DEFAULT_OPUS_MODEL: provider.models.opus,
+    },
+  }
+}
+
+async function migrateLegacyRootProviders(
+  configDir: string,
+  echoFlowDir: string,
+  report: MigrationReport,
+): Promise<void> {
+  const targetPath = path.join(echoFlowDir, 'providers.json')
+  try {
+    await fs.access(targetPath)
+    return
+  } catch (error) {
+    if (errnoCode(error) !== 'ENOENT') {
+      report.failures.push(`echoflow/providers.json: ${error instanceof Error ? error.message : String(error)}`)
+      return
+    }
+  }
+
+  const legacyPath = path.join(configDir, 'providers.json')
+
+  try {
+    const legacy = await readJsonFile(legacyPath)
+    if (legacy.missing) return
+
+    const migrated = migrateLegacyRootProvidersConfig(legacy.value)
+    if (!migrated) return
+
+    await writeJsonFile(targetPath, migrated)
+    report.migratedEntries.push('providers.json -> echoflow/providers.json')
+
+    const settingsPath = path.join(echoFlowDir, 'settings.json')
+    const settings = await readJsonFile(settingsPath).catch(() => ({ missing: false, value: undefined, raw: '' }))
+    if (!settings.missing) return
+
+    const activeId = typeof migrated.activeId === 'string' ? migrated.activeId : null
+    const activeProvider = Array.isArray(migrated.providers)
+      ? migrated.providers.find((provider) => isRecord(provider) && provider.id === activeId)
+      : undefined
+    const managedSettings = buildManagedSettingsForMigratedProvider(
+      isRecord(activeProvider) ? activeProvider : undefined,
+    )
+    if (managedSettings) {
+      await writeJsonFile(settingsPath, managedSettings)
+      report.migratedEntries.push('providers.json -> echoflow/settings.json')
+    }
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      report.failures.push(`providers.json: ${error.message}`)
+      return
+    }
+    report.failures.push(`providers.json: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
 async function runPersistentStorageMigrations(configDir: string): Promise<MigrationReport> {
   const report: MigrationReport = { migratedEntries: [], failures: [] }
   const echoFlowDir = getEchoFlowInternalDir(configDir)
 
   await ensureEchoFlowConfigRoot(configDir)
+
+  await migrateLegacyRootProviders(configDir, echoFlowDir, report)
 
   await migrateJsonEntry(
     path.join(echoFlowDir, 'providers.json'),

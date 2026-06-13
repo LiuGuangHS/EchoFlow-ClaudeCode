@@ -135,11 +135,13 @@ describe('persistent storage upgrade migrations', () => {
       schemaVersion?: number
       activeId?: string | null
       activeProviderId?: string
+      providerOrder?: string[]
       rootFutureField?: unknown
       providers?: Array<Record<string, unknown>>
     }
     expect(migrated.schemaVersion).toBe(CURRENT_PROVIDER_INDEX_SCHEMA_VERSION)
     expect(migrated.activeId).toBe('provider-1')
+    expect(migrated.providerOrder).toEqual(['provider-1', 'claude-official', 'openai-official'])
     expect(migrated.activeProviderId).toBeUndefined()
     expect(migrated.rootFutureField).toEqual({ keep: true })
     expect(migrated.providers?.[0]?.extraFutureField).toBe('keep-me')
@@ -161,7 +163,7 @@ describe('persistent storage upgrade migrations', () => {
     expect(rewritten.providers?.[0]?.extraFutureField).toBe('keep-me')
   })
 
-  test('does not auto-import legacy root providers config', async () => {
+  test('imports legacy root providers config into EchoFlow managed storage', async () => {
     await fs.writeFile(
       path.join(tempDir, 'providers.json'),
       JSON.stringify({
@@ -188,18 +190,51 @@ describe('persistent storage upgrade migrations', () => {
     const report = await ensurePersistentStorageUpgraded()
 
     expect(report.failures).toEqual([])
-    expect(report.migratedEntries).toEqual([])
+    expect(report.migratedEntries).toContain('providers.json -> echoflow/providers.json')
+    expect(report.migratedEntries).toContain('providers.json -> echoflow/settings.json')
     expect(JSON.parse(await fs.readFile(path.join(tempDir, 'providers.json'), 'utf-8'))).toMatchObject({
       version: 1,
       activeModel: 'legacy-sonnet',
     })
-    await expect(fs.readFile(path.join(echoFlowDir(), 'providers.json'), 'utf-8')).rejects.toThrow()
-    await expect(fs.readFile(path.join(echoFlowDir(), 'settings.json'), 'utf-8')).rejects.toThrow()
+    const migrated = JSON.parse(await fs.readFile(path.join(echoFlowDir(), 'providers.json'), 'utf-8')) as {
+      activeId?: string | null
+      providerOrder?: string[]
+      providers?: Array<{
+        id?: string
+        presetId?: string
+        apiFormat?: string
+        models?: Record<string, string>
+        notes?: string
+      }>
+    }
+    expect(migrated.activeId).toBe('legacy-provider')
+    expect(migrated.providerOrder).toEqual(['legacy-provider', 'claude-official', 'openai-official'])
+    expect(migrated.providers?.[0]).toMatchObject({
+      id: 'legacy-provider',
+      presetId: 'custom',
+      apiFormat: 'anthropic',
+      notes: 'keep note',
+      models: {
+        main: 'legacy-sonnet',
+        haiku: 'legacy-sonnet',
+        sonnet: 'legacy-sonnet',
+        opus: 'legacy-sonnet',
+      },
+    })
+
+    const managedSettings = JSON.parse(await fs.readFile(path.join(echoFlowDir(), 'settings.json'), 'utf-8')) as {
+      env?: Record<string, string>
+    }
+    expect(managedSettings.env).toMatchObject({
+      ANTHROPIC_BASE_URL: 'https://legacy.example.test',
+      ANTHROPIC_AUTH_TOKEN: 'legacy-token',
+      ANTHROPIC_MODEL: 'legacy-sonnet',
+    })
 
     const service = new ProviderService()
     const { providers, activeId } = await service.listProviders()
-    expect(activeId).toBeNull()
-    expect(providers).toEqual([])
+    expect(activeId).toBe('legacy-provider')
+    expect(providers).toHaveLength(1)
   })
 
   test('does not overwrite current EchoFlow provider storage with a legacy root config', async () => {
@@ -234,12 +269,14 @@ describe('persistent storage upgrade migrations', () => {
     const report = await ensurePersistentStorageUpgraded()
 
     expect(report.failures).toEqual([])
-    expect(report.migratedEntries).not.toContain('echoflow/providers.json')
+    expect(report.migratedEntries).toContain('echoflow/providers.json')
     const current = JSON.parse(await fs.readFile(path.join(currentDir, 'providers.json'), 'utf-8')) as {
       activeId?: string | null
+      providerOrder?: string[]
       providers?: unknown[]
     }
     expect(current.activeId).toBeNull()
+    expect(current.providerOrder).toEqual(['claude-official', 'openai-official'])
     expect(current.providers).toEqual([])
   })
 

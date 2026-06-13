@@ -22,6 +22,7 @@ import {
   CreateProviderSchema,
   UpdateProviderSchema,
   TestProviderSchema,
+  ReorderProvidersSchema,
 } from '../types/provider.js'
 import { ApiError, errorResponse } from '../middleware/errorHandler.js'
 import { diagnosticsService } from '../services/diagnosticsService.js'
@@ -70,6 +71,12 @@ export async function handleProvidersApi(
     if (id === 'official' && req.method === 'POST') {
       await providerService.activateOfficial()
       return Response.json({ ok: true })
+    }
+
+    // PUT /api/providers/reorder
+    if (id === 'reorder') {
+      if (req.method !== 'PUT') throw methodNotAllowed(req.method)
+      return await handleReorder(req)
     }
 
     // /api/providers (no ID)
@@ -155,6 +162,18 @@ async function handleUpdate(req: Request, id: string): Promise<Response> {
     const input = UpdateProviderSchema.parse(body)
     const provider = await providerService.updateProvider(id, input)
     return Response.json({ provider })
+  } catch (err) {
+    if (err instanceof z.ZodError) throw ApiError.badRequest(err.issues.map((i) => i.message).join('; '))
+    throw err
+  }
+}
+
+async function handleReorder(req: Request): Promise<Response> {
+  const body = await parseJsonBody(req)
+  try {
+    const input = ReorderProvidersSchema.parse(body)
+    const { providers, providerOrder } = await providerService.reorderProviders(input.orderedIds)
+    return Response.json({ providers, providerOrder })
   } catch (err) {
     if (err instanceof z.ZodError) throw ApiError.badRequest(err.issues.map((i) => i.message).join('; '))
     throw err

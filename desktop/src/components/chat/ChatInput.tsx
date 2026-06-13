@@ -103,6 +103,8 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
   const [launchUseWorktree, setLaunchUseWorktree] = useState(false)
   const [launchReady, setLaunchReady] = useState(true)
   const [launchTransitioning, setLaunchTransitioning] = useState(false)
+  const [editingQueuedMessageId, setEditingQueuedMessageId] = useState<string | null>(null)
+  const [editingQueuedMessageText, setEditingQueuedMessageText] = useState('')
   const composingRef = useRef(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -125,13 +127,23 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
       return next
     })
   }, [])
-  const { sendMessage, stopGeneration, clearComposerPrefill, clearComposerInsertion } = useChatStore()
+  const {
+    sendMessage,
+    stopGeneration,
+    clearComposerPrefill,
+    clearComposerInsertion,
+    queueUserMessage,
+    updateQueuedUserMessage,
+    removeQueuedUserMessage,
+    sendQueuedUserMessage,
+  } = useChatStore()
   const activeTabId = useTabStore((s) => s.activeTabId)
   const sessionState = useChatStore((s) => activeTabId ? s.sessions[activeTabId] : undefined)
   const chatState = sessionState?.chatState ?? 'idle'
   const slashCommands = sessionState?.slashCommands ?? []
   const composerPrefill = sessionState?.composerPrefill ?? null
   const composerInsertion = sessionState?.composerInsertion ?? null
+  const queuedUserMessages = sessionState?.queuedUserMessages ?? []
   const runtimeSelection = useSessionRuntimeStore((state) =>
     activeTabId ? state.selections[activeTabId] : undefined,
   )
@@ -221,6 +233,8 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
     setSlashFilter('')
     setAtFilter('')
     setAtCursorPos(-1)
+    setEditingQueuedMessageId(null)
+    setEditingQueuedMessageText('')
     previousActiveTabIdRef.current = activeTabId
   }, [activeTabId, saveComposerDraft, setComposerAttachments, setComposerInput])
 
@@ -679,10 +693,20 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
       }
     }
 
-    sendMessage(targetSessionId, contentForModel, [...uploadAttachmentPayload, ...workspaceAttachmentPayload], {
-      displayContent,
-      displayAttachments: visibleAttachmentPayload,
-    })
+    const targetChatState = useChatStore.getState().sessions[targetSessionId]?.chatState ?? 'idle'
+    if (!isMemberSession && targetChatState !== 'idle') {
+      queueUserMessage(targetSessionId, {
+        content: contentForModel,
+        attachments: [...uploadAttachmentPayload, ...workspaceAttachmentPayload],
+        displayContent,
+        displayAttachments: visibleAttachmentPayload,
+      })
+    } else {
+      sendMessage(targetSessionId, contentForModel, [...uploadAttachmentPayload, ...workspaceAttachmentPayload], {
+        displayContent,
+        displayAttachments: visibleAttachmentPayload,
+      })
+    }
     setComposerInput('')
     setComposerAttachments([])
     useChatStore.getState().clearComposerDraft(activeTabId!)
@@ -867,6 +891,25 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
     if (activeTabId) removeWorkspaceReference(activeTabId, id)
   }
 
+  const startEditingQueuedMessage = (messageId: string, content: string) => {
+    setEditingQueuedMessageId(messageId)
+    setEditingQueuedMessageText(content)
+  }
+
+  const saveQueuedMessageEdit = () => {
+    if (!activeTabId || !editingQueuedMessageId) return
+    const nextContent = editingQueuedMessageText.trim()
+    if (!nextContent) return
+    updateQueuedUserMessage(activeTabId, editingQueuedMessageId, nextContent)
+    setEditingQueuedMessageId(null)
+    setEditingQueuedMessageText('')
+  }
+
+  const cancelQueuedMessageEdit = () => {
+    setEditingQueuedMessageId(null)
+    setEditingQueuedMessageText('')
+  }
+
   const insertSlashCommand = () => {
     if (isMemberSession) return
     const el = textareaRef.current
@@ -1041,6 +1084,105 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
             </div>
           )}
 
+          {!isMemberSession && activeTabId && queuedUserMessages.length > 0 && (
+            <div
+              data-testid="pending-user-message-list"
+              className={[
+                'overflow-hidden border-b border-[var(--color-border-separator)]',
+                isHeroComposer ? '-mx-4 -mt-4' : useCompactControls ? '-mx-3 -mt-3' : '-mx-4 -mt-4',
+              ].join(' ')}
+            >
+              {queuedUserMessages.map((message) => {
+                const isEditing = editingQueuedMessageId === message.id
+                return (
+                  <div
+                    key={message.id}
+                    data-testid="pending-user-message"
+                    className={[
+                      'flex min-w-0 items-center gap-2 px-3 py-2 text-xs',
+                      'border-t border-[var(--color-border-separator)] first:border-t-0',
+                      'bg-[var(--color-surface-container-lowest)]/70 text-[var(--color-text-secondary)]',
+                    ].join(' ')}
+                  >
+                    <span className="material-symbols-outlined shrink-0 text-[16px] text-[var(--color-text-tertiary)]" aria-hidden="true">
+                      subdirectory_arrow_right
+                    </span>
+                    {isEditing ? (
+                      <>
+                        <input
+                          value={editingQueuedMessageText}
+                          onChange={(event) => setEditingQueuedMessageText(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              event.preventDefault()
+                              saveQueuedMessageEdit()
+                            }
+                            if (event.key === 'Escape') {
+                              event.preventDefault()
+                              cancelQueuedMessageEdit()
+                            }
+                          }}
+                          aria-label={t('chat.pendingMessageEditInput')}
+                          className="min-w-0 flex-1 rounded-[6px] border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-xs text-[var(--color-text-primary)] outline-none focus:border-[var(--color-border-focus)]"
+                          autoFocus
+                        />
+                        <button
+                          type="button"
+                          onClick={saveQueuedMessageEdit}
+                          disabled={!editingQueuedMessageText.trim()}
+                          className="shrink-0 rounded-[6px] px-2 py-1 font-semibold text-[var(--color-brand)] hover:bg-[var(--color-surface-hover)] disabled:opacity-40"
+                        >
+                          {t('common.save')}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={cancelQueuedMessageEdit}
+                          className="shrink-0 rounded-[6px] px-2 py-1 font-medium text-[var(--color-text-tertiary)] hover:bg-[var(--color-surface-hover)]"
+                        >
+                          {t('common.cancel')}
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <span className="min-w-0 flex-1 truncate font-medium" title={message.displayContent}>
+                          {message.displayContent}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => sendQueuedUserMessage(activeTabId, message.id)}
+                          aria-label={t('chat.pendingMessageGuideNow')}
+                          title={t('chat.pendingMessageGuideNow')}
+                          className="inline-flex h-7 shrink-0 items-center gap-1 rounded-[6px] px-2 font-semibold text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]"
+                        >
+                          <span className="material-symbols-outlined text-[15px]" aria-hidden="true">subdirectory_arrow_right</span>
+                          <span>{t('chat.pendingMessageGuide')}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => startEditingQueuedMessage(message.id, message.displayContent)}
+                          aria-label={t('chat.pendingMessageEdit')}
+                          title={t('chat.pendingMessageEdit')}
+                          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] text-[var(--color-text-tertiary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]"
+                        >
+                          <span className="material-symbols-outlined text-[15px]" aria-hidden="true">edit</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removeQueuedUserMessage(activeTabId, message.id)}
+                          aria-label={t('chat.pendingMessageDelete')}
+                          title={t('chat.pendingMessageDelete')}
+                          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] text-[var(--color-text-tertiary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-error)]"
+                        >
+                          <span className="material-symbols-outlined text-[15px]" aria-hidden="true">delete</span>
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
           {composerAttachments.length > 0 && (
             isHeroComposer ? (
               <AttachmentGallery attachments={composerAttachments} variant="composer" onRemove={removeAttachment} />
@@ -1136,6 +1278,7 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
                   runtimeSelectionKey={runtimeSelectionKey}
                   fallbackModelLabel={runtimeModelLabel}
                   compact={useCompactControls}
+                  refreshNonce={sessionState?.compactCount ?? 0}
                 />
               )}
               {!isMemberSession && activeTabId && (

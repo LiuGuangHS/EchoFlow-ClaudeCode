@@ -138,11 +138,6 @@ export type PreviewHostMessage = PreviewCaptureMessage | PreviewPickerMessage
 
 export type AppModeConfig = SettingsAppModeConfig
 
-export type WindowDragMoveInput = {
-  deltaX: number
-  deltaY: number
-}
-
 export type AppModeSetInput = {
   mode: SettingsAppMode
   portableDir: string | null
@@ -200,7 +195,7 @@ export type DesktopHost = {
     minimize(): Promise<void>
     toggleMaximize(): Promise<void>
     close(): Promise<void>
-    startDragging(input?: WindowDragMoveInput): Promise<void>
+    startDragging(): Promise<void>
     requestAttention(): Promise<void>
     focus(): Promise<void>
     isMaximized(): Promise<boolean>

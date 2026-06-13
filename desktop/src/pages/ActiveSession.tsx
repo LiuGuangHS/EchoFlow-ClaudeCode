@@ -31,6 +31,7 @@ import type { SessionListItem } from '../types/session'
 import type { ActiveGoalState } from '../types/chat'
 import { useMobileViewport } from '../hooks/useMobileViewport'
 import { isDesktopRuntime } from '../lib/desktopRuntime'
+import { formatTokenCount } from '../lib/formatTokenCount'
 import { publicAssetPath } from '../lib/publicAsset'
 
 const TASK_POLL_INTERVAL_MS = 1000
@@ -479,7 +480,9 @@ export function ActiveSession() {
                       {totalTokens > 0 && (
                         <>
                           <span className="text-[var(--color-outline)]">·</span>
-                          <span>{totalTokens.toLocaleString()} t</span>
+                          <span title={t('common.tokens', { count: totalTokens.toLocaleString() })}>
+                            {t('common.tokens', { count: formatTokenCount(totalTokens) })}
+                          </span>
                         </>
                       )}
                       {lastUpdated && (

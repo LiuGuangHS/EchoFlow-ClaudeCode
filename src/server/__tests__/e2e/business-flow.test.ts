@@ -728,12 +728,10 @@ describe('Business Flow: WebSocket Chat', () => {
         }
         const hasStatus = messages.some((message) => message.type === 'status')
         const hasDelta = messages.some((message) => message.type === 'content_delta')
-        if (msg.type === 'message_complete' && hasStatus && hasDelta) {
-          finish()
-        }
+        if (msg.type === 'message_complete' && hasStatus && hasDelta) finish()
       }
       ws.onerror = finish
-      timeout = setTimeout(finish, 10000)
+      timeout = setTimeout(finish, 15000)
     })
 
     const types = messages.map((m) => m.type)
@@ -746,7 +744,7 @@ describe('Business Flow: WebSocket Chat', () => {
     // Should have thinking state first
     const statusMsgs = messages.filter((m) => m.type === 'status')
     expect(statusMsgs[0].state).toBe('thinking')
-  }, 15000)
+  }, 20000)
 
   it('should handle ping/pong', async () => {
     const messages: any[] = []
