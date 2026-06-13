@@ -8,6 +8,8 @@
     "android": "expo run:android",
     "android:prebuild": "expo prebuild --platform android",
     "android:build": "expo run:android --variant debug",
+    "android:release": "cd android && ./gradlew assembleRelease --console=plain --no-daemon",
+    "android:release:arm64": "cd android && ./gradlew assembleRelease --console=plain --no-daemon \"-Pandroid.enableSeparateBuildPerCPUArchitecture=true\" \"-PreactNativeArchitectures=arm64-v8a\"",
     "typecheck": "tsc --noEmit",
     "typecheck:tests": "tsc -p tsconfig.test.json",
     "test": "bun test",

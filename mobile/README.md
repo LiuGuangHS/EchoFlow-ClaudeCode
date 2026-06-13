@@ -1,6 +1,6 @@
-# EchoFlow CodeMobile
+# EchoFlow Code Mobile
 
-CodeMobile is an Expo React Native mobile client for EchoFlow-ClaudeCode. It provides a native mobile shell for connecting to an EchoFlow Desktop/server instance, then displays the existing H5 UI in a WebView for compatibility with the current chat, tool, permission, and WebSocket flows.
+EchoFlow Code Mobile is an Expo React Native mobile client for EchoFlow Code. It provides a native mobile shell for connecting to an EchoFlow Desktop/server instance, then displays the existing H5 UI in a WebView for compatibility with the current chat, tool, permission, and WebSocket flows.
 
 ## MVP 0 scope
 
@@ -8,7 +8,7 @@ Included:
 
 - Expo React Native Android app.
 - Native connection screen for Server URL + H5 Token.
-- QR launch URL scanning for desktop-generated CodeMobile links.
+- QR launch URL scanning for desktop-generated EchoFlow Code links.
 - Native H5 token verification before opening WebView.
 - Secure credential storage with `expo-secure-store`.
 - WebView compatibility layer for the existing H5 UI.
@@ -55,14 +55,14 @@ npx expo run:android
 2. Enable H5 access in desktop settings.
 3. Generate or copy the H5 Token.
 4. Ensure the Android device can reach the server, for example `http://192.168.1.10:3456/health` on a trusted LAN.
-5. Open CodeMobile and scan the desktop QR launch link, or enter the Server URL and H5 Token manually.
-6. CodeMobile verifies `/health` and `/api/h5-access/verify`, stores credentials in SecureStore, then opens the H5 UI in WebView.
+5. Open EchoFlow Code and scan the desktop QR launch link, or enter the Server URL and H5 Token manually.
+6. EchoFlow Code verifies `/health` and `/api/h5-access/verify`, stores credentials in SecureStore, then opens the H5 UI in WebView.
 
 ## Network notes
 
 MVP 0 supports plain HTTP on trusted LANs to match the existing H5 access flow. The H5 token is sent with REST and WebSocket requests and is initially passed to H5 with the existing `h5Token` query parameter, so do not expose plain HTTP access on public or untrusted networks.
 
-For Internet access, prefer HTTPS through a reverse proxy, private tunnel, VPN, or a future CodeMobile HTTPS/certificate mode.
+For Internet access, prefer HTTPS through a reverse proxy, private tunnel, VPN, or a future EchoFlow Code HTTPS/certificate mode.
 
 ## MVP 0 verification checklist
 
@@ -70,8 +70,8 @@ For Internet access, prefer HTTPS through a reverse proxy, private tunnel, VPN, 
 - [ ] H5 access is enabled.
 - [ ] H5 token is generated and copied.
 - [ ] The Android device can open `http://<desktop-lan-ip>:<port>/health` on the same trusted network.
-- [ ] CodeMobile native Connect screen appears.
-- [ ] CodeMobile accepts a QR launch link or manual Server URL and H5 token.
+- [ ] EchoFlow Code native Connect screen appears.
+- [ ] EchoFlow Code accepts a QR launch link or manual Server URL and H5 token.
 - [ ] Native `/health` check succeeds.
 - [ ] Native `/api/h5-access/verify` check succeeds.
 - [ ] WebView loads the existing H5 UI.
@@ -84,7 +84,7 @@ For Internet access, prefer HTTPS through a reverse proxy, private tunnel, VPN, 
 
 ## Known MVP limitations
 
-- CodeMobile MVP 0 is a remote client only. It does not run Claude Code locally on Android.
+- EchoFlow Code Mobile MVP 0 is a remote client only. It does not run Claude Code locally on Android.
 - Public Internet access is not automatic. Use LAN, VPN, Tailscale, frp, Cloudflare Tunnel, or your own reverse proxy.
 - Plain HTTP is allowed for trusted LAN compatibility. Prefer HTTPS for untrusted networks.
 - The H5 WebView remains the compatibility layer for complex chat/tool rendering. Native mobile pages will be added incrementally.

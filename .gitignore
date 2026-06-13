@@ -25,6 +25,8 @@ e2e-*.png
 
 # Local/generated artifacts
 artifacts/
+.android-sdk/
+.gradle-user-home/
 
 # Desktop build output
 desktop/dist/

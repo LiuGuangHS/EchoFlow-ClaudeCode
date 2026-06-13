@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "EchoFlow Code",
-    "slug": "codemobile",
+    "slug": "echoflow-code",
     "scheme": "codemobile",
     "version": "0.1.0",
     "orientation": "default",
@@ -10,7 +10,7 @@
     "icon": "./assets/icon.png",
     "assetBundlePatterns": ["**/*"],
     "android": {
-      "package": "com.echoflowai.codemobile",
+      "package": "com.echoflow.code",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0f172a"

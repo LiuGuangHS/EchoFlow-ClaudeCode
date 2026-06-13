@@ -1,10 +1,10 @@
 /**
- * CodeMobile i18n — Minimal Chinese-first translation layer.
+ * EchoFlow Code mobile i18n — Minimal Chinese-first translation layer.
  * Matches the EchoFlow Desktop zh.ts pattern for shared concepts.
  */
 export const zh = {
   // ConnectScreen
-  'connect.eyebrow': 'EchoFlow CodeMobile',
+  'connect.eyebrow': 'EchoFlow Code',
   'connect.title': '连接到你的桌面',
   'connect.description':
     '输入 EchoFlow 桌面端的 H5 服务器地址和令牌。局域网内可使用 HTTP，外网请使用 HTTPS 或私有隧道。',
@@ -18,14 +18,14 @@ export const zh = {
   'connect.connect': '连接',
   'connect.clipboardDetected': '检测到连接链接：',
   'connect.clipboardFill': '填入',
-  'connect.qrInvalid': '不是有效的 CodeMobile 二维码。请扫描 EchoFlow 桌面端 H5 接入设置里的二维码。',
-  'connect.loading': '正在加载 EchoFlow CodeMobile...',
-  'connect.credentialLoadError': '无法加载已保存的 CodeMobile 凭据。',
+  'connect.qrInvalid': '不是有效的 EchoFlow Code 二维码。请扫描 EchoFlow 桌面端 H5 接入设置里的二维码。',
+  'connect.loading': '正在加载 EchoFlow Code...',
+  'connect.credentialLoadError': '无法加载已保存的 EchoFlow Code 凭据。',
   'connect.timeout': '连接超时（10 秒）',
   'connect.unableToConnect': '无法连接到 EchoFlow H5 服务。',
 
   // H5WebViewScreen
-  'webview.title': 'CodeMobile',
+  'webview.title': 'EchoFlow Code',
   'webview.back': '返回',
   'webview.reload': '重载',
   'webview.disconnect': '断开',

@@ -154,7 +154,7 @@ export function H5WebViewScreen({ credentials, onDisconnect }: H5WebViewScreenPr
 
       <View style={styles.toolbar}>
         <View style={styles.toolbarTextGroup}>
-          <Text style={styles.title}>CodeMobile</Text>
+          <Text style={styles.title}>EchoFlow Code</Text>
           <Text numberOfLines={1} style={styles.subtitle}>{credentials.serverUrl}</Text>
         </View>
         <Pressable accessibilityLabel={canGoBack ? '返回' : '重新加载'} onPress={handleBack} style={styles.secondaryButton}>
