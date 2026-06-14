@@ -104,7 +104,6 @@ cp .env.example .env
 | [桌面端](docs/desktop/) | Electron + React 图形化客户端 — [快速上手](docs/desktop/01-quick-start.md) \| [架构设计](docs/desktop/02-architecture.md) \| [安装指南](docs/desktop/04-installation.md) |
 | [全局使用](docs/guide/global-usage.md) | 在任意目录启动 echoflow-code |
 | [常见问题](docs/guide/faq.md) | 常见错误排查 |
-| [源码修复记录](docs/reference/fixes.md) | 相对于原始泄露源码的修复内容 |
 | [项目结构](docs/reference/project-structure.md) | 代码目录结构说明 |
 
 ---
@@ -149,7 +148,6 @@ cp .env.example .env
 
 感谢以下开源项目和社区实践为本项目提供参考与启发：
 
-- [NanmiCoder/cc-haha](https://github.com/NanmiCoder/cc-haha)：原上游项目，为 EchoFlow Code 的持续迭代奠定基础。
 - [React](https://github.com/facebook/react)：前端工程与组件化 UI 生态。
 - [Electron](https://github.com/electron/electron)：跨端桌面应用能力与工程实践。
 - [cc-switch](https://github.com/farion1231/cc-switch)：模型供应商配置能力参考。
@@ -167,9 +165,3 @@ cp .env.example .env
     <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=LiuGuangHS/EchoFlow-ClaudeCode&type=Date" />
   </picture>
 </a>
-
----
-
-## Disclaimer
-
-本仓库基于 2026-03-31 从 Anthropic npm registry 泄露的 Claude Code 源码。所有原始源码版权归 [Anthropic](https://www.anthropic.com) 所有。仅供学习和研究用途。

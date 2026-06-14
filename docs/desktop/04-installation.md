@@ -70,4 +70,4 @@ bun run dev --host 127.0.0.1 --port 2024
 
 桌面端会检查 GitHub Releases 并在有新版本时提示更新；Windows/macOS 未完成代码签名时，系统仍可能要求你手动确认或重新下载安装包。最稳妥的方式仍是到 [GitHub Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest) 下载最新版覆盖安装。
 
-覆盖安装不会删除本地数据。上游兼容数据（例如 `projects`、`skills`、`plugins`、`agents`、`teams`、`tasks`、`adapters.json`）默认继续保存在 `~/.claude`；EchoFlow 自有 Provider、OAuth、桌面偏好和 diagnostics 保存在 EchoFlow 应用数据目录。
+覆盖安装不会删除本地数据。Claude Code 兼容数据（例如 `projects`、`skills`、`plugins`、`agents`、`teams`、`tasks`、`adapters.json`）默认继续保存在 `~/.claude`；EchoFlow 自有 Provider、OAuth、桌面偏好和 diagnostics 保存在 EchoFlow 应用数据目录。
