@@ -135,7 +135,17 @@ function booleanFrom(value: unknown): boolean | undefined {
 
 function isAuthFailure(message: string | undefined): boolean {
   const lower = message?.toLowerCase() ?? ''
-  return lower.includes('token') || lower.includes('auth') || lower.includes('unauthorized') || lower.includes('forbidden') || lower.includes('invalid')
+  return lower.includes('token') ||
+    lower.includes('auth') ||
+    lower.includes('unauthorized') ||
+    lower.includes('forbidden') ||
+    lower.includes('invalid') ||
+    lower.includes('令牌') ||
+    lower.includes('无效') ||
+    lower.includes('无权') ||
+    lower.includes('未授权') ||
+    lower.includes('认证') ||
+    lower.includes('鉴权')
 }
 
 function inferModelType(id: string): EchoFlowModelOption['type'] {
