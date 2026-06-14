@@ -5,6 +5,7 @@ const siteUrl = 'https://code.echoflow.cn'
 const apiSiteUrl = 'https://api.echoflow.cn'
 const aiAppUrl = 'https://ai.echoflow.cn'
 const siteImage = `${siteUrl}/images/app-icon.png`
+const docsBase = normalizeBase(process.env.DOCS_BASE)
 const zhDescription = 'EchoFlow Code 是本地可运行的 Coding Agent，内置 EchoFlowAPI，支持 Anthropic 兼容 API、多 Agent、记忆系统、桌面端、IM 接入与 Computer Use。'
 const enDescription = 'EchoFlow Code is a locally runnable coding agent with EchoFlowAPI, Anthropic-compatible API support, multi-agent workflows, memory, desktop, IM adapters, and Computer Use.'
 const organizationJsonLd = JSON.stringify({
@@ -57,6 +58,11 @@ function slugify(str: string): string {
     .toLowerCase()
     .replace(/[^\p{L}\p{M}\p{N}\p{Pc}\- ]/gu, '')
     .replace(/ /g, '-')
+}
+
+function normalizeBase(base = '/'): string {
+  const withLeadingSlash = base.startsWith('/') ? base : `/${base}`
+  return withLeadingSlash.endsWith('/') ? withLeadingSlash : `${withLeadingSlash}/`
 }
 
 function canonicalUrl(page: string): string {
@@ -258,7 +264,7 @@ export default withMermaid(defineConfig({
   title: 'EchoFlow Code',
   description: zhDescription,
   lastUpdated: true,
-  base: '/',
+  base: docsBase,
   cleanUrls: true,
   sitemap: {
     hostname: siteUrl,
