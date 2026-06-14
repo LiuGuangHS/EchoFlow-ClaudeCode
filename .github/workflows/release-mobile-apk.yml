@@ -84,6 +84,7 @@ jobs:
 
           node <<'NODE'
           const fs = require('fs')
+          const path = require('path')
           const config = JSON.parse(process.env.ANDROID_SIGNING_CONFIG_JSON || '{}')
           const required = ['keystoreBase64', 'storePassword', 'keyAlias', 'keyPassword']
           const missing = required.filter((key) => !config[key])
@@ -91,13 +92,14 @@ jobs:
             console.error(`::error::ANDROID_SIGNING_CONFIG_JSON is missing: ${missing.join(', ')}`)
             process.exit(1)
           }
-          fs.writeFileSync('android/app/release.keystore', Buffer.from(config.keystoreBase64, 'base64'))
+          const keystorePath = path.resolve('android/app/release.keystore')
+          fs.writeFileSync(keystorePath, Buffer.from(config.keystoreBase64, 'base64'))
           for (const key of ['storePassword', 'keyAlias', 'keyPassword']) {
             console.log(`::add-mask::${config[key]}`)
           }
           fs.appendFileSync('android/gradle.properties', [
             '',
-            'android.injected.signing.store.file=app/release.keystore',
+            `android.injected.signing.store.file=${keystorePath}`,
             `android.injected.signing.store.password=${config.storePassword}`,
             `android.injected.signing.key.alias=${config.keyAlias}`,
             `android.injected.signing.key.password=${config.keyPassword}`,

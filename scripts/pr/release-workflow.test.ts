@@ -334,3 +334,19 @@ describe('release desktop workflow', () => {
     expect(desktopPackage.build.nsis?.allowToChangeInstallationDirectory).toBe(true)
   })
 })
+
+describe('release mobile APK workflow', () => {
+  function readMobileReleaseWorkflow() {
+    return readFileSync('.github/workflows/release-mobile-apk.yml', 'utf8')
+  }
+
+  test('passes Android signing keystore to Gradle with an absolute path', () => {
+    const workflow = readMobileReleaseWorkflow()
+
+    expect(workflow).toContain("const path = require('path')")
+    expect(workflow).toContain("const keystorePath = path.resolve('android/app/release.keystore')")
+    expect(workflow).toContain("fs.writeFileSync(keystorePath, Buffer.from(config.keystoreBase64, 'base64'))")
+    expect(workflow).toContain('`android.injected.signing.store.file=${keystorePath}`')
+    expect(workflow).not.toContain('android.injected.signing.store.file=app/release.keystore')
+  })
+})
