@@ -349,4 +349,14 @@ describe('release mobile APK workflow', () => {
     expect(workflow).toContain('`android.injected.signing.store.file=${keystorePath}`')
     expect(workflow).not.toContain('android.injected.signing.store.file=app/release.keystore')
   })
+
+  test('native Android release manifest allows trusted LAN HTTP H5 access', () => {
+    const appConfig = JSON.parse(readFileSync('mobile/app.json', 'utf8')) as {
+      expo?: { android?: { usesCleartextTraffic?: boolean } }
+    }
+    const manifest = readFileSync('mobile/android/app/src/main/AndroidManifest.xml', 'utf8')
+
+    expect(appConfig.expo?.android?.usesCleartextTraffic).toBe(true)
+    expect(manifest).toContain('android:usesCleartextTraffic="true"')
+  })
 })
