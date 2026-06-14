@@ -16,6 +16,8 @@
 
 > 不确定 Mac 架构？点击左上角  → 关于本机，芯片为「Apple M…」选 arm64，「Intel」选 x64。
 
+移动端 Android 客户端用于连接已经运行的桌面端或本地服务。它不会在手机上运行 sidecar，也不会替代桌面端安装；需要先在桌面端开启 H5 访问，再按 [移动端文档](/mobile/) 扫码或手动输入 Server URL + H5 Token。
+
 ## macOS 安装
 
 双击 DMG 把应用拖入 `Applications`。首次打开如果提示**"已损坏"**或**"无法验证开发者"**，在终端执行：
@@ -66,4 +68,6 @@ bun run dev --host 127.0.0.1 --port 2024
 
 **Q: 这个版本会自动更新吗？**
 
-暂时不会。在拿到苹果签名前，请每次到 [GitHub Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases) 手动下载新版本覆盖安装。覆盖安装不会删除 EchoFlow Code AppData 中的本地配置和会话数据。
+桌面端会检查 GitHub Releases 并在有新版本时提示更新；Windows/macOS 未完成代码签名时，系统仍可能要求你手动确认或重新下载安装包。最稳妥的方式仍是到 [GitHub Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest) 下载最新版覆盖安装。
+
+覆盖安装不会删除本地数据。上游兼容数据（例如 `projects`、`skills`、`plugins`、`agents`、`teams`、`tasks`、`adapters.json`）默认继续保存在 `~/.claude`；EchoFlow 自有 Provider、OAuth、桌面偏好和 diagnostics 保存在 EchoFlow 应用数据目录。

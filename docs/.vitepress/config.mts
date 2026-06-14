@@ -1,6 +1,50 @@
 import { defineConfig } from 'vitepress'
 import { withMermaid } from 'vitepress-plugin-mermaid'
 
+const siteUrl = 'https://code.echoflow.cn'
+const apiSiteUrl = 'https://api.echoflow.cn'
+const aiAppUrl = 'https://ai.echoflow.cn'
+const siteImage = `${siteUrl}/images/app-icon.png`
+const zhDescription = 'EchoFlow Code 是本地可运行的 Coding Agent，内置 EchoFlowAPI，支持 Anthropic 兼容 API、多 Agent、记忆系统、桌面端、IM 接入与 Computer Use。'
+const enDescription = 'EchoFlow Code is a locally runnable coding agent with EchoFlowAPI, Anthropic-compatible API support, multi-agent workflows, memory, desktop, IM adapters, and Computer Use.'
+const organizationJsonLd = JSON.stringify({
+  '@context': 'https://schema.org',
+  '@type': 'Organization',
+  name: '清云 API',
+  alternateName: 'EchoFlowAPI',
+  url: apiSiteUrl,
+  sameAs: [
+    siteUrl,
+    aiAppUrl,
+    'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode',
+  ],
+})
+const softwareJsonLd = JSON.stringify({
+  '@context': 'https://schema.org',
+  '@type': 'SoftwareApplication',
+  name: 'EchoFlow Code',
+  applicationCategory: 'DeveloperApplication',
+  operatingSystem: 'Windows, macOS, Linux',
+  url: siteUrl,
+  image: siteImage,
+  description: zhDescription,
+  offers: {
+    '@type': 'Offer',
+    price: '0',
+    priceCurrency: 'USD',
+  },
+  publisher: {
+    '@type': 'Organization',
+    name: '清云 API',
+    url: apiSiteUrl,
+  },
+  sameAs: [
+    apiSiteUrl,
+    aiAppUrl,
+    'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode',
+  ],
+})
+
 // GitHub-compatible slugify (matches github-slugger algorithm)
 // Makes heading anchor IDs consistent between VitePress and GitHub rendering
 function slugify(str: string): string {
@@ -13,6 +57,18 @@ function slugify(str: string): string {
     .toLowerCase()
     .replace(/[^\p{L}\p{M}\p{N}\p{Pc}\- ]/gu, '')
     .replace(/ /g, '-')
+}
+
+function canonicalUrl(page: string): string {
+  const normalized = page.replace(/(^|\/)index\.md$/, '$1').replace(/\.md$/, '')
+  const path = normalized === '/' ? '/' : `/${normalized.replace(/^\/+/, '')}`
+  return new URL(path, siteUrl).toString()
+}
+
+function alternateUrl(page: string, targetLocale: 'zh' | 'en'): string {
+  const withoutEn = page.replace(/^en\//, '')
+  const localized = targetLocale === 'en' ? `en/${withoutEn}` : withoutEn
+  return canonicalUrl(localized)
 }
 
 const zhSidebar = [
@@ -98,6 +154,13 @@ const zhSidebar = [
     ],
   },
   {
+    text: '移动端',
+    collapsed: false,
+    items: [
+      { text: 'Android 客户端', link: '/mobile/' },
+    ],
+  },
+  {
     text: '参考',
     collapsed: true,
     items: [
@@ -164,14 +227,21 @@ const enSidebar = [
     ],
   },
   {
-    text: 'Desktop',
+    text: 'Desktop (Chinese docs)',
     collapsed: false,
     items: [
-      { text: 'Overview', link: '/en/desktop/' },
-      { text: 'Quick Start', link: '/en/desktop/01-quick-start' },
-      { text: 'Architecture', link: '/en/desktop/02-architecture' },
-      { text: 'Features', link: '/en/desktop/03-features' },
-      { text: 'Installation & Build', link: '/en/desktop/04-installation' },
+      { text: 'Overview', link: '/desktop/' },
+      { text: 'Quick Start', link: '/desktop/01-quick-start' },
+      { text: 'Architecture', link: '/desktop/02-architecture' },
+      { text: 'Features', link: '/desktop/03-features' },
+      { text: 'Installation & Build', link: '/desktop/04-installation' },
+    ],
+  },
+  {
+    text: 'Mobile',
+    collapsed: false,
+    items: [
+      { text: 'Android Client', link: '/en/mobile/' },
     ],
   },
   {
@@ -186,9 +256,13 @@ const enSidebar = [
 
 export default withMermaid(defineConfig({
   title: 'EchoFlow Code',
-  description: '本地可运行的 Coding Agent，内置 EchoFlowAPI，支持 Anthropic 兼容 API、多 Agent、记忆系统、桌面端与 Computer Use。',
+  description: zhDescription,
   lastUpdated: true,
   base: '/',
+  cleanUrls: true,
+  sitemap: {
+    hostname: siteUrl,
+  },
 
   markdown: {
     anchor: {
@@ -203,9 +277,40 @@ export default withMermaid(defineConfig({
   },
 
   head: [
+    ['meta', { name: 'theme-color', content: '#D97757' }],
+    ['meta', { property: 'og:site_name', content: 'EchoFlow Code' }],
+    ['meta', { property: 'og:type', content: 'website' }],
+    ['meta', { property: 'og:image', content: siteImage }],
+    ['meta', { property: 'og:image:alt', content: 'EchoFlow Code' }],
+    ['meta', { name: 'keywords', content: 'EchoFlow Code, 清云 API, EchoFlowAPI, api.echoflow.cn, ai.echoflow.cn, AI 编程工具, Coding Agent, Claude Code, AI 应用, 多 Agent, Computer Use' }],
+    ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
+    ['meta', { name: 'twitter:image', content: siteImage }],
+    ['link', { rel: 'dns-prefetch', href: apiSiteUrl }],
+    ['link', { rel: 'dns-prefetch', href: aiAppUrl }],
+    ['script', { type: 'application/ld+json' }, organizationJsonLd],
+    ['script', { type: 'application/ld+json' }, softwareJsonLd],
     ['script', { async: '', src: 'https://www.googletagmanager.com/gtag/js?id=G-D42DM82263' }],
     ['script', {}, `window.dataLayer = window.dataLayer || [];\nfunction gtag(){dataLayer.push(arguments);}\ngtag('js', new Date());\ngtag('config', 'G-D42DM82263');`],
   ],
+
+  transformHead({ page, title, description }) {
+    const url = canonicalUrl(page)
+    const isEnglish = page.startsWith('en/')
+    const locale = isEnglish ? 'en_US' : 'zh_CN'
+
+    return [
+      ['link', { rel: 'canonical', href: url }],
+      ['link', { rel: 'alternate', hreflang: 'zh-CN', href: alternateUrl(page, 'zh') }],
+      ['link', { rel: 'alternate', hreflang: 'en-US', href: alternateUrl(page, 'en') }],
+      ['link', { rel: 'alternate', hreflang: 'x-default', href: alternateUrl(page, 'zh') }],
+      ['meta', { property: 'og:url', content: url }],
+      ['meta', { property: 'og:title', content: title }],
+      ['meta', { property: 'og:description', content: description }],
+      ['meta', { property: 'og:locale', content: locale }],
+      ['meta', { name: 'twitter:title', content: title }],
+      ['meta', { name: 'twitter:description', content: description }],
+    ]
+  },
 
   locales: {
     root: {
@@ -215,6 +320,8 @@ export default withMermaid(defineConfig({
         nav: [
           { text: '首页', link: '/' },
           { text: '快速开始', link: '/guide/quick-start' },
+          { text: '清云 API 主站', link: apiSiteUrl },
+          { text: '清云 AI 在线应用站', link: aiAppUrl },
         ],
         sidebar: zhSidebar,
         outline: { label: '页面导航' },
@@ -228,7 +335,7 @@ export default withMermaid(defineConfig({
     en: {
       label: 'English',
       lang: 'en-US',
-      description: 'EchoFlow Code is a locally runnable coding agent with EchoFlowAPI, Anthropic-compatible API support, multi-agent workflows, memory, desktop, and Computer Use.',
+      description: enDescription,
       themeConfig: {
         editLink: {
           pattern: 'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/edit/main/docs/:path',
@@ -237,6 +344,8 @@ export default withMermaid(defineConfig({
         nav: [
           { text: 'Home', link: '/en/' },
           { text: 'Quick Start', link: '/en/guide/quick-start' },
+          { text: 'Qingyun API', link: apiSiteUrl },
+          { text: 'Qingyun AI Apps', link: aiAppUrl },
         ],
         sidebar: enSidebar,
       },

@@ -28,6 +28,10 @@
 
 面向个人和团队的可选浏览器访问：开启 H5、生成 Token、配置允许来源、通过局域网或反向代理在手机上访问聊天界面。
 
+### [移动端 Android 客户端](/mobile/)
+
+通过原生 Android 壳层扫码连接桌面端 H5 服务，在手机 WebView 中继续聊天、审批权限、上传文件和接收流式响应。
+
 ### [Tauri 迁移 Electron 调研索引](./07-electron-migration-research.md)
 
 桌面端从 Tauri 2 迁移到 Electron 的系统能力盘点、React 复用边界、目标架构、安全要求和迁移路径。
@@ -77,4 +81,5 @@
 | **Tab** | 标签页，对应一个 Session 或特殊页面 |
 | **Provider** | AI 模型提供商，支持 Anthropic/OpenAI 兼容接口 |
 | **Adapter** | IM 适配器，支持 Telegram / 飞书 / WhatsApp / 微信 / 钉钉接入 |
+| **H5 Token** | 移动端浏览器或 Android 客户端连接桌面服务时使用的远程访问凭据 |
 | **Store** | Zustand 状态容器，按领域拆分管理 |

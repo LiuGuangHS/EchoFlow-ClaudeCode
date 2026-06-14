@@ -13,17 +13,6 @@
   --vp-c-brand-soft: rgba(217, 119, 87, 0.16);
 }
 
-/* Hero image larger */
-.VPHero .image-container {
-  max-width: 500px !important;
-  max-height: 500px !important;
-}
-
-.VPHero .image-container .image-src {
-  max-width: 500px !important;
-  max-height: 500px !important;
-}
-
 /* medium-zoom overlay */
 .medium-zoom-overlay {
   z-index: 30;
@@ -31,4 +20,54 @@
 
 .medium-zoom-image--opened {
   z-index: 31;
+}
+
+.VPHome .VPHero {
+  padding-bottom: 24px;
+}
+
+.VPHomeFeatures .container {
+  gap: 20px;
+}
+
+.VPHomeFeatures .item {
+  padding: 10px;
+}
+
+.VPHomeFeatures .VPFeature {
+  border-color: rgba(217, 119, 87, 0.18);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.72);
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.VPHomeFeatures .VPFeature.link:hover {
+  border-color: rgba(217, 119, 87, 0.42);
+  box-shadow: 0 12px 32px rgba(18, 32, 51, 0.08);
+  transform: translateY(-2px);
+}
+
+.VPHomeFeatures .VPFeature .icon {
+  margin-bottom: 22px;
+  width: 40px;
+  height: 40px;
+  background: transparent;
+}
+
+.VPHomeFeatures .VPFeature .icon img {
+  width: 32px;
+  height: 32px;
+}
+
+.VPHomeFeatures .VPFeature .title {
+  line-height: 1.35;
+}
+
+.VPHomeFeatures .VPFeature .details {
+  line-height: 1.75;
+}
+
+.dark .VPHomeFeatures .VPFeature {
+  border-color: rgba(217, 119, 87, 0.28);
+  background: rgba(22, 24, 28, 0.72);
 }
