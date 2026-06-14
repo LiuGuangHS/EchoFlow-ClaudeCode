@@ -3,7 +3,7 @@
     "name": "EchoFlow Code",
     "slug": "echoflow-code",
     "scheme": "codemobile",
-    "version": "0.1.0",
+    "version": "0.4.2",
     "orientation": "default",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": false,

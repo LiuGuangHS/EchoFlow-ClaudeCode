@@ -23,34 +23,48 @@
 }
 
 .VPHome .VPHero {
-  padding-bottom: 24px;
+  padding: 24px 0 16px;
+}
+
+.VPHome .VPHero .name {
+  letter-spacing: 0;
+}
+
+.VPHome .VPHero .text {
+  max-width: 12em;
+}
+
+.VPHome .VPHero .tagline {
+  max-width: 44rem;
+  line-height: 1.7;
 }
 
 .VPHomeFeatures .container {
-  gap: 20px;
+  gap: 16px;
 }
 
 .VPHomeFeatures .item {
-  padding: 10px;
+  padding: 0;
 }
 
 .VPHomeFeatures .VPFeature {
-  border-color: rgba(217, 119, 87, 0.18);
+  border-color: rgba(217, 119, 87, 0.16);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.72);
-  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+  background: rgba(255, 255, 255, 0.82);
+  padding: 22px 22px 20px;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease, background-color 160ms ease;
 }
 
 .VPHomeFeatures .VPFeature.link:hover {
   border-color: rgba(217, 119, 87, 0.42);
-  box-shadow: 0 12px 32px rgba(18, 32, 51, 0.08);
+  box-shadow: 0 16px 36px rgba(18, 32, 51, 0.1);
   transform: translateY(-2px);
 }
 
 .VPHomeFeatures .VPFeature .icon {
-  margin-bottom: 22px;
-  width: 40px;
-  height: 40px;
+  margin-bottom: 18px;
+  width: 38px;
+  height: 38px;
   background: transparent;
 }
 
@@ -60,14 +74,45 @@
 }
 
 .VPHomeFeatures .VPFeature .title {
-  line-height: 1.35;
+  font-size: 18px;
+  line-height: 1.4;
 }
 
 .VPHomeFeatures .VPFeature .details {
-  line-height: 1.75;
+  margin-top: 10px;
+  line-height: 1.7;
 }
 
 .dark .VPHomeFeatures .VPFeature {
   border-color: rgba(217, 119, 87, 0.28);
-  background: rgba(22, 24, 28, 0.72);
+  background: rgba(22, 24, 28, 0.78);
+}
+
+.VPHomeFeatures {
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+@media (min-width: 960px) {
+  .VPHomeFeatures .VPFeature {
+    min-height: 210px;
+  }
+}
+
+@media (max-width: 767px) {
+  .VPHome .VPHero {
+    padding: 20px 0 12px;
+  }
+
+  .VPHome .VPHero .text {
+    max-width: 100%;
+  }
+
+  .VPHomeFeatures .VPFeature {
+    padding: 18px 18px 16px;
+  }
+
+  .VPHomeFeatures .VPFeature .title {
+    font-size: 17px;
+  }
 }
