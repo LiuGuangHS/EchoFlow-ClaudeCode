@@ -457,6 +457,9 @@ export const en = {
   'settings.providers.authStrategyDualSameTokenDesc': 'Services such as Hugging Face Router that check both variables.',
   'settings.providers.authStrategyDualDummy': 'Write dummy to both variables',
   'settings.providers.authStrategyDualDummyDesc': 'Local vLLM-compatible services that only need placeholder auth values.',
+  'settings.providers.toolSearchEnabled': 'Enable Tool Search',
+  'settings.providers.toolSearchDesc': 'Load MCP and deferred tools on demand to reduce initial tool schema tokens. Disable it for weak models or providers that reject tool references.',
+  'settings.providers.toolSearchUnsupported': 'Only Anthropic Messages providers support Tool Search here. OpenAI proxy formats keep full tool schemas available.',
 
   // Settings > Permissions
   'settings.permissions.title': 'Permission Mode',

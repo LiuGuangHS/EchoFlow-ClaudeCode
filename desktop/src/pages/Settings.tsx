@@ -845,6 +845,50 @@ function normalizeModelMapping(models: ModelMapping): ModelMapping {
   }
 }
 
+function applyToolSearchEnv(
+  env: Record<string, unknown>,
+  apiFormat: ApiFormat,
+  toolSearchEnabled: boolean,
+): void {
+  delete env.ENABLE_TOOL_SEARCH
+  if (apiFormat === 'anthropic') {
+    env.ENABLE_TOOL_SEARCH = toolSearchEnabled ? 'true' : 'false'
+  }
+}
+
+function updateSettingsJsonToolSearch(
+  raw: string,
+  apiFormat: ApiFormat,
+  toolSearchEnabled: boolean,
+): string {
+  try {
+    const parsed = JSON.parse(raw || '{}') as { env?: Record<string, unknown> }
+    const existingEnv = parsed.env && typeof parsed.env === 'object' && !Array.isArray(parsed.env)
+      ? parsed.env
+      : {}
+    const env = { ...existingEnv }
+    applyToolSearchEnv(env, apiFormat, toolSearchEnabled)
+    parsed.env = env
+    return JSON.stringify(parsed, null, 2)
+  } catch {
+    return raw
+  }
+}
+
+function readToolSearchEnabledFromEnv(env: Record<string, unknown>): boolean {
+  const value = env.ENABLE_TOOL_SEARCH
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value !== 0
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    if (['0', 'false', 'off', 'no'].includes(normalized)) return false
+    if (['1', 'true', 'on', 'yes', 'auto'].includes(normalized) || normalized.startsWith('auto:')) {
+      return true
+    }
+  }
+  return true
+}
+
 function updateSettingsJsonAutoCompactWindow(raw: string, value: string): string {
   try {
     const parsed = JSON.parse(raw || '{}') as { env?: Record<string, unknown> }
@@ -914,6 +958,7 @@ function updateSettingsJsonProviderConnection(
   preset: ProviderPreset,
   baseUrl: string,
   proxyBaseUrl: string,
+  toolSearchEnabled = true,
 ): string {
   try {
     const parsed = JSON.parse(raw || '{}') as { env?: Record<string, unknown> }
@@ -923,6 +968,7 @@ function updateSettingsJsonProviderConnection(
     const env = { ...existingEnv }
     delete env.ANTHROPIC_API_KEY
     delete env.ANTHROPIC_AUTH_TOKEN
+    applyToolSearchEnv(env, apiFormat, toolSearchEnabled)
     env.ANTHROPIC_BASE_URL = apiFormat !== 'anthropic' ? proxyBaseUrl : baseUrl
     Object.assign(env, buildSettingsJsonAuthEnv(apiFormat, authStrategy, apiKey, preset))
     parsed.env = env
@@ -996,6 +1042,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
       ? String(provider.autoCompactWindow)
       : getPresetAutoCompactWindow(initialPreset),
   )
+  const [toolSearchEnabled, setToolSearchEnabled] = useState(provider?.toolSearchEnabled ?? true)
   const [showContextSettings, setShowContextSettings] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [testResult, setTestResult] = useState<ProviderTestResult | null>(null)
@@ -1020,23 +1067,25 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
         const normalizedModels = normalizeModelMapping(models)
         const existingEnv = (settings.env as Record<string, string>) || {}
         const cleanedEnv = stripProviderSettingsJsonEnv(existingEnv, presetDefaultEnvKeys)
+        const mergedEnv: Record<string, unknown> = {
+          ...cleanedEnv,
+          ...omitAuthEnv(selectedPreset.defaultEnv),
+          ...(autoCompactWindowEnv ? { [AUTO_COMPACT_WINDOW_ENV_KEY]: autoCompactWindowEnv } : {}),
+          ...(Object.keys(modelContextWindows).length > 0
+            ? { [MODEL_CONTEXT_WINDOWS_ENV_KEY]: JSON.stringify(modelContextWindows) }
+            : {}),
+          ANTHROPIC_BASE_URL: needsProxy ? providerProxyBaseUrl : baseUrl,
+          ...buildSettingsJsonAuthEnv(apiFormat, authStrategy, apiKey, selectedPreset),
+          ANTHROPIC_MODEL: normalizedModels.main,
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: normalizedModels.haiku,
+          ANTHROPIC_DEFAULT_SONNET_MODEL: normalizedModels.sonnet,
+          ANTHROPIC_DEFAULT_OPUS_MODEL: normalizedModels.opus,
+        }
+        applyToolSearchEnv(mergedEnv, apiFormat, toolSearchEnabled)
         const merged = {
           ...settings,
           skipWebFetchPreflight: settings.skipWebFetchPreflight ?? true,
-          env: {
-            ...cleanedEnv,
-            ...omitAuthEnv(selectedPreset.defaultEnv),
-            ...(autoCompactWindowEnv ? { [AUTO_COMPACT_WINDOW_ENV_KEY]: autoCompactWindowEnv } : {}),
-            ...(Object.keys(modelContextWindows).length > 0
-              ? { [MODEL_CONTEXT_WINDOWS_ENV_KEY]: JSON.stringify(modelContextWindows) }
-              : {}),
-            ANTHROPIC_BASE_URL: needsProxy ? providerProxyBaseUrl : baseUrl,
-            ...buildSettingsJsonAuthEnv(apiFormat, authStrategy, apiKey, selectedPreset),
-            ANTHROPIC_MODEL: normalizedModels.main,
-            ANTHROPIC_DEFAULT_HAIKU_MODEL: normalizedModels.haiku,
-            ANTHROPIC_DEFAULT_SONNET_MODEL: normalizedModels.sonnet,
-            ANTHROPIC_DEFAULT_OPUS_MODEL: normalizedModels.opus,
-          },
+          env: mergedEnv,
         }
         setSettingsJson(JSON.stringify(merged, null, 2))
       }).catch(() => {
@@ -1055,6 +1104,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
     setModels({ ...preset.defaultModels })
     setModelContextInputs(getModelContextInputs(preset.defaultModels, preset))
     setAutoCompactWindow(getPresetAutoCompactWindow(preset))
+    setToolSearchEnabled(true)
     setShowContextSettings(false)
     setTestResult(null)
   }
@@ -1120,6 +1170,10 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
     },
   ] satisfies Array<{ value: ProviderAuthStrategy; label: string; description: string; icon: ReactNode }>
   const selectedAuthStrategyLabel = authStrategyItems.find((item) => item.value === authStrategy)?.label ?? t('settings.providers.authStrategyAuthToken')
+  const toolSearchUnsupported = apiFormat !== 'anthropic'
+  const toolSearchDescription = toolSearchUnsupported
+    ? t('settings.providers.toolSearchUnsupported')
+    : t('settings.providers.toolSearchDesc')
   const configuredContextWindows = buildModelContextWindows(models, modelContextInputs)
   const configuredContextSummary = Object.entries(configuredContextWindows)
     .filter(([model], index, entries) => entries.findIndex(([candidate]) => candidate === model) === index)
@@ -1140,19 +1194,24 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
   }
   const handleBaseUrlChange = (value: string) => {
     setBaseUrl(value)
-    setSettingsJson((current) => updateSettingsJsonProviderConnection(current, apiFormat, authStrategy, apiKey, selectedPreset, value, providerProxyBaseUrl))
+    setSettingsJson((current) => updateSettingsJsonProviderConnection(current, apiFormat, authStrategy, apiKey, selectedPreset, value, providerProxyBaseUrl, toolSearchEnabled))
   }
   const handleApiKeyChange = (value: string) => {
     setApiKey(value)
-    setSettingsJson((current) => updateSettingsJsonProviderConnection(current, apiFormat, authStrategy, value, selectedPreset, baseUrl, providerProxyBaseUrl))
+    setSettingsJson((current) => updateSettingsJsonProviderConnection(current, apiFormat, authStrategy, value, selectedPreset, baseUrl, providerProxyBaseUrl, toolSearchEnabled))
   }
   const handleApiFormatChange = (value: ApiFormat) => {
     setApiFormat(value)
-    setSettingsJson((current) => updateSettingsJsonProviderConnection(current, value, authStrategy, apiKey, selectedPreset, baseUrl, providerProxyBaseUrl))
+    setSettingsJson((current) => updateSettingsJsonProviderConnection(current, value, authStrategy, apiKey, selectedPreset, baseUrl, providerProxyBaseUrl, toolSearchEnabled))
   }
   const handleAuthStrategyChange = (value: ProviderAuthStrategy) => {
     setAuthStrategy(value)
-    setSettingsJson((current) => updateSettingsJsonProviderConnection(current, apiFormat, value, apiKey, selectedPreset, baseUrl, providerProxyBaseUrl))
+    setSettingsJson((current) => updateSettingsJsonProviderConnection(current, apiFormat, value, apiKey, selectedPreset, baseUrl, providerProxyBaseUrl, toolSearchEnabled))
+  }
+  const handleToolSearchToggle = (enabled: boolean) => {
+    if (toolSearchUnsupported) return
+    setToolSearchEnabled(enabled)
+    setSettingsJson((current) => updateSettingsJsonToolSearch(current, apiFormat, enabled))
   }
   const handleModelChange = (slot: ModelSlot, value: string) => {
     const nextModels = { ...models, [slot]: value }
@@ -1219,6 +1278,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
           models: normalizedModels,
           ...(parsedAutoCompactWindow !== undefined && { autoCompactWindow: parsedAutoCompactWindow }),
           ...(Object.keys(parsedModelContextWindows).length > 0 && { modelContextWindows: parsedModelContextWindows }),
+          toolSearchEnabled,
           notes: notes.trim() || undefined,
         })
       } else if (provider) {
@@ -1232,6 +1292,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
           modelContextWindows: Object.keys(parsedModelContextWindows).length > 0
             ? parsedModelContextWindows
             : null,
+          toolSearchEnabled,
           notes: notes.trim() || undefined,
         }
         if (apiKey.trim()) input.apiKey = apiKey.trim()
@@ -1370,6 +1431,32 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
             />
           </div>
         )}
+
+        <label
+          className={`relative flex items-start gap-3 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-3 py-3 transition-colors ${
+            toolSearchUnsupported
+              ? 'cursor-not-allowed opacity-70'
+              : 'cursor-pointer hover:border-[var(--color-border-focus)] hover:bg-[var(--color-surface-hover)]'
+          }`}
+        >
+          <input
+            type="checkbox"
+            aria-label={t('settings.providers.toolSearchEnabled')}
+            checked={toolSearchEnabled && !toolSearchUnsupported}
+            disabled={toolSearchUnsupported}
+            onChange={(e) => handleToolSearchToggle(e.target.checked)}
+            className={SETTINGS_CHECKBOX_INPUT_CLASS}
+          />
+          <SettingsCheckboxMark checked={toolSearchEnabled && !toolSearchUnsupported} disabled={toolSearchUnsupported} />
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-[var(--color-text-primary)]">
+              {t('settings.providers.toolSearchEnabled')}
+            </div>
+            <div className="mt-1 text-xs leading-5 text-[var(--color-text-tertiary)]">
+              {toolSearchDescription}
+            </div>
+          </div>
+        </label>
 
         <div className="flex flex-col gap-1">
           <label htmlFor="provider-api-key" className="text-sm font-medium text-[var(--color-text-primary)]">
@@ -1588,6 +1675,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
                   if (nextAuthStrategy) {
                     setAuthStrategy(nextAuthStrategy)
                   }
+                  setToolSearchEnabled(readToolSearchEnabledFromEnv(env))
                   if (env[AUTO_COMPACT_WINDOW_ENV_KEY] !== undefined) {
                     setAutoCompactWindow(String(env[AUTO_COMPACT_WINDOW_ENV_KEY]))
                   } else {

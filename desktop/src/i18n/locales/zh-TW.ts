@@ -459,6 +459,9 @@ export const zh: Record<TranslationKey, string> = {
   'settings.providers.authStrategyDualSameTokenDesc': 'Hugging Face Router 等同時檢查兩個變數的服務。',
   'settings.providers.authStrategyDualDummy': '兩個變數寫 dummy',
   'settings.providers.authStrategyDualDummyDesc': 'vLLM 等本地相容服務，只需要佔位認證值。',
+  'settings.providers.toolSearchEnabled': '啟用 Tool Search',
+  'settings.providers.toolSearchDesc': '按需載入 MCP 和延遲工具，減少首輪工具 schema token。弱模型或不支援 tool_reference 的服務商可以關閉。',
+  'settings.providers.toolSearchUnsupported': '目前僅 Anthropic Messages 格式支援 Tool Search；OpenAI 代理格式會保留完整工具 schema。',
 
   // Settings > Permissions
   'settings.permissions.title': '許可權模式',

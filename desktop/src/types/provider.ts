@@ -32,6 +32,7 @@ export type SavedProvider = {
   models: ModelMapping
   autoCompactWindow?: number
   modelContextWindows?: ModelContextWindows
+  toolSearchEnabled?: boolean
   notes?: string
 }
 
@@ -46,6 +47,7 @@ export type CreateProviderInput = {
   models: ModelMapping
   autoCompactWindow?: number
   modelContextWindows?: ModelContextWindows
+  toolSearchEnabled?: boolean
   notes?: string
 }
 
@@ -59,6 +61,7 @@ export type UpdateProviderInput = {
   models?: ModelMapping
   autoCompactWindow?: number | null
   modelContextWindows?: ModelContextWindows | null
+  toolSearchEnabled?: boolean
   notes?: string
 }
 

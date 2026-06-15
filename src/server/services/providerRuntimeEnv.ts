@@ -27,6 +27,7 @@ export const MANAGED_PROVIDER_ENV_KEYS = [
   'ANTHROPIC_BASE_URL',
   'ANTHROPIC_API_KEY',
   'ANTHROPIC_AUTH_TOKEN',
+  'ENABLE_TOOL_SEARCH',
   'ANTHROPIC_MODEL',
   'ANTHROPIC_DEFAULT_HAIKU_MODEL',
   'ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES',
@@ -77,6 +78,19 @@ function isSavedProvider(value: unknown): value is SavedProvider {
   )
 }
 
+function normalizeToolSearchEnabled(value: unknown): boolean {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value !== 0
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    if (['0', 'false', 'off', 'no'].includes(normalized)) return false
+    if (['1', 'true', 'on', 'yes', 'auto'].includes(normalized) || normalized.startsWith('auto:')) {
+      return true
+    }
+  }
+  return true
+}
+
 export function normalizeModelMapping(models: SavedProvider['models']): SavedProvider['models'] {
   const main = models.main.trim()
   return {
@@ -88,11 +102,13 @@ export function normalizeModelMapping(models: SavedProvider['models']): SavedPro
 }
 
 export function normalizeSavedProvider(provider: SavedProvider): SavedProvider {
+  const rawProvider = provider as SavedProvider & Record<string, unknown>
   return {
     ...provider,
     apiFormat: provider.apiFormat ?? 'anthropic',
     runtimeKind: provider.runtimeKind ?? 'anthropic_compatible',
     models: normalizeModelMapping(provider.models),
+    toolSearchEnabled: normalizeToolSearchEnabled(rawProvider.toolSearchEnabled),
   }
 }
 
@@ -281,6 +297,9 @@ export function buildProviderManagedEnv(
     }),
     ...(Object.keys(modelContextWindows).length > 0 && {
       [MODEL_CONTEXT_WINDOWS_ENV_KEY]: JSON.stringify(modelContextWindows),
+    }),
+    ...(apiFormat === 'anthropic' && {
+      ENABLE_TOOL_SEARCH: provider.toolSearchEnabled === false ? 'false' : 'true',
     }),
     ANTHROPIC_BASE_URL: baseUrl,
     ...buildProviderAuthEnv(provider, presetDefaultEnv, needsProxy),

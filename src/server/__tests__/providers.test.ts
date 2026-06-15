@@ -788,12 +788,29 @@ describe('ProviderService', () => {
       expect(env.ANTHROPIC_BASE_URL).toBe('https://second-api.example.com')
       expect(env.ANTHROPIC_AUTH_TOKEN).toBe('sk-second-key')
       expect(env.ANTHROPIC_API_KEY).toBe('')
+      expect(env.ENABLE_TOOL_SEARCH).toBe('true')
       expect(env.ANTHROPIC_MODEL).toBe('model-main')
       expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('model-haiku')
       expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('model-sonnet')
       expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('model-opus')
       expect(env.CLAUDE_CODE_ATTRIBUTION_HEADER).toBe('0')
       expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined()
+    })
+
+    test('should persist disabled tool search for native Anthropic providers', async () => {
+      const svc = new ProviderService()
+      const provider = await svc.addProvider(sampleInput({
+        toolSearchEnabled: false,
+      }))
+
+      await svc.activateProvider(provider.id)
+
+      const settings = await readSettings()
+      const env = settings.env as Record<string, string>
+      expect(env.ENABLE_TOOL_SEARCH).toBe('false')
+
+      const runtimeEnv = await svc.getProviderRuntimeEnv(provider.id)
+      expect(runtimeEnv.ENABLE_TOOL_SEARCH).toBe('false')
     })
 
     test('should preserve attribution header for Claude-prefixed provider models', async () => {
@@ -868,6 +885,7 @@ describe('ProviderService', () => {
       const env = settings.env as Record<string, string>
       expect(env.ANTHROPIC_API_KEY).toBe('proxy-managed')
       expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
+      expect(env.ENABLE_TOOL_SEARCH).toBeUndefined()
     })
 
     test('should include preset default env on activation and runtime env', async () => {

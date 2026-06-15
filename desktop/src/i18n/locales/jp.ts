@@ -459,6 +459,9 @@ export const jp: Record<TranslationKey, string> = {
   'settings.providers.authStrategyDualSameTokenDesc': '両方の変数をチェックする Hugging Face Router などのサービス向け。',
   'settings.providers.authStrategyDualDummy': '両方の変数にダミー値を書き込む',
   'settings.providers.authStrategyDualDummyDesc': 'プレースホルダーの認証値のみが必要な、ローカルの vLLM 互換サービス向け。',
+  'settings.providers.toolSearchEnabled': 'Tool Search を有効にする',
+  'settings.providers.toolSearchDesc': 'MCP と遅延ツールを必要に応じて読み込み、初回のツール schema トークンを減らします。弱いモデルや tool_reference を拒否するプロバイダーでは無効にできます。',
+  'settings.providers.toolSearchUnsupported': 'ここでは Anthropic Messages 形式のプロバイダーのみ Tool Search をサポートします。OpenAI プロキシ形式では完全なツール schema を維持します。',
 
   // Settings > Permissions
   'settings.permissions.title': '権限モード',

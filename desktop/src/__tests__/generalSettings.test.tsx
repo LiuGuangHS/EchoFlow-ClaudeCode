@@ -1666,6 +1666,77 @@ describe('Settings > Providers tab', () => {
     })
   })
 
+  it('defaults Tool Search on and persists an explicit disable from the provider form', async () => {
+    MOCK_GET_SETTINGS.mockResolvedValue({ env: { EXISTING_ENV: '1' } })
+    providerStoreState.createProvider = vi.fn().mockResolvedValue({
+      id: 'provider-new',
+      presetId: 'custom',
+      name: 'Custom',
+      apiKey: 'sk-test',
+      baseUrl: 'https://api.example.com/anthropic',
+      apiFormat: 'anthropic',
+      toolSearchEnabled: false,
+      models: {
+        main: 'custom-main',
+        haiku: 'custom-main',
+        sonnet: 'custom-main',
+        opus: 'custom-main',
+      },
+    })
+    providerStoreState.presets = [
+      {
+        id: 'custom',
+        name: 'Custom',
+        baseUrl: 'https://api.example.com/anthropic',
+        apiFormat: 'anthropic',
+        defaultModels: {
+          main: 'custom-main',
+          haiku: '',
+          sonnet: '',
+          opus: '',
+        },
+        needsApiKey: true,
+        websiteUrl: '',
+      },
+    ]
+
+    render(<Settings />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Add Provider/i }))
+    const dialog = screen.getByRole('dialog')
+    const toolSearchCheckbox = within(dialog).getByRole('checkbox', { name: 'Enable Tool Search' })
+
+    expect(toolSearchCheckbox).toBeChecked()
+    await waitFor(() => {
+      expect(within(dialog).getByDisplayValue((value) => (
+        typeof value === 'string' && value.includes('"ENABLE_TOOL_SEARCH": "true"')
+      ))).toBeInTheDocument()
+    })
+
+    fireEvent.click(toolSearchCheckbox)
+    expect(toolSearchCheckbox).not.toBeChecked()
+    await waitFor(() => {
+      expect(within(dialog).getByDisplayValue((value) => (
+        typeof value === 'string' && value.includes('"ENABLE_TOOL_SEARCH": "false"')
+      ))).toBeInTheDocument()
+    })
+
+    fireEvent.change(within(dialog).getByPlaceholderText('sk-...'), { target: { value: 'sk-test' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: /Save|Add/i }))
+
+    await waitFor(() => {
+      expect(providerStoreState.createProvider).toHaveBeenCalledWith(expect.objectContaining({
+        toolSearchEnabled: false,
+      }))
+    })
+    expect(MOCK_UPDATE_SETTINGS).toHaveBeenCalledWith(expect.objectContaining({
+      env: expect.objectContaining({
+        EXISTING_ENV: '1',
+        ENABLE_TOOL_SEARCH: 'false',
+      }),
+    }))
+  })
+
   it('hides the API key by default and reveals it from the eye button', () => {
     providerStoreState.presets = [
       {
