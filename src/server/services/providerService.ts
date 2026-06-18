@@ -223,10 +223,12 @@ export class ProviderService {
       apiFormat: input.apiFormat ?? 'anthropic',
       runtimeKind: input.runtimeKind ?? 'anthropic_compatible',
       models: normalizeModelMapping(input.models),
+      ...(input.model1mSupport !== undefined && { model1mSupport: input.model1mSupport }),
       ...(input.autoCompactWindow !== undefined && { autoCompactWindow: input.autoCompactWindow }),
       ...(input.modelContextWindows !== undefined && { modelContextWindows: input.modelContextWindows }),
       ...(input.echoflowManagement !== undefined && { echoflowManagement: input.echoflowManagement }),
       ...(input.echoflowToken !== undefined && { echoflowToken: input.echoflowToken }),
+      toolSearchEnabled: input.toolSearchEnabled ?? true,
       ...(input.notes !== undefined && { notes: input.notes }),
     }
 
@@ -251,11 +253,16 @@ export class ProviderService {
       ...(input.apiFormat !== undefined && { apiFormat: input.apiFormat }),
       ...(input.runtimeKind !== undefined && { runtimeKind: input.runtimeKind }),
       ...(input.models !== undefined && { models: normalizeModelMapping(input.models) }),
+      ...(input.model1mSupport !== undefined && input.model1mSupport !== null && { model1mSupport: input.model1mSupport }),
       ...(typeof input.autoCompactWindow === 'number' && { autoCompactWindow: input.autoCompactWindow }),
       ...(input.modelContextWindows !== undefined && input.modelContextWindows !== null && { modelContextWindows: input.modelContextWindows }),
       ...(input.echoflowManagement !== undefined && input.echoflowManagement !== null && { echoflowManagement: input.echoflowManagement }),
       ...(input.echoflowToken !== undefined && input.echoflowToken !== null && { echoflowToken: input.echoflowToken }),
+      ...(input.toolSearchEnabled !== undefined && { toolSearchEnabled: input.toolSearchEnabled }),
       ...(input.notes !== undefined && { notes: input.notes }),
+    }
+    if (input.model1mSupport === null) {
+      delete updated.model1mSupport
     }
     if (input.autoCompactWindow === null) {
       delete updated.autoCompactWindow

@@ -1,6 +1,6 @@
 # 安装指南
 
-桌面端基于 **Electron**，提供 macOS / Windows / Linux 安装包。当前版本暂未进行 Apple / Windows 代码签名，首次安装需要手动放行一次（不是文件损坏，按下方步骤操作即可）。
+桌面端基于 **Electron**，提供 macOS / Windows / Linux 安装包。`v0.4.3` 起的正式 macOS Release 使用 Developer ID 签名和 notarization；更早版本或临时开发包仍可能需要手动放行。
 
 ## 下载
 
@@ -20,7 +20,9 @@
 
 ## macOS 安装
 
-双击 DMG 把应用拖入 `Applications`。首次打开如果提示**"已损坏"**或**"无法验证开发者"**，在终端执行：
+双击 DMG 把应用拖入 `Applications`。`v0.4.3` 起的正式 Release 正常情况下只会出现 macOS 的标准下载来源确认，不需要执行 `xattr`。
+
+如果安装的是旧版或 unsigned 临时包，首次打开可能提示**"已损坏"**或**"无法验证开发者"**，再在终端执行：
 
 ```bash
 xattr -cr "/Applications/EchoFlow Code.app"
@@ -68,6 +70,6 @@ bun run dev --host 127.0.0.1 --port 2024
 
 **Q: 这个版本会自动更新吗？**
 
-桌面端会检查 GitHub Releases 并在有新版本时提示更新；Windows/macOS 未完成代码签名时，系统仍可能要求你手动确认或重新下载安装包。最稳妥的方式仍是到 [GitHub Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest) 下载最新版覆盖安装。
+`v0.4.3` 起的正式 Release 会通过 GitHub Releases 检查更新，并下载对应平台的更新包。首次迁移到 signed/notarized macOS 版本时，建议先手动下载安装 `v0.4.3`；后续版本可以走应用内更新。Windows/macOS 系统仍可能要求你手动确认。
 
-覆盖安装不会删除本地数据。Claude Code 兼容数据（例如 `projects`、`skills`、`plugins`、`agents`、`teams`、`tasks`、`adapters.json`）默认继续保存在 `~/.claude`；EchoFlow 自有 Provider、OAuth、桌面偏好和 diagnostics 保存在 EchoFlow 应用数据目录。
+覆盖安装不会删除本地数据。Claude Code 兼容数据（例如 `projects`、`skills`、`plugins`、`agents`、`teams`、`tasks`、`adapters.json`）默认继续保存在 `~/.claude`；EchoFlow 自有 Provider、OAuth、桌面偏好和 diagnostics 保存在 EchoFlow 应用数据目录。最稳妥的方式仍是到 [GitHub Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest) 下载最新版覆盖安装。

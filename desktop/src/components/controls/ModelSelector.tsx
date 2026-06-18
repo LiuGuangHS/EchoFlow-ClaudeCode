@@ -146,21 +146,21 @@ function resolveDefaultRuntimeSelection(
   providers: SavedProvider[],
   currentModelId: string | undefined,
 ): RuntimeSelection {
-  let inferredProvider: SavedProvider | null = null
-  if (activeId) {
-    inferredProvider = providers.find((provider) => provider.id === activeId) ?? null
-  } else if (activeProviderName) {
-    inferredProvider = providers.find((provider) => provider.name === activeProviderName) ?? null
-  }
-
-  const inferredProviderId = activeId ?? inferredProvider?.id ?? null
-  const defaultModelId = inferredProviderId === OPENAI_OFFICIAL_PROVIDER_ID
-    ? OPENAI_OFFICIAL_DEFAULT_MODEL_ID
-    : OFFICIAL_DEFAULT_MODEL_ID
+  const activeProvider = activeId
+    ? providers.find((provider) => provider.id === activeId)
+    : activeProviderName
+      ? providers.find((provider) => provider.name === activeProviderName)
+      : undefined
+  const inferredProviderId = activeId ?? activeProvider?.id ?? null
+  const providerMainModelId = activeProvider?.models.main.trim()
 
   return {
     providerId: inferredProviderId,
-    modelId: inferredProvider?.models.main.trim() || currentModelId || defaultModelId,
+    modelId: providerMainModelId || currentModelId || (
+      inferredProviderId === OPENAI_OFFICIAL_PROVIDER_ID
+        ? OPENAI_OFFICIAL_DEFAULT_MODEL_ID
+        : OFFICIAL_DEFAULT_MODEL_ID
+    ),
   }
 }
 
