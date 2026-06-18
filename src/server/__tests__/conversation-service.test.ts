@@ -217,6 +217,42 @@ describe('ConversationService', () => {
     await expect(fs.stat(path.dirname(env.CLAUDE_CODE_DIAGNOSTICS_FILE))).resolves.toBeTruthy()
   })
 
+  test('buildChildEnv injects stream watchdog + overall max-duration so a trickling provider stream cannot hang the desktop forever (#766)', async () => {
+    const prev = process.env.CLAUDE_STREAM_MAX_DURATION_MS
+    delete process.env.CLAUDE_STREAM_MAX_DURATION_MS
+    try {
+      const service = new ConversationService() as any
+      const env = (await service.buildChildEnv('/tmp')) as Record<string, string>
+
+      // Idle watchdog frees a fully-silent stream after 240s...
+      expect(env.CLAUDE_ENABLE_STREAM_WATCHDOG).toBe('1')
+      expect(env.CLAUDE_STREAM_IDLE_TIMEOUT_MS).toBe('240000')
+      // ...but the idle timer is reset by EVERY SSE event, so an upstream that
+      // trickles content deltas (a large tool_use input_json_delta) just under
+      // 240s apart keeps it alive forever. The overall-duration cap is NOT reset
+      // by chunks and is what actually frees that case (#766).
+      expect(env.CLAUDE_STREAM_MAX_DURATION_MS).toBe('600000')
+      // Non-streaming fallback stays off — its retry loop also hangs the UI (#766).
+      expect(env.CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK).toBe('1')
+    } finally {
+      if (prev === undefined) delete process.env.CLAUDE_STREAM_MAX_DURATION_MS
+      else process.env.CLAUDE_STREAM_MAX_DURATION_MS = prev
+    }
+  })
+
+  test('buildChildEnv lets caller env override the stream max-duration cap (#766)', async () => {
+    const prev = process.env.CLAUDE_STREAM_MAX_DURATION_MS
+    process.env.CLAUDE_STREAM_MAX_DURATION_MS = '120000'
+    try {
+      const service = new ConversationService() as any
+      const env = (await service.buildChildEnv('/tmp')) as Record<string, string>
+      expect(env.CLAUDE_STREAM_MAX_DURATION_MS).toBe('120000')
+    } finally {
+      if (prev === undefined) delete process.env.CLAUDE_STREAM_MAX_DURATION_MS
+      else process.env.CLAUDE_STREAM_MAX_DURATION_MS = prev
+    }
+  })
+
   test('builds hidden CLI spawn options for desktop session subprocesses', () => {
     const env = { CLAUDECODE: '1' }
 
@@ -323,6 +359,44 @@ describe('ConversationService', () => {
     expect(env.API_TIMEOUT_MS).toBe('180000')
     expect(env.HTTP_PROXY).toBe('http://127.0.0.1:7890')
     expect(env.HTTPS_PROXY).toBe('http://127.0.0.1:7890')
+  })
+
+  test('buildChildEnv ties the first-token watchdog to the user request timeout so slow prefill is not killed early (#826)', async () => {
+    const prev = process.env.CLAUDE_STREAM_FIRST_TOKEN_TIMEOUT_MS
+    delete process.env.CLAUDE_STREAM_FIRST_TOKEN_TIMEOUT_MS
+    await fs.writeFile(
+      path.join(tmpDir, 'settings.json'),
+      JSON.stringify({ network: { aiRequestTimeoutMs: 600_000 } }),
+      'utf-8',
+    )
+    try {
+      const service = new ConversationService() as any
+      const env = (await service.buildChildEnv('/tmp')) as Record<string, string>
+
+      // The user's "请求超时" must reach the first-token watchdog, not only the
+      // SDK client timeout (which on a stream is cleared the moment response
+      // headers arrive). Otherwise a local/3P model that needs minutes to emit
+      // its first token gets killed by the 240s idle watchdog no matter how high
+      // the configured timeout is (#826).
+      expect(env.CLAUDE_STREAM_FIRST_TOKEN_TIMEOUT_MS).toBe('600000')
+      expect(env.CLAUDE_STREAM_FIRST_TOKEN_TIMEOUT_MS).toBe(env.API_TIMEOUT_MS)
+    } finally {
+      if (prev === undefined) delete process.env.CLAUDE_STREAM_FIRST_TOKEN_TIMEOUT_MS
+      else process.env.CLAUDE_STREAM_FIRST_TOKEN_TIMEOUT_MS = prev
+    }
+  })
+
+  test('buildChildEnv lets caller env override the first-token watchdog (#826)', async () => {
+    const prev = process.env.CLAUDE_STREAM_FIRST_TOKEN_TIMEOUT_MS
+    process.env.CLAUDE_STREAM_FIRST_TOKEN_TIMEOUT_MS = '900000'
+    try {
+      const service = new ConversationService() as any
+      const env = (await service.buildChildEnv('/tmp')) as Record<string, string>
+      expect(env.CLAUDE_STREAM_FIRST_TOKEN_TIMEOUT_MS).toBe('900000')
+    } finally {
+      if (prev === undefined) delete process.env.CLAUDE_STREAM_FIRST_TOKEN_TIMEOUT_MS
+      else process.env.CLAUDE_STREAM_FIRST_TOKEN_TIMEOUT_MS = prev
+    }
   })
 
   test('buildChildEnv injects CLAUDE_CODE_OAUTH_TOKEN when official mode + haha oauth token exists', async () => {

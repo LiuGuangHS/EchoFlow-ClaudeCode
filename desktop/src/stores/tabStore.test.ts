@@ -44,12 +44,34 @@ describe('tabStore', () => {
     expect(useTabStore.getState().activeTabId).toBe(tabId)
   })
 
+  it('opens one ephemeral workbench tab per source session', () => {
+    const firstTabId = useTabStore.getState().openWorkbenchTab('session-1', 'Workbench')
+    const secondTabId = useTabStore.getState().openWorkbenchTab('session-1', 'Workbench')
+
+    expect(firstTabId).toBe('__workbench__session-1')
+    expect(secondTabId).toBe(firstTabId)
+    expect(useTabStore.getState().tabs).toEqual([
+      {
+        sessionId: '__workbench__session-1',
+        title: 'Workbench',
+        type: 'workbench',
+        status: 'idle',
+        workbenchSessionId: 'session-1',
+      },
+    ])
+    expect(useTabStore.getState().activeTabId).toBe('__workbench__session-1')
+    expect(localStorage.getItem('echoflow-code-open-tabs')).toBe(JSON.stringify({
+      openTabs: [],
+      activeTabId: null,
+    }))
+  })
+
   it('does not let async tab restore overwrite tabs opened while restore is in flight', async () => {
     let resolveSessions: (value: unknown) => void = () => {}
     vi.mocked(sessionsApi.list).mockReturnValueOnce(new Promise((resolve) => {
       resolveSessions = resolve
     }) as never)
-    localStorage.setItem('cc-haha-open-tabs', JSON.stringify({
+    localStorage.setItem('echoflow-code-open-tabs', JSON.stringify({
       openTabs: [{ sessionId: 'session-1', title: 'Old Session', type: 'session' }],
       activeTabId: 'session-1',
     }))
