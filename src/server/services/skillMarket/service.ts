@@ -1,6 +1,12 @@
 import { normalizeClawHubList } from './clawhubAdapter.js'
 import { normalizeSkillHubList } from './skillhubAdapter.js'
-import type { SkillMarketItem, SkillMarketListResult } from './types.js'
+import type {
+  SkillMarketDetail,
+  SkillMarketItem,
+  SkillMarketListResult,
+  SkillMarketSource,
+  SkillMarketTrustState,
+} from './types.js'
 
 export type SkillMarketListSource = 'auto' | 'clawhub' | 'skillhub'
 
@@ -10,6 +16,11 @@ export type SkillMarketListParams = {
   query?: string
   cursor?: string
   sort?: 'downloads' | 'installs' | 'stars' | 'updated' | 'trending'
+}
+
+export type SkillMarketDetailParams = {
+  source: SkillMarketSource
+  slug: string
 }
 
 type FetchImpl = typeof fetch
@@ -24,6 +35,7 @@ export type SkillMarketServiceOptions = {
 export type SkillMarketService = {
   listSkills: (params?: SkillMarketListParams) => Promise<SkillMarketListResult>
   list: (params?: SkillMarketListParams) => Promise<SkillMarketListResult>
+  getDetail: (params: SkillMarketDetailParams) => Promise<SkillMarketDetail | null>
 }
 
 const CLAWHUB_SKILLS_URL = 'https://clawhub.ai/api/v1/skills'
@@ -32,6 +44,12 @@ const DEFAULT_LIMIT = 24
 const MAX_LIMIT = 100
 const CATALOG_CACHE_TTL_MS = 5 * 60 * 1_000
 const FAILURE_CACHE_TTL_MS = 60 * 1_000
+const DETAIL_INSTALLABLE_TRUST_STATES = new Set<SkillMarketTrustState>([
+  'clean',
+  'benign',
+  'signed',
+  'official',
+])
 
 type CatalogCacheEntry = {
   expiresAt: number
@@ -179,10 +197,61 @@ export function createSkillMarketService(options: SkillMarketServiceOptions = {}
     }
   }
 
+  async function getDetail(params: SkillMarketDetailParams): Promise<SkillMarketDetail | null> {
+    if (params.source !== 'clawhub' && params.source !== 'skillhub') {
+      throw new Error(`Unsupported skill market source: ${params.source}`)
+    }
+
+    const slug = params.slug.trim()
+    if (!slug) {
+      return null
+    }
+
+    const list = await listSkills({
+      source: params.source,
+      query: slug,
+      limit: MAX_LIMIT,
+    })
+    const item = list.items.find((candidate) => candidate.source === params.source && candidate.slug === slug)
+    if (!item) {
+      return null
+    }
+    return detailFromListItem(item)
+  }
+
   return {
     listSkills,
     list: listSkills,
+    getDetail,
   }
+}
+
+function detailFromListItem(item: SkillMarketItem): SkillMarketDetail {
+  return {
+    ...item,
+    files: [],
+    riskLabels: [],
+    installEligibility: installEligibilityFromListItem(item),
+  }
+}
+
+function installEligibilityFromListItem(item: SkillMarketItem): SkillMarketDetail['installEligibility'] {
+  if (item.installed) {
+    return {
+      status: 'installed',
+      installedSkillName: item.slug,
+    }
+  }
+  if (DETAIL_INSTALLABLE_TRUST_STATES.has(item.trustState)) {
+    return { status: 'installable' }
+  }
+  if (item.trustState === 'warning') {
+    return { status: 'blocked', reason: 'Skill market trust metadata contains warnings.' }
+  }
+  if (item.trustState === 'unknown') {
+    return { status: 'blocked', reason: 'Skill market trust metadata is missing or inconclusive.' }
+  }
+  return { status: 'blocked', reason: 'Skill market trust metadata blocked this skill.' }
 }
 
 function clawHubUrlFor(params: SkillMarketListParams): URL {

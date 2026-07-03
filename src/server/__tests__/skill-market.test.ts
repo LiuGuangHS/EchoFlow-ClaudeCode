@@ -670,6 +670,57 @@ describe('skill market service source selection', () => {
 
     expect(fetchCalls).toHaveLength(0)
   })
+
+  it('builds detail from the explicit ClawHub list and marks installed eligibility', async () => {
+    const fetchCalls: string[] = []
+    const service = createSkillMarketService({
+      fetchImpl: async (url) => {
+        fetchCalls.push(String(url))
+        return Response.json(CLAWHUB_TOP_SKILLS_RESPONSE)
+      },
+      installedSkillNames: new Set(['skill-vetter']),
+    })
+
+    const detail = await service.getDetail({ source: 'clawhub', slug: 'skill-vetter' })
+
+    expect(fetchCalls).toHaveLength(1)
+    expect(fetchCalls[0]).toStartWith('https://clawhub.ai/api/v1/skills')
+    expect(fetchCalls[0]).toContain('query=skill-vetter')
+    expect(fetchCalls[0]).toContain('limit=100')
+    expect(detail).toMatchObject({
+      source: 'clawhub',
+      slug: 'skill-vetter',
+      installed: true,
+      files: [],
+      riskLabels: [],
+      installEligibility: {
+        status: 'installed',
+        installedSkillName: 'skill-vetter',
+      },
+    })
+  })
+
+  it('blocks detail installs when list trust metadata is not installable', async () => {
+    const service = createSkillMarketService({
+      fetchImpl: async () => Response.json(SKILLHUB_TOP_SKILLS_RESPONSE),
+      installedSkillNames: new Set(),
+    })
+
+    const detail = await service.getDetail({ source: 'skillhub', slug: 'skill-vetter' })
+
+    expect(detail).toMatchObject({
+      source: 'skillhub',
+      slug: 'skill-vetter',
+      trustState: 'unknown',
+      installed: false,
+      files: [],
+      riskLabels: [],
+      installEligibility: {
+        status: 'blocked',
+        reason: expect.stringContaining('missing or inconclusive'),
+      },
+    })
+  })
 })
 
 describe('skill market risk analysis', () => {
@@ -800,6 +851,92 @@ describe('skill market API', () => {
     await expect(res.json()).resolves.toMatchObject({ error: 'invalid_json' })
   })
 
+  it('returns detail route responses from the service', async () => {
+    let capturedParams: unknown
+    setSkillMarketServiceFactoryForTests(() => ({
+      list: async () => {
+        throw new Error('list should not be called by detail route')
+      },
+      listSkills: async () => {
+        throw new Error('listSkills should not be called by detail route')
+      },
+      getDetail: async (params) => {
+        capturedParams = params
+        return {
+          source: 'clawhub',
+          sourceMode: 'primary',
+          slug: 'skill-vetter',
+          displayName: 'Skill Vetter',
+          summary: 'Reviews skill packages before install.',
+          canonicalUrl: 'https://clawhub.ai/skill-vetter',
+          trustState: 'clean',
+          installed: false,
+          files: [],
+          riskLabels: [],
+          installEligibility: { status: 'installable' },
+        }
+      },
+    }))
+    const url = new URL('/api/skill-market/clawhub/%73kill-vetter', 'http://localhost:3456')
+    const req = new Request(url, { method: 'GET' })
+
+    const res = await handleSkillMarketApi(req, url, ['api', 'skill-market', 'clawhub', '%73kill-vetter'])
+
+    expect(res.status).toBe(200)
+    expect(capturedParams).toEqual({
+      source: 'clawhub',
+      slug: 'skill-vetter',
+    })
+    await expect(res.json()).resolves.toMatchObject({
+      detail: {
+        source: 'clawhub',
+        slug: 'skill-vetter',
+        files: [],
+        riskLabels: [],
+        installEligibility: { status: 'installable' },
+      },
+    })
+  })
+
+  it('rejects unsupported detail sources', async () => {
+    const url = new URL('/api/skill-market/auto/skill-vetter', 'http://localhost:3456')
+    const req = new Request(url, { method: 'GET' })
+
+    const res = await handleSkillMarketApi(req, url, ['api', 'skill-market', 'auto', 'skill-vetter'])
+
+    expect(res.status).toBe(400)
+    await expect(res.json()).resolves.toMatchObject({ error: 'unsupported_source' })
+  })
+
+  it('returns 404 for detail requests with missing slugs', async () => {
+    const url = new URL('/api/skill-market/clawhub', 'http://localhost:3456')
+    const req = new Request(url, { method: 'GET' })
+
+    const res = await handleSkillMarketApi(req, url, ['api', 'skill-market', 'clawhub'])
+
+    expect(res.status).toBe(404)
+    await expect(res.json()).resolves.toMatchObject({ error: 'not_found' })
+  })
+
+  it('returns 404 when detail lookup misses the requested slug', async () => {
+    setSkillMarketServiceFactoryForTests(() => ({
+      list: async () => {
+        throw new Error('list should not be called by detail route')
+      },
+      listSkills: async () => {
+        throw new Error('listSkills should not be called by detail route')
+      },
+      getDetail: async () => null,
+    }))
+    const url = new URL('/api/skill-market/skillhub/not-found', 'http://localhost:3456')
+    const req = new Request(url, { method: 'GET' })
+
+    const res = await handleSkillMarketApi(req, url, ['api', 'skill-market', 'skillhub', 'not-found'])
+
+    expect(res.status).toBe(404)
+    await expect(res.json()).resolves.toMatchObject({ error: 'not_found' })
+  })
+
   it('routes skill market requests through the API router without network access', async () => {
     mock.module('@whiskeysockets/baileys', () => ({
       DisconnectReason: { loggedOut: 401 },
@@ -872,6 +1009,7 @@ describe('skill market API', () => {
               sourceStatus: 'ok',
             }
           },
+          getDetail: async () => null,
         }
       })
       const url = new URL('/api/skill-market?source=skillhub&sort=updated&q=vetter&cursor=abc&limit=12', 'http://localhost:3456')
