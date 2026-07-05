@@ -151,6 +151,9 @@ export function TerminalSettings({
   }, [runtime])
 
   const startTerminal = useCallback(async () => {
+    
+    if (runtime.status === 'starting') return
+
     if (!terminalApi.isAvailable()) {
       updateTerminalRuntime(runtime, { status: 'unavailable' })
       return

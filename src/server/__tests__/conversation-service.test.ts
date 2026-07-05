@@ -8,7 +8,6 @@ import {
   DESKTOP_CLI_GRACEFUL_SHUTDOWN_TIMEOUT_MS,
 } from '../services/conversationService.js'
 import { ProviderService } from '../services/providerService.js'
-import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 import { updateTraceCaptureSettings } from '../services/traceCaptureService.js'
 import { resetTerminalShellEnvironmentCacheForTests } from '../../utils/terminalShellEnvironment.js'
 
@@ -24,6 +23,7 @@ describe('ConversationService', () => {
   let originalProviderManagedByHost: string | undefined
   let originalDiagnosticsFile: string | undefined
   let originalAttributionHeader: string | undefined
+  let originalDisableExperimentalBetas: string | undefined
   let originalResumeInterruptedTurn: string | undefined
   let originalTraceApiCalls: string | undefined
   let originalTraceProviderId: string | undefined
@@ -34,11 +34,6 @@ describe('ConversationService', () => {
   let originalShell: string | undefined
   let originalZdotdir: string | undefined
   let originalDisableTerminalShellEnv: string | undefined
-  let originalLegacyComputerUseHostBundleId: string | undefined
-  let originalLegacyDesktopServerUrl: string | undefined
-  let originalLegacyDesktopAwaitMcp: string | undefined
-  let originalLegacyDesktopAwaitMcpTimeoutMs: string | undefined
-  let originalLegacySkipDotenv: string | undefined
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cc-haha-conversation-service-'))
@@ -52,6 +47,7 @@ describe('ConversationService', () => {
     originalProviderManagedByHost = process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST
     originalDiagnosticsFile = process.env.CLAUDE_CODE_DIAGNOSTICS_FILE
     originalAttributionHeader = process.env.CLAUDE_CODE_ATTRIBUTION_HEADER
+    originalDisableExperimentalBetas = process.env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS
     originalResumeInterruptedTurn = process.env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN
     originalTraceApiCalls = process.env.CC_HAHA_TRACE_API_CALLS
     originalTraceProviderId = process.env.CC_HAHA_TRACE_PROVIDER_ID
@@ -62,11 +58,6 @@ describe('ConversationService', () => {
     originalShell = process.env.SHELL
     originalZdotdir = process.env.ZDOTDIR
     originalDisableTerminalShellEnv = process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV
-    originalLegacyComputerUseHostBundleId = process.env.CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID
-    originalLegacyDesktopServerUrl = process.env.CC_HAHA_DESKTOP_SERVER_URL
-    originalLegacyDesktopAwaitMcp = process.env.CC_HAHA_DESKTOP_AWAIT_MCP
-    originalLegacyDesktopAwaitMcpTimeoutMs = process.env.CC_HAHA_DESKTOP_AWAIT_MCP_TIMEOUT_MS
-    originalLegacySkipDotenv = process.env.CC_HAHA_SKIP_DOTENV
 
     process.env.CLAUDE_CONFIG_DIR = tmpDir
     process.env.ANTHROPIC_API_KEY = 'stale-parent-api-key'
@@ -80,11 +71,7 @@ describe('ConversationService', () => {
     delete process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST
     delete process.env.CLAUDE_CODE_DIAGNOSTICS_FILE
     delete process.env.CLAUDE_CODE_ATTRIBUTION_HEADER
-    delete process.env.CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID
-    delete process.env.CC_HAHA_DESKTOP_SERVER_URL
-    delete process.env.CC_HAHA_DESKTOP_AWAIT_MCP
-    delete process.env.CC_HAHA_DESKTOP_AWAIT_MCP_TIMEOUT_MS
-    delete process.env.CC_HAHA_SKIP_DOTENV
+    delete process.env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS
     delete process.env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN
     delete process.env.CC_HAHA_TRACE_API_CALLS
     delete process.env.CC_HAHA_TRACE_PROVIDER_ID
@@ -125,6 +112,9 @@ describe('ConversationService', () => {
     if (originalAttributionHeader === undefined) delete process.env.CLAUDE_CODE_ATTRIBUTION_HEADER
     else process.env.CLAUDE_CODE_ATTRIBUTION_HEADER = originalAttributionHeader
 
+    if (originalDisableExperimentalBetas === undefined) delete process.env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS
+    else process.env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = originalDisableExperimentalBetas
+
     if (originalResumeInterruptedTurn === undefined) delete process.env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN
     else process.env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN = originalResumeInterruptedTurn
 
@@ -155,21 +145,6 @@ describe('ConversationService', () => {
     if (originalDisableTerminalShellEnv === undefined) delete process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV
     else process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV = originalDisableTerminalShellEnv
 
-    if (originalLegacyComputerUseHostBundleId === undefined) delete process.env.CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID
-    else process.env.CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID = originalLegacyComputerUseHostBundleId
-
-    if (originalLegacyDesktopServerUrl === undefined) delete process.env.CC_HAHA_DESKTOP_SERVER_URL
-    else process.env.CC_HAHA_DESKTOP_SERVER_URL = originalLegacyDesktopServerUrl
-
-    if (originalLegacyDesktopAwaitMcp === undefined) delete process.env.CC_HAHA_DESKTOP_AWAIT_MCP
-    else process.env.CC_HAHA_DESKTOP_AWAIT_MCP = originalLegacyDesktopAwaitMcp
-
-    if (originalLegacyDesktopAwaitMcpTimeoutMs === undefined) delete process.env.CC_HAHA_DESKTOP_AWAIT_MCP_TIMEOUT_MS
-    else process.env.CC_HAHA_DESKTOP_AWAIT_MCP_TIMEOUT_MS = originalLegacyDesktopAwaitMcpTimeoutMs
-
-    if (originalLegacySkipDotenv === undefined) delete process.env.CC_HAHA_SKIP_DOTENV
-    else process.env.CC_HAHA_SKIP_DOTENV = originalLegacySkipDotenv
-
     resetTerminalShellEnvironmentCacheForTests()
     await fs.rm(tmpDir, { recursive: true, force: true })
   })
@@ -198,10 +173,6 @@ describe('ConversationService', () => {
     )
   }
 
-  function echoFlowPath(...segments: string[]): string {
-    return path.join(getEchoFlowInternalDir(tmpDir), ...segments)
-  }
-
   test('keeps inherited provider env when no desktop provider config exists', async () => {
     const service = new ConversationService() as any
     const env = (await service.buildChildEnv('D:\\workspace\\code\\myself_code\\cc-haha')) as Record<string, string>
@@ -210,7 +181,7 @@ describe('ConversationService', () => {
     expect(env.ANTHROPIC_BASE_URL).toBe('https://example.invalid/anthropic')
     expect(env.ANTHROPIC_MODEL).toBe('test-model')
     expect(env.CLAUDE_CODE_ATTRIBUTION_HEADER).toBe('0')
-    expect(env.CLAUDE_CODE_DIAGNOSTICS_FILE).toBe(echoFlowPath('diagnostics', 'cli-diagnostics.jsonl'))
+    expect(env.CLAUDE_CODE_DIAGNOSTICS_FILE).toBe(path.join(tmpDir, 'cc-haha', 'diagnostics', 'cli-diagnostics.jsonl'))
     expect(env.CLAUDE_COWORK_MEMORY_PATH_OVERRIDE).toBe(
       `${path.join(tmpDir, 'projects', 'D--workspace-code-myself-code-cc-haha', 'memory')}${path.sep}`,
     )
@@ -280,7 +251,7 @@ describe('ConversationService', () => {
     expect(env.CLAUDE_COWORK_MEMORY_PATH_OVERRIDE).not.toContain('myself_code')
   })
 
-  test('buildChildEnv inherits exported terminal shell variables for desktop CLI sessions on supported platforms', async () => {
+  test('buildChildEnv inherits exported terminal shell variables for desktop CLI sessions', async () => {
     const shellPath = path.join(tmpDir, 'zsh')
     const nodeBin = path.join(tmpDir, 'node-bin')
     const nvmDir = path.join(tmpDir, '.nvm')
@@ -299,31 +270,23 @@ describe('ConversationService', () => {
     delete process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV
     process.env.HOME = tmpDir
     process.env.SHELL = shellPath
-    if (process.platform !== 'win32') {
-      process.env.PATH = '/usr/bin:/bin'
-    }
+    process.env.PATH = '/usr/bin:/bin'
     delete process.env.ZDOTDIR
     resetTerminalShellEnvironmentCacheForTests()
 
     const service = new ConversationService() as any
     const env = (await service.buildChildEnv(tmpDir)) as Record<string, string>
 
-    if (process.platform === 'win32') {
-      const pathEnv = env.PATH ?? env.Path ?? ''
-      expect(env.NVM_DIR).toBeUndefined()
-      expect(pathEnv).not.toContain(nodeBin)
-    } else {
-      expect(env.NVM_DIR).toBe(nvmDir)
-      expect(env.PATH.split(path.delimiter)[0]).toBe(nodeBin)
-      expect(env.PATH.split(path.delimiter)).toContain('/usr/bin')
-    }
+    expect(env.NVM_DIR).toBe(nvmDir)
+    expect(env.PATH.split(path.delimiter)[0]).toBe(nodeBin)
+    expect(env.PATH.split(path.delimiter)).toContain('/usr/bin')
   })
 
   test('strips inherited provider env when desktop provider config exists', async () => {
-    const echoFlowDir = getEchoFlowInternalDir(tmpDir)
-    await fs.mkdir(echoFlowDir, { recursive: true })
+    const ccHahaDir = path.join(tmpDir, 'cc-haha')
+    await fs.mkdir(ccHahaDir, { recursive: true })
     await fs.writeFile(
-      path.join(echoFlowDir, 'providers.json'),
+      path.join(ccHahaDir, 'providers.json'),
       JSON.stringify({ activeId: null, providers: [] }),
       'utf-8',
     )
@@ -337,10 +300,8 @@ describe('ConversationService', () => {
   })
 
   test('buildChildEnv injects General network timeout and manual proxy for CLI requests', async () => {
-    const echoFlowDir = getEchoFlowInternalDir(tmpDir)
-    await fs.mkdir(echoFlowDir, { recursive: true })
     await fs.writeFile(
-      path.join(echoFlowDir, 'settings.json'),
+      path.join(tmpDir, 'settings.json'),
       JSON.stringify({
         network: {
           aiRequestTimeoutMs: 180_000,
@@ -359,6 +320,8 @@ describe('ConversationService', () => {
     expect(env.API_TIMEOUT_MS).toBe('180000')
     expect(env.HTTP_PROXY).toBe('http://127.0.0.1:7890')
     expect(env.HTTPS_PROXY).toBe('http://127.0.0.1:7890')
+    expect(env.NO_PROXY).toContain('127.0.0.1')
+    expect(env.no_proxy).toContain('localhost')
   })
 
   test('buildChildEnv ties the first-token watchdog to the user request timeout so slow prefill is not killed early (#826)', async () => {
@@ -400,10 +363,10 @@ describe('ConversationService', () => {
   })
 
   test('buildChildEnv injects CLAUDE_CODE_OAUTH_TOKEN when official mode + haha oauth token exists', async () => {
-    const echoFlowDir = getEchoFlowInternalDir(tmpDir)
-    await fs.mkdir(echoFlowDir, { recursive: true })
+    const ccHahaDir = path.join(tmpDir, 'cc-haha')
+    await fs.mkdir(ccHahaDir, { recursive: true })
     await fs.writeFile(
-      path.join(echoFlowDir, 'settings.json'),
+      path.join(ccHahaDir, 'settings.json'),
       JSON.stringify({ env: {} }),
       'utf-8',
     )
@@ -470,10 +433,10 @@ describe('ConversationService', () => {
   })
 
   test('buildChildEnv does NOT inject CLAUDE_CODE_OAUTH_TOKEN when not official mode', async () => {
-    const echoFlowDir = getEchoFlowInternalDir(tmpDir)
-    await fs.mkdir(echoFlowDir, { recursive: true })
+    const ccHahaDir = path.join(tmpDir, 'cc-haha')
+    await fs.mkdir(ccHahaDir, { recursive: true })
     await fs.writeFile(
-      path.join(echoFlowDir, 'settings.json'),
+      path.join(ccHahaDir, 'settings.json'),
       JSON.stringify({ env: { ANTHROPIC_AUTH_TOKEN: 'custom-provider-token' } }),
       'utf-8',
     )
@@ -527,6 +490,38 @@ describe('ConversationService', () => {
     expect(env.CC_HAHA_TRACE_PROVIDER_ID).toBeUndefined()
     expect(env.CC_HAHA_TRACE_PROVIDER_NAME).toBeUndefined()
     expect(env.CC_HAHA_TRACE_PROVIDER_FORMAT).toBeUndefined()
+  })
+
+  test('buildChildEnv isolates experimental beta kill switch for session-scoped providers', async () => {
+    process.env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = '1'
+    const providerService = new ProviderService()
+    const provider = await providerService.addProvider({
+      presetId: 'custom',
+      name: 'Betas Managed',
+      apiKey: 'provider-key',
+      baseUrl: 'https://api.betas.example',
+      apiFormat: 'anthropic',
+      models: {
+        main: 'claude-sonnet-4-6',
+        haiku: '',
+        sonnet: '',
+        opus: '',
+      },
+    })
+
+    const service = new ConversationService() as any
+    const defaultEnv = (await service.buildChildEnv('/tmp', undefined, {
+      providerId: provider.id,
+    })) as Record<string, string>
+
+    expect(defaultEnv.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS).toBeUndefined()
+
+    await providerService.updateProvider(provider.id, { disableExperimentalBetas: true })
+    const disabledEnv = (await service.buildChildEnv('/tmp', undefined, {
+      providerId: provider.id,
+    })) as Record<string, string>
+
+    expect(disabledEnv.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS).toBe('1')
   })
 
   test('buildChildEnv injects trace provider metadata for desktop sdk session-scoped providers', async () => {
@@ -618,10 +613,10 @@ describe('ConversationService', () => {
   test('buildChildEnv clears stale api key for bearer-token providers', async () => {
     const providerService = new ProviderService()
     const provider = await providerService.addProvider({
-      presetId: 'echoflowai',
-      name: 'EchoFlowAPI',
+      presetId: 'jiekouai',
+      name: 'Jiekou',
       apiKey: 'provider-key',
-      baseUrl: 'https://api.echoflow.cn',
+      baseUrl: 'https://api.jiekou.ai/anthropic',
       apiFormat: 'anthropic',
       models: {
         main: 'claude-sonnet-4-6',
@@ -637,18 +632,17 @@ describe('ConversationService', () => {
       model: 'claude-sonnet-4-6',
     })) as Record<string, string>
 
-    expect(env.ANTHROPIC_BASE_URL).toBe('https://api.echoflow.cn')
+    expect(env.ANTHROPIC_BASE_URL).toBe('https://api.jiekou.ai/anthropic')
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe('provider-key')
     expect(env.ANTHROPIC_API_KEY).toBe('')
     expect(env.ANTHROPIC_MODEL).toBe('claude-sonnet-4-6')
+    expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe('none')
     expect(env.CLAUDE_CODE_ATTRIBUTION_HEADER).toBe('1')
   })
 
-  test('buildChildEnv injects General network timeout for session-scoped providers', async () => {
-    const echoFlowDir = getEchoFlowInternalDir(tmpDir)
-    await fs.mkdir(echoFlowDir, { recursive: true })
+  test('buildChildEnv lets General network timeout override provider preset timeouts', async () => {
     await fs.writeFile(
-      path.join(echoFlowDir, 'settings.json'),
+      path.join(tmpDir, 'settings.json'),
       JSON.stringify({
         network: {
           aiRequestTimeoutMs: 180_000,
@@ -660,34 +654,35 @@ describe('ConversationService', () => {
 
     const providerService = new ProviderService()
     const provider = await providerService.addProvider({
-      presetId: 'echoflowai',
-      name: 'EchoFlowAPI',
+      presetId: 'shengsuanyun',
+      name: 'Shengsuanyun',
       apiKey: 'provider-key',
-      baseUrl: 'https://api.echoflow.cn',
+      baseUrl: 'https://router.shengsuanyun.com/api',
       apiFormat: 'anthropic',
       models: {
-        main: 'claude-sonnet-4-6',
-        haiku: 'claude-haiku-4-5',
-        sonnet: 'claude-sonnet-4-6',
-        opus: 'claude-opus-4-7',
+        main: 'anthropic/claude-sonnet-4.6',
+        haiku: 'anthropic/claude-haiku-4.5:thinking',
+        sonnet: 'anthropic/claude-sonnet-4.6',
+        opus: 'anthropic/claude-opus-4.7',
       },
     })
 
     const service = new ConversationService() as any
     const env = (await service.buildChildEnv('/tmp', undefined, {
       providerId: provider.id,
-      model: 'claude-sonnet-4-6',
+      model: 'anthropic/claude-sonnet-4.6',
     })) as Record<string, string>
 
-    expect(env.ANTHROPIC_BASE_URL).toBe('https://api.echoflow.cn')
+    expect(env.ANTHROPIC_BASE_URL).toBe('https://router.shengsuanyun.com/api')
     expect(env.API_TIMEOUT_MS).toBe('180000')
+    expect(env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1')
   })
 
   test('buildChildEnv can force official auth even when a custom default provider exists', async () => {
-    const echoFlowDir = getEchoFlowInternalDir(tmpDir)
-    await fs.mkdir(echoFlowDir, { recursive: true })
+    const ccHahaDir = path.join(tmpDir, 'cc-haha')
+    await fs.mkdir(ccHahaDir, { recursive: true })
     await fs.writeFile(
-      path.join(echoFlowDir, 'settings.json'),
+      path.join(ccHahaDir, 'settings.json'),
       JSON.stringify({ env: { ANTHROPIC_AUTH_TOKEN: 'custom-provider-token' } }),
       'utf-8',
     )
@@ -740,10 +735,9 @@ describe('ConversationService', () => {
       providerId: 'openai-official',
     })) as Record<string, string>
 
-    expect(env.ECHOFLOW_OPENAI_OAUTH_PROVIDER).toBe('1')
-    expect(env.CC_HAHA_OPENAI_OAUTH_PROVIDER).toBeUndefined()
+    expect(env.CC_HAHA_OPENAI_OAUTH_PROVIDER).toBe('1')
     expect(env.OPENAI_CODEX_OAUTH_FILE).toBe(
-      echoFlowPath('openai-oauth.json'),
+      path.join(tmpDir, 'cc-haha', 'openai-oauth.json'),
     )
     expect(env.ANTHROPIC_MODEL).toBe('gpt-5.3-codex')
     expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.4')
@@ -756,10 +750,10 @@ describe('ConversationService', () => {
   })
 
   test('buildChildEnv does not leak inherited CLAUDE_CODE_OAUTH_TOKEN when official token is unavailable', async () => {
-    const echoFlowDir = getEchoFlowInternalDir(tmpDir)
-    await fs.mkdir(echoFlowDir, { recursive: true })
+    const ccHahaDir = path.join(tmpDir, 'cc-haha')
+    await fs.mkdir(ccHahaDir, { recursive: true })
     await fs.writeFile(
-      path.join(echoFlowDir, 'settings.json'),
+      path.join(ccHahaDir, 'settings.json'),
       JSON.stringify({ env: {} }),
       'utf-8',
     )
@@ -771,22 +765,17 @@ describe('ConversationService', () => {
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined()
   })
 
-  test('buildChildEnv injects EchoFlow desktop bridge env for sdk sessions', async () => {
-    process.env.CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID = 'legacy-host'
-    process.env.CC_HAHA_DESKTOP_SERVER_URL = 'http://127.0.0.1:9999'
-
+  test('buildChildEnv injects desktop Computer Use host bundle id for sdk sessions', async () => {
     const service = new ConversationService() as any
     const env = (await service.buildChildEnv(
       '/tmp',
       'ws://127.0.0.1:3456/sdk/test-session?token=test-token',
     )) as Record<string, string>
 
-    expect(env.ECHOFLOW_COMPUTER_USE_HOST_BUNDLE_ID).toBe(
-      'com.echoflowai-claude-code.desktop',
+    expect(env.CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID).toBe(
+      'com.claude-code-haha.desktop',
     )
-    expect(env.CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID).toBeUndefined()
-    expect(env.ECHOFLOW_DESKTOP_SERVER_URL).toBe('http://127.0.0.1:3456')
-    expect(env.CC_HAHA_DESKTOP_SERVER_URL).toBeUndefined()
+    expect(env.CC_HAHA_DESKTOP_SERVER_URL).toBe('http://127.0.0.1:3456')
     expect(env.CC_HAHA_TRACE_API_CALLS).toBe('1')
     expect(env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING).toBe('1')
   })
@@ -801,7 +790,7 @@ describe('ConversationService', () => {
       expect(args[2]).toContain('preload.ts')
       expect(args[3]).toContain(path.join('src', 'entrypoints', 'cli.tsx'))
     } else {
-      expect(args[0]).toContain(path.join('bin', 'echoflow-code'))
+      expect(args[0]).toContain(path.join('bin', 'claude-haha'))
     }
   })
 
@@ -820,22 +809,14 @@ describe('ConversationService', () => {
   })
 
   test('buildChildEnv asks desktop SDK sessions to wait briefly for MCP tools', async () => {
-    process.env.CC_HAHA_DESKTOP_AWAIT_MCP = 'legacy'
-    process.env.CC_HAHA_DESKTOP_AWAIT_MCP_TIMEOUT_MS = '9999'
-    process.env.CC_HAHA_SKIP_DOTENV = '1'
-
     const service = new ConversationService() as any
     const env = (await service.buildChildEnv(
       '/tmp',
       'ws://127.0.0.1:3456/sdk/test-session?token=test-token',
     )) as Record<string, string>
 
-    expect(env.ECHOFLOW_DESKTOP_AWAIT_MCP).toBe('1')
-    expect(env.ECHOFLOW_DESKTOP_AWAIT_MCP_TIMEOUT_MS).toBe('5000')
-    expect(env.CC_HAHA_DESKTOP_AWAIT_MCP).toBeUndefined()
-    expect(env.CC_HAHA_DESKTOP_AWAIT_MCP_TIMEOUT_MS).toBeUndefined()
-    expect(env.ECHOFLOW_SKIP_DOTENV).toBe('1')
-    expect(env.CC_HAHA_SKIP_DOTENV).toBeUndefined()
+    expect(env.CC_HAHA_DESKTOP_AWAIT_MCP).toBe('1')
+    expect(env.CC_HAHA_DESKTOP_AWAIT_MCP_TIMEOUT_MS).toBe('5000')
   })
 
   test('buildChildEnv disables inherited interrupted-turn resume for prewarm launches', async () => {

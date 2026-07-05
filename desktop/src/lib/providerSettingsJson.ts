@@ -1,6 +1,7 @@
 export const API_KEY_JSON_PLACEHOLDER = '••••••••'
 
 const API_KEY_JSON_KEYS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'] as const
+const PROXY_MANAGED_PLACEHOLDERS = new Set(['proxy-managed', 'proxy_managed'])
 
 const PROVIDER_SETTINGS_JSON_ENV_KEYS = new Set([
   'ANTHROPIC_BASE_URL',
@@ -22,6 +23,7 @@ const PROVIDER_SETTINGS_JSON_ENV_KEYS = new Set([
   'ANTHROPIC_SMALL_FAST_MODEL',
   'ECHOFLOW_OPENAI_OAUTH_PROVIDER',
   'ENABLE_TOOL_SEARCH',
+  'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS',
   'CC_HAHA_OPENAI_OAUTH_PROVIDER',
   'CLAUDE_CODE_AUTO_COMPACT_WINDOW',
   'CLAUDE_CODE_MODEL_CONTEXT_WINDOWS',
@@ -42,12 +44,13 @@ function getEnvRecord(raw: string): Record<string, unknown> | null {
 }
 
 function isSecretDisplayValue(value: unknown): value is string {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : ''
   return (
     typeof value === 'string' &&
     value.trim() !== '' &&
     value !== API_KEY_JSON_PLACEHOLDER &&
     value !== '(your API key)' &&
-    value !== 'proxy-managed'
+    !PROXY_MANAGED_PLACEHOLDERS.has(normalized)
   )
 }
 

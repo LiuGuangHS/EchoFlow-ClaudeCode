@@ -262,7 +262,20 @@ function trimRuns(data: RunsFile): void {
 
 // ─── Scheduler ─────────────────────────────────────────────────────────────────
 
-const TASK_TIMEOUT_MS = 10 * 60 * 1000 // 10 minutes
+const DEFAULT_TASK_TIMEOUT_MS = 10 * 60 * 1000 // 10 minutes
+
+export function resolveCronTaskTimeoutMs(
+  env: { CC_HAHA_TASK_TIMEOUT_MS?: string } = process.env,
+): number {
+  const raw = env.CC_HAHA_TASK_TIMEOUT_MS?.trim()
+  if (!raw) return DEFAULT_TASK_TIMEOUT_MS
+
+  const timeoutMs = Number(raw)
+  return Number.isInteger(timeoutMs) && timeoutMs > 0
+    ? timeoutMs
+    : DEFAULT_TASK_TIMEOUT_MS
+}
+
 const CRON_BRIDGE_ENV_KEYS = [
   'ECHOFLOW_SKIP_DOTENV',
   'CC_HAHA_SKIP_DOTENV',
@@ -534,6 +547,7 @@ export class CronScheduler {
     ])
 
     const childEnv = await this.buildTaskChildEnv(workDir, task)
+    const taskTimeoutMs = resolveCronTaskTimeoutMs()
     const proc = Bun.spawn(
       cliArgs,
       buildCronTaskSpawnOptions(workDir, childEnv),
@@ -558,7 +572,7 @@ export class CronScheduler {
           // ignore
         }
       }
-    }, TASK_TIMEOUT_MS)
+    }, taskTimeoutMs)
 
     try {
       // Collect stdout
@@ -589,7 +603,7 @@ export class CronScheduler {
         new Date(completedAt).getTime() - new Date(startedAt).getTime()
 
       // Determine if this was a timeout
-      const wasTimeout = durationMs >= TASK_TIMEOUT_MS
+      const wasTimeout = durationMs >= taskTimeoutMs
 
       // Extract only meaningful AI text responses from raw NDJSON output.
       // The raw stream contains system/init messages, tool_use blocks, and
@@ -681,6 +695,8 @@ export class CronScheduler {
     return [
       ...(model ? ['--model', model] : []),
       '--dangerously-skip-permissions',
+      '--permission-mode',
+      'bypassPermissions',
     ]
   }
 
@@ -824,13 +840,14 @@ export class CronScheduler {
     const data = await readRunsFile()
     let changed = false
     const now = Date.now()
+    const taskTimeoutMs = resolveCronTaskTimeoutMs()
 
     for (const run of data.runs) {
       if (run.status !== 'running') continue
       const startedAt = new Date(run.startedAt).getTime()
       // If "running" for longer than the task timeout + 1-minute buffer,
       // the owning process is certainly dead.
-      if (now - startedAt > TASK_TIMEOUT_MS + 60_000) {
+      if (now - startedAt > taskTimeoutMs + 60_000) {
         run.status = 'failed'
         run.error = 'Process terminated before task could complete'
         run.completedAt = new Date().toISOString()

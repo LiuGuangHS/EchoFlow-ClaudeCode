@@ -544,6 +544,13 @@ export class ConversationService {
     return sent
   }
 
+  recordSessionPermissionMode(sessionId: string, mode: string): boolean {
+    const session = this.sessions.get(sessionId)
+    if (!session) return false
+    session.permissionMode = mode
+    return true
+  }
+
   setMaxThinkingTokens(sessionId: string, maxThinkingTokens: number | null): boolean {
     return this.sendSdkMessage(sessionId, {
       type: 'control_request',
@@ -1076,6 +1083,7 @@ export class ConversationService {
       'ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES',
       ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
       LEGACY_CC_HAHA_SEND_DISABLED_THINKING_ENV_KEY,
+      'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS',
       'CLAUDE_CODE_AUTO_COMPACT_WINDOW',
       'CLAUDE_CODE_ATTRIBUTION_HEADER',
       'CLAUDE_CODE_MODEL_CONTEXT_WINDOWS',
@@ -1118,7 +1126,7 @@ export class ConversationService {
     const explicitProviderEnv = explicitProvider
       ? await this.providerService.getProviderRuntimeEnv(explicitProvider.id)
       : null
-    const networkEnv = buildNetworkEnvironment(await loadNetworkSettings())
+    const networkEnv = buildNetworkEnvironment(await loadNetworkSettings(), cleanEnv)
     const traceCaptureEnabled = (await readTraceCaptureSettings()).enabled
     if (explicitProviderEnv && options?.model?.trim()) {
       explicitProviderEnv.ANTHROPIC_MODEL = options.model.trim()

@@ -219,6 +219,11 @@ export async function getAnthropicClient({
   const resolvedFetch = usingOpenAICodex
     ? buildOpenAICodexFetch(fetchOverride, source)
     : buildFetch(fetchOverride, source)
+  const stagingOAuthBaseUrl = process.env.USER_TYPE === 'ant' &&
+    isEnvTruthy(process.env.USE_STAGING_OAUTH)
+    ? getOauthConfig().BASE_API_URL
+    : undefined
+  const baseURL = stagingOAuthBaseUrl || process.env.ANTHROPIC_BASE_URL
 
   const ARGS = {
     defaultHeaders,
@@ -227,6 +232,7 @@ export async function getAnthropicClient({
     dangerouslyAllowBrowser: true,
     fetchOptions: getProxyFetchOptions({
       forAnthropicAPI: true,
+      targetUrl: baseURL,
     }) as ClientOptions['fetchOptions'],
     ...(resolvedFetch && {
       fetch: resolvedFetch,
@@ -390,10 +396,7 @@ export async function getAnthropicClient({
       ? getClaudeAIOAuthTokens()?.accessToken
       : undefined,
     // Set baseURL from OAuth config when using staging OAuth
-    ...(process.env.USER_TYPE === 'ant' &&
-    isEnvTruthy(process.env.USE_STAGING_OAUTH)
-      ? { baseURL: getOauthConfig().BASE_API_URL }
-      : {}),
+    ...(stagingOAuthBaseUrl ? { baseURL: stagingOAuthBaseUrl } : {}),
     ...ARGS,
     ...(isDebugToStdErr() && { logger: createStderrLogger() }),
   }

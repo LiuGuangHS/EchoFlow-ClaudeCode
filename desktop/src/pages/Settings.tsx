@@ -26,6 +26,7 @@ import { ConfirmDialog } from '../components/shared/ConfirmDialog'
 import { Input } from '../components/shared/Input'
 import { Button } from '../components/shared/Button'
 import { Dropdown } from '../components/shared/Dropdown'
+import { PermissionModeSelector } from '../components/controls/PermissionModeSelector'
 import { isThemeMode, type ThemeMode, type UpdateProxyMode, type NetworkProxyMode, type WebSearchMode, type AppMode, type ChatSendBehavior, type OutputStyleSource } from '../types/settings'
 import type { Locale } from '../i18n'
 import type { SavedProvider, UpdateProviderInput, ProviderTestResult, ModelMapping, Model1mSupport, ApiFormat, ProviderAuthStrategy } from '../types/provider'
@@ -48,7 +49,7 @@ import { DiagnosticsSettings } from './DiagnosticsSettings'
 import { TraceList } from './TraceList'
 import { ActivitySettings } from './ActivitySettings'
 import { MemorySettings } from './MemorySettings'
-import { useUIStore, type SettingsTab } from '../stores/uiStore'
+import { useUIStore } from '../stores/uiStore'
 import { ClaudeOfficialLogin } from '../components/settings/ClaudeOfficialLogin'
 import { EchoFlowAPIOfficialLogin } from '../components/settings/EchoFlowAPIOfficialLogin'
 import { ChatGPTOfficialLogin } from '../components/settings/ChatGPTOfficialLogin'
@@ -187,7 +188,8 @@ function buildH5PublicBaseUrlFromHostDraft(draft: string, currentBaseUrl: string
 }
 
 export function Settings() {
-  const [activeTab, setActiveTab] = useState<SettingsTab>('providers')
+  const activeTab = useUIStore((s) => s.activeSettingsTab)
+  const setActiveTab = useUIStore((s) => s.setActiveSettingsTab)
   const pendingSettingsTab = useUIStore((s) => s.pendingSettingsTab)
   const t = useTranslation()
 
@@ -195,7 +197,7 @@ export function Settings() {
     if (!pendingSettingsTab) return
     setActiveTab(pendingSettingsTab)
     useUIStore.getState().setPendingSettingsTab(null)
-  }, [pendingSettingsTab])
+  }, [pendingSettingsTab, setActiveTab])
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-[var(--color-surface)]">
@@ -762,6 +764,7 @@ function requirePreset(preset: ProviderPreset | undefined): ProviderPreset {
 
 const AUTO_COMPACT_WINDOW_ENV_KEY = 'CLAUDE_CODE_AUTO_COMPACT_WINDOW'
 const MODEL_CONTEXT_WINDOWS_ENV_KEY = 'CLAUDE_CODE_MODEL_CONTEXT_WINDOWS'
+const DISABLE_EXPERIMENTAL_BETAS_ENV_KEY = 'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS'
 const MODEL_CONTEXT_WINDOW_MIN = 16000
 const MODEL_CONTEXT_WINDOW_MAX = 10000000
 const MODEL_1M_CONTEXT_WINDOW = 1000000
@@ -986,6 +989,27 @@ function normalizeModelMapping(models: ModelMapping): ModelMapping {
   }
 }
 
+function readSettingsEnvString(env: Record<string, unknown>, key: string): string | undefined {
+  const value = env[key]
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed || undefined
+}
+
+function readModelMappingFromSettingsEnv(env: Record<string, unknown>): Partial<ModelMapping> {
+  const haiku = readSettingsEnvString(env, 'ANTHROPIC_DEFAULT_HAIKU_MODEL')
+  const sonnet = readSettingsEnvString(env, 'ANTHROPIC_DEFAULT_SONNET_MODEL')
+  const opus = readSettingsEnvString(env, 'ANTHROPIC_DEFAULT_OPUS_MODEL')
+  const main = readSettingsEnvString(env, 'ANTHROPIC_MODEL') ?? sonnet ?? haiku ?? opus
+
+  return {
+    ...(main ? { main } : {}),
+    ...(haiku ? { haiku } : {}),
+    ...(sonnet ? { sonnet } : {}),
+    ...(opus ? { opus } : {}),
+  }
+}
+
 function applyToolSearchEnv(
   env: Record<string, unknown>,
   apiFormat: ApiFormat,
@@ -994,6 +1018,17 @@ function applyToolSearchEnv(
   delete env.ENABLE_TOOL_SEARCH
   if (apiFormat === 'anthropic') {
     env.ENABLE_TOOL_SEARCH = toolSearchEnabled ? 'true' : 'false'
+  }
+}
+
+function applyDisableExperimentalBetasEnv(
+  env: Record<string, unknown>,
+  disableExperimentalBetas: boolean,
+): void {
+  if (disableExperimentalBetas) {
+    env[DISABLE_EXPERIMENTAL_BETAS_ENV_KEY] = '1'
+  } else {
+    delete env[DISABLE_EXPERIMENTAL_BETAS_ENV_KEY]
   }
 }
 
@@ -1016,6 +1051,24 @@ function updateSettingsJsonToolSearch(
   }
 }
 
+function updateSettingsJsonDisableExperimentalBetas(
+  raw: string,
+  disableExperimentalBetas: boolean,
+): string {
+  try {
+    const parsed = JSON.parse(raw || '{}') as { env?: Record<string, unknown> }
+    const existingEnv = parsed.env && typeof parsed.env === 'object' && !Array.isArray(parsed.env)
+      ? parsed.env
+      : {}
+    const env = { ...existingEnv }
+    applyDisableExperimentalBetasEnv(env, disableExperimentalBetas)
+    parsed.env = env
+    return JSON.stringify(parsed, null, 2)
+  } catch {
+    return raw
+  }
+}
+
 function readToolSearchEnabledFromEnv(env: Record<string, unknown>): boolean {
   const value = env.ENABLE_TOOL_SEARCH
   if (typeof value === 'boolean') return value
@@ -1028,6 +1081,18 @@ function readToolSearchEnabledFromEnv(env: Record<string, unknown>): boolean {
     }
   }
   return true
+}
+
+function readDisableExperimentalBetasFromEnv(env: Record<string, unknown>): boolean {
+  const value = env[DISABLE_EXPERIMENTAL_BETAS_ENV_KEY]
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value !== 0
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    if (['0', 'false', 'off', 'no'].includes(normalized)) return false
+    if (['1', 'true', 'on', 'yes'].includes(normalized)) return true
+  }
+  return false
 }
 
 function updateSettingsJsonAutoCompactWindow(raw: string, value: string): string {
@@ -1105,6 +1170,7 @@ function updateSettingsJsonProviderConnection(
   baseUrl: string,
   proxyBaseUrl: string,
   toolSearchEnabled = true,
+  disableExperimentalBetas = false,
 ): string {
   try {
     const parsed = JSON.parse(raw || '{}') as { env?: Record<string, unknown> }
@@ -1115,6 +1181,7 @@ function updateSettingsJsonProviderConnection(
     delete env.ANTHROPIC_API_KEY
     delete env.ANTHROPIC_AUTH_TOKEN
     applyToolSearchEnv(env, apiFormat, toolSearchEnabled)
+    applyDisableExperimentalBetasEnv(env, disableExperimentalBetas)
     env.ANTHROPIC_BASE_URL = apiFormat !== 'anthropic' ? proxyBaseUrl : baseUrl
     Object.assign(env, buildSettingsJsonAuthEnv(apiFormat, authStrategy, apiKey, preset))
     parsed.env = env
@@ -1197,6 +1264,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, initialPres
       : getPresetAutoCompactWindow(initialPreset),
   )
   const [toolSearchEnabled, setToolSearchEnabled] = useState(provider?.toolSearchEnabled ?? true)
+  const [disableExperimentalBetas, setDisableExperimentalBetas] = useState(provider?.disableExperimentalBetas ?? false)
   const [showContextSettings, setShowContextSettings] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [testResult, setTestResult] = useState<ProviderTestResult | null>(null)
@@ -1237,6 +1305,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, initialPres
           ANTHROPIC_DEFAULT_OPUS_MODEL: runtimeModels.opus,
         }
         applyToolSearchEnv(mergedEnv, apiFormat, toolSearchEnabled)
+        applyDisableExperimentalBetasEnv(mergedEnv, disableExperimentalBetas)
         const merged = {
           ...settings,
           skipWebFetchPreflight: settings.skipWebFetchPreflight ?? true,
@@ -1267,6 +1336,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, initialPres
     setModelContextInputs(nextModelContextInputs)
     setAutoCompactWindow(getPresetAutoCompactWindow(preset))
     setToolSearchEnabled(true)
+    setDisableExperimentalBetas(false)
     setShowContextSettings(false)
     setTestResult(null)
   }
@@ -1356,24 +1426,28 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, initialPres
   }
   const handleBaseUrlChange = (value: string) => {
     setBaseUrl(value)
-    setSettingsJson((current) => updateSettingsJsonProviderConnection(current, apiFormat, authStrategy, apiKey, selectedPreset, value, providerProxyBaseUrl, toolSearchEnabled))
+    setSettingsJson((current) => updateSettingsJsonProviderConnection(current, apiFormat, authStrategy, apiKey, selectedPreset, value, providerProxyBaseUrl, toolSearchEnabled, disableExperimentalBetas))
   }
   const handleApiKeyChange = (value: string) => {
     setApiKey(value)
-    setSettingsJson((current) => updateSettingsJsonProviderConnection(current, apiFormat, authStrategy, value, selectedPreset, baseUrl, providerProxyBaseUrl, toolSearchEnabled))
+    setSettingsJson((current) => updateSettingsJsonProviderConnection(current, apiFormat, authStrategy, value, selectedPreset, baseUrl, providerProxyBaseUrl, toolSearchEnabled, disableExperimentalBetas))
   }
   const handleApiFormatChange = (value: ApiFormat) => {
     setApiFormat(value)
-    setSettingsJson((current) => updateSettingsJsonProviderConnection(current, value, authStrategy, apiKey, selectedPreset, baseUrl, providerProxyBaseUrl, toolSearchEnabled))
+    setSettingsJson((current) => updateSettingsJsonProviderConnection(current, value, authStrategy, apiKey, selectedPreset, baseUrl, providerProxyBaseUrl, toolSearchEnabled, disableExperimentalBetas))
   }
   const handleAuthStrategyChange = (value: ProviderAuthStrategy) => {
     setAuthStrategy(value)
-    setSettingsJson((current) => updateSettingsJsonProviderConnection(current, apiFormat, value, apiKey, selectedPreset, baseUrl, providerProxyBaseUrl, toolSearchEnabled))
+    setSettingsJson((current) => updateSettingsJsonProviderConnection(current, apiFormat, value, apiKey, selectedPreset, baseUrl, providerProxyBaseUrl, toolSearchEnabled, disableExperimentalBetas))
   }
   const handleToolSearchToggle = (enabled: boolean) => {
     if (toolSearchUnsupported) return
     setToolSearchEnabled(enabled)
     setSettingsJson((current) => updateSettingsJsonToolSearch(current, apiFormat, enabled))
+  }
+  const handleDisableExperimentalBetasToggle = (disabled: boolean) => {
+    setDisableExperimentalBetas(disabled)
+    setSettingsJson((current) => updateSettingsJsonDisableExperimentalBetas(current, disabled))
   }
   const handleModelChange = (slot: ModelSlot, value: string) => {
     const hasMarker = hasModel1mMarker(value)
@@ -1431,7 +1505,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, initialPres
   )
 
   const handleSubmit = async () => {
-    if (!canSubmit) return
+    if (!canSubmit || isSubmitting) return
     const normalizedModels = normalizeModelMapping(models)
     const parsedAutoCompactWindow = parseAutoCompactWindowInput(autoCompactWindow)
     const parsedModelContextWindows = buildModelContextWindows(models, modelContextInputs)
@@ -1465,6 +1539,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, initialPres
           ...(parsedAutoCompactWindow !== undefined && { autoCompactWindow: parsedAutoCompactWindow }),
           ...(Object.keys(parsedModelContextWindows).length > 0 && { modelContextWindows: parsedModelContextWindows }),
           toolSearchEnabled,
+          ...(disableExperimentalBetas && { disableExperimentalBetas }),
           notes: notes.trim() || undefined,
         })
       } else if (provider) {
@@ -1480,6 +1555,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, initialPres
             ? parsedModelContextWindows
             : null,
           toolSearchEnabled,
+          disableExperimentalBetas,
           notes: notes.trim() || undefined,
         }
         if (apiKey.trim()) input.apiKey = apiKey.trim()
@@ -1492,6 +1568,11 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, initialPres
     } finally {
       setIsSubmitting(false)
     }
+  }
+
+  const handleClose = () => {
+    if (isSubmitting) return
+    onClose()
   }
 
   const handleTest = async () => {
@@ -1528,13 +1609,13 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, initialPres
   return (
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={handleClose}
       title={mode === 'create' ? t('settings.providers.addTitle') : t('settings.providers.editTitle')}
       width={720}
       footer={
         <>
-          <Button variant="secondary" onClick={onClose}>{t('common.cancel')}</Button>
-          <Button onClick={handleSubmit} disabled={!canSubmit} loading={isSubmitting}>
+          <Button variant="secondary" onClick={handleClose} disabled={isSubmitting}>{t('common.cancel')}</Button>
+          <Button onClick={handleSubmit} disabled={!canSubmit || isSubmitting} loading={isSubmitting}>
             {mode === 'create' ? t('common.add') : t('common.save')}
           </Button>
         </>
@@ -1641,6 +1722,25 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, initialPres
             </div>
             <div className="mt-1 text-xs leading-5 text-[var(--color-text-tertiary)]">
               {toolSearchDescription}
+            </div>
+          </div>
+        </label>
+
+        <label className="relative flex cursor-pointer items-start gap-3 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-3 py-3 transition-colors hover:border-[var(--color-border-focus)] hover:bg-[var(--color-surface-hover)]">
+          <input
+            type="checkbox"
+            aria-label={t('settings.providers.disableExperimentalBetas')}
+            checked={disableExperimentalBetas}
+            onChange={(e) => handleDisableExperimentalBetasToggle(e.target.checked)}
+            className={SETTINGS_CHECKBOX_INPUT_CLASS}
+          />
+          <SettingsCheckboxMark checked={disableExperimentalBetas} />
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-[var(--color-text-primary)]">
+              {t('settings.providers.disableExperimentalBetas')}
+            </div>
+            <div className="mt-1 text-xs leading-5 text-[var(--color-text-tertiary)]">
+              {t('settings.providers.disableExperimentalBetasDesc')}
             </div>
           </div>
         </label>
@@ -1890,6 +1990,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, initialPres
                     setAuthStrategy(nextAuthStrategy)
                   }
                   setToolSearchEnabled(readToolSearchEnabledFromEnv(env))
+                  setDisableExperimentalBetas(readDisableExperimentalBetasFromEnv(env))
                   if (env[AUTO_COMPACT_WINDOW_ENV_KEY] !== undefined) {
                     setAutoCompactWindow(String(env[AUTO_COMPACT_WINDOW_ENV_KEY]))
                   } else {
@@ -1907,11 +2008,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, initialPres
                       parsedContextWindows = {}
                     }
                   }
-                  const newModels: Partial<ModelMapping> = {}
-                  if (env.ANTHROPIC_MODEL) newModels.main = env.ANTHROPIC_MODEL
-                  if (env.ANTHROPIC_DEFAULT_HAIKU_MODEL) newModels.haiku = env.ANTHROPIC_DEFAULT_HAIKU_MODEL
-                  if (env.ANTHROPIC_DEFAULT_SONNET_MODEL) newModels.sonnet = env.ANTHROPIC_DEFAULT_SONNET_MODEL
-                  if (env.ANTHROPIC_DEFAULT_OPUS_MODEL) newModels.opus = env.ANTHROPIC_DEFAULT_OPUS_MODEL
+                  const newModels = readModelMappingFromSettingsEnv(env)
                   if (Object.keys(newModels).length > 0) {
                     setModels((prev) => {
                       const mergedModels = { ...prev, ...newModels }
@@ -1969,6 +2066,8 @@ export function GeneralSettings() {
   const {
     thinkingEnabled,
     setThinkingEnabled,
+    permissionMode,
+    setPermissionMode,
     autoDreamEnabled,
     setAutoDreamEnabled,
     locale,
@@ -2156,6 +2255,11 @@ export function GeneralSettings() {
 
   const NETWORK_PROXY_MODES: Array<{ value: NetworkProxyMode; label: string; description: string }> = [
     {
+      value: 'direct',
+      label: t('settings.general.networkProxyModeDirect'),
+      description: t('settings.general.networkProxyModeDirectDescription'),
+    },
+    {
       value: 'system',
       label: t('settings.general.networkProxyModeSystem'),
       description: t('settings.general.networkProxyModeSystemDescription'),
@@ -2306,7 +2410,7 @@ export function GeneralSettings() {
         aiRequestTimeoutMs: parsedNetworkTimeoutSeconds * 1000,
         proxy: {
           mode: networkDraft.proxy.mode,
-          url: networkProxyUrl,
+          url: networkDraft.proxy.mode === 'manual' ? networkProxyUrl : '',
         },
       })
       addToast({
@@ -2714,6 +2818,29 @@ export function GeneralSettings() {
             {outputStyleError}
           </p>
         )}
+      </div>
+
+      <div className="mt-8">
+        <h2 className="text-base font-semibold text-[var(--color-text-primary)] mb-1">{t('settings.general.defaultPermissionTitle')}</h2>
+        <p className="text-sm text-[var(--color-text-tertiary)] mb-3">{t('settings.general.defaultPermissionDescription')}</p>
+        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-4 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-[var(--color-text-primary)]">
+                {t('settings.general.defaultPermissionLabel')}
+              </div>
+              <div className="mt-1 text-xs leading-5 text-[var(--color-text-tertiary)]">
+                {t('settings.general.defaultPermissionHint')}
+              </div>
+            </div>
+            <PermissionModeSelector
+              value={permissionMode}
+              onChange={(mode) => void setPermissionMode(mode)}
+              workDir={t('settings.general.defaultPermissionScope')}
+              menuPlacement="bottom"
+            />
+          </div>
+        </div>
       </div>
 
       <div className="mt-8">

@@ -12,6 +12,7 @@ import { useOpenTargetStore } from '../../stores/openTargetStore'
 import { desktopUiPreferencesApi, type SidebarProjectPreferences } from '../../api/desktopUiPreferences'
 import { getDesktopHost } from '../../lib/desktopHost'
 import { publicAssetPath } from '../../lib/publicAsset'
+import { hasRunningBackgroundTasks } from '../../lib/backgroundTasks'
 
 const desktopHost = getDesktopHost()
 const isDesktopRuntime = desktopHost.isDesktop
@@ -127,6 +128,7 @@ export function Sidebar({ isMobile = false, onRequestClose }: SidebarProps) {
     ))
   }, [hiddenProjectKeys, orderedProjectGroups])
   const showInitialLoading = isLoading && sessions.length === 0
+  const showRefreshLoading = showInitialLoading
   const filteredSessionIds = useMemo(() => filteredSessions.map((session) => session.id), [filteredSessions])
   const selectedCount = selectedSessionIds.size
   const sessionsById = useMemo(
@@ -139,7 +141,9 @@ export function Sidebar({ isMobile = false, onRequestClose }: SidebarProps) {
       if (tab.type === 'session' && tab.status === 'running') ids.add(tab.sessionId)
     }
     for (const [sessionId, sessionState] of Object.entries(chatSessions)) {
-      if (sessionState.chatState !== 'idle') ids.add(sessionId)
+      if (sessionState.chatState !== 'idle' || hasRunningBackgroundTasks(sessionState.backgroundAgentTasks)) {
+        ids.add(sessionId)
+      }
     }
     return ids
   }, [chatSessions, tabs])
@@ -709,12 +713,11 @@ export function Sidebar({ isMobile = false, onRequestClose }: SidebarProps) {
               <button
                 type="button"
                 onClick={() => void refreshSessionsNow()}
-                disabled={isLoading}
                 className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-[12px] border border-[var(--color-sidebar-search-border)] bg-[var(--color-sidebar-search-bg)] text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-sidebar-item-hover)] hover:text-[var(--color-text-primary)] disabled:cursor-default disabled:opacity-65 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]"
                 aria-label={t('sidebar.refreshSessions')}
                 title={t('sidebar.refreshSessions')}
               >
-                <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} strokeWidth={1.9} aria-hidden="true" />
+                <RefreshCw className={`h-4 w-4 ${showRefreshLoading ? 'animate-spin' : ''}`} strokeWidth={1.9} aria-hidden="true" />
               </button>
               <button
                 type="button"
@@ -975,6 +978,7 @@ export function Sidebar({ isMobile = false, onRequestClose }: SidebarProps) {
                                     }
                                   `}
                                   aria-pressed={isBatchMode ? selectedSessionIds.has(session.id) : undefined}
+                                  title={session.title || 'Untitled'}
                                 >
                                   <span className="flex min-w-0 items-center gap-2">
                                     {isBatchMode ? (
@@ -1213,7 +1217,7 @@ function useSessionListAutoRefresh(fetchSessions: () => Promise<void>): () => Pr
   const lastStartedAtRef = useRef(0)
 
   const refreshSessions = useCallback((force = false) => {
-    if (inFlightRef.current) return inFlightRef.current
+    if (inFlightRef.current && !force) return inFlightRef.current
 
     const now = Date.now()
     if (!force && now - lastStartedAtRef.current < SESSION_LIST_FOCUS_REFRESH_MIN_MS) {
