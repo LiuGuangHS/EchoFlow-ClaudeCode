@@ -21,7 +21,6 @@ const SETTINGS_TABS = [
   'diagnostics',
   'about',
 ] as const
->>>>>>> upstream/main
 
 function getStoredTheme(): ThemeMode {
   try {
