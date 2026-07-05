@@ -410,6 +410,34 @@ describe('TraceSession', () => {
     expect(detail.getByRole('heading', { level: 2, name: 'claude-sonnet-4-5' })).toBeInTheDocument()
   })
 
+  it('does not refetch full messages for identical trace polls', async () => {
+    vi.mocked(sessionsApi.getTrace).mockResolvedValue(baseTrace)
+
+    await renderReady(20)
+
+    await waitFor(() => expect(vi.mocked(sessionsApi.getTrace).mock.calls.length).toBeGreaterThanOrEqual(3))
+    expect(sessionsApi.getMessages).toHaveBeenCalledTimes(1)
+  })
+
+  it('refetches messages when only the trace message signature changes', async () => {
+    const pendingMessages = baseMessages.filter((message) => message.type !== 'tool_result')
+    vi.mocked(sessionsApi.getTrace)
+      .mockResolvedValueOnce({ ...baseTrace, messageSignature: '3:tool-use' })
+      .mockResolvedValue({ ...baseTrace, messageSignature: '4:tool-result' })
+    vi.mocked(sessionsApi.getMessages)
+      .mockResolvedValueOnce({ messages: pendingMessages })
+      .mockResolvedValue({ messages: baseMessages })
+
+    await renderReady(20)
+
+    const tree = within(screen.getByTestId('trace-tree'))
+    fireEvent.click(tree.getByText('Bash'))
+    expect(within(screen.getByTestId('trace-detail')).queryByText('file.txt')).not.toBeInTheDocument()
+
+    await waitFor(() => expect(sessionsApi.getMessages).toHaveBeenCalledTimes(2))
+    expect(within(screen.getByTestId('trace-detail')).getByText('file.txt')).toBeInTheDocument()
+  })
+
   it('applies poll updates when a call changes without changing row counts', async () => {
     const pendingTrace: TraceSessionData = {
       ...baseTrace,

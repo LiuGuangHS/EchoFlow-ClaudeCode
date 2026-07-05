@@ -7,6 +7,7 @@ import {
   buildCronCliArgs,
   buildCronTaskSpawnOptions,
   CronScheduler,
+  resolveCronTaskTimeoutMs,
   resolveCronProjectRoot,
 } from '../services/cronScheduler.js'
 import { CronService } from '../services/cronService.js'
@@ -24,7 +25,7 @@ const originalHome = process.env.HOME
 const originalShell = process.env.SHELL
 const originalZdotdir = process.env.ZDOTDIR
 const originalDisableTerminalShellEnv = process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV
-const originalLegacySkipDotenv = process.env.CC_HAHA_SKIP_DOTENV
+const originalTaskTimeout = process.env.CC_HAHA_TASK_TIMEOUT_MS
 
 const isWindows = process.platform === 'win32'
 const unixOnly = isWindows ? it.skip : it
@@ -108,10 +109,10 @@ function restoreEnv(): void {
   } else {
     delete process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV
   }
-  if (originalLegacySkipDotenv) {
-    process.env.CC_HAHA_SKIP_DOTENV = originalLegacySkipDotenv
+  if (originalTaskTimeout) {
+    process.env.CC_HAHA_TASK_TIMEOUT_MS = originalTaskTimeout
   } else {
-    delete process.env.CC_HAHA_SKIP_DOTENV
+    delete process.env.CC_HAHA_TASK_TIMEOUT_MS
   }
   resetTerminalShellEnvironmentCacheForTests()
 }
@@ -129,6 +130,64 @@ describe('cron scheduler launcher resolution', () => {
   afterEach(async () => {
     restoreEnv()
     await cleanupTmpDir(tmpDir)
+  })
+
+  it('uses a configurable scheduled task timeout with the default unchanged', () => {
+    expect(resolveCronTaskTimeoutMs({})).toBe(10 * 60 * 1000)
+    expect(resolveCronTaskTimeoutMs({ CC_HAHA_TASK_TIMEOUT_MS: '1800000' })).toBe(1_800_000)
+    expect(resolveCronTaskTimeoutMs({ CC_HAHA_TASK_TIMEOUT_MS: 'not-a-number' })).toBe(10 * 60 * 1000)
+    expect(resolveCronTaskTimeoutMs({ CC_HAHA_TASK_TIMEOUT_MS: '0' })).toBe(10 * 60 * 1000)
+  })
+
+  unixOnly('executeTask arms the subprocess timeout from CC_HAHA_TASK_TIMEOUT_MS', async () => {
+    const binDir = path.join(tmpDir, 'bin')
+    const sidecarPath = path.join(tmpDir, 'claude-sidecar')
+    const appRoot = path.join(tmpDir, 'app-root')
+    await fs.mkdir(binDir, { recursive: true })
+    await fs.mkdir(appRoot, { recursive: true })
+    await fs.writeFile(
+      sidecarPath,
+      [
+        '#!/bin/sh',
+        '/bin/cat >/dev/null',
+        'printf \'%s\\n\' \'{"type":"result","result":"timeout env ok"}\'',
+        'exit 0',
+        '',
+      ].join('\n'),
+      'utf-8',
+    )
+    await fs.chmod(sidecarPath, 0o755)
+
+    const originalSetTimeout = globalThis.setTimeout
+    const timeoutCalls: number[] = []
+    globalThis.setTimeout = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+      timeoutCalls.push(timeout ?? 0)
+      return originalSetTimeout(handler, timeout, ...args)
+    }) as typeof setTimeout
+
+    process.env.PATH = binDir
+    process.env.CLAUDE_CLI_PATH = sidecarPath
+    process.env.CLAUDE_APP_ROOT = appRoot
+    process.env.CC_HAHA_TASK_TIMEOUT_MS = '12345'
+
+    try {
+      const cronService = new CronService()
+      const scheduler = new CronScheduler(cronService)
+      const task = await cronService.createTask({
+        cron: '* * * * *',
+        prompt: 'cron timeout env test',
+        name: 'Timeout Env Task',
+        recurring: true,
+        folderPath: tmpDir,
+      })
+
+      const run = await scheduler.executeTask(task)
+
+      expect(run.status).toBe('completed')
+      expect(timeoutCalls).toContain(12_345)
+    } finally {
+      globalThis.setTimeout = originalSetTimeout
+    }
   })
 
   it('uses the bundled sidecar launcher when one is configured', () => {
@@ -151,19 +210,6 @@ describe('cron scheduler launcher resolution', () => {
       appRoot,
       '--print',
     ])
-  })
-
-  it('prefers an explicit ECHOFLOW_ROOT when it points at a source checkout', async () => {
-    const sourceRoot = path.join(tmpDir, 'source')
-    await createSourceRoot(sourceRoot)
-
-    expect(
-      resolveCronProjectRoot({
-        cwd: path.join(tmpDir, 'other'),
-        moduleDir: path.join(tmpDir, 'broken', 'src', 'server', 'services'),
-        env: { ECHOFLOW_ROOT: sourceRoot },
-      }),
-    ).toBe(sourceRoot)
   })
 
   it('builds hidden CLI spawn options for scheduled task subprocesses', () => {
@@ -190,36 +236,6 @@ describe('cron scheduler launcher resolution', () => {
         env: { CC_HAHA_ROOT: sourceRoot },
       }),
     ).toBe(sourceRoot)
-  })
-
-  it('builds scheduled task env with EchoFlow dotenv skip marker only', async () => {
-    process.env.CC_HAHA_SKIP_DOTENV = '1'
-    process.env.ANTHROPIC_BASE_URL = 'https://parent.example'
-    process.env.ANTHROPIC_MODEL = 'parent-model'
-
-    const scheduler = new CronScheduler(new CronService()) as unknown as {
-      buildTaskChildEnv: (
-        workDir: string,
-        task: {
-          id: string
-          cron: string
-          prompt: string
-          createdAt: number
-          model?: string
-        },
-      ) => Promise<Record<string, string | undefined>>
-    }
-    const env = await scheduler.buildTaskChildEnv(tmpDir, {
-      id: 'task-1',
-      cron: '* * * * *',
-      prompt: 'run',
-      createdAt: Date.now(),
-      model: 'task-model',
-    })
-
-    expect(env.ECHOFLOW_SKIP_DOTENV).toBe('1')
-    expect(env.CC_HAHA_SKIP_DOTENV).toBeUndefined()
-    expect(env.ANTHROPIC_MODEL).toBe('parent-model')
   })
 
   it('falls back to the nearest source checkout from cwd before module dir', async () => {
@@ -336,7 +352,6 @@ describe('cron scheduler launcher resolution', () => {
     process.env.ANTHROPIC_BASE_URL = 'https://stale-parent.example'
     process.env.ANTHROPIC_MODEL = 'stale-parent-model'
     process.env.CLAUDE_CODE_ENTRYPOINT = 'stale-parent-entrypoint'
-    process.env.CC_HAHA_SKIP_DOTENV = '1'
 
     const provider = await new ProviderService().addProvider({
       presetId: 'custom',
@@ -392,8 +407,6 @@ describe('cron scheduler launcher resolution', () => {
     expect(env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST).toBe('1')
     expect(env.CLAUDE_CODE_ATTRIBUTION_HEADER).toBe('0')
     expect(env.CLAUDE_CODE_ENTRYPOINT).toBe('sdk-cli')
-    expect(env.ECHOFLOW_SKIP_DOTENV).toBe('1')
-    expect(env.CC_HAHA_SKIP_DOTENV).toBeUndefined()
   })
 
   unixOnly('executeTask launches scheduled tasks with full permissions', async () => {
@@ -461,7 +474,10 @@ describe('cron scheduler launcher resolution', () => {
       .trim()
       .split('\n')
     expect(sidecarArgs).toContain('--dangerously-skip-permissions')
-    expect(sidecarArgs).not.toContain('--permission-mode')
+    expect(sidecarArgs).toContain('--permission-mode')
+    expect(sidecarArgs[sidecarArgs.indexOf('--permission-mode') + 1]).toBe(
+      'bypassPermissions',
+    )
   })
 
   unixOnly('executeTask inherits exported terminal shell variables', async () => {

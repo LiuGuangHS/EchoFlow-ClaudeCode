@@ -228,6 +228,7 @@ export type BackgroundAgentTask = {
   taskType?: string
   workflowName?: string
   prompt?: string
+  result?: string
   summary?: string
   lastToolName?: string
   outputFile?: string

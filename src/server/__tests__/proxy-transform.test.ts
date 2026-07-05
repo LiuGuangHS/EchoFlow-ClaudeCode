@@ -63,6 +63,34 @@ describe('anthropicToOpenaiChat', () => {
     expect(result.stop).toEqual(['END', 'STOP'])
   })
 
+  test('omits Anthropic sampling params by default for OpenAI-compatible providers', () => {
+    const req: AnthropicRequest = {
+      model: 'glm-5.2',
+      max_tokens: 100,
+      temperature: 0.7,
+      top_p: 0.9,
+      messages: [{ role: 'user', content: 'Hi' }],
+    }
+
+    const result = anthropicToOpenaiChat(req)
+    expect(result.temperature).toBeUndefined()
+    expect(result.top_p).toBeUndefined()
+  })
+
+  test('can explicitly pass sampling params for chat providers that accept them', () => {
+    const req: AnthropicRequest = {
+      model: 'gpt-4',
+      max_tokens: 100,
+      temperature: 0.7,
+      top_p: 0.9,
+      messages: [{ role: 'user', content: 'Hi' }],
+    }
+
+    const result = anthropicToOpenaiChat(req, { passSamplingParams: true })
+    expect(result.temperature).toBe(0.7)
+    expect(result.top_p).toBe(0.9)
+  })
+
   test('tools conversion', () => {
     const req: AnthropicRequest = {
       model: 'gpt-4',
@@ -154,6 +182,31 @@ describe('anthropicToOpenaiChat', () => {
 
     expect(anthropicToOpenaiChat(req).thinking).toBeUndefined()
     expect(anthropicToOpenaiChat(req, { passThinkingToggle: true }).thinking).toEqual({ type: 'disabled' })
+  })
+
+  test('maps output_config effort to reasoning_effort for OpenAI-compatible chat providers', () => {
+    const req: AnthropicRequest = {
+      model: 'longcat',
+      max_tokens: 100,
+      messages: [{ role: 'user', content: 'Hi' }],
+      thinking: { type: 'adaptive' },
+      output_config: { effort: 'high' },
+    }
+
+    const result = anthropicToOpenaiChat(req)
+    expect(result.reasoning_effort).toBe('high')
+  })
+
+  test('clamps max output_config effort to high for OpenAI-compatible chat providers', () => {
+    const req: AnthropicRequest = {
+      model: 'longcat',
+      max_tokens: 100,
+      messages: [{ role: 'user', content: 'Hi' }],
+      output_config: { effort: 'max' },
+    }
+
+    const result = anthropicToOpenaiChat(req)
+    expect(result.reasoning_effort).toBe('high')
   })
 
   test('assistant message with tool_use', () => {
@@ -407,6 +460,34 @@ describe('anthropicToOpenaiResponses', () => {
     expect(result.input).toEqual([{ type: 'message', role: 'user', content: 'Hello' }])
   })
 
+  test('omits Anthropic sampling params by default for Responses-compatible providers', () => {
+    const req: AnthropicRequest = {
+      model: 'glm-5.2',
+      max_tokens: 100,
+      temperature: 0.7,
+      top_p: 0.9,
+      messages: [{ role: 'user', content: 'Hi' }],
+    }
+
+    const result = anthropicToOpenaiResponses(req)
+    expect(result.temperature).toBeUndefined()
+    expect(result.top_p).toBeUndefined()
+  })
+
+  test('can explicitly pass sampling params for Responses providers that accept them', () => {
+    const req: AnthropicRequest = {
+      model: 'gpt-4o',
+      max_tokens: 100,
+      temperature: 0.7,
+      top_p: 0.9,
+      messages: [{ role: 'user', content: 'Hi' }],
+    }
+
+    const result = anthropicToOpenaiResponses(req, { passSamplingParams: true })
+    expect(result.temperature).toBe(0.7)
+    expect(result.top_p).toBe(0.9)
+  })
+
   test('tools conversion uses top-level name', () => {
     const req: AnthropicRequest = {
       model: 'gpt-4o',
@@ -476,6 +557,31 @@ describe('anthropicToOpenaiResponses', () => {
       messages: [{ role: 'user', content: 'Hi' }],
       thinking: { type: 'enabled', budget_tokens: 10000 },
     }
+    const result = anthropicToOpenaiResponses(req)
+    expect(result.reasoning).toEqual({ effort: 'high' })
+  })
+
+  test('output_config effort → reasoning effort', () => {
+    const req: AnthropicRequest = {
+      model: 'gpt-5.5',
+      max_tokens: 100,
+      messages: [{ role: 'user', content: 'Hi' }],
+      thinking: { type: 'adaptive' },
+      output_config: { effort: 'high' },
+    }
+
+    const result = anthropicToOpenaiResponses(req)
+    expect(result.reasoning).toEqual({ effort: 'high' })
+  })
+
+  test('clamps max output_config effort for Responses API', () => {
+    const req: AnthropicRequest = {
+      model: 'gpt-5.5',
+      max_tokens: 100,
+      messages: [{ role: 'user', content: 'Hi' }],
+      output_config: { effort: 'max' },
+    }
+
     const result = anthropicToOpenaiResponses(req)
     expect(result.reasoning).toEqual({ effort: 'high' })
   })

@@ -56,6 +56,7 @@ export type SavedProvider = {
   echoflowManagement?: EchoFlowManagement
   echoflowToken?: EchoFlowTokenMetadata
   toolSearchEnabled?: boolean
+  disableExperimentalBetas?: boolean
   notes?: string
 }
 
@@ -74,6 +75,7 @@ export type CreateProviderInput = {
   echoflowManagement?: EchoFlowManagement
   echoflowToken?: EchoFlowTokenMetadata
   toolSearchEnabled?: boolean
+  disableExperimentalBetas?: boolean
   notes?: string
 }
 
@@ -91,6 +93,7 @@ export type UpdateProviderInput = {
   echoflowManagement?: EchoFlowManagement | null
   echoflowToken?: EchoFlowTokenMetadata | null
   toolSearchEnabled?: boolean
+  disableExperimentalBetas?: boolean
   notes?: string
 }
 

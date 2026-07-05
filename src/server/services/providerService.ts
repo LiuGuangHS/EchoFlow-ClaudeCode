@@ -35,9 +35,8 @@ import {
   normalizeModelMapping,
   normalizeProvidersIndex,
 } from './providerRuntimeEnv.js'
-import { getProxyFetchOptions } from '../../utils/proxy.js'
 import {
-  getManualNetworkProxyUrl,
+  getNetworkProxyFetchOptions,
   loadNetworkSettings,
   type NetworkSettings,
 } from './networkSettings.js'
@@ -229,6 +228,7 @@ export class ProviderService {
       ...(input.echoflowManagement !== undefined && { echoflowManagement: input.echoflowManagement }),
       ...(input.echoflowToken !== undefined && { echoflowToken: input.echoflowToken }),
       toolSearchEnabled: input.toolSearchEnabled ?? true,
+      ...(input.disableExperimentalBetas === true && { disableExperimentalBetas: true }),
       ...(input.notes !== undefined && { notes: input.notes }),
     }
 
@@ -259,6 +259,7 @@ export class ProviderService {
       ...(input.echoflowManagement !== undefined && input.echoflowManagement !== null && { echoflowManagement: input.echoflowManagement }),
       ...(input.echoflowToken !== undefined && input.echoflowToken !== null && { echoflowToken: input.echoflowToken }),
       ...(input.toolSearchEnabled !== undefined && { toolSearchEnabled: input.toolSearchEnabled }),
+      ...(input.disableExperimentalBetas === true && { disableExperimentalBetas: true }),
       ...(input.notes !== undefined && { notes: input.notes }),
     }
     if (input.model1mSupport === null) {
@@ -275,6 +276,9 @@ export class ProviderService {
     }
     if (input.echoflowToken === null) {
       delete updated.echoflowToken
+    }
+    if (input.disableExperimentalBetas === false) {
+      delete updated.disableExperimentalBetas
     }
 
     index.providers[idx] = updated
@@ -607,7 +611,7 @@ export class ProviderService {
     const start = Date.now()
     try {
       const { url, headers, body } = buildDirectTestRequest(base, apiKey, modelId, format, authStrategy)
-      const proxyOptions = getProxyFetchOptions({ proxyUrl: getManualNetworkProxyUrl(networkSettings) })
+      const proxyOptions = getNetworkProxyFetchOptions(networkSettings, url)
       const response = await fetch(url, {
         method: 'POST',
         headers,
@@ -670,7 +674,7 @@ export class ProviderService {
         transformedBody = anthropicToOpenaiResponses(anthropicReq)
         upstreamUrl = `${base}/v1/responses`
       }
-      const proxyOptions = getProxyFetchOptions({ proxyUrl: getManualNetworkProxyUrl(networkSettings) })
+      const proxyOptions = getNetworkProxyFetchOptions(networkSettings, upstreamUrl)
 
       // Call upstream with transformed request
       const response = await fetch(upstreamUrl, {

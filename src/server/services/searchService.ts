@@ -10,6 +10,10 @@ import * as path from 'path'
 import { ApiError } from '../middleware/errorHandler.js'
 import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
 import { sessionService } from './sessionService.js'
+import {
+  getCommandMetadataDisplayText,
+  shouldHideCommandMetadataContent,
+} from '../../utils/commandMetadata.js'
 
 export type SearchResult = {
   file: string
@@ -389,7 +393,11 @@ export class SearchService {
     if (entry.type !== 'user' && entry.type !== 'assistant') return []
 
     const content = entry.message?.content
-    if (this.isInternalCommandBreadcrumb(content)) return []
+    const commandDisplayText = getCommandMetadataDisplayText(content)
+    if (commandDisplayText) {
+      return [{ role: 'user', text: commandDisplayText }]
+    }
+    if (shouldHideCommandMetadataContent(content)) return []
 
     const role: SessionMatchRole =
       entry.type === 'assistant' || entry.message?.role === 'assistant'
@@ -418,19 +426,6 @@ export class SearchService {
       }
     }
     return out
-  }
-
-  private isInternalCommandBreadcrumb(content: unknown): boolean {
-    const textBlocks = this.extractPlainTextBlocks(content)
-    return (
-      textBlocks.length > 0 &&
-      textBlocks.every((text) =>
-        text.includes('<command-name>') ||
-        text.includes('<command-message>') ||
-        text.includes('<command-args>') ||
-        text.includes('<local-command-caveat>'),
-      )
-    )
   }
 
   /** Window a single match into a one-line, highlighted snippet. */

@@ -12,6 +12,7 @@ import {
   reserveServerPort,
   SERVER_BIND_HOST,
   SERVER_CONTROL_HOST,
+  SERVER_STARTUP_TIMEOUT_MS,
   spawnSidecar,
   waitForServer,
   windowsPowerShellOverride,
@@ -95,7 +96,7 @@ export class ElectronServerRuntime {
     try {
       const child = spawnSidecar(plan)
       this.captureLogs(child, 'claude-server', logs)
-      await waitForServer(SERVER_CONTROL_HOST, port)
+      await waitForServer(SERVER_CONTROL_HOST, port, SERVER_STARTUP_TIMEOUT_MS)
       writeLastServerPort(port)
       this.server = { url, child }
       this.startupError = null

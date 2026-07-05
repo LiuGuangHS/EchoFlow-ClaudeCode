@@ -7,7 +7,6 @@ import {
   mergeActiveProviderManagedEnv,
   readActiveProviderManagedEnv,
 } from '../services/providerRuntimeEnv.js'
-import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 
 let tmpDir: string
 
@@ -26,7 +25,7 @@ describe('providerRuntimeEnv', () => {
   })
 
   test('derives native Anthropic provider env from the active provider index', async () => {
-    await writeJson(path.join(getEchoFlowInternalDir(tmpDir), 'providers.json'), {
+    await writeJson(path.join(tmpDir, 'cc-haha', 'providers.json'), {
       activeId: 'provider-1',
       providers: [
         {
@@ -62,7 +61,7 @@ describe('providerRuntimeEnv', () => {
   })
 
   test('active provider env overrides stale proxy settings while preserving unrelated env', async () => {
-    await writeJson(path.join(getEchoFlowInternalDir(tmpDir), 'providers.json'), {
+    await writeJson(path.join(tmpDir, 'cc-haha', 'providers.json'), {
       activeId: 'provider-1',
       providers: [
         {
@@ -88,8 +87,7 @@ describe('providerRuntimeEnv', () => {
         ANTHROPIC_BASE_URL: 'http://127.0.0.1:3456/proxy',
         ANTHROPIC_API_KEY: 'proxy-managed',
         ANTHROPIC_MODEL: 'deepseek-v4-pro',
-        API_TIMEOUT_MS: '3000000',
-        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+        CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '1',
         DISABLE_AUTOUPDATER: '1',
       },
       tmpDir,
@@ -106,12 +104,11 @@ describe('providerRuntimeEnv', () => {
       ANTHROPIC_DEFAULT_OPUS_MODEL: 'gpt-5.5',
       DISABLE_AUTOUPDATER: '1',
     })
-    expect(env.API_TIMEOUT_MS).toBeUndefined()
-    expect(env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBeUndefined()
+    expect(env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS).toBeUndefined()
   })
 
   test('honors disabled tool search for native Anthropic providers', async () => {
-    await writeJson(path.join(getEchoFlowInternalDir(tmpDir), 'providers.json'), {
+    await writeJson(path.join(tmpDir, 'cc-haha', 'providers.json'), {
       activeId: 'provider-1',
       providers: [
         {
@@ -138,8 +135,36 @@ describe('providerRuntimeEnv', () => {
     expect(env.ENABLE_TOOL_SEARCH).toBe('false')
   })
 
+  test('honors disabled experimental betas for active providers', async () => {
+    await writeJson(path.join(tmpDir, 'cc-haha', 'providers.json'), {
+      activeId: 'provider-1',
+      providers: [
+        {
+          id: 'provider-1',
+          presetId: 'custom',
+          name: 'Experimental Betas Off',
+          apiKey: 'sk-active',
+          authStrategy: 'auth_token',
+          baseUrl: 'https://api.example.com/anthropic',
+          apiFormat: 'anthropic',
+          disableExperimentalBetas: true,
+          models: {
+            main: 'active-main',
+            haiku: 'active-main',
+            sonnet: 'active-main',
+            opus: 'active-main',
+          },
+        },
+      ],
+    })
+
+    const env = readActiveProviderManagedEnv(tmpDir)
+
+    expect(env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS).toBe('1')
+  })
+
   test('keeps providers readable when stored tool search values are stringly typed', async () => {
-    await writeJson(path.join(getEchoFlowInternalDir(tmpDir), 'providers.json'), {
+    await writeJson(path.join(tmpDir, 'cc-haha', 'providers.json'), {
       activeId: 'provider-1',
       providers: [
         {
@@ -168,7 +193,7 @@ describe('providerRuntimeEnv', () => {
   })
 
   test('does not write tool search env for OpenAI proxy providers', async () => {
-    await writeJson(path.join(getEchoFlowInternalDir(tmpDir), 'providers.json'), {
+    await writeJson(path.join(tmpDir, 'cc-haha', 'providers.json'), {
       activeId: 'provider-1',
       providers: [
         {
@@ -193,5 +218,73 @@ describe('providerRuntimeEnv', () => {
     const env = readActiveProviderManagedEnv(tmpDir)
 
     expect(env.ENABLE_TOOL_SEARCH).toBeUndefined()
+  })
+
+  test('applies updated docs-backed preset env for domestic Anthropic-compatible providers', async () => {
+    await writeJson(path.join(tmpDir, 'cc-haha', 'providers.json'), {
+      activeId: 'provider-kimi',
+      providers: [
+        {
+          id: 'provider-kimi',
+          presetId: 'kimi',
+          name: 'Kimi',
+          apiKey: 'sk-kimi',
+          authStrategy: 'auth_token',
+          baseUrl: 'https://api.moonshot.cn/anthropic',
+          apiFormat: 'anthropic',
+          models: {
+            main: 'kimi-k2.7-code',
+            haiku: 'kimi-k2.7-code',
+            sonnet: 'kimi-k2.7-code',
+            opus: 'kimi-k2.7-code',
+          },
+        },
+      ],
+    })
+
+    const kimiEnv = readActiveProviderManagedEnv(tmpDir)
+
+    expect(kimiEnv).toMatchObject({
+      ANTHROPIC_BASE_URL: 'https://api.moonshot.cn/anthropic',
+      ANTHROPIC_MODEL: 'kimi-k2.7-code',
+      ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES: 'thinking',
+    })
+    expect(JSON.parse(kimiEnv!.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS)).toMatchObject({
+      'kimi-k2.7-code': 262144,
+      'kimi-k2.7-code-highspeed': 262144,
+    })
+
+    await writeJson(path.join(tmpDir, 'cc-haha', 'providers.json'), {
+      activeId: 'provider-zhipu',
+      providers: [
+        {
+          id: 'provider-zhipu',
+          presetId: 'zhipuglm',
+          name: 'Zhipu GLM',
+          apiKey: 'sk-zhipu',
+          authStrategy: 'auth_token',
+          baseUrl: 'https://open.bigmodel.cn/api/anthropic',
+          apiFormat: 'anthropic',
+          models: {
+            main: 'glm-5.2[1m]',
+            haiku: 'glm-4.7',
+            sonnet: 'glm-5.2[1m]',
+            opus: 'glm-5.2[1m]',
+          },
+        },
+      ],
+    })
+
+    const zhipuEnv = readActiveProviderManagedEnv(tmpDir)
+
+    expect(zhipuEnv).toMatchObject({
+      ANTHROPIC_MODEL: 'glm-5.2[1m]',
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'glm-4.7',
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000',
+    })
+    expect(JSON.parse(zhipuEnv!.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS)).toMatchObject({
+      'glm-5.2[1m]': 1000000,
+      'glm-4.7': 200000,
+    })
   })
 })

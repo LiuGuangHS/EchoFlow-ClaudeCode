@@ -56,6 +56,7 @@ export const ModelContextWindowsSchema = z.record(
   z.number().int().min(16000).max(10000000),
 )
 export const ToolSearchEnabledSchema = z.boolean()
+export const DisableExperimentalBetasSchema = z.boolean()
 
 export const EchoFlowManagementSchema = z.object({
   userId: z.string().min(1),
@@ -86,6 +87,7 @@ export const SavedProviderSchema = z.object({
   echoflowManagement: EchoFlowManagementSchema.optional(),
   echoflowToken: EchoFlowTokenSchema.optional(),
   toolSearchEnabled: ToolSearchEnabledSchema.optional(),
+  disableExperimentalBetas: DisableExperimentalBetasSchema.optional(),
   notes: z.string().optional(),
 })
 
@@ -111,6 +113,7 @@ export const CreateProviderSchema = z.object({
   echoflowManagement: EchoFlowManagementSchema.optional(),
   echoflowToken: EchoFlowTokenSchema.optional(),
   toolSearchEnabled: ToolSearchEnabledSchema.optional(),
+  disableExperimentalBetas: DisableExperimentalBetasSchema.optional(),
   notes: z.string().optional(),
 })
 
@@ -128,6 +131,7 @@ export const UpdateProviderSchema = z.object({
   echoflowManagement: EchoFlowManagementSchema.nullable().optional(),
   echoflowToken: EchoFlowTokenSchema.nullable().optional(),
   toolSearchEnabled: ToolSearchEnabledSchema.optional(),
+  disableExperimentalBetas: DisableExperimentalBetasSchema.optional(),
   notes: z.string().optional(),
 })
 

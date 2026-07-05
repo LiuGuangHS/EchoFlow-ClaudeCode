@@ -45,7 +45,7 @@ import { BackgroundHint } from '../BashTool/UI.js';
 import { FILE_READ_TOOL_NAME } from '../FileReadTool/prompt.js';
 import { spawnTeammate } from '../shared/spawnMultiAgent.js';
 import { setAgentColor } from './agentColorManager.js';
-import { agentToolResultSchema, classifyHandoffIfNeeded, emitTaskProgress, extractPartialResult, finalizeAgentTool, getLastToolUseName, runAsyncAgentLifecycle } from './agentToolUtils.js';
+import { agentToolResultSchema, classifyHandoffIfNeeded, emitAgentToolActivitiesForMessage, emitTaskProgress, extractPartialResult, finalizeAgentTool, getLastToolUseName, runAsyncAgentLifecycle } from './agentToolUtils.js';
 import { GENERAL_PURPOSE_AGENT } from './built-in/generalPurposeAgent.js';
 import { AGENT_TOOL_NAME, LEGACY_AGENT_TOOL_NAME, ONE_SHOT_BUILTIN_AGENT_TYPES } from './constants.js';
 import { buildForkedMessages, buildWorktreeNotice, FORK_AGENT, isForkSubagentEnabled, isInForkChild } from './forkSubagent.js';
@@ -943,6 +943,7 @@ export const AgentTool = buildTool({
                       // Track progress for backgrounded agents
                       updateProgressFromMessage(tracker, msg, resolveActivity2, toolUseContext.options.tools);
                       updateAsyncAgentProgress(backgroundedTaskId, getProgressUpdate(tracker), rootSetAppState);
+                      emitAgentToolActivitiesForMessage(msg, backgroundedTaskId, toolUseContext.toolUseId);
                       const lastToolName = getLastToolUseName(msg);
                       if (lastToolName) {
                         emitTaskProgress(tracker, backgroundedTaskId, toolUseContext.toolUseId, description, startTime, lastToolName);

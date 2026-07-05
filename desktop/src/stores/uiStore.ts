@@ -2,6 +2,26 @@ import { create } from 'zustand'
 import { isThemeMode, THEME_MODES, type ThemeMode } from '../types/settings'
 
 const THEME_STORAGE_KEY = 'echoflow-code-theme'
+const ACTIVE_SETTINGS_TAB_STORAGE_KEY = 'cc-haha-active-settings-tab'
+
+const SETTINGS_TABS = [
+  'providers',
+  'activity',
+  'general',
+  'h5Access',
+  'adapters',
+  'terminal',
+  'mcp',
+  'agents',
+  'skills',
+  'memory',
+  'plugins',
+  'computerUse',
+  'trace',
+  'diagnostics',
+  'about',
+] as const
+>>>>>>> upstream/main
 
 function getStoredTheme(): ThemeMode {
   try {
@@ -9,6 +29,18 @@ function getStoredTheme(): ThemeMode {
     if (isThemeMode(stored)) return stored
   } catch { /* localStorage unavailable */ }
   return 'white'
+}
+
+function isSettingsTab(value: unknown): value is SettingsTab {
+  return typeof value === 'string' && (SETTINGS_TABS as readonly string[]).includes(value)
+}
+
+function getStoredSettingsTab(): SettingsTab {
+  try {
+    const stored = localStorage.getItem(ACTIVE_SETTINGS_TAB_STORAGE_KEY)
+    if (isSettingsTab(stored)) return stored
+  } catch { /* localStorage unavailable */ }
+  return 'providers'
 }
 
 export function applyTheme(theme: ThemeMode) {
@@ -51,6 +83,7 @@ type UIStore = {
   theme: ThemeMode
   sidebarOpen: boolean
   activeView: ActiveView
+  activeSettingsTab: SettingsTab
   pendingSettingsTab: SettingsTab | null
   pendingMemoryPath: string | null
   activeModal: string | null
@@ -61,6 +94,7 @@ type UIStore = {
   toggleSidebar: () => void
   setSidebarOpen: (open: boolean) => void
   setActiveView: (view: ActiveView) => void
+  setActiveSettingsTab: (tab: SettingsTab) => void
   setPendingSettingsTab: (tab: SettingsTab | null) => void
   setPendingMemoryPath: (path: string | null) => void
   openModal: (id: string) => void
@@ -75,6 +109,7 @@ export const useUIStore = create<UIStore>((set) => ({
   theme: getStoredTheme(),
   sidebarOpen: true,
   activeView: 'code',
+  activeSettingsTab: getStoredSettingsTab(),
   pendingSettingsTab: null,
   pendingMemoryPath: null,
   activeModal: null,
@@ -99,6 +134,10 @@ export const useUIStore = create<UIStore>((set) => ({
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
   setActiveView: (view) => set({ activeView: view }),
+  setActiveSettingsTab: (tab) => {
+    try { localStorage.setItem(ACTIVE_SETTINGS_TAB_STORAGE_KEY, tab) } catch { /* noop */ }
+    set({ activeSettingsTab: tab })
+  },
   setPendingSettingsTab: (tab) => set({ pendingSettingsTab: tab }),
   setPendingMemoryPath: (path) => set({ pendingMemoryPath: path }),
   openModal: (id) => set({ activeModal: id }),
