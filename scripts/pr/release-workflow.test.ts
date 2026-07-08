@@ -62,17 +62,18 @@ describe('release desktop workflow', () => {
     }
   })
 
-  test('development desktop artifacts exclude unpacked macOS app bundles and updater-only files', () => {
+  test('development desktop artifacts include packaged installers and update files', () => {
     const workflow = readFileSync('.github/workflows/build-desktop-dev.yml', 'utf8')
     const collectStep = workflow.match(
       /- name: Collect artifacts[\s\S]*?(?:\n\s{6}- name:|$)/,
     )?.[0]
 
     expect(collectStep).toContain('*.dmg')
-    // The macOS auto-update zip and blockmaps are not collected: unsigned builds
-    // ship manual downloads only, so the artifact stays the installer + script.
-    expect(collectStep).not.toContain('*.zip')
-    expect(collectStep).not.toContain('*.blockmap')
+    expect(collectStep).toContain('*.zip')
+    expect(collectStep).toContain('*.exe')
+    expect(collectStep).toContain('*.deb')
+    expect(collectStep).toContain('*.AppImage')
+    expect(collectStep).toContain('*.blockmap')
     expect(collectStep).toContain('*.yml')
     expect(collectStep).toContain('install-macos-unsigned.sh')
     expect(collectStep).toContain('[ "${{ matrix.smoke_platform }}" = "macos" ]')
@@ -258,7 +259,9 @@ describe('release desktop workflow', () => {
     }
     expect(buildJob).toContain('target_triple: aarch64-pc-windows-msvc')
     expect(buildJob).toContain('builder_args: --win nsis --arm64')
-    expect(buildJob).toContain('Claude-Code-Haha-${APP_VERSION}-win-arm64.exe')
+    expect(buildJob).toContain('EchoFlow-Code-${APP_VERSION}-win-arm64.exe')
+    expect(buildJob).toContain('EchoFlow-Code-${APP_VERSION}-win-arm64.exe.blockmap')
+    expect(buildJob).not.toContain('Claude-Code-Haha')
     expect(buildJob).toContain('Upload release artifacts for final publish')
     expect(buildJob).toContain('actions/upload-artifact@v4')
     expect(buildJob).toContain('name: desktop-release-artifacts-${{ matrix.label }}')
@@ -322,6 +325,8 @@ describe('release desktop workflow', () => {
       `EchoFlow-Code-${version}-linux-arm64.deb`,
       `EchoFlow-Code-${version}-win-x64.exe`,
       `EchoFlow-Code-${version}-win-x64.exe.blockmap`,
+      `EchoFlow-Code-${version}-win-arm64.exe`,
+      `EchoFlow-Code-${version}-win-arm64.exe.blockmap`,
     ]
     const namespacedMetadata = [
       'latest-mac-macOS-ARM64.yml',
@@ -347,7 +352,7 @@ describe('release desktop workflow', () => {
     expect(expectedReleaseAssets.filter((name) => name.endsWith('.zip')).length).toBe(2)
     expect(expectedReleaseAssets.filter((name) => name.endsWith('.AppImage')).length).toBe(2)
     expect(expectedReleaseAssets.filter((name) => name.endsWith('.deb')).length).toBe(2)
-    expect(expectedReleaseAssets.filter((name) => name.endsWith('.exe')).length).toBe(1)
+    expect(expectedReleaseAssets.filter((name) => name.endsWith('.exe')).length).toBe(2)
     expect(expectedReleaseAssets.some((name) => name.includes('-linux-') && name.endsWith('.blockmap'))).toBe(false)
     for (const platform of ['mac', 'linux', 'win']) {
       expect(expectedReleaseAssets.some((name) => name.includes(`-${platform}-`))).toBe(true)
@@ -374,6 +379,7 @@ describe('release desktop workflow', () => {
       'EchoFlow-Code-${APP_VERSION}-linux-arm64.AppImage',
       'EchoFlow-Code-${APP_VERSION}-linux-arm64.deb',
       'EchoFlow-Code-${APP_VERSION}-win-x64.exe',
+      'EchoFlow-Code-${APP_VERSION}-win-arm64.exe',
     ]
 
     for (const file of expectedFiles) {
@@ -458,6 +464,19 @@ describe('release mobile APK workflow', () => {
   function readMobileReleaseWorkflow() {
     return readFileSync('.github/workflows/release-mobile-apk.yml', 'utf8')
   }
+
+  test('mobile APK release is manually triggered so desktop-only releases do not publish stale APKs', () => {
+    const workflow = readMobileReleaseWorkflow()
+
+    expect(workflow).toContain('workflow_dispatch:')
+    expect(workflow).toContain('tag:')
+    expect(workflow).toContain('upload:')
+    expect(workflow).not.toContain('workflow_run:')
+    expect(workflow).not.toContain('github.event.workflow_run')
+    expect(workflow).toContain('ref: ${{ inputs.tag }}')
+    expect(workflow).toContain('UPLOAD_RELEASE_ASSET: ${{ inputs.upload }}')
+    expect(workflow).toContain('if: ${{ inputs.upload }}')
+  })
 
   test('passes Android signing keystore to Gradle with an absolute path', () => {
     const workflow = readMobileReleaseWorkflow()

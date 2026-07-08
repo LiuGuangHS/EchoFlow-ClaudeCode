@@ -124,7 +124,7 @@ jobs:
           STAGING="desktop/build-artifacts/ci-EchoFlow-Code-v${{ steps.version.outputs.version }}-${{ matrix.artifact_name }}"
           mkdir -p "$STAGING"
           find desktop/build-artifacts/electron -maxdepth 1 -type f \
-            \( -name "*.dmg" -o -name "*.exe" -o -name "*.deb" -o -name "*.AppImage" -o -name "*.yml" \) \
+            \( -name "*.dmg" -o -name "*.zip" -o -name "*.exe" -o -name "*.deb" -o -name "*.AppImage" -o -name "*.blockmap" -o -name "*.yml" \) \
             | while read -r artifact; do
               cp -f "$artifact" "$STAGING/"
             done

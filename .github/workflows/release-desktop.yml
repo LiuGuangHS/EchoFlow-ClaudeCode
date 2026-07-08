@@ -434,8 +434,8 @@ jobs:
               ;;
             Windows-ARM64)
               expected=(
-                "Claude-Code-Haha-${APP_VERSION}-win-arm64.exe"
-                "Claude-Code-Haha-${APP_VERSION}-win-arm64.exe.blockmap"
+                "EchoFlow-Code-${APP_VERSION}-win-arm64.exe"
+                "EchoFlow-Code-${APP_VERSION}-win-arm64.exe.blockmap"
                 "latest.yml"
               )
               ;;
