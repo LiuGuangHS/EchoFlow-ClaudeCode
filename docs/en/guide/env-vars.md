@@ -22,7 +22,7 @@
 cp .env.example .env
 ```
 
-Edit `.env` (the example below uses [MiniMax](https://platform.minimaxi.com/subscribe/token-plan?code=1TG2Cseab2&source=link) as the API provider — you can replace it with any compatible service):
+Edit `.env` (the example below uses the official MiniMax API — you can replace it with any compatible service):
 
 ```bash
 # API authentication (choose one)

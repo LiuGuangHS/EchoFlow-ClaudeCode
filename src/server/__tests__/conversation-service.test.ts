@@ -613,14 +613,14 @@ describe('ConversationService', () => {
   test('buildChildEnv clears stale api key for bearer-token providers', async () => {
     const providerService = new ProviderService()
     const provider = await providerService.addProvider({
-      presetId: 'jiekouai',
-      name: 'Jiekou',
+      presetId: 'echoflowai',
+      name: 'EchoFlow API',
       apiKey: 'provider-key',
-      baseUrl: 'https://api.jiekou.ai/anthropic',
+      baseUrl: 'https://api.echoflow.cn',
       apiFormat: 'anthropic',
       models: {
         main: 'claude-sonnet-4-6',
-        haiku: 'claude-haiku-4-5-20251001',
+        haiku: 'claude-haiku-4-5',
         sonnet: 'claude-sonnet-4-6',
         opus: 'claude-opus-4-7',
       },
@@ -632,11 +632,11 @@ describe('ConversationService', () => {
       model: 'claude-sonnet-4-6',
     })) as Record<string, string>
 
-    expect(env.ANTHROPIC_BASE_URL).toBe('https://api.jiekou.ai/anthropic')
+    expect(env.ANTHROPIC_BASE_URL).toBe('https://api.echoflow.cn')
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe('provider-key')
     expect(env.ANTHROPIC_API_KEY).toBe('')
     expect(env.ANTHROPIC_MODEL).toBe('claude-sonnet-4-6')
-    expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe('none')
+    expect(env.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS).toContain('claude-sonnet-4-6')
     expect(env.CLAUDE_CODE_ATTRIBUTION_HEADER).toBe('1')
   })
 
@@ -654,28 +654,28 @@ describe('ConversationService', () => {
 
     const providerService = new ProviderService()
     const provider = await providerService.addProvider({
-      presetId: 'shengsuanyun',
-      name: 'Shengsuanyun',
+      presetId: 'custom',
+      name: 'Custom Gateway',
       apiKey: 'provider-key',
-      baseUrl: 'https://router.shengsuanyun.com/api',
+      baseUrl: 'https://gateway.example/api',
       apiFormat: 'anthropic',
       models: {
-        main: 'anthropic/claude-sonnet-4.6',
-        haiku: 'anthropic/claude-haiku-4.5:thinking',
-        sonnet: 'anthropic/claude-sonnet-4.6',
-        opus: 'anthropic/claude-opus-4.7',
+        main: 'custom-main-model',
+        haiku: 'custom-haiku-model',
+        sonnet: 'custom-sonnet-model',
+        opus: 'custom-opus-model',
       },
     })
 
     const service = new ConversationService() as any
     const env = (await service.buildChildEnv('/tmp', undefined, {
       providerId: provider.id,
-      model: 'anthropic/claude-sonnet-4.6',
+      model: 'custom-sonnet-model',
     })) as Record<string, string>
 
-    expect(env.ANTHROPIC_BASE_URL).toBe('https://router.shengsuanyun.com/api')
+    expect(env.ANTHROPIC_BASE_URL).toBe('https://gateway.example/api')
     expect(env.API_TIMEOUT_MS).toBe('180000')
-    expect(env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1')
+    expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,max_effort')
   })
 
   test('buildChildEnv can force official auth even when a custom default provider exists', async () => {

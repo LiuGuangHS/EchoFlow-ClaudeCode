@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from 'react'
+import { memo, useCallback, useState } from 'react'
 import { BookMarked, ChevronDown, ChevronRight, Settings } from 'lucide-react'
 import { ToolCallBlock } from './ToolCallBlock'
 import { MarkdownRenderer } from '../markdown/MarkdownRenderer'
@@ -27,12 +27,24 @@ type MemoryToolActivity = {
   files: MemoryToolFile[]
 }
 
+function useExpandableCardState() {
+  const [expanded, setExpanded] = useState(false)
+
+  const toggleExpanded = useCallback(() => {
+    setExpanded((value) => !value)
+  }, [])
+
+  return { expanded, toggleExpanded }
+}
+
 type Props = {
+  sessionId?: string | null
   toolCalls: ToolCall[]
   resultMap: Map<string, ToolResult>
   childToolCallsByParent: Map<string, ToolCall[]>
   agentTaskNotifications: Record<string, AgentTaskNotification>
-  /** When true, the last tool is still executing — show expanded */
+  showOpenRun?: boolean
+  /** When true, the last tool is still executing. */
   isStreaming?: boolean
 }
 
@@ -110,63 +122,62 @@ function hasUnresolvedToolCalls(
 }
 
 export const ToolCallGroup = memo(function ToolCallGroup({
+  sessionId,
   toolCalls,
   resultMap,
   childToolCallsByParent,
   agentTaskNotifications,
+  showOpenRun = true,
   isStreaming,
 }: Props) {
   const memoryActivity = getMemoryToolActivity(toolCalls, resultMap)
   if (memoryActivity) {
     const memoryToolCalls = toolCalls.filter(isMemoryToolCall)
     const regularToolCalls = toolCalls.filter((toolCall) => !isMemoryToolCall(toolCall))
-    if (regularToolCalls.length > 0) {
-      return (
-        <div className="mb-2 space-y-2">
-          <MemoryToolActivityGroup
-            activity={memoryActivity}
-            toolCalls={memoryToolCalls}
-            resultMap={resultMap}
-            childToolCallsByParent={childToolCallsByParent}
-            isStreaming={isStreaming}
-          />
+    return (
+      <div className={regularToolCalls.length > 0 ? 'mb-2 space-y-2' : ''}>
+        <MemoryToolActivityGroup
+          activity={memoryActivity}
+          toolCalls={memoryToolCalls}
+          resultMap={resultMap}
+          childToolCallsByParent={childToolCallsByParent}
+          isStreaming={isStreaming}
+        />
+        {regularToolCalls.length > 0 ? (
           <ToolCallGroupContent
+            sessionId={sessionId}
             toolCalls={regularToolCalls}
             resultMap={resultMap}
             childToolCallsByParent={childToolCallsByParent}
             agentTaskNotifications={agentTaskNotifications}
+            showOpenRun={showOpenRun}
             isStreaming={isStreaming}
           />
-        </div>
-      )
-    }
-    return (
-      <MemoryToolActivityGroup
-        activity={memoryActivity}
-        toolCalls={memoryToolCalls}
-        resultMap={resultMap}
-        childToolCallsByParent={childToolCallsByParent}
-        isStreaming={isStreaming}
-      />
+        ) : null}
+      </div>
     )
   }
 
   return (
     <ToolCallGroupContent
+      sessionId={sessionId}
       toolCalls={toolCalls}
       resultMap={resultMap}
       childToolCallsByParent={childToolCallsByParent}
       agentTaskNotifications={agentTaskNotifications}
+      showOpenRun={showOpenRun}
       isStreaming={isStreaming}
     />
   )
 })
 
 function ToolCallGroupContent({
+  sessionId,
   toolCalls,
   resultMap,
   childToolCallsByParent,
   agentTaskNotifications,
+  showOpenRun = true,
   isStreaming,
 }: Props) {
   const allAgents = toolCalls.every((toolCall) => toolCall.toolName === 'Agent')
@@ -174,10 +185,12 @@ function ToolCallGroupContent({
   if (allAgents) {
     return (
       <AgentToolGroup
+        sessionId={sessionId}
         toolCalls={toolCalls}
         resultMap={resultMap}
         childToolCallsByParent={childToolCallsByParent}
         agentTaskNotifications={agentTaskNotifications}
+        showOpenRun={showOpenRun}
         isStreaming={isStreaming}
       />
     )
@@ -219,7 +232,7 @@ function MemoryToolActivityGroup({
   childToolCallsByParent: Map<string, ToolCall[]>
   isStreaming?: boolean
 }) {
-  const [expanded, setExpanded] = useState(activity.action === 'saved')
+  const { expanded, toggleExpanded } = useExpandableCardState()
   const [detailsExpanded, setDetailsExpanded] = useState(false)
   const t = useTranslation()
   const titleKey = activity.action === 'saved'
@@ -227,10 +240,6 @@ function MemoryToolActivityGroup({
     : 'chat.memoryReferencedTitle'
   const visibleFiles = activity.files.slice(0, 4)
   const hiddenCount = Math.max(0, activity.files.length - visibleFiles.length)
-
-  useEffect(() => {
-    if (isStreaming) setExpanded(true)
-  }, [isStreaming])
 
   return (
     <div className="mb-2">
@@ -240,7 +249,7 @@ function MemoryToolActivityGroup({
       >
         <button
           type="button"
-          onClick={() => setExpanded((value) => !value)}
+          onClick={toggleExpanded}
           className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-[var(--color-surface-hover)]/50"
         >
           {expanded ? (
@@ -327,13 +336,15 @@ function MemoryToolActivityGroup({
 }
 
 function AgentToolGroup({
+  sessionId,
   toolCalls,
   resultMap,
   childToolCallsByParent,
   agentTaskNotifications,
+  showOpenRun = true,
   isStreaming,
 }: Props) {
-  const [expanded, setExpanded] = useState(true)
+  const { expanded, toggleExpanded } = useExpandableCardState()
   const t = useTranslation()
   const statuses = toolCalls.map((toolCall) =>
     getAgentStatus({
@@ -350,17 +361,11 @@ function AgentToolGroup({
   const allComplete = statuses.every((status) => status === 'done')
   const anyStopped = statuses.some((status) => status === 'stopped')
 
-  useEffect(() => {
-    if (isStreaming) {
-      setExpanded(true)
-    }
-  }, [isStreaming])
-
   return (
     <div className="mb-2">
       <button
         type="button"
-        onClick={() => setExpanded((value) => !value)}
+        onClick={toggleExpanded}
         className="flex w-full items-center gap-2 rounded-lg border border-[var(--color-border)]/40 bg-[var(--color-surface-container-low)] px-3 py-1.5 text-left transition-colors hover:bg-[var(--color-surface-container-high)]"
       >
         <span className="material-symbols-outlined text-[14px] text-[var(--color-outline)]">
@@ -399,10 +404,12 @@ function AgentToolGroup({
                   <div className="absolute left-[8px] top-1/2 h-2.5 w-2.5 -translate-y-1/2 rounded-full border border-[var(--color-border)]/65 bg-[var(--color-surface-container-lowest)] shadow-[0_0_0_2px_var(--color-surface)]" />
                 </div>
                 <AgentCallCard
+                  sessionId={sessionId}
                   toolCall={toolCall}
                   resultMap={resultMap}
                   childToolCallsByParent={childToolCallsByParent}
                   agentTaskNotification={agentTaskNotifications[toolCall.toolUseId]}
+                  showOpenRun={showOpenRun}
                   isStreaming={isStreaming && !resultMap.has(toolCall.toolUseId)}
                 />
               </div>
@@ -416,25 +423,18 @@ function AgentToolGroup({
 
 /** Separated so the useState hook is never called conditionally. */
 function ToolCallGroupMulti({ toolCalls, resultMap, childToolCallsByParent, isStreaming }: Props) {
-  const [expanded, setExpanded] = useState(false)
+  const { expanded, toggleExpanded } = useExpandableCardState()
   const t = useTranslation()
   const summary = generateSummary(toolCalls, t)
   const errorPresent = groupHasErrors(toolCalls, resultMap, childToolCallsByParent)
   const hasUnresolvedTools = hasUnresolvedToolCalls(toolCalls, resultMap, childToolCallsByParent)
   const isRunning = !!isStreaming || hasUnresolvedTools
-  const hasNestedToolCalls = toolCalls.some((tc) => (childToolCallsByParent.get(tc.toolUseId)?.length ?? 0) > 0)
-
-  useEffect(() => {
-    if (isRunning || hasNestedToolCalls) {
-      setExpanded(true)
-    }
-  }, [hasNestedToolCalls, isRunning])
 
   return (
     <div className="mb-2">
       <button
         type="button"
-        onClick={() => setExpanded((v) => !v)}
+        onClick={toggleExpanded}
         className="flex w-full items-center gap-2 rounded-lg border border-[var(--color-border)]/40 bg-[var(--color-surface-container-low)] px-3 py-1.5 text-left transition-colors hover:bg-[var(--color-surface-container-high)]"
       >
         <span className="material-symbols-outlined text-[14px] text-[var(--color-outline)]">
@@ -474,16 +474,20 @@ function ToolCallGroupMulti({ toolCalls, resultMap, childToolCallsByParent, isSt
 }
 
 function AgentCallCard({
+  sessionId,
   toolCall,
   resultMap,
   childToolCallsByParent,
   agentTaskNotification,
+  showOpenRun = true,
   isStreaming = false,
 }: {
+  sessionId?: string | null
   toolCall: ToolCall
   resultMap: Map<string, ToolResult>
   childToolCallsByParent: Map<string, ToolCall[]>
   agentTaskNotification?: AgentTaskNotification
+  showOpenRun?: boolean
   isStreaming?: boolean
 }) {
   const [expanded, setExpanded] = useState(false)
@@ -523,6 +527,8 @@ function AgentCallCard({
   const previewText = terminalTaskReport || fullOutputText || terminalTaskSummary
   const outputSummary = previewText ? getAgentOutputSummary(previewText) : ''
   const description = typeof input.description === 'string' ? input.description : ''
+  const openRunTitle = description.trim() || 'Agent'
+  const canOpenRun = showOpenRun && !!sessionId && !!toolCall.toolUseId
 
   return (
     <div className="overflow-hidden rounded-lg border border-[var(--color-border)]/50 bg-[var(--color-surface-container-lowest)]">
@@ -570,6 +576,19 @@ function AgentCallCard({
             className="shrink-0 rounded-md border border-[var(--color-border)] px-2.5 py-1 text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]"
           >
             {t('agentStatus.viewResult')}
+          </button>
+        )}
+        {canOpenRun && (
+          <button
+            type="button"
+            aria-label={`Open run ${openRunTitle}`}
+            onClick={(event) => {
+              event.stopPropagation()
+              useTabStore.getState().openSubagentTab(sessionId, toolCall.toolUseId, openRunTitle)
+            }}
+            className="shrink-0 rounded-md border border-[var(--color-border)] px-2.5 py-1 text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]"
+          >
+            Open run
           </button>
         )}
         <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusClassName}`}>

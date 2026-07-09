@@ -78,8 +78,6 @@
     },
     "needsApiKey": true,
     "websiteUrl": "https://open.bigmodel.cn",
-    "apiKeyUrl": "https://www.bigmodel.cn/invite?icode=d41B2qi8Z5xNwTGLNPPF3OZLO2QH3C0EBTSr%2BArzMw4%3D",
-    "promoText": "智谱 GLM 为 EchoFlow Code 用户准备了专属邀请福利，使用此链接注册后可领取新用户权益。",
     "authStrategy": "auth_token",
     "defaultEnv": {
       "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1000000"
@@ -133,7 +131,6 @@
     },
     "needsApiKey": true,
     "websiteUrl": "https://platform.minimaxi.com",
-    "apiKeyUrl": "https://platform.minimaxi.com/subscribe/token-plan?code=1TG2Cseab2&source=link",
     "authStrategy": "auth_token",
     "defaultEnv": {
       "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1000000",

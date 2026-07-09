@@ -7,6 +7,7 @@
  *   GET    /api/sessions            — 列出会话
  *   GET    /api/sessions/:id        — 获取会话详情
  *   GET    /api/sessions/:id/messages — 获取会话消息
+ *   GET    /api/sessions/:id/subagents/by-tool/:toolUseId — 获取 SubAgent 运行详情
  *   GET    /api/sessions/:id/trace — 获取会话级模型调用 trace（body preview 裁剪后的列表视图）
  *   GET    /api/sessions/:id/trace/calls/:callId — 获取单次调用的完整 trace 记录
  *   GET    /api/sessions/:id/turn-checkpoints — 获取按轮次保留的 checkpoint 预览
@@ -43,6 +44,7 @@ import {
 import { registerChangedFileAccessRoot, registerFilesystemAccessRoot } from '../services/filesystemAccessRoots.js'
 import { findGitRoot } from '../../utils/git.js'
 import { traceCaptureService, trimTraceCallPreviews } from '../services/traceCaptureService.js'
+import { getSubagentRunByTool } from '../services/subagentRunService.js'
 
 const DEFAULT_GIT_INFO_COMMAND_TIMEOUT_MS = 3_000
 
@@ -198,6 +200,36 @@ export async function handleSessionsApi(
         )
       }
       return await handleSessionWorkspaceRoute(sessionId, url, segments[4])
+    }
+
+    if (subResource === 'subagents') {
+      if (req.method !== 'GET') {
+        return Response.json(
+          { error: 'METHOD_NOT_ALLOWED', message: `Method ${req.method} not allowed` },
+          { status: 405 }
+        )
+      }
+      if (segments[4] !== 'by-tool' || !segments[5] || segments.length !== 6) {
+        return Response.json(
+          { error: 'NOT_FOUND', message: 'SubAgent route not found' },
+          { status: 404 }
+        )
+      }
+
+      let toolUseId: string
+      try {
+        toolUseId = decodeURIComponent(segments[5])
+      } catch {
+        return Response.json(
+          { error: 'NOT_FOUND', message: 'SubAgent route not found' },
+          { status: 404 }
+        )
+      }
+      const result = await getSubagentRunByTool(sessionId, toolUseId)
+      if (!result) {
+        throw ApiError.notFound(`SubAgent run not found: ${toolUseId}`)
+      }
+      return Response.json(result)
     }
 
     // Route to conversations handler if sub-resource is 'chat'

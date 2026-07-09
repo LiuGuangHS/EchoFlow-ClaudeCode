@@ -504,7 +504,7 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
                   className={`
                     rounded-lg py-2 text-center text-xs font-semibold transition-colors
                     ${isSelected
-                      ? 'bg-[var(--color-brand)] text-white'
+                      ? 'bg-[var(--color-brand)] text-[var(--color-on-primary)]'
                       : 'bg-[var(--color-surface-container-high)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]'
                     }
                   `}

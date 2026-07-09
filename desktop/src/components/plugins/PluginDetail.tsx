@@ -101,7 +101,7 @@ export function PluginDetail() {
     }
   }
 
-  const openSettingsTab = (tab: 'skills' | 'agents' | 'mcp') => {
+  const openSettingsTab = (tab: 'agents' | 'mcp') => {
     useUIStore.getState().setPendingSettingsTab(tab)
     useTabStore.getState().openTab(SETTINGS_TAB_ID, 'Settings', 'settings')
   }
@@ -114,7 +114,8 @@ export function PluginDetail() {
       })
       return
     }
-    openSettingsTab('skills')
+    useUIStore.getState().setPendingSettingsTab('skills')
+    useTabStore.getState().openTab(SETTINGS_TAB_ID, 'Settings', 'settings')
     await fetchSkillDetail('plugin', skillName, currentWorkDir, 'plugins')
 
     const { selectedSkill, error } = useSkillStore.getState()

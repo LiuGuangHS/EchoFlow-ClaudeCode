@@ -290,7 +290,7 @@ describe('Settings > General tab', () => {
       appMode: {
         mode: 'default',
         portableDir: null,
-        defaultPortableDir: '/Applications/Claude Code Haha/CLAUDE_CONFIG_DIR',
+        defaultPortableDir: '/Applications/EchoFlow Code/CLAUDE_CONFIG_DIR',
         activeConfigDir: null,
         configDirSource: 'system',
       },
@@ -300,9 +300,9 @@ describe('Settings > General tab', () => {
         useSettingsStore.setState({
           appMode: {
             mode,
-            portableDir: mode === 'portable' ? portableDir ?? '/Applications/Claude Code Haha/CLAUDE_CONFIG_DIR' : null,
-            defaultPortableDir: '/Applications/Claude Code Haha/CLAUDE_CONFIG_DIR',
-            activeConfigDir: mode === 'portable' ? portableDir ?? '/Applications/Claude Code Haha/CLAUDE_CONFIG_DIR' : null,
+            portableDir: mode === 'portable' ? portableDir ?? '/Applications/EchoFlow Code/CLAUDE_CONFIG_DIR' : null,
+            defaultPortableDir: '/Applications/EchoFlow Code/CLAUDE_CONFIG_DIR',
+            activeConfigDir: mode === 'portable' ? portableDir ?? '/Applications/EchoFlow Code/CLAUDE_CONFIG_DIR' : null,
             configDirSource: mode === 'portable' ? 'portable' : 'system',
           },
           appModeRequiresRestart: true,
@@ -539,7 +539,7 @@ describe('Settings > General tab', () => {
       appMode: {
         mode: 'portable',
         portableDir: '/Users/test/cc-haha-data',
-        defaultPortableDir: '/Applications/Claude Code Haha/CLAUDE_CONFIG_DIR',
+        defaultPortableDir: '/Applications/EchoFlow Code/CLAUDE_CONFIG_DIR',
         activeConfigDir: '/Users/test/cc-haha-data',
         configDirSource: 'portable',
       },
@@ -571,7 +571,7 @@ describe('Settings > General tab', () => {
     expect(screen.getByText('Choose or enter a portable data directory first.')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Use the default portable folder beside the app' }))
-    expect(input).toHaveValue('/Applications/Claude Code Haha/CLAUDE_CONFIG_DIR')
+    expect(input).toHaveValue('/Applications/EchoFlow Code/CLAUDE_CONFIG_DIR')
     expect(screen.queryByText('Choose or enter a portable data directory first.')).not.toBeInTheDocument()
   })
 
@@ -591,7 +591,7 @@ describe('Settings > General tab', () => {
       appMode: {
         mode: 'portable',
         portableDir: '/env/claude-data',
-        defaultPortableDir: '/Applications/Claude Code Haha/CLAUDE_CONFIG_DIR',
+        defaultPortableDir: '/Applications/EchoFlow Code/CLAUDE_CONFIG_DIR',
         activeConfigDir: '/env/claude-data',
         configDirSource: 'environment',
       },
@@ -889,7 +889,7 @@ describe('Settings > General tab', () => {
       expect(desktopNotificationsMock.requestDesktopNotificationPermission).toHaveBeenCalledTimes(1)
     })
     expect(desktopNotificationsMock.notifyDesktop).toHaveBeenCalledWith({
-      title: 'Claude Code Haha notifications are enabled',
+      title: 'EchoFlow Code notifications are enabled',
       body: 'Permission prompts and completed agent replies will now use system notifications.',
     })
   })
@@ -1507,13 +1507,13 @@ describe('Settings > Providers tab', () => {
     providerStoreState.providers = [
       {
         id: 'provider-1',
-        name: 'MiniMax-M2.7-highspeed(openai)',
+        name: 'Custom OpenAI Gateway',
         presetId: 'custom',
         apiKey: '***',
-        baseUrl: 'https://api.minimaxi.com',
+        baseUrl: 'https://gateway.example/v1',
         apiFormat: 'openai_chat',
         models: {
-          main: 'MiniMax-M2.7-highspeed',
+          main: 'custom-highspeed-model',
           haiku: '',
           sonnet: '',
           opus: '',
@@ -1651,6 +1651,34 @@ describe('Settings > Providers tab', () => {
     expect(within(dialog).getByText('Requests will be translated via the local proxy')).toBeInTheDocument()
   })
 
+  it('localizes the main model placeholder in the provider form', () => {
+    useSettingsStore.setState({ locale: 'zh' })
+    providerStoreState.presets = [
+      {
+        id: 'custom',
+        name: 'Custom',
+        baseUrl: 'https://api.example.com/anthropic',
+        apiFormat: 'anthropic',
+        defaultModels: {
+          main: '',
+          haiku: '',
+          sonnet: '',
+          opus: '',
+        },
+        needsApiKey: true,
+        websiteUrl: '',
+      },
+    ]
+
+    render(<Settings />)
+
+    fireEvent.click(screen.getByRole('button', { name: /添加服务商/i }))
+
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).getByPlaceholderText('模型 ID')).toBeInTheDocument()
+    expect(within(dialog).queryByPlaceholderText('Model ID')).not.toBeInTheDocument()
+  })
+
   it('normalizes blank model mappings to the main model when saving a provider', async () => {
     providerStoreState.createProvider = vi.fn().mockResolvedValue({
       id: 'provider-new',
@@ -1719,18 +1747,18 @@ describe('Settings > Providers tab', () => {
     })
     providerStoreState.presets = [
       {
-        id: 'deepseek',
-        name: 'DeepSeek',
-        baseUrl: 'https://api.deepseek.com/anthropic',
+        id: 'echoflowai',
+        name: '清云（EchoFlow）API',
+        baseUrl: 'https://api.echoflow.cn',
         apiFormat: 'anthropic',
         defaultModels: {
-          main: 'deepseek-v4-pro',
-          haiku: 'deepseek-v4-flash',
-          sonnet: 'deepseek-v4-pro',
-          opus: 'deepseek-v4-pro',
+          main: 'claude-sonnet-4-6',
+          haiku: 'claude-haiku-4-5',
+          sonnet: 'claude-sonnet-4-6',
+          opus: 'claude-opus-4-7',
         },
         needsApiKey: true,
-        websiteUrl: '',
+        websiteUrl: 'https://api.echoflow.cn/',
       },
       {
         id: 'custom',
@@ -1797,7 +1825,7 @@ describe('Settings > Providers tab', () => {
       modelId: 'Qwen3Coder',
     }))
     expect(providerStoreState.testConfig).not.toHaveBeenCalledWith(expect.objectContaining({
-      modelId: 'deepseek-v4-pro',
+      modelId: 'claude-sonnet-4-6',
     }))
   })
 
@@ -2141,7 +2169,7 @@ describe('Settings > About tab', () => {
     useUpdateStore.setState({
       status: 'available',
       availableVersion: '0.1.5',
-      releaseNotes: '# Claude Code Haha v0.1.5\n\n- Fixed updater rendering\n- Added markdown support',
+      releaseNotes: '# EchoFlow Code v0.1.5\n\n- Fixed updater rendering\n- Added markdown support',
       progressPercent: 0,
       downloadedBytes: 0,
       totalBytes: null,
@@ -2158,7 +2186,7 @@ describe('Settings > About tab', () => {
   it('renders release notes with markdown formatting', async () => {
     render(<Settings />)
 
-    expect(await screen.findByRole('heading', { name: 'Claude Code Haha v0.1.5' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'EchoFlow Code v0.1.5' })).toBeInTheDocument()
     expect(screen.getByText('Fixed updater rendering')).toBeInTheDocument()
     expect(screen.getByText('Added markdown support')).toBeInTheDocument()
   })
@@ -2202,7 +2230,7 @@ describe('Settings > About tab', () => {
     useUpdateStore.setState({
       status: 'downloading',
       availableVersion: '0.1.5',
-      releaseNotes: '# Claude Code Haha v0.1.5',
+      releaseNotes: '# EchoFlow Code v0.1.5',
       progressPercent: 0,
       downloadedBytes: 1536,
       totalBytes: null,

@@ -4,20 +4,20 @@ layout: home
 hero:
   name: EchoFlow Code
   text: 面向真实项目的本地 Coding Agent
-  tagline: 在终端、桌面端和 IM 里协同编码，内置 EchoFlowAPI，支持 Anthropic 兼容模型、多 Agent、记忆系统、Skills 与 Computer Use。
+  tagline: 在终端、桌面端和 IM 里协同编码，内置清云 API（EchoFlowAPI），支持官方 Claude、Anthropic 兼容模型、多 Agent、记忆系统、Skills 与 Computer Use。
   actions:
     - theme: brand
       text: 快速开始
       link: /guide/quick-start
     - theme: brand
+      text: 配置清云 API
+      link: https://api.echoflow.cn/
+    - theme: alt
       text: 下载最新版
       link: https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest
     - theme: alt
-      text: 阅读文档
-      link: /guide/quick-start
-    - theme: alt
-      text: GitHub 源码
-      link: https://github.com/LiuGuangHS/EchoFlow-ClaudeCode
+      text: 清云 AI 在线应用
+      link: https://ai.echoflow.cn/
 
 features:
   - icon:
@@ -82,9 +82,9 @@ EchoFlow Code 是一个本地可运行的 Coding Agent 产品，覆盖 CLI、桌
 
 ## 推荐使用清云 API
 
-新用户推荐优先使用 **清云（EchoFlow）API**：[api.echoflow.cn](https://api.echoflow.cn)。桌面端 Providers 页面顶部提供官方快捷接入卡片，可以直接注册 EchoFlowAPI、生成系统访问令牌、选择 main / haiku 模型并连接为默认 Provider。
+新用户推荐优先使用 **清云（EchoFlow）API**：[api.echoflow.cn](https://api.echoflow.cn)。桌面端 Providers 页面提供清云 API 快捷接入卡片，可以注册账号、生成系统访问令牌、选择 main / haiku 模型并连接为默认 Provider。
 
-清云 API 适合作为 EchoFlow Code 的默认模型入口：配置路径更短，和桌面端 Provider 流程贴合，也方便后续在 Anthropic 兼容协议、OpenAI 兼容网关、本地模型之间切换。已经有自有模型网关的团队，也可以把清云 API 作为开箱验证路径，先跑通项目会话、多 Agent、记忆和 Computer Use。
+清云 API 是 EchoFlow Code 的推荐模型入口：配置路径更短，和桌面端 Provider 流程贴合，也方便后续在官方 Claude、Anthropic 兼容协议、OpenAI 兼容网关和本地模型之间切换。已经有自有模型网关的团队，可以先用清云 API 跑通项目会话、多 Agent、记忆和 Computer Use，再按需要改成 Custom Provider。
 
 ## EchoFlow 生态入口
 

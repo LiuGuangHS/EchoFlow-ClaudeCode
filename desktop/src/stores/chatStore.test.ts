@@ -4396,13 +4396,17 @@ describe('chatStore history mapping', () => {
     })
     useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
       type: 'error',
-      message: 'provider failed',
-      code: 'provider_error',
+      message: 'API Error: Provider stream stalled after partial response - no new chunks for 240s',
+      code: 'STREAM_IDLE_TIMEOUT',
     })
 
     expect(useChatStore.getState().sessions[TEST_SESSION_ID]?.messages).toMatchObject([
       { type: 'assistant_text', content: 'partial answer before error' },
-      { type: 'error', message: 'provider failed' },
+      {
+        type: 'error',
+        message: 'API Error: Provider stream stalled after partial response - no new chunks for 240s',
+        code: 'STREAM_IDLE_TIMEOUT',
+      },
     ])
 
     vi.runOnlyPendingTimers()

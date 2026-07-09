@@ -89,6 +89,20 @@ const NETWORK_TIMEOUT_STEP_SECONDS = 30
 const ECHOFLOW_REGISTER_URL = 'https://api.echoflow.cn/register?channel=c_fe4eotyx'
 const MOBILE_APP_DOWNLOAD_URL = 'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest'
 const SETTINGS_CHECKBOX_INPUT_CLASS = 'settings-checkbox-input peer'
+const BUILT_IN_OUTPUT_STYLE_TRANSLATION_KEYS = {
+  default: {
+    label: 'settings.general.outputStyleBuiltin.default.label',
+    description: 'settings.general.outputStyleBuiltin.default.description',
+  },
+  Explanatory: {
+    label: 'settings.general.outputStyleBuiltin.explanatory.label',
+    description: 'settings.general.outputStyleBuiltin.explanatory.description',
+  },
+  Learning: {
+    label: 'settings.general.outputStyleBuiltin.learning.label',
+    description: 'settings.general.outputStyleBuiltin.learning.description',
+  },
+} satisfies Record<string, { label: TranslationKey; description: TranslationKey }>
 
 function buildH5LaunchUrl(baseUrl: string | null, token: string | null): string | null {
   if (!baseUrl) return null
@@ -1822,7 +1836,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, initialPres
                     required={slot === 'main'}
                     value={models[slot]}
                     onChange={(e) => handleModelChange(slot, e.target.value)}
-                    placeholder={slot === 'main' ? 'Model ID' : t('settings.providers.sameAsMain')}
+                    placeholder={slot === 'main' ? t('settings.providers.modelIdPlaceholder') : t('settings.providers.sameAsMain')}
                   />
                   <label className="mt-1 inline-flex h-6 w-fit cursor-pointer items-center gap-1.5 rounded-[var(--radius-sm)] px-1 text-xs text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]">
                     <input
@@ -2227,11 +2241,17 @@ export function GeneralSettings() {
     RESPONSE_LANGUAGES.find(({ value }) => value === responseLanguage)?.label ?? RESPONSE_LANGUAGES[0]!.label
   const outputStyleItems = outputStyles.map((style) => ({
     value: style.value,
-    label: style.label,
-    description: `${style.description} · ${getOutputStyleSourceLabel(style.source, t)}`,
+    label: getOutputStyleLabel(style, t),
+    description: `${getOutputStyleDescription(style, t)} · ${getOutputStyleSourceLabel(style.source, t)}`,
   }))
   const selectedOutputStyle =
     outputStyles.find((style) => style.value === outputStyle) ?? outputStyles[0]
+  const selectedOutputStyleLabel = selectedOutputStyle
+    ? getOutputStyleLabel(selectedOutputStyle, t)
+    : outputStyle
+  const selectedOutputStyleDescription = selectedOutputStyle
+    ? getOutputStyleDescription(selectedOutputStyle, t)
+    : ''
   const outputStyleScopeLabel = outputStyleScope === 'localSettings'
     ? t('settings.general.outputStyleScopeLocal')
     : t('settings.general.outputStyleScopeUser')
@@ -2733,7 +2753,7 @@ export function GeneralSettings() {
             onClick={() => setLocale(value)}
             className={`flex-1 py-2 text-xs font-semibold rounded-lg border transition-all ${
               locale === value
-                ? 'bg-[var(--color-brand)] text-white border-[var(--color-brand)]'
+                ? 'bg-[var(--color-brand)] text-[var(--color-on-primary)] border-[var(--color-brand)]'
                 : 'border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]'
             }`}
           >
@@ -2787,11 +2807,11 @@ export function GeneralSettings() {
                 <span className="block truncate font-medium">
                   {outputStylesLoading
                     ? t('settings.general.outputStyleLoading')
-                    : selectedOutputStyle?.label ?? outputStyle}
+                    : selectedOutputStyleLabel}
                 </span>
-                {selectedOutputStyle?.description && (
+                {selectedOutputStyleDescription && (
                   <span className="mt-0.5 block truncate text-xs text-[var(--color-text-tertiary)]">
-                    {selectedOutputStyle.description}
+                    {selectedOutputStyleDescription}
                   </span>
                 )}
               </span>
@@ -3177,7 +3197,7 @@ export function GeneralSettings() {
                 onClick={() => setWebSearchDraft({ ...webSearchDraft, mode: value })}
                 className={`h-9 px-2 text-xs font-semibold rounded-lg border transition-all truncate ${
                   (webSearchDraft.mode ?? 'auto') === value
-                    ? 'bg-[var(--color-brand)] text-white border-[var(--color-brand)]'
+                    ? 'bg-[var(--color-brand)] text-[var(--color-on-primary)] border-[var(--color-brand)]'
                     : 'border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]'
                 }`}
                 title={label}
@@ -3504,6 +3524,40 @@ export function GeneralSettings() {
       />
     </div>
   )
+}
+
+function getBuiltInOutputStyleTranslationKeys(style: {
+  value: string
+  source: OutputStyleSource
+}) {
+  if (style.source !== 'built-in') return null
+  return BUILT_IN_OUTPUT_STYLE_TRANSLATION_KEYS[
+    style.value as keyof typeof BUILT_IN_OUTPUT_STYLE_TRANSLATION_KEYS
+  ] ?? null
+}
+
+function getOutputStyleLabel(
+  style: {
+    value: string
+    label: string
+    source: OutputStyleSource
+  },
+  t: (key: TranslationKey) => string,
+) {
+  const keys = getBuiltInOutputStyleTranslationKeys(style)
+  return keys ? t(keys.label) : style.label
+}
+
+function getOutputStyleDescription(
+  style: {
+    value: string
+    description: string
+    source: OutputStyleSource
+  },
+  t: (key: TranslationKey) => string,
+) {
+  const keys = getBuiltInOutputStyleTranslationKeys(style)
+  return keys ? t(keys.description) : style.description
 }
 
 function getOutputStyleSourceLabel(
@@ -4022,7 +4076,7 @@ function SettingsCheckboxMark({ checked, disabled = false }: { checked: boolean;
       aria-hidden="true"
       className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-all peer-focus-visible:ring-2 peer-focus-visible:ring-[var(--color-brand)]/40 ${
         checked
-          ? 'border-[var(--color-brand)] bg-[var(--color-brand)] text-white shadow-[var(--shadow-button-primary)]'
+          ? 'border-[var(--color-brand)] bg-[var(--color-brand)] text-[var(--color-on-primary)] shadow-[var(--shadow-button-primary)]'
           : 'border-[var(--color-border-focus)] bg-[var(--color-surface)] text-transparent'
       } ${disabled ? 'opacity-50' : ''}`}
     >

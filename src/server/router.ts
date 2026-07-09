@@ -16,6 +16,7 @@ import { handleProvidersApi } from './api/providers.js'
 import { handleAdaptersApi } from './api/adapters.js'
 import { handlePluginsApi } from './api/plugins.js'
 import { handleSkillsApi } from './api/skills.js'
+import { handleMarketApi } from './api/market.js'
 import { handleComputerUseApi } from './api/computer-use.js'
 import { handleHahaOAuthApi } from './api/haha-oauth.js'
 import { handleHahaOpenAIOAuthApi } from './api/haha-openai-oauth.js'
@@ -91,6 +92,9 @@ export async function handleApiRequest(req: Request, url: URL): Promise<Response
 
     case 'skills':
       return handleSkillsApi(req, url, segments)
+
+    case 'market':
+      return handleMarketApi(req, url, segments)
 
     case 'mcp':
       return handleMcpApi(req, url, segments)

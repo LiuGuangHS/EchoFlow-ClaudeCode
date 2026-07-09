@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import { tmpdir } from 'node:os'
 import { describe, expect, it, vi } from 'vitest'
@@ -38,6 +38,25 @@ describe('Electron window service', () => {
       expect(JSON.parse(readFileSync(statePath, 'utf-8'))).toEqual(state)
       expect(app.getPath).not.toHaveBeenCalled()
     } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  it('does not crash when window state cannot be written', () => {
+    const tmp = mkdtempSync(path.join(tmpdir(), 'electron-window-state-unwritable-'))
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      const app = fakeApp(path.join(tmp, 'user-data'))
+      const state = { x: 10, y: 20, width: 1280, height: 820, maximized: false }
+      mkdirSync(path.join(tmp, 'window-state.json'))
+
+      expect(() => writeWindowState(app as never, state, { CLAUDE_CONFIG_DIR: tmp })).not.toThrow()
+      expect(consoleError).toHaveBeenCalledWith(
+        expect.stringContaining('[desktop] failed to write Electron window state'),
+        expect.any(Error),
+      )
+    } finally {
+      consoleError.mockRestore()
       rmSync(tmp, { recursive: true, force: true })
     }
   })

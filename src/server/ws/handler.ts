@@ -1356,6 +1356,19 @@ function isDuplicateOfLastApiError(
   )
 }
 
+function classifyRuntimeErrorCode(message: string, fallbackCode: string): string {
+  if (/Stream max duration exceeded/i.test(message)) {
+    return 'STREAM_MAX_DURATION'
+  }
+  if (
+    /Provider stream stalled after partial response/i.test(message) ||
+    /Stream idle timeout/i.test(message)
+  ) {
+    return 'STREAM_IDLE_TIMEOUT'
+  }
+  return fallbackCode
+}
+
 function bindPrewarmMetadataCapture(sessionId: string) {
   for (const msg of conversationService.getRecentSdkMessages(sessionId)) {
     cacheSessionInitMetadata(sessionId, msg)
@@ -1443,7 +1456,8 @@ export function translateCliMessage(cliMsg: any, sessionId: string): ServerMessa
           return []
         }
         const message = extractAssistantText(cliMsg) || cliMsg.error || 'Unknown API error'
-        const code = typeof cliMsg.error === 'string' ? cliMsg.error : 'API_ERROR'
+        const fallbackCode = typeof cliMsg.error === 'string' ? cliMsg.error : 'API_ERROR'
+        const code = classifyRuntimeErrorCode(message, fallbackCode)
         streamState.lastApiError = { message, code }
         return [{
           type: 'error',
@@ -1743,7 +1757,7 @@ export function translateCliMessage(cliMsg: any, sessionId: string): ServerMessa
           {
             type: 'error',
             message: resultMessage,
-            code: 'CLI_ERROR',
+            code: classifyRuntimeErrorCode(resultMessage, 'CLI_ERROR'),
           },
           { type: 'message_complete', usage },
         ]

@@ -593,8 +593,9 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         mode,
         portableDir: newMode.portableDir || null,
       })
-    } catch {
+    } catch (error) {
       set({ appMode: prev, appModeRequiresRestart: false })
+      throw error
     }
   },
 }))

@@ -109,11 +109,23 @@ Every feature, bugfix, and behavior change must ship with proof that matches the
 - Do not use fork RC tags such as `vX.Y.Z-rc.N` unless the release tooling is updated first.
 - `scripts/release.ts`, release-note naming, and `.github/workflows/release-desktop.yml` expect plain `X.Y.Z` versions and publish non-prerelease GitHub Releases.
 - Desktop releases are built remotely by GitHub Actions from tags matching `v*.*.*`; do not upload local build artifacts as the release source of truth.
-- The release workflow `.github/workflows/release-desktop.yml` validates that the tag matches `desktop/package.json`, loads `release-notes/vX.Y.Z.md`, builds sidecars, and packages the Electron desktop app across the matrix.
-- The hosted tag workflow is not a substitute for local release verification. Before tagging or calling a release ready, run `bun run scripts/release.ts <version> --dry`, then run `bun run verify`, and run `bun run quality:gate --mode release --allow-live --provider-model <provider:model[:label]>` when live provider access is available.
-- GitHub Release body is sourced from `release-notes/vX.Y.Z.md` in the tagged commit. Keep the filename, app version, and tag aligned exactly.
-- Use `bun run scripts/release.ts <version>` to cut a desktop release. The script updates Electron desktop version files, requires the matching release-notes file, commits it, and creates the annotated tag.
-- The normal release push is `git push origin main --tags`. If no live provider is configured, or a provider quota/key is unavailable, run the non-live gate anyway and report the live-release blocker explicitly.
+- The release workflow `.github/workflows/release-desktop.yml` validates that the tag matches `desktop/package.json`, loads `release-notes/vX.Y.Z.md`, builds sidecars, packages the Electron desktop app across the matrix, uploads updater metadata, and only publishes the GitHub Release after all assets are uploaded.
+- GitHub Release body is sourced from `release-notes/vX.Y.Z.md` in the tagged commit. Keep the filename, app version in `desktop/package.json`, and tag aligned exactly.
+- Before cutting a release, commit the product/workflow changes that should ship in the release onto `main`. The release script creates a separate `release: vX.Y.Z` commit; it is not a substitute for committing the bugfix or feature work first.
+- Release notes must exist before the release script is run, for example `release-notes/v0.4.6.md`. Keep them user-facing and include install/update caveats when the release changes packaging, signing, updater behavior, or platform support.
+- Required local release runbook for `vX.Y.Z`:
+  1. Confirm the worktree is on `main` and only intended release changes are staged or committed: `git status --short`.
+  2. Create or update `release-notes/vX.Y.Z.md`.
+  3. Run `bun run scripts/release.ts X.Y.Z --dry` and verify the printed tag, version, and notes path.
+  4. Run the relevant local gates before tagging. At minimum for desktop/native/release changes: `bun run check:policy`, `bun run check:desktop`, and `bun run check:native`. Before calling the release ready, run `bun run verify`.
+  5. When live provider access exists, run `bun run quality:gate --mode release --allow-live --provider-model <provider:model[:label]>`. If no provider key/quota is available, run the non-live gates anyway and report the live-release blocker explicitly.
+  6. Run `bun run scripts/release.ts X.Y.Z` to update `desktop/package.json`, stage the release notes, create the `release: vX.Y.Z` commit, and create the annotated `vX.Y.Z` tag.
+  7. Push with `git push origin main --tags`.
+  8. Watch the `Release Desktop` workflow for the pushed tag. Do not announce the release until the workflow succeeds and `gh release view vX.Y.Z --json isDraft,url,assets` shows a public release with the expected macOS, Windows, Linux, and updater metadata assets.
+- Do not manually create or move a release tag unless recovering from a failed release with maintainer intent. The normal path is `bun run scripts/release.ts X.Y.Z`; if a tag must be repaired, document the old tag target, the new target, and why the repair is safe.
+- Non-draft desktop releases should have macOS signing and notarization secrets: `MACOS_CERTIFICATE`, `MACOS_CERTIFICATE_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID`. Missing macOS secrets produce unsigned fallback artifacts and must be called out before publishing.
+- Windows signing secrets, `WINDOWS_CERTIFICATE` and `WINDOWS_CERTIFICATE_PASSWORD`, are recommended but not currently release-blocking. Without them, Windows auto-update can still work, but users may see SmartScreen warnings.
+- Manual `workflow_dispatch` runs are for draft/testing builds by default. A draft run may be unsigned while signing setup is being tested; it must not be treated as the public update source.
 - For local macOS test packaging, `desktop/scripts/build-macos-arm64.sh` is the canonical Apple Silicon build entrypoint, with outputs under `desktop/build-artifacts/macos-arm64/`.
 - For Windows installer packaging, use `desktop/scripts/build-windows-x64.ps1` through `cd desktop && bun run build:windows-x64`; use `SKIP_INSTALL=1` only when dependencies are already installed, and `REBUILD_NATIVE=1` when Electron native dependencies such as `node-pty` need rebuilding.
 

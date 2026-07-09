@@ -188,6 +188,10 @@ function getTerminalService() {
 function getPreviewService() {
   previewService ??= new ElectronPreviewService({
     previewScriptPath: previewAgentPath(),
+    resolveScaleFactor: parent => {
+      const bounds = parent.getBounds?.()
+      return bounds ? screen.getDisplayMatching(bounds).scaleFactor : 1
+    },
     createView: () => {
       const view = new WebContentsView({
         webPreferences: {
@@ -406,6 +410,11 @@ registerIpcHandlers()
 app.whenReady().then(async () => {
   applyWindowsAppUserModelId(app)
   applyStartupPortableMode(app)
+  screen.on('display-metrics-changed', (_event, _display, changedMetrics) => {
+    if (changedMetrics.includes('scaleFactor') || changedMetrics.includes('bounds')) {
+      previewService?.refreshBounds()
+    }
+  })
   await getServerRuntime().startServer().catch(error => {
     console.error('[desktop] failed to start Electron server sidecar', error)
   })

@@ -24,6 +24,7 @@ type Props = {
   isPending?: boolean
   status?: 'stopped'
   partialInput?: string
+  defaultExpanded?: boolean
 }
 
 const TOOL_ICONS: Record<string, string> = {
@@ -50,10 +51,10 @@ type ContentStats = {
   windowed?: boolean
 }
 
-export const ToolCallBlock = memo(function ToolCallBlock({ toolName, input, result, compact = false, isPending = false, status, partialInput }: Props) {
+export const ToolCallBlock = memo(function ToolCallBlock({ toolName, input, result, compact = false, isPending = false, status, partialInput, defaultExpanded = false }: Props) {
   const isExitPlanTool = isExitPlanModeTool(toolName)
   const isEnterPlanTool = isEnterPlanModeTool(toolName)
-  const [expanded, setExpanded] = useState(isExitPlanTool)
+  const [expanded, setExpanded] = useState(defaultExpanded || isExitPlanTool)
   const t = useTranslation()
   const obj = input && typeof input === 'object' ? (input as Record<string, unknown>) : {}
   const icon = TOOL_ICONS[toolName] || 'build'
@@ -82,7 +83,12 @@ export const ToolCallBlock = memo(function ToolCallBlock({ toolName, input, resu
   const hasResultDetails = Boolean(result && extractTextContent(result.content))
   const hasEditPreview = toolName === 'Edit' && typeof obj.old_string === 'string' && typeof obj.new_string === 'string'
   const hasWritePreview = toolName === 'Write' && typeof obj.content === 'string'
-  const expandable = hasEditPreview || hasWritePreview || hasResultDetails || Boolean(isPending && partialInput)
+  const hasAgentInputDetails = toolName === 'Agent' && (
+    typeof obj.description === 'string' ||
+    typeof obj.prompt === 'string' ||
+    typeof obj.subagent_type === 'string'
+  )
+  const expandable = hasEditPreview || hasWritePreview || hasResultDetails || hasAgentInputDetails || Boolean(isPending && partialInput)
 
   if (isEnterPlanTool) {
     return (

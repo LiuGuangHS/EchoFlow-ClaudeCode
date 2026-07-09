@@ -403,6 +403,11 @@ async function collectAllSkills(cwd?: string): Promise<SkillMeta[]> {
   return skills
 }
 
+export async function collectUserSkillNames(): Promise<Set<string>> {
+  const skills = await collectSkillsFromRoots([getUserSkillsDir()], 'user')
+  return new Set(skills.map((skill) => skill.name))
+}
+
 export async function listSkillSlashCommands(cwd?: string): Promise<SkillSlashCommand[]> {
   const requestedCwd = cwd || getCwd()
   const [skills, legacyCommands] = await Promise.all([
@@ -506,8 +511,20 @@ async function getSkillDetail(url: URL): Promise<Response> {
   }
 
   const { tree, files } = await buildFileTree(skillDir)
+  const marketMeta = await loadMarketMeta(skillDir)
 
   return Response.json({
-    detail: { meta, tree, files, skillRoot: skillDir },
+    detail: { meta, tree, files, skillRoot: skillDir, marketMeta },
   })
+}
+
+/** Marker written by the Skills Market installer — enables uninstall from the local detail view. */
+async function loadMarketMeta(skillDir: string): Promise<Record<string, unknown> | undefined> {
+  try {
+    const raw = await fs.readFile(path.join(skillDir, '.market-meta.json'), 'utf-8')
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    return typeof parsed === 'object' && parsed !== null ? parsed : undefined
+  } catch {
+    return undefined
+  }
 }

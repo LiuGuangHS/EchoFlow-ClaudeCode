@@ -2487,6 +2487,21 @@ export class SessionService {
     )
   }
 
+  async getSubagentTranscriptMessages(
+    sessionId: string,
+    agentId: string,
+  ): Promise<MessageEntry[]> {
+    const found = await this.findSessionFile(sessionId)
+    if (!found) {
+      throw ApiError.notFound(`Session not found: ${sessionId}`)
+    }
+
+    const entries = await this.readJsonlFile(
+      this.subagentTranscriptPath(found.projectDir, sessionId, agentId),
+    )
+    return this.entriesToMessages(entries)
+  }
+
   async getSessionMessagesSignature(sessionId: string): Promise<string | null> {
     const found = await this.findSessionFile(sessionId)
     if (!found) return null

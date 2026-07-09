@@ -28,15 +28,22 @@
 
 .VPHome .VPHero .name {
   letter-spacing: 0;
+  line-height: 1;
 }
 
 .VPHome .VPHero .text {
-  max-width: 12em;
+  max-width: 13em;
+  line-height: 1.12;
 }
 
 .VPHome .VPHero .tagline {
-  max-width: 44rem;
-  line-height: 1.7;
+  max-width: 42rem;
+  line-height: 1.65;
+}
+
+.VPHome .VPHero .actions {
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .VPHomeFeatures .container {
@@ -94,6 +101,11 @@
 }
 
 @media (min-width: 960px) {
+  .VPHome .VPHero .name,
+  .VPHome .VPHero .text {
+    font-size: clamp(56px, 6vw, 74px);
+  }
+
   .VPHomeFeatures .VPFeature {
     min-height: 210px;
   }

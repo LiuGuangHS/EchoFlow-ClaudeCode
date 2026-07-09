@@ -219,6 +219,8 @@ describe('release desktop workflow', () => {
     expect(signingJob).toContain('Missing macOS signing/notarization secrets')
     expect(signingJob).toContain('macOS artifacts will be unsigned')
     expect(signingJob).toContain('install-macos-unsigned.sh')
+    expect(signingJob).toContain("RELEASE_DRAFT: ${{ github.event_name == 'workflow_dispatch' && inputs.draft == true }}")
+    expect(signingJob).toContain('Refusing to publish a non-draft desktop release without macOS signing/notarization secrets.')
     expect(signingJob).toContain('macos_signed=false')
     expect(signingJob).toContain('macos_signed=true')
     expect(signingJob).toContain('Windows signing secrets missing')
@@ -230,7 +232,8 @@ describe('release desktop workflow', () => {
     const windowsOptionalBlock = signingJob?.match(
       /win_missing=\(\)[\s\S]*?fi\r?\n/,
     )?.[0]
-    expect(macRequiredBlock).not.toContain('exit 1')
+    expect(macRequiredBlock).toContain('if [ "$RELEASE_DRAFT" != "true" ]; then')
+    expect(macRequiredBlock).toContain('exit 1')
     expect(windowsOptionalBlock).toContain('::warning::')
     expect(windowsOptionalBlock).not.toContain('exit 1')
     expect(buildJob).toContain('- signing-preflight')
@@ -291,13 +294,29 @@ describe('release desktop workflow', () => {
     expect(publishJob).toContain('artifacts/release-assets/**/*.blockmap')
     expect(publishJob).toContain('artifacts/update-metadata-standard/*.yml')
     expect(publishJob).toContain('desktop/scripts/install-macos-unsigned.sh')
-    expect(publishJob).toContain("draft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft == true }}")
-    expect(publishJob).toContain('Ensure workflow-dispatch release remains draft')
+    expect(publishJob).toContain('draft: true')
+    expect(publishJob).toContain('Publish GitHub release after complete upload')
+    expect(publishJob).toContain("if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.draft == false)")
+    expect(publishJob).toContain('gh release edit "v${{ steps.version.outputs.value }}" --draft=false --repo "${{ github.repository }}"')
+    expect(publishJob).toContain('Keep workflow-dispatch release as draft')
     expect(publishJob).toContain("if: github.event_name == 'workflow_dispatch' && inputs.draft == true")
-    expect(publishJob).toContain('gh release edit "v${{ steps.version.outputs.value }}" --draft --repo "${{ github.repository }}"')
+    expect(publishJob).toContain('release remains draft')
     expect(publishJob).toContain('fail_on_unmatched_files: true')
     expect(publishJob).toContain('Load release notes')
+    expect(publishJob.indexOf('Publish complete GitHub release')).toBeLessThan(publishJob.indexOf('Publish GitHub release after complete upload'))
     expect(workflow.indexOf('publish-release:')).toBeGreaterThan(workflow.indexOf('build:'))
+  })
+
+  test('release workflow keeps updater-visible releases draft until every asset is uploaded', () => {
+    const workflow = readReleaseWorkflow()
+    const publishJob = extractJob(workflow, 'publish-release')
+
+    expect(publishJob).toContain('draft: true')
+    expect(publishJob).toContain('fail_on_unmatched_files: true')
+    expect(publishJob).toContain('Publish GitHub release after complete upload')
+    expect(publishJob).toContain('--draft=false')
+    expect(publishJob.indexOf('Publish complete GitHub release')).toBeLessThan(publishJob.indexOf('Publish GitHub release after complete upload'))
+    expect(publishJob.indexOf('Validate standard update metadata set')).toBeLessThan(publishJob.indexOf('Publish complete GitHub release'))
   })
 
   test('release matrix asset basenames remain unique when final artifacts are flattened', () => {
@@ -379,7 +398,9 @@ describe('release desktop workflow', () => {
       'EchoFlow-Code-${APP_VERSION}-linux-arm64.AppImage',
       'EchoFlow-Code-${APP_VERSION}-linux-arm64.deb',
       'EchoFlow-Code-${APP_VERSION}-win-x64.exe',
+      'EchoFlow-Code-${APP_VERSION}-win-x64.exe.blockmap',
       'EchoFlow-Code-${APP_VERSION}-win-arm64.exe',
+      'EchoFlow-Code-${APP_VERSION}-win-arm64.exe.blockmap',
     ]
 
     for (const file of expectedFiles) {

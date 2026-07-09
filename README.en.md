@@ -17,17 +17,38 @@
 
 </div>
 
-EchoFlow Code is a local AI coding workbench built for the Claude Code ecosystem on macOS, Windows, and Linux. It recommends EchoFlowAPI out of the box for better compatibility and native Claude Code ecosystem support, while preserving custom API and third-party provider setup. Sessions, projects, branch / Worktree launch, right-side file changes, code diffs, permission review, provider setup, Computer Use, H5 remote access, IM integration, and scheduled tasks live in one desktop app.
+EchoFlow Code is a local coding agent for real projects on macOS, Windows, and Linux. Work from the terminal, desktop, or IM channels with Qingyun API (EchoFlowAPI), official Claude, Anthropic-compatible models, multi-agent workflows, memory, Skills, and Computer Use. Sessions, projects, branch / Worktree launch, right-side file changes, code diffs, permission review, H5 remote access, and scheduled tasks live in one desktop app.
 
 <p align="center">
-  <a href="#desktop-preview">Desktop Preview</a> · <a href="#install-the-desktop-app">Install</a> · <a href="#desktop-highlights">Highlights</a> · <a href="#community--contact">Community</a> · <a href="#sponsorship--partnership">Sponsorship</a> · <a href="#more-documentation">More Docs</a>
+  <a href="#desktop-preview">Desktop Preview</a> · <a href="#quick-links">Quick Links</a> · <a href="#install-the-desktop-app">Install</a> · <a href="#desktop-highlights">Highlights</a> · <a href="#community--contact">Community</a> · <a href="#more-documentation">More Docs</a>
 </p>
+
+<p align="center">
+  <a href="https://code.echoflow.cn"><img src="https://img.shields.io/badge/Docs-code.echoflow.cn-D97757?style=for-the-badge" alt="EchoFlow Code docs"></a>
+  &nbsp;
+  <a href="https://api.echoflow.cn/"><img src="https://img.shields.io/badge/Qingyun_API-api.echoflow.cn-D97757?style=for-the-badge" alt="Qingyun API"></a>
+  &nbsp;
+  <a href="https://ai.echoflow.cn/"><img src="https://img.shields.io/badge/Online_Apps-ai.echoflow.cn-gray?style=for-the-badge" alt="Qingyun AI online apps"></a>
+</p>
+
+---
+
+## Quick Links
+
+| Destination | URL | Best fit |
+|------|------|----------|
+| EchoFlow Code docs | [code.echoflow.cn](https://code.echoflow.cn) | Download the desktop app, read setup guides, connect models, and learn multi-agent workflows. |
+| Qingyun API main site | [api.echoflow.cn](https://api.echoflow.cn/) | Register, create a system access token, and configure the recommended EchoFlow Code Provider. |
+| Qingyun AI online apps | [ai.echoflow.cn](https://ai.echoflow.cn/) | Try lightweight online AI workflows; use EchoFlow Code when you need AI inside local repositories. |
+| Community & contact | [Community & Contact](#community--contact) | Join community groups, contact the maintainer on WeChat, share requirements, or leave team usage leads. |
+
+If you want AI to work inside a local codebase, start with EchoFlow Code and connect it with [Qingyun API](https://api.echoflow.cn/). If you only want lightweight online AI workflows, start with [Qingyun AI online apps](https://ai.echoflow.cn/).
 
 ---
 
 ## Desktop Preview
 
-The EchoFlow Code desktop app brings sessions, multi-project navigation, branch / Worktree controls, right-side file changes, code diffs, permission review, provider setup, and remote access into one graphical workspace. EchoFlowAPI is the recommended built-in provider for better compatibility and native Claude Code ecosystem support, while custom APIs and third-party providers remain configurable.
+The EchoFlow Code desktop app brings sessions, multi-project navigation, branch / Worktree controls, right-side file changes, code diffs, permission review, provider setup, and remote access into one graphical workspace. EchoFlowAPI is the recommended built-in provider for better compatibility and native Claude Code ecosystem support, while official vendor APIs, local models, and custom APIs remain configurable.
 
 <p align="center">
   <a href="https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases"><img src="https://img.shields.io/badge/⬇_Download_Desktop-macOS_%7C_Windows_%7C_Linux-FF7A00?style=for-the-badge" alt="Download Desktop"></a>
@@ -56,7 +77,7 @@ The EchoFlow Code desktop app brings sessions, multi-project navigation, branch 
 
 1. Download the macOS / Windows / Linux desktop installer from [Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases).
 2. On first launch, configure your model provider, API key, and default model in Settings.
-3. This build is currently unsigned, so the first launch needs a one-time manual approval (clear quarantine on macOS, click "Run anyway" on Windows). See the [desktop installation guide](docs/desktop/04-installation.md).
+3. Public macOS releases require signing and notarization. Draft or unsigned temporary builds may still need one-time manual approval. Unsigned Windows installers may show SmartScreen; click "More info" -> "Run anyway". See the [desktop installation guide](docs/desktop/04-installation.md).
 
 ## Run the CLI from Source
 
@@ -82,6 +103,8 @@ See [environment variables](docs/en/guide/env-vars.md) and [global usage](docs/e
 - **Visual code changes**: inspect edits, file writes, and diffs directly in the desktop app.
 - **Permission review**: approve risky commands, tool calls, and model follow-up questions in the GUI.
 - **Multi-provider setup**: configure Anthropic-compatible APIs, third-party models, WebSearch fallback, and local options.
+- **Skill Marketplace**: discover, preview, install, and manage third-party skills from ClawHub / SkillHub in the desktop app.
+- **Session Activity Panel**: review tasks, background tasks, SubAgents, team activity, and sources in one side panel.
 - **Computer Use**: let the agent take screenshots, click, type, and control desktop apps after authorization.
 - **H5 remote access**: open the current desktop session from a phone or another device with a one-time token.
 - **IM integration**: chat, switch projects, and approve actions through Telegram / Feishu / WeChat / DingTalk.
@@ -129,14 +152,6 @@ Scan a QR code to join the community groups or contact the maintainer on WeChat.
 </td>
 </tr>
 </table>
-
----
-
-## Sponsorship & Partnership
-
-This project is maintained in the author's spare time. Corporate or individual sponsorships are welcome to support ongoing development. Custom features, integrations, and business partnerships are also open for discussion.
-
-📧 **Contact**: zhijun2003@users.noreply.github.com
 
 ---
 

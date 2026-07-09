@@ -536,6 +536,30 @@ describe('settingsStore app mode', () => {
     })
   })
 
+  it('rolls back and surfaces app mode persistence failures', async () => {
+    const error = new Error('Data storage directory is not writable')
+    const setAppMode = vi.fn().mockRejectedValue(error)
+    installElectronAppModeHost({ set: setAppMode })
+
+    const { useSettingsStore } = await import('./settingsStore')
+    const prevAppMode = {
+      mode: 'default' as const,
+      portableDir: null,
+      defaultPortableDir: 'C:\\cc-haha\\CLAUDE_CONFIG_DIR',
+      activeConfigDir: null,
+      configDirSource: 'system' as const,
+    }
+    useSettingsStore.setState({
+      appMode: prevAppMode,
+      appModeRequiresRestart: false,
+    })
+
+    await expect(useSettingsStore.getState().setAppMode('portable', 'D:\\blocked-data'))
+      .rejects.toThrow('Data storage directory is not writable')
+    expect(useSettingsStore.getState().appMode).toEqual(prevAppMode)
+    expect(useSettingsStore.getState().appModeRequiresRestart).toBe(false)
+  })
+
   it('switches app mode back to the system data source', async () => {
     const setAppMode = vi.fn().mockResolvedValue(undefined)
     installElectronAppModeHost({ set: setAppMode })

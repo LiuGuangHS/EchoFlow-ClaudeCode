@@ -2440,6 +2440,99 @@ describe('Sessions API', () => {
     ])
   })
 
+  it('GET /api/sessions/:id/subagents/by-tool/:toolUseId should return a resolved run', async () => {
+    const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const projectDir = '-tmp-api-subagent-run'
+    const agentId = 'abc123'
+    await writeSessionFile(projectDir, sessionId, [
+      makeSnapshotEntry(),
+      makeAssistantToolUseEntry([
+        {
+          id: 'tool-1',
+          name: 'Agent',
+          input: { description: 'Inspect server seam', prompt: 'Read session routes' },
+        },
+      ]),
+      makeToolResultUserEntry('tool-1', `server summary\nagentId: ${agentId}`),
+    ])
+    await writeSubagentTranscriptFile(projectDir, sessionId, agentId, [
+      {
+        type: 'user',
+        message: { role: 'user', content: 'Read session routes' },
+        uuid: crypto.randomUUID(),
+        timestamp: '2026-01-01T00:00:04.000Z',
+      },
+      {
+        type: 'assistant',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'Found sessions.ts' }] },
+        uuid: crypto.randomUUID(),
+        timestamp: '2026-01-01T00:00:05.000Z',
+      },
+    ])
+
+    const res = await fetch(`${baseUrl}/api/sessions/${sessionId}/subagents/by-tool/tool-1`)
+    expect(res.status).toBe(200)
+
+    const body = (await res.json()) as {
+      sessionId: string
+      toolUseId: string
+      agentId: string | null
+      description?: string
+      prompt?: string
+      messages: unknown[]
+      source: string
+    }
+    expect(body).toMatchObject({
+      sessionId,
+      toolUseId: 'tool-1',
+      agentId,
+      description: 'Inspect server seam',
+      prompt: 'Read session routes',
+      source: 'subagent-jsonl',
+    })
+    expect(body.messages).toHaveLength(2)
+  })
+
+  it('POST /api/sessions/:id/subagents/by-tool/:toolUseId should return 405', async () => {
+    const res = await fetch(
+      `${baseUrl}/api/sessions/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/subagents/by-tool/tool-1`,
+      { method: 'POST' },
+    )
+
+    expect(res.status).toBe(405)
+  })
+
+  it('GET /api/sessions/:id/subagents/by-tool/:toolUseId/extra should return 404', async () => {
+    const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const agentId = 'abc123'
+    await writeSessionFile('-tmp-api-subagent-run-extra', sessionId, [
+      makeSnapshotEntry(),
+      makeAssistantToolUseEntry([
+        {
+          id: 'tool-1',
+          name: 'Agent',
+          input: { description: 'Inspect server seam', prompt: 'Read session routes' },
+        },
+      ]),
+      makeToolResultUserEntry('tool-1', `server summary\nagentId: ${agentId}`),
+    ])
+
+    const res = await fetch(`${baseUrl}/api/sessions/${sessionId}/subagents/by-tool/tool-1/extra`)
+
+    expect(res.status).toBe(404)
+  })
+
+  it('GET /api/sessions/:id/subagents/by-tool/:toolUseId should return 404 for malformed encoding', async () => {
+    const { handleSessionsApi } = await import('../api/sessions.js')
+    const res = await handleSessionsApi(
+      new Request(`${baseUrl}/api/sessions/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/subagents/by-tool/%25E0%25A4%25A`),
+      new URL(`${baseUrl}/api/sessions/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/subagents/by-tool/%25E0%25A4%25A`),
+      ['api', 'sessions', 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', 'subagents', 'by-tool', '%E0%A4%A'],
+    )
+
+    expect(res.status).toBe(404)
+  })
+
   it('GET /api/sessions/:id/git-info should prefer the active CLI workDir', async () => {
     const workDir = await createCleanGitRepo(tmpDir)
     const activeWorktree = path.join(tmpDir, `active-feature-rail-${Date.now()}`)

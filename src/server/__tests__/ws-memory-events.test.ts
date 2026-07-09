@@ -27,6 +27,46 @@ describe('WebSocket memory events', () => {
     ])
   })
 
+  it('maps watchdog API errors to stable desktop error codes', () => {
+    expect(translateCliMessage({
+      type: 'assistant',
+      error: 'server_error',
+      isApiErrorMessage: true,
+      message: {
+        role: 'assistant',
+        content: [{
+          type: 'text',
+          text: 'API Error: Provider stream stalled after partial response - no new chunks for 240s (last event: text_delta, content deltas: 1)',
+        }],
+      },
+    }, 'session-1')).toEqual([
+      {
+        type: 'error',
+        message: 'API Error: Provider stream stalled after partial response - no new chunks for 240s (last event: text_delta, content deltas: 1)',
+        code: 'STREAM_IDLE_TIMEOUT',
+      },
+    ])
+
+    expect(translateCliMessage({
+      type: 'assistant',
+      error: 'server_error',
+      isApiErrorMessage: true,
+      message: {
+        role: 'assistant',
+        content: [{
+          type: 'text',
+          text: 'API Error: Stream max duration exceeded - no completion received after 600s (last event: text_delta)',
+        }],
+      },
+    }, 'session-1')).toEqual([
+      {
+        type: 'error',
+        message: 'API Error: Stream max duration exceeded - no completion received after 600s (last event: text_delta)',
+        code: 'STREAM_MAX_DURATION',
+      },
+    ])
+  })
+
   it('replays slash-command breadcrumbs as readable user messages', () => {
     expect(translateCliMessage({
       type: 'user',

@@ -404,7 +404,7 @@ describe('packaged artifact inspection', () => {
     const rootDir = createRepoRoot()
     tempDirs.push(rootDir)
 
-    writeFile(rootDir, 'desktop/build-artifacts/windows-arm64/win-arm64-unpacked/Claude Code Haha.exe')
+    writeFile(rootDir, 'desktop/build-artifacts/windows-arm64/win-arm64-unpacked/EchoFlow Code.exe')
     writeFile(rootDir, 'desktop/build-artifacts/windows-arm64/win-arm64-unpacked/resources/app.asar')
     writeFile(rootDir, 'desktop/build-artifacts/windows-arm64/win-arm64-unpacked/resources/app-update.yml')
     writeFile(rootDir, 'desktop/build-artifacts/windows-arm64/win-arm64-unpacked/resources/app.asar.unpacked/src-tauri/binaries/claude-sidecar-aarch64-pc-windows-msvc.exe')

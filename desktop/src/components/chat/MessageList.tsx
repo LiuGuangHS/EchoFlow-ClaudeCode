@@ -1960,6 +1960,7 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
       <>
         {item.kind === 'tool_group' ? (
           <ToolCallGroup
+            sessionId={resolvedSessionId}
             toolCalls={item.toolCalls}
             resultMap={toolResultMap}
             childToolCallsByParent={childToolCallsByParent}

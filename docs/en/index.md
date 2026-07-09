@@ -4,20 +4,20 @@ layout: home
 hero:
   name: EchoFlow Code
   text: A local coding agent for real projects
-  tagline: Work from the terminal, desktop, or IM channels with EchoFlowAPI, Anthropic-compatible models, multi-agent workflows, memory, Skills, and Computer Use.
+  tagline: Work from the terminal, desktop, or IM channels with Qingyun API (EchoFlowAPI), official Claude, Anthropic-compatible models, multi-agent workflows, memory, Skills, and Computer Use.
   actions:
     - theme: brand
       text: Quick Start
       link: /en/guide/quick-start
     - theme: brand
+      text: Configure Qingyun API
+      link: https://api.echoflow.cn/
+    - theme: alt
       text: Download Latest
       link: https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest
     - theme: alt
-      text: Read Docs
-      link: /en/guide/quick-start
-    - theme: alt
-      text: GitHub Source
-      link: https://github.com/LiuGuangHS/EchoFlow-ClaudeCode
+      text: Qingyun AI Apps
+      link: https://ai.echoflow.cn/
 
 features:
   - icon:
@@ -82,9 +82,9 @@ EchoFlow Code is a locally runnable coding agent product with a CLI, desktop app
 
 ## Recommended: Qingyun API
 
-New users should start with **Qingyun (EchoFlow) API** at [api.echoflow.cn](https://api.echoflow.cn), also shown as EchoFlowAPI in the product. The desktop Providers page includes an official quick-connect card where you can register EchoFlowAPI, generate a system access token, choose main / haiku models, and set it as the default Provider.
+New users should start with **Qingyun (EchoFlow) API** at [api.echoflow.cn](https://api.echoflow.cn), also shown as EchoFlowAPI in the product. The desktop Providers page includes a Qingyun API quick-connect card where you can register an account, generate a system access token, choose main / haiku models, and set it as the default Provider.
 
-Qingyun API is the shortest path to a working EchoFlow Code setup: it matches the desktop Provider flow, keeps model configuration simple, and still leaves room to add Anthropic-compatible APIs, OpenAI-compatible gateways, or local models later. Teams with their own model gateway can still use Qingyun API as the first validation path before expanding into multi-agent workflows, memory, and Computer Use.
+Qingyun API is the recommended model entry for EchoFlow Code: it matches the desktop Provider flow, keeps model configuration simple, and still leaves room to use official Claude, Anthropic-compatible APIs, OpenAI-compatible gateways, or local models later. Teams with their own model gateway can start with Qingyun API as the first validation path, then switch to Custom Provider when needed.
 
 ## EchoFlow Ecosystem
 
