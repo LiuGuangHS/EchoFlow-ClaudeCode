@@ -73,4 +73,4 @@ bun run dev --host 127.0.0.1 --port 2024
 
 `v0.4.3` 起的正式 Release 会通过 GitHub Releases 检查更新，并下载对应平台的更新包。首次迁移到 signed/notarized macOS 版本时，建议先手动下载安装 `v0.4.3`；后续版本可以走应用内更新。Windows/macOS 系统仍可能要求你手动确认。
 
-覆盖安装或应用内更新不会删除本地数据。Claude Code 兼容数据（例如 `projects`、`skills`、`plugins`, `agents`, `teams`, `tasks`, `adapters.json`）默认继续保存在 `~/.claude`；EchoFlow 自有 Provider、OAuth、桌面偏好和 diagnostics 保存在 EchoFlow 应用数据目录。正式公开的 macOS Release 需要签名和公证；draft/unsigned 临时包仍可能需要手动放行。Windows 签名不是发布阻塞项，未签名安装包仍可更新，但可能出现 SmartScreen 提示。最稳妥的方式仍是到 [GitHub Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest) 下载最新版覆盖安装。
+覆盖安装或应用内更新不会删除本地数据。Claude Code 兼容数据（例如 `projects`、`skills`、`plugins`, `agents`, `teams`, `tasks`, `adapters.json`）默认继续保存在 `~/.claude`；EchoFlow 自有 Provider、OAuth、桌面偏好和 diagnostics 保存在 EchoFlow 应用数据目录。macOS Release 优先使用签名和公证；缺少证书时会发布 unsigned fallback，需要运行随 Release 提供的 `install-macos-unsigned.sh` 或手动放行。Windows 签名不是发布阻塞项，未签名安装包仍可更新，但可能出现 SmartScreen 提示。最稳妥的方式仍是到 [GitHub Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest) 下载最新版覆盖安装。

@@ -36,7 +36,7 @@ WINDOWS_CERTIFICATE
 WINDOWS_CERTIFICATE_PASSWORD
 ```
 
-缺少 Windows 签名时 NSIS 自动更新仍可工作，但用户可能看到 SmartScreen 提示。
+缺少 macOS 签名/公证 secrets 时，workflow 会继续生成 unsigned fallback，并在 Release 中附带 `install-macos-unsigned.sh`；用户首次安装时需要运行辅助脚本或手动放行。缺少 Windows 签名时 NSIS 自动更新仍可工作，但用户可能看到 SmartScreen 提示。
 
 ## v0.4.3 首次切换
 
@@ -60,7 +60,7 @@ WINDOWS_CERTIFICATE_PASSWORD
 
 平台重点：
 
-- macOS：确认 Release job 使用 `Build signed macOS Electron release artifacts`，且 `Verify macOS launch policy` 通过。
+- macOS：配置签名 secrets 时确认使用 `Build signed macOS Electron release artifacts` 且 `Verify macOS launch policy` 通过；未配置时确认使用 unsigned fallback，并上传 `install-macos-unsigned.sh`。
 - Windows：确认 `latest.yml`、`.exe`、`.exe.blockmap` 都在 GitHub Release 中；未签名时 SmartScreen 不代表 updater 失败。
 - Linux：优先用 AppImage 验证自动更新；`.deb` 继续作为手动安装包发布。
 

@@ -77,7 +77,7 @@ The EchoFlow Code desktop app brings sessions, multi-project navigation, branch 
 
 1. Download the macOS / Windows / Linux desktop installer from [Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases).
 2. On first launch, configure your model provider, API key, and default model in Settings.
-3. Public macOS releases require signing and notarization. Draft or unsigned temporary builds may still need one-time manual approval. Unsigned Windows installers may show SmartScreen; click "More info" -> "Run anyway". See the [desktop installation guide](docs/desktop/04-installation.md).
+3. macOS releases prefer signing and notarization. When certificates are unavailable, the workflow publishes an unsigned fallback that needs the bundled helper script or one-time manual approval. Unsigned Windows installers may show SmartScreen; click "More info" -> "Run anyway". See the [desktop installation guide](docs/desktop/04-installation.md).
 
 ## Run the CLI from Source
 
