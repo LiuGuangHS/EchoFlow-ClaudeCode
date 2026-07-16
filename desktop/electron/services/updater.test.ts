@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { ElectronUpdaterService, normalizeUpdateInfo, type ElectronUpdaterLike } from './updater'
+import { ElectronUpdaterService, normalizeUpdateInfo, updaterSessionProxyConfig, type ElectronUpdaterLike } from './updater'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,12 +9,10 @@ function fakeUpdater(): ElectronUpdaterLike & {
   checkForUpdates: ReturnType<typeof vi.fn>
   downloadUpdate: ReturnType<typeof vi.fn>
   quitAndInstall: ReturnType<typeof vi.fn>
-  setFeedURL: ReturnType<typeof vi.fn>
 } {
   let progressHandler: ((progress: { transferred?: number, total?: number }) => void) | null = null
   const updater = {
     autoDownload: true,
-    setFeedURL: vi.fn(),
     checkForUpdates: vi.fn(),
     downloadUpdate: vi.fn(),
     quitAndInstall: vi.fn(),
@@ -34,21 +32,11 @@ function fakeUpdater(): ElectronUpdaterLike & {
     checkForUpdates: ReturnType<typeof vi.fn>
     downloadUpdate: ReturnType<typeof vi.fn>
     quitAndInstall: ReturnType<typeof vi.fn>
-    setFeedURL: ReturnType<typeof vi.fn>
   }
   return updater
 }
 
-const PROXY_FEED = 'https://gh-proxy.org/https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest/download/'
-const DIRECT_FEED = 'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest/download/'
-const CUSTOM_FEED = 'https://custom-proxy.test/https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest/download/'
-
-function missingChannelMetadataError() {
-  return Object.assign(
-    new Error('Cannot find latest-mac.yml in the latest release artifacts (https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/download/v0.3.2/latest-mac.yml): HttpError: 404'),
-    { code: 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND' },
-  )
-}
+const updater = fakeUpdater()
 
 describe('Electron updater service', () => {
   it('normalizes update metadata from electron-updater', () => {
@@ -64,7 +52,6 @@ describe('Electron updater service', () => {
   })
 
   it('keeps electron-updater autoDownload disabled and emits store-compatible progress', async () => {
-    const updater = fakeUpdater()
     updater.checkForUpdates.mockResolvedValue({ updateInfo: { version: '1.2.3', body: 'Fixes' } })
     updater.downloadUpdate.mockImplementation(async () => {
       updater.emitProgress({ transferred: 40, total: 100 })
@@ -87,7 +74,6 @@ describe('Electron updater service', () => {
   })
 
   it('treats missing unpacked app update metadata as no update', async () => {
-    const updater = fakeUpdater()
     const service = new ElectronUpdaterService(updater)
     updater.checkForUpdates.mockRejectedValueOnce(Object.assign(new Error("ENOENT: no such file or directory, open '/App/Contents/Resources/app-update.yml'"), {
       code: 'ENOENT',
@@ -98,31 +84,32 @@ describe('Electron updater service', () => {
   })
 
   it('skips electron-updater when packaged update config is absent', async () => {
-    const updater = fakeUpdater()
+    const localUpdater = fakeUpdater()
     const tempDir = mkdtempSync(join(tmpdir(), 'cc-haha-updater-'))
     try {
-      const service = new ElectronUpdaterService(updater, undefined, {
+      const service = new ElectronUpdaterService(localUpdater, undefined, {
         updateConfigPath: join(tempDir, 'app-update.yml'),
       })
 
       await expect(service.checkForUpdates()).resolves.toBeNull()
 
-      expect(updater.checkForUpdates).not.toHaveBeenCalled()
+      expect(localUpdater.checkForUpdates).not.toHaveBeenCalled()
     } finally {
       rmSync(tempDir, { recursive: true, force: true })
     }
   })
 
   it('treats missing GitHub channel metadata as no update', async () => {
-    const updater = fakeUpdater()
     const service = new ElectronUpdaterService(updater)
-    updater.checkForUpdates.mockRejectedValueOnce(missingChannelMetadataError())
+    updater.checkForUpdates.mockRejectedValueOnce(Object.assign(
+      new Error('Cannot find latest-mac.yml in the latest release artifacts (https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/download/v0.3.2/latest-mac.yml): HttpError: 404'),
+      { code: 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND' },
+    ))
 
     await expect(service.checkForUpdates()).resolves.toBeNull()
   })
 
   it('treats missing GitHub channel metadata as no update even without an error code', async () => {
-    const updater = fakeUpdater()
     const service = new ElectronUpdaterService(updater)
     updater.checkForUpdates.mockRejectedValueOnce(
       new Error('Cannot find latest-mac.yml in the latest release artifacts (https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/download/v0.3.2/latest-mac.yml): HttpError: 404'),
@@ -132,7 +119,6 @@ describe('Electron updater service', () => {
   })
 
   it('treats stringified missing GitHub channel metadata as no update', async () => {
-    const updater = fakeUpdater()
     const service = new ElectronUpdaterService(updater)
     updater.checkForUpdates.mockRejectedValueOnce(
       'Error: Cannot find latest-mac.yml in the latest release artifacts (https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/download/v0.3.2/latest-mac.yml): HttpError: 404',
@@ -141,179 +127,13 @@ describe('Electron updater service', () => {
     await expect(service.checkForUpdates()).resolves.toBeNull()
   })
 
-  it('uses a custom update feed URL when configured', async () => {
-    const updater = fakeUpdater()
-    updater.checkForUpdates.mockResolvedValue({ updateInfo: { version: '1.2.5' } })
-    const service = new ElectronUpdaterService(updater, undefined, {
-      feedUrl: ` ${CUSTOM_FEED} `,
-    })
-
-    await service.checkForUpdates()
-
-    expect(updater.setFeedURL).toHaveBeenCalledWith(CUSTOM_FEED)
-  })
-
-  it('uses ordered feed URLs and falls back when the primary check fails', async () => {
-    const updater = fakeUpdater()
-    updater.checkForUpdates
-      .mockRejectedValueOnce(new Error('proxy feed unavailable'))
-      .mockResolvedValueOnce({ updateInfo: { version: '1.2.5', body: 'Fixes' } })
-    const service = new ElectronUpdaterService(updater, undefined, {
-      feedUrls: [PROXY_FEED, DIRECT_FEED],
-    })
-
-    await expect(service.checkForUpdates()).resolves.toEqual({
-      version: '1.2.5',
-      body: 'Fixes',
-      feedUrl: DIRECT_FEED,
-      feedAttempts: [
-        { feedUrl: PROXY_FEED, result: 'error', error: 'proxy feed unavailable' },
-        { feedUrl: DIRECT_FEED, result: 'selected' },
-      ],
-    })
-
-    expect(updater.setFeedURL).toHaveBeenNthCalledWith(1, PROXY_FEED)
-    expect(updater.setFeedURL).toHaveBeenNthCalledWith(2, DIRECT_FEED)
-    expect(service.getLastFeedAttempts()).toEqual([
-      { feedUrl: PROXY_FEED, result: 'error', error: 'proxy feed unavailable' },
-      { feedUrl: DIRECT_FEED, result: 'selected' },
-    ])
-  })
-
-  it('falls back from primary missing channel metadata to the direct feed', async () => {
-    const updater = fakeUpdater()
-    updater.checkForUpdates
-      .mockRejectedValueOnce(missingChannelMetadataError())
-      .mockResolvedValueOnce({ updateInfo: { version: '1.2.6' } })
-    const service = new ElectronUpdaterService(updater, undefined, {
-      feedUrls: [PROXY_FEED, DIRECT_FEED],
-    })
-
-    await expect(service.checkForUpdates()).resolves.toEqual({
-      version: '1.2.6',
-      body: null,
-      feedUrl: DIRECT_FEED,
-      feedAttempts: [
-        {
-          feedUrl: PROXY_FEED,
-          result: 'missing-metadata',
-          error: 'Electron update channel metadata is missing',
-        },
-        { feedUrl: DIRECT_FEED, result: 'selected' },
-      ],
-    })
-
-    expect(updater.checkForUpdates).toHaveBeenCalledTimes(2)
-    expect(updater.setFeedURL).toHaveBeenLastCalledWith(DIRECT_FEED)
-  })
-
-  it('returns null when all feeds have no update or missing metadata', async () => {
-    const updater = fakeUpdater()
-    updater.checkForUpdates
-      .mockRejectedValueOnce(missingChannelMetadataError())
-      .mockResolvedValueOnce(null)
-    const service = new ElectronUpdaterService(updater, undefined, {
-      feedUrls: [PROXY_FEED, DIRECT_FEED],
-    })
-
-    await expect(service.checkForUpdates()).resolves.toBeNull()
-
-    expect(updater.checkForUpdates).toHaveBeenCalledTimes(2)
-    expect(service.getLastFeedAttempts()).toEqual([
-      {
-        feedUrl: PROXY_FEED,
-        result: 'missing-metadata',
-        error: 'Electron update channel metadata is missing',
-      },
-      { feedUrl: DIRECT_FEED, result: 'no-update' },
-    ])
-  })
-
-  it('does not use fallback when the primary feed successfully reports no update', async () => {
-    const updater = fakeUpdater()
-    updater.checkForUpdates.mockResolvedValueOnce(null)
-    const service = new ElectronUpdaterService(updater, undefined, {
-      feedUrls: [PROXY_FEED, DIRECT_FEED],
-    })
-
-    await expect(service.checkForUpdates()).resolves.toBeNull()
-
-    expect(updater.checkForUpdates).toHaveBeenCalledTimes(1)
-    expect(updater.setFeedURL).toHaveBeenLastCalledWith(PROXY_FEED)
-    expect(service.getLastFeedAttempts()).toEqual([
-      { feedUrl: PROXY_FEED, result: 'no-update' },
-    ])
-  })
-
-  it('does not hide non-metadata failures from the final feed', async () => {
-    const updater = fakeUpdater()
-    updater.checkForUpdates
-      .mockRejectedValueOnce(new Error('proxy feed unavailable'))
-      .mockRejectedValueOnce(new Error('direct feed unavailable'))
-    const service = new ElectronUpdaterService(updater, undefined, {
-      feedUrls: [PROXY_FEED, DIRECT_FEED],
-    })
-
-    await expect(service.checkForUpdates()).rejects.toThrow('direct feed unavailable')
-  })
-
-  it('does not hide an earlier real feed failure behind later missing metadata', async () => {
-    const updater = fakeUpdater()
-    updater.checkForUpdates
-      .mockRejectedValueOnce(new Error('proxy feed unavailable'))
-      .mockRejectedValueOnce(missingChannelMetadataError())
-    const service = new ElectronUpdaterService(updater, undefined, {
-      feedUrls: [PROXY_FEED, DIRECT_FEED],
-    })
-
-    await expect(service.checkForUpdates()).rejects.toThrow('proxy feed unavailable')
-  })
-
-  it('does not hide non-metadata updater failures without a fallback feed', async () => {
-    const updater = fakeUpdater()
-    const service = new ElectronUpdaterService(updater)
-    updater.checkForUpdates.mockRejectedValueOnce(new Error('feed unavailable'))
-
-    await expect(service.checkForUpdates()).rejects.toThrow('feed unavailable')
-  })
-
-  it('includes feed attempt diagnostics when every configured feed fails', async () => {
-    const updater = fakeUpdater()
-    updater.checkForUpdates
-      .mockRejectedValueOnce(new Error('proxy feed unavailable'))
-      .mockRejectedValueOnce(new Error('direct feed unavailable'))
-    const service = new ElectronUpdaterService(updater, undefined, {
-      feedUrls: [PROXY_FEED, DIRECT_FEED],
-    })
-
-    await expect(service.checkForUpdates()).rejects.toThrow(
-      `direct feed unavailable (update feeds tried: error ${PROXY_FEED}: proxy feed unavailable; error ${DIRECT_FEED}: direct feed unavailable)`,
-    )
-  })
-
-  it('does not fallback during download when the selected feed download fails', async () => {
-    const updater = fakeUpdater()
-    updater.checkForUpdates.mockResolvedValueOnce({ updateInfo: { version: '1.2.7' } })
-    updater.downloadUpdate.mockRejectedValueOnce(new Error('proxy download failed'))
-    const service = new ElectronUpdaterService(updater, undefined, {
-      feedUrls: [PROXY_FEED, DIRECT_FEED],
-    })
-
-    await service.checkForUpdates()
-    await expect(service.downloadUpdate(() => {})).rejects.toThrow('proxy download failed')
-
-    expect(updater.downloadUpdate).toHaveBeenCalledTimes(1)
-    expect(updater.checkForUpdates).toHaveBeenCalledTimes(1)
-    expect(updater.setFeedURL).toHaveBeenLastCalledWith(PROXY_FEED)
-  })
-
   it('applies manual updater proxy before checking and clears it when returning to system proxy', async () => {
-    const updater = fakeUpdater()
+    const localUpdater = fakeUpdater()
     const proxyController = {
       apply: vi.fn().mockResolvedValue(undefined),
     }
-    updater.checkForUpdates.mockResolvedValue({ updateInfo: { version: '1.2.5' } })
-    const service = new ElectronUpdaterService(updater, proxyController)
+    localUpdater.checkForUpdates.mockResolvedValue({ updateInfo: { version: '1.2.5' } })
+    const service = new ElectronUpdaterService(localUpdater, proxyController)
 
     await service.checkForUpdates({ proxy: 'http://127.0.0.1:7890' })
     await service.checkForUpdates({ proxy: 'http://127.0.0.1:7890' })
@@ -322,23 +142,33 @@ describe('Electron updater service', () => {
     expect(proxyController.apply).toHaveBeenNthCalledWith(1, 'http://127.0.0.1:7890')
     expect(proxyController.apply).toHaveBeenNthCalledWith(2, null)
     expect(proxyController.apply).toHaveBeenCalledTimes(2)
-    expect(updater.checkForUpdates).toHaveBeenCalledTimes(3)
+    expect(localUpdater.checkForUpdates).toHaveBeenCalledTimes(3)
   })
 
-  it('rechecks before downloading when the pending update was not primed', async () => {
-    const updater = fakeUpdater()
+  it('disables differential download so update downloads run at full bandwidth', () => {
+    const localUpdater = fakeUpdater()
+
+    void new ElectronUpdaterService(localUpdater)
+
+    expect(localUpdater.disableDifferentialDownload).toBe(true)
+  })
+
+  it('maps proxy settings to the updater net session proxy config', () => {
+    expect(updaterSessionProxyConfig(null)).toEqual({ mode: 'system' })
+    expect(updaterSessionProxyConfig('http://127.0.0.1:7890')).toEqual({
+      proxyRules: 'http://127.0.0.1:7890',
+      proxyBypassRules: '<local>',
+    })
+  })
+
+  it('does not hide non-metadata updater failures', async () => {
     const service = new ElectronUpdaterService(updater)
-    updater.checkForUpdates.mockResolvedValue({ updateInfo: { version: '1.2.4' } })
-    updater.downloadUpdate.mockResolvedValue(undefined)
+    updater.checkForUpdates.mockRejectedValueOnce(new Error('feed unavailable'))
 
-    await service.downloadUpdate(() => {})
-
-    expect(updater.checkForUpdates).toHaveBeenCalledTimes(1)
-    expect(updater.downloadUpdate).toHaveBeenCalledTimes(1)
+    await expect(service.checkForUpdates()).rejects.toThrow('feed unavailable')
   })
 
   it('stages then installs through quitAndInstall only after an update has downloaded', async () => {
-    const updater = fakeUpdater()
     const service = new ElectronUpdaterService(updater)
     updater.checkForUpdates.mockResolvedValue({ updateInfo: { version: '1.2.4' } })
     updater.downloadUpdate.mockResolvedValue(undefined)

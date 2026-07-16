@@ -1,3 +1,4 @@
+import { ChevronDown } from 'lucide-react'
 import { useTranslation } from '../../i18n'
 import { Dropdown } from '../shared/Dropdown'
 import { useMarketStore, type MarketFilters } from '../../stores/marketStore'
@@ -9,19 +10,19 @@ import type {
 
 function FilterTrigger({ label, value, active }: { label: string; value: string; active: boolean }) {
   return (
-    <span
-      className={`inline-flex min-h-9 items-center gap-1.5 rounded-xl border px-3 text-xs transition-colors ${
+    <button
+      type="button"
+      aria-haspopup="menu"
+      className={`inline-flex min-h-10 items-center gap-1.5 rounded-lg border px-3 text-xs transition-colors focus-visible:outline-none focus-visible:shadow-[var(--shadow-focus-ring)] active:scale-[0.98] ${
         active
-          ? 'border-[var(--color-brand)] bg-[var(--color-surface)] text-[var(--color-brand)]'
-          : 'border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-focus)]'
+          ? 'border-[var(--color-brand)]/35 bg-[var(--color-primary-fixed)] text-[var(--color-brand)]'
+          : 'border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-focus)] hover:bg-[var(--color-surface-hover)]'
       }`}
     >
-      <span className="text-[var(--color-text-tertiary)]">{label}</span>
+      <span className={active ? 'text-[var(--color-brand)]/75' : 'text-[var(--color-text-tertiary)]'}>{label}</span>
       <span className="font-medium">{value}</span>
-      <span className="material-symbols-outlined text-[14px]" aria-hidden>
-        expand_more
-      </span>
-    </span>
+      <ChevronDown className="h-3.5 w-3.5" strokeWidth={2} aria-hidden="true" />
+    </button>
   )
 }
 

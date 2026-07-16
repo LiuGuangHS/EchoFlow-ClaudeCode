@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { sessionsApi } from '../api/sessions'
+import { useSessionRuntimeStore } from './sessionRuntimeStore'
 import { SETTINGS_TAB_ID, MARKET_TAB_ID, useTabStore } from './tabStore'
 
 vi.mock('../api/sessions', () => ({
@@ -12,6 +13,7 @@ describe('tabStore', () => {
   beforeEach(() => {
     useTabStore.setState({ tabs: [], activeTabId: null })
     localStorage.clear()
+    useSessionRuntimeStore.setState({ selections: {} })
     vi.mocked(sessionsApi.list).mockResolvedValue({ sessions: [] } as never)
   })
 
@@ -76,12 +78,55 @@ describe('tabStore', () => {
         type: 'workbench',
         status: 'idle',
         workbenchSessionId: 'session-1',
+        sourceSessionId: 'session-1',
       },
     ])
     expect(useTabStore.getState().activeTabId).toBe('__workbench__session-1')
     expect(localStorage.getItem('echoflow-code-open-tabs')).toBe(JSON.stringify({
       openTabs: [],
       activeTabId: null,
+    }))
+  })
+
+  it('returns an ephemeral workbench tab to its source session before closing it', () => {
+    useTabStore.getState().openTab('session-a', 'Session A')
+    useTabStore.getState().openTab('session-b', 'Session B')
+    const tabId = useTabStore.getState().openWorkbenchTab('session-b', 'Workbench', {
+      sourceSessionId: 'session-b',
+      sourceTurnKey: 'assistant:turn-2',
+      sourceElementId: 'turn-change-session-b-main-ts',
+    })
+
+    useTabStore.getState().returnFromWorkbench(tabId)
+
+    expect(useTabStore.getState().activeTabId).toBe('session-b')
+    expect(useTabStore.getState().tabs.map((tab) => tab.sessionId)).toEqual(['session-a', 'session-b'])
+  })
+
+  it('defaults a workbench origin to its source session and keeps it ephemeral', () => {
+    useTabStore.getState().openTab('session-a', 'Session A')
+    const tabId = useTabStore.getState().openWorkbenchTab('session-a', 'Workbench')
+
+    expect(useTabStore.getState().tabs.find((tab) => tab.sessionId === tabId)).toMatchObject({
+      sourceSessionId: 'session-a',
+    })
+    expect(localStorage.getItem('echoflow-code-open-tabs')).toBe(JSON.stringify({
+      openTabs: [{ sessionId: 'session-a', title: 'Session A', type: 'session' }],
+      activeTabId: 'session-a',
+    }))
+  })
+
+  it('persists the source session as active while its ephemeral workbench is active', () => {
+    useTabStore.getState().openTab('session-a', 'Session A')
+    useTabStore.getState().openTab('session-b', 'Session B')
+    useTabStore.getState().openWorkbenchTab('session-b', 'Workbench')
+
+    expect(localStorage.getItem('echoflow-code-open-tabs')).toBe(JSON.stringify({
+      openTabs: [
+        { sessionId: 'session-a', title: 'Session A', type: 'session' },
+        { sessionId: 'session-b', title: 'Session B', type: 'session' },
+      ],
+      activeTabId: 'session-b',
     }))
   })
 
@@ -102,7 +147,7 @@ describe('tabStore', () => {
       },
     ])
     expect(useTabStore.getState().activeTabId).toBe('__subagent__session-1__tool-1')
-    expect(localStorage.getItem('cc-haha-open-tabs')).toBe(JSON.stringify({
+    expect(localStorage.getItem('echoflow-code-open-tabs')).toBe(JSON.stringify({
       openTabs: [],
       activeTabId: null,
     }))
@@ -135,7 +180,7 @@ describe('tabStore', () => {
   })
 
   it('restores the market tab without requiring a server session', async () => {
-    localStorage.setItem('cc-haha-open-tabs', JSON.stringify({
+    localStorage.setItem('echoflow-code-open-tabs', JSON.stringify({
       openTabs: [{ sessionId: MARKET_TAB_ID, title: 'Market', type: 'market' }],
       activeTabId: MARKET_TAB_ID,
     }))
@@ -153,8 +198,38 @@ describe('tabStore', () => {
     expect(useTabStore.getState().activeTabId).toBe(MARKET_TAB_ID)
   })
 
+  it('hydrates restored tabs with authoritative transcript runtime metadata', async () => {
+    useSessionRuntimeStore.getState().setSelection('session-1', {
+      providerId: null,
+      modelId: 'gpt-5.4',
+      effortLevel: 'max',
+    })
+    localStorage.setItem('echoflow-code-open-tabs', JSON.stringify({
+      openTabs: [{ sessionId: 'session-1', title: 'Runtime session', type: 'session' }],
+      activeTabId: 'session-1',
+    }))
+    vi.mocked(sessionsApi.list).mockResolvedValue({
+      sessions: [{
+        id: 'session-1',
+        title: 'Runtime session',
+        runtimeProviderId: 'provider-latest',
+        runtimeModelId: 'anthropic/claude-opus-4.7',
+        effortLevel: 'max',
+      }],
+      total: 1,
+    } as never)
+
+    await useTabStore.getState().restoreTabs()
+
+    expect(useSessionRuntimeStore.getState().selections['session-1']).toEqual({
+      providerId: 'provider-latest',
+      modelId: 'anthropic/claude-opus-4.7',
+      effortLevel: 'max',
+    })
+  })
+
   it('canonicalizes mismatched persisted special tab ids and types during restore', async () => {
-    localStorage.setItem('cc-haha-open-tabs', JSON.stringify({
+    localStorage.setItem('echoflow-code-open-tabs', JSON.stringify({
       openTabs: [
         { sessionId: SETTINGS_TAB_ID, title: 'Settings', type: 'market' },
         { sessionId: MARKET_TAB_ID, title: 'Market', type: 'settings' },

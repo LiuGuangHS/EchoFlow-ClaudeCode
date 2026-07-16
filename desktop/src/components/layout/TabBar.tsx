@@ -122,7 +122,7 @@ export function TabBar() {
   }))
   const activityState = useChatStore(useShallow((state) => {
     if (!activeTabId || !isActiveSessionTab) {
-      return { badgeCount: 0, hasVisibleActivity: false }
+      return { hasVisibleActivity: false }
     }
     const sessionState = state.sessions[activeTabId]
     const includeCliTasks = cliTasksSessionId === activeTabId
@@ -138,12 +138,10 @@ export function TabBar() {
       teamMembers: activityTeamMembers,
     })
     return {
-      badgeCount: model.badgeCount,
       hasVisibleActivity: hasVisibleSessionActivity(model),
     }
   }))
-  const showActivityButton = activeTabId && activityState.hasVisibleActivity
-  const activityBadgeCount = activityState.badgeCount
+  const showActivityButton = activeTabId && activityState.hasVisibleActivity && !isWorkbenchOpen
 
   const moveTab = useTabStore((s) => s.moveTab)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -435,7 +433,7 @@ export function TabBar() {
 
       <div className="flex shrink-0 items-center gap-1 border-l border-[var(--color-border)]/70 px-2">
         {showActivityButton && activeTabId && (
-          <SessionActivityButton sessionId={activeTabId} badgeCount={activityBadgeCount} />
+          <SessionActivityButton sessionId={activeTabId} />
         )}
         {isDesktopRuntime && isActiveSessionTab && (
           <OpenProjectMenu path={openProjectPath} />

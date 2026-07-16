@@ -13,6 +13,9 @@ import { handleModelsApi } from '../api/models.js'
 import { handleStatusApi, resetUsage, addUsage } from '../api/status.js'
 import { ProviderService } from '../services/providerService.js'
 import {
+  clearOpenAICodexModelCatalogCache,
+} from '../../services/openaiAuth/modelCatalog.js'
+import {
   clearOpenAIOAuthTokenCache,
 } from '../../services/openaiAuth/storage.js'
 import { plainTextStorage } from '../../utils/secureStorage/plainTextStorage.js'
@@ -358,6 +361,15 @@ describe('SettingsService', () => {
     expect(mode).toBe('plan')
   })
 
+  it('should persist auto as the user default permission mode', async () => {
+    const svc = new SettingsService()
+
+    await svc.setPermissionMode('auto')
+
+    expect(await svc.getPermissionMode()).toBe('auto')
+    expect(await svc.getUserSettings()).toMatchObject({ defaultMode: 'auto' })
+  })
+
   it('should reject invalid permission mode', async () => {
     const svc = new SettingsService()
     await expect(svc.setPermissionMode('invalid')).rejects.toThrow('Invalid permission mode')
@@ -602,6 +614,18 @@ describe('Settings API', () => {
     expect(body.mode).toBe('bypassPermissions')
   })
 
+  it('PUT /api/permissions/mode should accept auto', async () => {
+    const { req, url, segments } = makeRequest('PUT', '/api/permissions/mode', {
+      mode: 'auto',
+    })
+
+    const res = await handleSettingsApi(req, url, segments)
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true, mode: 'auto' })
+    expect(await new SettingsService().getPermissionMode()).toBe('auto')
+  })
+
   it('PUT /api/permissions/mode should reject invalid mode', async () => {
     const { req, url, segments } = makeRequest('PUT', '/api/permissions/mode', {
       mode: 'yolo',
@@ -650,8 +674,14 @@ describe('Models API', () => {
       expiresAt: Date.now() + 60_000,
     })
 
+    const originalFetch = globalThis.fetch
+    clearOpenAICodexModelCatalogCache()
+    globalThis.fetch = async () => new Response('offline', { status: 503 })
     const { req, url, segments } = makeRequest('GET', '/api/models')
-    const res = await handleModelsApi(req, url, segments)
+    const res = await handleModelsApi(req, url, segments).finally(() => {
+      globalThis.fetch = originalFetch
+      clearOpenAICodexModelCatalogCache()
+    })
 
     expect(res.status).toBe(200)
     const body = await res.json()
@@ -659,6 +689,7 @@ describe('Models API', () => {
 
     expect(ids).toContain('deepseek-v4-pro')
     expect(ids).toContain('deepseek-v4-flash')
+    expect(ids).toContain('gpt-5.6-sol')
     expect(ids).toContain('gpt-5.3-codex')
     expect(ids).toContain('gpt-5.4')
     expect(ids).toContain('gpt-5.4-mini')
@@ -785,11 +816,19 @@ describe('Models API', () => {
       name: 'ChatGPT Official',
     })
     expect(body.models.map((model) => model.id)).toEqual([
+      'gpt-5.6-sol',
+      'gpt-5.6-terra',
+      'gpt-5.6-luna',
       'gpt-5.3-codex',
       'gpt-5.4',
       'gpt-5.5',
       'gpt-5.4-mini',
     ])
+    expect(body.models[0]).toMatchObject({
+      id: 'gpt-5.6-sol',
+      defaultReasoningEffort: 'low',
+      supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+    })
   })
 
   it('PUT /api/models/current should persist GPT model to EchoFlow settings when ChatGPT Official is active', async () => {
@@ -825,6 +864,35 @@ describe('Models API', () => {
       id: 'gpt-5.5',
       name: 'GPT-5.5',
     })
+  })
+
+  it('GET /api/models should return the Grok fallback catalog when Grok Official is active', async () => {
+    const providerSvc = new ProviderService()
+    await providerSvc.activateProvider('grok-official')
+
+    const { req, url, segments } = makeRequest('GET', '/api/models')
+    const res = await handleModelsApi(req, url, segments)
+    const body = await res.json() as {
+      models: Array<{ id: string; context: string }>
+      provider: { id: string; name: string }
+    }
+    expect(body.provider).toEqual({ id: 'grok-official', name: 'Grok Official' })
+    expect(body.models.map((model) => model.id)).toEqual([
+      'grok-4.5',
+      'grok-composer-2.5-fast',
+    ])
+    expect(body.models.find((model) => model.id === 'grok-4.5')?.context).toBe('500000')
+  })
+
+  it('persists and reads a Grok model from managed settings', async () => {
+    const providerSvc = new ProviderService()
+    await providerSvc.activateProvider('grok-official')
+    const put = makeRequest('PUT', '/api/models/current', { modelId: 'grok-4.5' })
+    expect((await handleModelsApi(put.req, put.url, put.segments)).status).toBe(200)
+
+    const get = makeRequest('GET', '/api/models/current')
+    const body = await (await handleModelsApi(get.req, get.url, get.segments)).json()
+    expect(body.model).toMatchObject({ id: 'grok-4.5', name: 'Grok 4.5' })
   })
 
   it('GET /api/effort should return default effort level', async () => {
@@ -897,6 +965,9 @@ describe('Model Options', () => {
     const labels = options.map(option => option.label)
 
     expect(values).toContain('gpt-5.3-codex')
+    expect(values).toContain('gpt-5.6-sol')
+    expect(values).toContain('gpt-5.6-terra')
+    expect(values).toContain('gpt-5.6-luna')
     expect(values).toContain('gpt-5.4')
     expect(values).toContain('gpt-5.4-mini')
     expect(labels).toContain('deepseek-v4-pro')

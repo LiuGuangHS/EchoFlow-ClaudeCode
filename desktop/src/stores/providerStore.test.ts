@@ -165,7 +165,18 @@ describe('providerStore runtime refresh', () => {
     const { useProviderStore } = await import('./providerStore')
     await useProviderStore.getState().activateProvider('openai-official')
 
-    expect(settingsSetModelMock).toHaveBeenCalledWith('gpt-5.3-codex')
+    expect(settingsSetModelMock).toHaveBeenCalledWith('gpt-5.6-sol')
+    expect(settingsFetchAllMock).toHaveBeenCalled()
+  })
+
+  it('sets the Grok default model when activating built-in Grok Official', async () => {
+    providersApiMock.activate.mockResolvedValue({ ok: true })
+    providersApiMock.list.mockResolvedValue({ providers: [], activeId: 'grok-official' })
+
+    const { useProviderStore } = await import('./providerStore')
+    await useProviderStore.getState().activateProvider('grok-official')
+
+    expect(settingsSetModelMock).toHaveBeenCalledWith('grok-4.5')
     expect(settingsFetchAllMock).toHaveBeenCalled()
   })
 
@@ -240,20 +251,20 @@ describe('providerStore reorderProviders', () => {
     const b = makeProvider({ id: 'b', name: 'B' })
     providersApiMock.reorder.mockResolvedValue({
       providers: [b, a],
-      providerOrder: ['openai-official', 'b', 'claude-official', 'a'],
+      providerOrder: ['openai-official', 'b', 'claude-official', 'a', 'grok-official'],
     })
 
     const { useProviderStore } = await import('./providerStore')
     useProviderStore.setState({
       providers: [a, b],
-      providerOrder: ['a', 'b', 'claude-official', 'openai-official'],
+      providerOrder: ['a', 'b', 'claude-official', 'openai-official', 'grok-official'],
       activeId: null,
     })
 
-    await useProviderStore.getState().reorderProviders(['openai-official', 'b', 'claude-official', 'a'])
+    await useProviderStore.getState().reorderProviders(['openai-official', 'b', 'claude-official', 'a', 'grok-official'])
 
-    expect(providersApiMock.reorder).toHaveBeenCalledWith(['openai-official', 'b', 'claude-official', 'a'])
-    expect(useProviderStore.getState().providerOrder).toEqual(['openai-official', 'b', 'claude-official', 'a'])
+    expect(providersApiMock.reorder).toHaveBeenCalledWith(['openai-official', 'b', 'claude-official', 'a', 'grok-official'])
+    expect(useProviderStore.getState().providerOrder).toEqual(['openai-official', 'b', 'claude-official', 'a', 'grok-official'])
     expect(useProviderStore.getState().providers.map((p) => p.id)).toEqual(['b', 'a'])
   })
 

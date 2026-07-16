@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import {
   createCurrentTurnLocalCommandForwarder,
-  shouldRestartForPermissionMode,
+  shouldFallbackToPermissionRestart,
   translateCliMessage,
 } from '../ws/handler.js'
 import { parseSlashCommand } from '../../utils/slashCommandParsing.js'
@@ -264,6 +264,15 @@ describe('WebSocket compact events', () => {
       { type: 'permission_mode_changed', mode: 'bypassPermissions' },
     ])
 
+    expect(translateCliMessage({
+      type: 'system',
+      subtype: 'status',
+      status: null,
+      permissionMode: 'auto',
+    }, 'session-1')).toEqual([
+      { type: 'permission_mode_changed', mode: 'auto' },
+    ])
+
     // 普通 thinking（无 permissionMode）仍走原路径，不受影响。
     expect(translateCliMessage({
       type: 'system',
@@ -309,33 +318,29 @@ describe('WebSocket compact events', () => {
   })
 })
 
-describe('WebSocket permission mode restart policy', () => {
-  it('restarts the CLI when entering bypassPermissions', () => {
-    // 进入 bypass 需要带 --dangerously-skip-permissions 重启子进程。
-    expect(shouldRestartForPermissionMode('default', 'bypassPermissions')).toBe(true)
-    expect(shouldRestartForPermissionMode('plan', 'bypassPermissions')).toBe(true)
-    expect(shouldRestartForPermissionMode('acceptEdits', 'bypassPermissions')).toBe(true)
+describe('WebSocket permission mode compatibility fallback', () => {
+  it('restarts only when an old CLI session lacks the bypass launch capability', () => {
+    expect(shouldFallbackToPermissionRestart(
+      'bypassPermissions',
+      new Error(
+        'Cannot set permission mode to bypassPermissions because the session was not launched with --dangerously-skip-permissions',
+      ),
+    )).toBe(true)
   })
 
-  it('restarts when leaving bypassPermissions for a stable stricter mode', () => {
-    // 离开 bypass 到稳定模式必须重启，避免继续沿用带 --dangerously-skip-permissions 的进程。
-    expect(shouldRestartForPermissionMode('bypassPermissions', 'default')).toBe(true)
-    expect(shouldRestartForPermissionMode('bypassPermissions', 'acceptEdits')).toBe(true)
-    expect(shouldRestartForPermissionMode('bypassPermissions', 'dontAsk')).toBe(true)
+  it('does not restart when bypass is disabled by user settings', () => {
+    expect(shouldFallbackToPermissionRestart(
+      'bypassPermissions',
+      new Error(
+        'Cannot set permission mode to bypassPermissions because it is disabled by settings or configuration',
+      ),
+    )).toBe(false)
   })
 
-  it('does not restart for bypassPermissions to plan so ExitPlanMode can restore bypass', () => {
-    // bypass→plan 不重启，否则会冲掉进程内 prePlanMode，导致 ExitPlanMode 后
-    // 恢复成 default 而非进入 plan 前的 bypassPermissions。
-    expect(shouldRestartForPermissionMode('bypassPermissions', 'plan')).toBe(false)
-  })
-
-  it('does not restart for non-bypass transitions or no-op changes', () => {
-    expect(shouldRestartForPermissionMode('default', 'plan')).toBe(false)
-    expect(shouldRestartForPermissionMode('plan', 'acceptEdits')).toBe(false)
-    // 同模式（含 bypass→bypass）是 no-op，不重启。
-    expect(shouldRestartForPermissionMode('bypassPermissions', 'bypassPermissions')).toBe(false)
-    expect(shouldRestartForPermissionMode('plan', 'plan')).toBe(false)
+  it('does not restart other permission failures', () => {
+    expect(shouldFallbackToPermissionRestart('auto', new Error('classifier unavailable'))).toBe(false)
+    expect(shouldFallbackToPermissionRestart('default', new Error('mock rejection'))).toBe(false)
+    expect(shouldFallbackToPermissionRestart('bypassPermissions', new Error('mock rejection'))).toBe(false)
   })
 })
 
@@ -455,6 +460,23 @@ describe('WebSocket background task events', () => {
         verb: 'Running Playwright checks',
       },
     ])
+  })
+
+  it('keeps AutoDream lifecycle visible without reviving foreground activity', () => {
+    const started = {
+      type: 'system',
+      subtype: 'task_started',
+      task_id: 'dream-task-1',
+      description: 'dreaming',
+      task_type: 'dream',
+    }
+
+    expect(translateCliMessage(started, 'session-1')).toEqual([{
+      type: 'system_notification',
+      subtype: 'task_started',
+      message: 'dreaming',
+      data: started,
+    }])
   })
 })
 
@@ -633,6 +655,99 @@ describe('WebSocket goal command events', () => {
 })
 
 describe('WebSocket stream event translation', () => {
+  it('does not replay buffered assistant blocks after their raw stream events', () => {
+    const sessionId = `buffered-assistant-${crypto.randomUUID()}`
+
+    translateCliMessage({
+      type: 'stream_event',
+      event: { type: 'message_start' },
+    }, sessionId)
+    translateCliMessage({
+      type: 'stream_event',
+      event: {
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'thinking', thinking: '' },
+      },
+    }, sessionId)
+    translateCliMessage({
+      type: 'stream_event',
+      event: {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'thinking_delta', thinking: 'reasoning' },
+      },
+    }, sessionId)
+    translateCliMessage({
+      type: 'stream_event',
+      event: { type: 'content_block_stop', index: 0 },
+    }, sessionId)
+    translateCliMessage({
+      type: 'stream_event',
+      event: {
+        type: 'content_block_start',
+        index: 1,
+        content_block: { type: 'text', text: '' },
+      },
+    }, sessionId)
+    translateCliMessage({
+      type: 'stream_event',
+      event: {
+        type: 'content_block_delta',
+        index: 1,
+        delta: { type: 'text_delta', text: 'hello' },
+      },
+    }, sessionId)
+    translateCliMessage({
+      type: 'stream_event',
+      event: { type: 'content_block_stop', index: 1 },
+    }, sessionId)
+    translateCliMessage({
+      type: 'stream_event',
+      event: { type: 'message_stop' },
+    }, sessionId)
+
+    expect(translateCliMessage({
+      type: 'assistant',
+      message: { content: [{ type: 'thinking', thinking: 'reasoning' }] },
+    }, sessionId)).toEqual([])
+    expect(translateCliMessage({
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: 'hello' }] },
+    }, sessionId)).toEqual([])
+  })
+
+  it('accepts the complete assistant response after a non-streaming fallback', () => {
+    const sessionId = `non-stream-fallback-${crypto.randomUUID()}`
+
+    translateCliMessage({
+      type: 'stream_event',
+      event: { type: 'message_start' },
+    }, sessionId)
+    translateCliMessage({
+      type: 'stream_event',
+      event: {
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'text', text: '' },
+      },
+    }, sessionId)
+
+    translateCliMessage({
+      type: 'system',
+      subtype: 'streaming_fallback',
+      cause: 'watchdog',
+    }, sessionId)
+
+    expect(translateCliMessage({
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: 'fallback answer' }] },
+    }, sessionId)).toEqual([
+      { type: 'content_start', blockType: 'text' },
+      { type: 'content_delta', text: 'fallback answer' },
+    ])
+  })
+
   it('keeps subagent parent linkage when later stream events omit the parent id', () => {
     const sessionId = `subagent-parent-${crypto.randomUUID()}`
 
@@ -703,7 +818,7 @@ describe('WebSocket stream event translation', () => {
       type: 'stream_event',
       event: { type: 'message_start' },
     }, sessionId)).toEqual([
-      { type: 'status', state: 'thinking' },
+      { type: 'status', state: 'thinking', attemptStart: true },
     ])
 
     expect(translateCliMessage({
@@ -742,6 +857,73 @@ describe('WebSocket stream event translation', () => {
       },
     }, sessionId)).toEqual([
       { type: 'content_start', blockType: 'text' },
+    ])
+  })
+
+  it('resets partial block accumulation before a safe stream retry', () => {
+    const sessionId = `stream-retry-${crypto.randomUUID()}`
+
+    translateCliMessage({
+      type: 'stream_event',
+      event: { type: 'message_start' },
+    }, sessionId)
+    translateCliMessage({
+      type: 'stream_event',
+      event: {
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'tool_use', id: 'stale-tool', name: 'Write' },
+      },
+    }, sessionId)
+    translateCliMessage({
+      type: 'stream_event',
+      event: {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'input_json_delta', partial_json: '{"stale":' },
+      },
+    }, sessionId)
+
+    expect(translateCliMessage({
+      type: 'system',
+      subtype: 'streaming_fallback',
+      cause: 'stream_retry',
+    }, sessionId)).toEqual([
+      { type: 'streaming_fallback', cause: 'stream_retry' },
+    ])
+
+    translateCliMessage({
+      type: 'stream_event',
+      event: { type: 'message_start' },
+    }, sessionId)
+    translateCliMessage({
+      type: 'stream_event',
+      event: {
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'tool_use', id: 'fresh-tool', name: 'Write' },
+      },
+    }, sessionId)
+    translateCliMessage({
+      type: 'stream_event',
+      event: {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'input_json_delta', partial_json: '{"fresh":true}' },
+      },
+    }, sessionId)
+
+    expect(translateCliMessage({
+      type: 'stream_event',
+      event: { type: 'content_block_stop', index: 0 },
+    }, sessionId)).toEqual([
+      {
+        type: 'tool_use_complete',
+        toolName: 'Write',
+        toolUseId: 'fresh-tool',
+        input: { fresh: true },
+        parentToolUseId: undefined,
+      },
     ])
   })
 })

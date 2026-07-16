@@ -23,6 +23,11 @@ import {
 import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 import { hahaOpenAIOAuthService } from './hahaOpenAIOAuthService.js'
 import {
+  GROK_OFFICIAL_PROVIDER,
+  isGrokOfficialProviderId,
+} from './grokOfficialProvider.js'
+import { hahaGrokOAuthService } from './hahaGrokOAuthService.js'
+import {
   CURRENT_PROVIDER_INDEX_SCHEMA_VERSION,
   ensurePersistentStorageUpgraded,
 } from './persistentStorageMigrations.js'
@@ -202,6 +207,9 @@ export class ProviderService {
     if (isOpenAIOfficialProviderId(id)) {
       return OPENAI_OFFICIAL_PROVIDER
     }
+    if (isGrokOfficialProviderId(id)) {
+      return GROK_OFFICIAL_PROVIDER
+    }
 
     const index = await this.readIndex()
     const provider = index.providers.find((p) => p.id === id)
@@ -342,13 +350,15 @@ export class ProviderService {
     const index = await this.readIndex()
     const provider = isOpenAIOfficialProviderId(id)
       ? OPENAI_OFFICIAL_PROVIDER
-      : index.providers.find((p) => p.id === id)
+      : isGrokOfficialProviderId(id)
+        ? GROK_OFFICIAL_PROVIDER
+        : index.providers.find((p) => p.id === id)
     if (!provider) throw ApiError.notFound(`Provider not found: ${id}`)
 
     index.activeId = id
     await this.writeIndex(index)
 
-    if (provider.runtimeKind === 'openai_oauth') {
+    if (provider.runtimeKind === 'openai_oauth' || provider.runtimeKind === 'grok_oauth') {
       await this.syncToSettings(provider)
     } else if (provider.presetId === 'official') {
       await this.clearProviderFromSettings()
@@ -441,7 +451,7 @@ export class ProviderService {
    */
   async checkAuthStatus(): Promise<{
     hasAuth: boolean
-    source: 'echoflow-provider' | 'openai-oauth' | 'echoflow-settings' | 'env' | 'none'
+    source: 'echoflow-provider' | 'openai-oauth' | 'grok-oauth' | 'echoflow-settings' | 'env' | 'none'
     activeProvider?: string
   }> {
     // 1. Check EchoFlow active provider
@@ -460,6 +470,21 @@ export class ProviderService {
           hasAuth: false,
           source: 'none',
           activeProvider: OPENAI_OFFICIAL_PROVIDER.name,
+        }
+      }
+      if (isGrokOfficialProviderId(index.activeId)) {
+        const tokens = await hahaGrokOAuthService.ensureFreshTokens()
+        if (tokens?.accessToken && tokens.refreshToken) {
+          return {
+            hasAuth: true,
+            source: 'grok-oauth',
+            activeProvider: GROK_OFFICIAL_PROVIDER.name,
+          }
+        }
+        return {
+          hasAuth: false,
+          source: 'none',
+          activeProvider: GROK_OFFICIAL_PROVIDER.name,
         }
       }
 
@@ -505,7 +530,7 @@ export class ProviderService {
     apiFormat: ApiFormat
   } | null> {
     if (providerId) {
-      if (isOpenAIOfficialProviderId(providerId)) {
+      if (isOpenAIOfficialProviderId(providerId) || isGrokOfficialProviderId(providerId)) {
         return null
       }
       const provider = await this.getProvider(providerId)
@@ -520,7 +545,7 @@ export class ProviderService {
 
     const index = await this.readIndex()
     if (!index.activeId) return null
-    if (isOpenAIOfficialProviderId(index.activeId)) {
+    if (isOpenAIOfficialProviderId(index.activeId) || isGrokOfficialProviderId(index.activeId)) {
       return null
     }
     const provider = await this.getProvider(index.activeId).catch(() => null)

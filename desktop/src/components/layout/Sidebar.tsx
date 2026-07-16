@@ -1264,7 +1264,7 @@ function useSessionListAutoRefresh(fetchSessions: () => Promise<void>): () => Pr
     document.addEventListener('visibilitychange', refreshIfVisible)
     const timer = window.setInterval(() => {
       if (!isDocumentVisible()) return
-      void refreshSessions(true)
+      void refreshSessions()
     }, SESSION_LIST_AUTO_REFRESH_MS)
 
     return () => {

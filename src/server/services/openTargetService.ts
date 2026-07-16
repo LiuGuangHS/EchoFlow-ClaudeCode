@@ -265,6 +265,17 @@ async function defaultPathExists(targetPath: string): Promise<boolean> {
   }
 }
 
+/**
+ * Keep external applications detached without setting `windowsHide`: on
+ * Windows that flag passes SW_HIDE to GUI targets such as Explorer and IDEs.
+ */
+export function getDefaultLaunchSpawnOptions() {
+  return {
+    detached: true as const,
+    stdio: 'ignore' as const,
+  }
+}
+
 async function defaultLaunch(command: string, args: string[]): Promise<OpenTargetLaunchResult> {
   return await new Promise((resolveLaunch) => {
     let settled = false
@@ -275,11 +286,7 @@ async function defaultLaunch(command: string, args: string[]): Promise<OpenTarge
     }
 
     try {
-      const child = spawn(command, args, {
-        detached: true,
-        stdio: 'ignore',
-        windowsHide: true,
-      })
+      const child = spawn(command, args, getDefaultLaunchSpawnOptions())
 
       child.once('error', (error) => {
         settle({

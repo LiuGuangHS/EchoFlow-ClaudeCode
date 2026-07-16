@@ -107,6 +107,7 @@ describe('MCP host preflight', () => {
 
     process.env.HOME = tmpDir
     process.env.SHELL = '/bin/zsh'
+    process.env.PATH = processBin
     if (process.platform === 'win32') {
       await expect(
         inspectMcpHostCommand('mcp-tool', tmpDir, { PATH: processBin }),

@@ -217,7 +217,7 @@ describe('Business Flow: Permission Modes', () => {
     await fs.rm(tmpDir, { recursive: true, force: true })
   })
 
-  const VALID_MODES = ['default', 'acceptEdits', 'plan', 'bypassPermissions', 'dontAsk']
+  const VALID_MODES = ['default', 'acceptEdits', 'plan', 'bypassPermissions', 'dontAsk', 'auto']
 
   it('should default to "default" mode', async () => {
     const { data } = await api('GET', '/api/permissions/mode')
@@ -236,8 +236,8 @@ describe('Business Flow: Permission Modes', () => {
     })
   }
 
-  it('should reject invalid mode "auto"', async () => {
-    const { status, data } = await api('PUT', '/api/permissions/mode', { mode: 'auto' })
+  it('should reject an unknown permission mode', async () => {
+    const { status, data } = await api('PUT', '/api/permissions/mode', { mode: 'unknown' })
     expect(status).toBe(400)
     expect(data.message).toContain('Invalid permission mode')
   })
@@ -253,64 +253,6 @@ describe('Business Flow: Permission Modes', () => {
     const raw = await fs.readFile(settingsPath, 'utf-8')
     const settings = JSON.parse(raw)
     expect(settings.defaultMode).toBe('plan')
-  })
-})
-
-describe('Business Flow: Task Lists API', () => {
-  beforeAll(startTestServer)
-  afterAll(async () => {
-    server?.stop()
-    await fs.rm(tmpDir, { recursive: true, force: true })
-  })
-
-  it('should reset a persisted task list through the API', async () => {
-    const taskListDir = path.join(tmpDir, 'tasks', 'desktop-session-1')
-    await fs.mkdir(taskListDir, { recursive: true })
-    await fs.writeFile(
-      path.join(taskListDir, '1.json'),
-      JSON.stringify({
-        id: '1',
-        subject: 'First task',
-        description: '',
-        status: 'completed',
-        blocks: [],
-        blockedBy: [],
-      }),
-      'utf-8',
-    )
-    await fs.writeFile(
-      path.join(taskListDir, '2.json'),
-      JSON.stringify({
-        id: '2',
-        subject: 'Second task',
-        description: '',
-        status: 'completed',
-        blocks: [],
-        blockedBy: [],
-      }),
-      'utf-8',
-    )
-
-    const { status: beforeStatus, data: beforeData } = await api(
-      'GET',
-      '/api/tasks/lists/desktop-session-1',
-    )
-    expect(beforeStatus).toBe(200)
-    expect(beforeData.tasks).toHaveLength(2)
-
-    const { status: resetStatus, data: resetData } = await api(
-      'POST',
-      '/api/tasks/lists/desktop-session-1/reset',
-    )
-    expect(resetStatus).toBe(200)
-    expect(resetData.ok).toBe(true)
-
-    const { status: afterStatus, data: afterData } = await api(
-      'GET',
-      '/api/tasks/lists/desktop-session-1',
-    )
-    expect(afterStatus).toBe(200)
-    expect(afterData.tasks).toEqual([])
   })
 })
 

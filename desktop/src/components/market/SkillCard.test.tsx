@@ -65,8 +65,20 @@ describe('SkillCard', () => {
     expect(onInstall).toHaveBeenCalledWith('clawhub:demo')
     expect(onOpen).not.toHaveBeenCalled()
 
-    fireEvent.click(screen.getByText('Demo Skill'))
+    fireEvent.click(screen.getByRole('button', { name: 'Demo Skill' }))
     expect(onOpen).toHaveBeenCalledWith('clawhub:demo')
+  })
+
+  it('uses separate semantic actions for opening and installing', () => {
+    render(<SkillCard skill={makeSkill()} onOpen={vi.fn()} onInstall={vi.fn()} />)
+
+    const card = screen.getByRole('article')
+    const openButton = screen.getByRole('button', { name: 'Demo Skill' })
+    const installButton = screen.getByRole('button', { name: 'Install' })
+
+    expect(card).toContainElement(openButton)
+    expect(card).toContainElement(installButton)
+    expect(openButton).not.toContainElement(installButton)
   })
 
   it('disables the quick-install button while installing', () => {

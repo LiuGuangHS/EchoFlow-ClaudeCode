@@ -144,17 +144,13 @@ export type AppModeSetInput = {
   portableDir: string | null
 }
 
-export type PortableDirDetection = {
-  defaultPortableDir: string | null
-  hasData: boolean
-}
-
 export type DesktopHost = {
   kind: DesktopHostKind
   isDesktop: boolean
   capabilities: DesktopHostCapabilities
   runtime: {
     getServerUrl(): Promise<string>
+    getLocalAccessToken(): Promise<string | null>
   }
   app: {
     getVersion(): Promise<string>
@@ -230,7 +226,6 @@ export type DesktopHost = {
   appMode: {
     get(): Promise<AppModeConfig>
     set(config: AppModeSetInput): Promise<void>
-    detectPortableDir(): Promise<PortableDirDetection | null>
     prepareRestart(): Promise<void>
     restart(): Promise<void>
   }

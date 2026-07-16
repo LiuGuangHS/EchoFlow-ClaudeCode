@@ -5,6 +5,7 @@ import * as path from 'path'
 
 import { handleProvidersApi } from '../api/providers.js'
 import { PROVIDER_PRESETS } from '../config/providerPresets.js'
+import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 
 let tmpDir: string
 let originalConfigDir: string | undefined
@@ -118,7 +119,10 @@ describe('provider presets API', () => {
     expect(kimi?.baseUrl).toBe('https://api.moonshot.cn/anthropic')
     expect(kimi?.authStrategy).toBe('auth_token')
     expect(kimi?.defaultModels.main).toBe('kimi-k2.7-code')
-    expect(kimi?.defaultEnv?.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking')
+    expect(kimi?.defaultEnv?.CC_HAHA_SEND_DISABLED_THINKING).toBeUndefined()
+    expect(kimi?.defaultEnv?.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe(
+      'thinking,required_thinking',
+    )
     expect(minimax?.authStrategy).toBe('auth_token')
     expect(minimax?.defaultModels.main).toBe('MiniMax-M3[1m]')
     expect(minimax?.defaultEnv?.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1000000')
@@ -149,16 +153,16 @@ describe('provider presets API', () => {
     expect(custom?.defaultEnv).toBeUndefined()
   })
 
-  test('GET and PUT /api/providers/settings read and write cc-haha settings.json', async () => {
+  test('GET and PUT /api/providers/settings read and write EchoFlow settings.json', async () => {
     const initial = {
       env: {
         ANTHROPIC_MODEL: 'glm-5.1',
       },
       model: 'glm-5.1',
     }
-    await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+    await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
     await fs.writeFile(
-      path.join(tmpDir, 'cc-haha', 'settings.json'),
+      path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'),
       JSON.stringify(initial, null, 2),
       'utf-8',
     )
@@ -178,7 +182,10 @@ describe('provider presets API', () => {
     const putRes = await handleProvidersApi(putReq.req, putReq.url, putReq.segments)
     expect(putRes.status).toBe(200)
 
-    const updatedRaw = await fs.readFile(path.join(tmpDir, 'cc-haha', 'settings.json'), 'utf-8')
+    const updatedRaw = await fs.readFile(
+      path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'),
+      'utf-8',
+    )
     expect(JSON.parse(updatedRaw)).toEqual(updateBody)
   })
 

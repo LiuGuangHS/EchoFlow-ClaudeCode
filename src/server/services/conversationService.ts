@@ -14,7 +14,16 @@ import {
   LEGACY_OPENAI_OAUTH_PROVIDER_ENV_KEY,
   OPENAI_CODEX_OAUTH_FILE_ENV_KEY,
   OPENAI_OAUTH_PROVIDER_ENV_KEY,
+  isOpenAIOfficialProviderId,
 } from './openaiOfficialProvider.js'
+import {
+  GROK_OAUTH_FILE_ENV_KEY,
+  GROK_OAUTH_PROVIDER_ENV_KEY,
+} from './grokOfficialProvider.js'
+import {
+  OPENAI_CODEX_REASONING_EFFORT_ENV_KEY,
+  isOpenAIReasoningEffort,
+} from '../../services/openaiAuth/models.js'
 import { sessionService } from './sessionService.js'
 import { diagnosticsService } from './diagnosticsService.js'
 import {
@@ -118,6 +127,8 @@ type SessionProcess = {
   permissionMode: string
   sdkToken: string
   sdkSocket: { send(data: string): void } | null
+  sdkAttached: Promise<void>
+  resolveSdkAttached: (() => void) | null
   pendingOutbound: string[]
   startupPending: boolean
   startupExitCode: number | null
@@ -178,6 +189,25 @@ export class ConversationService {
   private sessions = new Map<string, SessionProcess>()
   private deletedSessions = new Set<string>()
   private providerService = new ProviderService()
+  private pendingPermissionModeChanges = new Map<string, Map<string, number>>()
+
+  private trackPendingPermissionModeChange(sessionId: string, mode: string, delta: 1 | -1): void {
+    const sessionChanges = this.pendingPermissionModeChanges.get(sessionId) ?? new Map<string, number>()
+    const nextCount = (sessionChanges.get(mode) ?? 0) + delta
+    if (nextCount > 0) {
+      sessionChanges.set(mode, nextCount)
+      this.pendingPermissionModeChanges.set(sessionId, sessionChanges)
+      return
+    }
+    sessionChanges.delete(mode)
+    if (sessionChanges.size === 0) {
+      this.pendingPermissionModeChanges.delete(sessionId)
+    }
+  }
+
+  isPermissionModeChangePending(sessionId: string, mode: string): boolean {
+    return (this.pendingPermissionModeChanges.get(sessionId)?.get(mode) ?? 0) > 0
+  }
 
   private buildSessionCliArgs(
     sessionId: string,
@@ -340,6 +370,10 @@ export class ConversationService {
       )
     }
 
+    let resolveSdkAttached: (() => void) | null = null
+    const sdkAttached = new Promise<void>((resolve) => {
+      resolveSdkAttached = resolve
+    })
     const session: SessionProcess = {
       proc,
       outputCallbacks: [],
@@ -347,6 +381,8 @@ export class ConversationService {
       permissionMode: options?.permissionMode || 'default',
       sdkToken: this.getSdkTokenFromUrl(sdkUrl),
       sdkSocket: null,
+      sdkAttached,
+      resolveSdkAttached,
       pendingOutbound: [],
       startupPending: true,
       startupExitCode: null,
@@ -371,12 +407,15 @@ export class ConversationService {
     })
 
     const STARTUP_GRACE_MS = 3000
+    let startupGraceTimer: ReturnType<typeof setTimeout> | undefined
     const earlyExitCode = await Promise.race([
       proc.exited,
+      session.sdkAttached.then(() => null),
       new Promise<null>((resolve) =>
-        setTimeout(() => resolve(null), STARTUP_GRACE_MS),
+        startupGraceTimer = setTimeout(() => resolve(null), STARTUP_GRACE_MS),
       ),
     ])
+    if (startupGraceTimer) clearTimeout(startupGraceTimer)
 
     const startupExitCode = earlyExitCode ?? session.startupExitCode
     if (startupExitCode !== null) {
@@ -528,20 +567,57 @@ export class ConversationService {
     })
   }
 
-  setPermissionMode(sessionId: string, mode: string): boolean {
-    const sent = this.sendSdkMessage(sessionId, {
-      type: 'control_request',
-      request_id: crypto.randomUUID(),
-      request: {
+  async setPermissionMode(sessionId: string, mode: string, timeoutMs = 10_000): Promise<boolean> {
+    if (!this.sessions.has(sessionId)) return false
+    this.trackPendingPermissionModeChange(sessionId, mode, 1)
+
+    let confirmationSettled = false
+    let confirmationTimeout: ReturnType<typeof setTimeout>
+    let handleOutput: (msg: any) => void
+    const cleanupConfirmation = () => {
+      clearTimeout(confirmationTimeout)
+      this.removeOutputCallback(sessionId, handleOutput)
+    }
+    const confirmation = new Promise<void>((resolve, reject) => {
+      handleOutput = (msg: any) => {
+        if (
+          msg?.type !== 'system' ||
+          msg.subtype !== 'status' ||
+          msg.permissionMode !== mode
+        ) {
+          return
+        }
+
+        confirmationSettled = true
+        cleanupConfirmation()
+        resolve()
+      }
+
+      confirmationTimeout = setTimeout(() => {
+        confirmationSettled = true
+        cleanupConfirmation()
+        reject(new Error(`Timed out waiting for permission mode confirmation: ${mode}`))
+      }, timeoutMs)
+      this.onOutput(sessionId, handleOutput)
+    })
+    // requestControl can reject before the confirmation promise is awaited.
+    // Attach a handler immediately so a later confirmation timeout is never unhandled.
+    void confirmation.catch(() => undefined)
+
+    try {
+      await this.requestControl(sessionId, {
         subtype: 'set_permission_mode',
         mode,
-      },
-    })
-    if (sent) {
-      const session = this.sessions.get(sessionId)
-      if (session) session.permissionMode = mode
+      }, timeoutMs)
+      await confirmation
+
+      return this.sessions.has(sessionId)
+    } catch (err) {
+      if (!confirmationSettled) cleanupConfirmation()
+      throw err
+    } finally {
+      this.trackPendingPermissionModeChange(sessionId, mode, -1)
     }
-    return sent
   }
 
   recordSessionPermissionMode(sessionId: string, mode: string): boolean {
@@ -710,6 +786,8 @@ export class ConversationService {
     if (!session) return false
 
     session.sdkSocket = socket
+    session.resolveSdkAttached?.()
+    session.resolveSdkAttached = null
     while (session.pendingOutbound.length > 0) {
       const line = session.pendingOutbound.shift()
       if (line) {
@@ -719,9 +797,12 @@ export class ConversationService {
     return true
   }
 
-  detachSdkConnection(sessionId: string): void {
+  detachSdkConnection(
+    sessionId: string,
+    socket: { send(data: string): void },
+  ): void {
     const session = this.sessions.get(sessionId)
-    if (session) {
+    if (session?.sdkSocket === socket) {
       session.sdkSocket = null
     }
   }
@@ -794,12 +875,28 @@ export class ConversationService {
         ) {
           session.pendingPermissionRequests.delete(msg.response.request_id)
         }
-        for (const cb of session.outputCallbacks) {
-          cb(msg)
-        }
+        this.notifyOutputCallbacks(sessionId, session.outputCallbacks, msg)
       } catch {
         console.warn(
           `[ConversationService] Ignoring malformed SDK payload for ${sessionId}`,
+        )
+      }
+    }
+  }
+
+  private notifyOutputCallbacks(
+    sessionId: string,
+    callbacks: Array<(msg: any) => void>,
+    message: any,
+  ): void {
+    for (const callback of [...callbacks]) {
+      try {
+        callback(message)
+      } catch (error) {
+        console.warn(
+          `[ConversationService] Output callback failed for ${sessionId}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
         )
       }
     }
@@ -1008,17 +1105,16 @@ export class ConversationService {
           sdkMessages: this.summarizeSdkMessages(activeSession.sdkMessages),
         },
       })
-      for (const cb of activeSession.outputCallbacks) {
-        cb({
-          type: 'result',
-          subtype: 'error',
-          is_error: true,
-          result: exitError,
-          usage: { input_tokens: 0, output_tokens: 0 },
-          session_id: sessionId,
-        })
-      }
+      const callbacks = [...activeSession.outputCallbacks]
       this.sessions.delete(sessionId)
+      this.notifyOutputCallbacks(sessionId, callbacks, {
+        type: 'result',
+        subtype: 'error',
+        is_error: true,
+        result: exitError,
+        usage: { input_tokens: 0, output_tokens: 0 },
+        session_id: sessionId,
+      })
     }
   }
 
@@ -1035,7 +1131,11 @@ export class ConversationService {
       return ['--dangerously-skip-permissions']
     }
 
-    const args = ['--permission-mode', resolvedMode]
+    const args = [
+      '--allow-dangerously-skip-permissions',
+      '--permission-mode',
+      resolvedMode,
+    ]
     return args
   }
 
@@ -1046,11 +1146,11 @@ export class ConversationService {
       args.push('--model', options.model)
     }
 
-    if (options?.effort) {
+    if (options?.effort && !isOpenAIOfficialProviderId(options.providerId)) {
       args.push('--effort', options.effort)
     }
 
-    if (options?.thinking) {
+    if (options?.thinking && !isOpenAIOfficialProviderId(options.providerId)) {
       args.push('--thinking', options.thinking)
     }
 
@@ -1090,6 +1190,9 @@ export class ConversationService {
       OPENAI_OAUTH_PROVIDER_ENV_KEY,
       LEGACY_OPENAI_OAUTH_PROVIDER_ENV_KEY,
       OPENAI_CODEX_OAUTH_FILE_ENV_KEY,
+      OPENAI_CODEX_REASONING_EFFORT_ENV_KEY,
+      GROK_OAUTH_PROVIDER_ENV_KEY,
+      GROK_OAUTH_FILE_ENV_KEY,
     ] as const
 
     const cleanEnv = await getProcessEnvWithTerminalShellEnvironment()
@@ -1208,6 +1311,10 @@ export class ConversationService {
       // should come from Desktop-managed config or inherited launch env, not
       // be reintroduced from the repo's .env file.
       ECHOFLOW_SKIP_DOTENV: '1',
+      CC_HAHA_SKIP_DOTENV: '1',
+      // Keep the SDK runtime identity for auth and client behavior, but stamp
+      // desktop-owned transcripts with an entrypoint visible to Claude /resume.
+      CC_HAHA_TRANSCRIPT_ENTRYPOINT: 'claude-desktop',
       ...(explicitProviderEnv
         ? { CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: '1' }
         : {}),
@@ -1217,6 +1324,12 @@ export class ConversationService {
       // 否则 CLI 会忽略 provider 的 AUTH_TOKEN、错误地走 OAuth 打到第三方
       // endpoint。详见 src/utils/auth.ts isManagedOAuthContext()。
       ...(explicitProviderEnv ?? {}),
+      ...(
+        isOpenAIOfficialProviderId(options?.providerId) &&
+        isOpenAIReasoningEffort(options?.effort)
+          ? { [OPENAI_CODEX_REASONING_EFFORT_ENV_KEY]: options.effort }
+          : {}
+      ),
       ...networkEnv,
       ...(this.shouldMarkManagedOAuth(options?.providerId)
         ? await this.buildOfficialOAuthEnv()
@@ -1333,6 +1446,8 @@ export class ConversationService {
         OPENAI_OAUTH_PROVIDER_ENV_KEY,
         LEGACY_OPENAI_OAUTH_PROVIDER_ENV_KEY,
         OPENAI_CODEX_OAUTH_FILE_ENV_KEY,
+        GROK_OAUTH_PROVIDER_ENV_KEY,
+        GROK_OAUTH_FILE_ENV_KEY,
       ].some((key) => typeof env[key] === 'string' && env[key]!.trim().length > 0)
     } catch {
       return false
@@ -1365,6 +1480,9 @@ export class ConversationService {
         env[OPENAI_OAUTH_PROVIDER_ENV_KEY] === '1' ||
         env[LEGACY_OPENAI_OAUTH_PROVIDER_ENV_KEY] === '1'
       ) {
+        return false
+      }
+      if (env[GROK_OAUTH_PROVIDER_ENV_KEY] === '1') {
         return false
       }
       const hasProviderEnv = [
@@ -1620,36 +1738,29 @@ export class ConversationService {
   private summarizeSdkMessages(messages: any[]): unknown[] {
     return messages.slice(-MAX_CAPTURED_SDK_SUMMARY).map((message) => {
       if (!message || typeof message !== 'object') {
-        return message
+        return { type: 'unknown' }
       }
-      const content = Array.isArray(message.message?.content)
-        ? message.message.content.map((block: unknown) => {
-            if (!block || typeof block !== 'object') return block
-            const typedBlock = block as Record<string, unknown>
-            return {
-              type: typedBlock.type,
-              text:
-                typeof typedBlock.text === 'string'
-                  ? this.redactProcessOutput(typedBlock.text)
-                  : undefined,
-            }
-          })
-        : undefined
       return {
-        type: message.type,
-        subtype: message.subtype,
-        is_error: message.is_error,
-        status: typeof message.status === 'string' ? message.status : undefined,
-        result: typeof message.result === 'string' ? this.redactProcessOutput(message.result) : undefined,
-        error: typeof message.error === 'string' ? this.redactProcessOutput(message.error) : undefined,
-        errorDetails:
-          typeof message.errorDetails === 'string'
-            ? this.redactProcessOutput(message.errorDetails)
-            : undefined,
-        message: typeof message.message === 'string' ? this.redactProcessOutput(message.message) : undefined,
-        content,
+        type: typeof message.type === 'string' ? message.type : 'unknown',
+        ...(typeof message.subtype === 'string' ? { subtype: message.subtype } : {}),
+        ...(typeof message.is_error === 'boolean' ? { is_error: message.is_error } : {}),
+        ...(this.isSafeSdkStatus(message.status) ? { status: message.status } : {}),
+        ...(this.sdkErrorCategory(message) ? { errorCategory: this.sdkErrorCategory(message) } : {}),
       }
     })
+  }
+
+  private isSafeSdkStatus(value: unknown): value is string {
+    return typeof value === 'string' && /^(?:failed|error|success|completed|cancelled|canceled|pending|running)$/i.test(value)
+  }
+
+  private sdkErrorCategory(message: any): string | undefined {
+    if (message?.type === 'assistant' && (message.isApiErrorMessage === true || message.error !== undefined)) {
+      return 'api_error'
+    }
+    if (message?.type === 'result' && message.is_error === true) return 'result_error'
+    if (message?.type === 'auth_status') return 'authentication'
+    return undefined
   }
 
   private async buildUserContent(

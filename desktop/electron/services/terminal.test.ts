@@ -63,10 +63,6 @@ function tempDir() {
   return dir
 }
 
-function posixPath(value: string | null): string | null {
-  return value?.replaceAll('\\', '/') ?? null
-}
-
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true })
@@ -75,11 +71,37 @@ afterEach(() => {
 })
 
 describe('Electron terminal service', () => {
-  it('uses the portable terminal config path before app userData', () => {
-    const app = { getPath: vi.fn(() => '/app/user-data') }
+  it('uses the custom terminal config path before the standard ~/.claude path', () => {
+    const app = { getPath: vi.fn(() => '/Users/test') }
 
-    expect(posixPath(terminalConfigPath(app, { CLAUDE_CONFIG_DIR: '/portable' }))).toBe('/portable/terminal-config.json')
-    expect(posixPath(terminalConfigPath(app, {}))).toBe('/app/user-data/terminal-config.json')
+    expect(terminalConfigPath(app, { CLAUDE_CONFIG_DIR: '/portable' })).toBe('/portable/terminal-config.json')
+    expect(terminalConfigPath(app, {})).toBe('/Users/test/.claude/terminal-config.json')
+  })
+
+  it('reads an old userData terminal config but writes future changes to ~/.claude', () => {
+    const root = tempDir()
+    const home = path.join(root, 'home')
+    const userData = path.join(root, 'user-data')
+    const legacyBash = path.join(root, 'legacy-bash.exe')
+    const newBash = path.join(root, 'new-bash.exe')
+    fs.mkdirSync(userData, { recursive: true })
+    fs.writeFileSync(legacyBash, '')
+    fs.writeFileSync(newBash, '')
+    fs.writeFileSync(path.join(userData, 'terminal-config.json'), JSON.stringify({ bash_path: legacyBash }))
+    const service = new ElectronTerminalService({
+      app: { getPath: name => name === 'home' ? home : userData },
+      env: {},
+      isFile: filePath => filePath === legacyBash || filePath === newBash,
+    })
+
+    expect(service.getBashPath()).toBe(legacyBash)
+    service.setBashPath(newBash)
+    expect(JSON.parse(fs.readFileSync(path.join(home, '.claude', 'terminal-config.json'), 'utf8'))).toEqual({
+      bash_path: newBash,
+    })
+    expect(JSON.parse(fs.readFileSync(path.join(userData, 'terminal-config.json'), 'utf8'))).toEqual({
+      bash_path: legacyBash,
+    })
   })
 
   it('persists the legacy bash path config and validates saved paths', () => {
@@ -125,12 +147,16 @@ describe('Electron terminal service', () => {
       JSON.stringify({ desktopTerminal: { startupShell: 'cmd' } }),
     )
 
+    const ignoredHome = tempDir()
     const service = new ElectronTerminalService({
-      env: { HOME: dir, COMSPEC: 'powershell.exe' },
+      env: { HOME: ignoredHome, USERPROFILE: dir, COMSPEC: 'powershell.exe' },
       platform: 'win32',
     })
 
-    expect(desktopTerminalSettingsPath({ HOME: dir })).toBe(path.join(dir, '.claude', 'settings.json'))
+    expect(desktopTerminalSettingsPath({ HOME: ignoredHome, USERPROFILE: dir }, 'win32'))
+      .toBe(path.join(dir, '.claude', 'settings.json'))
+    expect(desktopTerminalSettingsPath({ HOME: dir }, 'darwin'))
+      .toBe(path.join(dir, '.claude', 'settings.json'))
     expect(service.resolveShell()).toBe('cmd.exe')
   })
 
@@ -155,10 +181,8 @@ describe('Electron terminal service', () => {
 
     expect(prepareNodePtyRuntime(source, cache)).toBe(cache)
     expect(fs.existsSync(path.join(cache, 'index.js'))).toBe(true)
-    if (process.platform !== 'win32') {
-      expect(fs.statSync(cache).mode & 0o077).toBe(0)
-      expect(fs.statSync(path.join(cache, 'prebuilds', 'darwin-arm64', 'spawn-helper')).mode & 0o777).toBe(0o500)
-    }
+    expect(fs.statSync(cache).mode & 0o077).toBe(0)
+    expect(fs.statSync(path.join(cache, 'prebuilds', 'darwin-arm64', 'spawn-helper')).mode & 0o777).toBe(0o500)
     expect(fs.existsSync(path.join(cache, '.echoflow-code-node-pty-manifest.json'))).toBe(true)
   })
 

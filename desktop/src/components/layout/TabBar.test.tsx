@@ -295,11 +295,12 @@ describe('TabBar', () => {
     expect(screen.queryByTestId('session-activity-badge')).not.toBeInTheDocument()
   })
 
-  it('shows the activity button for completed TodoWrite history without a badge', async () => {
+  it('shows the activity button for completed TodoWrite history and hides it while the workspace is open', async () => {
     const { TabBar } = await import('./TabBar')
     const { useTabStore } = await import('../../stores/tabStore')
     const { useChatStore } = await import('../../stores/chatStore')
     const { useSessionStore } = await import('../../stores/sessionStore')
+    const { useWorkspacePanelStore } = await import('../../stores/workspacePanelStore')
     const sessionId = 'session-1'
     const chatSession = makeChatSession('idle')
     chatSession.messages = [completedTodoWriteMessage()]
@@ -324,9 +325,15 @@ describe('TabBar', () => {
 
     expect(screen.getByRole('button', { name: /activity/i })).toBeInTheDocument()
     expect(screen.queryByTestId('session-activity-badge')).not.toBeInTheDocument()
+
+    act(() => {
+      useWorkspacePanelStore.getState().openPanel(sessionId)
+    })
+
+    expect(screen.queryByRole('button', { name: /activity/i })).not.toBeInTheDocument()
   })
 
-  it('shows the activity button with a badge for running or failed activity', async () => {
+  it('shows the activity button without a numeric badge for running or failed activity', async () => {
     const { TabBar } = await import('./TabBar')
     const { useTabStore } = await import('../../stores/tabStore')
     const { useChatStore } = await import('../../stores/chatStore')
@@ -375,7 +382,7 @@ describe('TabBar', () => {
 
     const button = screen.getByRole('button', { name: /activity/i })
     expect(button).toBeInTheDocument()
-    expect(screen.getByTestId('session-activity-badge')).toHaveTextContent('2')
+    expect(screen.queryByTestId('session-activity-badge')).not.toBeInTheDocument()
     expect(useActivityPanelStore.getState().isOpen(sessionId)).toBe(false)
     expect(button).toHaveAttribute('aria-expanded', 'false')
     expect(button).toHaveAttribute('aria-pressed', 'false')
@@ -426,7 +433,7 @@ describe('TabBar', () => {
     })
 
     expect(screen.getByRole('button', { name: /activity/i })).toBeInTheDocument()
-    expect(screen.getByTestId('session-activity-badge')).toHaveTextContent('1')
+    expect(screen.queryByTestId('session-activity-badge')).not.toBeInTheDocument()
   })
 
   it('hides team-only activity when the active team belongs to another session', async () => {
@@ -469,7 +476,7 @@ describe('TabBar', () => {
     expect(screen.queryByTestId('session-activity-badge')).not.toBeInTheDocument()
   })
 
-  it('shows the activity button when team activity arrives after initial render', async () => {
+  it('shows the activity button without a badge when team activity arrives after initial render', async () => {
     const { TabBar } = await import('./TabBar')
     const { useTabStore } = await import('../../stores/tabStore')
     const { useChatStore } = await import('../../stores/chatStore')
@@ -511,7 +518,7 @@ describe('TabBar', () => {
     })
 
     expect(screen.getByRole('button', { name: /activity/i })).toBeInTheDocument()
-    expect(screen.getByTestId('session-activity-badge')).toHaveTextContent('1')
+    expect(screen.queryByTestId('session-activity-badge')).not.toBeInTheDocument()
   })
 
   it('does not show the activity button for settings tabs', async () => {
@@ -530,7 +537,7 @@ describe('TabBar', () => {
     expect(screen.queryByRole('button', { name: /activity/i })).not.toBeInTheDocument()
   })
 
-  it('includes current-session CLI tasks in the activity badge', async () => {
+  it('shows current-session CLI tasks without a numeric activity badge', async () => {
     const { TabBar } = await import('./TabBar')
     const { useTabStore } = await import('../../stores/tabStore')
     const { useChatStore } = await import('../../stores/chatStore')
@@ -580,10 +587,10 @@ describe('TabBar', () => {
       render(<TabBar />)
     })
 
-    expect(screen.getByTestId('session-activity-badge')).toHaveTextContent('2')
+    expect(screen.queryByTestId('session-activity-badge')).not.toBeInTheDocument()
   })
 
-  it('excludes dismissed failed background tasks from the activity badge while keeping running tasks', async () => {
+  it('keeps running activity available without showing a numeric badge', async () => {
     const { TabBar } = await import('./TabBar')
     const { useTabStore } = await import('../../stores/tabStore')
     const { useChatStore } = await import('../../stores/chatStore')
@@ -636,7 +643,7 @@ describe('TabBar', () => {
       render(<TabBar />)
     })
 
-    expect(screen.getByTestId('session-activity-badge')).toHaveTextContent('1')
+    expect(screen.queryByTestId('session-activity-badge')).not.toBeInTheDocument()
   })
 
   it('ignores CLI tasks from a different session in the activity badge', async () => {

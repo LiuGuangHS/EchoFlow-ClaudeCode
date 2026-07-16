@@ -1,0 +1,40 @@
+# Quality policy and required-check topology are maintainer-owned.
+/.github/workflows/ @LiuGuangHS
+/.github/CODEOWNERS @LiuGuangHS
+/.github/copilot-instructions.md @LiuGuangHS
+/.github/pull_request_template.md @LiuGuangHS
+/AGENTS.md @LiuGuangHS
+**/AGENTS.md @LiuGuangHS
+/CONTRIBUTING.md @LiuGuangHS
+/docs/en/guide/contributing.md @LiuGuangHS
+/docs/guide/contributing.md @LiuGuangHS
+/scripts/pr/ @LiuGuangHS
+/scripts/quality-gate/ @LiuGuangHS
+
+# Cross-process and provider boundaries carry a wider blast radius.
+/desktop/electron/ @LiuGuangHS
+/desktop/scripts/ @LiuGuangHS
+/desktop/src/api/providers* @LiuGuangHS
+/desktop/src/api/websocket* @LiuGuangHS
+/desktop/src/lib/providerSettingsJson* @LiuGuangHS
+/desktop/src/pages/ActiveSession* @LiuGuangHS
+/desktop/src/pages/EmptySession* @LiuGuangHS
+/desktop/src/stores/chatStore* @LiuGuangHS
+/desktop/src/stores/providerStore* @LiuGuangHS
+/desktop/src/stores/sessionRuntimeStore* @LiuGuangHS
+/desktop/src/lib/persistenceMigrations* @LiuGuangHS
+/src/server/api/providers* @LiuGuangHS
+/src/server/config/provider* @LiuGuangHS
+/src/server/proxy/ @LiuGuangHS
+/src/server/services/conversationService* @LiuGuangHS
+/src/server/services/persistentStorageMigrations* @LiuGuangHS
+/src/server/services/openaiOfficialProvider* @LiuGuangHS
+/src/server/services/provider* @LiuGuangHS
+/src/server/types/provider* @LiuGuangHS
+/src/server/ws/ @LiuGuangHS
+/src/services/api/client* @LiuGuangHS
+/src/services/compact/autoCompact* @LiuGuangHS
+/src/services/openaiAuth/ @LiuGuangHS
+/src/utils/managedEnv* @LiuGuangHS
+/src/utils/model/ @LiuGuangHS
+/src/utils/providerManagedEnvCompat* @LiuGuangHS

@@ -17,6 +17,7 @@ export type ElectronUpdateCheckOptions = {
 
 export type ElectronUpdaterLike = {
   autoDownload: boolean
+  disableDifferentialDownload?: boolean
   logger?: unknown
   setFeedURL?(options: string): void
   checkForUpdates(): Promise<ElectronUpdateCheckResult>
@@ -47,6 +48,22 @@ export type ElectronUpdaterRuntimeOptions = {
   updateConfigPath?: string
   feedUrl?: string | null
   feedUrls?: Array<string | null | undefined>
+}
+
+export type UpdaterSessionProxyConfig = {
+  mode?: 'system'
+  proxyRules?: string
+  proxyBypassRules?: string
+}
+
+// electron-updater performs all update traffic (metadata + downloads) on its
+// own session partition, so proxy settings must target that session. Passing
+// an empty config would mean fixed_servers with no rules (= direct), so the
+// system fallback has to be an explicit `mode: 'system'`.
+export function updaterSessionProxyConfig(proxy: string | null): UpdaterSessionProxyConfig {
+  return proxy
+    ? { proxyRules: proxy, proxyBypassRules: '<local>' }
+    : { mode: 'system' }
 }
 
 export function normalizeUpdateInfo(info: ElectronUpdateInfo | undefined): ElectronUpdateMetadata | null {
@@ -157,6 +174,9 @@ export class ElectronUpdaterService {
     this.updateConfigPath = runtimeOptions.updateConfigPath
     this.feedUrls = normalizeFeedUrls(runtimeOptions)
     this.updater.autoDownload = false
+    // Differential download issues many small sequential range requests and is
+    // RTT-bound against the GitHub CDN, so it downloads far below line speed.
+    this.updater.disableDifferentialDownload = true
     this.updater.logger = null
   }
 

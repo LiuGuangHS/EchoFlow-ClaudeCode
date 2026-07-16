@@ -17,6 +17,9 @@ export type StreamWatchdogSnapshot = {
   lastBlockType?: string
   messageStopReceived: boolean
   toolUseStarted: boolean
+  localToolUseStarted: boolean
+  localToolUseCompleted: boolean
+  serverToolUseStarted: boolean
 }
 
 type StreamEventLike = {
@@ -148,8 +151,9 @@ export class StreamWatchdogTimeoutError extends Error {
 
   safeToRetryStream(): boolean {
     return (
-      this.streamSnapshot.contentDeltaCount === 0 &&
-      !this.streamSnapshot.toolUseStarted
+      this.reason === 'idle' &&
+      !this.streamSnapshot.localToolUseCompleted &&
+      !this.streamSnapshot.serverToolUseStarted
     )
   }
 
@@ -175,6 +179,9 @@ class StreamWatchdogState {
     toolInputDeltaCount: 0,
     messageStopReceived: false,
     toolUseStarted: false,
+    localToolUseStarted: false,
+    localToolUseCompleted: false,
+    serverToolUseStarted: false,
   }
 
   private readonly blockTypesByIndex = new Map<number, string>()
@@ -212,10 +219,31 @@ class StreamWatchdogState {
             this.snapshotValue.toolUseStarted ||
             blockType === 'tool_use' ||
             blockType === 'server_tool_use',
+          localToolUseStarted:
+            this.snapshotValue.localToolUseStarted || blockType === 'tool_use',
+          serverToolUseStarted:
+            this.snapshotValue.serverToolUseStarted || blockType === 'server_tool_use',
         }
         if (index !== undefined) {
           this.blockTypesByIndex.set(index, blockType)
         }
+      }
+    }
+
+    if (type === 'content_block_stop') {
+      const index = readIndex(rawEvent?.index)
+      const blockType = index === undefined
+        ? undefined
+        : this.blockTypesByIndex.get(index)
+      if (blockType === 'tool_use') {
+        this.snapshotValue = {
+          ...this.snapshotValue,
+          localToolUseCompleted: true,
+          lastBlockType: blockType,
+        }
+      }
+      if (index !== undefined) {
+        this.blockTypesByIndex.delete(index)
       }
     }
 

@@ -1,7 +1,7 @@
-import type { EffortLevel } from './settings'
+import type { ReasoningEffortLevel } from './settings'
 
 export type RuntimeSelection = {
   providerId: string | null
   modelId: string
-  effortLevel?: EffortLevel
+  effortLevel?: ReasoningEffortLevel
 }

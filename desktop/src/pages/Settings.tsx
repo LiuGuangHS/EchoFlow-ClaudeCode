@@ -53,11 +53,13 @@ import { useUIStore } from '../stores/uiStore'
 import { ClaudeOfficialLogin } from '../components/settings/ClaudeOfficialLogin'
 import { EchoFlowAPIOfficialLogin } from '../components/settings/EchoFlowAPIOfficialLogin'
 import { ChatGPTOfficialLogin } from '../components/settings/ChatGPTOfficialLogin'
+import { GrokOfficialLogin } from '../components/settings/GrokOfficialLogin'
 import {
   BUILT_IN_PROVIDER_IDS,
   CLAUDE_OFFICIAL_PROVIDER_ID,
   OPENAI_OFFICIAL_PROVIDER_ID,
 } from '../constants/openaiOfficialProvider'
+import { GROK_OFFICIAL_PROVIDER_ID } from '../constants/grokOfficialProvider'
 import { useUpdateStore } from '../stores/updateStore'
 import { getBaseUrl } from '../api/client'
 import { legacyMigrationApi, type LegacyMigrationResult } from '../api/legacyMigration'
@@ -67,6 +69,7 @@ import { isDesktopRuntime } from '../lib/desktopRuntime'
 import { getDesktopHost } from '../lib/desktopHost'
 import { publicAssetPath } from '../lib/publicAsset'
 import { LEGACY_LOCAL_STORAGE_TARGET_KEYS, runLegacyLocalStorageMigration } from '../lib/legacyLocalStorageMigration'
+import { isBrowserSafePort } from '../lib/browserSafePort'
 import {
   getDesktopNotificationPermission,
   notifyDesktop,
@@ -171,7 +174,7 @@ function parseH5FixedPortDraft(draft: string): number | null | 'invalid' {
   if (!trimmed) return null
   if (!/^\d{1,5}$/.test(trimmed)) return 'invalid'
   const port = Number(trimmed)
-  return port >= 1024 && port <= 65535 ? port : 'invalid'
+  return port >= 1024 && port <= 65535 && isBrowserSafePort(port) ? port : 'invalid'
 }
 
 // Mirrors the server-side disconnect grace range (h5AccessService
@@ -266,13 +269,14 @@ function TabButton({ icon, label, active, onClick }: { icon: string; label: stri
   return (
     <button
       onClick={onClick}
+      aria-current={active ? 'page' : undefined}
       className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-sm text-left transition-colors ${
         active
           ? 'bg-[var(--color-surface-selected)] text-[var(--color-text-primary)] font-medium'
           : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]'
       }`}
     >
-      <span className="material-symbols-outlined text-[18px]">{icon}</span>
+      <span className="material-symbols-outlined text-[18px]" aria-hidden="true">{icon}</span>
       {label}
     </button>
   )
@@ -283,6 +287,7 @@ function TabButton({ icon, label, active, onClick }: { icon: string; label: stri
 type ProviderListItem =
   | { id: typeof CLAUDE_OFFICIAL_PROVIDER_ID; kind: 'claude-official' }
   | { id: typeof OPENAI_OFFICIAL_PROVIDER_ID; kind: 'openai-official' }
+  | { id: typeof GROK_OFFICIAL_PROVIDER_ID; kind: 'grok-official' }
   | { id: string; kind: 'saved'; provider: SavedProvider }
 
 function defaultProviderOrder(providers: SavedProvider[]): string[] {
@@ -329,6 +334,7 @@ function buildProviderListItems(
   const items = new Map<string, ProviderListItem>([
     [CLAUDE_OFFICIAL_PROVIDER_ID, { id: CLAUDE_OFFICIAL_PROVIDER_ID, kind: 'claude-official' }],
     [OPENAI_OFFICIAL_PROVIDER_ID, { id: OPENAI_OFFICIAL_PROVIDER_ID, kind: 'openai-official' }],
+    [GROK_OFFICIAL_PROVIDER_ID, { id: GROK_OFFICIAL_PROVIDER_ID, kind: 'grok-official' }],
     ...savedItems,
   ])
 
@@ -343,6 +349,8 @@ function providerItemTestId(item: ProviderListItem): string {
       return 'claude-official-provider'
     case 'openai-official':
       return 'openai-official-provider'
+    case 'grok-official':
+      return 'grok-official-provider'
     case 'saved':
       return `provider-${item.provider.id}`
   }
@@ -452,6 +460,7 @@ function ProviderSettings() {
 
   const isClaudeOfficialActive = hasLoadedProviders && activeId === null
   const isOpenAIOfficialActive = hasLoadedProviders && activeId === OPENAI_OFFICIAL_PROVIDER_ID
+  const isGrokOfficialActive = hasLoadedProviders && activeId === GROK_OFFICIAL_PROVIDER_ID
 
   return (
     <div className="max-w-2xl">
@@ -554,6 +563,28 @@ function ProviderSettings() {
                     details={isOpenAIOfficialActive ? (
                       <div className="border-t border-[var(--color-border-separator)] px-4 pb-4 pt-3">
                         <ChatGPTOfficialLogin />
+                      </div>
+                    ) : null}
+                  />
+                )
+              }
+
+              if (item.kind === 'grok-official') {
+                return (
+                  <SortableProviderCard
+                    key={item.id}
+                    item={item}
+                    isActive={isGrokOfficialActive}
+                    dragLabel={t('settings.providers.dragToReorder')}
+                    onActivate={!isGrokOfficialActive ? () => handleActivate(GROK_OFFICIAL_PROVIDER_ID) : undefined}
+                    title={t('settings.providers.grokOfficialName')}
+                    subtitle={t('settings.providers.grokOfficialDesc')}
+                    badges={isGrokOfficialActive ? (
+                      <span className="rounded border border-[var(--color-brand)]/18 bg-[var(--color-brand)]/12 px-1.5 py-0.5 text-[10px] font-bold leading-none text-[var(--color-brand)]">{t('settings.providers.default')}</span>
+                    ) : null}
+                    details={isGrokOfficialActive ? (
+                      <div className="border-t border-[var(--color-border-separator)] px-4 pb-4 pt-3">
+                        <GrokOfficialLogin />
                       </div>
                     ) : null}
                   />
@@ -2201,8 +2232,8 @@ export function GeneralSettings() {
   }, [fetchAppMode])
 
   useEffect(() => {
-    setPortableDirDraft(appMode.portableDir ?? appMode.defaultPortableDir ?? '')
-  }, [appMode.defaultPortableDir, appMode.portableDir])
+    setPortableDirDraft(appMode.portableDir ?? '')
+  }, [appMode.portableDir])
 
   const LANGUAGES: Array<{ value: Locale; label: string }> = [
     { value: 'en', label: 'English' },
@@ -3350,17 +3381,7 @@ export function GeneralSettings() {
                   </Button>
                 </div>
 
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                  <button
-                    type="button"
-                    className="text-xs font-medium text-[var(--color-brand)] hover:underline"
-                    onClick={() => {
-                      setPortableDirDraft(appMode.defaultPortableDir ?? '')
-                      setModeError(null)
-                    }}
-                  >
-                    {t('settings.general.storageUseDefaultPortableDir')}
-                  </button>
+                <div className="mt-3 flex justify-end">
                   <Button
                     type="button"
                     size="sm"
@@ -4768,7 +4789,7 @@ function AboutSettings() {
   })()
 
   return (
-    <div className="w-full min-w-0 max-w-lg mx-auto flex flex-col items-center py-6">
+    <div className="w-full min-w-0 max-w-2xl mx-auto flex flex-col items-center py-6">
       {/* Logo + App Name + Version */}
       <img src={publicAssetPath('app-icon.png')} alt="EchoFlow Code" className="w-20 h-20 mb-4" />
       <h1 className="text-xl font-bold text-[var(--color-text-primary)]">EchoFlow Code</h1>

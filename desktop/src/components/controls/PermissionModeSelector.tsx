@@ -4,16 +4,19 @@ import { useSettingsStore } from '../../stores/settingsStore'
 import { useChatStore } from '../../stores/chatStore'
 import { useSessionStore } from '../../stores/sessionStore'
 import { useTabStore } from '../../stores/tabStore'
+import { useUIStore } from '../../stores/uiStore'
 import { useTranslation } from '../../i18n'
 import type { PermissionMode } from '../../types/settings'
 import { useMobileViewport } from '../../hooks/useMobileViewport'
 import { isDesktopRuntime } from '../../lib/desktopRuntime'
 import { MobileBottomSheet } from '../shared/MobileBottomSheet'
 import { ActionDialog } from '../shared/ActionDialog'
+import { AutoModeOptInDialog } from './AutoModeOptInDialog'
 
 const MODE_ICONS: Record<PermissionMode, string> = {
   default: 'verified_user',
   acceptEdits: 'bolt',
+  auto: 'autoplay',
   plan: 'architecture',
   bypassPermissions: 'gavel',
   dontAsk: 'gavel',
@@ -32,12 +35,27 @@ type Props = {
 export function PermissionModeSelector({ workDir: workDirProp, compact = false, menuPlacement = 'top', value, onChange }: Props = {}) {
   const t = useTranslation()
   const isMobile = useMobileViewport() && !isDesktopRuntime()
-  const { permissionMode: storeMode } = useSettingsStore()
+  const {
+    permissionMode: storeMode,
+    autoModeOptInAccepted,
+    acceptAutoModeOptIn,
+  } = useSettingsStore()
   const setSessionPermissionMode = useChatStore((s) => s.setSessionPermissionMode)
   const activeTabId = useTabStore((s) => s.activeTabId)
   const sessions = useSessionStore((s) => s.sessions)
+  const chatState = useChatStore((s) =>
+    activeTabId ? s.sessions[activeTabId]?.chatState ?? 'idle' : 'idle',
+  )
+  const isTurnActive = chatState !== 'idle'
+  const isTurnActiveNow = (tabId: string | null) => {
+    if (!tabId) return false
+    return (useChatStore.getState().sessions[tabId]?.chatState ?? 'idle') !== 'idle'
+  }
   const [open, setOpen] = useState(false)
   const [confirmDialog, setConfirmDialog] = useState(false)
+  const [autoDialog, setAutoDialog] = useState(false)
+  const [autoConsentPending, setAutoConsentPending] = useState(false)
+  const interactionTabIdRef = useRef<string | null>(null)
   const ref = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
 
@@ -62,6 +80,13 @@ export function PermissionModeSelector({ workDir: workDirProp, compact = false, 
       icon: 'bolt',
     },
     {
+      value: 'auto',
+      label: t('permMode.autoMode'),
+      description: t('permMode.autoModeDesc'),
+      icon: 'autoplay',
+      color: 'text-[var(--color-brand)]',
+    },
+    {
       value: 'plan',
       label: t('permMode.planMode'),
       description: t('permMode.planModeDesc'),
@@ -80,6 +105,7 @@ export function PermissionModeSelector({ workDir: workDirProp, compact = false, 
   const MODE_LABELS: Record<PermissionMode, string> = {
     default: t('permMode.label.default'),
     acceptEdits: t('permMode.label.acceptEdits'),
+    auto: t('permMode.label.auto'),
     plan: t('permMode.label.plan'),
     bypassPermissions: t('permMode.label.bypassPermissions'),
     dontAsk: t('permMode.label.dontAsk'),
@@ -101,6 +127,27 @@ export function PermissionModeSelector({ workDir: workDirProp, compact = false, 
     ? 'top-full mt-2'
     : 'bottom-full mb-2'
   const menuId = 'permission-mode-menu'
+
+  useEffect(() => {
+    if (isTurnActive) {
+      setOpen(false)
+      setConfirmDialog(false)
+      setAutoDialog(false)
+      interactionTabIdRef.current = null
+    }
+  }, [isTurnActive])
+
+  useEffect(() => {
+    if (
+      (open || confirmDialog || autoDialog) &&
+      activeTabId !== interactionTabIdRef.current
+    ) {
+      setOpen(false)
+      setConfirmDialog(false)
+      setAutoDialog(false)
+      interactionTabIdRef.current = null
+    }
+  }, [activeTabId, autoDialog, confirmDialog, open])
 
   useEffect(() => {
     if (!open) return
@@ -132,6 +179,22 @@ export function PermissionModeSelector({ workDir: workDirProp, compact = false, 
           key={item.value}
           role="menuitem"
           onClick={() => {
+            const actionTabId = useTabStore.getState().activeTabId
+            if (
+              actionTabId !== interactionTabIdRef.current ||
+              isTurnActiveNow(actionTabId)
+            ) {
+              setOpen(false)
+              setConfirmDialog(false)
+              setAutoDialog(false)
+              interactionTabIdRef.current = null
+              return
+            }
+            if (item.value === 'auto' && item.value !== currentMode) {
+              setOpen(false)
+              setAutoDialog(true)
+              return
+            }
             if (item.value === 'bypassPermissions') {
               setOpen(false)
               setConfirmDialog(true)
@@ -140,9 +203,10 @@ export function PermissionModeSelector({ workDir: workDirProp, compact = false, 
             if (isControlled) {
               onChange?.(item.value)
             } else {
-              if (activeTabId) setSessionPermissionMode(activeTabId, item.value)
+              if (actionTabId) setSessionPermissionMode(actionTabId, item.value)
             }
             setOpen(false)
+            interactionTabIdRef.current = null
           }}
           className={`
             flex w-full items-start gap-3 px-4 py-3 text-left transition-colors
@@ -150,7 +214,7 @@ export function PermissionModeSelector({ workDir: workDirProp, compact = false, 
             ${item.value === currentMode ? 'bg-[var(--color-surface-selected)]' : ''}
           `}
         >
-          <span className={`material-symbols-outlined mt-0.5 text-[20px] ${item.color || 'text-[var(--color-text-secondary)]'}`}>
+          <span className={`material-symbols-outlined mt-0.5 ${item.value === 'auto' ? 'text-[18px]' : 'text-[20px]'} ${item.color || 'text-[var(--color-text-secondary)]'}`}>
             {item.icon}
           </span>
           <div className="min-w-0 flex-1">
@@ -179,17 +243,30 @@ export function PermissionModeSelector({ workDir: workDirProp, compact = false, 
   return (
     <div ref={ref} className="relative">
       <button
-        onClick={() => setOpen(!open)}
+        onClick={() => {
+          const actionTabId = useTabStore.getState().activeTabId
+          if (isTurnActiveNow(actionTabId)) return
+          if (open) {
+            setOpen(false)
+            interactionTabIdRef.current = null
+            return
+          }
+          interactionTabIdRef.current = actionTabId
+          setOpen(true)
+        }}
+        disabled={isTurnActive}
         aria-label={MODE_LABELS[currentMode]}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
-        title={compact ? MODE_LABELS[currentMode] : undefined}
-        className={`flex items-center bg-[var(--color-surface-container-low)] font-medium text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)] ${
-          compactButtonClass
-        }`}
+        title={isTurnActive ? t('permMode.disabledDuringTurn') : (compact ? MODE_LABELS[currentMode] : undefined)}
+        className={`flex items-center bg-[var(--color-surface-container-low)] font-medium text-[var(--color-text-secondary)] transition-colors ${
+          isTurnActive ? 'opacity-50 cursor-not-allowed' : 'hover:bg-[var(--color-surface-hover)]'
+        } ${compactButtonClass}`}
       >
-        <span className="material-symbols-outlined text-[14px]">{MODE_ICONS[currentMode]}</span>
+        <span className={`material-symbols-outlined ${currentMode === 'auto' ? 'text-[12px]' : 'text-[14px]'}`}>
+          {MODE_ICONS[currentMode]}
+        </span>
         {!compact && (
           <>
             <span>{MODE_LABELS[currentMode]}</span>
@@ -219,7 +296,10 @@ export function PermissionModeSelector({ workDir: workDirProp, compact = false, 
 
       <ActionDialog
         open={confirmDialog}
-        onClose={() => setConfirmDialog(false)}
+        onClose={() => {
+          setConfirmDialog(false)
+          interactionTabIdRef.current = null
+        }}
         title={t('permMode.enableBypassTitle')}
         width={420}
         body={(
@@ -254,22 +334,84 @@ export function PermissionModeSelector({ workDir: workDirProp, compact = false, 
         actions={[
           {
             label: t('common.cancel'),
-            onClick: () => setConfirmDialog(false),
+            onClick: () => {
+              setConfirmDialog(false)
+              interactionTabIdRef.current = null
+            },
             variant: 'secondary',
           },
           {
             label: t('permMode.enableBypassBtn'),
             onClick: () => {
+              const actionTabId = useTabStore.getState().activeTabId
+              if (
+                actionTabId !== interactionTabIdRef.current ||
+                isTurnActiveNow(actionTabId)
+              ) {
+                setConfirmDialog(false)
+                interactionTabIdRef.current = null
+                return
+              }
               if (isControlled) {
                 onChange?.('bypassPermissions')
-              } else if (activeTabId) {
-                setSessionPermissionMode(activeTabId, 'bypassPermissions')
+              } else if (actionTabId) {
+                setSessionPermissionMode(actionTabId, 'bypassPermissions')
               }
               setConfirmDialog(false)
+              interactionTabIdRef.current = null
             },
             variant: 'danger',
           },
         ]}
+      />
+
+      <AutoModeOptInDialog
+        open={autoDialog}
+        loading={autoConsentPending}
+        onClose={() => {
+          if (autoConsentPending) return
+          setAutoDialog(false)
+          interactionTabIdRef.current = null
+        }}
+        onConfirm={async () => {
+          const actionTabId = useTabStore.getState().activeTabId
+          if (
+            actionTabId !== interactionTabIdRef.current ||
+            isTurnActiveNow(actionTabId)
+          ) {
+            setAutoDialog(false)
+            interactionTabIdRef.current = null
+            return
+          }
+
+          setAutoConsentPending(true)
+          try {
+            if (!autoModeOptInAccepted) {
+              await acceptAutoModeOptIn()
+            }
+            const confirmedTabId = useTabStore.getState().activeTabId
+            if (
+              confirmedTabId !== interactionTabIdRef.current ||
+              isTurnActiveNow(confirmedTabId)
+            ) {
+              return
+            }
+            if (isControlled) {
+              onChange?.('auto')
+            } else if (confirmedTabId) {
+              setSessionPermissionMode(confirmedTabId, 'auto')
+            }
+            setAutoDialog(false)
+            interactionTabIdRef.current = null
+          } catch (err) {
+            useUIStore.getState().addToast({
+              type: 'error',
+              message: err instanceof Error ? err.message : t('common.error'),
+            })
+          } finally {
+            setAutoConsentPending(false)
+          }
+        }}
       />
     </div>
   )

@@ -668,6 +668,148 @@ describe('SessionService', () => {
     expect(scanCount).toBe(5)
   })
 
+  it('should coalesce concurrent session list scans for the same query', async () => {
+    for (let i = 0; i < 3; i++) {
+      const id = `2400000${i.toString(16)}-bbbb-cccc-dddd-eeeeeeeeeeee`
+      await writeSessionFile('-tmp-concurrent-session-list', id, [
+        makeSnapshotEntry(),
+        makeUserEntry(`Concurrent message ${i}`),
+      ])
+    }
+
+    const serviceWithSpy = service as unknown as {
+      scanSessionListSummary: (...args: unknown[]) => Promise<unknown>
+    }
+    const originalScanSessionListSummary = serviceWithSpy.scanSessionListSummary.bind(service)
+    let scanCount = 0
+    let releaseFirstScan: () => void = () => {}
+    let markFirstScanStarted: () => void = () => {}
+    const firstScanStarted = new Promise<void>((resolve) => {
+      markFirstScanStarted = resolve
+    })
+    const firstScanGate = new Promise<void>((resolve) => {
+      releaseFirstScan = resolve
+    })
+
+    serviceWithSpy.scanSessionListSummary = async (...args) => {
+      scanCount += 1
+      if (scanCount === 1) {
+        markFirstScanStarted()
+        await firstScanGate
+      }
+      return originalScanSessionListSummary(...args)
+    }
+
+    const first = service.listSessions({ limit: 3, offset: 0 })
+    await firstScanStarted
+    const second = service.listSessions({ limit: 3, offset: 0 })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    releaseFirstScan()
+
+    const [firstResult, secondResult] = await Promise.all([first, second])
+
+    expect(firstResult).toEqual(secondResult)
+    expect(scanCount).toBe(3)
+  })
+
+  it('should coalesce file summary scans across concurrent pagination queries', async () => {
+    for (let i = 0; i < 3; i++) {
+      const id = `2420000${i.toString(16)}-bbbb-cccc-dddd-eeeeeeeeeeee`
+      await writeSessionFile('-tmp-concurrent-session-pages', id, [
+        makeSnapshotEntry(),
+        makeUserEntry(`Concurrent page message ${i}`),
+      ])
+    }
+
+    const serviceWithSpy = service as unknown as {
+      scanSessionListSummary: (...args: unknown[]) => Promise<unknown>
+    }
+    const originalScanSessionListSummary = serviceWithSpy.scanSessionListSummary.bind(service)
+    let scanCount = 0
+    let releaseFirstScan: () => void = () => {}
+    let markFirstScanStarted: () => void = () => {}
+    const firstScanStarted = new Promise<void>((resolve) => {
+      markFirstScanStarted = resolve
+    })
+    const firstScanGate = new Promise<void>((resolve) => {
+      releaseFirstScan = resolve
+    })
+
+    serviceWithSpy.scanSessionListSummary = async (...args) => {
+      scanCount += 1
+      if (scanCount === 1) {
+        markFirstScanStarted()
+        await firstScanGate
+      }
+      return originalScanSessionListSummary(...args)
+    }
+
+    const sidebarRequest = service.listSessions({ limit: 400, offset: 0 })
+    await firstScanStarted
+    const tabRestoreRequest = service.listSessions({ limit: 200, offset: 0 })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    releaseFirstScan()
+
+    const [sidebarResult, tabRestoreResult] = await Promise.all([
+      sidebarRequest,
+      tabRestoreRequest,
+    ])
+
+    expect(sidebarResult.sessions).toHaveLength(3)
+    expect(tabRestoreResult.sessions).toHaveLength(3)
+    expect(scanCount).toBe(3)
+  })
+
+  it('should not reuse or cache a list scan started before session metadata changes', async () => {
+    const sessionId = '24500000-bbbb-cccc-dddd-eeeeeeeeeeee'
+    await writeSessionFile('-tmp-invalidated-session-list', sessionId, [
+      makeSnapshotEntry(),
+      makeUserEntry('Original title'),
+    ])
+
+    const serviceWithSpy = service as unknown as {
+      scanSessionListSummary: (...args: unknown[]) => Promise<unknown>
+    }
+    const originalScanSessionListSummary = serviceWithSpy.scanSessionListSummary.bind(service)
+    let scanCount = 0
+    let releaseFirstScan: () => void = () => {}
+    let markFirstScanStarted: () => void = () => {}
+    const firstScanStarted = new Promise<void>((resolve) => {
+      markFirstScanStarted = resolve
+    })
+    const firstScanGate = new Promise<void>((resolve) => {
+      releaseFirstScan = resolve
+    })
+
+    serviceWithSpy.scanSessionListSummary = async (...args) => {
+      scanCount += 1
+      const summary = await originalScanSessionListSummary(...args)
+      if (scanCount === 1) {
+        markFirstScanStarted()
+        await firstScanGate
+      }
+      return summary
+    }
+
+    const staleRequest = service.listSessions({ limit: 10, offset: 0 })
+    await firstScanStarted
+    await service.renameSession(sessionId, 'Renamed while scanning')
+
+    const freshRequest = service.listSessions({ limit: 10, offset: 0 })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(scanCount).toBe(2)
+
+    const freshResult = await freshRequest
+    expect(freshResult.sessions[0]?.title).toBe('Renamed while scanning')
+
+    releaseFirstScan()
+    const staleResult = await staleRequest
+    expect(staleResult.sessions[0]?.title).toBe('Original title')
+
+    const cachedResult = await service.listSessions({ limit: 10, offset: 0 })
+    expect(cachedResult.sessions[0]?.title).toBe('Renamed while scanning')
+  })
+
   it('should reuse unchanged file summaries after the list response cache is cleared', async () => {
     const sessionFiles: Array<{ id: string; filePath: string }> = []
     for (let i = 0; i < 3; i++) {
@@ -1537,6 +1679,55 @@ describe('SessionService', () => {
     expect(launchInfo?.permissionMode).toBe('plan')
   })
 
+  it('should round-trip auto through creation, list, metadata update, restore, and clear', async () => {
+    const workDir = path.join(tmpDir, 'auto-permission-workdir')
+    await fs.mkdir(workDir, { recursive: true })
+
+    const { sessionId } = await service.createSession(workDir, undefined, 'auto')
+
+    expect((await service.getSessionLaunchInfo(sessionId))?.permissionMode).toBe('auto')
+    expect(
+      (await service.listSessions()).sessions.find((session) => session.id === sessionId)
+        ?.permissionMode,
+    ).toBe('auto')
+
+    await service.appendSessionMetadata(sessionId, {
+      workDir,
+      permissionMode: 'default',
+    })
+    await service.appendSessionMetadata(sessionId, {
+      workDir,
+      permissionMode: 'auto',
+    })
+    expect((await service.getSessionLaunchInfo(sessionId))?.permissionMode).toBe('auto')
+
+    await service.clearSessionTranscript(sessionId, workDir, 'auto')
+    expect((await service.getSessionLaunchInfo(sessionId))?.permissionMode).toBe('auto')
+  })
+
+  it('should expose the latest runtime selection in the session list', async () => {
+    const workDir = '/tmp/runtime-list-metadata'
+    const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    await writeSessionFile(sanitizePath(workDir), sessionId, [
+      makeSnapshotEntry(),
+      {
+        ...makeSessionMetaEntry(workDir),
+        runtimeProviderId: 'provider-latest',
+        runtimeModelId: 'anthropic/claude-opus-4.7',
+        effortLevel: 'max',
+      },
+      makeUserEntry('Use the latest runtime metadata'),
+    ])
+
+    const listed = (await service.listSessions()).sessions.find((session) => session.id === sessionId)
+
+    expect(listed).toMatchObject({
+      runtimeProviderId: 'provider-latest',
+      runtimeModelId: 'anthropic/claude-opus-4.7',
+      effortLevel: 'max',
+    })
+  })
+
   it('should not append duplicate runtime metadata when it already matches', async () => {
     const workDir = '/tmp/runtime-idempotent'
     const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
@@ -1857,11 +2048,12 @@ describe('SessionService', () => {
   })
 
   it('should default to the user home directory when workDir is missing', async () => {
-    const { sessionId } = await service.createSession('')
+    const { sessionId, workDir } = await service.createSession('')
+    expect(workDir).toBe(await fs.realpath(os.homedir()))
     const filePath = path.join(
       tmpDir,
       'projects',
-      sanitizePath(os.homedir()),
+      sanitizePath(workDir),
       `${sessionId}.jsonl`,
     )
 
@@ -2306,6 +2498,16 @@ describe('Sessions API', () => {
     expect(body.sessionId).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
     )
+  })
+
+  it('POST /api/sessions should reject an unknown permission mode', async () => {
+    const res = await fetch(`${baseUrl}/api/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ permissionMode: 'unknown' }),
+    })
+
+    expect(res.status).toBe(400)
   })
 
   it('GET /api/sessions/:id/inspection should report persisted permission mode for inactive sessions', async () => {

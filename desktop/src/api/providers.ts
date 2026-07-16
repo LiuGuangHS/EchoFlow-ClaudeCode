@@ -18,7 +18,7 @@ type PresetsResponse = { presets: ProviderPreset[] }
 type TestResultResponse = { result: ProviderTestResult }
 type AuthStatusResponse = {
   hasAuth: boolean
-  source: 'echoflow-provider' | 'openai-oauth' | 'echoflow-settings' | 'env' | 'none'
+  source: 'echoflow-provider' | 'openai-oauth' | 'grok-oauth' | 'echoflow-settings' | 'env' | 'none'
   activeProvider?: string
 }
 

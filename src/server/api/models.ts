@@ -13,12 +13,27 @@ import { ProviderService } from '../services/providerService.js'
 import { attributionHeaderEnvForModel } from '../services/attributionHeaderPolicy.js'
 import { ApiError, errorResponse } from '../middleware/errorHandler.js'
 import { hasOpenAIAuthLogin } from '../../utils/auth.js'
-import { OPENAI_CODEX_MODEL_CATALOG } from '../../services/openaiAuth/models.js'
+import { getOpenAICodexModelCatalog } from '../../services/openaiAuth/modelCatalog.js'
+import {
+  OPENAI_DEFAULT_MAIN_MODEL,
+  type OpenAIModelCatalogEntry,
+} from '../../services/openaiAuth/models.js'
 import {
   OPENAI_OFFICIAL_PROVIDER_ID,
   OPENAI_OFFICIAL_PROVIDER_NAME,
   isOpenAIOfficialProviderId,
 } from '../services/openaiOfficialProvider.js'
+import { getGrokModelCatalog } from '../../services/grokAuth/modelCatalog.js'
+import {
+  GROK_DEFAULT_MAIN_MODEL,
+  type GrokModelCatalogEntry,
+} from '../../services/grokAuth/models.js'
+import {
+  GROK_OFFICIAL_PROVIDER_ID,
+  GROK_OFFICIAL_PROVIDER_NAME,
+  isGrokOfficialProviderId,
+} from '../services/grokOfficialProvider.js'
+import { hahaGrokOAuthService } from '../services/hahaGrokOAuthService.js'
 
 // ─── Fallback models (used when no provider is configured) ────────────────────
 
@@ -56,6 +71,8 @@ type ApiModelInfo = {
   name: string
   description: string
   context: string
+  defaultReasoningEffort?: string
+  supportedReasoningEfforts?: string[]
 }
 
 function addUniqueModel(
@@ -115,12 +132,41 @@ function buildProviderModelList(models: {
   return modelList
 }
 
-function buildOpenAIModelList(): ApiModelInfo[] {
-  return OPENAI_CODEX_MODEL_CATALOG.map(model => ({
+function buildOpenAIModelList(catalog: OpenAIModelCatalogEntry[]): ApiModelInfo[] {
+  return catalog.map(model => ({
     id: model.value,
     name: model.label,
     description: model.description,
-    context: '',
+    context: model.contextWindow ? String(model.contextWindow) : '',
+    defaultReasoningEffort: model.defaultReasoningEffort,
+    supportedReasoningEfforts: model.supportedReasoningEfforts,
+  }))
+}
+
+async function getOpenAIModelList(): Promise<ApiModelInfo[]> {
+  return buildOpenAIModelList(await getOpenAICodexModelCatalog())
+}
+
+function buildGrokModelList(catalog: GrokModelCatalogEntry[]): ApiModelInfo[] {
+  return catalog.map((model) => ({
+    id: model.value,
+    name: model.label,
+    description: model.description,
+    context: model.contextWindow ? String(model.contextWindow) : '',
+    ...(model.reasoningEffort && { defaultReasoningEffort: model.reasoningEffort }),
+    ...(model.supportsReasoningEffort === false
+      ? { supportedReasoningEfforts: [] }
+      : model.reasoningEfforts
+        ? { supportedReasoningEfforts: model.reasoningEfforts }
+        : {}),
+  }))
+}
+
+async function getGrokModelList(): Promise<ApiModelInfo[]> {
+  const tokens = await hahaGrokOAuthService.ensureFreshTokens()
+  return buildGrokModelList(await getGrokModelCatalog({
+    ...(tokens?.accessToken ? { accessToken: tokens.accessToken } : {}),
+    accountKey: tokens?.email ?? (tokens ? 'authenticated-default' : 'logged-out'),
   }))
 }
 
@@ -133,22 +179,22 @@ function getEnvConfiguredAnthropicModels(): ApiModelInfo[] {
   })
 }
 
-function getOpenAIAuthModels(): ApiModelInfo[] {
+async function getOpenAIAuthModels(): Promise<ApiModelInfo[]> {
   if (!hasOpenAIAuthLogin()) {
     return []
   }
 
-  return buildOpenAIModelList()
+  return getOpenAIModelList()
 }
 
-function getStandaloneModelList(): ApiModelInfo[] {
+async function getStandaloneModelList(): Promise<ApiModelInfo[]> {
   const models = [...getEnvConfiguredAnthropicModels()]
 
   if (models.length === 0) {
     models.push(...DEFAULT_MODELS)
   }
 
-  for (const model of getOpenAIAuthModels()) {
+  for (const model of await getOpenAIAuthModels()) {
     addUniqueModel(models, model)
   }
 
@@ -201,10 +247,19 @@ async function handleModelsList(): Promise<Response> {
   const { providers, activeId } = await providerService.listProviders()
   if (isOpenAIOfficialProviderId(activeId)) {
     return Response.json({
-      models: buildOpenAIModelList(),
+      models: await getOpenAIModelList(),
       provider: {
         id: OPENAI_OFFICIAL_PROVIDER_ID,
         name: OPENAI_OFFICIAL_PROVIDER_NAME,
+      },
+    })
+  }
+  if (isGrokOfficialProviderId(activeId)) {
+    return Response.json({
+      models: await getGrokModelList(),
+      provider: {
+        id: GROK_OFFICIAL_PROVIDER_ID,
+        name: GROK_OFFICIAL_PROVIDER_NAME,
       },
     })
   }
@@ -217,7 +272,7 @@ async function handleModelsList(): Promise<Response> {
       provider: { id: activeProvider.id, name: activeProvider.name },
     })
   }
-  return Response.json({ models: getStandaloneModelList(), provider: null })
+  return Response.json({ models: await getStandaloneModelList(), provider: null })
 }
 
 async function handleCurrentModel(req: Request): Promise<Response> {
@@ -225,8 +280,9 @@ async function handleCurrentModel(req: Request): Promise<Response> {
     // Build the full model list: prefer active provider's models, fall back to defaults
     const { providers, activeId } = await providerService.listProviders()
     const isOpenAIProviderActive = isOpenAIOfficialProviderId(activeId)
+    const isGrokProviderActive = isGrokOfficialProviderId(activeId)
     const activeProvider = activeId ? providers.find((p) => p.id === activeId) : null
-    const settings = activeProvider || isOpenAIProviderActive
+    const settings = activeProvider || isOpenAIProviderActive || isGrokProviderActive
       ? await providerService.getManagedSettings()
       : await settingsService.getUserSettings()
     const explicitModel = (settings.model as string) || ''
@@ -238,7 +294,10 @@ async function handleCurrentModel(req: Request): Promise<Response> {
     let currentModelName: string
 
     if (isOpenAIProviderActive) {
-      currentModelId = explicitModel || env.ANTHROPIC_MODEL || 'gpt-5.3-codex'
+      currentModelId = explicitModel || env.ANTHROPIC_MODEL || OPENAI_DEFAULT_MAIN_MODEL
+      currentModelName = currentModelId
+    } else if (isGrokProviderActive) {
+      currentModelId = explicitModel || env.ANTHROPIC_MODEL || GROK_DEFAULT_MAIN_MODEL
       currentModelName = currentModelId
     } else if (activeProvider) {
       // Provider is active — only use the provider-managed EchoFlow settings.
@@ -262,10 +321,12 @@ async function handleCurrentModel(req: Request): Promise<Response> {
 
     // Build available models for name lookup
     const availableModels = isOpenAIProviderActive
-      ? buildOpenAIModelList()
-      : activeProvider
-        ? buildProviderModelList(activeProvider.models)
-        : getStandaloneModelList()
+      ? await getOpenAIModelList()
+      : isGrokProviderActive
+        ? await getGrokModelList()
+        : activeProvider
+          ? buildProviderModelList(activeProvider.models)
+          : await getStandaloneModelList()
 
     const modelEntry = availableModels.find((m) => m.id === lookupId)
       || availableModels.find((m) => m.id === currentModelId)

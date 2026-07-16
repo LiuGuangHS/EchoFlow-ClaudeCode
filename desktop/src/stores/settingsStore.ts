@@ -5,7 +5,6 @@ import { modelsApi } from '../api/models'
 import { h5AccessApi } from '../api/h5Access'
 import { tracesApi } from '../api/traces'
 import {
-  isThemeMode,
   type AppMode,
   type AppModeConfig,
   type ChatSendBehavior,
@@ -61,6 +60,7 @@ type SettingsStore = {
   effortLevel: EffortLevel
   thinkingEnabled: boolean
   autoDreamEnabled: boolean
+  autoModeOptInAccepted: boolean
   availableModels: ModelInfo[]
   activeProviderName: string | null
   locale: Locale
@@ -97,6 +97,7 @@ type SettingsStore = {
   setEffort: (level: EffortLevel) => Promise<void>
   setThinkingEnabled: (enabled: boolean) => Promise<void>
   setAutoDreamEnabled: (enabled: boolean) => Promise<void>
+  acceptAutoModeOptIn: () => Promise<void>
   setLocale: (locale: Locale) => void
   setTheme: (theme: ThemeMode) => Promise<void>
   setChatSendBehavior: (behavior: ChatSendBehavior) => Promise<void>
@@ -177,6 +178,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   effortLevel: 'max',
   thinkingEnabled: true,
   autoDreamEnabled: false,
+  autoModeOptInAccepted: false,
   availableModels: [],
   activeProviderName: null,
   locale: getStoredLocale(),
@@ -206,7 +208,6 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   appMode: {
     mode: 'default',
     portableDir: null,
-    defaultPortableDir: null,
     activeConfigDir: null,
     configDirSource: 'system',
   },
@@ -230,7 +231,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         loadH5AccessSettings(previousH5Access),
         loadTraceCaptureSettings(),
       ])
-      const theme = isThemeMode(userSettings.theme) ? userSettings.theme : 'white'
+      const theme = useUIStore.getState().theme
       useUIStore.getState().setTheme(theme)
       set({
         permissionMode: mode,
@@ -240,6 +241,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         effortLevel: level,
         thinkingEnabled: userSettings.alwaysThinkingEnabled !== false,
         autoDreamEnabled: userSettings.autoDreamEnabled === true,
+        autoModeOptInAccepted: userSettings.skipAutoPermissionPrompt === true,
         theme,
         chatSendBehavior: normalizeChatSendBehavior(userSettings.chatSendBehavior),
         outputStyle: normalizeOutputStyle(userSettings.outputStyle),
@@ -321,21 +323,25 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     }
   },
 
+  acceptAutoModeOptIn: async () => {
+    const previous = get().autoModeOptInAccepted
+    set({ autoModeOptInAccepted: true })
+    try {
+      await settingsApi.updateUser({ skipAutoPermissionPrompt: true })
+    } catch (error) {
+      set({ autoModeOptInAccepted: previous })
+      throw error
+    }
+  },
+
   setLocale: (locale) => {
     set({ locale })
     try { localStorage.setItem(LOCALE_STORAGE_KEY, locale) } catch { /* noop */ }
   },
 
   setTheme: async (theme) => {
-    const prev = get().theme
     set({ theme })
     useUIStore.getState().setTheme(theme)
-    try {
-      await settingsApi.updateUser({ theme })
-    } catch {
-      set({ theme: prev })
-      useUIStore.getState().setTheme(prev)
-    }
   },
 
   setChatSendBehavior: async (behavior) => {
@@ -576,16 +582,14 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const host = getDesktopHost()
     if (!host.isDesktop) return
     const prev = get().appMode
+    const selectedCustomDir = mode === 'portable' ? portableDir?.trim() || null : null
+    if (mode === 'portable' && !selectedCustomDir) {
+      throw new Error('Choose an absolute custom data directory')
+    }
     const newMode: AppModeConfig = {
       ...prev,
       mode,
-      portableDir: mode === 'portable'
-        ? portableDir ?? prev.defaultPortableDir ?? prev.portableDir
-        : null,
-      activeConfigDir: mode === 'portable'
-        ? portableDir ?? prev.defaultPortableDir ?? prev.portableDir
-        : null,
-      configDirSource: mode === 'portable' ? 'portable' : 'system',
+      portableDir: selectedCustomDir,
     }
     set({ appMode: newMode, appModeRequiresRestart: true })
     try {

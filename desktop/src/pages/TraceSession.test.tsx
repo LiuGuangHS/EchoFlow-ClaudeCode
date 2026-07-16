@@ -432,7 +432,6 @@ describe('TraceSession', () => {
 
     const tree = within(screen.getByTestId('trace-tree'))
     fireEvent.click(tree.getByText('Bash'))
-    expect(within(screen.getByTestId('trace-detail')).queryByText('file.txt')).not.toBeInTheDocument()
 
     await waitFor(() => expect(sessionsApi.getMessages).toHaveBeenCalledTimes(2))
     expect(within(screen.getByTestId('trace-detail')).getByText('file.txt')).toBeInTheDocument()

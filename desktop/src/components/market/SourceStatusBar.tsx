@@ -27,7 +27,10 @@ export function SourceStatusBar({
 }) {
   const t = useTranslation()
   return (
-    <div className={`flex flex-wrap items-center gap-2 ${className}`} data-testid="market-source-status">
+    <div
+      className={`flex flex-wrap items-center gap-1 rounded-lg bg-[var(--color-surface-container-low)] p-1 ${className}`}
+      data-testid="market-source-status"
+    >
       {MARKET_SOURCES.map((source) => {
         const info = sources[source]
         if (!info) return null
@@ -40,11 +43,11 @@ export function SourceStatusBar({
             key={source}
             data-testid={`market-source-status-${source}`}
             title={info.error || undefined}
-            className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1 text-[11px] text-[var(--color-text-secondary)]"
+            className="inline-flex min-h-7 items-center gap-1.5 rounded-md px-2 text-[11px] text-[var(--color-text-secondary)]"
           >
-            <span className={`h-2 w-2 rounded-full border border-[var(--color-border)] ${DOT_CLASSES[info.status]}`} aria-hidden />
+            <span className={`h-1.5 w-1.5 rounded-full ${DOT_CLASSES[info.status]}`} aria-hidden />
             <span className="font-medium text-[var(--color-text-primary)]">{t(`market.source.${source}`)}</span>
-            <span>{statusLabel}</span>
+            <span className="text-[var(--color-text-tertiary)]">{statusLabel}</span>
           </span>
         )
       })}

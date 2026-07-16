@@ -10,7 +10,7 @@ describe('desktop persistence migrations', () => {
     window.localStorage.clear()
   })
 
-  test('migrates existing EchoFlow open-tab arrays into the current tab persistence shape', () => {
+  test('migrates legacy open-tab arrays into the current tab persistence shape', () => {
     window.localStorage.setItem('echoflow-code-open-tabs', JSON.stringify([
       { sessionId: 'session-1', title: 'Old tab' },
       { sessionId: '__terminal__legacy', title: 'Terminal 1', type: 'terminal' },
@@ -28,7 +28,7 @@ describe('desktop persistence migrations', () => {
   })
 
   test('preserves persisted market tabs during startup migration', () => {
-    window.localStorage.setItem('cc-haha-open-tabs', JSON.stringify({
+    window.localStorage.setItem('echoflow-code-open-tabs', JSON.stringify({
       openTabs: [
         { sessionId: '__market__', title: 'Market', type: 'market' },
         { sessionId: '__traces__', title: 'Traces', type: 'traces' },
@@ -38,8 +38,8 @@ describe('desktop persistence migrations', () => {
 
     const report = runDesktopPersistenceMigrations()
 
-    expect(report.migratedKeys).toContain('cc-haha-open-tabs')
-    expect(JSON.parse(window.localStorage.getItem('cc-haha-open-tabs') || '{}')).toEqual({
+    expect(report.migratedKeys).toContain('echoflow-code-open-tabs')
+    expect(JSON.parse(window.localStorage.getItem('echoflow-code-open-tabs') || '{}')).toEqual({
       openTabs: [
         { sessionId: '__market__', title: 'Market', type: 'market' },
         { sessionId: '__traces__', title: 'Traces', type: 'traces' },
@@ -49,7 +49,7 @@ describe('desktop persistence migrations', () => {
   })
 
   test('canonicalizes mismatched persisted special tab ids and types during startup migration', () => {
-    window.localStorage.setItem('cc-haha-open-tabs', JSON.stringify({
+    window.localStorage.setItem('echoflow-code-open-tabs', JSON.stringify({
       openTabs: [
         { sessionId: '__settings__', title: 'Settings', type: 'market' },
         { sessionId: '__market__', title: 'Skills', type: 'settings' },
@@ -59,7 +59,7 @@ describe('desktop persistence migrations', () => {
 
     runDesktopPersistenceMigrations()
 
-    expect(JSON.parse(window.localStorage.getItem('cc-haha-open-tabs') || '{}')).toEqual({
+    expect(JSON.parse(window.localStorage.getItem('echoflow-code-open-tabs') || '{}')).toEqual({
       openTabs: [
         { sessionId: '__settings__', title: 'Settings', type: 'settings' },
         { sessionId: '__market__', title: 'Skills', type: 'market' },
@@ -72,16 +72,14 @@ describe('desktop persistence migrations', () => {
     window.localStorage.setItem('unrelated-user-key', 'keep')
     window.localStorage.setItem('echoflow-code-session-runtime', JSON.stringify({
       good: { providerId: null, modelId: 'claude-sonnet' },
-      alsoGood: { providerId: 'provider-1', modelId: 'gpt-5.4' },
-      badOfficial: { providerId: null, modelId: '' },
-      badProviderDefault: { providerId: 'provider-default', modelId: '' },
+      alsoGood: { providerId: 'openai-official', modelId: 'gpt-5.6-sol', effortLevel: 'xhigh' },
       bad: { providerId: 'provider-2' },
     }))
 
     runDesktopPersistenceMigrations()
 
     expect(JSON.parse(window.localStorage.getItem('echoflow-code-session-runtime') || '{}')).toEqual({
-      alsoGood: { providerId: 'provider-1', modelId: 'gpt-5.4' },
+      alsoGood: { providerId: 'openai-official', modelId: 'gpt-5.6-sol', effortLevel: 'xhigh' },
       good: { providerId: null, modelId: 'claude-sonnet' },
     })
     expect(window.localStorage.getItem('unrelated-user-key')).toBe('keep')
@@ -108,7 +106,7 @@ describe('desktop persistence migrations', () => {
     expect(window.localStorage.getItem('echoflow-code-theme')).toBe('white')
   })
 
-  test('preserves every supported locale and removes unknown locale values', () => {
+  test('preserves every supported locale during startup migration', () => {
     for (const locale of ['en', 'zh', 'zh-TW', 'jp', 'kr']) {
       window.localStorage.setItem('echoflow-code-locale', locale)
 
@@ -116,24 +114,6 @@ describe('desktop persistence migrations', () => {
 
       expect(report.migratedKeys).not.toContain('echoflow-code-locale')
       expect(window.localStorage.getItem('echoflow-code-locale')).toBe(locale)
-    }
-
-    window.localStorage.setItem('echoflow-code-locale', 'fr')
-
-    const report = runDesktopPersistenceMigrations()
-
-    expect(report.migratedKeys).toContain('echoflow-code-locale')
-    expect(window.localStorage.getItem('echoflow-code-locale')).toBeNull()
-  })
-
-  test('preserves every supported locale during startup migration', () => {
-    for (const locale of ['en', 'zh', 'zh-TW', 'jp', 'kr']) {
-      window.localStorage.setItem('cc-haha-locale', locale)
-
-      const report = runDesktopPersistenceMigrations()
-
-      expect(report.migratedKeys).not.toContain('cc-haha-locale')
-      expect(window.localStorage.getItem('cc-haha-locale')).toBe(locale)
     }
   })
 

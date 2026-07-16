@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import '@testing-library/jest-dom'
 
 import { ModelSelector } from './ModelSelector'
 import { useChatStore } from '../../stores/chatStore'
 import { useHahaOAuthStore } from '../../stores/hahaOAuthStore'
 import { useHahaOpenAIOAuthStore } from '../../stores/hahaOpenAIOAuthStore'
+import { useHahaGrokOAuthStore } from '../../stores/hahaGrokOAuthStore'
 import { useProviderStore } from '../../stores/providerStore'
 import { useSessionRuntimeStore } from '../../stores/sessionRuntimeStore'
 import { useSettingsStore } from '../../stores/settingsStore'
@@ -32,11 +33,13 @@ afterEach(() => {
   useChatStore.setState(useChatStore.getInitialState(), true)
   useHahaOAuthStore.setState(useHahaOAuthStore.getInitialState(), true)
   useHahaOpenAIOAuthStore.setState(useHahaOpenAIOAuthStore.getInitialState(), true)
+  useHahaGrokOAuthStore.setState(useHahaGrokOAuthStore.getInitialState(), true)
 })
 
 beforeEach(() => {
   useHahaOAuthStore.setState({ fetchStatus: async () => {} })
   useHahaOpenAIOAuthStore.setState({ fetchStatus: async () => {} })
+  useHahaGrokOAuthStore.setState({ fetchStatus: async () => {} })
 })
 
 describe('ModelSelector', () => {
@@ -97,12 +100,12 @@ describe('ModelSelector', () => {
 
     render(<ModelSelector runtimeKey="session-oauth-on-open" />)
 
-    await clickByRole(/provider-main.*Provider A/i)
+    await clickByRole(/provider-main/i)
     await act(async () => {
       fireEvent.keyDown(document, { key: 'Escape' })
       await Promise.resolve()
     })
-    await clickByRole(/provider-main.*Provider A/i)
+    await clickByRole(/provider-main/i)
 
     expect(fetchClaudeStatus).toHaveBeenCalledTimes(1)
     expect(fetchOpenAIStatus).toHaveBeenCalledTimes(1)
@@ -193,7 +196,7 @@ describe('ModelSelector', () => {
 
     render(<ModelSelector runtimeKey="session-1" />)
 
-    await clickByRole(/provider-main.*Provider A/i)
+    await clickByRole(/provider-main/i)
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /provider-fast/ }))
       await Promise.resolve()
@@ -295,8 +298,8 @@ describe('ModelSelector', () => {
 
     render(<ModelSelector runtimeKey="session-1" />)
 
-    await clickByRole(/provider-main.*Provider A/i)
-    await clickByRole(/^High$/)
+    await clickByRole('Effort: Max')
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Effort' }), { key: 'ArrowLeft' })
 
     expect(useSessionRuntimeStore.getState().selections['session-1']).toEqual({
       providerId: 'provider-a',
@@ -316,60 +319,6 @@ describe('ModelSelector', () => {
     expect(useSettingsStore.getState().effortLevel).toBe('max')
   })
 
-  it('shows EchoFlowAPI prefilled models for provider runtime selection', async () => {
-    const setSessionRuntime = vi.fn()
-    useSettingsStore.setState({
-      locale: 'en',
-      availableModels: MODELS,
-      currentModel: MODELS[0],
-      activeProviderName: 'EchoFlowAPI',
-    })
-    useProviderStore.setState({
-      providers: [{
-        id: 'echoflowapi',
-        presetId: 'echoflowai',
-        name: 'EchoFlowAPI',
-        apiKey: '***',
-        baseUrl: 'https://api.echoflow.cn',
-        apiFormat: 'anthropic',
-        models: {
-          main: 'claude-sonnet-4-6',
-          haiku: 'claude-haiku-4-5',
-          sonnet: 'claude-sonnet-4-6',
-          opus: 'claude-opus-4-7',
-        },
-      }],
-      activeId: 'echoflowapi',
-      hasLoadedProviders: true,
-      isLoading: true,
-    })
-    useChatStore.setState({
-      setSessionRuntime,
-    } as Partial<ReturnType<typeof useChatStore.getState>>)
-
-    render(<ModelSelector runtimeKey="session-default" />)
-
-    expect(screen.getByRole('button', { name: /claude-sonnet-4-6.*EchoFlowAPI/i })).toBeInTheDocument()
-
-    await clickByRole(/claude-sonnet-4-6.*EchoFlowAPI/i)
-    expect(screen.queryByText('Claude Official')).not.toBeInTheDocument()
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /claude-opus-4-7.*Opus Model/i }))
-      await Promise.resolve()
-    })
-
-    expect(useSessionRuntimeStore.getState().selections['session-default']).toEqual({
-      providerId: 'echoflowapi',
-      modelId: 'claude-opus-4-7',
-      effortLevel: 'max',
-    })
-    expect(setSessionRuntime).toHaveBeenCalledWith('session-default', {
-      providerId: 'echoflowapi',
-      modelId: 'claude-opus-4-7',
-      effortLevel: 'max',
-    })
-  })
-
   it('uses the ChatGPT Official catalog when that built-in provider is active', async () => {
     const openAIModels: ModelInfo[] = [
       {
@@ -377,12 +326,16 @@ describe('ModelSelector', () => {
         name: 'GPT-5.3 Codex',
         description: 'Best for coding and agentic work',
         context: '',
+        defaultReasoningEffort: 'medium',
+        supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
       },
       {
         id: 'gpt-5.5',
         name: 'GPT-5.5',
         description: 'Latest general-purpose model',
         context: '',
+        defaultReasoningEffort: 'medium',
+        supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
       },
     ]
     const setSessionRuntime = vi.fn()
@@ -417,18 +370,179 @@ describe('ModelSelector', () => {
     expect(useSessionRuntimeStore.getState().selections['session-openai']).toEqual({
       providerId: OPENAI_OFFICIAL_PROVIDER_ID,
       modelId: 'gpt-5.5',
-      effortLevel: 'max',
+      effortLevel: 'medium',
     })
     expect(setSessionRuntime).toHaveBeenCalledWith('session-openai', {
       providerId: OPENAI_OFFICIAL_PROVIDER_ID,
       modelId: 'gpt-5.5',
+      effortLevel: 'medium',
+    })
+  })
+
+  it('uses each ChatGPT model reasoning catalog and resets unsupported effort to its default', async () => {
+    const openAIModels: ModelInfo[] = [
+      {
+        id: 'gpt-5.6-sol',
+        name: 'GPT-5.6-Sol',
+        description: 'Frontier model',
+        context: '353400',
+        defaultReasoningEffort: 'low',
+        supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      },
+      {
+        id: 'gpt-5.5',
+        name: 'GPT-5.5',
+        description: 'General model',
+        context: '258400',
+        defaultReasoningEffort: 'medium',
+        supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+      },
+    ]
+    useHahaOpenAIOAuthStore.setState({
+      status: { loggedIn: true, expiresAt: null, email: null, accountId: null },
+      fetchStatus: async () => {},
+    })
+    useSettingsStore.setState({
+      locale: 'en',
+      availableModels: openAIModels,
+      currentModel: openAIModels[0],
+      activeProviderName: 'ChatGPT Official',
       effortLevel: 'max',
+    })
+    useProviderStore.setState({
+      providers: [],
+      activeId: OPENAI_OFFICIAL_PROVIDER_ID,
+      hasLoadedProviders: true,
+      isLoading: true,
+    })
+    useSessionRuntimeStore.getState().setSelection('session-openai-effort', {
+      providerId: OPENAI_OFFICIAL_PROVIDER_ID,
+      modelId: 'gpt-5.6-sol',
+      effortLevel: 'max',
+    })
+
+    render(<ModelSelector runtimeKey="session-openai-effort" />)
+
+    expect(screen.getByRole('button', { name: 'GPT-5.6-Sol, ChatGPT Official' })).toHaveAttribute(
+      'title',
+      'ChatGPT Official · GPT-5.6-Sol',
+    )
+    expect(screen.queryByTestId('model-provider-badge')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Effort: Max' })).toBeInTheDocument()
+    await clickByRole('Effort: Max')
+    expect(screen.getByRole('slider', { name: 'Effort' })).toHaveAttribute('aria-valuemax', '4')
+    expect(screen.getAllByTestId('reasoning-effort-stop')).toHaveLength(5)
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Effort' }), { key: 'Escape' })
+
+    await clickByRole(/GPT-5\.6-Sol/i)
+    await clickByRole(/GPT-5\.5/)
+
+    expect(useSessionRuntimeStore.getState().selections['session-openai-effort']).toEqual({
+      providerId: OPENAI_OFFICIAL_PROVIDER_ID,
+      modelId: 'gpt-5.5',
+      effortLevel: 'medium',
+    })
+
+    expect(screen.getByRole('button', { name: 'Effort: Medium' })).toBeInTheDocument()
+    await clickByRole('Effort: Medium')
+    expect(screen.getByRole('slider', { name: 'Effort' })).toHaveAttribute('aria-valuemax', '3')
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Effort' }), { key: 'End' })
+    expect(screen.getByRole('slider', { name: 'Effort' })).toHaveAttribute('aria-valuetext', 'X-High')
+
+    expect(useSessionRuntimeStore.getState().selections['session-openai-effort']).toEqual({
+      providerId: OPENAI_OFFICIAL_PROVIDER_ID,
+      modelId: 'gpt-5.5',
+      effortLevel: 'xhigh',
+    })
+  })
+
+  it('selects Grok Official models for a logged-in runtime', async () => {
+    const grokModels: ModelInfo[] = [{
+      id: 'grok-4.5',
+      name: 'Grok 4.5',
+      description: 'Grok frontier text model',
+      context: '',
+      supportedReasoningEfforts: [],
+    }]
+    useHahaGrokOAuthStore.setState({
+      status: { loggedIn: true, expiresAt: null, email: 'grok@example.com' },
+      fetchStatus: async () => {},
+    })
+    useSettingsStore.setState({
+      locale: 'en',
+      availableModels: grokModels,
+      currentModel: grokModels[0],
+      activeProviderName: 'Grok Official',
+    })
+    useProviderStore.setState({
+      providers: [],
+      activeId: 'grok-official',
+      hasLoadedProviders: true,
+      isLoading: false,
+    })
+
+    render(<ModelSelector runtimeKey="session-grok" />)
+    await clickByRole(/Grok 4\.5/i)
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole('button', { name: /Grok 4\.5/i })[1]!)
+      await Promise.resolve()
+    })
+
+    expect(useSessionRuntimeStore.getState().selections['session-grok']).toMatchObject({
+      providerId: 'grok-official',
+      modelId: 'grok-4.5',
+    })
+    expect(screen.queryByRole('button', { name: /Effort:/i })).not.toBeInTheDocument()
+  })
+
+  it('replaces a stale Grok runtime model with the current official default', async () => {
+    const grokModels: ModelInfo[] = [{
+      id: 'grok-4.5',
+      name: 'Grok 4.5',
+      description: 'Grok frontier text model',
+      context: '500000',
+      defaultReasoningEffort: 'high',
+      supportedReasoningEfforts: ['low', 'medium', 'high'],
+    }]
+    useHahaGrokOAuthStore.setState({
+      status: { loggedIn: true, expiresAt: null, email: 'grok@example.com' },
+      fetchStatus: async () => {},
+    })
+    useSettingsStore.setState({
+      locale: 'en',
+      availableModels: grokModels,
+      currentModel: grokModels[0],
+      activeProviderName: 'Grok Official',
+      effortLevel: 'max',
+    })
+    useProviderStore.setState({
+      providers: [],
+      activeId: 'grok-official',
+      hasLoadedProviders: true,
+      isLoading: false,
+    })
+    useSessionRuntimeStore.getState().setSelection('session-stale-grok', {
+      providerId: 'grok-official',
+      modelId: 'grok-build',
+      effortLevel: 'max',
+    })
+    render(<ModelSelector runtimeKey="session-stale-grok" />)
+
+    expect(screen.queryByText('grok-build')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Grok 4.5, Grok Official' })).toBeInTheDocument()
+    await waitFor(() => {
+      expect(useSessionRuntimeStore.getState().selections['session-stale-grok']).toEqual({
+        providerId: 'grok-official',
+        modelId: 'grok-4.5',
+        effortLevel: 'high',
+      })
     })
   })
 
   it('hides official provider sections when OAuth is not logged in', async () => {
     useHahaOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
     useHahaOpenAIOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
+    useHahaGrokOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
     useSettingsStore.setState({
       locale: 'en',
       availableModels: MODELS,
@@ -457,7 +571,7 @@ describe('ModelSelector', () => {
 
     render(<ModelSelector runtimeKey="session-hide" />)
 
-    await clickByRole(/provider-main.*Provider A/i)
+    await clickByRole(/provider-main/i)
 
     const dropdown = screen.getByTestId('model-selector-dropdown')
     expect(dropdown.textContent).not.toContain('Claude Official')

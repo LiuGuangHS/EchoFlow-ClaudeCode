@@ -76,6 +76,33 @@ describe('MermaidRenderer Mermaid integration', () => {
     expect(screen.queryByText('Mermaid Error')).not.toBeInTheDocument()
   })
 
+  it('preserves cylinder shapes whose quoted labels contain forward slashes', async () => {
+    render(
+      <MermaidRenderer
+        code={[
+          'flowchart LR',
+          '    A["客户端 / Web"] --> B{"是否已登录 / 有权限？"}',
+          '',
+          '    subgraph S["服务端 / API 子图"]',
+          '        B -- "是 / Yes" --> C[("用户数据库 / MySQL")]',
+          '        B -- "否 / No" --> D["登录 / OAuth"]',
+          '        D --> C',
+          '    end',
+          '',
+          '    C --> E["返回结果 / JSON"]',
+        ].join('\n')}
+      />,
+    )
+
+    const surface = await screen.findByTestId('mermaid-diagram-surface')
+    const databaseNode = Array.from(surface.querySelectorAll('.node'))
+      .find((node) => node.textContent?.includes('用户数据库 / MySQL'))
+
+    expect(surface).toHaveTextContent('用户数据库 / MySQL')
+    expect(databaseNode?.querySelector('path')).toBeInTheDocument()
+    expect(screen.queryByText('Mermaid Error')).not.toBeInTheDocument()
+  })
+
   it('renders generated flowchart labels with HTML breaks and structural characters', async () => {
     render(
       <MermaidRenderer

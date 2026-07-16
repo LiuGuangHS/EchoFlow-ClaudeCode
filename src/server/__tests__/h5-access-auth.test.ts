@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import * as fs from 'node:fs/promises'
-import { createServer } from 'node:net'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { startServer } from '../index.js'
+import {
+  clearFilesystemAccessRootsForTests,
+  registerFilesystemAccessRoot,
+} from '../services/filesystemAccessRoots.js'
 import { H5AccessService } from '../services/h5AccessService.js'
 import { ProviderService } from '../services/providerService.js'
 
@@ -18,6 +21,7 @@ let originalAnthropicApiKey: string | undefined
 let originalH5DistDir: string | undefined
 let originalClaudeAppRoot: string | undefined
 let originalServerAuthRequired: string | undefined
+let originalLocalAccessToken: string | undefined
 let originalServerPort = 3456
 const PHONE_ORIGIN = 'https://phone.example'
 
@@ -34,22 +38,6 @@ async function waitForServer(url: string): Promise<void> {
   }
 
   throw new Error(`Timed out waiting for server at ${url}`)
-}
-
-async function availablePort(): Promise<number> {
-  return await new Promise((resolve, reject) => {
-    const probe = createServer()
-    probe.once('error', reject)
-    probe.listen(0, '0.0.0.0', () => {
-      const address = probe.address()
-      if (!address || typeof address === 'string') {
-        probe.close(() => reject(new Error('Failed to allocate an H5 access test port')))
-        return
-      }
-      const port = address.port
-      probe.close(() => resolve(port))
-    })
-  })
 }
 
 function resolvePrivateLanBaseUrl(port: number): string | null {
@@ -79,8 +67,8 @@ async function startRemoteServer(options: { authRequired?: boolean } = {}): Prom
     delete process.env.SERVER_AUTH_REQUIRED
   }
 
-  const port = await availablePort()
-  server = startServer(port, '0.0.0.0')
+  server = startServer(0, '0.0.0.0')
+  const port = server.port
   baseUrl = `http://127.0.0.1:${port}`
   wsBaseUrl = `ws://127.0.0.1:${port}`
   lanBaseUrl = resolvePrivateLanBaseUrl(port) ?? ''
@@ -197,17 +185,21 @@ const settingsSurfaceEndpoints = [
 ] as const
 
 beforeEach(async () => {
+  clearFilesystemAccessRootsForTests()
+  registerFilesystemAccessRoot(process.cwd())
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'h5-access-auth-test-'))
   originalConfigDir = process.env.CLAUDE_CONFIG_DIR
   originalAnthropicApiKey = process.env.ANTHROPIC_API_KEY
   originalH5DistDir = process.env.CLAUDE_H5_DIST_DIR
   originalClaudeAppRoot = process.env.CLAUDE_APP_ROOT
   originalServerAuthRequired = process.env.SERVER_AUTH_REQUIRED
+  originalLocalAccessToken = process.env.CC_HAHA_LOCAL_ACCESS_TOKEN
   originalServerPort = ProviderService.getServerPort()
   process.env.CLAUDE_CONFIG_DIR = tmpDir
   const h5DistDir = path.join(tmpDir, 'dist')
   process.env.CLAUDE_H5_DIST_DIR = h5DistDir
   delete process.env.ANTHROPIC_API_KEY
+  delete process.env.CC_HAHA_LOCAL_ACCESS_TOKEN
   await fs.mkdir(path.join(h5DistDir, 'assets'), { recursive: true })
   await fs.writeFile(
     path.join(h5DistDir, 'index.html'),
@@ -221,6 +213,7 @@ beforeEach(async () => {
 afterEach(async () => {
   server?.stop(true)
   server = undefined
+  clearFilesystemAccessRootsForTests()
   ProviderService.setServerPort(originalServerPort)
 
   if (originalConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR
@@ -234,6 +227,8 @@ afterEach(async () => {
   else process.env.CLAUDE_APP_ROOT = originalClaudeAppRoot
   if (originalServerAuthRequired === undefined) delete process.env.SERVER_AUTH_REQUIRED
   else process.env.SERVER_AUTH_REQUIRED = originalServerAuthRequired
+  if (originalLocalAccessToken === undefined) delete process.env.CC_HAHA_LOCAL_ACCESS_TOKEN
+  else process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = originalLocalAccessToken
 
   await fs.rm(tmpDir, { recursive: true, force: true })
 })
@@ -300,6 +295,20 @@ describe('remote H5 auth and CORS integration', () => {
         status: 'ok',
       })
     }
+  })
+
+  test('rejects a tokenless loopback proxy hop when desktop local auth is configured', async () => {
+    process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+    await restartRemoteServer()
+
+    const proxyShapedResponse = await fetch(`${baseUrl}/api/status`)
+    expect(proxyShapedResponse.status).toBe(403)
+
+    const desktopResponse = await fetch(`${baseUrl}/api/status`, {
+      headers: { Authorization: 'Bearer desktop-local-secret' },
+    })
+    expect(desktopResponse.status).toBe(200)
+    await expect(desktopResponse.json()).resolves.toMatchObject({ status: 'ok' })
   })
 
   test('does not keep retired Tauri origins trusted after Electron replacement', async () => {

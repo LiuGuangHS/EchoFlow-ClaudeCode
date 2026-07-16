@@ -183,6 +183,7 @@ import { endQueryProfile, queryCheckpoint } from "src/utils/queryProfiler.js";
 import {
   modelSupportsAdaptiveThinking,
   modelSupportsThinking,
+  resolveModelThinkingEnabled,
   shouldSendExplicitDisabledThinking,
   type ThinkingConfig,
 } from "src/utils/thinking.js";
@@ -212,6 +213,7 @@ import {
   stopSessionActivity,
 } from "../../utils/sessionActivity.js";
 import { shouldTriggerNonStreamingFallbackForEmptyStream } from "./streamFallback.js";
+import { StreamAssistantCommitBuffer } from "./streamAssistantCommitBuffer.js";
 import {
   StreamWatchdogTimeoutError,
   createStreamWatchdogState,
@@ -1654,9 +1656,11 @@ async function* queryModel(
         : [];
     const extraBodyParams = getExtraBodyParams(bedrockBetas);
 
-    const hasThinking =
+    const hasThinking = resolveModelThinkingEnabled(
+      options.model,
       thinkingConfig.type !== 'disabled' &&
-      !isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_THINKING)
+        !isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_THINKING),
+    )
     const modelCanThink = modelSupportsThinking(options.model)
     const sendsExplicitDisabledThinking =
       !hasThinking && (modelCanThink || shouldSendExplicitDisabledThinking())
@@ -1870,6 +1874,7 @@ async function* queryModel(
   }
 
   const newMessages: AssistantMessage[] = [];
+  const assistantCommitBuffer = new StreamAssistantCommitBuffer<AssistantMessage>();
   let ttftMs = 0;
   let partialMessage: BetaMessage | undefined = undefined;
   const contentBlocks: (BetaContentBlock | ConnectorTextBlock)[] = [];
@@ -2420,7 +2425,12 @@ async function* queryModel(
               ...(advisorModel && { advisorModel }),
             };
             newMessages.push(m);
-            yield m;
+            for (const committedMessage of assistantCommitBuffer.add(
+              m,
+              contentBlock.type,
+            )) {
+              yield committedMessage;
+            }
             break;
           }
           case "message_delta": {
@@ -2460,6 +2470,18 @@ async function* queryModel(
               lastMsg.message.stop_reason = stopReason;
             }
 
+            // Max-token recovery needs the completed assistant blocks before
+            // its synthetic error so query.ts still sees the error as the
+            // terminal message and can continue from the partial response.
+            if (
+              stopReason === "max_tokens" ||
+              stopReason === "model_context_window_exceeded"
+            ) {
+              for (const committedMessage of assistantCommitBuffer.flush()) {
+                yield committedMessage;
+              }
+            }
+
             // Update cost
             const costUSDForPart = calculateUSDCost(resolvedModel, usage);
             costUSD += addToTotalSessionCost(
@@ -2473,6 +2495,9 @@ async function* queryModel(
               options.model,
             );
             if (refusalMessage) {
+              for (const committedMessage of assistantCommitBuffer.flush()) {
+                yield committedMessage;
+              }
               yield refusalMessage;
             }
 
@@ -2597,6 +2622,13 @@ async function* queryModel(
         throw new Error("Stream ended without receiving any events");
       }
 
+      // No tool boundary was crossed, so completed thinking/text blocks were
+      // intentionally held until the response proved it could finish. This
+      // keeps a watchdog retry from persisting orphan partial blocks.
+      for (const committedMessage of assistantCommitBuffer.flush()) {
+        yield committedMessage;
+      }
+
       // Log summary if any stalls occurred during streaming
       if (stallCount > 0) {
         logForDebugging(
@@ -2699,22 +2731,16 @@ async function* queryModel(
         }
       }
 
-      // A transient, server-side error that arrived mid-stream (a local provider
-      // rejecting a malformed tool_call, or an upstream api_error /
-      // overloaded_error SSE event) is recoverable by re-establishing the
-      // stream. Only retry when this attempt produced NOTHING
-      // (newMessages.length === 0): a zero-output stream means no tool_use block
-      // ever completed, so query.ts never started a tool — no double-execution
-      // risk (cf. #766 / inc-4258), the same precondition the zero-output
-      // fallback below relies on. Watchdog aborts without content/tool output
-      // are handled first; remaining watchdog aborts keep their partial-output
-      // boundary and are not retried. Thrown past the outer catch — which
-      // re-throws it — up to withStreamRetry.
+      // A watchdog stall is recoverable while the failed attempt is still
+      // side-effect-free. Completed thinking/text and partial local tool JSON
+      // stay buffered, so re-establishing the stream cannot duplicate a tool.
+      // A completed local tool block or any server-side tool activity closes
+      // this retry boundary permanently for the attempt.
       if (
         streamIdleAborted &&
         streamingError instanceof StreamWatchdogTimeoutError &&
         streamingError.safeToRetryStream() &&
-        newMessages.length === 0 &&
+        !assistantCommitBuffer.hasCrossedSideEffectBoundary() &&
         !signal.aborted
       ) {
         logForDebugging(

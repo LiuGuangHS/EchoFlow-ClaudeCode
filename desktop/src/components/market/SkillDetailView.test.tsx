@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, within } from '@testing-library/react'
 import '@testing-library/jest-dom'
 
 vi.mock('../markdown/MarkdownRenderer', () => ({
@@ -113,6 +113,9 @@ describe('SkillDetailView', () => {
   it('renders custom actions in the decision area', () => {
     renderView({ actions: <button type="button">Install now</button> })
 
-    expect(screen.getByText('Install now')).toBeInTheDocument()
+    const decisionSidebar = screen.getByTestId('skill-detail-sidebar')
+    expect(within(decisionSidebar).getByText('Install now')).toBeInTheDocument()
+    expect(within(decisionSidebar).getByText('Author')).toBeInTheDocument()
+    expect(within(decisionSidebar).getByText('Alice')).toBeInTheDocument()
   })
 })

@@ -73,13 +73,13 @@ describe('stream watchdog state', () => {
 
     expect(error.code).toBe('STREAM_IDLE_TIMEOUT')
     expect(error.phase).toBe('mid_stream')
-    expect(error.safeToRetryStream()).toBe(false)
+    expect(error.safeToRetryStream()).toBe(true)
     expect(error.message).toContain('Provider stream stalled after partial response')
     expect(error.message).toContain('last event: text_delta')
     expect(error.message).not.toContain('no chunks received')
   })
 
-  test('does not retry after a tool use has started', () => {
+  test('retries partial local tool input but stops after the tool block completes', () => {
     const state = createStreamWatchdogState()
     state.recordEvent({ type: 'message_start' })
     state.recordEvent({
@@ -88,9 +88,33 @@ describe('stream watchdog state', () => {
       content_block: { type: 'tool_use' },
     })
 
+    expect(state.createTimeoutError('idle', 240_000).safeToRetryStream()).toBe(true)
+
+    state.recordEvent({
+      type: 'content_block_delta',
+      index: 0,
+      delta: { type: 'input_json_delta', partial_json: '{"file_path":' },
+    })
+    expect(state.createTimeoutError('idle', 240_000).safeToRetryStream()).toBe(true)
+
+    state.recordEvent({ type: 'content_block_stop', index: 0 })
     const error = state.createTimeoutError('idle', 240_000)
 
-    expect(error.phase).toBe('before_content')
+    expect(error.phase).toBe('mid_stream')
+    expect(error.safeToRetryStream()).toBe(false)
+  })
+
+  test('never retries after server-side tool activity begins', () => {
+    const state = createStreamWatchdogState()
+    state.recordEvent({ type: 'message_start' })
+    state.recordEvent({
+      type: 'content_block_start',
+      index: 0,
+      content_block: { type: 'server_tool_use' },
+    })
+
+    const error = state.createTimeoutError('idle', 240_000)
+
     expect(error.safeToRetryStream()).toBe(false)
   })
 
@@ -112,6 +136,7 @@ describe('stream watchdog state', () => {
 
     expect(error.code).toBe('STREAM_MAX_DURATION')
     expect(error.phase).toBe('mid_stream')
+    expect(error.safeToRetryStream()).toBe(false)
     expect(error.message).toContain('Stream max duration exceeded')
     expect(error.message).toContain('last event: text_delta')
   })

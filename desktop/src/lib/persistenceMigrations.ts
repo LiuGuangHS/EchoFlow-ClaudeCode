@@ -17,7 +17,7 @@ const TAB_STORAGE_KEY = 'echoflow-code-open-tabs'
 const SESSION_RUNTIME_STORAGE_KEY = 'echoflow-code-session-runtime'
 const THEME_STORAGE_KEY = 'echoflow-code-theme'
 const LOCALE_STORAGE_KEY = 'echoflow-code-locale'
-const EFFORT_LEVELS = ['low', 'medium', 'high', 'max']
+const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max']
 const PERSISTED_SPECIAL_TAB_TYPES = ['settings', 'scheduled', 'market', 'traces'] as const
 const PERSISTED_SPECIAL_TAB_IDS: Record<(typeof PERSISTED_SPECIAL_TAB_TYPES)[number], string> = {
   settings: '__settings__',

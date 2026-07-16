@@ -353,9 +353,9 @@ describe('titleService', () => {
 
     try {
       const providerId = 'auth-token-title-test'
-      await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+      await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
       await fs.writeFile(
-        path.join(tmpDir, 'cc-haha', 'providers.json'),
+        path.join(getEchoFlowInternalDir(tmpDir), 'providers.json'),
         JSON.stringify({
           activeId: providerId,
           providers: [

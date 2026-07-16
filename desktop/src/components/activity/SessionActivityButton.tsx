@@ -4,21 +4,17 @@ import { useActivityPanelStore } from '../../stores/activityPanelStore'
 
 type SessionActivityButtonProps = {
   sessionId: string
-  badgeCount: number
   label?: string
 }
 
 export function SessionActivityButton({
   sessionId,
-  badgeCount,
   label,
 }: SessionActivityButtonProps) {
   const t = useTranslation()
   const resolvedLabel = label ?? t('session.activity.title')
   const isOpen = useActivityPanelStore((state) => state.isOpen(sessionId))
   const toggle = useActivityPanelStore((state) => state.toggle)
-  const visibleBadgeCount = Math.max(0, badgeCount)
-
   return (
     <button
       type="button"
@@ -36,14 +32,6 @@ export function SessionActivityButton({
       }`}
     >
       <ListChecks size={17} strokeWidth={1.9} />
-      {visibleBadgeCount > 0 && (
-        <span
-          data-testid="session-activity-badge"
-          className="absolute -right-1 -top-1 inline-flex min-w-4 h-4 items-center justify-center rounded-full bg-[var(--color-error)] px-1 text-[10px] font-semibold leading-none text-white"
-        >
-          {visibleBadgeCount > 9 ? '9+' : visibleBadgeCount}
-        </span>
-      )}
     </button>
   )
 }

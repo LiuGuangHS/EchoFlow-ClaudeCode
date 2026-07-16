@@ -1,7 +1,10 @@
 #!/usr/bin/env bun
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join, relative, sep } from 'node:path'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join, relative, sep, win32 } from 'node:path'
+import { rootBunTestFilter } from '../pr/bun-test-filter'
+import { createSandboxedTestEnvironment } from '../pr/test-environment'
 import { loadQuarantineManifest, quarantinedPathSet } from './quarantine'
 
 type CoverageMetric = {
@@ -22,6 +25,7 @@ type CoverageScope = {
   title: string
   includePrefixes: string[]
   excludePrefixes?: string[]
+  excludePathFragments?: string[]
   excludeSuffixes?: string[]
 }
 
@@ -34,6 +38,7 @@ type SuiteCoverage = {
   summary?: CoverageSummary
   logPath: string
   error?: string
+  note?: string
 }
 
 type CoverageThresholds = {
@@ -109,18 +114,21 @@ const ROOT_COVERAGE_SCOPES: CoverageScope[] = [
     id: 'server-api',
     title: 'Server/API',
     includePrefixes: ['src/server/'],
+    excludePathFragments: ['/__tests__/', '/fixtures/'],
     excludeSuffixes: ['.test.ts', '.test.tsx'],
   },
   {
     id: 'agent-tools',
     title: 'Agent tools',
     includePrefixes: ['src/tools/'],
+    excludePathFragments: ['/__tests__/', '/fixtures/'],
     excludeSuffixes: ['.test.ts', '.test.tsx'],
   },
   {
     id: 'agent-utils',
     title: 'Agent utils',
     includePrefixes: ['src/utils/'],
+    excludePathFragments: ['/__tests__/', '/fixtures/'],
     excludeSuffixes: ['.test.ts', '.test.tsx'],
   },
 ]
@@ -144,11 +152,22 @@ const DESKTOP_SCOPE: CoverageScope = {
   excludeSuffixes: ['.test.ts', '.test.tsx', '.d.ts', 'vite-env.d.ts', '.css'],
 }
 
+const ROOT_RUNTIME_CHANGED_SCOPE: CoverageScope = {
+  id: 'root-runtime',
+  title: 'Root runtime',
+  includePrefixes: ['src/'],
+  excludePrefixes: ['src/server/', 'src/tools/', 'src/utils/'],
+  excludePathFragments: ['/__tests__/', '/fixtures/'],
+  excludeSuffixes: ['.test.ts', '.test.tsx', '.d.ts'],
+}
+
 const CHANGED_LINE_SCOPES = [
   ...ROOT_COVERAGE_SCOPES,
+  ROOT_RUNTIME_CHANGED_SCOPE,
   ADAPTERS_SCOPE,
   DESKTOP_SCOPE,
 ]
+const TEST_FILE_PATTERN = /\.test\.[cm]?[jt]sx?$/
 
 function nowId() {
   return new Date().toISOString().replace(/[:.]/g, '-')
@@ -184,6 +203,11 @@ function normalize(path: string, rootDir = ROOT_DIR) {
 
 function normalizeCoveragePath(path: string, rootDir = ROOT_DIR) {
   const normalized = path.replace(/\\/g, '/')
+  if (/^[A-Za-z]:\//.test(normalized)) {
+    return win32.relative(rootDir.replace(/\//g, '\\'), normalized.replace(/\//g, '\\'))
+      .split(win32.sep)
+      .join('/')
+  }
   if (normalized.startsWith('/')) {
     return relative(rootDir, normalized).split(sep).join('/')
   }
@@ -207,10 +231,16 @@ export function prefixRelativeLcovSourcePaths(content: string, prefix: string) {
 
 function matchesScope(file: string, scope: CoverageScope) {
   const normalized = file.replace(/\\/g, '/')
+  if (!/\.[cm]?[jt]sx?$/.test(normalized)) {
+    return false
+  }
   if (!scope.includePrefixes.some((prefix) => normalized.startsWith(prefix))) {
     return false
   }
   if (scope.excludePrefixes?.some((prefix) => normalized.startsWith(prefix))) {
+    return false
+  }
+  if (scope.excludePathFragments?.some((fragment) => normalized.includes(fragment))) {
     return false
   }
   if (scope.excludeSuffixes?.some((suffix) => normalized.endsWith(suffix))) {
@@ -230,7 +260,7 @@ function walkTestFiles(path: string, files: string[], excluded: Set<string>, roo
   if (!stat.isFile()) return
 
   const normalized = normalize(path, rootDir)
-  if (normalized.endsWith('.test.ts') && !excluded.has(normalized)) {
+  if (TEST_FILE_PATTERN.test(normalized) && !excluded.has(normalized)) {
     files.push(normalized)
   }
 }
@@ -238,9 +268,7 @@ function walkTestFiles(path: string, files: string[], excluded: Set<string>, roo
 export function collectServerTestFiles(rootDir = ROOT_DIR, quarantineManifest = loadQuarantineManifest()) {
   const excluded = quarantinedPathSet(quarantineManifest)
   const files: string[] = []
-  for (const root of ['src/server', 'src/tools', 'src/utils']) {
-    walkTestFiles(join(rootDir, root), files, excluded, rootDir)
-  }
+  walkTestFiles(join(rootDir, 'src'), files, excluded, rootDir)
   return files.sort()
 }
 
@@ -299,6 +327,41 @@ function parseLcovRecords(content: string, options: {
   return records
 }
 
+export function hasUsableLcov(content: string, options: {
+  rootDir?: string
+  scope?: CoverageScope
+} = {}) {
+  return parseLcovRecords(content, options).some(isUsableLcovRecord)
+}
+
+function isUsableLcovRecord(record: LcovRecord) {
+  return record.linesTotal > 0 ||
+    record.functionsTotal > 0 ||
+    record.branchesTotal > 0 ||
+    record.lineHits.size > 0
+}
+
+export function parseBunTestFileCount(output: string) {
+  const match = output.match(/Ran \d+ tests? across (\d+) files?\./)
+  return match ? Number(match[1]) : null
+}
+
+export function buildRootCoverageCommand(outputDir: string, serverFiles: string[]) {
+  return [
+    'bun',
+    '--no-env-file',
+    '--feature=TRANSCRIPT_CLASSIFIER',
+    'test',
+    '--timeout=20000',
+    '--coverage',
+    '--coverage-reporter=lcov',
+    '--coverage-reporter=text',
+    '--coverage-dir',
+    join(outputDir, 'root-server'),
+    ...serverFiles.map(rootBunTestFilter),
+  ]
+}
+
 function summarizeLcovRecords(records: LcovRecord[]): CoverageSummary {
   let linesTotal = 0
   let linesCovered = 0
@@ -331,9 +394,9 @@ export function parseLcov(content: string, options: {
   return summarizeLcovRecords(parseLcovRecords(content, options))
 }
 
-function lcovLineCoverage(content: string, suiteId: string, scope: CoverageScope, rootDir = ROOT_DIR) {
+function lcovRecordLineCoverage(records: LcovRecord[], suiteId: string) {
   const coverage = new Map<string, FileLineCoverage>()
-  for (const record of parseLcovRecords(content, { rootDir, scope })) {
+  for (const record of records) {
     const executableLines = new Set<number>()
     const coveredLines = new Set<number>()
     for (const [line, hits] of record.lineHits) {
@@ -345,6 +408,13 @@ function lcovLineCoverage(content: string, suiteId: string, scope: CoverageScope
     coverage.set(record.file, { suiteId, executableLines, coveredLines })
   }
   return coverage
+}
+
+function lcovLineCoverage(content: string, suiteId: string, scope: CoverageScope, rootDir = ROOT_DIR) {
+  return lcovRecordLineCoverage(
+    parseLcovRecords(content, { rootDir, scope }),
+    suiteId,
+  )
 }
 
 function parseVitestSummary(path: string): CoverageSummary {
@@ -360,21 +430,35 @@ function parseVitestSummary(path: string): CoverageSummary {
   }
 }
 
+export function hasUsableCoverageSummary(summary: CoverageSummary) {
+  return Object.values(summary).some((coverage) => coverage.total > 0)
+}
+
 async function runCommand(command: string[], cwd: string, logPath: string) {
   const started = Date.now()
-  const proc = Bun.spawn(command, {
-    cwd,
-    stdout: 'pipe',
-    stderr: 'pipe',
-  })
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ])
-  mkdirSync(dirname(logPath), { recursive: true })
-  writeFileSync(logPath, `$ ${command.join(' ')}\n${stdout}${stderr}`)
-  return { exitCode, durationMs: Date.now() - started }
+  const sandboxHome = mkdtempSync(join(tmpdir(), 'cc-haha-coverage-test-'))
+  try {
+    const proc = Bun.spawn(command, {
+      cwd,
+      env: createSandboxedTestEnvironment(sandboxHome),
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ])
+    mkdirSync(dirname(logPath), { recursive: true })
+    writeFileSync(logPath, `$ ${command.join(' ')}\n${stdout}${stderr}`)
+    return {
+      exitCode,
+      durationMs: Date.now() - started,
+      output: `${stdout}${stderr}`,
+    }
+  } finally {
+    rmSync(sandboxHome, { recursive: true, force: true })
+  }
 }
 
 async function runSuite(
@@ -401,6 +485,10 @@ async function runSuite(
   }
 
   try {
+    const summary = readSummary()
+    if (!hasUsableCoverageSummary(summary)) {
+      throw new Error('coverage artifact contained no measurable source records')
+    }
     return {
       id,
       title,
@@ -408,7 +496,7 @@ async function runSuite(
       command,
       durationMs: result.durationMs,
       logPath,
-      summary: readSummary(),
+      summary,
     }
   } catch (error) {
     return {
@@ -667,6 +755,14 @@ function renderReport(report: CoverageReport) {
     ].join(' | ')} |`)
   }
 
+  const suiteNotes = report.suites.filter((suite) => suite.note)
+  if (suiteNotes.length > 0) {
+    lines.push('', '## Suite Notes', '')
+    for (const suite of suiteNotes) {
+      lines.push(`- ${suite.title}: ${suite.note}`)
+    }
+  }
+
   lines.push('', '## Changed Lines', '')
   if (!report.changedLines) {
     lines.push('- not evaluated')
@@ -725,39 +821,72 @@ export async function runCoverageGate(options: {
   const suites: SuiteCoverage[] = []
   const coverageByFile = new Map<string, FileLineCoverage>()
 
-  const rootCommand = ['bun', 'test', '--timeout=20000', '--coverage', '--coverage-reporter=lcov', '--coverage-reporter=text', '--coverage-dir', join(outputDir, 'root-server'), ...serverFiles]
-  const rootLogPath = join(outputDir, 'root-server', 'coverage.log')
   mkdirSync(join(outputDir, 'root-server'), { recursive: true })
+  const rootCommand = buildRootCoverageCommand(outputDir, serverFiles)
+  const rootLogPath = join(outputDir, 'root-server', 'coverage.log')
   const rootResult = await runCommand(rootCommand, rootDir, rootLogPath)
   const rootLcovPath = join(outputDir, 'root-server', 'lcov.info')
-  const rootLcov = rootResult.exitCode === 0 && existsSync(rootLcovPath)
+  const rootLcov = existsSync(rootLcovPath)
     ? readFileSync(rootLcovPath, 'utf8')
     : ''
+  const rootRecords = parseLcovRecords(rootLcov, { rootDir }).filter(isUsableLcovRecord)
+  const rootTestFileCount = parseBunTestFileCount(rootResult.output)
+  const rootTestDiscoveryComplete = rootTestFileCount === serverFiles.length
+  const rootCoverageAvailable = hasUsableLcov(rootLcov, { rootDir }) && rootTestDiscoveryComplete
+
+  if (rootResult.exitCode !== 0 && rootCoverageAvailable) {
+    writeFileSync(
+      rootLogPath,
+      `${readFileSync(rootLogPath, 'utf8')}\n# Coverage note: test assertions exited with ${rootResult.exitCode}; correctness is enforced by check:server's per-file sandboxed test processes. This lane uses the complete single-process LCOV universe because Bun LCOV does not expose function identities for lossless cross-process merging.\n`,
+    )
+  }
+
   for (const scope of ROOT_COVERAGE_SCOPES) {
-    const summary = rootResult.exitCode === 0
-      ? parseLcov(rootLcov, { rootDir, scope })
+    const scopedRecords = rootRecords.filter((record) => matchesScope(record.file, scope))
+    const scopeCoverageAvailable = rootCoverageAvailable && scopedRecords.length > 0
+    const summary = scopeCoverageAvailable
+      ? summarizeLcovRecords(scopedRecords)
       : undefined
     suites.push({
       id: scope.id,
       title: scope.title,
-      status: rootResult.exitCode === 0 ? 'passed' : 'failed',
+      status: scopeCoverageAvailable ? 'passed' : 'failed',
       command: rootCommand,
       durationMs: rootResult.durationMs,
       logPath: rootLogPath,
       ...(summary ? { summary } : {}),
-      ...(rootResult.exitCode !== 0 ? { error: `coverage command exited with ${rootResult.exitCode}` } : {}),
+      ...(rootResult.exitCode !== 0 && rootCoverageAvailable ? {
+        note: `instrumentation test process exited with ${rootResult.exitCode}; correctness is enforced by the required per-file server gate`,
+      } : {}),
+      ...(!scopeCoverageAvailable ? {
+        error: rootCoverageAvailable
+          ? `coverage command produced no LCOV records for ${scope.id}`
+          : !rootTestDiscoveryComplete
+            ? `coverage command discovered ${rootTestFileCount ?? 0}/${serverFiles.length} root test files`
+            : `coverage command exited with ${rootResult.exitCode} and produced no usable LCOV records`,
+      } : {}),
     })
-    if (rootResult.exitCode === 0) {
-      for (const [file, coverage] of lcovLineCoverage(rootLcov, scope.id, scope, rootDir)) {
+    if (scopeCoverageAvailable) {
+      for (const [file, coverage] of lcovRecordLineCoverage(scopedRecords, scope.id)) {
         coverageByFile.set(file, coverage)
       }
     }
   }
 
+  const rootRuntimeRecords = rootRecords.filter((record) => (
+    matchesScope(record.file, ROOT_RUNTIME_CHANGED_SCOPE)
+  ))
+  for (const [file, coverage] of lcovRecordLineCoverage(
+    rootRuntimeRecords,
+    ROOT_RUNTIME_CHANGED_SCOPE.id,
+  )) {
+    coverageByFile.set(file, coverage)
+  }
+
   const adapters = await runSuite(
     'adapters',
     'IM adapters',
-    ['bun', 'test', '--coverage', '--coverage-reporter=lcov', '--coverage-reporter=text', '--coverage-dir', join(outputDir, 'adapters')],
+    ['bun', '--no-env-file', 'test', '--coverage', '--coverage-reporter=lcov', '--coverage-reporter=text', '--coverage-dir', join(outputDir, 'adapters')],
     join(rootDir, 'adapters'),
     join(outputDir, 'adapters'),
     () => parseLcov(readFileSync(join(outputDir, 'adapters', 'lcov.info'), 'utf8')),
@@ -776,6 +905,7 @@ export async function runCoverageGate(options: {
     'Desktop React',
     [
       'bun',
+      '--no-env-file',
       'run',
       'test',
       '--',

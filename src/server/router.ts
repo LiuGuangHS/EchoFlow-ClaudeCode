@@ -13,13 +13,13 @@ import { handleConversationsApi } from './api/conversations.js'
 import { handleTeamsApi } from './api/teams.js'
 import { handleFilesystemRoute } from './api/filesystem.js'
 import { handleProvidersApi } from './api/providers.js'
-import { handleAdaptersApi } from './api/adapters.js'
 import { handlePluginsApi } from './api/plugins.js'
 import { handleSkillsApi } from './api/skills.js'
 import { handleMarketApi } from './api/market.js'
 import { handleComputerUseApi } from './api/computer-use.js'
 import { handleHahaOAuthApi } from './api/haha-oauth.js'
 import { handleHahaOpenAIOAuthApi } from './api/haha-openai-oauth.js'
+import { handleHahaGrokOAuthApi } from './api/haha-grok-oauth.js'
 import { handleMcpApi } from './api/mcp.js'
 import { handleDiagnosticsApi } from './api/diagnostics.js'
 import { handleDoctorApi } from './api/doctor.js'
@@ -87,8 +87,13 @@ export async function handleApiRequest(req: Request, url: URL): Promise<Response
     case 'haha-openai-oauth':
       return handleHahaOpenAIOAuthApi(req, url, segments)
 
+    case 'haha-grok-oauth':
+      return handleHahaGrokOAuthApi(req, url, segments)
+
     case 'adapters':
-      return handleAdaptersApi(req, url, segments)
+      // Adapter protocols pull in platform SDKs that are unnecessary for the
+      // core server path. Load them only when this API is actually used.
+      return (await import('./api/adapters.js')).handleAdaptersApi(req, url, segments)
 
     case 'skills':
       return handleSkillsApi(req, url, segments)

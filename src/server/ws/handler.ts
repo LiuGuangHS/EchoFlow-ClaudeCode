@@ -7,7 +7,13 @@
  */
 
 import type { ServerWebSocket } from 'bun'
-import type { ClientMessage, ServerMessage, StreamingFallbackCause, TokenUsage } from './events.js'
+import type {
+  ClientMessage,
+  PermissionMode,
+  ServerMessage,
+  StreamingFallbackCause,
+  TokenUsage,
+} from './events.js'
 import * as os from 'node:os'
 import {
   ConversationStartupError,
@@ -18,6 +24,16 @@ import { sessionService } from '../services/sessionService.js'
 import { SettingsService } from '../services/settingsService.js'
 import { ProviderService } from '../services/providerService.js'
 import { isOpenAIOfficialProviderId } from '../services/openaiOfficialProvider.js'
+import { isGrokOfficialProviderId } from '../services/grokOfficialProvider.js'
+import { getOpenAICodexModelCatalog } from '../../services/openaiAuth/modelCatalog.js'
+import {
+  OPENAI_DEFAULT_MAIN_MODEL,
+  getOpenAIModelCatalogEntry,
+  isOpenAIReasoningEffort,
+} from '../../services/openaiAuth/models.js'
+import { GROK_DEFAULT_MAIN_MODEL } from '../../services/grokAuth/models.js'
+import { getGrokModelCatalog } from '../../services/grokAuth/modelCatalog.js'
+import { hahaGrokOAuthService } from '../services/hahaGrokOAuthService.js'
 import { diagnosticsService } from '../services/diagnosticsService.js'
 import {
   buildConversationTitleInput,
@@ -42,6 +58,15 @@ import { getDisconnectGraceMs } from './disconnectGraceConfig.js'
 
 const settingsService = new SettingsService()
 const providerService = new ProviderService()
+
+function buildSdkWebSocketUrl(
+  ws: ServerWebSocket<WebSocketData>,
+  sessionId: string,
+): string {
+  const url = new URL(`ws://${ws.data.serverHost}:${ws.data.serverPort}/sdk/${sessionId}`)
+  url.searchParams.set('token', crypto.randomUUID())
+  return url.toString()
+}
 
 /**
  * Cache slash commands from CLI init messages, keyed by sessionId.
@@ -100,7 +125,19 @@ type ActiveUserTurnState = {
 const runtimeOverrides = new Map<string, RuntimeOverride>()
 const activeUserTurns = new Map<string, ActiveUserTurnState>()
 const deferredRuntimeRestarts = new Map<string, RuntimeOverride>()
-const deferredPermissionModes = new Map<string, string>()
+const deferredPermissionModes = new Map<string, PermissionMode>()
+const validPermissionModes = new Set<PermissionMode>([
+  'default',
+  'acceptEdits',
+  'plan',
+  'bypassPermissions',
+  'dontAsk',
+  'auto',
+])
+
+function isPermissionMode(value: unknown): value is PermissionMode {
+  return typeof value === 'string' && validPermissionModes.has(value as PermissionMode)
+}
 
 const runtimeTransitionPromises = new Map<string, Promise<void>>()
 const sessionStartupPromises = new Map<string, Promise<void>>()
@@ -111,7 +148,7 @@ const prewarmPendingSessions = new Set<string>()
 const prewarmedSessions = new Set<string>()
 const prewarmIdleTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const DEFAULT_PREWARM_IDLE_TIMEOUT_MS = 5 * 60_000
-const VALID_EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'max'])
+const VALID_CLAUDE_EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'max'])
 
 async function sendRepositoryStartupStatus(
   ws: ServerWebSocket<WebSocketData>,
@@ -209,7 +246,15 @@ export const handleWebSocket = {
 
     const msg: ServerMessage = { type: 'connected', sessionId }
     ws.send(JSON.stringify(msg))
-    replayPendingPermissionRequests(ws, sessionId)
+    const toolRequestIds = replayPendingPermissionRequests(ws, sessionId)
+    const computerUseRequestIds = replayPendingComputerUsePermissionRequests(ws, sessionId)
+    sendMessage(ws, {
+      type: 'permission_requests_snapshot',
+      toolRequestIds,
+      computerUseRequestIds,
+      turnActive:
+        hasPendingOrActiveUserTurn(sessionId) && !sessionStopRequested.has(sessionId),
+    })
   },
 
   message(ws: ServerWebSocket<WebSocketData>, rawMessage: string | Buffer) {
@@ -225,18 +270,36 @@ export const handleWebSocket = {
       ) as ClientMessage
 
       switch (message.type) {
-        case 'user_message':
-          handleUserMessage(ws, message).catch((err) => {
+        case 'user_message': {
+          const activeTurn: ActiveUserTurnState = { messageSent: false }
+          handleUserMessage(ws, message, activeTurn).catch((err) => {
+            const sessionId = ws.data.sessionId
             void diagnosticsService.recordEvent({
               type: 'ws_user_message_failed',
               severity: 'error',
-              sessionId: ws.data.sessionId,
+              sessionId,
               summary: err instanceof Error ? err.message : String(err),
               details: err,
             })
             console.error(`[WS] Unhandled error in handleUserMessage:`, err)
+            // A queued/newer turn may have replaced this handler while an
+            // earlier await was pending. Only the handler that still owns the
+            // active-turn token may terminate the desktop state.
+            if (activeUserTurns.get(sessionId) === activeTurn) {
+              clearActiveUserTurn(sessionId, activeTurn)
+              const titleState = sessionTitleState.get(sessionId)
+              if (titleState) titleState.activeTurn = undefined
+              sendMessage(ws, {
+                type: 'error',
+                message: 'The request could not be started. Please retry.',
+                code: 'USER_TURN_FAILED',
+                retryable: true,
+              })
+              sendMessage(ws, { type: 'status', state: 'idle' })
+            }
           })
           break
+        }
 
         case 'permission_response':
           handlePermissionResponse(ws, message)
@@ -258,8 +321,21 @@ export const handleWebSocket = {
           void handlePrewarmSession(ws)
           break
 
+        case 'sync_state':
+          sendMessage(ws, {
+            type: 'session_state',
+            turnState: hasPendingOrActiveUserTurn(ws.data.sessionId)
+              ? 'running'
+              : 'idle',
+          })
+          break
+
         case 'stop_generation':
           handleStopGeneration(ws)
+          break
+
+        case 'stop_background_task':
+          void handleStopBackgroundTask(ws, message)
           break
 
         case 'ping':
@@ -279,7 +355,7 @@ export const handleWebSocket = {
 
     if (channel === 'sdk') {
       console.log(`[WS] SDK disconnected from session: ${sessionId} (${code}: ${reason})`)
-      conversationService.detachSdkConnection(sessionId)
+      conversationService.detachSdkConnection(sessionId, ws)
       return
     }
 
@@ -318,7 +394,8 @@ export const handleWebSocket = {
 
 async function handleUserMessage(
   ws: ServerWebSocket<WebSocketData>,
-  message: Extract<ClientMessage, { type: 'user_message' }>
+  message: Extract<ClientMessage, { type: 'user_message' }>,
+  activeTurn: ActiveUserTurnState,
 ) {
   const { sessionId } = ws.data
 
@@ -345,7 +422,6 @@ async function handleUserMessage(
   // Send thinking status
   sendMessage(ws, { type: 'status', state: 'thinking', verb: 'Thinking' })
 
-  const activeTurn: ActiveUserTurnState = { messageSent: false }
   activeUserTurns.set(sessionId, activeTurn)
 
   const initialRuntimeTransition = await waitForRuntimeTransitionBeforeUserTurn(ws, sessionId)
@@ -621,7 +697,7 @@ function handlePermissionResponse(
   message: Extract<ClientMessage, { type: 'permission_response' }>
 ) {
   const { sessionId } = ws.data
-  conversationService.respondToPermission(
+  const resolved = conversationService.respondToPermission(
     sessionId,
     message.requestId,
     message.allowed,
@@ -630,6 +706,14 @@ function handlePermissionResponse(
     message.denyMessage,
     message.permissionUpdates,
   )
+  if (resolved) {
+    sendToSession(sessionId, {
+      type: 'permission_resolved',
+      requestId: message.requestId,
+      permissionType: 'tool',
+      allowed: message.allowed,
+    })
+  }
   console.log(`[WS] Permission response for ${message.requestId}: ${message.allowed}`)
 }
 
@@ -646,7 +730,14 @@ function handleComputerUsePermissionResponse(
     console.warn(
       `[WS] Ignored Computer Use permission response for unknown request ${message.requestId} from ${sessionId}`
     )
+    return
   }
+  sendToSession(sessionId, {
+    type: 'permission_resolved',
+    requestId: message.requestId,
+    permissionType: 'computer_use',
+    allowed: message.response.userConsented !== false,
+  })
 }
 
 async function handleSetPermissionMode(
@@ -654,6 +745,14 @@ async function handleSetPermissionMode(
   message: Extract<ClientMessage, { type: 'set_permission_mode' }>
 ): Promise<void> {
   const { sessionId } = ws.data
+  if (!isPermissionMode(message.mode)) {
+    sendMessage(ws, {
+      type: 'error',
+      message: 'Permission mode is invalid.',
+      code: 'PERMISSION_MODE_INVALID',
+    })
+    return
+  }
   const pendingStartup = sessionStartupPromises.get(sessionId)
 
   if (pendingStartup) {
@@ -672,33 +771,32 @@ async function handleSetPermissionMode(
     return
   }
 
-  await applyPermissionModeToActiveSession(ws, sessionId, message.mode)
+  await enqueueRuntimeTransition(sessionId, () =>
+    applyPermissionModeToActiveSession(ws, sessionId, message.mode),
+  )
 }
 
+const BYPASS_CAPABILITY_UNAVAILABLE =
+  'Cannot set permission mode to bypassPermissions because the session was not launched with --dangerously-skip-permissions'
+
 /**
- * 决定一次权限模式切换是否需要重启 CLI 子进程。
- *
- * 进入 bypassPermissions 需要重启：CLI 必须带 --dangerously-skip-permissions
- * 启动，否则运行时的 set_permission_mode → bypassPermissions 会被拒绝。
- *
- * 从 bypassPermissions 切到 default / acceptEdits / dontAsk 也需要重启，确保新进程不再
- * 带危险跳过权限的启动 flag。唯一例外是 bypass→plan：重启会冲掉进程内 prePlanMode
- * 记忆，导致 ExitPlanMode 只能恢复成 default，而非进入 plan 前的 bypassPermissions。
- * 所以 bypass→plan 保持进程不变，走运行时 setPermissionMode。
+ * Sessions launched by this desktop build can switch into bypass in-process.
+ * A session that was already running before an app update may lack that launch
+ * capability, so retain the restart path only for that exact CLI error.
  */
-export function shouldRestartForPermissionMode(
-  currentMode: string,
-  mode: string,
+export function shouldFallbackToPermissionRestart(
+  mode: PermissionMode,
+  error: unknown,
 ): boolean {
-  if (currentMode === mode) return false
-  if (mode === 'bypassPermissions') return true
-  return currentMode === 'bypassPermissions' && mode !== 'plan'
+  if (mode !== 'bypassPermissions') return false
+  const message = error instanceof Error ? error.message : String(error)
+  return message.includes(BYPASS_CAPABILITY_UNAVAILABLE)
 }
 
 async function applyPermissionModeToActiveSession(
   ws: ServerWebSocket<WebSocketData>,
   sessionId: string,
-  mode: string,
+  mode: PermissionMode,
 ): Promise<void> {
   const currentMode = conversationService.getSessionPermissionMode(sessionId)
   if (shouldDeferRuntimeRestartForActiveTurn(sessionId)) {
@@ -707,25 +805,29 @@ async function applyPermissionModeToActiveSession(
   }
 
   if (currentMode === mode) {
-    sendMessage(ws, { type: 'permission_mode_changed', mode })
+    sendToSession(sessionId, { type: 'permission_mode_changed', mode })
     return
   }
-  const needsRestart = shouldRestartForPermissionMode(currentMode, mode)
-
-  if (needsRestart) {
-    void enqueueRuntimeTransition(sessionId, () =>
-      restartSessionWithPermissionMode(ws, sessionId, mode),
-    )
-    return
+  try {
+    const ok = await conversationService.setPermissionMode(sessionId, mode)
+    if (!ok) {
+      console.warn(`[WS] Ignored permission mode update for inactive session ${sessionId}`)
+      return
+    }
+    await commitConfirmedPermissionMode(sessionId, mode)
+  } catch (err) {
+    if (shouldFallbackToPermissionRestart(mode, err)) {
+      await restartSessionWithPermissionMode(ws, sessionId, mode)
+      return
+    }
+    const errMsg = err instanceof Error ? err.message : String(err)
+    console.warn(`[WS] Failed to set permission mode for ${sessionId}: ${errMsg}`)
+    sendMessage(ws, {
+      type: 'error',
+      message: `Failed to set permission mode: ${errMsg}`,
+      code: 'PERMISSION_MODE_CHANGE_FAILED',
+    })
   }
-
-  const ok = conversationService.setPermissionMode(sessionId, mode)
-  if (!ok) {
-    console.warn(`[WS] Ignored permission mode update for inactive session ${sessionId}`)
-    return
-  }
-  await persistSessionPermissionMode(sessionId, mode)
-  sendMessage(ws, { type: 'permission_mode_changed', mode })
 }
 
 async function handleSetRuntimeConfig(
@@ -733,7 +835,7 @@ async function handleSetRuntimeConfig(
   message: Extract<ClientMessage, { type: 'set_runtime_config' }>
 ) {
   const { sessionId } = ws.data
-  const modelId = typeof message.modelId === 'string' ? message.modelId.trim() : ''
+  let modelId = typeof message.modelId === 'string' ? message.modelId.trim() : ''
   if (!modelId) {
     sendMessage(ws, {
       type: 'error',
@@ -742,9 +844,15 @@ async function handleSetRuntimeConfig(
     })
     return
   }
+  if (isGrokOfficialProviderId(message.providerId)) {
+    modelId = (await getGrokReasoningEfforts(modelId)).modelId
+  }
   const effortLevel =
     typeof message.effortLevel === 'string' ? message.effortLevel.trim() : undefined
-  if (effortLevel !== undefined && !VALID_EFFORT_LEVELS.has(effortLevel)) {
+  if (
+    effortLevel !== undefined &&
+    !(await isRuntimeEffortSupported(message.providerId, modelId, effortLevel))
+  ) {
     sendMessage(ws, {
       type: 'error',
       message: 'Runtime effort selection is invalid.',
@@ -820,22 +928,23 @@ async function handleSetRuntimeConfig(
 async function restartSessionWithPermissionMode(
   ws: ServerWebSocket<WebSocketData>,
   sessionId: string,
-  mode: string,
+  mode: PermissionMode,
 ): Promise<void> {
   try {
     const workDir = conversationService.getSessionWorkDir(sessionId)
-    await persistSessionPermissionMode(sessionId, mode, workDir)
     conversationService.stopSession(sessionId)
 
-    // Rebuild runtime settings (will pick up the session-scoped mode)
-    const runtimeSettings = await getRuntimeSettings(sessionId)
-    const sdkUrl =
-      `ws://${ws.data.serverHost}:${ws.data.serverPort}/sdk/${sessionId}` +
-      `?token=${encodeURIComponent(crypto.randomUUID())}`
+    // Launch with the requested mode in-memory. Persist it only after startup
+    // succeeds so a failed bypass restart cannot leave dangerous metadata.
+    const runtimeSettings = {
+      ...await getRuntimeSettings(sessionId),
+      permissionMode: mode,
+    }
+    const sdkUrl = buildSdkWebSocketUrl(ws, sessionId)
     await conversationService.startSession(sessionId, workDir, sdkUrl, runtimeSettings)
 
-    sendMessage(ws, { type: 'permission_mode_changed', mode })
-    sendMessage(ws, { type: 'status', state: 'idle' })
+    await commitConfirmedPermissionMode(sessionId, mode, workDir)
+    sendToSession(sessionId, { type: 'status', state: 'idle' })
     console.log(`[WS] Restarted CLI for ${sessionId} with permission mode: ${mode}`)
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err)
@@ -857,6 +966,19 @@ async function restartSessionWithPermissionMode(
     })
     sendMessage(ws, { type: 'status', state: 'idle' })
   }
+}
+
+async function commitConfirmedPermissionMode(
+  sessionId: string,
+  mode: PermissionMode,
+  knownWorkDir?: string | null,
+): Promise<void> {
+  const persisted = await persistSessionPermissionMode(sessionId, mode, knownWorkDir)
+  if (!persisted) {
+    throw new Error(`Unable to persist confirmed permission mode: ${mode}`)
+  }
+  conversationService.recordSessionPermissionMode(sessionId, mode)
+  sendToSession(sessionId, { type: 'permission_mode_changed', mode })
 }
 
 async function persistSessionPermissionMode(
@@ -905,9 +1027,7 @@ async function restartSessionWithRuntimeConfig(
     conversationService.stopSession(sessionId)
 
     const runtimeSettings = await getRuntimeSettings(sessionId)
-    const sdkUrl =
-      `ws://${ws.data.serverHost}:${ws.data.serverPort}/sdk/${sessionId}` +
-      `?token=${encodeURIComponent(crypto.randomUUID())}`
+    const sdkUrl = buildSdkWebSocketUrl(ws, sessionId)
     await conversationService.startSession(sessionId, workDir, sdkUrl, runtimeSettings)
 
     sendMessage(ws, { type: 'status', state: 'idle' })
@@ -954,6 +1074,36 @@ function handleStopGeneration(ws: ServerWebSocket<WebSocketData>) {
   }
 
   sendMessage(ws, { type: 'status', state: 'idle' })
+}
+
+async function handleStopBackgroundTask(
+  ws: ServerWebSocket<WebSocketData>,
+  message: Extract<ClientMessage, { type: 'stop_background_task' }>,
+): Promise<void> {
+  const { sessionId } = ws.data
+  const taskId = typeof message.taskId === 'string' ? message.taskId.trim() : ''
+
+  if (!taskId) {
+    sendMessage(ws, {
+      type: 'background_task_stop_failed',
+      taskId,
+      message: 'Background task id is required',
+    })
+    return
+  }
+
+  try {
+    await conversationService.requestControl(sessionId, {
+      subtype: 'stop_task',
+      task_id: taskId,
+    })
+  } catch (error) {
+    sendMessage(ws, {
+      type: 'background_task_stop_failed',
+      taskId,
+      message: error instanceof Error ? error.message : String(error),
+    })
+  }
 }
 
 // ============================================================================
@@ -1207,6 +1357,13 @@ function getStreamState(sessionId: string): SessionStreamState {
   return state
 }
 
+function resetCurrentStreamAttempt(state: SessionStreamState): void {
+  state.hasReceivedStreamEvents = false
+  state.activeBlockTypes.clear()
+  state.activeToolBlocks.clear()
+  state.pendingToolBlocks.clear()
+}
+
 function cliParentToolUseId(cliMsg: any): string | undefined {
   return typeof cliMsg.parent_tool_use_id === 'string' && cliMsg.parent_tool_use_id.length > 0
     ? cliMsg.parent_tool_use_id
@@ -1424,9 +1581,7 @@ async function ensureCliSessionStarted(
     const startupSettings = reason === 'prewarm_session'
       ? { ...runtimeSettings, resumeInterruptedTurn: false }
       : runtimeSettings
-    const sdkUrl =
-      `ws://${ws.data.serverHost}:${ws.data.serverPort}/sdk/${sessionId}` +
-      `?token=${encodeURIComponent(crypto.randomUUID())}`
+    const sdkUrl = buildSdkWebSocketUrl(ws, sessionId)
     await sendRepositoryStartupStatus(ws, sessionId, reason)
     console.log(`[WS] Starting CLI for ${sessionId} due to ${reason}`)
     await conversationService.startSession(sessionId, workDir, sdkUrl, startupSettings)
@@ -1512,9 +1667,6 @@ export function translateCliMessage(cliMsg: any, sessionId: string): ServerMessa
           }
         }
 
-        // Reset flags for next turn
-        streamState.hasReceivedStreamEvents = false
-        streamState.pendingToolBlocks.clear()
         return messages
       }
       return []
@@ -1596,7 +1748,7 @@ export function translateCliMessage(cliMsg: any, sessionId: string): ServerMessa
 
       switch (event.type) {
         case 'message_start': {
-          return [{ type: 'status', state: 'thinking' }]
+          return [{ type: 'status', state: 'thinking', attemptStart: true }]
         }
 
         case 'content_block_start': {
@@ -1728,12 +1880,40 @@ export function translateCliMessage(cliMsg: any, sessionId: string): ServerMessa
       return []
     }
 
-    case 'control_response':
-      return []
+    case 'control_cancel_request':
+      return typeof cliMsg.request_id === 'string'
+        ? [{
+            type: 'permission_resolved',
+            requestId: cliMsg.request_id,
+            permissionType: 'tool',
+          }]
+        : []
+
+    case 'control_response': {
+      const requestId = typeof cliMsg.response?.request_id === 'string'
+        ? cliMsg.response.request_id
+        : typeof cliMsg.request_id === 'string'
+          ? cliMsg.request_id
+          : null
+      if (!requestId) return []
+      const behavior = cliMsg.response?.response?.behavior
+      return [{
+        type: 'permission_resolved',
+        requestId,
+        permissionType: 'tool',
+        ...(behavior === 'allow' || behavior === 'deny'
+          ? { allowed: behavior === 'allow' }
+          : {}),
+      }]
+    }
 
     case 'result': {
       // 对话结果（成功或错误）
       const usage = translateCliUsage(cliMsg.usage)
+      // Buffered assistant blocks can arrive as a batch after all raw events
+      // for one provider message. Keep deduplication active across the entire
+      // batch, then clear it only at the terminal result boundary.
+      resetCurrentStreamAttempt(streamState)
 
       if (cliMsg.is_error) {
         // If the user requested stop, this "error" is just the interrupt
@@ -1777,6 +1957,9 @@ export function translateCliMessage(cliMsg: any, sessionId: string): ServerMessa
         return apiRetryMessage ? [apiRetryMessage] : []
       }
       if (subtype === 'streaming_fallback') {
+        // The next attempt is a new stream or a full non-streaming response;
+        // neither should inherit raw-event dedup/tool JSON from the failed one.
+        resetCurrentStreamAttempt(streamState)
         return [toStreamingFallbackServerMessage(cliMsg)]
       }
       if (subtype === 'init') {
@@ -1825,7 +2008,7 @@ export function translateCliMessage(cliMsg: any, sessionId: string): ServerMessa
         // Shift+Tab）广播给前端。它带 status:null 但**不是** thinking 信号，
         // 必须在下面的 null→thinking 兜底之前拦截，否则字段会被丢弃，桌面端
         // 选择器就会一直卡在"计划模式"。
-        if (typeof cliMsg.permissionMode === 'string') {
+        if (isPermissionMode(cliMsg.permissionMode)) {
           return [{ type: 'permission_mode_changed', mode: cliMsg.permissionMode }]
         }
         if (cliMsg.status == null) {
@@ -1877,13 +2060,17 @@ export function translateCliMessage(cliMsg: any, sessionId: string): ServerMessa
         }]
       }
       if (subtype === 'task_started') {
+        const notification: ServerMessage = {
+          type: 'system_notification',
+          subtype: 'task_started',
+          message: cliMsg.message || cliMsg.description || 'Task started',
+          data: cliMsg,
+        }
+        // AutoDream is detached maintenance work. Keep it visible in Activity,
+        // but do not revive the already-completed foreground turn.
+        if (cliMsg.task_type === 'dream') return [notification]
         return [
-          {
-            type: 'system_notification',
-            subtype: 'task_started',
-            message: cliMsg.message || cliMsg.description || 'Task started',
-            data: cliMsg,
-          },
+          notification,
           {
             type: 'status',
             state: 'tool_executing',
@@ -2021,6 +2208,7 @@ const STREAMING_FALLBACK_CAUSES: ReadonlySet<StreamingFallbackCause> = new Set([
   'watchdog',
   'stream_error',
   '404_stream_creation',
+  'stream_retry',
 ])
 
 function toStreamingFallbackServerMessage(cliMsg: any): ServerMessage {
@@ -2130,8 +2318,9 @@ function cancelSessionDisconnectWatcher(sessionId: string): void {
 function replayPendingPermissionRequests(
   ws: ServerWebSocket<WebSocketData>,
   sessionId: string,
-): void {
-  for (const request of conversationService.getPendingPermissionRequests(sessionId)) {
+): string[] {
+  const requests = conversationService.getPendingPermissionRequests(sessionId)
+  for (const request of requests) {
     sendMessage(ws, {
       type: 'permission_request',
       requestId: request.requestId,
@@ -2141,6 +2330,22 @@ function replayPendingPermissionRequests(
       ...(request.description ? { description: request.description } : {}),
     })
   }
+  return requests.map((request) => request.requestId)
+}
+
+function replayPendingComputerUsePermissionRequests(
+  ws: ServerWebSocket<WebSocketData>,
+  sessionId: string,
+): string[] {
+  const requests = computerUseApprovalService.getPendingRequests(sessionId)
+  for (const request of requests) {
+    sendMessage(ws, {
+      type: 'computer_use_permission_request',
+      requestId: request.requestId,
+      request,
+    })
+  }
+  return requests.map((request) => request.requestId)
 }
 
 function getDesktopSlashCommand(content: string): ReturnType<typeof parseSlashCommand> {
@@ -2463,6 +2668,14 @@ function bindClientSessionOutput(
       return
     }
 
+    const cliPermissionMode = getCliPermissionModeBroadcast(cliMsg)
+    if (
+      cliPermissionMode &&
+      conversationService.isPermissionModeChangePending(sessionId, cliPermissionMode)
+    ) {
+      return
+    }
+
     handleCliPermissionModeBroadcast(sessionId, cliMsg)
     const serverMsgs = translateCliMessage(cliMsg, sessionId)
     for (const msg of serverMsgs) {
@@ -2475,11 +2688,11 @@ function bindClientSessionOutput(
   conversationService.onOutput(sessionId, callback)
 }
 
-function getCliPermissionModeBroadcast(cliMsg: any): string | null {
+function getCliPermissionModeBroadcast(cliMsg: any): PermissionMode | null {
   if (
     cliMsg?.type === 'system' &&
     cliMsg.subtype === 'status' &&
-    typeof cliMsg.permissionMode === 'string'
+    isPermissionMode(cliMsg.permissionMode)
   ) {
     return cliMsg.permissionMode
   }
@@ -2507,12 +2720,59 @@ type RuntimeSettings = {
   providerId?: string | null
 }
 
+async function getDefaultOpenAIReasoningEffort(modelId: string): Promise<string> {
+  const catalog = await getOpenAICodexModelCatalog()
+  return getOpenAIModelCatalogEntry(modelId, catalog)?.defaultReasoningEffort ?? 'medium'
+}
+
+async function getGrokReasoningEfforts(modelId: string): Promise<{
+  modelId: string
+  defaultEffort?: string
+  supportedEfforts: string[]
+}> {
+  const tokens = await hahaGrokOAuthService.ensureFreshTokens()
+  const catalog = await getGrokModelCatalog({
+    ...(tokens?.accessToken ? { accessToken: tokens.accessToken } : {}),
+    accountKey: tokens?.email ?? (tokens ? 'authenticated-default' : 'logged-out'),
+  })
+  const model = catalog.find((entry) => entry.value === modelId)
+    ?? catalog.find((entry) => entry.value === GROK_DEFAULT_MAIN_MODEL)
+    ?? catalog[0]
+  return {
+    modelId: model?.value ?? GROK_DEFAULT_MAIN_MODEL,
+    ...(model?.reasoningEffort ? { defaultEffort: model.reasoningEffort } : {}),
+    supportedEfforts: model?.reasoningEfforts ?? [],
+  }
+}
+
+async function isRuntimeEffortSupported(
+  providerId: string | null | undefined,
+  modelId: string,
+  effort: string,
+): Promise<boolean> {
+  if (isGrokOfficialProviderId(providerId)) {
+    const { supportedEfforts } = await getGrokReasoningEfforts(modelId)
+    return supportedEfforts.includes(effort)
+  }
+  if (!isOpenAIOfficialProviderId(providerId)) {
+    return VALID_CLAUDE_EFFORT_LEVELS.has(effort)
+  }
+  if (!isOpenAIReasoningEffort(effort)) {
+    return false
+  }
+
+  const catalog = await getOpenAICodexModelCatalog()
+  const model = getOpenAIModelCatalogEntry(modelId, catalog)
+  return !model || model.supportedReasoningEfforts.includes(effort)
+}
+
 function isKnownRuntimeProviderId(
   providerId: string,
   providers: Array<{ id: string }>,
 ): boolean {
   return (
     isOpenAIOfficialProviderId(providerId) ||
+    isGrokOfficialProviderId(providerId) ||
     providers.some((provider) => provider.id === providerId)
   )
 }
@@ -2553,12 +2813,25 @@ async function getRuntimeSettings(sessionId?: string): Promise<RuntimeSettings> 
     }
 
     const userSettings = await settingsService.getUserSettings()
-    const thinking = resolveDesktopThinkingMode(userSettings)
+    const thinking = resolveDesktopThinkingMode(
+      userSettings,
+      runtimeOverride.providerId,
+    )
+    let effort = runtimeOverride.effort
+    if (isOpenAIOfficialProviderId(runtimeOverride.providerId)) {
+      effort = effort ?? await getDefaultOpenAIReasoningEffort(runtimeOverride.modelId)
+    } else if (isGrokOfficialProviderId(runtimeOverride.providerId)) {
+      const grokEffort = await getGrokReasoningEfforts(runtimeOverride.modelId)
+      runtimeOverride.modelId = grokEffort.modelId
+      effort = effort && grokEffort.supportedEfforts.includes(effort)
+        ? effort
+        : grokEffort.defaultEffort
+    }
 
     return {
       permissionMode: sessionPermissionMode ?? await settingsService.getPermissionMode().catch(() => undefined),
       model: runtimeOverride.modelId,
-      effort: runtimeOverride.effort,
+      effort,
       thinking,
       providerId: runtimeOverride.providerId,
     }
@@ -2596,11 +2869,11 @@ async function getDefaultRuntimeSettings(): Promise<RuntimeSettings> {
     typeof modelSettings.modelContext === 'string' && modelSettings.modelContext.trim()
       ? modelSettings.modelContext
       : undefined
-  const effort =
+  let effort =
     typeof userSettings.effort === 'string' && userSettings.effort.trim()
       ? userSettings.effort
       : undefined
-  const thinking = resolveDesktopThinkingMode(userSettings)
+  const thinking = resolveDesktopThinkingMode(userSettings, resolvedActiveId)
 
   let model: string | undefined
   if (resolvedActiveId) {
@@ -2613,6 +2886,13 @@ async function getDefaultRuntimeSettings(): Promise<RuntimeSettings> {
     if (baseModel) {
       model = baseModel
       if (modelContext) model += `:${modelContext}`
+    }
+    if (isOpenAIOfficialProviderId(resolvedActiveId)) {
+      model = model || OPENAI_DEFAULT_MAIN_MODEL
+      effort = await getDefaultOpenAIReasoningEffort(model)
+    } else if (isGrokOfficialProviderId(resolvedActiveId)) {
+      model = model || GROK_DEFAULT_MAIN_MODEL
+      effort = (await getGrokReasoningEfforts(model)).defaultEffort
     }
   } else {
     // No provider — pass model normally
@@ -2634,7 +2914,9 @@ async function getDefaultRuntimeSettings(): Promise<RuntimeSettings> {
 
 function resolveDesktopThinkingMode(
   settings: Record<string, unknown>,
+  providerId?: string | null,
 ): 'disabled' | undefined {
+  if (isOpenAIOfficialProviderId(providerId)) return undefined
   return settings.alwaysThinkingEnabled === false ? 'disabled' : undefined
 }
 

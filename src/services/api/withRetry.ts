@@ -216,11 +216,12 @@ export function isRetryableStreamError(error: unknown): boolean {
  * Max times withStreamRetry() re-establishes a stream after a transient
  * mid-stream error (see RetriableStreamError). Small by default — a malformed
  * tool_call or a one-off blip usually clears on the first retry; this is not a
- * capacity backoff loop. Override with CLAUDE_STREAM_TRANSIENT_RETRY_MAX.
+ * capacity backoff loop. Override with CLAUDE_STREAM_TRANSIENT_RETRY_MAX;
+ * values are capped at 5 so a bad environment value cannot make it unbounded.
  */
 export function getMaxStreamTransientRetries(): number {
   const raw = parseInt(process.env.CLAUDE_STREAM_TRANSIENT_RETRY_MAX || '', 10)
-  return Number.isFinite(raw) && raw >= 0 ? raw : 2
+  return Number.isFinite(raw) && raw >= 0 ? Math.min(raw, 5) : 2
 }
 
 export async function* withRetry<T>(
