@@ -3,6 +3,7 @@ import { getAPIProvider, isFirstPartyAnthropicBaseUrl } from './providers.js'
 
 export type ModelCapabilityOverride =
   | 'effort'
+  | 'xhigh_effort'
   | 'max_effort'
   | 'thinking'
   | 'required_thinking'
@@ -10,6 +11,10 @@ export type ModelCapabilityOverride =
   | 'interleaved_thinking'
 
 const TIERS = [
+  {
+    modelEnvVar: 'ANTHROPIC_DEFAULT_FABLE_MODEL',
+    capabilitiesEnvVar: 'ANTHROPIC_DEFAULT_FABLE_MODEL_SUPPORTED_CAPABILITIES',
+  },
   {
     modelEnvVar: 'ANTHROPIC_DEFAULT_OPUS_MODEL',
     capabilitiesEnvVar: 'ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES',

@@ -377,11 +377,11 @@ async function replaceFile(tempPath: string, targetPath: string) {
 }
 
 async function syncLegacyWindowsLauncherWrapper(sourcePath: string, binDir: string) {
-  await syncWindowsLauncherWrapper(sourcePath, join(binDir, 'claude-haha.cmd'))
+  await syncWindowsLauncherWrapper(sourcePath, join(binDir, 'echoflow-code.cmd'))
 }
 
 export async function removeLegacyWindowsBinaryLauncher(binDir: string) {
-  const legacyPath = join(binDir, 'claude-haha.exe')
+  const legacyPath = join(binDir, 'echoflow-code.exe')
   try {
     const legacyStats = await stat(legacyPath)
     if (!legacyStats.isFile()) return
@@ -398,7 +398,7 @@ export async function removeLegacyWindowsBinaryLauncher(binDir: string) {
     await unlink(legacyPath)
   } catch {
     // The stale executable may still be in use. Rename it away so PATHEXT will
-    // resolve the regenerated claude-haha.cmd compatibility wrapper instead.
+    // resolve the regenerated echoflow-code.cmd compatibility wrapper instead.
     const backupPath = `${legacyPath}.old.${Date.now()}`
     await rename(legacyPath, backupPath)
   }

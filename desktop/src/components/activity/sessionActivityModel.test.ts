@@ -541,6 +541,233 @@ describe('buildSessionActivityModel', () => {
     expect(model.badgeCount).toBe(1)
   })
 
+  it('drops tasks deleted by TaskUpdate instead of showing them as pending', () => {
+    const model = buildSessionActivityModel({
+      sessionId: 'session-1',
+      messages: [
+        {
+          id: 'task-create-1',
+          type: 'tool_use',
+          toolName: 'TaskCreate',
+          toolUseId: 'task-create-call-1',
+          input: { subject: '写 README' },
+          timestamp: 1000,
+        },
+        {
+          id: 'task-create-result-1',
+          type: 'tool_result',
+          toolUseId: 'task-create-call-1',
+          content: 'Task #1 created successfully: 写 README',
+          isError: false,
+          timestamp: 1001,
+        },
+        {
+          id: 'task-create-2',
+          type: 'tool_use',
+          toolName: 'TaskCreate',
+          toolUseId: 'task-create-call-2',
+          input: { subject: '给 summarize 加空数组保护' },
+          timestamp: 1002,
+        },
+        {
+          id: 'task-create-result-2',
+          type: 'tool_result',
+          toolUseId: 'task-create-call-2',
+          content: 'Task #2 created successfully: 给 summarize 加空数组保护',
+          isError: false,
+          timestamp: 1003,
+        },
+        {
+          id: 'task-update-1',
+          type: 'tool_use',
+          toolName: 'TaskUpdate',
+          toolUseId: 'task-update-call-1',
+          input: { taskId: '2', status: 'completed' },
+          timestamp: 1004,
+        },
+        {
+          id: 'task-update-2',
+          type: 'tool_use',
+          toolName: 'TaskUpdate',
+          toolUseId: 'task-update-call-2',
+          input: { taskId: '1', status: 'deleted' },
+          timestamp: 1005,
+        },
+      ],
+      tasks: [task({ id: '2', subject: '给 summarize 加空数组保护', status: 'completed' })],
+      completedAndDismissed: false,
+      backgroundTasks: [],
+      agentNotifications: [],
+    })
+
+    expect(model.sections.tasks.rows).toEqual([
+      expect.objectContaining({ id: '2', label: '给 summarize 加空数组保护', status: 'completed' }),
+    ])
+    expect(model.badgeCount).toBe(0)
+  })
+
+  it('does not invent a row for a TaskUpdate deletion without a matching TaskCreate', () => {
+    const model = buildSessionActivityModel({
+      sessionId: 'session-1',
+      messages: [
+        {
+          id: 'user-1',
+          type: 'user_text',
+          content: '那条任务不用做了，删掉吧',
+          timestamp: 1000,
+        },
+        {
+          id: 'task-update-1',
+          type: 'tool_use',
+          toolName: 'TaskUpdate',
+          toolUseId: 'task-update-call-1',
+          input: { taskId: '7', status: 'deleted' },
+          timestamp: 1001,
+        },
+      ],
+      tasks: [],
+      completedAndDismissed: false,
+      backgroundTasks: [],
+      agentNotifications: [],
+    })
+
+    expect(model.sections.tasks.rows).toEqual([])
+    expect(model.badgeCount).toBe(0)
+  })
+
+  it('removes tasks deleted in a later turn from earlier task history', () => {
+    const model = buildSessionActivityModel({
+      sessionId: 'session-1',
+      messages: [
+        { id: 'user-1', type: 'user_text', content: '先做订单功能', timestamp: 1000 },
+        {
+          id: 'task-create-1',
+          type: 'tool_use',
+          toolName: 'TaskCreate',
+          toolUseId: 'task-create-call-1',
+          input: { subject: '实现订单汇总' },
+          timestamp: 1001,
+        },
+        {
+          id: 'task-create-result-1',
+          type: 'tool_result',
+          toolUseId: 'task-create-call-1',
+          content: 'Task #1 created successfully: 实现订单汇总',
+          isError: false,
+          timestamp: 1002,
+        },
+        {
+          id: 'task-create-2',
+          type: 'tool_use',
+          toolName: 'TaskCreate',
+          toolUseId: 'task-create-call-2',
+          input: { subject: '写 README' },
+          timestamp: 1003,
+        },
+        {
+          id: 'task-create-result-2',
+          type: 'tool_result',
+          toolUseId: 'task-create-call-2',
+          content: 'Task #2 created successfully: 写 README',
+          isError: false,
+          timestamp: 1004,
+        },
+        {
+          id: 'task-update-1',
+          type: 'tool_use',
+          toolName: 'TaskUpdate',
+          toolUseId: 'task-update-call-1',
+          input: { taskId: '1', status: 'completed' },
+          timestamp: 1005,
+        },
+        { id: 'user-2', type: 'user_text', content: 'README 不写了，继续做活动面板', timestamp: 2000 },
+        {
+          id: 'task-update-2',
+          type: 'tool_use',
+          toolName: 'TaskUpdate',
+          toolUseId: 'task-update-call-2',
+          input: { taskId: '2', status: 'deleted' },
+          timestamp: 2001,
+        },
+        {
+          id: 'task-create-3',
+          type: 'tool_use',
+          toolName: 'TaskCreate',
+          toolUseId: 'task-create-call-3',
+          input: { subject: '实现活动面板' },
+          timestamp: 2002,
+        },
+        {
+          id: 'task-create-result-3',
+          type: 'tool_result',
+          toolUseId: 'task-create-call-3',
+          content: 'Task #3 created successfully: 实现活动面板',
+          isError: false,
+          timestamp: 2003,
+        },
+      ],
+      tasks: [],
+      completedAndDismissed: false,
+      backgroundTasks: [],
+      agentNotifications: [],
+    })
+
+    expect(model.sections.tasks.rows).toEqual([
+      expect.objectContaining({ id: '3', label: '实现活动面板', status: 'pending' }),
+      expect.objectContaining({
+        label: 'Earlier tasks',
+        status: 'completed',
+        taskHistory: { completed: 1, total: 1, turnCount: 1 },
+      }),
+    ])
+    expect(model.badgeCount).toBe(1)
+  })
+
+  it('hides deleted tasks that a stale live task list still reports', () => {
+    const model = buildSessionActivityModel({
+      sessionId: 'session-1',
+      messages: [
+        {
+          id: 'task-update-1',
+          type: 'tool_use',
+          toolName: 'TaskUpdate',
+          toolUseId: 'task-update-call-1',
+          input: { taskId: '1', status: 'deleted' },
+          timestamp: 1000,
+        },
+        {
+          id: 'task-create-1',
+          type: 'tool_use',
+          toolName: 'TaskCreate',
+          toolUseId: 'task-create-call-1',
+          input: { subject: '补充边界测试' },
+          timestamp: 1001,
+        },
+        {
+          id: 'task-create-result-1',
+          type: 'tool_result',
+          toolUseId: 'task-create-call-1',
+          content: 'Task #2 created successfully: 补充边界测试',
+          isError: false,
+          timestamp: 1002,
+        },
+      ],
+      // tool_result 后才异步 refreshTasks，这一刻的列表还没剔掉已删任务
+      tasks: [
+        task({ id: '1', subject: '写 README', status: 'pending' }),
+        task({ id: '2', subject: '补充边界测试', status: 'pending' }),
+      ],
+      completedAndDismissed: false,
+      backgroundTasks: [],
+      agentNotifications: [],
+    })
+
+    expect(model.sections.tasks.rows).toEqual([
+      expect.objectContaining({ id: '2', label: '补充边界测试', status: 'pending' }),
+    ])
+    expect(model.badgeCount).toBe(1)
+  })
+
   it('prefers task summary rows over earlier TodoWrite rows', () => {
     const model = buildSessionActivityModel({
       sessionId: 'session-1',
@@ -641,6 +868,63 @@ describe('buildSessionActivityModel', () => {
       }),
     ])
     expect(model.badgeCount).toBe(2)
+  })
+
+  it('seals interrupted earlier tasks without badge attention', () => {
+    const model = buildSessionActivityModel({
+      sessionId: 'session-1',
+      messages: [
+        {
+          id: 'user-1',
+          type: 'user_text',
+          content: '执行第一轮任务',
+          timestamp: 1000,
+        },
+        {
+          id: 'todo-1',
+          type: 'tool_use',
+          toolName: 'TodoWrite',
+          toolUseId: 'todo-1',
+          input: {
+            todos: [
+              { content: '已完成项', status: 'completed' },
+              { content: '被中断项', status: 'in_progress' },
+            ],
+          },
+          timestamp: 1100,
+        },
+        {
+          id: 'user-2',
+          type: 'user_text',
+          content: '中断后继续新任务',
+          timestamp: 2000,
+        },
+        {
+          id: 'todo-2',
+          type: 'tool_use',
+          toolName: 'TodoWrite',
+          toolUseId: 'todo-2',
+          input: {
+            todos: [{ content: '新轮次任务', status: 'completed' }],
+          },
+          timestamp: 2100,
+        },
+      ],
+      tasks: [],
+      completedAndDismissed: false,
+      backgroundTasks: [],
+      agentNotifications: [],
+    })
+
+    expect(model.sections.tasks.rows).toEqual([
+      expect.objectContaining({ label: '新轮次任务', status: 'completed' }),
+      expect.objectContaining({
+        label: 'Earlier tasks',
+        status: 'stopped',
+        taskHistory: { completed: 1, total: 2, turnCount: 1 },
+      }),
+    ])
+    expect(model.badgeCount).toBe(0)
   })
 
   it('does not show orphan non-agent notifications in the SubAgents section', () => {

@@ -1,18 +1,21 @@
 /**
  * Providers REST API
  *
- * GET    /api/providers              — list all saved providers + activeId
- * GET    /api/providers/presets       — list available presets
- * GET    /api/providers/auth-status   — check whether any usable auth exists
- * GET    /api/providers/settings      — read EchoFlow managed settings.json
- * POST   /api/providers              — add a provider
- * PUT    /api/providers/settings      — update EchoFlow managed settings.json
- * PUT    /api/providers/:id          — update a provider
- * DELETE /api/providers/:id          — delete a provider
- * POST   /api/providers/:id/activate — activate a saved provider
- * POST   /api/providers/official     — activate official (clear env)
- * POST   /api/providers/:id/test     — test a saved provider
- * POST   /api/providers/test         — test unsaved config
+ * GET    /api/providers                  — list all saved providers + activeId
+ * GET    /api/providers/presets           — list available presets
+ * GET    /api/providers/auth-status       — check whether any usable auth exists
+ * GET    /api/providers/settings          — read EchoFlow managed settings.json
+ * GET    /api/providers/cc-switch/scan    — scan a local cc-switch install
+ * POST   /api/providers                  — add a provider
+ * POST   /api/providers/cc-switch/import  — import scanned cc-switch providers
+ * POST   /api/providers/models            — list upstream models for a config
+ * PUT    /api/providers/settings          — update EchoFlow managed settings.json
+ * PUT    /api/providers/:id              — update a provider
+ * DELETE /api/providers/:id              — delete a provider
+ * POST   /api/providers/:id/activate     — activate a saved provider
+ * POST   /api/providers/official         — activate official (clear env)
+ * POST   /api/providers/:id/test         — test a saved provider
+ * POST   /api/providers/test             — test unsaved config
  */
 
 import { z } from 'zod'
@@ -26,8 +29,28 @@ import {
 } from '../types/provider.js'
 import { ApiError, errorResponse } from '../middleware/errorHandler.js'
 import { diagnosticsService } from '../services/diagnosticsService.js'
+import {
+  readCcSwitchProviders,
+  resolveCcSwitchImports,
+  toCcSwitchScanResult,
+} from '../services/ccSwitchImport.js'
+import { fetchProviderModels } from '../services/providerModelCatalog.js'
 
 const providerService = new ProviderService()
+
+const CcSwitchImportSchema = z.object({
+  sourceIds: z.array(z.string().min(1)).min(1),
+})
+
+const FetchProviderModelsSchema = z.object({
+  baseUrl: z.string().min(1),
+  apiKey: z.string().min(1),
+  isFullUrl: z.boolean().optional(),
+  // `modelsUrl` is deliberately NOT accepted over HTTP. The service still
+  // supports the override for internal callers, but exposing a free-form
+  // endpoint on an authenticated route only widens the request surface — no
+  // client sends it.
+})
 
 export async function handleProvidersApi(
   req: Request,
@@ -43,7 +66,27 @@ export async function handleProvidersApi(
       return await handleTestUnsaved(req)
     }
 
+    // POST /api/providers/models
+    if (id === 'models' && req.method === 'POST') {
+      return await handleFetchModels(req)
+    }
+
+    // /api/providers/cc-switch/* — registered before the generic :id handlers
+    if (id === 'cc-switch') {
+      if (action === 'scan') {
+        if (req.method !== 'GET') throw methodNotAllowed(req.method)
+        return await handleCcSwitchScan()
+      }
+      if (action === 'import') {
+        if (req.method !== 'POST') throw methodNotAllowed(req.method)
+        return await handleCcSwitchImport(req)
+      }
+      throw ApiError.notFound(`Unknown cc-switch route: ${action ?? ''}`)
+    }
+
     // GET /api/providers/presets
+    // Carries retired presets too (flagged `deprecated`), so a consumer resolving a saved
+    // provider's presetId still finds it. Filter on `deprecated` to build add-provider choices.
     if (id === 'presets' && req.method === 'GET') {
       return Response.json({ presets: PROVIDER_PRESETS })
     }
@@ -101,11 +144,27 @@ export async function handleProvidersApi(
     // /api/providers/:id/test
     if (action === 'test') {
       if (req.method !== 'POST') throw methodNotAllowed(req.method)
-      let overrides: { baseUrl?: string; modelId?: string; apiFormat?: string; authStrategy?: string } | undefined
+      let body: unknown
       try {
-        const body = await req.json()
-        if (body && typeof body === 'object') overrides = body as typeof overrides
+        body = await req.json()
       } catch { /* no body is fine — uses saved values */ }
+      let overrides: { modelId?: string } | undefined
+      if (body && typeof body === 'object') {
+        const candidate = body as Record<string, unknown>
+        for (const field of ['baseUrl', 'apiFormat', 'authStrategy']) {
+          if (Object.prototype.hasOwnProperty.call(candidate, field)) {
+            throw ApiError.badRequest(
+              `${field} cannot be overridden when testing with a saved provider key`,
+            )
+          }
+        }
+        if (candidate.modelId !== undefined && typeof candidate.modelId !== 'string') {
+          throw ApiError.badRequest('modelId must be a string')
+        }
+        overrides = candidate.modelId === undefined
+          ? undefined
+          : { modelId: candidate.modelId as string }
+      }
       const result = await providerService.testProvider(id, overrides)
       if (!result.connectivity.success || result.proxy?.success === false) {
         void diagnosticsService.recordEvent({
@@ -115,7 +174,6 @@ export async function handleProvidersApi(
           details: {
             providerId: id,
             httpStatus: result.connectivity.httpStatus ?? result.proxy?.httpStatus,
-            apiFormat: overrides?.apiFormat,
             modelId: overrides?.modelId,
             connectivity: result.connectivity,
             proxy: result.proxy,
@@ -162,6 +220,40 @@ async function handleUpdate(req: Request, id: string): Promise<Response> {
     const input = UpdateProviderSchema.parse(body)
     const provider = await providerService.updateProvider(id, input)
     return Response.json({ provider })
+  } catch (err) {
+    if (err instanceof z.ZodError) throw ApiError.badRequest(err.issues.map((i) => i.message).join('; '))
+    throw err
+  }
+}
+
+async function handleCcSwitchScan(): Promise<Response> {
+  const { providers } = await providerService.listProviders()
+  const scan = await readCcSwitchProviders({ existingProviders: providers })
+  // Full API keys stay server-side; the client only ever sees masked previews.
+  return Response.json(toCcSwitchScanResult(scan))
+}
+
+async function handleCcSwitchImport(req: Request): Promise<Response> {
+  const body = await parseJsonBody(req)
+  try {
+    const input = CcSwitchImportSchema.parse(body)
+    const { providers } = await providerService.listProviders()
+    const scan = await readCcSwitchProviders({ existingProviders: providers })
+    const { inputs, skipped } = resolveCcSwitchImports(scan, input.sourceIds)
+    const imported = await providerService.importProviders(inputs)
+    return Response.json({ imported, skipped })
+  } catch (err) {
+    if (err instanceof z.ZodError) throw ApiError.badRequest(err.issues.map((i) => i.message).join('; '))
+    throw err
+  }
+}
+
+async function handleFetchModels(req: Request): Promise<Response> {
+  const body = await parseJsonBody(req)
+  try {
+    const input = FetchProviderModelsSchema.parse(body)
+    // Upstream failures are reported as 200 + { ok: false }, like testProvider.
+    return Response.json(await fetchProviderModels(input))
   } catch (err) {
     if (err instanceof z.ZodError) throw ApiError.badRequest(err.issues.map((i) => i.message).join('; '))
     throw err

@@ -10,7 +10,7 @@ describe('Electron window smoke diagnostics', () => {
   })
 
   it('writes a focused visible window snapshot for packaged UI diagnostics', () => {
-    const tempDir = mkdtempSync(join(tmpdir(), 'cc-haha-window-smoke-'))
+    const tempDir = mkdtempSync(join(tmpdir(), 'echoflow-code-window-smoke-'))
     const logPath = join(tempDir, 'window-smoke.jsonl')
     try {
       writeWindowSmokeSnapshot({
@@ -27,7 +27,7 @@ describe('Electron window smoke diagnostics', () => {
           isLoading: vi.fn(() => false),
         },
       } as never, 'did-finish-load', {
-        CC_HAHA_ELECTRON_WINDOW_SMOKE_LOG: logPath,
+        ECHOFLOW_ELECTRON_WINDOW_SMOKE_LOG: logPath,
       })
 
       expect(JSON.parse(readFileSync(logPath, 'utf8')).trim).toBeUndefined()

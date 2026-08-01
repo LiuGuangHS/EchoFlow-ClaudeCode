@@ -17,7 +17,7 @@ import {
 import type { GrokOAuthTokenResponse } from '../../services/grokAuth/types.js'
 import { logTokenRefreshFailure } from './oauthRefreshLog.js'
 import {
-  getManualNetworkProxyUrl,
+  getNetworkProxyUrl,
   loadNetworkSettings,
 } from './networkSettings.js'
 
@@ -69,7 +69,7 @@ function escapeHtml(value: string): string {
 
 export function getHahaGrokOAuthFilePath(): string {
   const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
-  return path.join(configDir, 'cc-haha', 'grok-oauth.json')
+  return path.join(configDir, 'echoflow-code', 'grok-oauth.json')
 }
 
 export class HahaGrokOAuthService {
@@ -239,7 +239,7 @@ export class HahaGrokOAuthService {
   private async getTokenFetchOptions(): Promise<GrokTokenFetchOptions> {
     const settings = await loadNetworkSettings()
     return {
-      proxyUrl: getManualNetworkProxyUrl(settings),
+      proxyUrl: getNetworkProxyUrl(settings),
       timeoutMs: settings.aiRequestTimeoutMs,
     }
   }

@@ -7,6 +7,7 @@ import {
   getActiveConversationNavigationItemId,
   getConversationNavigationTargetScrollTop,
   isRenderItemFullyVisibleInChatScroller,
+  resetSessionScrollSnapshotsForTests,
   shouldVirtualizeRenderItems,
 } from './MessageList'
 import type { ConversationNavigationItem } from './ConversationNavigator'
@@ -23,6 +24,7 @@ import { useUIStore } from '../../stores/uiStore'
 import { formatExactMessageTimestamp, formatMessageHoverTime } from '../../lib/formatMessageTimestamp'
 import type { UIMessage } from '../../types/chat'
 import type { PerSessionState } from '../../stores/chatStore'
+import { FindInPageModal } from '../search/FindInPageModal'
 
 const ACTIVE_TAB = 'active-tab'
 
@@ -230,6 +232,7 @@ describe('MessageList nested tool calls', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+    resetSessionScrollSnapshotsForTests()
     useSettingsStore.setState({ locale: 'en' })
     useUIStore.setState({ pendingSettingsTab: null })
     useTabStore.setState({ activeTabId: ACTIVE_TAB, tabs: [{ sessionId: ACTIVE_TAB, title: 'Test', type: 'session' as const, status: 'idle' }] })
@@ -286,6 +289,198 @@ describe('MessageList nested tool calls', () => {
     for (const item of container.querySelectorAll('[data-virtual-message-item]')) {
       expect((item as HTMLElement).className).not.toContain('chat-render-item--cv')
     }
+  })
+
+  it('finds, mounts, navigates, and highlights matches outside a 120-item virtual window', async () => {
+    const highlights = new Map<string, { ranges: Range[]; priority?: number }>()
+    class TestHighlight {
+      ranges: Range[] = []
+      priority?: number
+
+      add(range: Range) {
+        this.ranges.push(range)
+      }
+    }
+    vi.stubGlobal('CSS', { highlights })
+    vi.stubGlobal('Highlight', TestHighlight)
+
+    const messages = Array.from({ length: 130 }, (_, index) => ({
+      id: `assistant-${index}`,
+      type: 'assistant_text' as const,
+      content: index === 0 || index === 64
+        ? `Virtual history needle ${index}`
+        : `Virtual history filler ${index}`,
+      timestamp: index,
+    }))
+    useChatStore.setState({
+      sessions: {
+        [ACTIVE_TAB]: makeSessionState({
+          messages,
+        }),
+      },
+    })
+
+    const { container } = render(
+      <>
+        <MessageList />
+        <FindInPageModal open onClose={() => {}} />
+      </>,
+    )
+    const scroller = container.querySelector('.chat-scroll-area') as HTMLElement
+    let scrollTop = 15_000
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 500 })
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 16_000 })
+    Object.defineProperty(scroller, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => { scrollTop = value },
+    })
+
+    expect(screen.queryByText('Virtual history needle 0')).toBeNull()
+    expect(screen.queryByText('Virtual history needle 64')).toBeNull()
+
+    fireEvent.change(screen.getByPlaceholderText('Find'), { target: { value: 'Virtual history needle' } })
+
+    await waitFor(() => expect(screen.getByText('1 / 2')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('Virtual history needle 0')).toBeTruthy())
+    expect(scrollTop).toBe(0)
+    await waitFor(() => expect(highlights.get('cc-find-active')?.ranges[0]?.startContainer.parentElement?.closest('[data-chat-render-item-key]')?.getAttribute('data-chat-render-item-key')).toBe('assistant-0'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next match' }))
+
+    await waitFor(() => expect(screen.getByText('2 / 2')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('Virtual history needle 64')).toBeTruthy())
+    expect(scrollTop).toBeGreaterThan(0)
+    expect(highlights.get('cc-find-active')?.ranges[0]?.startContainer.parentElement?.closest('[data-chat-render-item-key]')?.getAttribute('data-chat-render-item-key')).toBe('assistant-64')
+
+    act(() => {
+      useChatStore.setState({
+        sessions: {
+          [ACTIVE_TAB]: makeSessionState({
+            messages: [...messages, {
+              id: 'assistant-new-tail',
+              type: 'assistant_text',
+              content: 'new Virtual history needle response',
+              timestamp: 131,
+            }],
+          }),
+        },
+      })
+    })
+    await waitFor(() => expect(screen.getByText('2 / 3')).toBeTruthy())
+    expect(highlights.get('cc-find-active')?.ranges[0]?.startContainer.parentElement?.closest('[data-chat-render-item-key]')?.getAttribute('data-chat-render-item-key')).toBe('assistant-64')
+  })
+
+  it('bounds semantic conversation matches and ignores hidden tool payloads', async () => {
+    const highlights = new Map<string, { ranges: Range[] }>()
+    class TestHighlight {
+      ranges: Range[] = []
+
+      add(range: Range) {
+        this.ranges.push(range)
+      }
+    }
+    vi.stubGlobal('CSS', { highlights })
+    vi.stubGlobal('Highlight', TestHighlight)
+    useChatStore.setState({
+      sessions: {
+        [ACTIVE_TAB]: makeSessionState({
+          messages: [
+            {
+              id: 'assistant-many-matches',
+              type: 'assistant_text',
+              content: 'boundedneedle '.repeat(1_100),
+              timestamp: 1,
+            },
+            {
+              id: 'hidden-tool-payload',
+              type: 'tool_result',
+              toolUseId: 'tool-1',
+              content: 'hiddenpayloadneedle '.repeat(10_000),
+              isError: false,
+              timestamp: 2,
+            },
+          ],
+        }),
+      },
+    })
+
+    render(
+      <>
+        <MessageList />
+        <FindInPageModal open onClose={() => {}} />
+      </>,
+    )
+
+    fireEvent.change(screen.getByPlaceholderText('Find'), { target: { value: 'boundedneedle' } })
+    await waitFor(() => expect(screen.getByText('1 / 1000')).toBeTruthy())
+    await waitFor(() => expect(highlights.get('cc-find-results')?.ranges).toHaveLength(1_000))
+
+    fireEvent.change(screen.getByPlaceholderText('Find'), { target: { value: 'hiddenpayloadneedle' } })
+    await waitFor(() => expect(screen.getByText('0')).toBeTruthy())
+  })
+
+  it('finds the current streaming assistant response', async () => {
+    const highlights = new Map<string, { ranges: Range[] }>()
+    class TestHighlight {
+      ranges: Range[] = []
+
+      add(range: Range) {
+        this.ranges.push(range)
+      }
+    }
+    vi.stubGlobal('CSS', { highlights })
+    vi.stubGlobal('Highlight', TestHighlight)
+    useChatStore.setState({
+      sessions: {
+        [ACTIVE_TAB]: makeSessionState({
+          chatState: 'streaming',
+          streamingText: 'Current streaming response without the target',
+        }),
+      },
+    })
+
+    render(
+      <>
+        <MessageList />
+        <FindInPageModal open onClose={() => {}} />
+      </>,
+    )
+
+    fireEvent.change(screen.getByPlaceholderText('Find'), { target: { value: 'late streaming needle' } })
+
+    await waitFor(() => expect(screen.getByText('0')).toBeTruthy())
+    act(() => {
+      useChatStore.setState({
+        sessions: {
+          [ACTIVE_TAB]: makeSessionState({
+            chatState: 'streaming',
+            streamingText: 'Current late streaming needle',
+          }),
+        },
+      })
+    })
+
+    await waitFor(() => expect(screen.getByText('1 / 1')).toBeTruthy())
+    await waitFor(() => expect(highlights.get('cc-find-active')?.ranges[0]?.startContainer.parentElement?.closest('[data-chat-render-item-key]')?.getAttribute('data-chat-render-item-key')).toBe('streaming-assistant-message'))
+
+    act(() => {
+      useChatStore.setState({
+        sessions: {
+          [ACTIVE_TAB]: makeSessionState({
+            messages: [{
+              id: 'assistant-completed-stream',
+              type: 'assistant_text',
+              content: 'Current late streaming needle',
+              timestamp: 2,
+            }],
+            chatState: 'idle',
+            streamingText: '',
+          }),
+        },
+      })
+    })
+    await waitFor(() => expect(highlights.get('cc-find-active')?.ranges[0]?.startContainer.parentElement?.closest('[data-chat-render-item-key]')?.getAttribute('data-chat-render-item-key')).toBe('assistant-completed-stream'))
   })
 
   it('keeps small transcripts fully mounted without deferred browser painting', () => {
@@ -556,6 +751,45 @@ describe('MessageList nested tool calls', () => {
     })
 
     await waitFor(() => expect(scrollTop).toBe(600))
+  })
+
+  // #1149 — end-to-end pin for the tool duration badge. Injecting `durationMs`
+  // straight into ToolCallBlock only proves formatDuration reaches the header;
+  // it leaves the whole wiring severable with every test green. This drives it
+  // from real transcript messages, so it fails if any link breaks: the
+  // toolResultByToolUseId projection dropping `timestamp`, or either
+  // ToolCallBlock call site dropping the `durationMs` prop.
+  it('derives the tool duration badge from the tool_use/tool_result timestamps', async () => {
+    useChatStore.setState({
+      sessions: {
+        [ACTIVE_TAB]: makeSessionState({
+          messages: [
+            { id: 'user-1', type: 'user_text', content: 'Run it', timestamp: 1 },
+            {
+              id: 'tool-use-1',
+              type: 'tool_use',
+              toolName: 'Bash',
+              toolUseId: 'bash-1',
+              input: { command: 'ls -la', description: 'List files' },
+              timestamp: 10_000,
+            },
+            {
+              id: 'tool-result-1',
+              type: 'tool_result',
+              toolUseId: 'bash-1',
+              content: 'file-a',
+              isError: false,
+              timestamp: 11_598,
+            },
+          ],
+        }),
+      },
+    })
+
+    const { container } = render(<MessageList />)
+
+    // 11_598 - 10_000 = 1598ms -> "1.6s"
+    await waitFor(() => expect(container.textContent).toContain('1.6s'))
   })
 
   it('does not treat the last text marker as the transcript tail when tool output follows it', () => {
@@ -3485,7 +3719,7 @@ describe('MessageList nested tool calls', () => {
     expect(scrollTop).toBe(200)
   })
 
-  it('ignores one-pixel content resize jitter while pinned to active thinking output', async () => {
+  it('ignores stepwise two-pixel content resize oscillation while pinned to active thinking output', async () => {
     let resizeCallback: ResizeObserverCallback | null = null
     class TestResizeObserver {
       observe = vi.fn()
@@ -3555,12 +3789,14 @@ describe('MessageList nested tool calls', () => {
     expect(scrollTop).toBe(600)
 
     scrollTopWriteCount = 0
-    act(() => {
-      resizeCallback?.(makeResizeEntry(401), {} as ResizeObserver)
-    })
-    act(() => {
-      resizeCallback?.(makeResizeEntry(400), {} as ResizeObserver)
-    })
+    // WebView2 can reach the opposite edge of a 2px oscillation through
+    // adjacent 1px observations. The sticky follow baseline must not turn
+    // either edge into a bottom-scroll correction.
+    for (const height of [401, 402, 401, 400, 401, 402, 401, 400]) {
+      act(() => {
+        resizeCallback?.(makeResizeEntry(height), {} as ResizeObserver)
+      })
+    }
 
     expect(scrollTopWriteCount).toBe(0)
     expect(scrollTop).toBe(600)
@@ -3801,6 +4037,55 @@ describe('MessageList nested tool calls', () => {
     })
 
     expect(scrollTop).toBe(180)
+    expect(screen.getByRole('button', { name: 'Latest' })).toBeTruthy()
+  })
+
+  it('restores a session scroll position after the message list remounts between conversations', async () => {
+    const sessionA = 'issue-1057-session-a'
+    const sessionB = 'issue-1057-session-b'
+    useChatStore.setState({
+      sessions: {
+        [sessionA]: makeSessionState({
+          messages: [
+            { id: 'a-user', type: 'user_text', content: 'A prompt', timestamp: 1 },
+            { id: 'a-assistant', type: 'assistant_text', content: 'A response', timestamp: 2 },
+          ],
+        }),
+        [sessionB]: makeSessionState({
+          messages: [
+            { id: 'b-user', type: 'user_text', content: 'B prompt', timestamp: 1 },
+            { id: 'b-assistant', type: 'assistant_text', content: 'B response', timestamp: 2 },
+          ],
+        }),
+      },
+    })
+
+    const firstSession = render(<MessageList sessionId={sessionA} />)
+    const firstScroller = firstSession.container.querySelector('.overflow-y-auto') as HTMLDivElement
+    let firstScrollTop = 180
+    Object.defineProperty(firstScroller, 'scrollHeight', { configurable: true, value: 1200 })
+    Object.defineProperty(firstScroller, 'clientHeight', { configurable: true, value: 400 })
+    Object.defineProperty(firstScroller, 'scrollTop', {
+      configurable: true,
+      get: () => firstScrollTop,
+      set: (value) => {
+        firstScrollTop = value
+      },
+    })
+
+    await waitForProgrammaticScrollReset()
+    fireEvent.scroll(firstScroller)
+    expect(screen.getByRole('button', { name: 'Latest' })).toBeTruthy()
+    firstSession.unmount()
+
+    const secondSession = render(<MessageList sessionId={sessionB} />)
+    expect(screen.getByText('B response')).toBeTruthy()
+    secondSession.unmount()
+
+    const restoredSession = render(<MessageList sessionId={sessionA} />)
+    const restoredScroller = restoredSession.container.querySelector('.overflow-y-auto') as HTMLDivElement
+
+    expect(restoredScroller.scrollTop).toBe(180)
     expect(screen.getByRole('button', { name: 'Latest' })).toBeTruthy()
   })
 
@@ -4113,6 +4398,16 @@ describe('MessageList nested tool calls', () => {
               content: '这条回复应该停在左侧。',
               timestamp: assistantTimestamp,
             },
+            // Keeps the reply mid-turn: a turn-closing reply swaps its hover
+            // timestamp for the always-on completion stamp (#1151).
+            {
+              id: 'tool-1',
+              type: 'tool_use',
+              toolName: 'Read',
+              toolUseId: 'tool-use-1',
+              input: { file_path: '/tmp/a.ts' },
+              timestamp: assistantTimestamp + 1_000,
+            },
           ],
         }),
       },
@@ -4145,6 +4440,121 @@ describe('MessageList nested tool calls', () => {
     expect(userActions?.className).not.toContain('invisible')
     expect(userTime.getAttribute('title')).toBe(formatExactMessageTimestamp(userTimestamp, 'en'))
     expect(assistantTime.getAttribute('title')).toBe(formatExactMessageTimestamp(assistantTimestamp, 'en'))
+  })
+
+  describe('turn completion stamp (#1151)', () => {
+    const T0 = new Date('2026-07-30T07:08:22Z').getTime()
+    const MINUTE = 60_000
+
+    function turnMessages(): UIMessage[] {
+      return [
+        { id: 'user-1', type: 'user_text', content: '先问一个问题', timestamp: T0 },
+        { id: 'assistant-1', type: 'assistant_text', content: '先答第一轮。', timestamp: T0 + 30_000 },
+        { id: 'user-2', type: 'user_text', content: '再问一个问题', timestamp: T0 + 2 * MINUTE },
+        {
+          id: 'assistant-2',
+          type: 'assistant_text',
+          content: '第二轮跑了很久才答完。',
+          timestamp: T0 + 14 * MINUTE + 19_000,
+        },
+      ]
+    }
+
+    function shellFor(text: string) {
+      return screen.getByText(text).closest('[data-message-shell]') as HTMLElement | null
+    }
+
+    function stampFor(text: string) {
+      return shellFor(text)?.querySelector('[data-turn-completion]') as HTMLElement | null
+    }
+
+    it('closes a finished turn with its end time and duration, without hovering', () => {
+      useChatStore.setState({
+        sessions: { [ACTIVE_TAB]: makeSessionState({ messages: turnMessages() }) },
+      })
+
+      render(<MessageList />)
+
+      const stamp = stampFor('第二轮跑了很久才答完。')
+      expect(stamp?.textContent).toContain(`Done ${formatMessageHoverTime(T0 + 14 * MINUTE + 19_000, 'en')}`)
+      expect(stamp?.textContent).toContain('took 12m 19s')
+      // The stamp is the one piece that must survive without a pointer: it sits
+      // outside the hover-gated action bar.
+      expect(stamp?.closest('[data-message-actions]')).toBeNull()
+      expect(stamp?.className).not.toContain('opacity-0')
+    })
+
+    it('measures each turn from its own prompt', () => {
+      useChatStore.setState({
+        sessions: { [ACTIVE_TAB]: makeSessionState({ messages: turnMessages() }) },
+      })
+
+      render(<MessageList />)
+
+      expect(stampFor('先答第一轮。')?.textContent).toContain('took 30s')
+    })
+
+    it('drops the hover timestamp on a stamped reply so the time is not printed twice', () => {
+      useChatStore.setState({
+        sessions: { [ACTIVE_TAB]: makeSessionState({ messages: turnMessages() }) },
+      })
+
+      render(<MessageList />)
+
+      const closing = shellFor('第二轮跑了很久才答完。')
+      expect(closing?.querySelector('[data-turn-completion]')).not.toBeNull()
+      expect(
+        within(closing as HTMLElement).queryByText(formatMessageHoverTime(T0 + 14 * MINUTE + 19_000, 'en')),
+      ).toBeNull()
+    })
+
+    it('leaves prompts and mid-turn replies on the hover-only timestamp', () => {
+      useChatStore.setState({
+        sessions: {
+          [ACTIVE_TAB]: makeSessionState({
+            messages: [
+              { id: 'user-1', type: 'user_text', content: '接着改', timestamp: T0 },
+              { id: 'assistant-1', type: 'assistant_text', content: '接下来把两处调用点都接上：', timestamp: T0 + 10_000 },
+              {
+                id: 'tool-1',
+                type: 'tool_use',
+                toolName: 'Edit',
+                toolUseId: 'tool-use-1',
+                input: { file_path: '/tmp/a.ts' },
+                timestamp: T0 + 20_000,
+              },
+            ],
+          }),
+        },
+      })
+
+      render(<MessageList />)
+
+      // Caught in a real session: the last reply of the turn was an aside
+      // ("Now wire the duration at both call sites:") followed by edits, so a
+      // stamp there rendered above the work it introduced.
+      expect(stampFor('接下来把两处调用点都接上：')).toBeNull()
+      expect(stampFor('接着改')).toBeNull()
+      // Both still carry their own timestamp inside the hover-gated bar.
+      for (const [text, timestamp] of [['接着改', T0], ['接下来把两处调用点都接上：', T0 + 10_000]] as const) {
+        const bar = shellFor(text)?.querySelector('[data-message-actions]')
+        expect(bar?.className).toContain('opacity-0')
+        expect(within(bar as HTMLElement).getByText(formatMessageHoverTime(timestamp, 'en'))).toBeTruthy()
+      }
+    })
+
+    it('leaves the running turn unstamped while keeping earlier turns stamped', () => {
+      useChatStore.setState({
+        sessions: {
+          [ACTIVE_TAB]: makeSessionState({ messages: turnMessages(), chatState: 'tool_executing' }),
+        },
+      })
+
+      render(<MessageList />)
+
+      expect(stampFor('第二轮跑了很久才答完。')).toBeNull()
+      expect(stampFor('先答第一轮。')?.textContent).toContain('Done')
+    })
   })
 
   it('uses the document column for markdown-heavy assistant replies', () => {
@@ -4687,6 +5097,79 @@ describe('MessageList nested tool calls', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open src/live.ts in workspace' }))
     await waitFor(() => {
       expect(getWorkspaceDiff).toHaveBeenCalledWith(ACTIVE_TAB, 'src/live.ts')
+    })
+  })
+
+  it('rewinds a live turn with the authoritative checkpoint id when the local UI id differs', async () => {
+    vi.spyOn(sessionsApi, 'getTurnCheckpoints').mockResolvedValue({
+      checkpoints: [
+        {
+          target: {
+            targetUserMessageId: 'transcript-user-1',
+            userMessageIndex: 0,
+            userMessageCount: 1,
+          },
+          code: {
+            available: true,
+            filesChanged: ['src/live.ts'],
+            insertions: 1,
+            deletions: 0,
+          },
+        },
+      ],
+    })
+    const rewind = vi.spyOn(sessionsApi, 'rewind').mockResolvedValue({
+      target: {
+        targetUserMessageId: 'transcript-user-1',
+        userMessageIndex: 0,
+        userMessageCount: 1,
+      },
+      conversation: {
+        messagesRemoved: 2,
+      },
+      code: {
+        available: true,
+        filesChanged: ['src/live.ts'],
+        insertions: 1,
+        deletions: 0,
+      },
+    })
+
+    useChatStore.setState({
+      reloadHistory: vi.fn().mockResolvedValue(undefined),
+      sessions: {
+        [ACTIVE_TAB]: makeSessionState({
+          messages: [
+            {
+              id: 'local-user-temp-id',
+              type: 'user_text',
+              content: '实时这一轮',
+              timestamp: 1,
+            },
+            {
+              id: 'assistant-1',
+              type: 'assistant_text',
+              content: 'done',
+              timestamp: 2,
+            },
+          ],
+        }),
+      },
+    })
+
+    render(<MessageList />)
+
+    await screen.findByText('live.ts')
+    fireEvent.click(screen.getByRole('button', { name: 'Undo current turn changes' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Undo current turn?' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Undo current turn' }))
+
+    await waitFor(() => {
+      expect(rewind).toHaveBeenCalledWith(ACTIVE_TAB, {
+        targetUserMessageId: 'transcript-user-1',
+        userMessageIndex: 0,
+        expectedContent: '实时这一轮',
+      })
     })
   })
 
@@ -5405,6 +5888,27 @@ describe('conversation navigation layout', () => {
 
     expect(getConversationNavigationTargetScrollTop(items[0]!, offsets, 400, 650)).toBe(0)
     expect(getConversationNavigationTargetScrollTop(items[2]!, offsets, 400, 650)).toBe(250)
+  })
+
+  it('does not render the desktop conversation rail in the mobile chat layout', () => {
+    useChatStore.setState({
+      sessions: {
+        [ACTIVE_TAB]: makeSessionState({
+          messages: [
+            { id: 'user-1', type: 'user_text', content: 'First prompt', timestamp: 1 },
+            { id: 'assistant-1', type: 'assistant_text', content: 'First reply', timestamp: 2 },
+            { id: 'user-2', type: 'user_text', content: 'Second prompt', timestamp: 3 },
+            { id: 'assistant-2', type: 'assistant_text', content: 'Second reply', timestamp: 4 },
+          ],
+        }),
+      },
+    })
+
+    const { rerender } = render(<MessageList />)
+    expect(screen.getByRole('navigation', { name: 'Conversation navigation' })).toBeTruthy()
+
+    rerender(<MessageList mobileLayout />)
+    expect(screen.queryByRole('navigation', { name: 'Conversation navigation' })).toBeNull()
   })
 })
 

@@ -24,7 +24,17 @@ import {
   primeKeychainCacheFromPrefetch,
 } from '../../utils/secureStorage/macOsKeychainHelpers.js'
 import type { OpenAIOAuthTokens } from '../../services/openaiAuth/types.js'
-import { getModelOptions } from '../../utils/model/modelOptions.js'
+import {
+  getMaxOpus46_1MOption,
+  getMaxSonnet46_1MOption,
+  getModelOptions,
+  getOpus46_1MOption,
+  getSonnet46_1MOption,
+} from '../../utils/model/modelOptions.js'
+import {
+  getDefaultMainLoopModelSetting,
+  parseUserSpecifiedModel,
+} from '../../utils/model/model.js'
 import {
   getSettingsForSource,
   updateSettingsForSource,
@@ -49,6 +59,9 @@ let originalAnthropicModel: string | undefined
 let originalAnthropicDefaultHaikuModel: string | undefined
 let originalAnthropicDefaultSonnetModel: string | undefined
 let originalAnthropicDefaultOpusModel: string | undefined
+let originalAnthropicDefaultFableModel: string | undefined
+let originalAnthropicDefaultFableModelName: string | undefined
+let originalDisable1mContext: string | undefined
 
 async function setup() {
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'claude-test-'))
@@ -67,6 +80,9 @@ async function setup() {
   originalAnthropicDefaultHaikuModel = process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL
   originalAnthropicDefaultSonnetModel = process.env.ANTHROPIC_DEFAULT_SONNET_MODEL
   originalAnthropicDefaultOpusModel = process.env.ANTHROPIC_DEFAULT_OPUS_MODEL
+  originalAnthropicDefaultFableModel = process.env.ANTHROPIC_DEFAULT_FABLE_MODEL
+  originalAnthropicDefaultFableModelName = process.env.ANTHROPIC_DEFAULT_FABLE_MODEL_NAME
+  originalDisable1mContext = process.env.CLAUDE_CODE_DISABLE_1M_CONTEXT
   process.env.CLAUDE_CONFIG_DIR = tmpDir
   process.env.HOME = tmpDir
   process.env.USERPROFILE = tmpDir
@@ -77,6 +93,9 @@ async function setup() {
   delete process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL
   delete process.env.ANTHROPIC_DEFAULT_SONNET_MODEL
   delete process.env.ANTHROPIC_DEFAULT_OPUS_MODEL
+  delete process.env.ANTHROPIC_DEFAULT_FABLE_MODEL
+  delete process.env.ANTHROPIC_DEFAULT_FABLE_MODEL_NAME
+  delete process.env.CLAUDE_CODE_DISABLE_1M_CONTEXT
   clearKeychainCache()
   primeKeychainCacheFromPrefetch(null)
   clearOpenAIOAuthTokenCache()
@@ -160,6 +179,24 @@ async function teardown() {
     process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = originalAnthropicDefaultOpusModel
   } else {
     delete process.env.ANTHROPIC_DEFAULT_OPUS_MODEL
+  }
+
+  if (originalAnthropicDefaultFableModel !== undefined) {
+    process.env.ANTHROPIC_DEFAULT_FABLE_MODEL = originalAnthropicDefaultFableModel
+  } else {
+    delete process.env.ANTHROPIC_DEFAULT_FABLE_MODEL
+  }
+
+  if (originalAnthropicDefaultFableModelName !== undefined) {
+    process.env.ANTHROPIC_DEFAULT_FABLE_MODEL_NAME = originalAnthropicDefaultFableModelName
+  } else {
+    delete process.env.ANTHROPIC_DEFAULT_FABLE_MODEL_NAME
+  }
+
+  if (originalDisable1mContext !== undefined) {
+    process.env.CLAUDE_CODE_DISABLE_1M_CONTEXT = originalDisable1mContext
+  } else {
+    delete process.env.CLAUDE_CODE_DISABLE_1M_CONTEXT
   }
 
   await fs.rm(tmpDir, { recursive: true, force: true })
@@ -251,6 +288,45 @@ describe('SettingsService', () => {
     const settings = await svc.getUserSettings()
     expect(settings.theme).toBe('dark')
     expect(settings.model).toBe('claude-haiku-4-5')
+  })
+
+  it('should preserve unknown desktop terminal fields from older or future settings', async () => {
+    await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
+    await fs.writeFile(
+      echoFlowSettingsPath(),
+      JSON.stringify({
+        desktopTerminal: {
+          startupShell: 'system',
+          customShellPath: '',
+          legacyEncoding: 'utf-8',
+          futureProfile: {
+            id: 'work',
+            inheritEnvironment: false,
+          },
+        },
+      }),
+      'utf-8',
+    )
+
+    const svc = new SettingsService()
+    await svc.updateUserSettings({
+      desktopTerminal: {
+        startupShell: 'pwsh',
+        customShellPath: 'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
+      },
+    })
+
+    expect(await svc.getUserSettings()).toMatchObject({
+      desktopTerminal: {
+        startupShell: 'pwsh',
+        customShellPath: 'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
+        legacyEncoding: 'utf-8',
+        futureProfile: {
+          id: 'work',
+          inheritEnvironment: false,
+        },
+      },
+    })
   })
 
   it('should not let cached CLI settings overwrite desktop settings updates', async () => {
@@ -656,9 +732,36 @@ describe('Models API', () => {
 
     expect(res.status).toBe(200)
     const body = await res.json()
-    expect(body.models).toBeArray()
-    expect(body.models.length).toBe(3)
-    expect(body.models[0].id).toContain('claude')
+    expect(body.models).toEqual([
+      {
+        id: 'claude-fable-5',
+        name: 'Fable 5',
+        description: 'Highest capability for long-running tasks',
+        context: '1m',
+      },
+      {
+        id: 'claude-opus-4-8',
+        name: 'Opus 4.8',
+        description: 'Best for complex agentic coding and enterprise work',
+        context: '1m',
+        defaultReasoningEffort: 'high',
+        supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      },
+      {
+        id: 'claude-sonnet-5',
+        name: 'Sonnet 5',
+        description: 'Best combination of speed and intelligence',
+        context: '1m',
+        defaultReasoningEffort: 'high',
+        supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      },
+      {
+        id: 'claude-haiku-4-5',
+        name: 'Haiku 4.5',
+        description: 'Fastest with near-frontier intelligence',
+        context: '200k',
+      },
+    ])
   })
 
   it('GET /api/models should merge env-configured provider models with saved OpenAI OAuth models', async () => {
@@ -696,13 +799,53 @@ describe('Models API', () => {
     expect(ids.filter((id: string) => id === 'deepseek-v4-pro')).toHaveLength(1)
   })
 
+  it('GET /api/models should merge user settings model roles with runtime env and include Fable', async () => {
+    await new SettingsService().updateUserSettings({
+      env: {
+        ANTHROPIC_MODEL: 'claude-opus-4-8',
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: 'claude-haiku-4-5-20251001',
+        ANTHROPIC_DEFAULT_SONNET_MODEL: 'claude-sonnet-4-6',
+        ANTHROPIC_DEFAULT_OPUS_MODEL: 'claude-opus-4-8',
+        ANTHROPIC_DEFAULT_FABLE_MODEL: 'claude-fable-5',
+      },
+    })
+    process.env.ANTHROPIC_MODEL = 'claude-opus-4-8'
+
+    const { req, url, segments } = makeRequest('GET', '/api/models')
+    const res = await handleModelsApi(req, url, segments)
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.models.map((model: { id: string }) => model.id)).toEqual([
+      'claude-opus-4-8',
+      'claude-haiku-4-5-20251001',
+      'claude-sonnet-4-6',
+      'claude-fable-5',
+    ])
+  })
+
+  it('GET /api/models/current should use the configured user env model without a runtime override', async () => {
+    await new SettingsService().updateUserSettings({
+      env: { ANTHROPIC_MODEL: 'claude-sonnet-from-settings' },
+    })
+    delete process.env.ANTHROPIC_MODEL
+
+    const { req, url, segments } = makeRequest('GET', '/api/models/current')
+    const res = await handleModelsApi(req, url, segments)
+
+    expect(res.status).toBe(200)
+    await expect(res.json()).resolves.toMatchObject({
+      model: { id: 'claude-sonnet-from-settings' },
+    })
+  })
+
   it('GET /api/models/current should return default model when not set', async () => {
     const { req, url, segments } = makeRequest('GET', '/api/models/current')
     const res = await handleModelsApi(req, url, segments)
 
     expect(res.status).toBe(200)
     const body = await res.json()
-    expect(body.model.id).toBe('claude-opus-4-7')
+    expect(body.model.id).toBe('claude-opus-4-8')
   })
 
   it('GET /api/models/current should respect env-configured default model when no provider is active', async () => {
@@ -944,6 +1087,92 @@ describe('Models API', () => {
 describe('Model Options', () => {
   beforeEach(setup)
   afterEach(teardown)
+
+  it('defaults Anthropic API users to Opus 4.8 and exposes the current official options once', () => {
+    process.env.ANTHROPIC_API_KEY = 'test-api-key'
+
+    expect(getDefaultMainLoopModelSetting()).toBe('claude-opus-4-8')
+
+    const options = getModelOptions()
+    const values = options.map(option => option.value)
+
+    expect(options[0]?.description).toContain('Opus 4.8')
+    expect(options[0]?.description).toContain('$5')
+    expect(values).toContain('fable')
+    expect(values).toContain('sonnet')
+    expect(values).not.toContain('opus')
+    expect(values).not.toContain('opus[1m]')
+  })
+
+  it('keeps Anthropic-compatible third-party URLs on lag-safe defaults', () => {
+    process.env.ANTHROPIC_API_KEY = 'third-party-key'
+    process.env.ANTHROPIC_BASE_URL = 'https://api.deepseek.com/anthropic'
+
+    expect(getDefaultMainLoopModelSetting()).toBe('claude-sonnet-4-5-20250929')
+    expect(parseUserSpecifiedModel('best')).toBe('claude-opus-4-7')
+    expect(parseUserSpecifiedModel('fable')).toBe('claude-opus-4-7')
+
+    const options = getModelOptions()
+    const values = options.map(option => option.value)
+
+    expect(options[0]?.description).toContain('Sonnet 4.5')
+    expect(values).not.toContain('fable')
+    expect(values).not.toContain('claude-fable-5')
+  })
+
+  it('exposes a custom Fable alias only when a third-party provider configures it', () => {
+    process.env.ANTHROPIC_API_KEY = 'third-party-key'
+    process.env.ANTHROPIC_BASE_URL = 'https://api.deepseek.com/anthropic'
+    process.env.ANTHROPIC_DEFAULT_FABLE_MODEL = 'deepseek-v4-fable'
+    process.env.ANTHROPIC_DEFAULT_FABLE_MODEL_NAME = 'DeepSeek Fable'
+
+    expect(parseUserSpecifiedModel('fable')).toBe('deepseek-v4-fable')
+    expect(parseUserSpecifiedModel('best')).toBe('deepseek-v4-fable')
+    expect(getModelOptions()).toContainEqual(expect.objectContaining({
+      value: 'fable',
+      label: 'DeepSeek Fable',
+    }))
+  })
+
+  it('labels extended-context options with current first-party and conservative third-party names', () => {
+    process.env.ANTHROPIC_API_KEY = 'test-api-key'
+
+    expect(getSonnet46_1MOption().description).toContain('Sonnet 5')
+    expect(getOpus46_1MOption().description).toContain('Opus 4.8')
+    expect(getMaxSonnet46_1MOption().description).toContain('Sonnet 5')
+    expect(getMaxOpus46_1MOption().description).toContain('Opus 4.8')
+
+    process.env.ANTHROPIC_BASE_URL = 'https://api.deepseek.com/anthropic'
+
+    expect(getSonnet46_1MOption().description).toContain('Sonnet 4.6')
+    expect(getOpus46_1MOption().description).toContain('Opus 4.7')
+  })
+
+  it('does not offer redundant Sonnet 1M choices when extended context is disabled', () => {
+    process.env.ANTHROPIC_API_KEY = 'test-api-key'
+    process.env.CLAUDE_CODE_DISABLE_1M_CONTEXT = '1'
+
+    expect(getModelOptions().map(option => option.value)).not.toContain('sonnet[1m]')
+  })
+
+  it('renders explicit current aliases and Fable model IDs with current marketing names', () => {
+    process.env.ANTHROPIC_API_KEY = 'test-api-key'
+
+    process.env.ANTHROPIC_MODEL = 'opus'
+    expect(getModelOptions().find(option => option.value === 'opus')?.description)
+      .toContain('Opus 4.8')
+
+    process.env.ANTHROPIC_MODEL = 'opus[1m]'
+    expect(getModelOptions().find(option => option.value === 'opus[1m]')?.description)
+      .toContain('Opus 4.8')
+
+    process.env.ANTHROPIC_MODEL = 'claude-fable-5'
+    expect(getModelOptions()).toContainEqual(expect.objectContaining({
+      value: 'claude-fable-5',
+      label: 'Fable 5',
+      description: 'claude-fable-5',
+    }))
+  })
 
   it('should keep OpenAI OAuth models visible alongside env-configured provider models', () => {
     process.env.ANTHROPIC_API_KEY = 'deepseek-key'

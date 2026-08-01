@@ -15,6 +15,7 @@ import { validateElectronIpcPayload } from '../../../electron/ipc/capabilities'
 
 export type ElectronHostBridge = {
   invoke<T>(channel: ElectronIpcChannel, payload?: unknown): Promise<T>
+  getPathForFile?(file: File): string
   subscribe<T>(
     channel: ElectronEventChannel,
     handler: (payload: T) => void,
@@ -84,6 +85,10 @@ export function createElectronHost(bridge: ElectronHostBridge): DesktopHost {
     },
     app: {
       getVersion: () => invoke(ELECTRON_IPC_CHANNELS.appGetVersion),
+      getLocalePreference: () => invoke(ELECTRON_IPC_CHANNELS.appGetLocalePreference),
+      setLocalePreference: locale => invoke(ELECTRON_IPC_CHANNELS.appSetLocalePreference, locale),
+      getPreferredSystemLanguages: () => invoke(ELECTRON_IPC_CHANNELS.appGetPreferredSystemLanguages),
+      onLocaleChanged: handler => subscribe(ELECTRON_EVENT_CHANNELS.appLocaleChanged, handler),
     },
     commands: {
       invoke: (command, args) => invoke(ELECTRON_IPC_CHANNELS.commandInvoke, { command, args }),
@@ -91,6 +96,14 @@ export function createElectronHost(bridge: ElectronHostBridge): DesktopHost {
     clipboard: {
       readText: () => invoke(ELECTRON_IPC_CHANNELS.clipboardReadText),
       writeText: text => invoke(ELECTRON_IPC_CHANNELS.clipboardWriteText, text),
+    },
+    files: {
+      getPathForFile(file) {
+        const nativePath = bridge.getPathForFile?.(file)
+        if (nativePath) return nativePath
+        const legacyPath = (file as File & { path?: unknown }).path
+        return typeof legacyPath === 'string' ? legacyPath : ''
+      },
     },
     events: {
       listen: (_eventName, handler) => subscribe(ELECTRON_EVENT_CHANNELS.event, handler),
@@ -104,6 +117,29 @@ export function createElectronHost(bridge: ElectronHostBridge): DesktopHost {
     },
     trace: {
       openWindow: sessionId => invoke(ELECTRON_IPC_CHANNELS.traceOpenWindow, sessionId),
+    },
+    pets: {
+      list: () => invoke(ELECTRON_IPC_CHANNELS.petsList),
+      createFromImage: input => invoke(ELECTRON_IPC_CHANNELS.petsCreateFromImage, input),
+      createFromAtlas: input => invoke(ELECTRON_IPC_CHANNELS.petsCreateFromAtlas, input),
+      pickSourceSheet: input => invoke(ELECTRON_IPC_CHANNELS.petsPickSourceSheet, input),
+      createFromAtlasBytes: input => invoke(ELECTRON_IPC_CHANNELS.petsCreateFromAtlasBytes, input),
+      openFolder: () => invoke(ELECTRON_IPC_CHANNELS.petsOpenFolder),
+      show: () => invoke(ELECTRON_IPC_CHANNELS.petsShow),
+      hide: () => invoke(ELECTRON_IPC_CHANNELS.petsHide),
+      showContextMenu: closeLabel => invoke(
+        ELECTRON_IPC_CHANNELS.petsShowContextMenu,
+        { closeLabel },
+      ),
+      dragWindow: payload => invoke(ELECTRON_IPC_CHANNELS.petsDragWindow, payload),
+      setIgnoreMouseEvents: ignore => invoke(ELECTRON_IPC_CHANNELS.petsSetIgnoreMouseEvents, ignore),
+      setInteractiveRegions: regions => invoke(ELECTRON_IPC_CHANNELS.petsSetInteractiveRegions, regions),
+      focusMainWindow: () => invoke(ELECTRON_IPC_CHANNELS.petsFocusMainWindow),
+      focusSession: sessionId => invoke(ELECTRON_IPC_CHANNELS.petsFocusSession, sessionId),
+      onNavigateSession: handler => subscribe(ELECTRON_EVENT_CHANNELS.petNavigateSession, handler),
+      onVisibilityChanged: handler => subscribe(ELECTRON_EVENT_CHANNELS.petVisibilityChanged, handler),
+      onPanelPlacementChanged: handler =>
+        subscribe(ELECTRON_EVENT_CHANNELS.petPanelPlacementChanged, handler),
     },
     dialogs: {
       open: options => invoke(ELECTRON_IPC_CHANNELS.dialogOpen, options),
@@ -167,6 +203,9 @@ export function createElectronHost(bridge: ElectronHostBridge): DesktopHost {
     },
     zoom: {
       set: level => invoke(ELECTRON_IPC_CHANNELS.zoomSet, level),
+    },
+    appearance: {
+      setApplied: state => invoke(ELECTRON_IPC_CHANNELS.appearanceSetApplied, state),
     },
   }
 }

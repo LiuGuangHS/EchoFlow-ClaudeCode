@@ -231,7 +231,7 @@ const TERMINAL_CONFIG_FILE: &str = "terminal-config.json";
 const APP_MODE_FILE: &str = "app-mode.json";
 const ECHOFLOW_DEFAULT_CONFIG_ENV: &str = "ECHOFLOW_CODE_DEFAULT_CONFIG_DIR";
 const ECHOFLOW_PORTABLE_ENV: &str = "ECHOFLOW_CODE_APP_PORTABLE_DIR";
-const LEGACY_PORTABLE_ENV: &str = "CC_HAHA_APP_PORTABLE_DIR";
+const LEGACY_PORTABLE_ENV: &str = "ECHOFLOW_APP_PORTABLE_DIR";
 const SERVER_STATE_FILE: &str = "desktop-server-state.json";
 const MAX_PORT_RESERVATION_ATTEMPTS: usize = 128;
 const MIN_WINDOW_WIDTH: u32 = 960;
@@ -768,7 +768,7 @@ fn resolve_portable_state_path() -> Option<PathBuf> {
 }
 
 fn server_state_path() -> Option<PathBuf> {
-    // Lives next to cc-haha/settings.json (CLAUDE_CONFIG_DIR or ~/.claude) so
+    // Lives next to echoflow-code/settings.json (CLAUDE_CONFIG_DIR or ~/.claude) so
     // the Tauri and Electron shells share the same sticky port across builds.
     claude_config_dir().map(|dir| dir.join(SERVER_STATE_FILE))
 }
@@ -1459,7 +1459,7 @@ fn desktop_terminal_settings_path() -> Option<PathBuf> {
     claude_config_dir().map(|path| path.join("settings.json"))
 }
 
-/// 解析 cc-haha/settings.json 里的 h5Access.fixedPort。范围必须与
+/// 解析 echoflow-code/settings.json 里的 h5Access.fixedPort。范围必须与
 /// 服务端 h5AccessService 的 MIN/MAX_FIXED_PORT 一致（1024..=65535）。
 fn parse_h5_fixed_port(contents: &str) -> Option<u16> {
     let value: serde_json::Value = serde_json::from_str(contents).ok()?;
@@ -1474,7 +1474,7 @@ fn parse_h5_fixed_port(contents: &str) -> Option<u16> {
 }
 
 fn read_h5_fixed_port() -> Option<u16> {
-    let path = claude_config_dir()?.join("cc-haha").join("settings.json");
+    let path = claude_config_dir()?.join("echoflow-code").join("settings.json");
     let contents = fs::read_to_string(path).ok()?;
     parse_h5_fixed_port(&contents)
 }

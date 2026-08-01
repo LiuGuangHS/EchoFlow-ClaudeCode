@@ -28,7 +28,7 @@ import {
 } from '../../services/openaiAuth/client.js'
 import type { OpenAIOAuthTokenResponse } from '../../services/openaiAuth/types.js'
 import {
-  getManualNetworkProxyUrl,
+  getNetworkProxyUrl,
   loadNetworkSettings,
 } from './networkSettings.js'
 import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
@@ -363,7 +363,7 @@ export class HahaOpenAIOAuthService {
   private async getOpenAITokenFetchOptions(): Promise<OpenAITokenFetchOptions> {
     const networkSettings = await loadNetworkSettings()
     return {
-      proxyUrl: getManualNetworkProxyUrl(networkSettings),
+      proxyUrl: getNetworkProxyUrl(networkSettings),
       timeoutMs: networkSettings.aiRequestTimeoutMs,
     }
   }

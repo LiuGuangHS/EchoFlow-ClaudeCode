@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MessageEntry } from '../types/session'
 import { useSessionRuntimeStore } from './sessionRuntimeStore'
 
@@ -23,6 +23,7 @@ const {
   updateSessionPermissionModeMock,
   sessionStoreSnapshot,
   cliTaskStoreSnapshot,
+  connectionStateHandlers,
 } = vi.hoisted(() => ({
   sendMock: vi.fn(),
   getMemberBySessionIdMock: vi.fn<(sessionId: string) => any>(() => null),
@@ -58,6 +59,7 @@ const {
     tasks: [] as Array<{ id: string; subject: string; status: string; activeForm?: string }>,
     sessionId: null as string | null,
   },
+  connectionStateHandlers: new Map<string, (state: 'connecting' | 'connected' | 'reconnecting' | 'disconnected') => void>(),
 }))
 
 vi.mock('../lib/desktopNotifications', () => ({
@@ -68,6 +70,11 @@ vi.mock('../api/websocket', () => ({
   wsManager: {
     connect: vi.fn(),
     disconnect: vi.fn(),
+    onConnectionState: vi.fn((sessionId: string, handler: (state: 'connecting' | 'connected' | 'reconnecting' | 'disconnected') => void) => {
+      connectionStateHandlers.set(sessionId, handler)
+      handler('connecting')
+      return () => connectionStateHandlers.delete(sessionId)
+    }),
     onMessage: vi.fn(() => () => {}),
     clearHandlers: vi.fn(),
     send: sendMock,
@@ -263,6 +270,115 @@ describe('chatStore tool settlement', () => {
   })
 })
 
+// #1108: a background (async) agent's tool activity bubbles into the main
+// message stream carrying parentToolUseId, but MessageList folds those into
+// the agent card instead of rendering them inline. Merging streamed blocks
+// against the raw array tail therefore chopped one continuous thinking block
+// (or reply) into several, with nothing visible in between.
+describe('chatStore background agent activity interleaving', () => {
+  beforeEach(() => {
+    useChatStore.setState({
+      ...initialState,
+      sessions: { [TEST_SESSION_ID]: makeSession() },
+    })
+  })
+
+  function startBackgroundAgent(store: ReturnType<typeof useChatStore.getState>) {
+    store.handleServerMessage(TEST_SESSION_ID, {
+      type: 'tool_use_complete',
+      toolName: 'Task',
+      toolUseId: 'agent-1',
+      input: { description: 'Explore project', run_in_background: true },
+    })
+  }
+
+  function emitChildToolActivity(store: ReturnType<typeof useChatStore.getState>, id: string) {
+    store.handleServerMessage(TEST_SESSION_ID, {
+      type: 'tool_use_complete',
+      toolName: 'Grep',
+      toolUseId: id,
+      input: { pattern: 'needle' },
+      parentToolUseId: 'agent-1',
+    })
+    store.handleServerMessage(TEST_SESSION_ID, {
+      type: 'tool_result',
+      toolUseId: id,
+      content: 'match',
+      isError: false,
+      parentToolUseId: 'agent-1',
+    })
+  }
+
+  it('keeps one thinking block while a background agent streams tool activity', () => {
+    const store = useChatStore.getState()
+    startBackgroundAgent(store)
+
+    store.handleServerMessage(TEST_SESSION_ID, { type: 'thinking', text: 'The agents ' })
+    emitChildToolActivity(store, 'child-grep-1')
+    store.handleServerMessage(TEST_SESSION_ID, { type: 'thinking', text: 'are still running. ' })
+    emitChildToolActivity(store, 'child-grep-2')
+    store.handleServerMessage(TEST_SESSION_ID, { type: 'thinking', text: 'Let me wait a bit.' })
+
+    const messages = useChatStore.getState().sessions[TEST_SESSION_ID]?.messages ?? []
+    const thinking = messages.filter((message) => message.type === 'thinking')
+    expect(thinking).toHaveLength(1)
+    expect(thinking[0]).toMatchObject({
+      content: 'The agents are still running. Let me wait a bit.',
+    })
+  })
+
+  it('keeps one assistant reply while a background agent streams tool activity', () => {
+    const store = useChatStore.getState()
+    startBackgroundAgent(store)
+
+    store.handleServerMessage(TEST_SESSION_ID, { type: 'content_start', blockType: 'text' })
+    store.handleServerMessage(TEST_SESSION_ID, { type: 'content_delta', text: 'First half. ' })
+    store.handleServerMessage(TEST_SESSION_ID, {
+      type: 'message_complete',
+      usage: { input_tokens: 1, output_tokens: 1 },
+    })
+    emitChildToolActivity(store, 'child-grep-3')
+    store.handleServerMessage(TEST_SESSION_ID, { type: 'content_start', blockType: 'text' })
+    store.handleServerMessage(TEST_SESSION_ID, { type: 'content_delta', text: 'Second half.' })
+    store.handleServerMessage(TEST_SESSION_ID, {
+      type: 'message_complete',
+      usage: { input_tokens: 1, output_tokens: 1 },
+    })
+
+    const messages = useChatStore.getState().sessions[TEST_SESSION_ID]?.messages ?? []
+    const assistantText = messages.filter((message) => message.type === 'assistant_text')
+    expect(assistantText).toHaveLength(1)
+    expect(assistantText[0]).toMatchObject({ content: 'First half. Second half.' })
+  })
+
+  it('still starts a new thinking block after the main agent runs its own tool', () => {
+    const store = useChatStore.getState()
+
+    store.handleServerMessage(TEST_SESSION_ID, { type: 'thinking', text: 'Before the tool.' })
+    store.handleServerMessage(TEST_SESSION_ID, {
+      type: 'tool_use_complete',
+      toolName: 'Read',
+      toolUseId: 'read-1',
+      input: { file_path: '/a.md' },
+    })
+    store.handleServerMessage(TEST_SESSION_ID, {
+      type: 'tool_result',
+      toolUseId: 'read-1',
+      content: 'contents',
+      isError: false,
+    })
+    store.handleServerMessage(TEST_SESSION_ID, { type: 'thinking', text: 'After the tool.' })
+
+    const messages = useChatStore.getState().sessions[TEST_SESSION_ID]?.messages ?? []
+    const thinking = messages.filter((message) => message.type === 'thinking')
+    expect(thinking).toHaveLength(2)
+    expect(thinking.map((message) => message.content)).toEqual([
+      'Before the tool.',
+      'After the tool.',
+    ])
+  })
+})
+
 describe('chatStore history mapping', () => {
   beforeEach(() => {
     sendMock.mockReset()
@@ -280,8 +396,11 @@ describe('chatStore history mapping', () => {
     updateTabStatusMock.mockReset()
     updateSessionTitleMock.mockReset()
     updateSessionMessageCountMock.mockReset()
+    connectionStateHandlers.clear()
     vi.mocked(sessionsApi.getMessages).mockReset()
     vi.mocked(sessionsApi.getMessages).mockResolvedValue({ messages: [] })
+    vi.mocked(sessionsApi.getSlashCommands).mockReset()
+    vi.mocked(sessionsApi.getSlashCommands).mockResolvedValue({ commands: [] })
     sessionStoreSnapshot.sessions = []
     cliTaskStoreSnapshot.tasks = []
     cliTaskStoreSnapshot.sessionId = null
@@ -1211,6 +1330,50 @@ describe('chatStore history mapping', () => {
       },
     ])
     expect(notifyDesktopMock).not.toHaveBeenCalled()
+  })
+
+  // Same reconnect replay as above, one block type over. A thinking UIMessage
+  // carries no transcriptMessageId (types/chat.ts:291), so neither the
+  // appendAssistantTextMessage guard nor dropDuplicateTranscriptTextMessages
+  // can reach it — a replayed thinking block has nothing identifying it.
+  it('does not duplicate a hydrated thinking block when live output replays after reconnect', () => {
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession({
+          chatState: 'idle',
+          messages: [
+            {
+              id: 'live-user',
+              type: 'user_text',
+              content: 'live prompt',
+              transcriptMessageId: 'transcript-user-1',
+              timestamp: 1,
+            },
+            { id: 'live-thinking', type: 'thinking', content: 'weighing the options', timestamp: 2 },
+            {
+              id: 'live-assistant',
+              type: 'assistant_text',
+              content: 'live answer',
+              transcriptMessageId: 'transcript-assistant-1',
+              timestamp: 3,
+            },
+          ],
+        }),
+      },
+    })
+
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'thinking',
+      text: 'weighing the options',
+    })
+
+    const session = useChatStore.getState().sessions[TEST_SESSION_ID]
+    expect(session?.messages).toMatchObject([
+      { id: 'live-user', type: 'user_text' },
+      { id: 'live-thinking', type: 'thinking', content: 'weighing the options' },
+      { id: 'live-assistant', type: 'assistant_text', content: 'live answer' },
+    ])
+    if (session?.elapsedTimer) clearInterval(session.elapsedTimer)
   })
 
   it('collapses duplicate assistant replies after transcript id hydration', async () => {
@@ -2276,6 +2439,46 @@ describe('chatStore history mapping', () => {
     ])
   })
 
+  it('keeps skill source metadata while a live CLI slash update is being reconciled', async () => {
+    const projectSkill = {
+      name: 'project-audit',
+      description: 'Project skill',
+      kind: 'skill' as const,
+      source: 'project' as const,
+    }
+
+    vi.mocked(sessionsApi.getSlashCommands).mockResolvedValueOnce({
+      commands: [projectSkill],
+    })
+
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession({
+          slashCommands: [projectSkill],
+        }),
+      },
+    })
+
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'system_notification',
+      subtype: 'slash_commands',
+      data: [{ name: 'project-audit', description: 'CLI description' }],
+    })
+
+    expect(useChatStore.getState().sessions[TEST_SESSION_ID]?.slashCommands).toContainEqual({
+      name: 'project-audit',
+      description: 'CLI description',
+      kind: 'skill',
+      source: 'project',
+    })
+
+    await Promise.resolve()
+
+    expect(useChatStore.getState().sessions[TEST_SESSION_ID]?.slashCommands).toEqual([
+      projectSkill,
+    ])
+  })
+
   it('syncs live TodoWrite tool input into the task store for that session', () => {
     const todos = [{ content: 'Live todo', status: 'in_progress' }]
     useChatStore.setState({
@@ -2295,6 +2498,16 @@ describe('chatStore history mapping', () => {
   })
 
   it('replays saved runtime selection when reconnecting a session', () => {
+    sessionStoreSnapshot.sessions = [{
+      id: TEST_SESSION_ID,
+      title: 'New Session',
+      createdAt: '2026-06-20T10:00:00.000Z',
+      modifiedAt: '2026-06-20T10:00:00.000Z',
+      messageCount: 0,
+      projectPath: '/workspace/project',
+      workDir: '/workspace/project',
+      workDirExists: true,
+    }]
     useSessionRuntimeStore.getState().setSelection(TEST_SESSION_ID, {
       providerId: 'provider-1',
       modelId: 'kimi-k2.6',
@@ -2323,11 +2536,109 @@ describe('chatStore history mapping', () => {
     ])
   })
 
-  it('prewarms regular desktop sessions when connecting', () => {
+  it('does not prewarm unknown desktop sessions when connecting', () => {
     useChatStore.getState().connectToSession(TEST_SESSION_ID)
 
-    expect(sendMock).toHaveBeenCalledWith(TEST_SESSION_ID, {
+    expect(sendMock).not.toHaveBeenCalledWith(TEST_SESSION_ID, {
       type: 'prewarm_session',
+    })
+  })
+
+  it('can observe a known empty session without prewarming it', () => {
+    sessionStoreSnapshot.sessions = [{
+      id: TEST_SESSION_ID,
+      title: 'Observed Session',
+      createdAt: '2026-06-20T10:00:00.000Z',
+      modifiedAt: '2026-06-20T10:00:00.000Z',
+      messageCount: 0,
+      projectPath: '/workspace/project',
+      workDir: '/workspace/project',
+      workDirExists: true,
+    }]
+
+    useChatStore.getState().connectToSession(TEST_SESSION_ID, { prewarm: false })
+
+    expect(sendMock).not.toHaveBeenCalledWith(TEST_SESSION_ID, {
+      type: 'prewarm_session',
+    })
+  })
+
+  it('can connect a read-only companion without applying saved runtime selection', () => {
+    sessionStoreSnapshot.sessions = [{
+      id: TEST_SESSION_ID,
+      title: 'Observed Session',
+      createdAt: '2026-06-20T10:00:00.000Z',
+      modifiedAt: '2026-06-20T10:00:00.000Z',
+      messageCount: 1,
+      projectPath: '/workspace/project',
+      workDir: '/workspace/project',
+      workDirExists: true,
+    }]
+    useSessionRuntimeStore.getState().setSelection(TEST_SESSION_ID, {
+      providerId: 'provider-1',
+      modelId: 'kimi-k2.6',
+      effortLevel: 'high',
+    })
+
+    useChatStore.getState().connectToSession(TEST_SESSION_ID, {
+      prewarm: false,
+      applyRuntimeSelection: false,
+    })
+
+    expect(sendMock).not.toHaveBeenCalledWith(TEST_SESSION_ID, expect.objectContaining({
+      type: 'set_runtime_config',
+    }))
+    expect(sendMock).not.toHaveBeenCalledWith(TEST_SESSION_ID, {
+      type: 'prewarm_session',
+    })
+  })
+
+  it('connects a scoped pet client without fetching transcript, commands, or tasks', () => {
+    useChatStore.getState().connectToSession(TEST_SESSION_ID, {
+      prewarm: false,
+      applyRuntimeSelection: false,
+      minimalBootstrap: true,
+    })
+
+    expect(fetchSessionTasksMock).not.toHaveBeenCalled()
+    expect(sessionsApi.getMessages).not.toHaveBeenCalled()
+    expect(sessionsApi.getSlashCommands).not.toHaveBeenCalled()
+  })
+
+  it('blocks sends across reconnects until a fresh authoritative snapshot arrives', () => {
+    useChatStore.getState().connectToSession(TEST_SESSION_ID, {
+      prewarm: false,
+      applyRuntimeSelection: false,
+    })
+    const onConnectionState = connectionStateHandlers.get(TEST_SESSION_ID)
+    expect(onConnectionState).toBeTypeOf('function')
+    expect(useChatStore.getState().sessions[TEST_SESSION_ID]).toMatchObject({
+      connectionState: 'connecting',
+      connectionSnapshotReady: false,
+    })
+
+    onConnectionState?.('connected')
+    expect(useChatStore.getState().sessions[TEST_SESSION_ID]).toMatchObject({
+      connectionState: 'connected',
+      connectionSnapshotReady: false,
+    })
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'permission_requests_snapshot',
+      toolRequestIds: [],
+      computerUseRequestIds: [],
+      turnActive: false,
+    })
+    expect(useChatStore.getState().sessions[TEST_SESSION_ID]?.connectionSnapshotReady).toBe(true)
+
+    onConnectionState?.('reconnecting')
+    expect(useChatStore.getState().sessions[TEST_SESSION_ID]).toMatchObject({
+      connectionState: 'reconnecting',
+      connectionSnapshotReady: false,
+    })
+    onConnectionState?.('connected')
+    expect(useChatStore.getState().sessions[TEST_SESSION_ID]).toMatchObject({
+      connectionState: 'connected',
+      connectionSnapshotReady: false,
     })
   })
 
@@ -2616,6 +2927,7 @@ describe('chatStore history mapping', () => {
     })
 
     let session = useChatStore.getState().sessions[TEST_SESSION_ID]
+    expect(session?.connectionSnapshotReady).toBe(true)
     expect(Object.keys(session?.pendingPermissions ?? {})).toEqual(['perm-read-2'])
     expect(session?.pendingPermission?.requestId).toBe('perm-read-2')
     expect(Object.keys(session?.pendingComputerUsePermissions ?? {})).toEqual(['cu-2'])
@@ -4349,6 +4661,71 @@ describe('chatStore history mapping', () => {
     expect(updateTabStatusMock).toHaveBeenLastCalledWith(TEST_SESSION_ID, 'idle')
   })
 
+  it('does not suppress foreground skill output when a background task completes', () => {
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession({
+          messages: [{
+            id: 'skill-user-1',
+            type: 'user_text',
+            content: '/demo-skill',
+            timestamp: 1,
+          }],
+          chatState: 'thinking',
+          elapsedTimer: null,
+        }),
+      },
+    })
+
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'content_start',
+      blockType: 'tool_use',
+      toolUseId: 'skill-tool-1',
+      toolName: 'Skill',
+    })
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'tool_use_complete',
+      toolUseId: 'skill-tool-1',
+      toolName: 'Skill',
+      input: { skill: 'demo-skill' },
+    })
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'tool_result',
+      toolUseId: 'skill-tool-1',
+      content: 'Launching skill: demo-skill',
+      isError: false,
+    })
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'system_notification',
+      subtype: 'task_notification',
+      data: {
+        task_id: 'older-background-task',
+        tool_use_id: 'older-background-tool',
+        status: 'completed',
+        summary: 'Older background task completed',
+      },
+    })
+
+    expect(useChatStore.getState().sessions[TEST_SESSION_ID]?.suppressNextTaskNotificationResponse).not.toBe(true)
+
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'content_start',
+      blockType: 'text',
+    })
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'content_delta',
+      text: 'Visible skill output',
+    })
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'message_complete',
+      usage: { input_tokens: 12, output_tokens: 34 },
+    })
+
+    expect(useChatStore.getState().sessions[TEST_SESSION_ID]?.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'assistant_text', content: 'Visible skill output' }),
+    ]))
+  })
+
   it('does not flush a delayed completion before a new user turn while background tasks keep running', () => {
     useChatStore.setState({
       sessions: {
@@ -5077,6 +5454,36 @@ describe('chatStore history mapping', () => {
     expect(updateTabStatusMock).toHaveBeenCalledWith(TEST_SESSION_ID, 'idle')
   })
 
+  it('refreshes unfinished Task V2 tool state once when the message completes', () => {
+    cliTaskStoreSnapshot.sessionId = TEST_SESSION_ID
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession({ chatState: 'tool_executing' }),
+      },
+    })
+
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'tool_use_complete',
+      toolName: 'TaskUpdate',
+      toolUseId: 'task-update-1',
+      input: { taskId: '1', status: 'completed' },
+    })
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'message_complete',
+      usage: { input_tokens: 1, output_tokens: 2 },
+    })
+
+    expect(refreshTasksMock).toHaveBeenCalledTimes(1)
+    expect(refreshTasksMock).toHaveBeenCalledWith(TEST_SESSION_ID)
+
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'message_complete',
+      usage: { input_tokens: 1, output_tokens: 2 },
+    })
+
+    expect(refreshTasksMock).toHaveBeenCalledTimes(1)
+  })
+
   it('flushes pending text before appending a thinking block', () => {
     vi.useFakeTimers()
 
@@ -5234,6 +5641,175 @@ describe('chatStore history mapping', () => {
     const userMessages = useChatStore.getState().sessions[TEST_SESSION_ID]?.messages
       .filter((message) => message.type === 'user_text')
     expect(userMessages).toHaveLength(1)
+  })
+
+  it('keeps an image-only replay before the assistant response', () => {
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession({
+          messages: [
+            {
+              id: 'live-user',
+              type: 'user_text',
+              content: '',
+              attachments: [{
+                type: 'image',
+                name: 'screenshot.png',
+                data: 'data:image/png;base64,AAAA',
+                mimeType: 'image/png',
+              }],
+              timestamp: 1,
+            },
+            {
+              id: 'assistant-answer',
+              type: 'assistant_text',
+              content: 'The screenshot shows a repository list.',
+              timestamp: 2,
+            },
+          ],
+          chatState: 'thinking',
+        }),
+      },
+    })
+
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'user_message_replay',
+      content: [
+        'Please analyze the attached image.',
+        '[Image source: /Users/me/.claude/uploads/session/screenshot.png]',
+      ].join('\n'),
+    })
+
+    expect(useChatStore.getState().sessions[TEST_SESSION_ID]?.messages).toMatchObject([
+      {
+        type: 'user_text',
+        content: '',
+        attachments: [{ type: 'image', name: 'screenshot.png' }],
+      },
+      {
+        type: 'assistant_text',
+        content: 'The screenshot shows a repository list.',
+      },
+    ])
+  })
+
+  it('dedupes a path-backed image after the server inlines it into replay content', () => {
+    const prompt = '检查这张截图'
+    const imagePath = 'C:\\Users\\tester\\Desktop\\screen.png'
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession({
+          messages: [
+            {
+              id: 'live-user',
+              type: 'user_text',
+              content: prompt,
+              modelContent: `@"${imagePath}" ${prompt}`,
+              attachments: [{
+                type: 'file',
+                name: 'screen.png',
+                path: imagePath,
+              }],
+              timestamp: 1,
+            },
+          ],
+          chatState: 'thinking',
+        }),
+      },
+    })
+
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'user_message_replay',
+      content: `${prompt}\n[Image source: ${imagePath}]`,
+    })
+
+    const userMessages = useChatStore.getState().sessions[TEST_SESSION_ID]?.messages
+      .filter((message) => message.type === 'user_text')
+    expect(userMessages).toHaveLength(1)
+  })
+
+  it('dedupes a prompt when data-only files replay with server-materialized upload paths', () => {
+    const prompt = '检查这两个附件'
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession({
+          messages: [
+            {
+              id: 'live-user',
+              type: 'user_text',
+              content: prompt,
+              attachments: [
+                {
+                  type: 'file',
+                  name: 'PROJECT.md',
+                  data: 'data:text/markdown;base64,IyBQcm9qZWN0',
+                },
+                {
+                  type: 'file',
+                  name: 'server.pem',
+                  data: 'data:application/x-pem-file;base64,VEVTVA==',
+                },
+              ],
+              timestamp: 1,
+            },
+          ],
+          chatState: 'thinking',
+        }),
+      },
+    })
+
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'user_message_replay',
+      content: [
+        '@"C:\\Users\\tester\\.claude\\uploads\\sid\\5d3af295-b914-4d44-a686-d665dc46b189-PROJECT.md"',
+        '@"C:\\Users\\tester\\.claude\\uploads\\sid\\d81b63cd-978c-42ce-ad9a-3bcd049dc24e-server.pem"',
+        prompt,
+      ].join(' '),
+    })
+
+    const userMessages = useChatStore.getState().sessions[TEST_SESSION_ID]?.messages
+      .filter((message) => message.type === 'user_text')
+    expect(userMessages).toHaveLength(1)
+    expect(userMessages?.[0]).toMatchObject({
+      content: prompt,
+      attachments: [
+        { name: 'PROJECT.md', data: 'data:text/markdown;base64,IyBQcm9qZWN0' },
+        { name: 'server.pem', data: 'data:application/x-pem-file;base64,VEVTVA==' },
+      ],
+    })
+  })
+
+  it('keeps a replay whose materialized upload filename does not match the current attachment', () => {
+    const prompt = '检查这个附件'
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession({
+          messages: [
+            {
+              id: 'live-user',
+              type: 'user_text',
+              content: prompt,
+              attachments: [{
+                type: 'file',
+                name: 'PROJECT.md',
+                data: 'data:text/markdown;base64,IyBQcm9qZWN0',
+              }],
+              timestamp: 1,
+            },
+          ],
+          chatState: 'thinking',
+        }),
+      },
+    })
+
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'user_message_replay',
+      content: `@"C:\\Users\\tester\\.claude\\uploads\\sid\\5d3af295-b914-4d44-a686-d665dc46b189-other.md" ${prompt}`,
+    })
+
+    const userMessages = useChatStore.getState().sessions[TEST_SESSION_ID]?.messages
+      .filter((message) => message.type === 'user_text')
+    expect(userMessages).toHaveLength(2)
   })
 
   it('flushes pending text before appending an error message', () => {
@@ -5825,5 +6401,211 @@ describe('chatStore history mapping', () => {
     expect(session?.streamingResponseChars).toBe(0)
     if (session?.elapsedTimer) clearInterval(session.elapsedTimer)
     vi.useRealTimers()
+  })
+})
+
+// A desktop window left open for hours re-renders a long-finished session as a
+// wall of collapsed "已思考" bubbles with no reply text between them. No new LLM
+// call happens — the finished turn's stream events are pushed at the renderer a
+// second time on top of already-hydrated history. appendAssistantTextMessage
+// guards against exactly that replay, `case 'thinking'` does not.
+type FinishedTurnStep =
+  | { kind: 'thinking'; text: string }
+  | { kind: 'text'; text: string }
+  | { kind: 'tool'; id: string; name: string }
+
+// Verbatim block order of session fd09ae78-297a-427e-a849-5251731bf30c (Kimi
+// k3, a Computer Use run): 13 thinking blocks, 5 of them empty. Only the very
+// last assistant reply is elided — it is a long markdown table.
+const FINISHED_COMPUTER_USE_TURN: FinishedTurnStep[] = [
+  { kind: 'thinking', text: 'User wants Computer Use. I need to load the computer-use tools. Let me fetch the tool schemas first.' },
+  { kind: 'text', text: '我先加载 Computer Use 工具，然后严格按顺序执行。' },
+  { kind: 'tool', id: 'tool_aJGuYYOY4gzHHHFIaTus4M3e', name: 'ToolSearch' },
+  { kind: 'thinking', text: 'Start: get_app_state to find search box, then step 1 click it. User wants get_app_state after each step and report the search field content.' },
+  { kind: 'tool', id: 'tool_kosJoZ93D4WBqAWnmelI9Rik', name: 'mcp__computer-use__get_app_state' },
+  { kind: 'thinking', text: 'Search box at approx (410, 50). Step 1: single click.' },
+  { kind: 'text', text: '初始状态：搜索框为空（只有放大镜占位图标），位置约 (410, 50)。\n\n**第 1 步：单击搜索框**' },
+  { kind: 'tool', id: 'tool_KlLouIdZHyPcj0Jbmy5nfJOf', name: 'mcp__computer-use__click' },
+  { kind: 'thinking', text: '' },
+  { kind: 'tool', id: 'tool_lNWmFSm7Er61dyZJcWGkGH6b', name: 'mcp__computer-use__get_app_state' },
+  { kind: 'thinking', text: 'Step 1 done: search box still empty (only magnifier icon). Step 2: type "test".' },
+  { kind: 'text', text: '第 1 步后：搜索框里**为空**（只有放大镜占位图标，无文字）。\n\n**第 2 步：type_text 输入 "test"**' },
+  { kind: 'tool', id: 'tool_hTHyhielyvIaUIWN6YJDz2g5', name: 'mcp__computer-use__type_text' },
+  { kind: 'thinking', text: '' },
+  { kind: 'tool', id: 'tool_951Y0sQNx8tMZGGMS7XjVeOL', name: 'mcp__computer-use__get_app_state' },
+  { kind: 'thinking', text: 'Step 2 done: search box still empty — "test" did not appear. Report honestly. Step 3: type "abc".' },
+  { kind: 'text', text: '第 2 步后：搜索框里**为空** —— "test" 没有显示出来。\n\n**第 3 步：type_text 输入 "abc"**' },
+  { kind: 'tool', id: 'tool_Y1MzoPySfdwd7tNrFj389CEN', name: 'mcp__computer-use__type_text' },
+  { kind: 'thinking', text: 'Continue: get_app_state after step 3.' },
+  { kind: 'tool', id: 'tool_8TrKG2qCE6Q4bDYE5hMvngSW', name: 'mcp__computer-use__get_app_state' },
+  { kind: 'thinking', text: 'Step 3 done: still empty. Step 4: double-click search box.' },
+  { kind: 'text', text: '第 3 步后：搜索框里**依然为空** —— "abc" 也没有显示。\n\n**第 4 步：双击搜索框**' },
+  { kind: 'tool', id: 'tool_qguIh8LXvDxOn6wE4aSlys2K', name: 'mcp__computer-use__click' },
+  { kind: 'thinking', text: '' },
+  { kind: 'tool', id: 'tool_T4513oOu6to3GY1EeEPMLvFr', name: 'mcp__computer-use__get_app_state' },
+  { kind: 'thinking', text: '' },
+  { kind: 'text', text: '第 4 步后：搜索框里**仍然为空**，界面无任何变化。\n\n**第 5 步：type_text 输入 "xyz"**' },
+  { kind: 'tool', id: 'tool_XhJWl5aNuSPaUXctFQ91KSPM', name: 'mcp__computer-use__type_text' },
+  { kind: 'thinking', text: '' },
+  { kind: 'tool', id: 'tool_b2c5HshyO48rmbYqmlcGj94K', name: 'mcp__computer-use__get_app_state' },
+  { kind: 'thinking', text: 'Done. Report all 5 steps faithfully.' },
+  { kind: 'text', text: '5 步全部完成，如实汇报每步后搜索框的内容：' },
+]
+
+const FIRST_THINKING = FINISHED_COMPUTER_USE_TURN[0] as { kind: 'thinking'; text: string }
+const LAST_THINKING = FINISHED_COMPUTER_USE_TURN[30] as { kind: 'thinking'; text: string }
+
+/** The CLI persists one transcript entry per content block; mirror that shape. */
+function buildFinishedTurnHistory(): MessageEntry[] {
+  const entries: MessageEntry[] = [{
+    id: 'cu-prompt',
+    type: 'user',
+    timestamp: '2026-07-28T15:00:00.000Z',
+    content: '用 Computer Use 操作网易云音乐，严格按顺序做，每步做完立刻 get_app_state。',
+  }]
+  FINISHED_COMPUTER_USE_TURN.forEach((step, index) => {
+    const timestamp = new Date(Date.UTC(2026, 6, 28, 15, 1, index)).toISOString()
+    if (step.kind === 'thinking') {
+      entries.push({ id: `cu-a-${index}`, type: 'assistant', timestamp, content: [{ type: 'thinking', thinking: step.text }] })
+      return
+    }
+    if (step.kind === 'text') {
+      entries.push({ id: `cu-a-${index}`, type: 'assistant', timestamp, content: [{ type: 'text', text: step.text }] })
+      return
+    }
+    entries.push({ id: `cu-a-${index}`, type: 'assistant', timestamp, content: [{ type: 'tool_use', name: step.name, id: step.id, input: {} }] })
+    entries.push({ id: `cu-u-${index}`, type: 'user', timestamp, content: [{ type: 'tool_result', tool_use_id: step.id, content: 'ok', is_error: false }] })
+  })
+  return entries
+}
+
+/**
+ * Push the finished turn at the renderer exactly as the server emits it. Both
+ * emit paths skip falsy thinking (`handler.ts` thinking_delta and the
+ * no-stream-events assistant fallback), so the five empty transcript blocks
+ * never reach the wire — `withEmptyThinking` exists only for the defensive case.
+ */
+function replayFinishedTurn(options: { withText: boolean; withEmptyThinking?: boolean }) {
+  const store = useChatStore.getState()
+  for (const step of FINISHED_COMPUTER_USE_TURN) {
+    if (step.kind === 'thinking') {
+      if (step.text || options.withEmptyThinking) {
+        store.handleServerMessage(TEST_SESSION_ID, { type: 'thinking', text: step.text })
+      }
+      continue
+    }
+    if (step.kind === 'text') {
+      if (options.withText) store.handleServerMessage(TEST_SESSION_ID, { type: 'content_delta', text: step.text })
+      continue
+    }
+    store.handleServerMessage(TEST_SESSION_ID, {
+      type: 'tool_use_complete',
+      toolName: step.name,
+      toolUseId: step.id,
+      input: {},
+    })
+    store.handleServerMessage(TEST_SESSION_ID, {
+      type: 'tool_result',
+      toolUseId: step.id,
+      content: 'ok',
+      isError: false,
+    })
+  }
+}
+
+function thinkingBlocks() {
+  return (useChatStore.getState().sessions[TEST_SESSION_ID]?.messages ?? [])
+    .filter((message) => message.type === 'thinking')
+    .map((message) => message.content)
+}
+
+describe('chatStore wake replay of a finished thinking turn', () => {
+  beforeEach(async () => {
+    sendMock.mockReset()
+    notifyDesktopMock.mockReset()
+    updateTabStatusMock.mockReset()
+    getMemberBySessionIdMock.mockReset()
+    getMemberBySessionIdMock.mockReturnValue(null)
+    connectionStateHandlers.clear()
+    vi.mocked(sessionsApi.getMessages).mockReset()
+    vi.mocked(sessionsApi.getMessages).mockResolvedValue({ messages: buildFinishedTurnHistory() })
+    localStorage.clear()
+    useSettingsStore.setState({ locale: 'en' })
+    useChatStore.setState({
+      ...initialState,
+      sessions: { [TEST_SESSION_ID]: makeSession({ chatState: 'idle', messages: [] }) },
+    })
+    await useChatStore.getState().loadHistory(TEST_SESSION_ID)
+  })
+
+  afterEach(() => {
+    const timer = useChatStore.getState().sessions[TEST_SESSION_ID]?.elapsedTimer
+    if (timer) clearInterval(timer)
+  })
+
+  it('hydrates the finished turn as eight non-empty thinking blocks', () => {
+    // Sanity check on the fixture: history mapping drops the five empty
+    // thinking blocks, so anything empty on screen came from the stream path.
+    expect(thinkingBlocks()).toHaveLength(8)
+    expect(thinkingBlocks().every((content) => content.trim().length > 0)).toBe(true)
+  })
+
+  it('does not re-append hydrated thinking when a finished turn is replayed after wake', () => {
+    const before = thinkingBlocks()
+
+    replayFinishedTurn({ withText: false })
+
+    expect(thinkingBlocks()).toEqual(before)
+  })
+
+  // Defensive. The transcript really does hold five empty thinking blocks and
+  // history mapping filters them, but no server emit path puts an empty
+  // thinking event on the wire today — so a collapsed "已思考" row on screen is
+  // not by itself proof that an empty block was streamed.
+  it('does not spawn empty thinking bubbles from replayed empty thinking events', () => {
+    replayFinishedTurn({ withText: false, withEmptyThinking: true })
+
+    expect(thinkingBlocks().filter((content) => !content.trim())).toEqual([])
+  })
+
+  it('does not merge the turn tail into the turn head when the replay wraps around', () => {
+    replayFinishedTurn({ withText: false })
+    replayFinishedTurn({ withText: false })
+
+    // The last thinking block of one replay round and the first of the next
+    // arrive back to back with nothing between them, so the merge branch glues
+    // two unrelated reasoning blocks into a single bubble.
+    expect(thinkingBlocks().filter((content) =>
+      content.includes(LAST_THINKING.text) && content.includes(FIRST_THINKING.text),
+    )).toEqual([])
+  })
+
+  it('does not grow the thinking wall with every extra replay round', () => {
+    const hydrated = thinkingBlocks().length
+
+    replayFinishedTurn({ withText: false })
+    const afterFirst = thinkingBlocks().length
+    replayFinishedTurn({ withText: false })
+    const afterSecond = thinkingBlocks().length
+
+    expect({ afterFirst, afterSecond }).toEqual({
+      afterFirst: hydrated,
+      afterSecond: hydrated,
+    })
+  })
+
+  // Secondary gap. The reported screenshot has no reply text between the
+  // bubbles, so the observed replay carries thinking only — but the existing
+  // appendAssistantTextMessage guard would not have held either: it only
+  // matches while the tail still is the hydrated assistant message.
+  it('does not re-append replayed reply text once the tail moves past the hydrated message', () => {
+    const assistantTextOf = () => (useChatStore.getState().sessions[TEST_SESSION_ID]?.messages ?? [])
+      .filter((message) => message.type === 'assistant_text')
+      .map((message) => message.content)
+    const before = assistantTextOf()
+
+    replayFinishedTurn({ withText: true })
+
+    expect(assistantTextOf()).toEqual(before)
   })
 })

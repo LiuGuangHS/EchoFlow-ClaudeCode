@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import '@testing-library/jest-dom'
 
@@ -66,6 +66,10 @@ vi.mock('../api/websocket', () => ({
   wsManager: {
     clearHandlers: mocks.wsClearHandlers,
     connect: mocks.wsConnect,
+    onConnectionState: vi.fn((_sessionId: string, handler: (state: string) => void) => {
+      handler('connecting')
+      return () => {}
+    }),
     onMessage: mocks.wsOnMessage,
     send: mocks.wsSend,
     disconnect: mocks.wsDisconnect,
@@ -94,9 +98,9 @@ vi.mock('@tauri-apps/api/webview', () => ({
   }),
 }))
 
-vi.mock('../components/shared/DirectoryPicker', () => ({
-  DirectoryPicker: ({ value, onChange }: { value: string; onChange: (path: string) => void }) => (
-    <button type="button" aria-label="Pick project" data-value={value} onClick={() => onChange('/workspace/project')}>
+vi.mock('@/components/composite/DirectoryPicker', () => ({
+  RecentProjectsPanel: ({ value, onSelect }: { value: string; onSelect: (path: string) => void }) => (
+    <button type="button" aria-label="Pick project" data-value={value} onClick={() => onSelect('/workspace/project')}>
       Pick project
     </button>
   ),
@@ -145,6 +149,7 @@ import { useTabStore } from '../stores/tabStore'
 import { useUIStore } from '../stores/uiStore'
 import { usePluginStore } from '../stores/pluginStore'
 import type { RepositoryContextResult } from '../api/sessions'
+import { browserHost } from '../lib/desktopHost/browserHost'
 
 function okRepositoryContext(overrides: Partial<RepositoryContextResult> = {}): RepositoryContextResult {
   return {
@@ -184,6 +189,29 @@ function notGitRepositoryContext(): RepositoryContextResult {
     branches: [],
     worktrees: [],
   }
+}
+
+/** Opens the run-location pill's menu. */
+async function openLaunchMenu() {
+  fireEvent.click(await screen.findByRole('button', { name: /^Location/ }))
+}
+
+/**
+ * Picks the mocked project. The directory list is no longer a standing button
+ * on a bar under the composer — it is a view of the run-location pill's menu,
+ * which a fresh session opens directly onto.
+ */
+async function pickProject() {
+  await openLaunchMenu()
+  fireEvent.click(await screen.findByRole('button', { name: 'Pick project' }))
+  // Picking a repo holds the menu open on the root view, where the branch and
+  // worktree rows have just appeared. Close it so callers start from a clean
+  // slate and open it themselves when they mean to.
+  fireEvent.keyDown(document, { key: 'Escape' })
+  await waitFor(() => {
+    expect(screen.queryByRole('menu', { name: 'Location' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Pick project' })).not.toBeInTheDocument()
+  })
 }
 
 describe('EmptySession', () => {
@@ -261,7 +289,7 @@ describe('EmptySession', () => {
     expect(screen.getByTestId('model-selector')).toHaveAttribute('data-compact', 'true')
     expect(screen.getByRole('button', { name: 'Run' })).toHaveClass('h-11', 'w-11')
     expect(screen.getByTestId('empty-session-composer-shell')).toHaveClass('px-3')
-    expect(screen.getByTestId('empty-session-composer-panel')).toHaveClass('rounded-2xl')
+    expect(screen.getByTestId('empty-session-composer-panel')).toHaveClass('rounded-[var(--radius-2xl)]')
   })
 
   it('refreshes empty-session slash commands after plugin reloads', async () => {
@@ -335,11 +363,60 @@ describe('EmptySession', () => {
     })
 
     await waitFor(() => {
-      const commandButtons = screen
-        .getAllByRole('button')
-        .filter((button) => button.textContent?.startsWith('/'))
-      expect(commandButtons[0]).toHaveTextContent('/superpowers:brainstorming')
+      const commandOptions = screen.getAllByRole('option')
+      expect(commandOptions[0]).toHaveTextContent('superpowers:brainstorming')
     })
+  })
+
+  it('uses the grouped accessible slash menu and preserves skill source labels', async () => {
+    mocks.listSkills.mockResolvedValueOnce({
+      skills: [
+        {
+          name: 'project-audit',
+          description: 'Audit this project.',
+          source: 'project',
+          userInvocable: true,
+        },
+        {
+          name: 'drawing:render',
+          description: 'Render with the drawing plugin.',
+          source: 'plugin',
+          userInvocable: true,
+        },
+      ],
+    })
+
+    render(<EmptySession />)
+
+    await waitFor(() => {
+      expect(mocks.listSkills).toHaveBeenCalledTimes(1)
+    })
+
+    const input = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.change(input, {
+      target: { value: '/', selectionStart: 1 },
+    })
+
+    const listbox = await screen.findByRole('listbox', { name: 'Slash commands' })
+    const combobox = screen.getByRole('combobox')
+    const systemCommand = screen.getByText('mcp')
+    const skillsHeading = screen.getByText('Skills')
+    const projectSkill = screen.getByText('project-audit')
+    const pluginSkill = screen.getByText('drawing:render')
+
+    expect(systemCommand.compareDocumentPosition(skillsHeading)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    )
+    expect(skillsHeading.compareDocumentPosition(projectSkill)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    )
+    expect(projectSkill.closest('[role="option"]')).toHaveTextContent('Project')
+    expect(pluginSkill.closest('[role="option"]')).toHaveTextContent('Plugin')
+    expect(combobox).toHaveAttribute('aria-controls', listbox.id)
+    expect(combobox).toHaveAttribute(
+      'aria-activedescendant',
+      screen.getAllByRole('option')[0]!.id,
+    )
   })
 
   it('offers active agents as slash entries that insert /agent with the selected type', async () => {
@@ -367,7 +444,7 @@ describe('EmptySession', () => {
       target: { value: '/debug', selectionStart: 6 },
     })
 
-    const agentOption = await screen.findByText('/agent debugger')
+    const agentOption = await screen.findByText('agent debugger')
     fireEvent.click(agentOption)
 
     expect(input).toHaveValue('/agent debugger ')
@@ -424,7 +501,7 @@ describe('EmptySession', () => {
       target: { value: '/agent', selectionStart: 6 },
     })
 
-    await screen.findByText('/agent debugger')
+    await screen.findByText('agent debugger')
     fireEvent.keyDown(input, { key: 'ArrowDown' })
     fireEvent.keyDown(input, { key: 'Enter' })
 
@@ -433,21 +510,29 @@ describe('EmptySession', () => {
     expect(mocks.wsSend).not.toHaveBeenCalled()
   })
 
-  it('integrates repository launch controls into the desktop composer panel', async () => {
+  // The launch controls used to be a bar welded under the composer, which is
+  // what forced the panel's squared bottom edge and the third divider line.
+  // They are one pill in the toolbar now, so the panel is fully rounded and
+  // the row the pill sits in is the same one holding "+" and the model.
+  it('puts the run-location pill in the composer toolbar, not on a bar of its own', async () => {
     render(<EmptySession />)
 
     const panel = screen.getByTestId('empty-session-composer-panel')
-    expect(panel).toHaveClass('rounded-xl', 'p-0')
+    // 20px corner and the middle shadow step — the composer's own place on the
+    // handoff's scale. The repository controls live inside this panel, so it
+    // must stay a single rounded block rather than a split top/bottom pair.
+    expect(panel).toHaveClass('rounded-[var(--radius-2xl)]', 'p-0', 'glass-panel--composer')
     expect(panel).not.toHaveClass('rounded-b-none')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Pick project' }))
+    await pickProject()
 
-    const branchButton = await screen.findByRole('button', { name: 'Select branch: main' })
-    const launchBar = branchButton.parentElement
-    expect(launchBar).toBeTruthy()
-    expect(launchBar).toHaveClass('bg-transparent')
-    expect(launchBar).not.toHaveClass('rounded-b-xl')
-    expect(panel).toContainElement(launchBar)
+    const pill = await screen.findByRole('button', { name: 'Location: project / main' })
+    expect(panel).toContainElement(pill)
+    expect(pill).toHaveClass('h-9')
+
+    // Same toolbar row as Run — that row is the whole point of the change.
+    const toolbarRow = pill.closest('.justify-between')
+    expect(toolbarRow).toContainElement(screen.getByRole('button', { name: /Run/i }))
   })
 
   it('creates a session with the selected project and branch when submitted', async () => {
@@ -456,7 +541,7 @@ describe('EmptySession', () => {
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'draft question', selectionStart: 14 },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Pick project' }))
+    await pickProject()
 
     expect(mocks.createSession).not.toHaveBeenCalled()
 
@@ -721,6 +806,62 @@ describe('EmptySession', () => {
     })
   })
 
+  it('pastes copied desktop files into a new-session draft as path attachments', async () => {
+    mocks.isTauriRuntime = true
+    const copiedFile = new File(['{\"name\":\"echoflow-code\"}'], 'ignored-name.json', {
+      type: 'application/json',
+    })
+    Object.defineProperty(copiedFile, 'path', {
+      configurable: true,
+      value: 'C:\\Users\\Nanmi\\Desktop\\project-context.json',
+    })
+    window.desktopHost = {
+      ...browserHost,
+      kind: 'electron',
+      isDesktop: true,
+      webview: {
+        ...browserHost.webview,
+        onDragDropEvent: vi.fn().mockResolvedValue(mocks.webviewUnlisten),
+      },
+    }
+
+    render(<EmptySession />)
+
+    fireEvent.paste(screen.getByRole('textbox'), {
+      clipboardData: {
+        files: [],
+        items: [{
+          kind: 'file',
+          type: 'application/json',
+          getAsFile: () => copiedFile,
+        }],
+      },
+    })
+
+    expect(await screen.findByText('project-context.json')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByRole('textbox'), {
+      target: { value: 'use this context', selectionStart: 'use this context'.length },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /Run/i }))
+
+    await waitFor(() => {
+      expect(mocks.createSession).toHaveBeenCalledWith({ permissionMode: 'default' })
+    })
+    expect(mocks.wsSend).toHaveBeenCalledWith('draft-session', {
+      type: 'user_message',
+      content: 'use this context',
+      attachments: [
+        expect.objectContaining({
+          type: 'file',
+          name: 'project-context.json',
+          path: 'C:\\Users\\Nanmi\\Desktop\\project-context.json',
+          data: undefined,
+        }),
+      ],
+    })
+  })
+
   it('keeps slash and @ popovers visible above the empty-session drop target', async () => {
     mocks.search.mockResolvedValueOnce({
       currentPath: '/workspace/project',
@@ -742,7 +883,7 @@ describe('EmptySession', () => {
         selectionStart: 1,
       },
     })
-    expect(await screen.findByText('/mcp')).toBeInTheDocument()
+    expect(await screen.findByText('mcp')).toBeInTheDocument()
     expect(panel).toHaveClass('overflow-visible')
     expect(panel).not.toHaveClass('overflow-hidden')
 
@@ -765,15 +906,24 @@ describe('EmptySession', () => {
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'draft question', selectionStart: 14 },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Pick project' }))
+    await pickProject()
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /Run/i })).not.toBeDisabled()
     })
 
     expect(screen.queryByText('Current project is not a Git repository.')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Select branch:/ })).not.toBeInTheDocument()
-    expect(screen.queryByText('Current worktree')).not.toBeInTheDocument()
+
+    // Without a repo the pill carries the folder alone, and there are no
+    // branch or worktree rows to drop back to — so the menu opens straight on
+    // the directory list instead of a root view holding a single row.
+    await openLaunchMenu()
+    expect(await screen.findByRole('button', { name: 'Pick project' })).toBeInTheDocument()
+    expect(screen.queryByRole('menu', { name: 'Location' })).not.toBeInTheDocument()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Pick project' })).not.toBeInTheDocument()
+    })
 
     fireEvent.click(screen.getByRole('button', { name: /Run/i }))
 
@@ -796,7 +946,7 @@ describe('EmptySession', () => {
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'draft question', selectionStart: 14 },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Pick project' }))
+    await pickProject()
 
     await waitFor(() => {
       expect(screen.getByText('main')).toBeInTheDocument()
@@ -824,7 +974,7 @@ describe('EmptySession', () => {
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'draft question', selectionStart: 14 },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Pick project' }))
+    await pickProject()
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /Run/i })).toBeDisabled()
@@ -872,7 +1022,7 @@ describe('EmptySession', () => {
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'draft question', selectionStart: 14 },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Pick project' }))
+    await pickProject()
 
     await waitFor(() => {
       expect(screen.getByText('main')).toBeInTheDocument()
@@ -916,15 +1066,19 @@ describe('EmptySession', () => {
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'draft question', selectionStart: 14 },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Pick project' }))
+    await pickProject()
 
-    const branchButton = await screen.findByRole('button', { name: new RegExp(`Select branch: ${longBranch}`) })
-    const branchClasses = branchButton.className.split(/\s+/)
-    expect(branchButton.parentElement?.className).toContain('flex-nowrap')
-    expect(branchButton.parentElement?.className).not.toContain('flex-wrap')
-    expect(branchClasses).toContain('max-w-[260px]')
-    expect(branchClasses).not.toContain('max-w-full')
-    expect(branchButton.querySelector('span')?.className).toContain('truncate')
+    const pill = await screen.findByRole('button', { name: `Location: project / ${longBranch}` })
+    // The name sits in a <bdi>; the truncation and direction live on its wrapper.
+    const branchWrap = within(pill).getByText(longBranch).closest('[dir="rtl"]')
+
+    // Truncation happens inside the pill so the toolbar row never wraps.
+    expect(branchWrap?.className).toContain('truncate')
+    expect(pill.className).toContain('max-w-full')
+
+    // `dir="rtl"` moves the ellipsis to the front, so what survives is the
+    // tail — `…launch-controls-e2e`, not the useless `feature/super-long…`.
+    expect(branchWrap).not.toBeNull()
   })
 
   it('keeps current worktree selectable when the fallback branch is checked out elsewhere', async () => {
@@ -960,17 +1114,31 @@ describe('EmptySession', () => {
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'draft question', selectionStart: 14 },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Pick project' }))
+    await pickProject()
 
     await waitFor(() => {
       expect(screen.getByText('main')).toBeInTheDocument()
-      expect(screen.getByText('Current worktree')).toBeInTheDocument()
     })
 
-    expect(screen.getByText('Selected branch is already checked out in another worktree. Direct launch may be blocked by Git; use "Isolated worktree" to avoid changing directories.')).toBeInTheDocument()
+    const warning = screen.getByRole('status', {
+      name: 'Selected branch is already checked out in another worktree. Direct launch may be blocked by Git; use "Isolated worktree" to avoid changing directories.',
+    })
+    expect(warning).toHaveTextContent('Branch already checked out')
+    expect(warning).toHaveAttribute(
+      'title',
+      'Selected branch is already checked out in another worktree. Direct launch may be blocked by Git; use "Isolated worktree" to avoid changing directories.',
+    )
 
-    fireEvent.click(screen.getByRole('button', { name: /Select worktree mode: Current worktree/ }))
-    expect(await screen.findByRole('option', { name: 'Current worktree' })).not.toBeDisabled()
+    // Staying on the current worktree has to remain a live choice even when the
+    // fallback branch is checked out elsewhere — it must not render disabled.
+    await openLaunchMenu()
+    const currentWorktree = await screen.findByRole('menuitemradio', { name: /Current worktree/ })
+    expect(currentWorktree).not.toBeDisabled()
+    expect(currentWorktree).toHaveAttribute('aria-checked', 'true')
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => {
+      expect(screen.queryByRole('menu', { name: 'Location' })).not.toBeInTheDocument()
+    })
 
     fireEvent.click(screen.getByRole('button', { name: /Run/i }))
 

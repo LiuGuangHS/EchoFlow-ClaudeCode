@@ -14,9 +14,18 @@ const mocks = vi.hoisted(() => ({
   setActiveTab: vi.fn(),
   openTab: vi.fn(),
   openTraceTab: vi.fn(),
+  getDesktopUiPreferences: vi.fn(),
+  updatePetPreferences: vi.fn(),
   tabState: {
     activeTabId: null as string | null,
     tabs: [] as Array<{ sessionId: string; title: string; type: string; status: string }>,
+  },
+}))
+
+vi.mock('../../api/desktopUiPreferences', () => ({
+  desktopUiPreferencesApi: {
+    getPreferences: mocks.getDesktopUiPreferences,
+    updatePetPreferences: mocks.updatePetPreferences,
   },
 }))
 
@@ -110,11 +119,11 @@ vi.mock('../../pages/TraceSession', () => ({
   ),
 }))
 
-vi.mock('../shared/Toast', () => ({
+vi.mock('@/components/layout/Toast', () => ({
   ToastContainer: () => null,
 }))
 
-vi.mock('../shared/UpdateChecker', () => ({
+vi.mock('@/components/layout/UpdateChecker', () => ({
   UpdateChecker: () => <div>updates loaded</div>,
 }))
 
@@ -128,6 +137,38 @@ describe('AppShell boot flow', () => {
     mocks.initializeDesktopServerUrl.mockResolvedValue('http://127.0.0.1:3456')
     mocks.fetchAll.mockResolvedValue(undefined)
     mocks.restoreTabs.mockResolvedValue(undefined)
+    mocks.getDesktopUiPreferences.mockResolvedValue({
+      exists: true,
+      preferences: {
+        schemaVersion: 3,
+        sidebar: {},
+        profile: {},
+        pet: {
+          enabled: false,
+          selectedPetId: 'dada-code',
+          size: 144,
+          collapsed: false,
+          motionEnabled: true,
+          lastSessionId: null,
+        },
+      },
+    })
+    mocks.updatePetPreferences.mockResolvedValue({
+      ok: true,
+      preferences: {
+        schemaVersion: 3,
+        sidebar: {},
+        profile: {},
+        pet: {
+          enabled: false,
+          selectedPetId: 'dada-code',
+          size: 144,
+          collapsed: false,
+          motionEnabled: true,
+          lastSessionId: null,
+        },
+      },
+    })
     mocks.openTab.mockReset()
     mocks.openTraceTab.mockReset()
     mocks.setActiveTab.mockImplementation((sessionId: string) => {
@@ -150,6 +191,92 @@ describe('AppShell boot flow', () => {
     expect(screen.getByText('tabs loaded')).toBeInTheDocument()
     expect(screen.getByText('content loaded')).toBeInTheDocument()
     expect(screen.getByText('updates loaded')).toBeInTheDocument()
+  })
+
+  it('keeps the last real session as Settings project context', async () => {
+    useSessionStore.setState({
+      sessions: [{
+        id: 'session-1',
+        title: 'Project session',
+        createdAt: '',
+        modifiedAt: '',
+        messageCount: 0,
+        projectPath: '/workspace/project',
+        workDir: '/workspace/project',
+        workDirExists: true,
+      }],
+      activeSessionId: null,
+    })
+    mocks.tabState.activeTabId = 'session-1'
+    mocks.tabState.tabs = [
+      { sessionId: 'session-1', title: 'Project session', type: 'session', status: 'idle' },
+      { sessionId: '__settings__', title: 'Settings', type: 'settings', status: 'idle' },
+    ]
+
+    const { rerender } = render(<AppShell />)
+
+    await waitFor(() => {
+      expect(useSessionStore.getState().activeSessionId).toBe('session-1')
+    })
+
+    mocks.tabState.activeTabId = '__settings__'
+    rerender(<AppShell />)
+    expect(useSessionStore.getState().activeSessionId).toBe('session-1')
+
+    mocks.tabState.activeTabId = 'team-member:synthetic'
+    mocks.tabState.tabs = [
+      ...mocks.tabState.tabs,
+      { sessionId: 'team-member:synthetic', title: 'Teammate', type: 'session', status: 'idle' },
+    ]
+    rerender(<AppShell />)
+    expect(useSessionStore.getState().activeSessionId).toBe('session-1')
+  })
+
+  it('restores the most recent open real session as Settings project context', async () => {
+    const restoredSessions = [
+      {
+        id: 'session-recent',
+        title: 'Recent project session',
+        createdAt: '2026-07-21T02:00:00.000Z',
+        modifiedAt: '2026-07-21T03:00:00.000Z',
+        messageCount: 2,
+        projectPath: '/workspace/recent',
+        workDir: '/workspace/recent',
+        workDirExists: true,
+      },
+      {
+        id: 'session-older',
+        title: 'Older project session',
+        createdAt: '2026-07-20T02:00:00.000Z',
+        modifiedAt: '2026-07-20T03:00:00.000Z',
+        messageCount: 1,
+        projectPath: '/workspace/older',
+        workDir: '/workspace/older',
+        workDirExists: true,
+      },
+    ]
+    mocks.tabState.activeTabId = '__settings__'
+    mocks.tabState.tabs = [
+      { sessionId: 'session-older', title: 'Older project session', type: 'session', status: 'idle' },
+      { sessionId: '__settings__', title: 'Settings', type: 'settings', status: 'idle' },
+      { sessionId: 'team-member:synthetic', title: 'Teammate', type: 'session', status: 'idle' },
+      { sessionId: 'session-recent', title: 'Recent project session', type: 'session', status: 'idle' },
+    ]
+
+    const { rerender } = render(<AppShell />)
+
+    expect(useSessionStore.getState().activeSessionId).toBeNull()
+    act(() => {
+      useSessionStore.setState({ sessions: restoredSessions })
+    })
+
+    await waitFor(() => {
+      expect(useSessionStore.getState().activeSessionId).toBe('session-recent')
+    })
+
+    mocks.tabState.activeTabId = 'team-member:synthetic'
+    rerender(<AppShell />)
+    expect(useSessionStore.getState().activeSessionId).toBe('session-recent')
   })
 
   it('shows startup diagnostics instead of a blank shell when bootstrap fails', async () => {
@@ -193,6 +320,26 @@ describe('AppShell boot flow', () => {
     })
   })
 
+  it('keeps the pet selection synchronized with the main window current task', async () => {
+    mocks.isTauriRuntime = true
+    mocks.tabState.activeTabId = 'session-current'
+    mocks.tabState.tabs = [{
+      sessionId: 'session-current',
+      title: 'Current session',
+      type: 'session',
+      status: 'running',
+    }]
+
+    render(<AppShell />)
+
+    await screen.findByText('sidebar loaded')
+    await waitFor(() => {
+      expect(mocks.updatePetPreferences).toHaveBeenCalledWith({
+        lastSessionId: 'session-current',
+      })
+    })
+  })
+
   it('opens a trace tab from a session-scoped trace deep link', async () => {
     window.history.pushState({}, '', '/?traceSessionId=session-deep-link')
 
@@ -200,12 +347,33 @@ describe('AppShell boot flow', () => {
 
     await screen.findByText('sidebar loaded')
     await waitFor(() => {
-      expect(mocks.openTraceTab).toHaveBeenCalledWith(
-        'session-deep-link',
-        'Trace: session-',
-      )
+      // No session in the store yet, so the id prefix is all the title we have.
+      expect(mocks.openTraceTab).toHaveBeenCalledWith('session-deep-link', 'session-')
     })
     expect(mocks.connectToSession).not.toHaveBeenCalled()
+  })
+
+  it('titles a deep-linked trace tab with the session once the store knows it', async () => {
+    useSessionStore.setState({
+      sessions: [{
+        id: 'session-deep-link',
+        title: 'Debug stuck agent',
+        createdAt: '2026-06-09T10:00:00.000Z',
+        modifiedAt: '2026-06-09T10:10:00.000Z',
+        messageCount: 2,
+        projectPath: '/tmp',
+        workDir: '/tmp',
+        workDirExists: true,
+      }],
+    })
+    window.history.pushState({}, '', '/?traceSessionId=session-deep-link')
+
+    render(<AppShell />)
+
+    await screen.findByText('sidebar loaded')
+    await waitFor(() => {
+      expect(mocks.openTraceTab).toHaveBeenCalledWith('session-deep-link', 'Debug stuck agent')
+    })
   })
 
   it('renders a dedicated trace window shell from traceWindow deep links', async () => {
@@ -244,6 +412,49 @@ describe('AppShell boot flow', () => {
 
     expect(useUIStore.getState().pendingSettingsTab).toBe('about')
     expect(mocks.openTab).toHaveBeenCalledWith('__settings__', 'Settings', 'settings')
+  })
+
+  it('restores an enabled pet window and routes pet session navigation', async () => {
+    mocks.isTauriRuntime = true
+    mocks.getDesktopUiPreferences.mockResolvedValueOnce({
+      exists: true,
+      preferences: {
+        schemaVersion: 3,
+        sidebar: {},
+        profile: {},
+        pet: {
+          enabled: true,
+          selectedPetId: 'dada-code',
+          size: 144,
+          collapsed: false,
+          motionEnabled: true,
+          lastSessionId: 'session-pet',
+        },
+      },
+    })
+    const show = vi.fn().mockResolvedValue(undefined)
+    let navigate: ((sessionId: string) => void) | undefined
+    window.desktopHost = {
+      isDesktop: true,
+      pets: {
+        show,
+        onNavigateSession: vi.fn((handler: (sessionId: string) => void) => {
+          navigate = handler
+          return Promise.resolve(vi.fn())
+        }),
+      },
+      window: {
+        onNativeMenuNavigate: vi.fn().mockResolvedValue(vi.fn()),
+      },
+    } as any
+
+    render(<AppShell />)
+
+    await screen.findByText('sidebar loaded')
+    await waitFor(() => expect(show).toHaveBeenCalledTimes(1))
+    act(() => navigate?.('session-pet'))
+    expect(mocks.openTab).toHaveBeenCalledWith('session-pet', 'Session', 'session')
+    expect(mocks.connectToSession).toHaveBeenCalledWith('session-pet')
   })
 
   it('shows the H5 connection view in browser mode when startup needs H5 auth', async () => {
@@ -372,7 +583,10 @@ describe('AppShell boot flow', () => {
     expect(header).toHaveTextContent('Analyze recent commits')
     expect(header).toHaveTextContent('session.active')
     expect(header).toHaveTextContent('session.messages')
-    expect(screen.getByTestId('mobile-sidebar-toggle')).toHaveClass('h-10', 'w-10')
+    // 44px — the hamburger is the primary mobile navigation target, and the
+    // platform minimum for primary touch targets is 44, not the 40 it shipped
+    // at (IconButton's own size doc had the two tiers reversed).
+    expect(screen.getByTestId('mobile-sidebar-toggle')).toHaveClass('h-11', 'w-11')
   })
 
   it('keeps browser H5 mobile on chat tabs when settings was restored as active', async () => {

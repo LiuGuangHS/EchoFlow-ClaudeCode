@@ -9,8 +9,12 @@ import * as os from 'os'
 import { ProviderService } from '../services/providerService.js'
 import { handleProvidersApi } from '../api/providers.js'
 import { handleProxyRequest } from '../proxy/handler.js'
+import {
+  clearTraceCaptureStateForTests,
+  setTraceAppendBeforeWriteHookForTests,
+  traceCaptureService,
+} from '../services/traceCaptureService.js'
 import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
-import { clearTraceCaptureStateForTests, traceCaptureService } from '../services/traceCaptureService.js'
 import type { CreateProviderInput } from '../types/provider.js'
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
@@ -97,6 +101,49 @@ async function writeSettings(settings: Record<string, unknown>): Promise<void> {
 async function readProvidersConfig(): Promise<Record<string, unknown>> {
   const raw = await fs.readFile(path.join(echoFlowDir(), 'providers.json'), 'utf-8')
   return JSON.parse(raw) as Record<string, unknown>
+}
+
+async function waitForCompletedProxyTrace(sessionId: string) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const trace = await traceCaptureService.getSessionTrace(sessionId)
+    if (
+      trace.calls.some((call) => call.response) &&
+      trace.events.some((event) => event.phase === 'upstream_fetch_completed')
+    ) {
+      return trace
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  return traceCaptureService.getSessionTrace(sessionId)
+}
+
+function blockNextTraceAppend() {
+  let releaseWrite: () => void = () => {}
+  const blockedWrite = new Promise<void>((resolve) => {
+    releaseWrite = resolve
+  })
+  let signalBlocked: () => void = () => {}
+  const writeBlocked = new Promise<void>((resolve) => {
+    signalBlocked = resolve
+  })
+
+  setTraceAppendBeforeWriteHookForTests(async () => {
+    setTraceAppendBeforeWriteHookForTests(null)
+    signalBlocked()
+    await blockedWrite
+  })
+
+  return { releaseWrite, writeBlocked }
+}
+
+async function settlesBeforeBlockedTraceWrite<T>(promise: Promise<T>): Promise<T | null> {
+  return Promise.race([
+    promise,
+    // The trace hook is already blocked, so this timeout is only a failure
+    // bound. Keep it generous enough that a busy CI worker cannot masquerade
+    // as response/trace coupling.
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), 1_000)),
+  ])
 }
 
 // =============================================================================
@@ -238,13 +285,13 @@ describe('ProviderService', () => {
       const env = settings.env as Record<string, string>
       expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('deepseek-ai/DeepSeek-V4-Pro')
       expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe(
-        'thinking,effort,adaptive_thinking,max_effort',
+        'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
       )
       expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES).toBe(
-        'thinking,effort,adaptive_thinking,max_effort',
+        'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
       )
       expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES).toBe(
-        'thinking,effort,adaptive_thinking,max_effort',
+        'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
       )
     })
 
@@ -321,7 +368,7 @@ describe('ProviderService', () => {
 
       const settings = await readSettings()
       const env = settings.env as Record<string, string>
-      expect(env.CC_HAHA_SEND_DISABLED_THINKING).toBeUndefined()
+      expect(env.ECHOFLOW_SEND_DISABLED_THINKING).toBeUndefined()
       expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe(
         'thinking,effort,adaptive_thinking,max_effort',
       )
@@ -526,7 +573,7 @@ describe('ProviderService', () => {
         await svc.activateProvider(provider.id)
 
         const env = (await readSettings()).env as Record<string, string>
-        expect(env.ECHOFLOW_OPENAI_OAUTH_PROVIDER).toBeUndefined()
+        expect(env.CC_HAHA_OPENAI_OAUTH_PROVIDER).toBeUndefined()
         expect(env.CC_HAHA_OPENAI_OAUTH_PROVIDER).toBeUndefined()
         expect(env.OPENAI_CODEX_OAUTH_FILE).toBeUndefined()
         expect(env.ANTHROPIC_BASE_URL).toBe('https://api.example.com')
@@ -584,9 +631,9 @@ describe('ProviderService', () => {
         const config = await readProvidersConfig()
         const env = (await readSettings()).env as Record<string, string>
         expect(config.activeId).toBe('grok-official')
-        expect(env.CC_HAHA_GROK_OAUTH_PROVIDER).toBe('1')
+        expect(env.ECHOFLOW_GROK_OAUTH_PROVIDER).toBe('1')
         expect(env.GROK_OAUTH_FILE).toBe(
-          path.join(tmpDir, 'cc-haha', 'grok-oauth.json'),
+          path.join(tmpDir, 'echoflow-code', 'grok-oauth.json'),
         )
         expect(env.ANTHROPIC_MODEL).toBe('grok-4.5')
         expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('grok-4.5')
@@ -597,9 +644,9 @@ describe('ProviderService', () => {
       })
 
       test('auth status reports Grok Official from the isolated Grok token file', async () => {
-        await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+        await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
         await fs.writeFile(
-          path.join(tmpDir, 'cc-haha', 'grok-oauth.json'),
+          path.join(tmpDir, 'echoflow-code', 'grok-oauth.json'),
           JSON.stringify({
             accessToken: 'grok-access',
             refreshToken: 'grok-refresh',
@@ -1107,20 +1154,34 @@ describe('ProviderService', () => {
       expect(dummyRuntimeEnv.ANTHROPIC_AUTH_TOKEN).toBe('dummy')
     })
 
-    test('proxy providers keep proxy-managed auth regardless of auth strategy', async () => {
-      const svc = new ProviderService()
-      const provider = await svc.addProvider(sampleInput({
-        apiFormat: 'openai_chat',
-        authStrategy: 'auth_token',
-      }))
+    test('proxy providers keep transient desktop auth out of persisted settings', async () => {
+      const originalLocalAccessToken = process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
+      process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
 
-      await svc.activateProvider(provider.id)
+      try {
+        const svc = new ProviderService()
+        for (const apiFormat of ['openai_chat', 'openai_responses'] as const) {
+          const provider = await svc.addProvider(sampleInput({
+            apiFormat,
+            authStrategy: 'auth_token',
+          }))
 
-      const settings = await readSettings()
-      const env = settings.env as Record<string, string>
-      expect(env.ANTHROPIC_API_KEY).toBe('proxy-managed')
-      expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
-      expect(env.ENABLE_TOOL_SEARCH).toBeUndefined()
+          await svc.activateProvider(provider.id)
+
+          const settings = await readSettings()
+          const env = settings.env as Record<string, string>
+          expect(env.ANTHROPIC_API_KEY).toBe('proxy-managed')
+          expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
+          expect(env.ENABLE_TOOL_SEARCH).toBeUndefined()
+          expect(JSON.stringify(settings)).not.toContain('desktop-local-secret')
+        }
+      } finally {
+        if (originalLocalAccessToken === undefined) {
+          delete process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
+        } else {
+          process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = originalLocalAccessToken
+        }
+      }
     })
 
     test('should include preset default env on activation and runtime env', async () => {
@@ -1348,7 +1409,9 @@ describe('ProviderService', () => {
   describe('handleProxyRequest', () => {
     test('records a session trace for proxied OpenAI Chat calls', async () => {
       const originalFetch = globalThis.fetch
-      globalThis.fetch = mock(async () => {
+      const upstreamHeaders: Headers[] = []
+      globalThis.fetch = mock(async (_input: string | URL | Request, init?: RequestInit) => {
+        upstreamHeaders.push(new Headers(init?.headers))
         return new Response(JSON.stringify({
           id: 'chatcmpl-trace',
           object: 'chat.completion',
@@ -1371,6 +1434,7 @@ describe('ProviderService', () => {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            Authorization: 'Bearer desktop-local-secret',
             'X-Claude-Code-Session-Id': 'session-proxy-trace',
           },
           body: JSON.stringify({
@@ -1381,7 +1445,7 @@ describe('ProviderService', () => {
         })
 
         const res = await handleProxyRequest(req, new URL(req.url))
-        const trace = await traceCaptureService.getSessionTrace('session-proxy-trace')
+        const trace = await waitForCompletedProxyTrace('session-proxy-trace')
 
         expect(res.status).toBe(200)
         expect(trace.summary.apiCalls).toBe(1)
@@ -1396,7 +1460,126 @@ describe('ProviderService', () => {
         })
         expect(trace.calls[0].request.body.preview).toContain('capture this call')
         expect(trace.calls[0].response.body.preview).toContain('chatcmpl-trace')
+        expect(upstreamHeaders[0].get('Authorization')).toBe('Bearer sk-test-key-123')
+        expect(upstreamHeaders[0].get('Authorization')).not.toContain('desktop-local-secret')
       } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+
+    test('returns a non-streaming proxy response before trace persistence finishes', async () => {
+      const originalFetch = globalThis.fetch
+      globalThis.fetch = mock(async () => new Response(JSON.stringify({
+        id: 'chatcmpl-trace-background',
+        object: 'chat.completion',
+        created: 0,
+        model: 'gpt-4',
+        choices: [{ index: 0, message: { role: 'assistant', content: 'background trace ok' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })) as typeof fetch
+
+      const svc = new ProviderService()
+      const provider = await svc.addProvider(sampleInput({ apiFormat: 'openai_chat' }))
+      await svc.activateProvider(provider.id)
+      const { releaseWrite, writeBlocked } = blockNextTraceAppend()
+      let released = false
+      let responsePromise: Promise<Response> | undefined
+
+      try {
+        const req = new Request('http://localhost:3456/proxy/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Claude-Code-Session-Id': 'session-non-stream-background-trace',
+          },
+          body: JSON.stringify({
+            model: 'gpt-4',
+            max_tokens: 64,
+            messages: [{ role: 'user', content: 'return before trace persistence' }],
+          }),
+        })
+
+        responsePromise = handleProxyRequest(req, new URL(req.url))
+        await writeBlocked
+        const response = await settlesBeforeBlockedTraceWrite(responsePromise)
+        expect(response).not.toBeNull()
+        expect(response?.status).toBe(200)
+        await expect(response?.json()).resolves.toMatchObject({
+          content: [{ text: 'background trace ok' }],
+        })
+
+        releaseWrite()
+        released = true
+        const trace = await waitForCompletedProxyTrace('session-non-stream-background-trace')
+        expect(trace.calls[0]?.response?.body.preview).toContain('chatcmpl-trace-background')
+        expect(trace.events.at(-1)?.phase).toBe('upstream_fetch_completed')
+      } finally {
+        if (!released) releaseWrite()
+        await responsePromise?.catch(() => undefined)
+        globalThis.fetch = originalFetch
+      }
+    })
+
+    test('delivers streaming EOF before trace persistence finishes', async () => {
+      const originalFetch = globalThis.fetch
+      const encoder = new TextEncoder()
+      globalThis.fetch = mock(async () => new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode([
+            'data: {"id":"chatcmpl-stream-trace","object":"chat.completion.chunk","model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant","content":"streamed"},"finish_reason":null}]}',
+            '',
+            'data: {"id":"chatcmpl-stream-trace","object":"chat.completion.chunk","model":"gpt-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}',
+            '',
+            'data: [DONE]',
+            '',
+          ].join('\n')))
+          controller.close()
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      })) as typeof fetch
+
+      const svc = new ProviderService()
+      const provider = await svc.addProvider(sampleInput({ apiFormat: 'openai_chat' }))
+      await svc.activateProvider(provider.id)
+      const { releaseWrite, writeBlocked } = blockNextTraceAppend()
+      let released = false
+      let bodyPromise: Promise<string> | undefined
+
+      try {
+        const req = new Request('http://localhost:3456/proxy/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Claude-Code-Session-Id': 'session-stream-background-trace',
+          },
+          body: JSON.stringify({
+            model: 'gpt-4',
+            max_tokens: 64,
+            stream: true,
+            messages: [{ role: 'user', content: 'finish before trace persistence' }],
+          }),
+        })
+
+        const response = await handleProxyRequest(req, new URL(req.url))
+        bodyPromise = response.text()
+        await writeBlocked
+        const body = await settlesBeforeBlockedTraceWrite(bodyPromise)
+        expect(body).not.toBeNull()
+        expect(body).toContain('message_stop')
+
+        releaseWrite()
+        released = true
+        const trace = await waitForCompletedProxyTrace('session-stream-background-trace')
+        expect(trace.calls[0]?.response?.body.preview).toContain('message_stop')
+        expect(trace.events.at(-1)?.phase).toBe('upstream_fetch_completed')
+      } finally {
+        if (!released) releaseWrite()
+        await bodyPromise?.catch(() => undefined)
         globalThis.fetch = originalFetch
       }
     })
@@ -1454,9 +1637,12 @@ describe('ProviderService', () => {
 
     test('forwards a stable prompt_cache_key from client session metadata for OpenAI Responses upstreams', async () => {
       const originalFetch = globalThis.fetch
-      const calls: Array<{ body: Record<string, unknown> }> = []
+      const calls: Array<{ body: Record<string, unknown>; headers: Headers }> = []
       globalThis.fetch = mock(async (_url: string | URL | Request, init?: RequestInit) => {
-        calls.push({ body: JSON.parse(String(init?.body)) as Record<string, unknown> })
+        calls.push({
+          body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+          headers: new Headers(init?.headers),
+        })
         return new Response(JSON.stringify({
           id: 'resp-1',
           object: 'response',
@@ -1478,7 +1664,10 @@ describe('ProviderService', () => {
 
         const req = new Request('http://localhost:3456/proxy/v1/messages', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer desktop-local-secret',
+          },
           body: JSON.stringify({
             model: 'gpt-5.4',
             max_tokens: 64,
@@ -1490,6 +1679,8 @@ describe('ProviderService', () => {
         const res = await handleProxyRequest(req, new URL(req.url))
         expect(res.status).toBe(200)
         expect(calls[0].body.prompt_cache_key).toBe('sess-42aa')
+        expect(calls[0].headers.get('Authorization')).toBe('Bearer sk-test-key-123')
+        expect(calls[0].headers.get('Authorization')).not.toContain('desktop-local-secret')
       } finally {
         globalThis.fetch = originalFetch
       }
@@ -1633,6 +1824,114 @@ describe('ProviderService', () => {
         expect(result.connectivity.success).toBe(true)
         expect(calls[0].headers.Authorization).toBe('Bearer lmstudio')
         expect(calls[0].headers['x-api-key']).toBeUndefined()
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+
+    test('rejects destination and auth overrides before testing with a saved key', async () => {
+      const originalFetch = globalThis.fetch
+      const calls: string[] = []
+      globalThis.fetch = mock(async (url: string | URL | Request) => {
+        calls.push(String(url))
+        return new Response('{}', { status: 200 })
+      }) as typeof fetch
+
+      try {
+        const svc = new ProviderService()
+        const provider = await svc.addProvider(sampleInput())
+        const { req, url, segments } = makeRequest(
+          'POST',
+          `/api/providers/${provider.id}/test`,
+          {
+            baseUrl: 'https://override.example.com',
+            apiFormat: 'openai_chat',
+            authStrategy: 'auth_token',
+          },
+        )
+
+        const response = await handleProvidersApi(req, url, segments)
+
+        expect(response.status).toBe(400)
+        expect(calls).toEqual([])
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+
+    test('accepts a model-only override without changing a saved provider destination', async () => {
+      const originalFetch = globalThis.fetch
+      const calls: string[] = []
+      globalThis.fetch = mock(async (url: string | URL | Request) => {
+        calls.push(String(url))
+        return new Response(JSON.stringify({
+          type: 'message',
+          model: 'alternate-model',
+          content: [],
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }) as typeof fetch
+
+      try {
+        const svc = new ProviderService()
+        const provider = await svc.addProvider(sampleInput({
+          baseUrl: 'https://saved.example.com',
+        }))
+        const { req, url, segments } = makeRequest(
+          'POST',
+          `/api/providers/${provider.id}/test`,
+          { modelId: 'alternate-model' },
+        )
+
+        const response = await handleProvidersApi(req, url, segments)
+
+        expect(response.status).toBe(200)
+        expect(calls[0]).toContain('https://saved.example.com')
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+
+    test('keeps explicit draft provider tests independent from saved credentials', async () => {
+      const originalFetch = globalThis.fetch
+      const calls: Array<{ url: string; authorization: string | null }> = []
+      globalThis.fetch = mock(async (url: string | URL | Request, init?: RequestInit) => {
+        calls.push({
+          url: String(url),
+          authorization: new Headers(init?.headers).get('authorization'),
+        })
+        return new Response(JSON.stringify({
+          type: 'message',
+          model: 'draft-model',
+          content: [],
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }) as typeof fetch
+
+      try {
+        const { req, url, segments } = makeRequest(
+          'POST',
+          '/api/providers/test',
+          {
+            baseUrl: 'https://draft.example.com',
+            apiKey: 'draft-explicit-key',
+            modelId: 'draft-model',
+            apiFormat: 'anthropic',
+            authStrategy: 'auth_token',
+          },
+        )
+
+        const response = await handleProvidersApi(req, url, segments)
+
+        expect(response.status).toBe(200)
+        expect(calls).toEqual([{
+          url: 'https://draft.example.com/v1/messages',
+          authorization: 'Bearer draft-explicit-key',
+        }])
       } finally {
         globalThis.fetch = originalFetch
       }
@@ -1853,8 +2152,9 @@ describe('ProviderService', () => {
     })
 
     test('bypasses inherited system proxy when testing direct provider endpoints', async () => {
+      await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
       await fs.writeFile(
-        path.join(tmpDir, 'settings.json'),
+        path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'),
         JSON.stringify({
           network: {
             proxy: { mode: 'direct', url: '' },

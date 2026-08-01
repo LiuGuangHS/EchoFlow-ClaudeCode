@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 import { createOpenTargetService } from '../services/openTargetService.js'
 
-async function makeDir(prefix = 'cc-haha-open-target-') {
+async function makeDir(prefix = 'echoflow-code-open-target-') {
   return mkdtemp(join(tmpdir(), prefix))
 }
 
@@ -213,7 +213,7 @@ describe('openTargetService', () => {
   })
 
   it('launches command-first targets with argument arrays and the path as one argument', async () => {
-    const dir = await makeDir('cc-haha open-target-')
+    const dir = await makeDir('echoflow-code open-target-')
     const { service, launched } = createService('linux', {
       commands: { code: true },
     })
@@ -338,7 +338,7 @@ describe('openTargetService', () => {
 
   it('reports missing tilde paths with the expanded home path', async () => {
     const { service } = createService('darwin')
-    const missing = `~/cc-haha-missing-${Date.now()}/report.html`
+    const missing = `~/echoflow-code-missing-${Date.now()}/report.html`
 
     const rejection = expect(service.openTarget({ targetId: 'finder', path: missing })).rejects
     await rejection.toMatchObject({ code: 'OPEN_TARGET_PATH_MISSING' })
@@ -347,7 +347,7 @@ describe('openTargetService', () => {
 
   it('expands Windows backslash tilde paths on win32', async () => {
     const { service } = createService('win32')
-    const missing = `~\\cc-haha-missing-${Date.now()}\\report.html`
+    const missing = `~\\echoflow-code-missing-${Date.now()}\\report.html`
 
     const rejection = expect(service.openTarget({ targetId: 'explorer', path: missing })).rejects
     await rejection.toMatchObject({ code: 'OPEN_TARGET_PATH_MISSING' })

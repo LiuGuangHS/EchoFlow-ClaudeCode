@@ -13,6 +13,8 @@ const testFiles = [
   'src/server/__tests__/provider-settings-isolation.test.ts',
   'src/server/__tests__/provider-presets.test.ts',
   'src/server/__tests__/provider-runtime-env.test.ts',
+  'src/server/services/ccSwitchImport.test.ts',
+  'src/server/services/providerModelCatalog.test.ts',
   'src/services/api/client.test.ts',
   'src/services/compact/autoCompact.test.ts',
   'src/services/openaiAuth/client.test.ts',
@@ -32,7 +34,7 @@ const testFiles = [
 
 for (const testFile of testFiles) {
   console.log(`\n[provider-contract] ${testFile}`)
-  const sandboxHome = mkdtempSync(join(tmpdir(), 'cc-haha-provider-contract-'))
+  const sandboxHome = mkdtempSync(join(tmpdir(), 'echoflow-code-provider-contract-'))
   let exitCode = 1
   try {
     const proc = Bun.spawn([

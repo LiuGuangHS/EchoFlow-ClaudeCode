@@ -17,6 +17,10 @@ import {
   filterWhitespaceOnlyAssistantMessages,
 } from '../../utils/messages.js'
 import { getAgentModel } from '../../utils/model/agent.js'
+import {
+  isModelAlias,
+  type ModelAlias,
+} from '../../utils/model/aliases.js'
 import { getQuerySourceForAgent } from '../../utils/promptCategory.js'
 import {
   getAgentTranscript,
@@ -39,6 +43,13 @@ export type ResumeAgentResult = {
   description: string
   outputFile: string
 }
+
+export function resolveResumedAgentModelOverride(
+  model: unknown,
+): ModelAlias | undefined {
+  return typeof model === 'string' && isModelAlias(model) ? model : undefined
+}
+
 export async function resumeAgentBackground({
   agentId,
   prompt,
@@ -112,6 +123,7 @@ export async function resumeAgentBackground({
   }
 
   const uiDescription = meta?.description ?? '(resumed)'
+  const resumedModelOverride = resolveResumedAgentModelOverride(meta?.model)
 
   let forkParentSystemPrompt: SystemPrompt | undefined
   if (isResumedFork) {
@@ -151,7 +163,7 @@ export async function resumeAgentBackground({
   const resolvedAgentModel = getAgentModel(
     selectedAgent.model,
     toolUseContext.options.mainLoopModel,
-    undefined,
+    resumedModelOverride,
     permissionMode,
   )
 
@@ -176,7 +188,9 @@ export async function resumeAgentBackground({
       selectedAgent.agentType,
       isBuiltInAgent(selectedAgent),
     ),
-    model: undefined,
+    // Preserve the original Agent tool's per-invocation model precedence on
+    // follow-up, matching a fresh invocation of the same agent instance.
+    model: resumedModelOverride,
     // Fork resume: pass parent's system prompt (cache-identical prefix).
     // Non-fork: undefined → runAgent recomputes under wrapWithCwd so
     // getCwd() sees resumedWorktreePath.

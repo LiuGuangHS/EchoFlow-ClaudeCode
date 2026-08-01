@@ -6,7 +6,10 @@ import {
   APIUserAbortError,
 } from '@anthropic-ai/sdk'
 import type { QuerySource } from 'src/constants/querySource.js'
-import type { SystemAPIErrorMessage } from 'src/types/message.js'
+import type {
+  AssistantMessage,
+  SystemAPIErrorMessage,
+} from 'src/types/message.js'
 import { isAwsCredentialsProviderError } from 'src/utils/aws.js'
 import { logForDebugging } from 'src/utils/debug.js'
 import { logError } from 'src/utils/log.js'
@@ -175,9 +178,16 @@ export class FallbackTriggeredError extends Error {
  * path can surface a faithful API-error message.
  */
 export class RetriableStreamError extends Error {
-  constructor(public readonly originalError: unknown) {
+  public readonly bufferedMessages: readonly AssistantMessage[]
+
+  constructor(
+    public readonly originalError: unknown,
+    bufferedMessages: readonly AssistantMessage[] = [],
+  ) {
     super(errorMessage(originalError))
     this.name = 'RetriableStreamError'
+    this.bufferedMessages = bufferedMessages
+    Object.defineProperty(this, 'bufferedMessages', { enumerable: false })
     if (originalError instanceof Error && originalError.stack) {
       this.stack = originalError.stack
     }
@@ -209,6 +219,67 @@ export function isRetryableStreamError(error: unknown): boolean {
   return (
     message.includes('"type":"api_error"') ||
     message.includes('"type":"overloaded_error"')
+  )
+}
+
+/**
+ * Transport failures that mean the TCP/TLS connection under an *already
+ * established* stream died: a pooled keep-alive socket the peer had already
+ * closed, a proxy/NAT that dropped an idle-then-reused connection, or an
+ * upstream edge that reset the response mid-flight. Bun and Node/undici report
+ * the same physical failure under different codes.
+ */
+const STREAM_TRANSPORT_DISCONNECT_CODES = new Set([
+  'ECONNRESET',
+  'ECONNABORTED',
+  'EPIPE',
+  'UND_ERR_SOCKET',
+  'ERR_STREAM_PREMATURE_CLOSE',
+])
+
+/**
+ * Detect a transport disconnect raised while *consuming* an established stream.
+ *
+ * These reach neither retry layer on their own: withRetry only guards stream
+ * creation, and isRetryableStreamError only matches error payloads the upstream
+ * serialized into a 200 SSE body. A dead socket produces neither — under Bun it
+ * surfaces as a bare `Error` with `code: 'ECONNRESET'` and the message "The
+ * socket connection was closed unexpectedly", which is not an APIError at all.
+ * Hence the check walks the cause chain for a code instead of keying on type.
+ *
+ * Retrying is only safe behind a side-effect guard; see
+ * shouldRetryStreamAfterTransportDisconnect.
+ */
+export function isRetryableStreamTransportError(error: unknown): boolean {
+  const code = extractConnectionErrorDetails(error)?.code
+  return code !== undefined && STREAM_TRANSPORT_DISCONNECT_CODES.has(code)
+}
+
+/**
+ * Decide whether a mid-stream transport disconnect can be recovered by
+ * re-establishing the stream.
+ *
+ * SSE has no resume, so recovery is a full re-send — legitimate only while the
+ * failed attempt is still side-effect-free. That is exactly the boundary
+ * StreamAssistantCommitBuffer tracks: completed thinking/text stay buffered and
+ * are discarded with the attempt, but once a tool_use block completes or
+ * server-side tool activity starts, a re-send could duplicate a tool call
+ * (#766 / inc-4258), so the disconnect must surface to the user instead.
+ *
+ * A watchdog abort is excluded because it has its own retry path with a
+ * narrower safety check, and a user abort is not a fault to recover from.
+ */
+export function shouldRetryStreamAfterTransportDisconnect(input: {
+  error: unknown
+  hasCrossedSideEffectBoundary: boolean
+  streamIdleAborted: boolean
+  signalAborted: boolean
+}): boolean {
+  return (
+    !input.hasCrossedSideEffectBoundary &&
+    !input.streamIdleAborted &&
+    !input.signalAborted &&
+    isRetryableStreamTransportError(input.error)
   )
 }
 
@@ -454,16 +525,13 @@ export async function* withRetry<T>(
             )
             throw error
           }
-          // Ensure we have enough tokens for thinking + at least 1 output token
-          const minRequired =
-            (retryContext.thinkingConfig.type === 'enabled'
-              ? retryContext.thinkingConfig.budgetTokens
-              : 0) + 1
-          const adjustedMaxTokens = Math.max(
-            FLOOR_OUTPUT_TOKENS,
-            availableContext,
-            minRequired,
-          )
+          const adjustedMaxTokens = availableContext
+          if (
+            retryContext.maxTokensOverride !== undefined &&
+            adjustedMaxTokens >= retryContext.maxTokensOverride
+          ) {
+            throw new CannotRetryError(error, retryContext)
+          }
           retryContext.maxTokensOverride = adjustedMaxTokens
 
           logEvent('tengu_max_tokens_context_overflow_adjustment', {

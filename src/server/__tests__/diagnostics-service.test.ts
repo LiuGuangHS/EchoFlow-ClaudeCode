@@ -17,7 +17,7 @@ function diagnosticsDir(): string {
 }
 
 beforeEach(async () => {
-  tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cc-haha-diagnostics-test-'))
+  tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'echoflow-code-diagnostics-test-'))
   originalConfigDir = process.env.CLAUDE_CONFIG_DIR
   process.env.CLAUDE_CONFIG_DIR = tmpDir
 })
@@ -152,6 +152,61 @@ describe('DiagnosticsService', () => {
     expect(runtime).toContain('"nested"')
     expect(runtime).toContain('[REDACTED]')
     expect(runtime).not.toContain('sk-secret-token')
+  })
+
+  test('creates diagnostic directories and generated files with private permissions', async () => {
+    if (process.platform === 'win32') return
+    const service = new DiagnosticsService()
+
+    await service.recordEvent({
+      type: 'private_mode_probe',
+      severity: 'error',
+      summary: 'permission probe',
+    })
+    const bundle = await service.exportBundle()
+
+    expect((await fs.stat(service.getLogDir())).mode & 0o777).toBe(0o700)
+    expect((await fs.stat(service.getExportDir())).mode & 0o777).toBe(0o700)
+    expect((await fs.stat(service.getDiagnosticsPath())).mode & 0o777).toBe(0o600)
+    expect((await fs.stat(service.getRuntimeErrorsPath())).mode & 0o777).toBe(0o600)
+    expect((await fs.stat(bundle.path)).mode & 0o777).toBe(0o600)
+  })
+
+  test('rejects a symlinked diagnostics directory without changing or writing its target', async () => {
+    if (process.platform === 'win32') return
+    const service = new DiagnosticsService()
+    const unrelatedDir = path.join(tmpDir, 'unrelated-diagnostics-target')
+    const unrelatedFile = path.join(unrelatedDir, 'diagnostics.jsonl')
+    await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
+    await fs.mkdir(unrelatedDir, { mode: 0o755 })
+    await fs.writeFile(unrelatedFile, 'unrelated\n', { mode: 0o644 })
+    await fs.symlink(unrelatedDir, service.getLogDir(), 'dir')
+
+    await expect(service.getStatus()).rejects.toThrow(/symbolic link/i)
+
+    expect((await fs.stat(unrelatedDir)).mode & 0o777).toBe(0o755)
+    expect((await fs.stat(unrelatedFile)).mode & 0o777).toBe(0o644)
+    expect(await fs.readFile(unrelatedFile, 'utf-8')).toBe('unrelated\n')
+  })
+
+  test('rejects a symlinked diagnostics file without changing or appending its target', async () => {
+    if (process.platform === 'win32') return
+    const service = new DiagnosticsService()
+    const unrelatedFile = path.join(tmpDir, 'unrelated-diagnostics.jsonl')
+    await fs.mkdir(service.getLogDir(), { recursive: true })
+    await fs.writeFile(unrelatedFile, 'unrelated\n', { mode: 0o644 })
+    await fs.symlink(unrelatedFile, service.getDiagnosticsPath(), 'file')
+
+    const result = await service.recordEvent({
+      type: 'symlink_write_probe',
+      severity: 'error',
+      summary: 'must not escape',
+    })
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error).toMatch(/symbolic link/i)
+    expect((await fs.stat(unrelatedFile)).mode & 0o777).toBe(0o644)
+    expect(await fs.readFile(unrelatedFile, 'utf-8')).toBe('unrelated\n')
   })
 
   test('defaults an unclassified event to info, not error', async () => {
@@ -381,6 +436,69 @@ describe('DiagnosticsService', () => {
     expect(archiveText).not.toContain('token=x')
     expect(archiveText).not.toContain('sk-provider-secret')
     expect(archiveText).not.toContain('provider-secret')
+  })
+
+  test('redacts secret-bearing provider metadata from the exported summary', async () => {
+    const service = new DiagnosticsService()
+    await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
+    await fs.writeFile(
+      path.join(tmpDir, 'echoflow-code', 'providers.json'),
+      JSON.stringify({
+        activeId: 'provider-sk-proj-ACTIVESECRET',
+        providers: [{
+          id: 'provider-sk-proj-IDSECRET',
+          name: 'Provider sk-ant-api03-NAMESECRET',
+          presetId: 'custom',
+          apiFormat: 'anthropic',
+          baseUrl: 'https://api.example.com',
+          models: {
+            main: 'sk-proj-MODELSECRET',
+          },
+        }],
+      }),
+      'utf-8',
+    )
+
+    const bundle = await service.exportBundle()
+    const providerSummary = readTarEntry(await fs.readFile(bundle.path), 'providers-summary.json')
+
+    expect(providerSummary).toContain('[REDACTED]')
+    expect(providerSummary).not.toContain('ACTIVESECRET')
+    expect(providerSummary).not.toContain('IDSECRET')
+    expect(providerSummary).not.toContain('NAMESECRET')
+    expect(providerSummary).not.toContain('MODELSECRET')
+  })
+
+  test('redacts every shared scanner secret family from exported provider metadata', async () => {
+    const service = new DiagnosticsService()
+    const secrets = [
+      `AIza${'A'.repeat(35)}`,
+      `gho_${'B'.repeat(36)}`,
+      `ghr_${'C'.repeat(36)}`,
+      'xoxb-1234567890-1234567890-abcdefghijkl',
+    ]
+    await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
+    await fs.writeFile(
+      path.join(tmpDir, 'echoflow-code', 'providers.json'),
+      JSON.stringify({
+        activeId: secrets[0],
+        providers: [{
+          id: secrets[1],
+          name: `Provider ${secrets[2]}`,
+          presetId: 'custom',
+          apiFormat: 'anthropic',
+          baseUrl: 'https://api.example.com',
+          models: { main: secrets[3] },
+        }],
+      }),
+      'utf-8',
+    )
+
+    const bundle = await service.exportBundle()
+    const providerSummary = readTarEntry(await fs.readFile(bundle.path), 'providers-summary.json')
+
+    expect(providerSummary).toContain('[REDACTED]')
+    for (const secret of secrets) expect(providerSummary).not.toContain(secret)
   })
 
   test('leaves exported runtime-errors.log empty when only info events exist', async () => {
@@ -800,6 +918,66 @@ describe('DiagnosticsService', () => {
 })
 
 describe('diagnostics API', () => {
+  test('exposes local-index status and a no-path rebuild action', async () => {
+    const statusSpy = spyOn(diagnosticsService, 'getLocalIndexStatus').mockReturnValue({
+      mode: 'on',
+      state: 'degraded',
+      discovered: 12,
+      indexed: 10,
+      degradedSources: 2,
+      databaseBytes: 4096,
+      walBytes: 1024,
+      lastUpdatedAt: '2026-07-15T00:00:00.000Z',
+      lastErrorCode: 'SQLITE_BUSY',
+    })
+    const rebuildSpy = spyOn(diagnosticsService, 'rebuildLocalIndex').mockResolvedValue({
+      mode: 'on',
+      state: 'building',
+      discovered: 0,
+      indexed: 0,
+      degradedSources: 0,
+      databaseBytes: 0,
+      walBytes: 0,
+      lastUpdatedAt: null,
+      lastErrorCode: null,
+    })
+    try {
+      const getRequest = makeRequest('GET', '/api/diagnostics/local-index')
+      const getResponse = await handleDiagnosticsApi(
+        getRequest.req,
+        getRequest.url,
+        getRequest.segments,
+      )
+      expect(getResponse.status).toBe(200)
+      expect(await getResponse.json()).toMatchObject({
+        mode: 'on',
+        state: 'degraded',
+        lastErrorCode: 'SQLITE_BUSY',
+      })
+
+      const postRequest = new Request(
+        'http://localhost:3456/api/diagnostics/local-index/rebuild',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: '/private/must-not-be-used.sqlite' }),
+        },
+      )
+      const postUrl = new URL(postRequest.url)
+      const postResponse = await handleDiagnosticsApi(
+        postRequest,
+        postUrl,
+        postUrl.pathname.split('/').filter(Boolean),
+      )
+      expect(postResponse.status).toBe(200)
+      expect(rebuildSpy).toHaveBeenCalledTimes(1)
+      expect(rebuildSpy.mock.calls[0]).toEqual([])
+    } finally {
+      statusSpy.mockRestore()
+      rebuildSpy.mockRestore()
+    }
+  })
+
   test('returns status, events, export path, and supports clearing logs', async () => {
     const service = diagnosticsService
     await service.recordEvent({
@@ -812,7 +990,7 @@ describe('diagnostics API', () => {
     const statusRes = await handleDiagnosticsApi(statusReq.req, statusReq.url, statusReq.segments)
     expect(statusRes.status).toBe(200)
     const status = await statusRes.json() as { logDir: string; cliDiagnosticsPath: string; recentErrorCount: number }
-    expect(status.logDir).toContain(path.join('echoflow', 'diagnostics'))
+    expect(status.logDir).toContain(path.join('echoflow-code', 'diagnostics'))
     expect(status.cliDiagnosticsPath).toContain('cli-diagnostics.jsonl')
     expect(status.recentErrorCount).toBe(1)
 
@@ -892,7 +1070,7 @@ describe('diagnostics API', () => {
         activeId: 'provider-issue-report',
         providers: [{
           id: 'provider-issue-report',
-          name: 'Issue Report Provider',
+          name: '_foo_ Issue Report Provider',
           apiFormat: 'anthropic',
           baseUrl: 'https://user:pass@api.example.com/private?token=x',
           models: { main: 'main-model' },
@@ -923,6 +1101,9 @@ describe('diagnostics API', () => {
     expect(body.report).toContain('## 复现步骤')
     expect(body.report).toContain('## 错误摘要')
     expect(body.report).toContain('CLI_EXITED')
+    expect(body.report).not.toContain('CLI&#95;EXITED')
+    expect(body.report).not.toContain('_foo_')
+    expect(body.report).toContain('&#95;foo&#95;')
     expect(body.report).toContain('api.example.com')
     expect(body.report).not.toContain('user:pass')
     expect(body.report).not.toContain('/private')

@@ -85,7 +85,7 @@ describe('Electron updater service', () => {
 
   it('skips electron-updater when packaged update config is absent', async () => {
     const localUpdater = fakeUpdater()
-    const tempDir = mkdtempSync(join(tmpdir(), 'cc-haha-updater-'))
+    const tempDir = mkdtempSync(join(tmpdir(), 'echoflow-code-updater-'))
     try {
       const service = new ElectronUpdaterService(localUpdater, undefined, {
         updateConfigPath: join(tempDir, 'app-update.yml'),

@@ -96,6 +96,50 @@ describe('withStreamRetry', () => {
     delete process.env[RETRY_ENV]
   })
 
+  // Transport disconnects reach this wrapper as a bare Error, not an APIError —
+  // the first RetriableStreamError payload that is not an SDK error object. The
+  // recovery path must survive one, including the exhaustion branch that asks
+  // getAssistantMessageFromError to render it.
+  test('recovers from a mid-stream socket reset and reports it if it persists', async () => {
+    process.env[RETRY_ENV] = '1'
+    const socketReset = () =>
+      new RetriableStreamError(
+        Object.assign(
+          new Error('The socket connection was closed unexpectedly.'),
+          { code: 'ECONNRESET' },
+        ),
+      )
+
+    let calls = 0
+    const recovers = () =>
+      // biome-ignore lint/suspicious/noExplicitAny: mock stream messages
+      (async function* (): AsyncGenerator<any, void> {
+        calls++
+        if (calls === 1) {
+          yield { type: 'stream_event', event: { type: 'message_start' } }
+          throw socketReset()
+        }
+        yield { type: 'assistant', message: { content: [] }, uuid: 'recovered' }
+      })()
+
+    const recovered = await collect(withStreamRetry(recovers, 'test-model', []))
+    expect(calls).toBe(2)
+    expect(recovered.at(-1)?.uuid).toBe('recovered')
+    expect(recovered.some(m => m.isApiErrorMessage)).toBe(false)
+
+    const persists = () =>
+      // biome-ignore lint/suspicious/noExplicitAny: mock stream messages
+      (async function* (): AsyncGenerator<any, void> {
+        throw socketReset()
+      })()
+
+    const failed = await collect(withStreamRetry(persists, 'test-model', []))
+    const last = failed.at(-1)
+    expect(last?.type).toBe('assistant')
+    expect(last?.isApiErrorMessage).toBe(true)
+    delete process.env[RETRY_ENV]
+  })
+
   test('does not retry a non-RetriableStreamError; rethrows it', async () => {
     let calls = 0
     const attempt = () =>
@@ -125,6 +169,52 @@ describe('withStreamRetry', () => {
 
     expect(calls).toBe(1)
     expect(out.at(-1)?.type).toBe('assistant')
+    expect(out.at(-1)?.isApiErrorMessage).toBe(true)
+    delete process.env[RETRY_ENV]
+  })
+
+  test('yields completed text from only the final exhausted attempt', async () => {
+    process.env[RETRY_ENV] = '1'
+    let calls = 0
+    const attempt = () =>
+      // biome-ignore lint/suspicious/noExplicitAny: mock stream messages
+      (async function* (): AsyncGenerator<any, void> {
+        calls++
+        throw new RetriableStreamError(
+          new Error('socket reset'),
+          [
+            {
+              type: 'assistant',
+              message: {
+                id: `response-${calls}`,
+                type: 'message',
+                role: 'assistant',
+                model: 'test-model',
+                content: [{ type: 'text', text: `partial-${calls}` }],
+                stop_reason: null,
+                stop_sequence: null,
+                usage: {
+                  input_tokens: 0,
+                  output_tokens: 0,
+                },
+              },
+              uuid: `partial-${calls}`,
+              timestamp: new Date().toISOString(),
+            },
+          ],
+        )
+      })()
+
+    const out = await collect(withStreamRetry(attempt, 'test-model', []))
+    const partials = out.filter(
+      message =>
+        message.type === 'assistant' &&
+        typeof message.uuid === 'string' &&
+        message.uuid.startsWith('partial-'),
+    )
+
+    expect(calls).toBe(2)
+    expect(partials.map(message => message.uuid)).toEqual(['partial-2'])
     expect(out.at(-1)?.isApiErrorMessage).toBe(true)
     delete process.env[RETRY_ENV]
   })

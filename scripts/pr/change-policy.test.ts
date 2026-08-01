@@ -33,7 +33,9 @@ describe('evaluateChangePolicy', () => {
   test('keeps docs-only changes on the docs lane', () => {
     const result = evaluateChangePolicy([
       'docs/index.md',
+      'site/src/App.tsx',
       'README.md',
+      'README.zh-CN.md',
     ])
 
     expect(result.blocked).toBe(false)
@@ -114,11 +116,21 @@ describe('evaluateChangePolicy', () => {
     expect(result.checks.policy).toBe(true)
   })
 
+  test('routes desktop UI preference schema changes to the persistence check', () => {
+    const result = evaluateChangePolicy([
+      'src/server/services/desktopUiPreferencesService.ts',
+      'src/server/__tests__/desktop-ui-preferences.test.ts',
+    ])
+
+    expect(result.checks.server).toBe(true)
+    expect(result.checks.persistence).toBe(true)
+  })
+
   test('keeps quality ownership and contributor contracts on the policy lane', () => {
     const result = evaluateChangePolicy([
       '.github/CODEOWNERS',
       '.github/copilot-instructions.md',
-      'docs/guide/contributing.md',
+      'docs/internals/contributing.md',
     ])
 
     expect(result.checks.policy).toBe(true)

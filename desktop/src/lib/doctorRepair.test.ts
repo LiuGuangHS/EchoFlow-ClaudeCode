@@ -20,8 +20,8 @@ describe('doctorRepair', () => {
     for (const key of SAFE_DOCTOR_STORAGE_KEYS) {
       window.localStorage.setItem(key, `${key}-value`)
     }
-    window.localStorage.setItem('cc-haha-chat-history', 'preserve')
-    window.localStorage.setItem('cc-haha-provider-config', 'preserve')
+    window.localStorage.setItem('echoflow-code-chat-history', 'preserve')
+    window.localStorage.setItem('echoflow-code-provider-config', 'preserve')
 
     const result = runLocalDoctorRepair(window.localStorage)
 
@@ -30,8 +30,19 @@ describe('doctorRepair', () => {
     for (const key of SAFE_DOCTOR_STORAGE_KEYS) {
       expect(window.localStorage.getItem(key)).toBeNull()
     }
-    expect(window.localStorage.getItem('cc-haha-chat-history')).toBe('preserve')
-    expect(window.localStorage.getItem('cc-haha-provider-config')).toBe('preserve')
+    expect(window.localStorage.getItem('echoflow-code-chat-history')).toBe('preserve')
+    expect(window.localStorage.getItem('echoflow-code-provider-config')).toBe('preserve')
+  })
+
+  it('resets the appearance completely, not just the applied theme', () => {
+    // The theme is three keys. Clearing only the applied one leaves the
+    // follow-the-system switch behind, so the reset would not restore the
+    // out-of-the-box appearance.
+    expect(SAFE_DOCTOR_STORAGE_KEYS).toEqual(expect.arrayContaining([
+      'echoflow-code-theme',
+      'echoflow-code-follow-system-theme',
+      'echoflow-code-light-theme',
+    ]))
   })
 
   it('keeps local repair non-throwing when storage access is blocked', () => {

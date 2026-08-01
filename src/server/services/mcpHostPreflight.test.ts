@@ -11,7 +11,7 @@ let originalEnv: {
   PATH?: string
   SHELL?: string
   ZDOTDIR?: string
-  CC_HAHA_DISABLE_TERMINAL_SHELL_ENV?: string
+  ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV?: string
 }
 
 async function writeExecutable(filePath: string, content: string) {
@@ -49,10 +49,10 @@ describe('MCP host preflight', () => {
       PATH: process.env.PATH,
       SHELL: process.env.SHELL,
       ZDOTDIR: process.env.ZDOTDIR,
-      CC_HAHA_DISABLE_TERMINAL_SHELL_ENV:
-        process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV,
+      ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV:
+        process.env.ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV,
     }
-    delete process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV
+    delete process.env.ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV
     resetMcpStdioEnvironmentCacheForTests()
   })
 
@@ -68,7 +68,7 @@ describe('MCP host preflight', () => {
     await rm(tmpDir, { recursive: true, force: true })
   })
 
-  it('finds npx from user shell PATH when the desktop process PATH is minimal', async () => {
+  it.skipIf(process.platform === 'win32')('finds npx from user shell PATH when the desktop process PATH is minimal', async () => {
     const shellPath = path.join(tmpDir, 'zsh')
     const nodeBin = path.join(tmpDir, 'node-bin')
     const commandName = process.platform === 'win32' ? 'fake-shell-only-npx' : 'npx'

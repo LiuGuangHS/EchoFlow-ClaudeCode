@@ -20,7 +20,10 @@ import {
   conversationService,
 } from '../services/conversationService.js'
 import { computerUseApprovalService } from '../services/computerUseApprovalService.js'
-import { sessionService } from '../services/sessionService.js'
+import {
+  sessionService,
+  type SessionTaskNotification,
+} from '../services/sessionService.js'
 import { SettingsService } from '../services/settingsService.js'
 import { ProviderService } from '../services/providerService.js'
 import { isOpenAIOfficialProviderId } from '../services/openaiOfficialProvider.js'
@@ -55,6 +58,10 @@ import {
 } from '../../utils/commandMetadata.js'
 import { shouldCreateWorktreeForSessionLaunch } from '../services/repositoryLaunchService.js'
 import { getDisconnectGraceMs } from './disconnectGraceConfig.js'
+import {
+  isPetClientMessageAllowed,
+  toPetServerMessage,
+} from '../petAccessPolicy.js'
 
 const settingsService = new SettingsService()
 const providerService = new ProviderService()
@@ -86,10 +93,10 @@ const sessionSlashCommands = new Map<string, SessionSlashCommand[]>()
 const PENDING_PERMISSION_DISCONNECT_CLEANUP_MS = 30 * 60_000
 const sessionCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>()
 /**
- * Per-session removers for the turn-completion watcher (issue #764). When the
- * last client disconnects while a turn is still running, we let the turn finish
- * in the background instead of killing the CLI, then start the idle grace timer
- * once the result arrives. The remover is also cleared on reconnect/cleanup.
+ * Per-session removers for the active-work watcher (issue #764). When the last
+ * client disconnects while a turn or background task is still running, we let
+ * that work finish instead of killing the CLI, then start the idle grace timer.
+ * The remover is also cleared on reconnect/cleanup.
  */
 const sessionDisconnectWatchers = new Map<string, () => void>()
 
@@ -124,8 +131,142 @@ type ActiveUserTurnState = {
 
 const runtimeOverrides = new Map<string, RuntimeOverride>()
 const activeUserTurns = new Map<string, ActiveUserTurnState>()
+const activeBackgroundTaskIds = new Map<string, Set<string>>()
 const deferredRuntimeRestarts = new Map<string, RuntimeOverride>()
 const deferredPermissionModes = new Map<string, PermissionMode>()
+
+export type SessionChatActivityState =
+  | 'waiting'
+  | 'failed'
+  | 'review'
+  | 'running'
+  | 'idle'
+
+/**
+ * Pet/activity status deliberately reuses the authoritative WebSocket turn and
+ * permission state above. Only failures and the legacy REST queue fallback
+ * need their own memory; successful completion returns directly to idle.
+ */
+const terminalSessionChatStates = new Map<string, 'failed'>()
+const legacyQueuedSessionChats = new Set<string>()
+const interruptedSessionChats = new Set<string>()
+
+function beginSessionChatActivity(sessionId: string): void {
+  terminalSessionChatStates.delete(sessionId)
+  legacyQueuedSessionChats.delete(sessionId)
+  interruptedSessionChats.delete(sessionId)
+}
+
+function failSessionChatActivity(sessionId: string): void {
+  legacyQueuedSessionChats.delete(sessionId)
+  interruptedSessionChats.delete(sessionId)
+  terminalSessionChatStates.set(sessionId, 'failed')
+}
+
+function settleSessionChatActivity(sessionId: string, cliMsg: any): void {
+  if (cliMsg?.type !== 'result') return
+
+  legacyQueuedSessionChats.delete(sessionId)
+  if (interruptedSessionChats.has(sessionId)) {
+    terminalSessionChatStates.delete(sessionId)
+    return
+  }
+  if (cliMsg.is_error) {
+    terminalSessionChatStates.set(sessionId, 'failed')
+    return
+  }
+
+  // A successful result is complete. Keeping the tab open does not imply that
+  // the user has an outstanding review action.
+  terminalSessionChatStates.delete(sessionId)
+}
+
+type CliBackgroundTaskLifecycle = {
+  taskId: string
+  running: boolean
+}
+
+function getCliBackgroundTaskLifecycle(cliMsg: any): CliBackgroundTaskLifecycle | null {
+  if (cliMsg?.type !== 'system') return null
+  const taskId = typeof cliMsg.task_id === 'string' ? cliMsg.task_id.trim() : ''
+  if (!taskId) return null
+
+  if (cliMsg.subtype === 'task_started') {
+    return { taskId, running: true }
+  }
+
+  if (cliMsg.subtype === 'task_notification' && cliMsg.status === 'running') {
+    return { taskId, running: true }
+  }
+
+  if (
+    cliMsg.subtype === 'task_notification' &&
+    (cliMsg.status === 'completed' ||
+      cliMsg.status === 'failed' ||
+      cliMsg.status === 'stopped' ||
+      cliMsg.status === 'killed')
+  ) {
+    return { taskId, running: false }
+  }
+
+  return null
+}
+
+function trackCliBackgroundTaskLifecycle(
+  sessionId: string,
+  cliMsg: any,
+): CliBackgroundTaskLifecycle | null {
+  const lifecycle = getCliBackgroundTaskLifecycle(cliMsg)
+  if (!lifecycle) return null
+
+  if (lifecycle.running) {
+    let taskIds = activeBackgroundTaskIds.get(sessionId)
+    if (!taskIds) {
+      taskIds = new Set()
+      activeBackgroundTaskIds.set(sessionId, taskIds)
+    }
+    taskIds.add(lifecycle.taskId)
+    return lifecycle
+  }
+
+  const taskIds = activeBackgroundTaskIds.get(sessionId)
+  taskIds?.delete(lifecycle.taskId)
+  if (taskIds?.size === 0) activeBackgroundTaskIds.delete(sessionId)
+  return lifecycle
+}
+
+function hasActiveBackgroundTasks(sessionId: string): boolean {
+  return (activeBackgroundTaskIds.get(sessionId)?.size ?? 0) > 0
+}
+
+export function getSessionChatActivityState(sessionId: string): SessionChatActivityState {
+  // An explicit stop wins over permission queues that the CLI has not emitted
+  // cancellation events for yet. Otherwise the stopped pet would remain stuck
+  // in waiting until that asynchronous cleanup arrived.
+  if (interruptedSessionChats.has(sessionId)) return 'idle'
+  if (
+    conversationService.getPendingPermissionRequests(sessionId).length > 0 ||
+    computerUseApprovalService.getPendingRequests(sessionId).length > 0
+  ) {
+    return 'waiting'
+  }
+  if (activeUserTurns.has(sessionId) || hasActiveBackgroundTasks(sessionId)) return 'running'
+  return terminalSessionChatStates.get(sessionId)
+    ?? (legacyQueuedSessionChats.has(sessionId) ? 'running' : 'idle')
+}
+
+/** Compatibility fallback for the legacy REST enqueue endpoint. */
+export function markSessionChatQueued(sessionId: string): void {
+  beginSessionChatActivity(sessionId)
+  legacyQueuedSessionChats.add(sessionId)
+}
+
+/** Compatibility reset for the legacy REST stop endpoint. */
+export function clearLegacySessionChatState(sessionId: string): void {
+  legacyQueuedSessionChats.delete(sessionId)
+  terminalSessionChatStates.delete(sessionId)
+  interruptedSessionChats.delete(sessionId)
+}
 const validPermissionModes = new Set<PermissionMode>([
   'default',
   'acceptEdits',
@@ -193,6 +334,7 @@ export type WebSocketData = {
   sessionId: string
   connectedAt: number
   channel: 'client' | 'sdk'
+  clientKind?: 'full' | 'pet'
   sdkToken: string | null
   serverPort: number
   serverHost: string
@@ -201,6 +343,8 @@ export type WebSocketData = {
 // Active WebSocket clients, grouped by session. Desktop, H5, and IM adapters can
 // legitimately watch the same running session at the same time.
 const activeSessions = new Map<string, Set<ServerWebSocket<WebSocketData>>>()
+let activePetClient: ServerWebSocket<WebSocketData> | null = null
+
 const clientOutputCallbacks = new Map<
   ServerWebSocket<WebSocketData>,
   {
@@ -208,6 +352,7 @@ const clientOutputCallbacks = new Map<
     callback: (cliMsg: any) => void
   }
 >()
+const taskNotificationPersistence = new Map<string, Map<string, Promise<void>>>()
 
 export const handleWebSocket = {
   open(ws: ServerWebSocket<WebSocketData>) {
@@ -223,6 +368,14 @@ export const handleWebSocket = {
       conversationService.attachSdkConnection(sessionId, ws)
       console.log(`[WS] SDK connected for session: ${sessionId}`)
       return
+    }
+
+    if (ws.data.clientKind === 'pet') {
+      const previousPetClient = activePetClient
+      activePetClient = ws
+      if (previousPetClient && previousPetClient !== ws) {
+        previousPetClient.close(1000, 'Pet session switched')
+      }
     }
 
     console.log(`[WS] Client connected for session: ${sessionId}`)
@@ -245,7 +398,7 @@ export const handleWebSocket = {
     }
 
     const msg: ServerMessage = { type: 'connected', sessionId }
-    ws.send(JSON.stringify(msg))
+    sendMessage(ws, msg)
     const toolRequestIds = replayPendingPermissionRequests(ws, sessionId)
     const computerUseRequestIds = replayPendingComputerUsePermissionRequests(ws, sessionId)
     sendMessage(ws, {
@@ -269,6 +422,15 @@ export const handleWebSocket = {
         typeof rawMessage === 'string' ? rawMessage : rawMessage.toString()
       ) as ClientMessage
 
+      if (ws.data.clientKind === 'pet' && !isPetClientMessageAllowed(message)) {
+        sendError(
+          ws,
+          `Message type ${(message as { type?: unknown }).type ?? 'unknown'} is not available to the pet window`,
+          'PET_CAPABILITY_DENIED',
+        )
+        return
+      }
+
       switch (message.type) {
         case 'user_message': {
           const activeTurn: ActiveUserTurnState = { messageSent: false }
@@ -286,6 +448,7 @@ export const handleWebSocket = {
             // earlier await was pending. Only the handler that still owns the
             // active-turn token may terminate the desktop state.
             if (activeUserTurns.get(sessionId) === activeTurn) {
+              failSessionChatActivity(sessionId)
               clearActiveUserTurn(sessionId, activeTurn)
               const titleState = sessionTitleState.get(sessionId)
               if (titleState) titleState.activeTurn = undefined
@@ -339,7 +502,7 @@ export const handleWebSocket = {
           break
 
         case 'ping':
-          ws.send(JSON.stringify({ type: 'pong' } satisfies ServerMessage))
+          sendMessage(ws, { type: 'pong' })
           break
 
         default:
@@ -359,6 +522,8 @@ export const handleWebSocket = {
       return
     }
 
+    if (activePetClient === ws) activePetClient = null
+
     console.log(`[WS] Client disconnected from session: ${sessionId} (${code}: ${reason})`)
     if (!removeActiveClient(sessionId, ws)) {
       console.log(`[WS] Ignoring stale client disconnect for session: ${sessionId}`)
@@ -370,17 +535,24 @@ export const handleWebSocket = {
       return
     }
 
-    // No clients left. A turn that is still running must finish in the
-    // background (issue #764) — never kill it just because a phone locked its
-    // screen. Defer cleanup until the turn completes, then apply the idle
-    // grace period. Sessions that are already idle go straight to the timer.
-    if (isSessionTurnActive(sessionId)) {
-      console.log(`[WS] Session ${sessionId} still running after disconnect; keeping CLI alive until the turn finishes`)
+    // No clients left. A foreground turn or background task that is still
+    // running must finish (issue #764) — never kill it just because a renderer
+    // closed. Defer cleanup until all active work completes, then apply the
+    // idle grace period. Sessions that are already idle go straight to the timer.
+    if (hasPendingOrActiveUserTurn(sessionId) || hasActiveBackgroundTasks(sessionId)) {
+      // A turn blocked on permission cannot finish without user input. Keep the
+      // completion watcher for early cleanup, but also enforce the existing
+      // pending-permission maximum so an abandoned prompt cannot pin the CLI.
+      if (conversationService.getPendingPermissionRequests(sessionId).length > 0) {
+        scheduleDisconnectCleanup(sessionId)
+      }
+      console.log(`[WS] Session ${sessionId} still running after disconnect; keeping CLI alive until active work finishes`)
       watchTurnCompletionForCleanup(sessionId)
       return
     }
 
     scheduleDisconnectCleanup(sessionId)
+    watchTurnCompletionForCleanup(sessionId)
   },
 
   drain(ws: ServerWebSocket<WebSocketData>) {
@@ -401,6 +573,7 @@ async function handleUserMessage(
 
   // Clear any stale stop flag from a previous turn
   sessionStopRequested.delete(sessionId)
+  beginSessionChatActivity(sessionId)
   clearPrewarmState(sessionId)
 
   const desktopSlashCommand = getDesktopSlashCommand(message.content)
@@ -478,6 +651,7 @@ async function handleUserMessage(
         err instanceof ConversationStartupError ? err.retryable : false,
     })
     sendMessage(ws, { type: 'status', state: 'idle' })
+    failSessionChatActivity(sessionId)
     clearActiveUserTurn(sessionId, activeTurn)
     return
   }
@@ -512,6 +686,13 @@ async function handleUserMessage(
   })
   const removeActiveTurnOutputCallback = bindActiveUserTurnCompletion(ws, sessionId, activeTurn)
 
+  // The renderer may have left while the CLI was still starting, before this
+  // turn could flip messageSent=true. The disconnect handler cannot attach an
+  // effective output watcher until the ConversationService session exists, so
+  // refresh it here, immediately before sending the turn, to observe a
+  // permission request that arrives after the disconnect.
+  refreshDisconnectedTurnCleanupWatcher(sessionId)
+
   const sent = await conversationService.sendMessage(
     sessionId,
     message.content,
@@ -528,6 +709,7 @@ async function handleUserMessage(
       code: 'CLI_NOT_RUNNING',
     })
     sendMessage(ws, { type: 'status', state: 'idle' })
+    failSessionChatActivity(sessionId)
     return
   }
 
@@ -547,8 +729,12 @@ function bindActiveUserTurnCompletion(
   activeTurn: ActiveUserTurnState,
 ): () => void {
   const callback = (cliMsg: any) => {
-    if (!activeTurn.messageSent || cliMsg?.type !== 'result') return
+    if (
+      cliMsg?.type !== 'result' ||
+      (!activeTurn.messageSent && !cliMsg.is_error)
+    ) return
 
+    settleSessionChatActivity(sessionId, cliMsg)
     conversationService.removeOutputCallback(sessionId, callback)
     clearActiveUserTurn(sessionId, activeTurn)
     // Structurally disarm any prewarm idle timer that a concurrent
@@ -1056,17 +1242,25 @@ async function restartSessionWithRuntimeConfig(
 
 function handleStopGeneration(ws: ServerWebSocket<WebSocketData>) {
   const { sessionId } = ws.data
+  const stoppedTurn = activeUserTurns.get(sessionId)
   console.log(`[WS] Stop generation requested for session: ${sessionId}`)
 
   sessionStopRequested.add(sessionId)
+  legacyQueuedSessionChats.delete(sessionId)
+  terminalSessionChatStates.delete(sessionId)
+  interruptedSessionChats.add(sessionId)
 
-  if (conversationService.hasSession(sessionId)) {
+  if (stoppedTurn && conversationService.hasSession(sessionId)) {
     // First try graceful interrupt via SDK control message
     conversationService.sendInterrupt(sessionId)
 
     // Force-kill if still running after 3 seconds
     setTimeout(() => {
-      if (conversationService.hasSession(sessionId)) {
+      if (
+        sessionStopRequested.has(sessionId) &&
+        activeUserTurns.get(sessionId) === stoppedTurn &&
+        conversationService.hasSession(sessionId)
+      ) {
         console.log(`[WS] Force-killing CLI subprocess for session: ${sessionId}`)
         conversationService.stopSession(sessionId)
       }
@@ -1401,16 +1595,22 @@ function cleanupSessionRuntimeState(sessionId: string) {
   sessionTitleState.delete(sessionId)
   runtimeOverrides.delete(sessionId)
   activeUserTurns.delete(sessionId)
+  sessionStopRequested.delete(sessionId)
+  activeBackgroundTaskIds.delete(sessionId)
+  terminalSessionChatStates.delete(sessionId)
+  legacyQueuedSessionChats.delete(sessionId)
+  interruptedSessionChats.delete(sessionId)
   deferredRuntimeRestarts.delete(sessionId)
   deferredPermissionModes.delete(sessionId)
   runtimeTransitionPromises.delete(sessionId)
   sessionStartupPromises.delete(sessionId)
   lastResolvedStartupWorkDirs.delete(sessionId)
+  taskNotificationPersistence.delete(sessionId)
   clearPrewarmState(sessionId)
 }
 
 function getPrewarmIdleTimeoutMs(): number {
-  const raw = process.env.CC_HAHA_PREWARM_IDLE_TIMEOUT_MS
+  const raw = process.env.ECHOFLOW_PREWARM_IDLE_TIMEOUT_MS
   if (!raw) return DEFAULT_PREWARM_IDLE_TIMEOUT_MS
   const parsed = Number.parseInt(raw, 10)
   return Number.isFinite(parsed) && parsed >= 0
@@ -2221,7 +2421,10 @@ function toStreamingFallbackServerMessage(cliMsg: any): ServerMessage {
 }
 
 function sendMessage(ws: ServerWebSocket<WebSocketData>, message: ServerMessage) {
-  ws.send(JSON.stringify(message))
+  const outgoing = ws.data.clientKind === 'pet'
+    ? toPetServerMessage(message)
+    : message
+  if (outgoing) ws.send(JSON.stringify(outgoing))
 }
 
 function sendError(ws: ServerWebSocket<WebSocketData>, message: string, code: string) {
@@ -2241,19 +2444,11 @@ function getDisconnectCleanupDelayMs(sessionId: string): number {
 }
 
 /**
- * Whether the session is mid-turn (a user message was sent and no result has
- * arrived yet). Such a turn must not be killed on disconnect.
- */
-function isSessionTurnActive(sessionId: string): boolean {
-  return activeUserTurns.get(sessionId)?.messageSent === true
-}
-
-/**
  * Whether a user turn has been registered for this session and not yet settled,
  * INCLUDING the CLI-startup window before messageSent flips true. handleUserMessage
  * registers the turn in its synchronous prefix (activeUserTurns.set), well before
- * the message is actually sent. Unlike isSessionTurnActive, this is not blind to
- * that window, so the prewarm idle timer can neither arm on nor fire against a
+ * the message is actually sent. Checking the registration is not blind to that
+ * window, so the prewarm idle timer can neither arm on nor fire against a
  * session a user turn has already claimed — even when a concurrent
  * prewarm_session/user_message flush inverts their ordering.
  */
@@ -2274,27 +2469,69 @@ function scheduleDisconnectCleanup(sessionId: string): void {
   const cleanupDelayMs = getDisconnectCleanupDelayMs(sessionId)
   const cleanupTimer = setTimeout(() => {
     sessionCleanupTimers.delete(sessionId)
-    if (!hasActiveClients(sessionId)) {
-      console.log(`[WS] Session ${sessionId} not reconnected after ${cleanupDelayMs}ms, stopping CLI subprocess`)
-      conversationService.stopSession(sessionId)
-      cleanupSessionRuntimeState(sessionId)
+    if (hasActiveClients(sessionId)) return
+
+    const permissionBoundExpired = conversationService
+      .getPendingPermissionRequests(sessionId).length > 0
+    if (
+      !permissionBoundExpired &&
+      (hasPendingOrActiveUserTurn(sessionId) || hasActiveBackgroundTasks(sessionId))
+    ) {
+      console.log(`[WS] Session ${sessionId} became active during its idle grace period; keeping CLI alive`)
+      watchTurnCompletionForCleanup(sessionId)
+      return
     }
+
+    console.log(`[WS] Session ${sessionId} not reconnected after ${cleanupDelayMs}ms, stopping CLI subprocess`)
+    conversationService.stopSession(sessionId)
+    cleanupSessionRuntimeState(sessionId)
   }, cleanupDelayMs)
   sessionCleanupTimers.set(sessionId, cleanupTimer)
 }
 
 /**
- * Keep a still-running session alive after the last client leaves, and start
- * the idle grace timer only once the current turn completes (issue #764). If a
- * client reconnects first, cancelSessionDisconnectWatcher() tears this down.
+ * Keep a session with active foreground/background work alive after the last
+ * client leaves, and start the idle grace timer only once all work completes
+ * (issue #764). If a client reconnects first, the watcher is torn down.
  */
 function watchTurnCompletionForCleanup(sessionId: string): void {
   cancelSessionDisconnectWatcher(sessionId)
 
   const onComplete = (cliMsg: any) => {
-    if (cliMsg?.type !== 'result') return
+    const taskLifecycle = trackCliBackgroundTaskLifecycle(sessionId, cliMsg)
+    if (taskLifecycle?.running && !hasActiveClients(sessionId)) {
+      // A pending permission uses a hard 30-minute disconnect bound. A late
+      // background task may outlive (or never emit) its terminal notification,
+      // so it must not turn that bound into an unbounded watcher. Ordinary idle
+      // grace timers are still cancelled while observed work is running.
+      if (conversationService.getPendingPermissionRequests(sessionId).length === 0) {
+        const cleanupTimer = sessionCleanupTimers.get(sessionId)
+        if (cleanupTimer) clearTimeout(cleanupTimer)
+        sessionCleanupTimers.delete(sessionId)
+      }
+      return
+    }
+    if (
+      cliMsg?.type === 'control_request' &&
+      cliMsg.request?.subtype === 'can_use_tool' &&
+      !hasActiveClients(sessionId)
+    ) {
+      // The permission request may arrive after the renderer disconnected.
+      // ConversationService records it before notifying this callback, so the
+      // cleanup delay resolves to the bounded pending-permission window.
+      scheduleDisconnectCleanup(sessionId)
+      return
+    }
+
+    const foregroundTurnCompleted = cliMsg?.type === 'result'
+    const backgroundTaskCompleted = taskLifecycle?.running === false
+    if (!foregroundTurnCompleted && !backgroundTaskCompleted) return
+    if (hasActiveBackgroundTasks(sessionId)) return
+    if (!foregroundTurnCompleted && hasPendingOrActiveUserTurn(sessionId)) return
+
     cancelSessionDisconnectWatcher(sessionId)
-    // The turn finished while still unobserved — fall back to the idle timer.
+    // All observed work finished while still disconnected — fall back to the
+    // bounded idle timer rather than stopping the CLI immediately.
     if (!hasActiveClients(sessionId)) {
       scheduleDisconnectCleanup(sessionId)
     }
@@ -2306,7 +2543,27 @@ function watchTurnCompletionForCleanup(sessionId: string): void {
   })
 }
 
-/** Remove any pending turn-completion watcher for a session. */
+/**
+ * Re-arm the disconnect watcher once CLI startup has completed. A client can
+ * leave during the startup window, when the user turn is registered but the
+ * ConversationService session (and therefore its output callback list) does
+ * not exist yet.
+ */
+function refreshDisconnectedTurnCleanupWatcher(sessionId: string): void {
+  if (
+    hasActiveClients(sessionId) ||
+    (!hasPendingOrActiveUserTurn(sessionId) && !hasActiveBackgroundTasks(sessionId))
+  ) return
+
+  const pendingTimer = sessionCleanupTimers.get(sessionId)
+  if (pendingTimer) {
+    clearTimeout(pendingTimer)
+    sessionCleanupTimers.delete(sessionId)
+  }
+  watchTurnCompletionForCleanup(sessionId)
+}
+
+/** Remove any pending active-work completion watcher for a session. */
 function cancelSessionDisconnectWatcher(sessionId: string): void {
   const remove = sessionDisconnectWatchers.get(sessionId)
   if (remove) {
@@ -2639,6 +2896,66 @@ function removeClientOutputCallback(ws: ServerWebSocket<WebSocketData>): void {
   clientOutputCallbacks.delete(ws)
 }
 
+function normalizeCliTaskNotification(cliMsg: any): SessionTaskNotification | null {
+  if (cliMsg?.type !== 'system' || cliMsg.subtype !== 'task_notification') return null
+  const toolUseId = typeof cliMsg.tool_use_id === 'string' && cliMsg.tool_use_id
+    ? cliMsg.tool_use_id
+    : null
+  const rawStatus = cliMsg.status
+  const status = rawStatus === 'killed' ? 'stopped' : rawStatus
+  if (
+    !toolUseId ||
+    (status !== 'completed' && status !== 'failed' && status !== 'stopped')
+  ) {
+    return null
+  }
+
+  const optionalString = (value: unknown) =>
+    typeof value === 'string' && value ? value : undefined
+  return {
+    taskId: optionalString(cliMsg.task_id) ?? toolUseId,
+    toolUseId,
+    status,
+    ...(optionalString(cliMsg.summary) ? { summary: optionalString(cliMsg.summary) } : {}),
+    ...(optionalString(cliMsg.result) ? { result: optionalString(cliMsg.result) } : {}),
+    ...(optionalString(cliMsg.output_file) ? { outputFile: optionalString(cliMsg.output_file) } : {}),
+    timestamp: optionalString(cliMsg.timestamp) ?? new Date().toISOString(),
+  }
+}
+
+function persistCliTaskNotification(
+  sessionId: string,
+  cliMsg: any,
+): Promise<void> | null {
+  const notification = normalizeCliTaskNotification(cliMsg)
+  if (!notification) return null
+
+  let sessionWrites = taskNotificationPersistence.get(sessionId)
+  if (!sessionWrites) {
+    sessionWrites = new Map()
+    taskNotificationPersistence.set(sessionId, sessionWrites)
+  }
+  const eventKey = typeof cliMsg.uuid === 'string' && cliMsg.uuid
+    ? cliMsg.uuid
+    : JSON.stringify(notification)
+  const existing = sessionWrites.get(eventKey)
+  if (existing) return existing
+
+  const write = sessionService.appendSessionTaskNotification(sessionId, notification)
+    .catch((error) => {
+      sessionWrites?.delete(eventKey)
+      console.warn(
+        `[WS] Failed to persist task notification for ${sessionId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      )
+    })
+  sessionWrites.set(eventKey, write)
+  return write
+}
+
+export const __persistCliTaskNotificationForTests = persistCliTaskNotification
+
 function bindAllClientSessionOutputs(
   sessionId: string,
   options?: {
@@ -2664,6 +2981,7 @@ function bindClientSessionOutput(
   removeClientOutputCallback(ws)
 
   const callback = (cliMsg: any) => {
+    trackCliBackgroundTaskLifecycle(sessionId, cliMsg)
     if (options?.shouldForward && !options.shouldForward(cliMsg)) {
       return
     }
@@ -2676,12 +2994,30 @@ function bindClientSessionOutput(
       return
     }
 
-    handleCliPermissionModeBroadcast(sessionId, cliMsg)
-    const serverMsgs = translateCliMessage(cliMsg, sessionId)
-    for (const msg of serverMsgs) {
-      sendMessage(ws, msg)
+    const forward = () => {
+      handleCliPermissionModeBroadcast(sessionId, cliMsg)
+      const serverMsgs = translateCliMessage(cliMsg, sessionId)
+      for (const msg of serverMsgs) {
+        sendMessage(ws, msg)
+      }
     }
 
+    const persistence = persistCliTaskNotification(sessionId, cliMsg)
+    if (persistence) {
+      void persistence
+        .then(() => {
+          if (activeSessions.get(sessionId)?.has(ws)) forward()
+        })
+        .catch((error) => {
+          console.warn(
+            `[WS] Failed to forward persisted task notification for ${sessionId}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          )
+        })
+      return
+    }
+    forward()
   }
 
   clientOutputCallbacks.set(ws, { sessionId, callback })
@@ -3012,6 +3348,7 @@ async function waitForRuntimeTransitionBeforeUserTurn(
         code: 'CLI_RESTART_FAILED',
       })
       sendMessage(ws, { type: 'status', state: 'idle' })
+      failSessionChatActivity(sessionId)
       return { ok: false, waited }
     }
 
@@ -3031,9 +3368,8 @@ async function waitForRuntimeTransitionBeforeUserTurn(
 export function sendToSession(sessionId: string, message: ServerMessage): boolean {
   const clients = activeSessions.get(sessionId)
   if (!clients || clients.size === 0) return false
-  const payload = JSON.stringify(message)
   for (const ws of clients) {
-    ws.send(payload)
+    sendMessage(ws, message)
   }
   return true
 }
@@ -3102,6 +3438,7 @@ export function closeSessionConnection(sessionId: string, reason = 'session clos
 
   activeSessions.delete(sessionId)
   for (const ws of clients) {
+    if (activePetClient === ws) activePetClient = null
     clientOutputCallbacks.delete(ws)
     ws.close(1000, reason)
   }
@@ -3117,12 +3454,20 @@ export function __resetWebSocketHandlerStateForTests(): void {
   for (const timer of prewarmIdleTimers.values()) clearTimeout(timer)
   for (const remove of sessionDisconnectWatchers.values()) remove()
   activeSessions.clear()
+  activePetClient = null
   clientOutputCallbacks.clear()
+  taskNotificationPersistence.clear()
   sessionCleanupTimers.clear()
   sessionDisconnectWatchers.clear()
   prewarmPendingSessions.clear()
   prewarmedSessions.clear()
   prewarmIdleTimers.clear()
+  activeUserTurns.clear()
+  activeBackgroundTaskIds.clear()
+  sessionStopRequested.clear()
+  terminalSessionChatStates.clear()
+  legacyQueuedSessionChats.clear()
+  interruptedSessionChats.clear()
 }
 
 export function __markPrewarmPendingForTests(sessionId: string): void {
@@ -3131,15 +3476,28 @@ export function __markPrewarmPendingForTests(sessionId: string): void {
 
 /** Test hook: mark a session as mid-turn so disconnect keeps the CLI alive. */
 export function __markActiveTurnForTests(sessionId: string): void {
+  beginSessionChatActivity(sessionId)
   activeUserTurns.set(sessionId, { messageSent: true })
 }
 
 /**
  * Test hook: register a user turn still in the pre-send (messageSent:false)
- * window — i.e. the CLI-startup window that isSessionTurnActive is blind to.
+ * window — i.e. the CLI-startup window before messageSent becomes true.
  */
 export function __registerPendingUserTurnForTests(sessionId: string): void {
+  beginSessionChatActivity(sessionId)
   activeUserTurns.set(sessionId, { messageSent: false })
+}
+
+/** Test hook: settle a registered turn through the same CLI-result seam. */
+export function __settleActiveTurnForTests(sessionId: string, cliMsg: any): void {
+  settleSessionChatActivity(sessionId, cliMsg)
+  activeUserTurns.delete(sessionId)
+}
+
+/** Test hook: simulate CLI startup completing after the last client left. */
+export function __refreshDisconnectedTurnCleanupWatcherForTests(sessionId: string): void {
+  refreshDisconnectedTurnCleanupWatcher(sessionId)
 }
 
 /** Test hook: arm the prewarm idle timer for a session, as markPrewarmed does. */

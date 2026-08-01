@@ -72,9 +72,9 @@ function isLocalProviderProxyUrl(value: string): boolean {
 }
 
 function getTraceProviderFromEnv(): TraceProviderInfo | undefined {
-  const id = process.env.CC_HAHA_TRACE_PROVIDER_ID?.trim()
-  const name = process.env.CC_HAHA_TRACE_PROVIDER_NAME?.trim()
-  const format = process.env.CC_HAHA_TRACE_PROVIDER_FORMAT?.trim()
+  const id = process.env.ECHOFLOW_TRACE_PROVIDER_ID?.trim()
+  const name = process.env.ECHOFLOW_TRACE_PROVIDER_NAME?.trim()
+  const format = process.env.ECHOFLOW_TRACE_PROVIDER_FORMAT?.trim()
   if (!id && !name && !format) return undefined
 
   return {

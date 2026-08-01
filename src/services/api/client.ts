@@ -42,7 +42,7 @@ import {
 } from '../../utils/envUtils.js'
 
 export const ECHOFLOW_OPENAI_OAUTH_PROVIDER_ENV_KEY = 'ECHOFLOW_OPENAI_OAUTH_PROVIDER'
-export const LEGACY_CC_HAHA_OPENAI_OAUTH_PROVIDER_ENV_KEY = 'CC_HAHA_OPENAI_OAUTH_PROVIDER'
+export const LEGACY_ECHOFLOW_OPENAI_OAUTH_PROVIDER_ENV_KEY = 'CC_HAHA_OPENAI_OAUTH_PROVIDER'
 
 /**
  * Environment variables for different client types:
@@ -118,6 +118,63 @@ export function resolveAnthropicClientApiKey({
   return explicitApiKey || getFallbackApiKey()
 }
 
+export function resolveManagedProviderProxyAccessToken({
+  providerManagedByHost = process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST,
+  apiKey = process.env.ANTHROPIC_API_KEY,
+  baseUrl = process.env.ANTHROPIC_BASE_URL,
+  localAccessToken = process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN,
+  requestUrl = baseUrl,
+}: {
+  providerManagedByHost?: string
+  apiKey?: string
+  baseUrl?: string
+  localAccessToken?: string
+  requestUrl?: string
+} = {}): string | null {
+  const token = localAccessToken?.trim()
+  if (
+    !isEnvTruthy(providerManagedByHost) ||
+    apiKey !== 'proxy-managed' ||
+    !baseUrl ||
+    !token
+  ) {
+    return null
+  }
+
+  try {
+    const base = new URL(baseUrl)
+    const request = new URL(requestUrl || baseUrl)
+    const basePathname = base.pathname.replace(/\/+$/, '') || '/'
+    const requestPathname = request.pathname.replace(/\/+$/, '') || '/'
+    const isManagedProxyPath = basePathname === '/proxy' ||
+      /^\/proxy\/providers\/[^/]+$/.test(basePathname)
+    const isRequestWithinProxy = request.origin === base.origin &&
+      (
+        requestPathname === basePathname ||
+        requestPathname.startsWith(`${basePathname}/`)
+      )
+
+    if (
+      base.protocol !== 'http:' ||
+      base.hostname !== '127.0.0.1' ||
+      base.username ||
+      base.password ||
+      base.search ||
+      base.hash ||
+      request.username ||
+      request.password ||
+      !isManagedProxyPath ||
+      !isRequestWithinProxy
+    ) {
+      return null
+    }
+  } catch {
+    return null
+  }
+
+  return token
+}
+
 export function shouldUseOpenAICodexTransport({
   hasOpenAIAuth,
   isClaudeSubscriber,
@@ -148,7 +205,7 @@ export function shouldForceOpenAICodexProvider(
 ): boolean {
   return (
     isEnvTruthy(env[ECHOFLOW_OPENAI_OAUTH_PROVIDER_ENV_KEY]) ||
-    isEnvTruthy(env[LEGACY_CC_HAHA_OPENAI_OAUTH_PROVIDER_ENV_KEY])
+    isEnvTruthy(env[LEGACY_ECHOFLOW_OPENAI_OAUTH_PROVIDER_ENV_KEY])
   )
 }
 
@@ -201,8 +258,8 @@ export async function getAnthropicClient({
 
   const isOpenAIModel = model ? isOpenAIResponsesModel(model) : false
   const forceOpenAICodex = shouldForceOpenAICodexProvider(process.env)
-    || isEnvTruthy(process.env.CC_HAHA_OPENAI_OAUTH_PROVIDER)
-  const forceGrok = isEnvTruthy(process.env.CC_HAHA_GROK_OAUTH_PROVIDER)
+    || isEnvTruthy(process.env.ECHOFLOW_OPENAI_OAUTH_PROVIDER)
+  const forceGrok = isEnvTruthy(process.env.ECHOFLOW_GROK_OAUTH_PROVIDER)
   const isClaudeSubscriber = forceGrok ? false : isClaudeAISubscriber()
   const hasOpenAIAuth = shouldUseOpenAICodexAuth()
   const usingGrok = forceGrok && shouldUseGrokAuth()
@@ -469,6 +526,15 @@ function buildFetch(
   return (input, init) => {
     // eslint-disable-next-line eslint-plugin-n/no-unsupported-features/node-builtins
     const headers = new Headers(init?.headers)
+    // Authenticate only the exact host-managed loopback proxy request. Doing
+    // this at the final fetch seam prevents request-level headers from replacing
+    // the desktop credential and prevents that credential from reaching the
+    // real provider; the server adds the upstream provider key itself.
+    const requestUrl = input instanceof Request ? input.url : String(input)
+    const localProxyToken = resolveManagedProviderProxyAccessToken({ requestUrl })
+    if (localProxyToken) {
+      headers.set('Authorization', `Bearer ${localProxyToken}`)
+    }
     // Generate a client-side request ID so timeouts (which return no server
     // request ID) can still be correlated with server logs by the API team.
     // Callers that want to track the ID themselves can pre-set the header.
@@ -476,11 +542,9 @@ function buildFetch(
       headers.set(CLIENT_REQUEST_ID_HEADER, randomUUID())
     }
     try {
-      // eslint-disable-next-line eslint-plugin-n/no-unsupported-features/node-builtins
-      const url = input instanceof Request ? input.url : String(input)
       const id = headers.get(CLIENT_REQUEST_ID_HEADER)
       logForDebugging(
-        `[API REQUEST] ${new URL(url).pathname}${id ? ` ${CLIENT_REQUEST_ID_HEADER}=${id}` : ''} source=${source ?? 'unknown'}`,
+        `[API REQUEST] ${new URL(requestUrl).pathname}${id ? ` ${CLIENT_REQUEST_ID_HEADER}=${id}` : ''} source=${source ?? 'unknown'}`,
       )
     } catch {
       // never let logging crash the fetch

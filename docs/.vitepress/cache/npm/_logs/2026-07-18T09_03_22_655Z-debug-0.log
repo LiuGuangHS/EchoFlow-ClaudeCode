@@ -1,0 +1,78 @@
+0 verbose cli /home/zhijun/.nvm/versions/node/v22.20.0/bin/node /home/zhijun/.nvm/versions/node/v22.20.0/bin/npm
+1 info using npm@10.9.3
+2 info using node@v22.20.0
+3 silly config load:file:/home/zhijun/.nvm/versions/node/v22.20.0/lib/node_modules/npm/npmrc
+4 silly config load:file:/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/.npmrc
+5 silly config load:file:/home/zhijun/.npmrc
+6 silly config load:file:/home/zhijun/.nvm/versions/node/v22.20.0/etc/npmrc
+7 verbose title npm ci
+8 verbose argv "ci" "--loglevel" "error"
+9 verbose logfile logs-max:10 dir:/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/docs/.vitepress/cache/npm/_logs/2026-07-18T09_03_22_655Z-
+10 verbose logfile /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/docs/.vitepress/cache/npm/_logs/2026-07-18T09_03_22_655Z-debug-0.log
+11 silly logfile done cleaning log files
+12 silly packumentCache heap:2197815296 maxSize:549453824 maxEntrySize:274726912
+13 silly idealTree buildDeps
+14 silly fetch manifest react@>= 16.8.0 < 19.0.0
+15 silly packumentCache full:https://registry.npmmirror.com/react cache-miss
+16 http fetch GET https://registry.npmmirror.com/react attempt 1 failed with EPERM
+17 http fetch GET https://registry.npmmirror.com/react attempt 2 failed with EPERM
+18 http fetch GET https://registry.npmmirror.com/react attempt 3 failed with EPERM
+19 http fetch GET 200 https://registry.npmmirror.com/react 70122ms (cache stale)
+20 silly packumentCache full:https://registry.npmmirror.com/react set size:6551626 disposed:false
+21 silly placeDep node_modules/@docsearch/js react@18.3.1 OK for: @docsearch/react@3.8.2 want: >= 16.8.0 < 19.0.0
+22 verbose stack Error: 
+22 verbose stack `npm ci` can only install packages when your package.json and package-lock.json or npm-shrinkwrap.json are in sync. Please update your lock file with `npm install` before continuing.
+22 verbose stack
+22 verbose stack Missing: react@18.3.1 from lock file
+22 verbose stack
+22 verbose stack Clean install a project
+22 verbose stack
+22 verbose stack Usage:
+22 verbose stack npm ci
+22 verbose stack
+22 verbose stack Options:
+22 verbose stack [--install-strategy <hoisted|nested|shallow|linked>] [--legacy-bundling]
+22 verbose stack [--global-style] [--omit <dev|optional|peer> [--omit <dev|optional|peer> ...]]
+22 verbose stack [--include <prod|dev|optional|peer> [--include <prod|dev|optional|peer> ...]]
+22 verbose stack [--strict-peer-deps] [--foreground-scripts] [--ignore-scripts] [--no-audit]
+22 verbose stack [--no-bin-links] [--no-fund] [--dry-run]
+22 verbose stack [-w|--workspace <workspace-name> [-w|--workspace <workspace-name> ...]]
+22 verbose stack [-ws|--workspaces] [--include-workspace-root] [--install-links]
+22 verbose stack
+22 verbose stack aliases: clean-install, ic, install-clean, isntall-clean
+22 verbose stack
+22 verbose stack Run "npm help ci" for more info
+22 verbose stack     at CI.usageError (/home/zhijun/.nvm/versions/node/v22.20.0/lib/node_modules/npm/lib/base-cmd.js:111:26)
+22 verbose stack     at CI.exec (/home/zhijun/.nvm/versions/node/v22.20.0/lib/node_modules/npm/lib/commands/ci.js:70:18)
+22 verbose stack     at async Npm.exec (/home/zhijun/.nvm/versions/node/v22.20.0/lib/node_modules/npm/lib/npm.js:207:9)
+22 verbose stack     at async module.exports (/home/zhijun/.nvm/versions/node/v22.20.0/lib/node_modules/npm/lib/cli/entry.js:74:5)
+23 error code EUSAGE
+24 error
+24 error `npm ci` can only install packages when your package.json and package-lock.json or npm-shrinkwrap.json are in sync. Please update your lock file with `npm install` before continuing.
+24 error
+24 error Missing: react@18.3.1 from lock file
+24 error
+24 error Clean install a project
+24 error
+24 error Usage:
+24 error npm ci
+24 error
+24 error Options:
+24 error [--install-strategy <hoisted|nested|shallow|linked>] [--legacy-bundling]
+24 error [--global-style] [--omit <dev|optional|peer> [--omit <dev|optional|peer> ...]]
+24 error [--include <prod|dev|optional|peer> [--include <prod|dev|optional|peer> ...]]
+24 error [--strict-peer-deps] [--foreground-scripts] [--ignore-scripts] [--no-audit]
+24 error [--no-bin-links] [--no-fund] [--dry-run]
+24 error [-w|--workspace <workspace-name> [-w|--workspace <workspace-name> ...]]
+24 error [-ws|--workspaces] [--include-workspace-root] [--install-links]
+24 error
+24 error aliases: clean-install, ic, install-clean, isntall-clean
+24 error
+24 error Run "npm help ci" for more info
+25 verbose cwd /home/zhijun/WorkSpace/EchoFlow-ClaudeCode
+26 verbose os Linux 6.18.33.2-microsoft-standard-WSL2
+27 verbose node v22.20.0
+28 verbose npm  v10.9.3
+29 verbose exit 1
+30 verbose code 1
+31 error A complete log of this run can be found in: /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/docs/.vitepress/cache/npm/_logs/2026-07-18T09_03_22_655Z-debug-0.log

@@ -15,7 +15,7 @@ import { getHahaGrokOAuthFilePath } from './hahaGrokOAuthService.js'
 
 export { GROK_OFFICIAL_PROVIDER_ID, GROK_OAUTH_FILE_ENV_KEY }
 export const GROK_OFFICIAL_PROVIDER_NAME = 'Grok Official'
-export const GROK_OAUTH_PROVIDER_ENV_KEY = 'CC_HAHA_GROK_OAUTH_PROVIDER'
+export const GROK_OAUTH_PROVIDER_ENV_KEY = 'ECHOFLOW_GROK_OAUTH_PROVIDER'
 
 export function isGrokOfficialProviderId(id: string | null | undefined): boolean {
   return id === GROK_OFFICIAL_PROVIDER_ID

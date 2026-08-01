@@ -2,13 +2,14 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { startServer } from '../index.js'
+import { startServer, stopServerRuntimeForShutdown } from '../index.js'
 import {
   clearFilesystemAccessRootsForTests,
   registerFilesystemAccessRoot,
 } from '../services/filesystemAccessRoots.js'
 import { H5AccessService } from '../services/h5AccessService.js'
 import { ProviderService } from '../services/providerService.js'
+import { sessionService } from '../services/sessionService.js'
 
 let server: ReturnType<typeof Bun.serve> | undefined
 let baseUrl = ''
@@ -22,8 +23,10 @@ let originalH5DistDir: string | undefined
 let originalClaudeAppRoot: string | undefined
 let originalServerAuthRequired: string | undefined
 let originalLocalAccessToken: string | undefined
+let originalPetAccessToken: string | undefined
 let originalServerPort = 3456
 const PHONE_ORIGIN = 'https://phone.example'
+const SERVER_STOP_WAIT_MS = 500
 
 async function waitForServer(url: string): Promise<void> {
   for (let attempt = 0; attempt < 50; attempt += 1) {
@@ -76,9 +79,24 @@ async function startRemoteServer(options: { authRequired?: boolean } = {}): Prom
   await waitForServer(`${baseUrl}/health`)
 }
 
-async function restartRemoteServer(options: { authRequired?: boolean } = {}): Promise<void> {
-  server?.stop(true)
+async function stopRemoteServer(): Promise<void> {
+  const runningServer = server
   server = undefined
+  await stopServerRuntimeForShutdown({ waitForCli: false })
+  if (!runningServer) return
+
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  await Promise.race([
+    runningServer.stop(true),
+    new Promise<void>((resolve) => {
+      timeout = setTimeout(resolve, SERVER_STOP_WAIT_MS)
+    }),
+  ])
+  if (timeout) clearTimeout(timeout)
+}
+
+async function restartRemoteServer(options: { authRequired?: boolean } = {}): Promise<void> {
+  await stopRemoteServer()
   await startRemoteServer(options)
 }
 
@@ -131,15 +149,24 @@ async function enableH5Access(options: {
 function expectWebSocketOpen(url: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url)
+    let opened = false
     const timeout = setTimeout(() => {
       ws.close()
       reject(new Error(`Timed out opening websocket: ${url}`))
     }, 5000)
 
     ws.addEventListener('open', () => {
-      clearTimeout(timeout)
+      opened = true
       ws.close()
-      resolve()
+    })
+
+    ws.addEventListener('close', () => {
+      clearTimeout(timeout)
+      if (opened) {
+        resolve()
+      } else {
+        reject(new Error(`WebSocket closed before upgrade completed: ${url}`))
+      }
     })
 
     ws.addEventListener('error', () => {
@@ -193,13 +220,15 @@ beforeEach(async () => {
   originalH5DistDir = process.env.CLAUDE_H5_DIST_DIR
   originalClaudeAppRoot = process.env.CLAUDE_APP_ROOT
   originalServerAuthRequired = process.env.SERVER_AUTH_REQUIRED
-  originalLocalAccessToken = process.env.CC_HAHA_LOCAL_ACCESS_TOKEN
+  originalLocalAccessToken = process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
+  originalPetAccessToken = process.env.ECHOFLOW_PET_ACCESS_TOKEN
   originalServerPort = ProviderService.getServerPort()
   process.env.CLAUDE_CONFIG_DIR = tmpDir
   const h5DistDir = path.join(tmpDir, 'dist')
   process.env.CLAUDE_H5_DIST_DIR = h5DistDir
   delete process.env.ANTHROPIC_API_KEY
-  delete process.env.CC_HAHA_LOCAL_ACCESS_TOKEN
+  delete process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
+  delete process.env.ECHOFLOW_PET_ACCESS_TOKEN
   await fs.mkdir(path.join(h5DistDir, 'assets'), { recursive: true })
   await fs.writeFile(
     path.join(h5DistDir, 'index.html'),
@@ -211,8 +240,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
-  server?.stop(true)
-  server = undefined
+  await stopRemoteServer()
   clearFilesystemAccessRootsForTests()
   ProviderService.setServerPort(originalServerPort)
 
@@ -227,10 +255,17 @@ afterEach(async () => {
   else process.env.CLAUDE_APP_ROOT = originalClaudeAppRoot
   if (originalServerAuthRequired === undefined) delete process.env.SERVER_AUTH_REQUIRED
   else process.env.SERVER_AUTH_REQUIRED = originalServerAuthRequired
-  if (originalLocalAccessToken === undefined) delete process.env.CC_HAHA_LOCAL_ACCESS_TOKEN
-  else process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = originalLocalAccessToken
+  if (originalLocalAccessToken === undefined) delete process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
+  else process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = originalLocalAccessToken
+  if (originalPetAccessToken === undefined) delete process.env.ECHOFLOW_PET_ACCESS_TOKEN
+  else process.env.ECHOFLOW_PET_ACCESS_TOKEN = originalPetAccessToken
 
-  await fs.rm(tmpDir, { recursive: true, force: true })
+  await fs.rm(tmpDir, {
+    recursive: true,
+    force: true,
+    maxRetries: 5,
+    retryDelay: 50,
+  })
 })
 
 describe('remote H5 auth and CORS integration', () => {
@@ -297,18 +332,307 @@ describe('remote H5 auth and CORS integration', () => {
     }
   })
 
-  test('rejects a tokenless loopback proxy hop when desktop local auth is configured', async () => {
-    process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+  test('keeps tokenless loopback capabilities working when desktop local auth is configured', async () => {
+    // The desktop shell injects a process token, but the browser windows it
+    // opens (OAuth success pages, `/preview-fs` links) and local scripts cannot
+    // carry it. Loopback must stay trusted on its own.
+    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
     await restartRemoteServer()
 
-    const proxyShapedResponse = await fetch(`${baseUrl}/api/status`)
-    expect(proxyShapedResponse.status).toBe(403)
+    const tokenlessResponse = await fetch(`${baseUrl}/api/status`)
+    expect(tokenlessResponse.status).toBe(200)
+    await expect(tokenlessResponse.json()).resolves.toMatchObject({ status: 'ok' })
+
+    const oauthSuccessResponse = await fetch(`${baseUrl}/api/haha-grok-oauth/success`)
+    expect(oauthSuccessResponse.status).toBe(200)
+    expect(oauthSuccessResponse.headers.get('Content-Type')).toContain('text/html')
 
     const desktopResponse = await fetch(`${baseUrl}/api/status`, {
       headers: { Authorization: 'Bearer desktop-local-secret' },
     })
     expect(desktopResponse.status).toBe(200)
     await expect(desktopResponse.json()).resolves.toMatchObject({ status: 'ok' })
+  })
+
+  test('rejects tokenless loopback browser origins when desktop local auth is configured', async () => {
+    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+    await restartRemoteServer()
+
+    const browserResponse = await fetch(`${baseUrl}/api/status`, {
+      headers: { Origin: 'http://localhost:5173' },
+    })
+    expect(browserResponse.status).toBe(403)
+
+    const desktopResponse = await fetch(`${baseUrl}/api/status`, {
+      headers: {
+        Origin: 'http://localhost:5173',
+        Authorization: 'Bearer desktop-local-secret',
+      },
+    })
+    expect(desktopResponse.status).toBe(200)
+  })
+
+  test('still requires the desktop process token for the H5 control plane', async () => {
+    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+    await restartRemoteServer()
+
+    // Another browser or script on the same machine must not be able to publish
+    // the user's sessions to the network.
+    const tokenlessRead = await fetch(`${baseUrl}/api/h5-access`)
+    expect(tokenlessRead.status).toBe(403)
+
+    const tokenlessEnable = await fetch(`${baseUrl}/api/h5-access/enable`, { method: 'POST' })
+    expect(tokenlessEnable.status).toBe(403)
+
+    const desktopEnable = await fetch(`${baseUrl}/api/h5-access/enable`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer desktop-local-secret' },
+    })
+    expect(desktopEnable.status).toBe(200)
+    await expect(desktopEnable.json()).resolves.toHaveProperty('token')
+  })
+
+  test('does not extend tokenless loopback trust to cross-site subresource loads', async () => {
+    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+    await restartRemoteServer()
+
+    // A malicious page embedding `<img src="http://127.0.0.1:<port>/api/...">`
+    // sends no Origin, so Fetch Metadata is what marks it as not-a-navigation.
+    const subresourceResponse = await fetch(`${baseUrl}/api/status`, {
+      headers: {
+        'Sec-Fetch-Site': 'cross-site',
+        'Sec-Fetch-Mode': 'no-cors',
+        'Sec-Fetch-Dest': 'image',
+      },
+    })
+    expect(subresourceResponse.status).toBe(403)
+
+    const navigationResponse = await fetch(`${baseUrl}/api/status`, {
+      headers: {
+        'Sec-Fetch-Site': 'cross-site',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Dest': 'document',
+      },
+    })
+    expect(navigationResponse.status).toBe(200)
+  })
+
+  test('serves same-capability preview assets without opening ordinary local APIs', async () => {
+    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+    await restartRemoteServer()
+
+    const workDir = path.join(tmpDir, 'preview-workspace')
+    const previewDir = path.join(workDir, 'site')
+    await fs.mkdir(path.join(previewDir, 'assets'), { recursive: true })
+    await fs.writeFile(path.join(previewDir, 'index.html'), '<script type="module" src="./assets/app.js"></script>')
+    await fs.writeFile(path.join(previewDir, 'assets', 'app.js'), 'document.body.textContent = "preview-ready"')
+    const { sessionId } = await sessionService.createSession(workDir)
+    const previewDocumentUrl = `${baseUrl}/preview-fs/${sessionId}/site/index.html`
+    const previewAssetUrl = `${baseUrl}/preview-fs/${sessionId}/site/assets/app.js`
+    const previewHeaders = {
+      Origin: baseUrl,
+      Referer: previewDocumentUrl,
+      'Sec-Fetch-Site': 'same-origin',
+      'Sec-Fetch-Mode': 'cors',
+      'Sec-Fetch-Dest': 'script',
+    }
+
+    const previewAsset = await fetch(previewAssetUrl, { headers: previewHeaders })
+    expect(previewAsset.status).toBe(200)
+    await expect(previewAsset.text()).resolves.toContain('preview-ready')
+
+    const localSiteDir = path.join(tmpDir, 'local-site')
+    await fs.mkdir(path.join(localSiteDir, 'assets'), { recursive: true })
+    await fs.writeFile(path.join(localSiteDir, 'index.html'), '<script type="module" src="./assets/app.js"></script>')
+    await fs.writeFile(path.join(localSiteDir, 'assets', 'app.js'), 'document.body.textContent = "local-ready"')
+    registerFilesystemAccessRoot(localSiteDir)
+    const localDocumentUrl = localFileUrl(baseUrl, path.join(localSiteDir, 'index.html'))
+    const localAssetUrl = localFileUrl(baseUrl, path.join(localSiteDir, 'assets', 'app.js'))
+    const localAsset = await fetch(localAssetUrl, {
+      headers: {
+        ...previewHeaders,
+        Referer: localDocumentUrl,
+      },
+    })
+    expect(localAsset.status).toBe(200)
+    await expect(localAsset.text()).resolves.toContain('local-ready')
+
+    for (const pathname of [
+      '/api/status',
+      '/api/h5-access',
+      '/proxy/provider/v1/messages',
+    ]) {
+      const blocked = await fetch(`${baseUrl}${pathname}`, { headers: previewHeaders })
+      expect(blocked.status).toBe(403)
+    }
+
+    const externalAsset = await fetch(previewAssetUrl, {
+      headers: {
+        ...previewHeaders,
+        Origin: 'https://attacker.example',
+        Referer: 'https://attacker.example/',
+        'Sec-Fetch-Site': 'cross-site',
+      },
+    })
+    expect(externalAsset.status).toBe(403)
+  })
+
+  test('enforces the pet bearer capability allowlist before API routing', async () => {
+    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+    process.env.ECHOFLOW_PET_ACCESS_TOKEN = 'pet-capability-secret'
+    await restartRemoteServer()
+    const petHeaders = { Authorization: 'Bearer pet-capability-secret' }
+    const privateWorkDir = path.join(tmpDir, 'private-workspace')
+    await fs.mkdir(privateWorkDir, { recursive: true })
+    const { sessionId } = await sessionService.createSession(privateWorkDir)
+
+    for (const pathName of [
+      '/api/desktop-ui/preferences/pet',
+      `/api/sessions/${sessionId}/chat/status`,
+    ]) {
+      const response = await fetch(`${baseUrl}${pathName}`, { headers: petHeaders })
+      expect(response.status).toBe(200)
+    }
+
+    const sessionsResponse = await fetch(`${baseUrl}/api/sessions?limit=400`, {
+      headers: petHeaders,
+    })
+    expect(sessionsResponse.status).toBe(200)
+    const sessionsBody = await sessionsResponse.json() as {
+      sessions: Array<Record<string, unknown>>
+      total: number
+    }
+    const projectedSession = sessionsBody.sessions.find((session) => session.id === sessionId)
+    expect(projectedSession).toMatchObject({
+      id: sessionId,
+      title: 'Untitled Session',
+      messageCount: 0,
+      projectPath: '',
+      workDir: null,
+      workDirExists: false,
+    })
+    expect(typeof projectedSession?.createdAt).toBe('string')
+    expect(typeof projectedSession?.modifiedAt).toBe('string')
+    expect(JSON.stringify(sessionsBody)).not.toContain(privateWorkDir)
+    expect(sessionsBody.sessions.length).toBeLessThanOrEqual(9)
+
+    const desktopSessionsResponse = await fetch(`${baseUrl}/api/sessions?limit=400`, {
+      headers: { Authorization: 'Bearer desktop-local-secret' },
+    })
+    expect(desktopSessionsResponse.status).toBe(200)
+    const desktopSessionsBody = await desktopSessionsResponse.json() as {
+      sessions: Array<Record<string, unknown>>
+    }
+    const realPrivateWorkDir = await fs.realpath(privateWorkDir)
+    expect(desktopSessionsBody.sessions.find((session) => session.id === sessionId)).toMatchObject({
+      workDir: realPrivateWorkDir,
+      projectRoot: realPrivateWorkDir,
+    })
+
+    const updateResponse = await fetch(`${baseUrl}/api/desktop-ui/preferences/pet`, {
+      method: 'PUT',
+      headers: { ...petHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ collapsed: true }),
+    })
+    expect(updateResponse.status).toBe(200)
+    const updateBody = await updateResponse.json() as Record<string, unknown>
+    expect(updateBody).toEqual({
+      ok: true,
+      pet: {
+        enabled: false,
+        selectedPetId: 'dada-code',
+        size: 144,
+        showTaskPanel: false,
+        collapsed: true,
+        motionEnabled: true,
+        lastSessionId: null,
+      },
+    })
+    expect(updateBody).not.toHaveProperty('preferences')
+    const hiddenSessionStatus = await fetch(`${baseUrl}/api/sessions/pet-test/chat/status`, {
+      headers: petHeaders,
+    })
+    expect(hiddenSessionStatus.status).toBe(403)
+    await expect(hiddenSessionStatus.json()).resolves.toMatchObject({
+      error: 'Forbidden',
+      message: 'The pet token cannot access this session.',
+    })
+
+    const hiddenSessionSocket = await fetch(
+      `${baseUrl}/ws/pet-test?token=pet-capability-secret`,
+      { headers: makeUpgradeHeaders() },
+    )
+    expect(hiddenSessionSocket.status).toBe(403)
+    await expectWebSocketOpen(`${wsBaseUrl}/ws/${sessionId}?token=pet-capability-secret`)
+
+    for (const [method, pathName] of [
+      ['GET', '/api/providers'],
+      ['GET', '/api/desktop-ui/preferences'],
+      ['GET', '/api/filesystem'],
+      ['GET', '/api/computer-use/authorized-apps'],
+      ['GET', '/api/settings/user'],
+      ['POST', '/api/doctor/repair'],
+      ['GET', '/preview-fs/pet-test/index.html'],
+      ['GET', '/local-file/tmp/private.txt'],
+      ['POST', '/proxy/v1/messages'],
+    ]) {
+      const response = await fetch(`${baseUrl}${pathName}`, {
+        method,
+        headers: petHeaders,
+      })
+      expect(response.status).toBe(403)
+      await expect(response.json()).resolves.toMatchObject({
+        error: 'Forbidden',
+        message: 'The pet token cannot access this capability.',
+      })
+    }
+
+    const desktopResponse = await fetch(`${baseUrl}/api/settings/user`, {
+      headers: { Authorization: 'Bearer desktop-local-secret' },
+    })
+    expect(desktopResponse.status).toBe(200)
+  })
+
+  test('keeps the host-managed provider proxy working with local auth across H5 modes', async () => {
+    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+    await restartRemoteServer()
+
+    const requestProxy = (authorized: boolean) => fetch(`${baseUrl}/proxy/v1/messages`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': 'proxy-managed',
+        ...(authorized
+          ? { Authorization: 'Bearer desktop-local-secret' }
+          : {}),
+      },
+      body: JSON.stringify({ model: 'test', max_tokens: 8, messages: [] }),
+    })
+
+    // Loopback reaches the proxy with or without the process token; only the
+    // provider configuration decides the outcome.
+    const disabledTokenlessResponse = await requestProxy(false)
+    expect(disabledTokenlessResponse.status).toBe(400)
+
+    const disabledAuthorizedResponse = await requestProxy(true)
+    expect(disabledAuthorizedResponse.status).toBe(400)
+    await expect(disabledAuthorizedResponse.json()).resolves.toMatchObject({
+      error: { message: 'No active provider configured for proxy' },
+    })
+
+    await new H5AccessService().enable()
+
+    // Remote browsers on this same route still need the H5 token — covered by
+    // 'requires H5 token for remote browser proxy requests when H5 access is
+    // enabled'.
+    const enabledTokenlessResponse = await requestProxy(false)
+    expect(enabledTokenlessResponse.status).toBe(400)
+
+    const enabledAuthorizedResponse = await requestProxy(true)
+    expect(enabledAuthorizedResponse.status).toBe(400)
+    await expect(enabledAuthorizedResponse.json()).resolves.toMatchObject({
+      error: { message: 'No active provider configured for proxy' },
+    })
   })
 
   test('does not keep retired Tauri origins trusted after Electron replacement', async () => {

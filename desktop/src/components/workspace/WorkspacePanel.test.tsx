@@ -31,11 +31,13 @@ if (typeof document === 'undefined') {
 type WorkspaceApiMocks = {
   getWorkspaceStatusMock: ReturnType<typeof vi.fn>
   getWorkspaceTreeMock: ReturnType<typeof vi.fn>
+  searchWorkspaceMock: ReturnType<typeof vi.fn>
   getWorkspaceFileMock: ReturnType<typeof vi.fn>
   getWorkspaceDiffMock: ReturnType<typeof vi.fn>
 }
 
 var mocks: WorkspaceApiMocks | undefined
+const workspacePreviewLineLimitForTests = vi.hoisted(() => 20)
 
 function getMocks() {
   if (!mocks) {
@@ -258,6 +260,7 @@ vi.mock('../../api/sessions', () => ({
       mocks = {
         getWorkspaceStatusMock: vi.fn(),
         getWorkspaceTreeMock: vi.fn(),
+        searchWorkspaceMock: vi.fn(),
         getWorkspaceFileMock: vi.fn(),
         getWorkspaceDiffMock: vi.fn(),
       }
@@ -266,6 +269,7 @@ vi.mock('../../api/sessions', () => ({
     return {
       getWorkspaceStatus: mocks.getWorkspaceStatusMock,
       getWorkspaceTree: mocks.getWorkspaceTreeMock,
+      searchWorkspace: mocks.searchWorkspaceMock,
       getWorkspaceFile: mocks.getWorkspaceFileMock,
       getWorkspaceDiff: mocks.getWorkspaceDiffMock,
     }
@@ -280,6 +284,11 @@ vi.mock('../../api/openTargets', () => ({
 }))
 
 vi.mock('@tauri-apps/plugin-shell', () => ({ open: vi.fn().mockResolvedValue(undefined) }))
+
+vi.mock('./WorkspaceCodeSurface', async (importOriginal) => ({
+  ...await importOriginal<typeof import('./WorkspaceCodeSurface')>(),
+  WORKSPACE_PREVIEW_LINE_LIMIT: workspacePreviewLineLimitForTests,
+}))
 
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useChatStore } from '../../stores/chatStore'
@@ -393,7 +402,7 @@ describe('WorkspacePanel', () => {
       await statusRequest.promise
     })
 
-    expect(view.getByPlaceholderText('Filter files...')).toBeTruthy()
+    expect(view.getByPlaceholderText('Filter changed files...')).toBeTruthy()
 
     await waitFor(() => {
       expect(view.container.querySelector('[data-workspace-file-path="src/app.ts"]')).toBeTruthy()
@@ -430,7 +439,7 @@ describe('WorkspacePanel', () => {
     expect(view.queryByTestId('workspace-file-navigator')).toBeNull()
     await clickElement(view.getByRole('button', { name: 'Show file navigator' }))
     expect(view.getByTestId('workspace-file-navigator').className).toContain('absolute')
-    expect(view.queryByTestId('workspace-file-navigator-header')).toBeNull()
+    expect(view.getByTestId('workspace-file-navigator-header')).toBeTruthy()
     expect(view.queryByText('1 file')).toBeNull()
     expect(view.getByTestId('workspace-file-navigator').className).toContain('w-[min(280px,100%)]')
     expect(view.getByTestId('workspace-review-layout').className).toContain('grid-cols-1')
@@ -526,7 +535,7 @@ describe('WorkspacePanel', () => {
     expect(view.queryByText('claude-code-haha')).toBeNull()
     expect(view.queryByText('main')).toBeNull()
 
-    const filter = view.getByPlaceholderText('Filter files...')
+    const filter = view.getByPlaceholderText('Filter changed files...')
     expect(view.queryByText('3 files')).toBeNull()
     fireEvent.change(filter, { target: { value: 'theme' } })
 
@@ -614,7 +623,7 @@ describe('WorkspacePanel', () => {
     expect(view.getByText('App.tsx')).toBeTruthy()
     expect(view.getByText('theme.css')).toBeTruthy()
 
-    fireEvent.change(view.getByPlaceholderText('Filter files...'), { target: { value: 'theme' } })
+    fireEvent.change(view.getByPlaceholderText('Filter changed files...'), { target: { value: 'theme' } })
 
     expect(view.getByText('desktop/src')).toBeTruthy()
     expect(view.queryByText('docs')).toBeNull()
@@ -859,11 +868,224 @@ describe('WorkspacePanel', () => {
     expect(view.queryByRole('status')).toBeNull()
     expect(view.queryByText('No changes')).toBeNull()
 
-    fireEvent.change(view.getByPlaceholderText('Filter files...'), { target: { value: 'readme' } })
+    getMocks().searchWorkspaceMock.mockResolvedValueOnce({
+      state: 'ok',
+      query: 'readme',
+      truncated: false,
+      entries: [{ name: 'README.md', path: 'README.md', isDirectory: false }],
+    })
+    fireEvent.change(view.getByPlaceholderText('Search all files...'), { target: { value: 'readme' } })
 
-    expect(view.getByRole('status').textContent).toBe('1 of 2 items')
-    expect(view.queryByText('src')).toBeNull()
+    expect(await view.findByText('1 search results')).toBeTruthy()
     expect(view.getByText('README.md')).toBeTruthy()
+    expect(view.queryByText('src')).toBeNull()
+  })
+
+  it('searches unopened directories in a deep Java project without expanding the tree first', async () => {
+    const sessionId = 'session-deep-java-search'
+    const targetPath = 'services/mental-health-service/src/main/java/com/example/campus/mentalhealth/controller/MentalHealthTrendController.java'
+
+    getMocks().searchWorkspaceMock.mockResolvedValue({
+      state: 'ok',
+      query: 'MentalHealthTrendController',
+      truncated: false,
+      entries: [{
+        name: 'MentalHealthTrendController.java',
+        path: targetPath,
+        isDirectory: false,
+      }],
+    })
+    getMocks().getWorkspaceFileMock.mockResolvedValue({
+      state: 'ok',
+      path: targetPath,
+      content: 'package com.example.campus;\n\npublic final class MentalHealthTrendController {}\n',
+      language: 'java',
+      size: 82,
+    })
+
+    await setWorkspaceState((state) => ({
+      ...state,
+      panelBySession: {
+        ...state.panelBySession,
+        [sessionId]: { isOpen: true, activeView: 'all', hasUserSelectedView: true },
+      },
+      statusBySession: {
+        ...state.statusBySession,
+        [sessionId]: {
+          state: 'ok',
+          workDir: '/repo/campus-agent-platform',
+          repoName: 'campus-agent-platform',
+          branch: 'main',
+          isGitRepo: true,
+          changedFiles: [],
+        },
+      },
+      treeBySessionPath: {
+        ...state.treeBySessionPath,
+        [sessionId]: {
+          '': {
+            state: 'ok',
+            path: '',
+            entries: [
+              { name: 'identity-domain', path: 'identity-domain', isDirectory: true },
+              { name: 'identity-application', path: 'identity-application', isDirectory: true },
+              { name: 'identity-adapter', path: 'identity-adapter', isDirectory: true },
+              { name: 'services', path: 'services', isDirectory: true },
+              { name: 'build.gradle', path: 'build.gradle', isDirectory: false },
+            ],
+          },
+        },
+      },
+    }))
+
+    const view = await renderPanel(sessionId)
+    fireEvent.change(view.getByPlaceholderText('Search all files...'), {
+      target: { value: 'MentalHealthTrendController' },
+    })
+
+    expect(await view.findByText('MentalHealthTrendController.java')).toBeTruthy()
+    expect(view.getByText('services/mental-health-service/src/main/java/com/example/campus/mentalhealth/controller')).toBeTruthy()
+    expect(view.queryByRole('button', { name: 'services' })).toBeNull()
+    expect(getMocks().searchWorkspaceMock).toHaveBeenCalledWith(sessionId, 'MentalHealthTrendController')
+    expect(getMocks().getWorkspaceTreeMock).not.toHaveBeenCalledWith(sessionId, 'services')
+
+    await clickElement(view.getByRole('button', {
+      name: 'MentalHealthTrendController.java, services/mental-health-service/src/main/java/com/example/campus/mentalhealth/controller',
+    }))
+    expect((await view.findByTestId('workspace-preview-header')).textContent).toContain(targetPath)
+    await waitFor(() => {
+      expect(document.activeElement).toBe(view.getByTestId('workspace-preview-header'))
+    })
+
+    await clickElement(view.getByRole('button', { name: 'Show file navigator' }))
+    const searchInput = view.getByPlaceholderText('Search all files...') as HTMLInputElement
+    expect(searchInput.value).toBe('MentalHealthTrendController')
+    expect(view.getByText('MentalHealthTrendController.java')).toBeTruthy()
+    await waitFor(() => {
+      expect(document.activeElement).toBe(searchInput)
+    })
+
+    const staleSearch = deferred<{
+      state: 'ok'
+      query: string
+      truncated: boolean
+      entries: Array<{ name: string; path: string; isDirectory: boolean }>
+    }>()
+    getMocks().searchWorkspaceMock.mockReset()
+    getMocks().searchWorkspaceMock
+      .mockReturnValueOnce(staleSearch.promise)
+      .mockResolvedValueOnce({
+        state: 'ok',
+        query: 'JdbcOrganizationHierarchyRepository',
+        truncated: false,
+        entries: [{
+          name: 'JdbcOrganizationHierarchyRepository.java',
+          path: 'identity-adapter/src/main/java/com/example/campus/identity/adapter/persistence/mysql/JdbcOrganizationHierarchyRepository.java',
+          isDirectory: false,
+        }, {
+          name: 'JdbcOrganizationHierarchyRepositoryTest.java',
+          path: 'identity-adapter/src/test/java/com/example/campus/identity/adapter/persistence/mysql/JdbcOrganizationHierarchyRepositoryTest.java',
+          isDirectory: false,
+        }],
+      })
+
+    fireEvent.change(view.getByPlaceholderText('Search all files...'), {
+      target: { value: 'DeepOrganizationHierarchySearchService' },
+    })
+    await waitFor(() => {
+      expect(getMocks().searchWorkspaceMock).toHaveBeenCalledWith(sessionId, 'DeepOrganizationHierarchySearchService')
+    })
+    fireEvent.change(view.getByPlaceholderText('Search all files...'), {
+      target: { value: 'JdbcOrganizationHierarchyRepository' },
+    })
+
+    expect(await view.findByText('JdbcOrganizationHierarchyRepository.java')).toBeTruthy()
+    staleSearch.resolve({
+      state: 'ok',
+      query: 'DeepOrganizationHierarchySearchService',
+      truncated: false,
+      entries: [{
+        name: 'DeepOrganizationHierarchySearchService.java',
+        path: 'identity-application/src/main/java/com/example/campus/identity/application/query/DeepOrganizationHierarchySearchService.java',
+        isDirectory: false,
+      }],
+    })
+    await flushReactWork()
+    expect(view.queryByText('DeepOrganizationHierarchySearchService.java')).toBeNull()
+    expect(view.getByText('JdbcOrganizationHierarchyRepository.java')).toBeTruthy()
+
+    const currentSearchInput = view.getByPlaceholderText('Search all files...')
+    fireEvent.keyDown(currentSearchInput, { key: 'ArrowDown' })
+    const currentResult = view.getByRole('button', {
+      name: /JdbcOrganizationHierarchyRepository\.java, identity-adapter\/src\/main/,
+    })
+    expect(document.activeElement).toBe(currentResult)
+    const nextResult = view.getByRole('button', {
+      name: /JdbcOrganizationHierarchyRepositoryTest\.java/,
+    })
+    fireEvent.keyDown(currentResult, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(nextResult)
+    fireEvent.keyDown(nextResult, { key: 'ArrowUp' })
+    expect(document.activeElement).toBe(currentResult)
+    fireEvent.keyDown(currentResult, { key: 'End' })
+    expect(document.activeElement).toBe(nextResult)
+    fireEvent.keyDown(nextResult, { key: 'Home' })
+    expect(document.activeElement).toBe(currentResult)
+    fireEvent.keyDown(currentResult, { key: 'Escape' })
+    await waitFor(() => {
+      expect(document.activeElement).toBe(currentSearchInput)
+    })
+    expect(view.getByText('services')).toBeTruthy()
+    expect(view.queryByText('JdbcOrganizationHierarchyRepository.java')).toBeNull()
+  })
+
+  it('shows workspace search errors and empty results without falling back to the loaded root tree', async () => {
+    const sessionId = 'session-workspace-search-states'
+    getMocks().searchWorkspaceMock
+      .mockRejectedValueOnce(new Error('Workspace search failed'))
+      .mockResolvedValueOnce({ state: 'ok', query: 'missing-class', truncated: false, entries: [] })
+
+    await setWorkspaceState((state) => ({
+      ...state,
+      panelBySession: {
+        ...state.panelBySession,
+        [sessionId]: { isOpen: true, activeView: 'all', hasUserSelectedView: true },
+      },
+      statusBySession: {
+        ...state.statusBySession,
+        [sessionId]: {
+          state: 'ok',
+          workDir: '/repo/campus-agent-platform',
+          repoName: 'campus-agent-platform',
+          branch: 'main',
+          isGitRepo: true,
+          changedFiles: [],
+        },
+      },
+      treeBySessionPath: {
+        ...state.treeBySessionPath,
+        [sessionId]: {
+          '': {
+            state: 'ok',
+            path: '',
+            entries: [{ name: 'services', path: 'services', isDirectory: true }],
+          },
+        },
+      },
+    }))
+
+    const view = await renderPanel(sessionId)
+    fireEvent.change(view.getByPlaceholderText('Search all files...'), {
+      target: { value: 'broken-search' },
+    })
+    expect(await view.findByText('Workspace search failed')).toBeTruthy()
+    expect(view.queryByText('services')).toBeNull()
+
+    fireEvent.change(view.getByPlaceholderText('Search all files...'), {
+      target: { value: 'missing-class' },
+    })
+    expect(await view.findByText('No matching files')).toBeTruthy()
+    expect(view.queryByText('services')).toBeNull()
   })
 
   it('lazy loads the root tree, expands directories, and opens file previews from the all-files view', async () => {
@@ -1054,6 +1276,58 @@ describe('WorkspacePanel', () => {
     expect(view.getAllByText('b.ts').length).toBeGreaterThanOrEqual(1)
   })
 
+  it('keeps a close control available for the last preview tab', async () => {
+    await setWorkspaceState((state) => ({
+      ...state,
+      panelBySession: {
+        ...state.panelBySession,
+        'session-last-preview-tab': {
+          isOpen: true,
+          activeView: 'changed',
+          hasUserSelectedView: true,
+        },
+      },
+      statusBySession: {
+        ...state.statusBySession,
+        'session-last-preview-tab': {
+          state: 'ok',
+          workDir: '/repo',
+          repoName: 'repo',
+          branch: 'main',
+          isGitRepo: true,
+          changedFiles: [{
+            path: 'src/app.ts',
+            status: 'modified',
+            additions: 1,
+            deletions: 1,
+          }],
+        },
+      },
+      previewTabsBySession: {
+        ...state.previewTabsBySession,
+        'session-last-preview-tab': [{
+          id: 'diff:src/app.ts',
+          path: 'src/app.ts',
+          kind: 'diff',
+          title: 'app.ts',
+          diff: '@@ -1 +1 @@\n-old\n+new',
+          state: 'ok',
+        }],
+      },
+      activePreviewTabIdBySession: {
+        ...state.activePreviewTabIdBySession,
+        'session-last-preview-tab': 'diff:src/app.ts',
+      },
+    }))
+
+    const view = await renderPanel('session-last-preview-tab')
+
+    expect(view.getByTestId('workspace-code').textContent).toContain('+new')
+    await clickElement(view.getByLabelText('Close tab app.ts Diff'))
+
+    expect(view.queryByTestId('workspace-preview-column')).toBeNull()
+  })
+
   it('keeps the file navigator hidden while previewing until explicitly opened', async () => {
     await setWorkspaceState((state) => ({
       ...state,
@@ -1104,17 +1378,17 @@ describe('WorkspacePanel', () => {
 
     expect(view.getByTestId('workspace-code').textContent).toContain('+new')
     expect(view.queryByRole('button', { name: 'Changed files' })).toBeNull()
-    expect(view.queryByPlaceholderText('Filter files...')).toBeNull()
+    expect(view.queryByPlaceholderText('Filter changed files...')).toBeNull()
 
     await clickElement(view.getByRole('button', { name: 'Show file navigator' }))
 
-    expect(view.queryByRole('button', { name: 'Changed files' })).toBeNull()
-    expect(view.getByPlaceholderText('Filter files...')).toBeTruthy()
+    expect(view.getByRole('button', { name: 'Changed files' })).toBeTruthy()
+    expect(view.getByPlaceholderText('Filter changed files...')).toBeTruthy()
     expect(view.container.querySelector('[data-workspace-file-path="src/app.ts"]')).toBeTruthy()
     expect(view.getByRole('button', { name: 'Hide file navigator' })).toBeTruthy()
   })
 
-  it('keeps a preview navigator scoped to changed files when the previous view was all files', async () => {
+  it('preserves the all-files navigator when a preview is already open', async () => {
     getMocks().getWorkspaceTreeMock.mockResolvedValue({
       state: 'ok',
       path: '',
@@ -1172,14 +1446,18 @@ describe('WorkspacePanel', () => {
     expect(getMocks().getWorkspaceTreeMock).not.toHaveBeenCalled()
 
     await clickElement(view.getByRole('button', { name: 'Show file navigator' }))
-    await flushReactWork()
+    await waitFor(() => {
+      expect(getMocks().getWorkspaceTreeMock).toHaveBeenCalledWith('session-preview-hidden-tree', '')
+    })
 
-    expect(getMocks().getWorkspaceTreeMock).not.toHaveBeenCalled()
-    expect(view.container.querySelector('[data-workspace-file-path="src/app.ts"]')).toBeTruthy()
+    expect(view.getByRole('button', { name: 'All files' })).toBeTruthy()
+    expect(view.getByPlaceholderText('Search all files...')).toBeTruthy()
+    expect(view.getByText('src')).toBeTruthy()
+    expect(view.container.querySelector('[data-workspace-file-path="src/app.ts"]')).toBeNull()
   })
 
   it('uses theme tokens for the panel, preview header, and code surface in dark mode', async () => {
-    await setSettingsState({ ...settingsInitialState, locale: 'en', theme: 'dark' })
+    await setSettingsState({ ...settingsInitialState, locale: 'en' })
     await setWorkspaceState((state) => ({
       ...state,
       panelBySession: {
@@ -1235,6 +1513,74 @@ describe('WorkspacePanel', () => {
     expect(addToChatLabel?.className).toContain('hidden min-[960px]:inline')
     expect(classNameContains(codeSurface, 'bg-[var(--color-code-bg)]')).toBe(true)
     expect(classNameContains(codeSurface, 'bg-white')).toBe(false)
+  })
+
+  it('syntax highlights Java source previews instead of rendering them as plain text', async () => {
+    const sessionId = 'session-java-preview'
+    const javaSource = [
+      'package com.example.campus;',
+      '',
+      'import java.util.List;',
+      '',
+      'public final class MentalHealthTrendController {',
+      '  private final List<String> campusIds;',
+      '',
+      '  public int countVisibleOrganizations() {',
+      '    return campusIds.size();',
+      '  }',
+      '}',
+    ].join('\n')
+
+    await setWorkspaceState((state) => ({
+      ...state,
+      panelBySession: {
+        ...state.panelBySession,
+        [sessionId]: {
+          isOpen: true,
+          activeView: 'all',
+          hasUserSelectedView: true,
+        },
+      },
+      statusBySession: {
+        ...state.statusBySession,
+        [sessionId]: {
+          state: 'ok',
+          workDir: '/repo',
+          repoName: 'repo',
+          branch: 'main',
+          isGitRepo: true,
+          changedFiles: [],
+        },
+      },
+      previewTabsBySession: {
+        ...state.previewTabsBySession,
+        [sessionId]: [{
+          id: 'file:src/MentalHealthTrendController.java',
+          path: 'src/MentalHealthTrendController.java',
+          kind: 'file',
+          title: 'MentalHealthTrendController.java',
+          language: 'java',
+          content: javaSource,
+          state: 'ok',
+          size: javaSource.length,
+        }],
+      },
+      activePreviewTabIdBySession: {
+        ...state.activePreviewTabIdBySession,
+        [sessionId]: 'file:src/MentalHealthTrendController.java',
+      },
+    }))
+
+    const view = await renderPanel(sessionId)
+    await waitFor(() => {
+      expect(view.getByTestId('workspace-code').getAttribute('data-highlight-engine')).toBe('shiki')
+    })
+    const tokens = Array.from(view.getByTestId('workspace-code').querySelectorAll<HTMLElement>('[data-workspace-token]'))
+    const tokenColor = (text: string) => tokens.find((token) => token.textContent === text)?.style.color
+
+    expect(tokenColor('package')).toBe('var(--color-code-keyword)')
+    expect(tokenColor('MentalHealthTrendController')).toBe('var(--color-code-type)')
+    expect(tokenColor('countVisibleOrganizations')).toBe('var(--color-code-function)')
   })
 
   it('can expand long diff previews beyond the default rendered line cap', async () => {
@@ -1349,7 +1695,10 @@ describe('WorkspacePanel', () => {
   })
 
   it('can expand long file previews beyond the default rendered line cap', async () => {
-    const longFile = Array.from({ length: 2300 }, (_, index) => `const line${index + 1} = ${index + 1}`).join('\n')
+    const longFile = Array.from(
+      { length: workspacePreviewLineLimitForTests + 3 },
+      (_, index) => `const line${index + 1} = ${index + 1}`,
+    ).join('\n')
 
     await setWorkspaceState((state) => ({
       ...state,
@@ -1383,15 +1732,103 @@ describe('WorkspacePanel', () => {
     const highlightedCode = view.getByTestId('workspace-code').textContent ?? ''
 
     expect(highlightedCode).toContain('const line1 = 1')
-    expect(highlightedCode).toContain('const line2000 = 2000')
-    expect(highlightedCode).not.toContain('const line2001 = 2001')
+    expect(highlightedCode).toContain('const line20 = 20')
+    expect(highlightedCode).not.toContain('const line21 = 21')
     await clickElement(view.getByRole('button', { name: 'Show all loaded lines' }))
 
     await waitFor(() => {
-      expect(view.getByTestId('workspace-code').textContent).toContain('const line2300 = 2300')
+      expect(view.getByTestId('workspace-code').textContent).toContain('const line23 = 23')
     })
     expect(view.getByRole('button', { name: 'Collapse preview' })).toBeTruthy()
-  }, 20_000)
+  })
+
+  it('marks the revealed line when a reference carries one', async () => {
+    // #1146: clicking `src/app.ts:3` in the chat has to land on line 3, not just
+    // open the file.
+    await setWorkspaceState((state) => ({
+      ...state,
+      panelBySession: {
+        ...state.panelBySession,
+        'session-reveal-line': { isOpen: true, activeView: 'all' },
+      },
+      previewTabsBySession: {
+        ...state.previewTabsBySession,
+        'session-reveal-line': [{
+          id: 'file:src/app.ts',
+          path: 'src/app.ts',
+          kind: 'file',
+          title: 'app.ts',
+          content: 'const a = 1\nconst b = 2\nconst c = 3\nconst d = 4',
+          language: 'typescript',
+          previewType: 'text',
+          state: 'ok',
+          reveal: { line: 3, nonce: 1 },
+        }],
+      },
+      activePreviewTabIdBySession: {
+        ...state.activePreviewTabIdBySession,
+        'session-reveal-line': 'file:src/app.ts',
+      },
+    }))
+
+    const view = await renderPanel('session-reveal-line')
+    const code = view.getByTestId('workspace-code')
+
+    const revealed = code.querySelector('[data-workspace-line-number="3"]')
+    expect(revealed?.className).toContain('bg-[var(--color-brand-soft)]')
+    // The inset rule is the load-bearing part of the mark: every soft fill in the
+    // palette sits under 1.11 contrast against the code background. See
+    // theme/contrast.test.ts.
+    expect(revealed?.className).toContain('shadow-[inset_2px_0_0_var(--color-brand)]')
+    // Neighbours keep the plain hover treatment.
+    expect(code.querySelector('[data-workspace-line-number="2"]')?.className)
+      .toContain('hover:bg-[var(--color-surface-hover)]')
+  })
+
+  it('expands a truncated preview when the revealed line is past the fold', async () => {
+    // Without this the reference silently does nothing: the row it points at is
+    // not rendered at all while the preview is capped.
+    const longFile = Array.from(
+      { length: workspacePreviewLineLimitForTests + 10 },
+      (_, index) => `const line${index + 1} = ${index + 1}`,
+    ).join('\n')
+    const revealLine = workspacePreviewLineLimitForTests + 5
+
+    await setWorkspaceState((state) => ({
+      ...state,
+      panelBySession: {
+        ...state.panelBySession,
+        'session-reveal-past-fold': { isOpen: true, activeView: 'all' },
+      },
+      previewTabsBySession: {
+        ...state.previewTabsBySession,
+        'session-reveal-past-fold': [{
+          id: 'file:long.ts',
+          path: 'long.ts',
+          kind: 'file',
+          title: 'long.ts',
+          content: longFile,
+          language: 'typescript',
+          previewType: 'text',
+          state: 'ok',
+          reveal: { line: revealLine, nonce: 1 },
+        }],
+      },
+      activePreviewTabIdBySession: {
+        ...state.activePreviewTabIdBySession,
+        'session-reveal-past-fold': 'file:long.ts',
+      },
+    }))
+
+    const view = await renderPanel('session-reveal-past-fold')
+
+    await waitFor(() => {
+      expect(view.getByTestId('workspace-code').textContent).toContain(`const line${revealLine} = ${revealLine}`)
+    })
+    expect(view.getByTestId('workspace-code')
+      .querySelector(`[data-workspace-line-number="${revealLine}"]`)?.className)
+      .toContain('bg-[var(--color-brand-soft)]')
+  })
 
   it('renders image previews from workspace files', async () => {
     await setWorkspaceState((state) => ({
@@ -1955,6 +2392,82 @@ describe('WorkspacePanel', () => {
         lineEnd: 1,
         note: 'Rename this title',
         quote: 'const title = "Todo"',
+      },
+    ])
+  })
+
+  it('adds a Shift-selected line range comment from a code preview to the chat context', async () => {
+    await setWorkspaceState((state) => ({
+      ...state,
+      panelBySession: {
+        ...state.panelBySession,
+        'session-line-range-comment': {
+          isOpen: true,
+          activeView: 'all',
+        },
+      },
+      statusBySession: {
+        ...state.statusBySession,
+        'session-line-range-comment': {
+          state: 'ok',
+          workDir: '/repo',
+          repoName: 'repo',
+          branch: 'main',
+          isGitRepo: true,
+          changedFiles: [],
+        },
+      },
+      previewTabsBySession: {
+        ...state.previewTabsBySession,
+        'session-line-range-comment': [{
+          id: 'file:src/App.tsx',
+          path: 'src/App.tsx',
+          kind: 'file',
+          title: 'App.tsx',
+          language: 'tsx',
+          content: 'const title = "Todo"\nconst count = 1\nexport default title',
+          state: 'ok',
+          size: 64,
+        }],
+      },
+      activePreviewTabIdBySession: {
+        ...state.activePreviewTabIdBySession,
+        'session-line-range-comment': 'file:src/App.tsx',
+      },
+    }))
+
+    const view = await renderPanel('session-line-range-comment')
+    const firstLine = view.getByRole('button', { name: 'Comment line 1' })
+    const secondLine = view.getByRole('button', { name: 'Comment line 2' })
+    const thirdLine = view.getByRole('button', { name: 'Comment line 3' })
+
+    await clickElement(firstLine)
+    await act(async () => {
+      fireEvent.click(thirdLine, { shiftKey: true })
+      await Promise.resolve()
+    })
+
+    expect(firstLine.getAttribute('aria-pressed')).toBe('true')
+    expect(secondLine.getAttribute('aria-pressed')).toBe('true')
+    expect(thirdLine.getAttribute('aria-pressed')).toBe('true')
+    expect(view.getByText('Lines 1–3')).toBeTruthy()
+
+    const textarea = view.getByPlaceholderText('Describe what should change here...')
+    await act(() => {
+      fireEvent.change(textarea, { target: { value: 'Extract this setup' } })
+    })
+    await clickElement(view.getByRole('button', { name: 'Add comment' }))
+
+    expect(useWorkspaceChatContextStore.getState().referencesBySession['session-line-range-comment']).toMatchObject([
+      {
+        kind: 'code-comment',
+        path: 'src/App.tsx',
+        absolutePath: '/repo/src/App.tsx',
+        name: 'App.tsx',
+        lineStart: 1,
+        lineEnd: 3,
+        note: 'Extract this setup',
+        quote: 'const title = "Todo"\nconst count = 1\nexport default title',
       },
     ])
   })

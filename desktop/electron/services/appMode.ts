@@ -46,7 +46,7 @@ function writeAppModeConfig(configDir: string, config: PersistedAppModeConfig): 
 function assertWritableDataDir(configDir: string): void {
   try {
     fs.mkdirSync(configDir, { recursive: true })
-    const probeDir = fs.mkdtempSync(path.join(configDir, '.cc-haha-write-test-'))
+    const probeDir = fs.mkdtempSync(path.join(configDir, '.echoflow-code-write-test-'))
     try {
       fs.writeFileSync(path.join(probeDir, 'probe'), '')
     } finally {
@@ -90,7 +90,7 @@ function normalizedCustomDir(app: AppModeAppLike, value: string | null | undefin
 }
 
 function externallyControlled(env: NodeJS.ProcessEnv): boolean {
-  return Boolean(env.CLAUDE_CONFIG_DIR && env.CC_HAHA_APP_PORTABLE_DIR !== '1')
+  return Boolean(env.CLAUDE_CONFIG_DIR && env.ECHOFLOW_APP_PORTABLE_DIR !== '1')
 }
 
 export function determineStartupPortableDir(
@@ -115,9 +115,9 @@ export function applyStartupPortableMode(
 ): string | null {
   // app.relaunch() inherits process.env. Discard the previous app-managed
   // selection so the persisted two-mode record remains authoritative.
-  if (env.CC_HAHA_APP_PORTABLE_DIR === '1') {
+  if (env.ECHOFLOW_APP_PORTABLE_DIR === '1') {
     delete env.CLAUDE_CONFIG_DIR
-    delete env.CC_HAHA_APP_PORTABLE_DIR
+    delete env.ECHOFLOW_APP_PORTABLE_DIR
     delete env.WEBVIEW2_USER_DATA_FOLDER
   }
   if (env.CLAUDE_CONFIG_DIR) {
@@ -130,7 +130,7 @@ export function applyStartupPortableMode(
   const webViewDataDir = path.join(customDir, 'EBWebView')
   fs.mkdirSync(webViewDataDir, { recursive: true })
   env.CLAUDE_CONFIG_DIR = customDir
-  env.CC_HAHA_APP_PORTABLE_DIR = '1'
+  env.ECHOFLOW_APP_PORTABLE_DIR = '1'
   env.WEBVIEW2_USER_DATA_FOLDER = webViewDataDir
   return customDir
 }
@@ -149,7 +149,7 @@ export function getAppMode(
       mode: 'portable',
       portableDir: customDir,
       activeConfigDir: customDir,
-      configDirSource: envConfigDir && env.CC_HAHA_APP_PORTABLE_DIR !== '1'
+      configDirSource: envConfigDir && env.ECHOFLOW_APP_PORTABLE_DIR !== '1'
         ? 'environment'
         : 'portable',
     }

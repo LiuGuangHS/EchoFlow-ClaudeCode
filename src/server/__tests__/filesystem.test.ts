@@ -4,8 +4,14 @@ import * as fs from 'fs'
 import * as fsp from 'fs/promises'
 import * as os from 'os'
 import * as path from 'path'
-import { handleFilesystemRoute } from '../api/filesystem.js'
-import { clearFilesystemAccessRootsForTests } from '../services/filesystemAccessRoots.js'
+import {
+  getProjectSearchFiles,
+  handleFilesystemRoute,
+} from '../api/filesystem.js'
+import {
+  clearFilesystemAccessRootsForTests,
+  registerFilesystemAccessRoot,
+} from '../services/filesystemAccessRoots.js'
 import { getRepositoryContext } from '../services/repositoryLaunchService.js'
 
 const cleanupDirs = new Set<string>()
@@ -117,6 +123,57 @@ describe('filesystem API', () => {
     expect(body.entries.some((entry) => entry.name === 'note.txt')).toBe(true)
   })
 
+  it('rejects final and intermediate file symlinks that escape a registered root', async () => {
+    if (process.platform === 'win32') return
+    const externalFixtureDir = await makeExternalFixtureDir()
+    if (!externalFixtureDir) return
+
+    cleanupDirs.add(externalFixtureDir)
+    const allowedRoot = path.join(externalFixtureDir, 'allowed')
+    const outsideRoot = path.join(externalFixtureDir, 'outside')
+    await fsp.mkdir(allowedRoot)
+    await fsp.mkdir(outsideRoot)
+    await fsp.writeFile(path.join(outsideRoot, 'secret.png'), Buffer.from('outside'))
+    await fsp.writeFile(path.join(allowedRoot, 'not-an-image.txt'), 'text')
+    await fsp.symlink(
+      path.join(outsideRoot, 'secret.png'),
+      path.join(allowedRoot, 'final-link.png'),
+    )
+    await fsp.symlink(outsideRoot, path.join(allowedRoot, 'linked-directory'), 'dir')
+    await fsp.symlink(
+      path.join(allowedRoot, 'not-an-image.txt'),
+      path.join(allowedRoot, 'pretend-image.png'),
+    )
+    registerFilesystemAccessRoot(allowedRoot)
+
+    for (const candidate of [
+      path.join(allowedRoot, 'final-link.png'),
+      path.join(allowedRoot, 'linked-directory', 'secret.png'),
+    ]) {
+      const res = await handleFilesystemRoute(
+        '/api/filesystem/file',
+        makeUrl('/api/filesystem/file', { path: candidate }),
+      )
+      expect(res.status).toBe(403)
+    }
+
+    const browseEscape = await handleFilesystemRoute(
+      '/api/filesystem/browse',
+      makeUrl('/api/filesystem/browse', {
+        path: path.join(allowedRoot, 'linked-directory'),
+      }),
+    )
+    expect(browseEscape.status).toBe(403)
+
+    const disguisedType = await handleFilesystemRoute(
+      '/api/filesystem/file',
+      makeUrl('/api/filesystem/file', {
+        path: path.join(allowedRoot, 'pretend-image.png'),
+      }),
+    )
+    expect(disguisedType.status).toBe(400)
+  })
+
   it('fuzzy searches files and directories below the selected root', async () => {
     const fixtureDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'claude-filesystem-test-'))
     cleanupDirs.add(fixtureDir)
@@ -216,6 +273,56 @@ describe('filesystem API', () => {
       }),
     ]))
     expect(body.entries.some((entry) => entry.relativePath === 'node_modules/pkg/cache-result.js')).toBe(false)
+  })
+
+  it('keeps non-git file suggestions working when ripgrep cannot start', async () => {
+    const fixtureDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'claude-filesystem-fallback-'))
+    cleanupDirs.add(fixtureDir)
+    await fsp.mkdir(path.join(fixtureDir, 'app'), { recursive: true })
+    await fsp.mkdir(path.join(fixtureDir, 'app', 'generated'), { recursive: true })
+    await fsp.mkdir(path.join(fixtureDir, 'node_modules', 'pkg'), { recursive: true })
+    await fsp.mkdir(path.join(fixtureDir, '.git', 'objects'), { recursive: true })
+    await fsp.writeFile(path.join(fixtureDir, '.gitignore'), 'node_modules/\n')
+    await fsp.writeFile(path.join(fixtureDir, 'app', '.gitignore'), 'generated/\n')
+    await fsp.writeFile(path.join(fixtureDir, 'app', 'search-result.ts'), 'export {}')
+    await fsp.writeFile(path.join(fixtureDir, 'app', 'generated', 'search-result.ts'), '')
+    await fsp.writeFile(path.join(fixtureDir, 'node_modules', 'pkg', 'search-result.js'), '')
+    await fsp.writeFile(path.join(fixtureDir, '.git', 'objects', 'search-result'), '')
+
+    const files = await getProjectSearchFiles(fixtureDir, {
+      ripGrepFn: async () => {
+        throw new Error('ripgrep unavailable')
+      },
+    })
+
+    expect(files).toContain('app/search-result.ts')
+    expect(files).not.toContain('app/generated/search-result.ts')
+    expect(files).not.toContain('node_modules/pkg/search-result.js')
+    expect(files).not.toContain('.git/objects/search-result')
+  })
+
+  it('does not let unrelated files exhaust the fallback search budget', async () => {
+    const fixtureDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'claude-filesystem-fair-fallback-'))
+    cleanupDirs.add(fixtureDir)
+    await fsp.mkdir(path.join(fixtureDir, 'a-target'), { recursive: true })
+    await fsp.mkdir(path.join(fixtureDir, 'z-heavy'), { recursive: true })
+    await fsp.writeFile(path.join(fixtureDir, 'a-target', 'needle.ts'), '')
+    await Promise.all(
+      Array.from({ length: 10 }, (_, index) =>
+        fsp.writeFile(path.join(fixtureDir, 'z-heavy', `cache-${index}.tmp`), '')),
+    )
+
+    const files = await getProjectSearchFiles(fixtureDir, {
+      ripGrepFn: async () => {
+        throw new Error('ripgrep unavailable')
+      },
+      fallbackOptions: {
+        searchQuery: 'needle',
+        maxFiles: 1,
+      },
+    })
+
+    expect(files).toEqual(['a-target/needle.ts'])
   })
 
   it('accepts /private/tmp aliases on macOS for browsing and file serving', async () => {

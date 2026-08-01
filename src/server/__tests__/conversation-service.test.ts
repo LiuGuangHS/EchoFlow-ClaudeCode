@@ -22,6 +22,7 @@ describe('ConversationService', () => {
   let originalEntrypoint: string | undefined
   let originalOAuthToken: string | undefined
   let originalProviderManagedByHost: string | undefined
+  let originalLocalAccessToken: string | undefined
   let originalDiagnosticsFile: string | undefined
   let originalAttributionHeader: string | undefined
   let originalDisableExperimentalBetas: string | undefined
@@ -37,7 +38,7 @@ describe('ConversationService', () => {
   let originalDisableTerminalShellEnv: string | undefined
 
   beforeEach(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cc-haha-conversation-service-'))
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'echoflow-code-conversation-service-'))
     await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
     originalConfigDir = process.env.CLAUDE_CONFIG_DIR
     originalApiKey = process.env.ANTHROPIC_API_KEY
@@ -47,19 +48,20 @@ describe('ConversationService', () => {
     originalEntrypoint = process.env.CLAUDE_CODE_ENTRYPOINT
     originalOAuthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN
     originalProviderManagedByHost = process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST
+    originalLocalAccessToken = process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
     originalDiagnosticsFile = process.env.CLAUDE_CODE_DIAGNOSTICS_FILE
     originalAttributionHeader = process.env.CLAUDE_CODE_ATTRIBUTION_HEADER
     originalDisableExperimentalBetas = process.env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS
     originalResumeInterruptedTurn = process.env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN
-    originalTraceApiCalls = process.env.CC_HAHA_TRACE_API_CALLS
-    originalTraceProviderId = process.env.CC_HAHA_TRACE_PROVIDER_ID
-    originalTraceProviderName = process.env.CC_HAHA_TRACE_PROVIDER_NAME
-    originalTraceProviderFormat = process.env.CC_HAHA_TRACE_PROVIDER_FORMAT
+    originalTraceApiCalls = process.env.ECHOFLOW_TRACE_API_CALLS
+    originalTraceProviderId = process.env.ECHOFLOW_TRACE_PROVIDER_ID
+    originalTraceProviderName = process.env.ECHOFLOW_TRACE_PROVIDER_NAME
+    originalTraceProviderFormat = process.env.ECHOFLOW_TRACE_PROVIDER_FORMAT
     originalHome = process.env.HOME
     originalPath = process.env.PATH
     originalShell = process.env.SHELL
     originalZdotdir = process.env.ZDOTDIR
-    originalDisableTerminalShellEnv = process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV
+    originalDisableTerminalShellEnv = process.env.ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV
 
     process.env.CLAUDE_CONFIG_DIR = tmpDir
     process.env.ANTHROPIC_API_KEY = 'stale-parent-api-key'
@@ -71,15 +73,16 @@ describe('ConversationService', () => {
     // buildChildEnv injects it or not without interference from the shell env.
     delete process.env.CLAUDE_CODE_ENTRYPOINT
     delete process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST
+    delete process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
     delete process.env.CLAUDE_CODE_DIAGNOSTICS_FILE
     delete process.env.CLAUDE_CODE_ATTRIBUTION_HEADER
     delete process.env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS
     delete process.env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN
-    delete process.env.CC_HAHA_TRACE_API_CALLS
-    delete process.env.CC_HAHA_TRACE_PROVIDER_ID
-    delete process.env.CC_HAHA_TRACE_PROVIDER_NAME
-    delete process.env.CC_HAHA_TRACE_PROVIDER_FORMAT
-    process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV = '1'
+    delete process.env.ECHOFLOW_TRACE_API_CALLS
+    delete process.env.ECHOFLOW_TRACE_PROVIDER_ID
+    delete process.env.ECHOFLOW_TRACE_PROVIDER_NAME
+    delete process.env.ECHOFLOW_TRACE_PROVIDER_FORMAT
+    process.env.ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV = '1'
     resetTerminalShellEnvironmentCacheForTests()
   })
 
@@ -108,6 +111,9 @@ describe('ConversationService', () => {
     if (originalProviderManagedByHost === undefined) delete process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST
     else process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST = originalProviderManagedByHost
 
+    if (originalLocalAccessToken === undefined) delete process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
+    else process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = originalLocalAccessToken
+
     if (originalDiagnosticsFile === undefined) delete process.env.CLAUDE_CODE_DIAGNOSTICS_FILE
     else process.env.CLAUDE_CODE_DIAGNOSTICS_FILE = originalDiagnosticsFile
 
@@ -120,17 +126,17 @@ describe('ConversationService', () => {
     if (originalResumeInterruptedTurn === undefined) delete process.env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN
     else process.env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN = originalResumeInterruptedTurn
 
-    if (originalTraceApiCalls === undefined) delete process.env.CC_HAHA_TRACE_API_CALLS
-    else process.env.CC_HAHA_TRACE_API_CALLS = originalTraceApiCalls
+    if (originalTraceApiCalls === undefined) delete process.env.ECHOFLOW_TRACE_API_CALLS
+    else process.env.ECHOFLOW_TRACE_API_CALLS = originalTraceApiCalls
 
-    if (originalTraceProviderId === undefined) delete process.env.CC_HAHA_TRACE_PROVIDER_ID
-    else process.env.CC_HAHA_TRACE_PROVIDER_ID = originalTraceProviderId
+    if (originalTraceProviderId === undefined) delete process.env.ECHOFLOW_TRACE_PROVIDER_ID
+    else process.env.ECHOFLOW_TRACE_PROVIDER_ID = originalTraceProviderId
 
-    if (originalTraceProviderName === undefined) delete process.env.CC_HAHA_TRACE_PROVIDER_NAME
-    else process.env.CC_HAHA_TRACE_PROVIDER_NAME = originalTraceProviderName
+    if (originalTraceProviderName === undefined) delete process.env.ECHOFLOW_TRACE_PROVIDER_NAME
+    else process.env.ECHOFLOW_TRACE_PROVIDER_NAME = originalTraceProviderName
 
-    if (originalTraceProviderFormat === undefined) delete process.env.CC_HAHA_TRACE_PROVIDER_FORMAT
-    else process.env.CC_HAHA_TRACE_PROVIDER_FORMAT = originalTraceProviderFormat
+    if (originalTraceProviderFormat === undefined) delete process.env.ECHOFLOW_TRACE_PROVIDER_FORMAT
+    else process.env.ECHOFLOW_TRACE_PROVIDER_FORMAT = originalTraceProviderFormat
 
     if (originalHome === undefined) delete process.env.HOME
     else process.env.HOME = originalHome
@@ -144,8 +150,8 @@ describe('ConversationService', () => {
     if (originalZdotdir === undefined) delete process.env.ZDOTDIR
     else process.env.ZDOTDIR = originalZdotdir
 
-    if (originalDisableTerminalShellEnv === undefined) delete process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV
-    else process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV = originalDisableTerminalShellEnv
+    if (originalDisableTerminalShellEnv === undefined) delete process.env.ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV
+    else process.env.ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV = originalDisableTerminalShellEnv
 
     resetTerminalShellEnvironmentCacheForTests()
     await fs.rm(tmpDir, { recursive: true, force: true })
@@ -175,9 +181,33 @@ describe('ConversationService', () => {
     )
   }
 
+  function installNetworkTestSession(
+    service: any,
+    sessionId: string,
+    sent: string[],
+    networkDerivedFirstTokenTimeout = true,
+  ) {
+    const session = {
+      outputCallbacks: [],
+      networkRoutingFingerprint: '',
+      networkDerivedFirstTokenTimeout,
+      sdkSocket: {
+        send(line: string) {
+          sent.push(line)
+        },
+      },
+      pendingOutbound: [],
+      usesOfficialOAuth: false,
+      officialOAuthToken: null,
+      pendingPermissionRequests: new Map(),
+    }
+    service.sessions.set(sessionId, session)
+    return session
+  }
+
   test('keeps inherited provider env when no desktop provider config exists', async () => {
     const service = new ConversationService() as any
-    const env = (await service.buildChildEnv('D:\\workspace\\code\\myself_code\\cc-haha')) as Record<string, string>
+    const env = (await service.buildChildEnv('D:\\workspace\\code\\myself_code\\echoflow-code')) as Record<string, string>
 
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe('test-token')
     expect(env.ANTHROPIC_BASE_URL).toBe('https://example.invalid/anthropic')
@@ -187,9 +217,30 @@ describe('ConversationService', () => {
       path.join(getEchoFlowInternalDir(tmpDir), 'diagnostics', 'cli-diagnostics.jsonl'),
     )
     expect(env.CLAUDE_COWORK_MEMORY_PATH_OVERRIDE).toBe(
-      `${path.join(tmpDir, 'projects', 'D--workspace-code-myself-code-cc-haha', 'memory')}${path.sep}`,
+      `${path.join(tmpDir, 'projects', 'D--workspace-code-myself-code-echoflow-code', 'memory')}${path.sep}`,
     )
-    await expect(fs.stat(path.dirname(env.CLAUDE_CODE_DIAGNOSTICS_FILE))).resolves.toBeTruthy()
+    const diagnosticsDirectory = await fs.stat(path.dirname(env.CLAUDE_CODE_DIAGNOSTICS_FILE))
+    expect(diagnosticsDirectory).toBeTruthy()
+    if (process.platform !== 'win32') {
+      expect(diagnosticsDirectory.mode & 0o777).toBe(0o700)
+    }
+  })
+
+  test('omits CLI diagnostics when its managed directory resolves through a symlink', async () => {
+    if (process.platform === 'win32') return
+    const unrelatedDir = path.join(tmpDir, 'unrelated-cli-diagnostics')
+    const unrelatedDiagnosticsDir = path.join(unrelatedDir, 'diagnostics')
+    await fs.mkdir(unrelatedDiagnosticsDir, { recursive: true, mode: 0o755 })
+    await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
+    await fs.rm(path.join(tmpDir, 'echoflow-code'), { recursive: true, force: true })
+    await fs.symlink(unrelatedDir, path.join(tmpDir, 'echoflow-code'), 'dir')
+
+    const service = new ConversationService() as any
+    const env = (await service.buildChildEnv('/tmp')) as Record<string, string>
+
+    expect(env.CLAUDE_CODE_DIAGNOSTICS_FILE).toBeUndefined()
+    expect((await fs.stat(unrelatedDiagnosticsDir)).mode & 0o777).toBe(0o755)
+    await expect(fs.stat(path.join(unrelatedDiagnosticsDir, 'cli-diagnostics.jsonl'))).rejects.toThrow()
   })
 
   test('buildChildEnv injects stream watchdog + overall max-duration so a trickling provider stream cannot hang the desktop forever (#766)', async () => {
@@ -212,6 +263,35 @@ describe('ConversationService', () => {
     } finally {
       if (prev === undefined) delete process.env.CLAUDE_STREAM_MAX_DURATION_MS
       else process.env.CLAUDE_STREAM_MAX_DURATION_MS = prev
+    }
+  })
+
+  test('buildChildEnv flushes desktop transcripts before the SDK reports turn completion (#1033)', async () => {
+    const previous = process.env.CLAUDE_CODE_EAGER_FLUSH
+    delete process.env.CLAUDE_CODE_EAGER_FLUSH
+    resetTerminalShellEnvironmentCacheForTests()
+    try {
+      const service = new ConversationService() as any
+      const sdkEnv = (await service.buildChildEnv(
+        '/tmp',
+        'ws://127.0.0.1:3456/sdk/session?token=test',
+      )) as Record<string, string>
+      const nonSdkEnv = (await service.buildChildEnv('/tmp')) as Record<string, string>
+
+      expect(sdkEnv.CLAUDE_CODE_EAGER_FLUSH).toBe('1')
+      expect(nonSdkEnv.CLAUDE_CODE_EAGER_FLUSH).toBeUndefined()
+
+      process.env.CLAUDE_CODE_EAGER_FLUSH = '0'
+      resetTerminalShellEnvironmentCacheForTests()
+      const explicitEnv = (await service.buildChildEnv(
+        '/tmp',
+        'ws://127.0.0.1:3456/sdk/session?token=test',
+      )) as Record<string, string>
+      expect(explicitEnv.CLAUDE_CODE_EAGER_FLUSH).toBe('0')
+    } finally {
+      if (previous === undefined) delete process.env.CLAUDE_CODE_EAGER_FLUSH
+      else process.env.CLAUDE_CODE_EAGER_FLUSH = previous
+      resetTerminalShellEnvironmentCacheForTests()
     }
   })
 
@@ -255,36 +335,39 @@ describe('ConversationService', () => {
     expect(env.CLAUDE_COWORK_MEMORY_PATH_OVERRIDE).not.toContain('myself_code')
   })
 
-  test('buildChildEnv inherits exported terminal shell variables for desktop CLI sessions', async () => {
-    const shellPath = path.join(tmpDir, 'zsh')
-    const nodeBin = path.join(tmpDir, 'node-bin')
-    const nvmDir = path.join(tmpDir, '.nvm')
-    await fs.mkdir(nodeBin, { recursive: true })
-    await fs.mkdir(nvmDir, { recursive: true })
-    await writeFakeZsh(shellPath)
-    await fs.writeFile(
-      path.join(tmpDir, '.zshrc'),
-      [
-        `export NVM_DIR="${nvmDir}"`,
-        `export PATH="${nodeBin}:$PATH"`,
-        '',
-      ].join('\n'),
-    )
+  test.skipIf(process.platform === 'win32')(
+    'buildChildEnv inherits exported terminal shell variables for desktop CLI sessions',
+    async () => {
+      const shellPath = path.join(tmpDir, 'zsh')
+      const nodeBin = path.join(tmpDir, 'node-bin')
+      const nvmDir = path.join(tmpDir, '.nvm')
+      await fs.mkdir(nodeBin, { recursive: true })
+      await fs.mkdir(nvmDir, { recursive: true })
+      await writeFakeZsh(shellPath)
+      await fs.writeFile(
+        path.join(tmpDir, '.zshrc'),
+        [
+          `export NVM_DIR="${nvmDir}"`,
+          `export PATH="${nodeBin}:$PATH"`,
+          '',
+        ].join('\n'),
+      )
 
-    delete process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV
-    process.env.HOME = tmpDir
-    process.env.SHELL = shellPath
-    process.env.PATH = '/usr/bin:/bin'
-    delete process.env.ZDOTDIR
-    resetTerminalShellEnvironmentCacheForTests()
+      delete process.env.ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV
+      process.env.HOME = tmpDir
+      process.env.SHELL = shellPath
+      process.env.PATH = '/usr/bin:/bin'
+      delete process.env.ZDOTDIR
+      resetTerminalShellEnvironmentCacheForTests()
 
-    const service = new ConversationService() as any
-    const env = (await service.buildChildEnv(tmpDir)) as Record<string, string>
+      const service = new ConversationService() as any
+      const env = (await service.buildChildEnv(tmpDir)) as Record<string, string>
 
-    expect(env.NVM_DIR).toBe(nvmDir)
-    expect(env.PATH.split(path.delimiter)[0]).toBe(nodeBin)
-    expect(env.PATH.split(path.delimiter)).toContain('/usr/bin')
-  })
+      expect(env.NVM_DIR).toBe(nvmDir)
+      expect(env.PATH.split(path.delimiter)[0]).toBe(nodeBin)
+      expect(env.PATH.split(path.delimiter)).toContain('/usr/bin')
+    },
+  )
 
   test('strips inherited provider env when desktop provider config exists', async () => {
     const echoFlowDir = getEchoFlowInternalDir(tmpDir)
@@ -296,7 +379,7 @@ describe('ConversationService', () => {
     )
 
     const service = new ConversationService() as any
-    const env = (await service.buildChildEnv('D:\\workspace\\code\\myself_code\\cc-haha')) as Record<string, string>
+    const env = (await service.buildChildEnv('D:\\workspace\\code\\myself_code\\echoflow-code')) as Record<string, string>
 
     expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined()
@@ -324,8 +407,37 @@ describe('ConversationService', () => {
     expect(env.API_TIMEOUT_MS).toBe('180000')
     expect(env.HTTP_PROXY).toBe('http://127.0.0.1:7890')
     expect(env.HTTPS_PROXY).toBe('http://127.0.0.1:7890')
+    expect(env.ALL_PROXY).toBe('http://127.0.0.1:7890')
+    expect(env.all_proxy).toBe('http://127.0.0.1:7890')
     expect(env.NO_PROXY).toContain('127.0.0.1')
     expect(env.no_proxy).toContain('localhost')
+  })
+
+  test('buildChildEnv routes system mode through the host-managed dynamic bridge', async () => {
+    const originalBridgeUrl = process.env.ECHOFLOW_SYSTEM_PROXY_URL
+    process.env.ECHOFLOW_SYSTEM_PROXY_URL = 'http://127.0.0.1:17890'
+    await fs.writeFile(
+      path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'),
+      JSON.stringify({
+        network: {
+          proxy: { mode: 'system', url: '' },
+        },
+      }),
+      'utf-8',
+    )
+
+    try {
+      const service = new ConversationService() as any
+      const env = (await service.buildChildEnv('/tmp')) as Record<string, string>
+
+      expect(env.HTTP_PROXY).toBe('http://127.0.0.1:17890')
+      expect(env.HTTPS_PROXY).toBe('http://127.0.0.1:17890')
+      expect(env.ALL_PROXY).toBe('http://127.0.0.1:17890')
+      expect(env.all_proxy).toBe('http://127.0.0.1:17890')
+    } finally {
+      if (originalBridgeUrl === undefined) delete process.env.ECHOFLOW_SYSTEM_PROXY_URL
+      else process.env.ECHOFLOW_SYSTEM_PROXY_URL = originalBridgeUrl
+    }
   })
 
   test('buildChildEnv ties the first-token watchdog to the user request timeout so slow prefill is not killed early (#826)', async () => {
@@ -436,6 +548,117 @@ describe('ConversationService', () => {
     expect(JSON.parse(sent[1]!).type).toBe('user')
   })
 
+  test('sendMessage hot-applies direct to system routing before the next user turn', async () => {
+    const originalBridgeUrl = process.env.ECHOFLOW_SYSTEM_PROXY_URL
+    process.env.ECHOFLOW_SYSTEM_PROXY_URL = 'http://127.0.0.1:17890'
+    try {
+      await fs.writeFile(
+        path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'),
+        JSON.stringify({ network: { proxy: { mode: 'direct', url: '' } } }),
+        'utf-8',
+      )
+      const service = new ConversationService() as any
+      const sent: string[] = []
+      const session = installNetworkTestSession(service, 'direct-to-system', sent)
+      await service.refreshNetworkEnvironmentBeforeTurn('direct-to-system', session)
+
+      await fs.writeFile(
+        path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'),
+        JSON.stringify({ network: { proxy: { mode: 'system', url: '' } } }),
+        'utf-8',
+      )
+
+      expect(await service.sendMessage('direct-to-system', 'use system proxy')).toBe(true)
+      expect(sent).toHaveLength(2)
+      const update = JSON.parse(sent[0]!)
+      expect(update.type).toBe('update_environment_variables')
+      expect(update.variables).toMatchObject({
+        HTTP_PROXY: 'http://127.0.0.1:17890',
+        HTTPS_PROXY: 'http://127.0.0.1:17890',
+        http_proxy: 'http://127.0.0.1:17890',
+        https_proxy: 'http://127.0.0.1:17890',
+        ALL_PROXY: 'http://127.0.0.1:17890',
+        all_proxy: 'http://127.0.0.1:17890',
+        API_TIMEOUT_MS: '600000',
+        CLAUDE_STREAM_FIRST_TOKEN_TIMEOUT_MS: '600000',
+      })
+      expect(update.variables.NO_PROXY).toContain('127.0.0.1')
+      expect(update.variables.no_proxy).toContain('localhost')
+      expect(JSON.parse(sent[1]!).type).toBe('user')
+    } finally {
+      if (originalBridgeUrl === undefined) delete process.env.ECHOFLOW_SYSTEM_PROXY_URL
+      else process.env.ECHOFLOW_SYSTEM_PROXY_URL = originalBridgeUrl
+    }
+  })
+
+  test('sendMessage hot-applies manual proxy and timeout changes before the next user turn', async () => {
+    await fs.writeFile(
+      path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'),
+      JSON.stringify({
+        network: {
+          aiRequestTimeoutMs: 600_000,
+          proxy: { mode: 'manual', url: 'http://127.0.0.1:17891' },
+        },
+      }),
+      'utf-8',
+    )
+    const service = new ConversationService() as any
+    const sent: string[] = []
+    const session = installNetworkTestSession(service, 'manual-change', sent)
+    await service.refreshNetworkEnvironmentBeforeTurn('manual-change', session)
+
+    await fs.writeFile(
+      path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'),
+      JSON.stringify({
+        network: {
+          aiRequestTimeoutMs: 180_000,
+          proxy: { mode: 'manual', url: 'http://127.0.0.1:17892' },
+        },
+      }),
+      'utf-8',
+    )
+
+    expect(await service.sendMessage('manual-change', 'use changed proxy')).toBe(true)
+    expect(sent).toHaveLength(2)
+    const update = JSON.parse(sent[0]!)
+    expect(update.type).toBe('update_environment_variables')
+    expect(update.variables).toMatchObject({
+      HTTP_PROXY: 'http://127.0.0.1:17892',
+      HTTPS_PROXY: 'http://127.0.0.1:17892',
+      ALL_PROXY: 'http://127.0.0.1:17892',
+      all_proxy: 'http://127.0.0.1:17892',
+      API_TIMEOUT_MS: '180000',
+      CLAUDE_STREAM_FIRST_TOKEN_TIMEOUT_MS: '180000',
+    })
+    expect(JSON.parse(sent[1]!).type).toBe('user')
+  })
+
+  test('sendMessage does not resend network env when the system bridge fingerprint is unchanged', async () => {
+    const originalBridgeUrl = process.env.ECHOFLOW_SYSTEM_PROXY_URL
+    process.env.ECHOFLOW_SYSTEM_PROXY_URL = 'http://127.0.0.1:17893'
+    try {
+      await fs.writeFile(
+        path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'),
+        JSON.stringify({ network: { proxy: { mode: 'system', url: '' } } }),
+        'utf-8',
+      )
+      const service = new ConversationService() as any
+      const sent: string[] = []
+      const session = installNetworkTestSession(service, 'unchanged-system', sent)
+      await service.refreshNetworkEnvironmentBeforeTurn('unchanged-system', session)
+
+      // PAC/system rules are resolved dynamically inside this stable bridge URL.
+      // Their changes must not churn the CLI environment between turns.
+      expect(await service.sendMessage('unchanged-system', 'same bridge')).toBe(true)
+
+      expect(sent).toHaveLength(1)
+      expect(JSON.parse(sent[0]!).type).toBe('user')
+    } finally {
+      if (originalBridgeUrl === undefined) delete process.env.ECHOFLOW_SYSTEM_PROXY_URL
+      else process.env.ECHOFLOW_SYSTEM_PROXY_URL = originalBridgeUrl
+    }
+  })
+
   test('buildChildEnv does NOT inject CLAUDE_CODE_OAUTH_TOKEN when not official mode', async () => {
     const echoFlowDir = getEchoFlowInternalDir(tmpDir)
     await fs.mkdir(echoFlowDir, { recursive: true })
@@ -462,6 +685,7 @@ describe('ConversationService', () => {
   })
 
   test('buildChildEnv injects explicit provider runtime env for session-scoped providers', async () => {
+    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
     const providerService = new ProviderService()
     const provider = await providerService.addProvider({
       presetId: 'custom',
@@ -489,12 +713,13 @@ describe('ConversationService', () => {
     expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('kimi-k2.6')
     expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('kimi-k2.6')
     expect(env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST).toBe('1')
+    expect(env.ECHOFLOW_LOCAL_ACCESS_TOKEN).toBe('desktop-local-secret')
     expect(env.CLAUDE_CODE_ATTRIBUTION_HEADER).toBe('0')
-    expect(env.CC_HAHA_TRANSCRIPT_ENTRYPOINT).toBe('claude-desktop')
+    expect(env.ECHOFLOW_TRANSCRIPT_ENTRYPOINT).toBe('claude-desktop')
     expect(env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined()
-    expect(env.CC_HAHA_TRACE_PROVIDER_ID).toBeUndefined()
-    expect(env.CC_HAHA_TRACE_PROVIDER_NAME).toBeUndefined()
-    expect(env.CC_HAHA_TRACE_PROVIDER_FORMAT).toBeUndefined()
+    expect(env.ECHOFLOW_TRACE_PROVIDER_ID).toBeUndefined()
+    expect(env.ECHOFLOW_TRACE_PROVIDER_NAME).toBeUndefined()
+    expect(env.ECHOFLOW_TRACE_PROVIDER_FORMAT).toBeUndefined()
   })
 
   test('buildChildEnv isolates experimental beta kill switch for session-scoped providers', async () => {
@@ -552,10 +777,10 @@ describe('ConversationService', () => {
       { providerId: provider.id },
     )) as Record<string, string>
 
-    expect(env.CC_HAHA_TRACE_API_CALLS).toBe('1')
-    expect(env.CC_HAHA_TRACE_PROVIDER_ID).toBe(provider.id)
-    expect(env.CC_HAHA_TRACE_PROVIDER_NAME).toBe('Traceable Provider')
-    expect(env.CC_HAHA_TRACE_PROVIDER_FORMAT).toBe('anthropic')
+    expect(env.ECHOFLOW_TRACE_API_CALLS).toBe('1')
+    expect(env.ECHOFLOW_TRACE_PROVIDER_ID).toBe(provider.id)
+    expect(env.ECHOFLOW_TRACE_PROVIDER_NAME).toBe('Traceable Provider')
+    expect(env.ECHOFLOW_TRACE_PROVIDER_FORMAT).toBe('anthropic')
   })
 
   test('buildChildEnv does not inject trace env when managed trace capture is disabled', async () => {
@@ -582,10 +807,10 @@ describe('ConversationService', () => {
       { providerId: provider.id },
     )) as Record<string, string>
 
-    expect(env.CC_HAHA_TRACE_API_CALLS).toBeUndefined()
-    expect(env.CC_HAHA_TRACE_PROVIDER_ID).toBeUndefined()
-    expect(env.CC_HAHA_TRACE_PROVIDER_NAME).toBeUndefined()
-    expect(env.CC_HAHA_TRACE_PROVIDER_FORMAT).toBeUndefined()
+    expect(env.ECHOFLOW_TRACE_API_CALLS).toBeUndefined()
+    expect(env.ECHOFLOW_TRACE_PROVIDER_ID).toBeUndefined()
+    expect(env.ECHOFLOW_TRACE_PROVIDER_NAME).toBeUndefined()
+    expect(env.ECHOFLOW_TRACE_PROVIDER_FORMAT).toBeUndefined()
   })
 
   test('buildChildEnv uses the session-selected model for session-scoped providers', async () => {
@@ -680,7 +905,7 @@ describe('ConversationService', () => {
 
     expect(env.ANTHROPIC_BASE_URL).toBe('https://gateway.example/api')
     expect(env.API_TIMEOUT_MS).toBe('180000')
-    expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,max_effort')
+    expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,xhigh_effort,max_effort')
   })
 
   test('buildChildEnv can force official auth even when a custom default provider exists', async () => {
@@ -761,12 +986,12 @@ describe('ConversationService', () => {
       model: 'grok-4.5',
     })) as Record<string, string>
 
-    expect(env.CC_HAHA_GROK_OAUTH_PROVIDER).toBe('1')
-    expect(env.GROK_OAUTH_FILE).toBe(path.join(tmpDir, 'cc-haha', 'grok-oauth.json'))
+    expect(env.ECHOFLOW_GROK_OAUTH_PROVIDER).toBe('1')
+    expect(env.GROK_OAUTH_FILE).toBe(path.join(tmpDir, 'echoflow-code', 'grok-oauth.json'))
     expect(env.ANTHROPIC_MODEL).toBe('grok-4.5')
     expect(env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST).toBe('1')
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined()
-    expect(env.CC_HAHA_OPENAI_OAUTH_PROVIDER).toBeUndefined()
+    expect(env.ECHOFLOW_OPENAI_OAUTH_PROVIDER).toBeUndefined()
     expect(env.OPENAI_CODEX_OAUTH_FILE).toBeUndefined()
     expect(env.ANTHROPIC_API_KEY).toBeUndefined()
     expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
@@ -774,8 +999,8 @@ describe('ConversationService', () => {
   })
 
   test('buildChildEnv passes OpenAI-native effort without leaking Claude effort state', async () => {
-    const originalEffort = process.env.CC_HAHA_OPENAI_REASONING_EFFORT
-    process.env.CC_HAHA_OPENAI_REASONING_EFFORT = 'stale-parent-effort'
+    const originalEffort = process.env.ECHOFLOW_OPENAI_REASONING_EFFORT
+    process.env.ECHOFLOW_OPENAI_REASONING_EFFORT = 'stale-parent-effort'
     try {
       const service = new ConversationService() as any
       const env = (await service.buildChildEnv('/tmp', undefined, {
@@ -785,10 +1010,10 @@ describe('ConversationService', () => {
       })) as Record<string, string>
 
       expect(env.ANTHROPIC_MODEL).toBe('gpt-5.6-sol')
-      expect(env.CC_HAHA_OPENAI_REASONING_EFFORT).toBe('xhigh')
+      expect(env.ECHOFLOW_OPENAI_REASONING_EFFORT).toBe('xhigh')
     } finally {
-      if (originalEffort === undefined) delete process.env.CC_HAHA_OPENAI_REASONING_EFFORT
-      else process.env.CC_HAHA_OPENAI_REASONING_EFFORT = originalEffort
+      if (originalEffort === undefined) delete process.env.ECHOFLOW_OPENAI_REASONING_EFFORT
+      else process.env.ECHOFLOW_OPENAI_REASONING_EFFORT = originalEffort
     }
   })
 
@@ -819,7 +1044,7 @@ describe('ConversationService', () => {
       'com.echoflowai-claude-code.desktop',
     )
     expect(env.ECHOFLOW_DESKTOP_SERVER_URL).toBe('http://127.0.0.1:3456')
-    expect(env.CC_HAHA_TRACE_API_CALLS).toBe('1')
+    expect(env.ECHOFLOW_TRACE_API_CALLS).toBe('1')
     expect(env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING).toBe('1')
   })
 
@@ -1043,6 +1268,139 @@ describe('ConversationService', () => {
     }))
 
     expect(completionObserved).toBe(true)
+  })
+
+  // CLI 的 WebSocketTransport 每次重连成功都会把整个发送缓冲区重放一遍，并假定
+  // 「The server deduplicates by UUID」。以前 server 没实现这个契约：笔记本睡醒后
+  // CLI 重连，一整轮早已结束的对话会被重新推上来，前端当成实时输出再渲染一遍
+  // （表现为满屏「已思考」）。
+  test('drops SDK messages replayed by the CLI after a reconnect', () => {
+    const service = new ConversationService() as any
+    const forwarded: any[] = []
+    service.sessions.set('replay-dedupe', {
+      outputCallbacks: [(message: any) => forwarded.push(message)],
+      seenSdkMessageUuids: new Set<string>(),
+      sdkMessages: [],
+      initMessage: null,
+      pendingPermissionRequests: new Map(),
+    })
+
+    const turn = [
+      { type: 'assistant', uuid: 'uuid-thinking-1', message: { content: [{ type: 'thinking', thinking: 'step one' }] } },
+      { type: 'assistant', uuid: 'uuid-thinking-2', message: { content: [{ type: 'thinking', thinking: 'step two' }] } },
+      { type: 'result', uuid: 'uuid-result', subtype: 'success', is_error: false },
+    ]
+    const payload = turn.map((msg) => JSON.stringify(msg)).join('\n')
+
+    service.handleSdkPayload('replay-dedupe', payload)
+    expect(forwarded).toHaveLength(3)
+
+    // 重连后 CLI 把同一批消息从缓冲区头部重放 —— 一条都不该再转发出去。
+    service.handleSdkPayload('replay-dedupe', payload)
+    service.handleSdkPayload('replay-dedupe', payload)
+    expect(forwarded).toHaveLength(3)
+  })
+
+  // 真机日志（cli-diagnostics.jsonl.58975）显示重放的 858 条里绝大多数是 stream_event：
+  // 桌面端固定传 --include-partial-messages，CLI 为每个 thinking_delta 单独产一条
+  // stream_event 并现铸 uuid（QueryEngine.ts:846），所以重放到达前端时是 delta 碎片，
+  // 而不是整块 thinking。渲染侧的逐字比对挡不住碎片，只有这里的 uuid 判重挡得住。
+  test('drops replayed partial-message stream events, not just whole assistant blocks', () => {
+    const service = new ConversationService() as any
+    const forwarded: any[] = []
+    service.sessions.set('replay-stream-events', {
+      outputCallbacks: [(message: any) => forwarded.push(message)],
+      seenSdkMessageUuids: new Set<string>(),
+      sdkMessages: [],
+      initMessage: null,
+      pendingPermissionRequests: new Map(),
+    })
+
+    const deltas = ['Start: get_', 'app_state to find ', 'the search box.']
+    const payload = deltas
+      .map((thinking, index) =>
+        JSON.stringify({
+          type: 'stream_event',
+          uuid: `uuid-stream-${index}`,
+          event: {
+            type: 'content_block_delta',
+            index: 0,
+            delta: { type: 'thinking_delta', thinking },
+          },
+        }),
+      )
+      .join('\n')
+
+    service.handleSdkPayload('replay-stream-events', payload)
+    expect(forwarded).toHaveLength(deltas.length)
+
+    service.handleSdkPayload('replay-stream-events', payload)
+    expect(forwarded).toHaveLength(deltas.length)
+  })
+
+  test('keeps forwarding SDK messages that carry no uuid', () => {
+    const service = new ConversationService() as any
+    const forwarded: any[] = []
+    service.sessions.set('no-uuid', {
+      outputCallbacks: [(message: any) => forwarded.push(message)],
+      seenSdkMessageUuids: new Set<string>(),
+      sdkMessages: [],
+      initMessage: null,
+      pendingPermissionRequests: new Map(),
+    })
+
+    // 没有 uuid 的消息不会进 CLI 的重放缓冲，所以也不该被判重丢弃。
+    const payload = JSON.stringify({ type: 'result', subtype: 'success', is_error: false })
+    service.handleSdkPayload('no-uuid', payload)
+    service.handleSdkPayload('no-uuid', payload)
+
+    expect(forwarded).toHaveLength(2)
+  })
+
+  test('tolerates sessions created without the replay-dedupe bookkeeping', () => {
+    const service = new ConversationService() as any
+    const forwarded: any[] = []
+    // 故意不带 seenSdkMessageUuids，模拟别处构造出来的会话对象。
+    service.sessions.set('legacy-shape', {
+      outputCallbacks: [(message: any) => forwarded.push(message)],
+      sdkMessages: [],
+      initMessage: null,
+      pendingPermissionRequests: new Map(),
+    })
+
+    const payload = JSON.stringify({
+      type: 'assistant',
+      uuid: 'uuid-legacy',
+      message: { content: [{ type: 'thinking', thinking: 'hello' }] },
+    })
+    service.handleSdkPayload('legacy-shape', payload)
+    service.handleSdkPayload('legacy-shape', payload)
+
+    expect(forwarded).toHaveLength(1)
+  })
+
+  test('remembers enough uuids to cover a full CLI replay buffer', () => {
+    const service = new ConversationService() as any
+    const forwarded: any[] = []
+    service.sessions.set('buffer-span', {
+      outputCallbacks: [(message: any) => forwarded.push(message)],
+      seenSdkMessageUuids: new Set<string>(),
+      sdkMessages: [],
+      initMessage: null,
+      pendingPermissionRequests: new Map(),
+    })
+
+    // CLI 侧缓冲上限是 1000 条，整个缓冲区被重放时每一条都必须还认得出来。
+    const CLI_REPLAY_BUFFER_SIZE = 1000
+    const payload = Array.from({ length: CLI_REPLAY_BUFFER_SIZE }, (_unused, index) =>
+      JSON.stringify({ type: 'assistant', uuid: `uuid-${index}`, message: { content: [] } }),
+    ).join('\n')
+
+    service.handleSdkPayload('buffer-span', payload)
+    expect(forwarded).toHaveLength(CLI_REPLAY_BUFFER_SIZE)
+
+    service.handleSdkPayload('buffer-span', payload)
+    expect(forwarded).toHaveLength(CLI_REPLAY_BUFFER_SIZE)
   })
 
   test('removes an exited CLI session even when one output callback throws', async () => {

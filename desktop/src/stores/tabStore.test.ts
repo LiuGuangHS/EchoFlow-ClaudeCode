@@ -131,8 +131,8 @@ describe('tabStore', () => {
   })
 
   it('opens one ephemeral SubAgent tab per source session and tool use', () => {
-    const tabId = useTabStore.getState().openSubagentTab('session-1', 'tool-1', 'Kuhn')
-    const sameTabId = useTabStore.getState().openSubagentTab('session-1', 'tool-1', 'Kuhn updated')
+    const tabId = useTabStore.getState().openSubagentTab('session-1', 'tool-1', 'Kuhn', 'agent-1')
+    const sameTabId = useTabStore.getState().openSubagentTab('session-1', 'tool-1', 'Kuhn updated', 'agent-1')
 
     expect(tabId).toBe('__subagent__session-1__tool-1')
     expect(sameTabId).toBe(tabId)
@@ -144,6 +144,7 @@ describe('tabStore', () => {
         status: 'idle',
         sourceSessionId: 'session-1',
         subagentToolUseId: 'tool-1',
+        subagentTaskId: 'agent-1',
       },
     ])
     expect(useTabStore.getState().activeTabId).toBe('__subagent__session-1__tool-1')

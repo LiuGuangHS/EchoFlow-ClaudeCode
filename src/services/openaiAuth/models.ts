@@ -44,7 +44,7 @@ export const OPENAI_REASONING_EFFORTS = [
 export type OpenAIReasoningEffort = (typeof OPENAI_REASONING_EFFORTS)[number]
 
 export const OPENAI_CODEX_REASONING_EFFORT_ENV_KEY =
-  'CC_HAHA_OPENAI_REASONING_EFFORT'
+  'ECHOFLOW_OPENAI_REASONING_EFFORT'
 
 const GPT_5_6_REASONING_EFFORTS: OpenAIReasoningEffort[] = [
   'low',
@@ -148,12 +148,27 @@ export function resolveOpenAIReasoningEffort(
   model: string,
   requestedEffort: unknown,
 ): OpenAIReasoningEffort {
+  return resolveOpenAIReasoningEffortWithPriority(model, [requestedEffort])
+}
+
+/**
+ * Resolve the first model-supported effort candidate, in priority order.
+ * Request-scoped values should come before process/session defaults so
+ * concurrent subagents can select different efforts without mutating shared
+ * environment state.
+ */
+export function resolveOpenAIReasoningEffortWithPriority(
+  model: string,
+  requestedEfforts: readonly unknown[],
+): OpenAIReasoningEffort {
   const entry = getOpenAIModelCatalogEntry(model)
-  if (
-    isOpenAIReasoningEffort(requestedEffort) &&
-    (!entry || entry.supportedReasoningEfforts.includes(requestedEffort))
-  ) {
-    return requestedEffort
+  for (const requestedEffort of requestedEfforts) {
+    if (
+      isOpenAIReasoningEffort(requestedEffort) &&
+      (!entry || entry.supportedReasoningEfforts.includes(requestedEffort))
+    ) {
+      return requestedEffort
+    }
   }
 
   return entry?.defaultReasoningEffort ?? 'medium'

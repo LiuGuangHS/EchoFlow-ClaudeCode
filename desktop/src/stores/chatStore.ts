@@ -34,6 +34,11 @@ import type {
   TokenUsage,
   PermissionUpdate,
 } from '../types/chat'
+import type {
+  SlashCommandKind,
+  SlashCommandOption,
+  SlashCommandSource,
+} from '../types/slashCommand'
 
 type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
 type ToolCall = Extract<UIMessage, { type: 'tool_use' }>
@@ -88,6 +93,8 @@ export type PerSessionState = {
   messages: UIMessage[]
   chatState: ChatState
   connectionState: ConnectionState
+  /** True after the server's authoritative reconnect snapshot has arrived. */
+  connectionSnapshotReady?: boolean
   historyStatus?: 'idle' | 'loading' | 'ready' | 'error'
   historyError?: string | null
   streamingText: string
@@ -124,7 +131,7 @@ export type PerSessionState = {
   apiRetry?: ApiRetryState | null
   // 流式恢复/非流式降级提示（活动回合状态，与 apiRetry 同清除时机）。
   streamingFallback?: StreamingFallbackState | null
-  slashCommands: Array<{ name: string; description: string; argumentHint?: string }>
+  slashCommands: SlashCommandOption[]
   agentTaskNotifications: Record<string, AgentTaskNotification>
   backgroundAgentTasks?: Record<string, BackgroundAgentTask>
   stoppingBackgroundTaskIds?: Record<string, boolean>
@@ -147,6 +154,7 @@ const DEFAULT_SESSION_STATE: PerSessionState = {
   messages: [],
   chatState: 'idle',
   connectionState: 'disconnected',
+  connectionSnapshotReady: false,
   historyStatus: 'idle',
   historyError: null,
   streamingText: '',
@@ -259,7 +267,14 @@ type ChatStore = {
   sessions: Record<string, PerSessionState>
 
   getSession: (sessionId: string) => PerSessionState
-  connectToSession: (sessionId: string) => void
+  connectToSession: (
+    sessionId: string,
+    options?: {
+      prewarm?: boolean
+      applyRuntimeSelection?: boolean
+      minimalBootstrap?: boolean
+    },
+  ) => void
   disconnectSession: (sessionId: string) => void
   sendMessage: (
     sessionId: string,
@@ -339,6 +354,13 @@ function consumePendingTaskToolUseId(sessionId: string, toolUseId: string): bool
 
 function clearPendingTaskToolUseIds(sessionId: string): void {
   pendingTaskToolUseIdsBySession.delete(sessionId)
+}
+
+function consumeAllPendingTaskToolUseIds(sessionId: string): boolean {
+  const hasPendingTaskTools =
+    (pendingTaskToolUseIdsBySession.get(sessionId)?.size ?? 0) > 0
+  pendingTaskToolUseIdsBySession.delete(sessionId)
+  return hasPendingTaskTools
 }
 
 function rememberPendingToolParentUseId(
@@ -540,6 +562,24 @@ function clearPendingToolInputDelta(sessionId: string): void {
   pendingToolInputDeltaBySession.delete(sessionId)
 }
 
+/**
+ * 后台（异步）子 agent 的工具活动会带着 parentToolUseId 冒泡进主消息流，但
+ * 渲染层把它们折叠进父 agent 卡片、不在主流单独显示（MessageList 的
+ * childToolCallsByParent）。合并流式块时必须跳过这些"隐形"消息去看真正的上一
+ * 条主流消息，否则主 agent 一段连续的 thinking / 正文会被它们切成好几块 ——
+ * 块之间还什么都不显示（#1108）。
+ */
+function findStreamMergeTargetIndex(messages: UIMessage[]): number {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]!
+    const isBubbledChildActivity =
+      (message.type === 'tool_use' || message.type === 'tool_result') &&
+      Boolean(message.parentToolUseId)
+    if (!isBubbledChildActivity) return index
+  }
+  return -1
+}
+
 function appendAssistantTextMessage(
   messages: UIMessage[],
   content: string,
@@ -550,7 +590,8 @@ function appendAssistantTextMessage(
   const trimmedContent = content.trim()
   if (!trimmedContent) return messages
 
-  const last = messages[messages.length - 1]
+  const lastIndex = findStreamMergeTargetIndex(messages)
+  const last = lastIndex >= 0 ? messages[lastIndex] : undefined
   // Wake/reconnect replay can resend persisted assistant text without a
   // transcript id. Ignore chunks that are already present in the hydrated tail.
   if (
@@ -558,6 +599,21 @@ function appendAssistantTextMessage(
     last.transcriptMessageId &&
     !transcriptMessageId &&
     last.content.trim().includes(trimmedContent)
+  ) {
+    return messages
+  }
+  // 上面那道只在尾部仍是那条 hydrated 消息时才够得着。整轮重放时，正文到达前
+  // 尾部早被 thinking / tool_result 顶掉了，于是重复的回复照样追加进来。
+  // 这里比的是"逐字相同"而不是子串：整段重发的正文会与某条 hydrated 回复完全一致，
+  // 而正常流式送来的是碎片（碎片几乎必然是某条历史回复的子串，用子串判定会误伤）。
+  if (
+    !transcriptMessageId &&
+    messages.some(
+      (message) =>
+        message.type === 'assistant_text' &&
+        message.transcriptMessageId &&
+        message.content.trim() === trimmedContent,
+    )
   ) {
     return messages
   }
@@ -578,7 +634,9 @@ function appendAssistantTextMessage(
         ? { transcriptMessageId: transcriptMessageId ?? last.transcriptMessageId }
         : {}),
     }
-    return [...messages.slice(0, -1), merged]
+    const next = [...messages]
+    next[lastIndex] = merged
+    return next
   }
 
   return [
@@ -743,13 +801,11 @@ function isAgentBackgroundTask(task: Pick<BackgroundAgentTask, 'taskType' | 'sum
 }
 
 function shouldSuppressTaskNotificationResponse(session: PerSessionState): boolean {
+  if (session.chatState !== 'idle') return false
   const lastMessage = session.messages[session.messages.length - 1]
   const hasVisibleActiveOutput =
     session.streamingText.trim().length > 0 ||
-    Boolean(session.activeToolUseId) ||
-    session.chatState === 'streaming' ||
-    session.chatState === 'tool_executing' ||
-    session.chatState === 'permission_pending'
+    Boolean(session.activeToolUseId)
   return !hasVisibleActiveOutput && lastMessage?.type !== 'user_text'
 }
 
@@ -963,14 +1019,30 @@ type SlashCommandState = PerSessionState['slashCommands'][number]
 
 function normalizeSlashCommand(command: unknown): SlashCommandState | null {
   if (!command || typeof command !== 'object') return null
-  const candidate = command as { name?: unknown; description?: unknown; argumentHint?: unknown }
+  const candidate = command as {
+    name?: unknown
+    description?: unknown
+    argumentHint?: unknown
+    kind?: unknown
+    source?: unknown
+  }
   if (typeof candidate.name !== 'string' || !candidate.name) return null
+  const kind: SlashCommandKind | undefined =
+    candidate.kind === 'command' || candidate.kind === 'skill' || candidate.kind === 'agent'
+      ? candidate.kind
+      : undefined
+  const source: SlashCommandSource | undefined =
+    candidate.source === 'user' || candidate.source === 'project' || candidate.source === 'plugin'
+      ? candidate.source
+      : undefined
   return {
     name: candidate.name,
     description: typeof candidate.description === 'string' ? candidate.description : '',
     ...(typeof candidate.argumentHint === 'string' && candidate.argumentHint
       ? { argumentHint: candidate.argumentHint }
       : {}),
+    ...(kind ? { kind } : {}),
+    ...(source ? { source } : {}),
   }
 }
 
@@ -989,7 +1061,18 @@ function mergeSlashCommandUpdates(
     if (command.name) merged.set(command.name, command)
   }
   for (const command of incoming) {
-    if (command.name) merged.set(command.name, command)
+    if (!command.name) continue
+    const currentCommand = merged.get(command.name)
+    merged.set(command.name, {
+      ...currentCommand,
+      ...command,
+      ...(command.kind ?? currentCommand?.kind
+        ? { kind: command.kind ?? currentCommand?.kind }
+        : {}),
+      ...(command.source ?? currentCommand?.source
+        ? { source: command.source ?? currentCommand?.source }
+        : {}),
+    })
   }
   return [...merged.values()]
 }
@@ -1048,7 +1131,7 @@ const historyLoadsInFlight = new Map<string, Promise<void>>()
 
 function shouldPrewarmSession(sessionId: string): boolean {
   const knownSession = useSessionStore.getState().sessions.find((session) => session.id === sessionId)
-  return !knownSession || knownSession.messageCount === 0
+  return knownSession?.messageCount === 0
 }
 
 export const useChatStore = create<ChatStore>((set, get) => ({
@@ -1056,14 +1139,17 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   getSession: (sessionId) => get().sessions[sessionId] ?? createDefaultSessionState(),
 
-  connectToSession: (sessionId) => {
-    void useCLITaskStore.getState().fetchSessionTasks(sessionId)
+  connectToSession: (sessionId, options) => {
+    if (!options?.minimalBootstrap) {
+      void useCLITaskStore.getState().fetchSessionTasks(sessionId)
+    }
 
     const existing = get().sessions[sessionId]
     if (existing && existing.connectionState !== 'disconnected') {
       if (
         existing.messages.length === 0 &&
-        (existing.historyStatus === 'idle' || existing.historyStatus === 'error')
+        (existing.historyStatus === 'idle' || existing.historyStatus === 'error') &&
+        !options?.minimalBootstrap
       ) {
         void get().loadHistory(sessionId)
       }
@@ -1076,6 +1162,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         [sessionId]: {
           ...createDefaultSessionState(),
           connectionState: 'connecting',
+          connectionSnapshotReady: false,
           messages: existing?.messages ?? [],
           activeGoal: existing?.activeGoal ?? null,
           composerDraft: existing?.composerDraft ?? null,
@@ -1086,18 +1173,31 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
     wsManager.clearHandlers(sessionId)
     wsManager.connect(sessionId)
+    wsManager.onConnectionState(sessionId, (connectionState) => {
+      if (!get().sessions[sessionId]) return
+      set((s) => ({
+        sessions: updateSessionIn(s.sessions, sessionId, () => ({
+          connectionState,
+          connectionSnapshotReady: false,
+        })),
+      }))
+    })
     wsManager.onMessage(sessionId, (msg) => {
       if (msg.type === 'connected') {
-        set((s) => ({ sessions: updateSessionIn(s.sessions, sessionId, () => ({ connectionState: 'connected' })) }))
+        set((s) => ({ sessions: updateSessionIn(s.sessions, sessionId, () => ({
+          connectionState: 'connected',
+          connectionSnapshotReady: false,
+        })) }))
       }
       get().handleServerMessage(sessionId, msg)
     })
 
     const runtimeSelection = useSessionRuntimeStore.getState().selections[sessionId]
-    if (runtimeSelection) {
+    if (runtimeSelection && options?.applyRuntimeSelection !== false) {
       wsManager.send(sessionId, { type: 'set_runtime_config', ...runtimeSelection })
     }
     if (
+      options?.prewarm !== false &&
       !sessionId.startsWith('__') &&
       !useTeamStore.getState().getMemberBySessionId(sessionId) &&
       shouldPrewarmSession(sessionId)
@@ -1105,18 +1205,20 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       wsManager.send(sessionId, { type: 'prewarm_session' })
     }
 
-    get().loadHistory(sessionId)
-    sessionsApi.getSlashCommands(sessionId)
-      .then(({ commands }) => {
-        if (get().sessions[sessionId]) {
-          set((s) => ({ sessions: updateSessionIn(s.sessions, sessionId, () => ({ slashCommands: commands })) }))
-        }
-      })
-      .catch(() => {
-        if (get().sessions[sessionId]) {
-          set((s) => ({ sessions: updateSessionIn(s.sessions, sessionId, () => ({ slashCommands: [] })) }))
-        }
-      })
+    if (!options?.minimalBootstrap) {
+      get().loadHistory(sessionId)
+      sessionsApi.getSlashCommands(sessionId)
+        .then(({ commands }) => {
+          if (get().sessions[sessionId]) {
+            set((s) => ({ sessions: updateSessionIn(s.sessions, sessionId, () => ({ slashCommands: commands })) }))
+          }
+        })
+        .catch(() => {
+          if (get().sessions[sessionId]) {
+            set((s) => ({ sessions: updateSessionIn(s.sessions, sessionId, () => ({ slashCommands: [] })) }))
+          }
+        })
+    }
   },
 
   disconnectSession: (sessionId) => {
@@ -2124,7 +2226,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         if (receivedLiveDelta && get().sessions[sessionId]?.chatState !== 'idle') ensureElapsedTimer()
         break
 
-      case 'thinking':
+      case 'thinking': {
         if (get().sessions[sessionId]?.suppressNextTaskNotificationResponse) {
           consumePendingDelta(sessionId)
           update(() => ({
@@ -2134,15 +2236,33 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           }))
           break
         }
+        // 重放/空块都不该冒出一个新的「已思考」气泡，也不该把会话拖回 thinking 态
+        // 或者启动计时器 —— 那正是"打开一个早就结束的会话，它自己开始输出"的观感。
+        let skippedThinkingBlock = false
         update((s) => {
           const pendingText = `${s.streamingText}${consumePendingDelta(sessionId)}`
           const base = pendingText.trim()
             ? appendAssistantTextMessage(s.messages, pendingText, Date.now())
             : s.messages
-          const last = base[base.length - 1]
+          // 服务端两个 thinking 发射点都做了非空过滤，但 `&& delta.thinking` 是真值
+          // 判断，纯空白仍能漏过来，落到下面就是一个点开什么都没有的空壳气泡。
+          if (!msg.text.trim()) {
+            skippedThinkingBlock = true
+            return { messages: base, streamingText: '' }
+          }
+          // 真正的重放源已在服务端按 uuid 挡掉（conversationService.isReplayedSdkMessage）。
+          // 这里再兜一道：thinking 没有 transcriptMessageId 之类的身份，任何漏网的
+          // 重放都只能靠"整块内容与已有 thinking 逐字相同"来认。流式 delta 是碎片，
+          // 不会命中；命中的必然是被整块重发的同一段思考。
+          if (base.some((message) => message.type === 'thinking' && message.content === msg.text)) {
+            skippedThinkingBlock = true
+            return { messages: base, streamingText: '' }
+          }
+          const lastIndex = findStreamMergeTargetIndex(base)
+          const last = lastIndex >= 0 ? base[lastIndex] : undefined
           if (last && last.type === 'thinking') {
             const updated = [...base]
-            updated[updated.length - 1] = { ...last, content: last.content + msg.text }
+            updated[lastIndex] = { ...last, content: last.content + msg.text }
             return {
               messages: updated,
               chatState: 'thinking',
@@ -2160,8 +2280,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             streamingResponseChars: s.streamingResponseChars + msg.text.length,
           }
         })
-        ensureElapsedTimer()
+        if (!skippedThinkingBlock) ensureElapsedTimer()
         break
+      }
 
       case 'tool_use_complete': {
         clearPendingToolInputDelta(sessionId)
@@ -2170,26 +2291,37 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         const toolUseId = msg.toolUseId || session?.activeToolUseId || ''
         const parentToolUseId = msg.parentToolUseId ?? getPendingToolParentUseId(sessionId, toolUseId)
         rememberPendingToolParentUseId(sessionId, toolUseId, parentToolUseId)
-        update((s) => ({
-          messages: toolUseId
-            ? upsertToolUseMessage(s.messages, toolUseId, (existing) => ({
-                id: existing?.id ?? nextId(),
-                type: 'tool_use',
-                toolName,
-                toolUseId,
-                input: msg.input,
-                timestamp: existing?.timestamp ?? Date.now(),
-                parentToolUseId,
-                isPending: false,
-              }))
-            : [...s.messages, {
-                id: nextId(), type: 'tool_use', toolName,
-                toolUseId,
-                input: msg.input, timestamp: Date.now(), parentToolUseId,
-                isPending: false,
-              }],
-          activeToolUseId: null, activeToolName: null, activeThinkingId: null, streamingToolInput: '',
-        }))
+        update((s) => {
+          // 流式路径上，工具块的 content_start 已经把待定正文冲刷成一条消息了
+          // （见 case 'content_start' 里 blockType !== 'text' 的分支）。但整块兜底
+          // 路径只发 tool_use_complete、不发 content_start —— 不在这里补一次冲刷，
+          // 工具调用前后的两段正文就会跨消息粘成一条。
+          const pendingText = `${s.streamingText}${consumePendingDelta(sessionId)}`
+          const base = pendingText.trim()
+            ? appendAssistantTextMessage(s.messages, pendingText, Date.now())
+            : s.messages
+          return {
+            messages: toolUseId
+              ? upsertToolUseMessage(base, toolUseId, (existing) => ({
+                  id: existing?.id ?? nextId(),
+                  type: 'tool_use',
+                  toolName,
+                  toolUseId,
+                  input: msg.input,
+                  timestamp: existing?.timestamp ?? Date.now(),
+                  parentToolUseId,
+                  isPending: false,
+                }))
+              : [...base, {
+                  id: nextId(), type: 'tool_use', toolName,
+                  toolUseId,
+                  input: msg.input, timestamp: Date.now(), parentToolUseId,
+                  isPending: false,
+                }],
+            streamingText: '',
+            activeToolUseId: null, activeToolName: null, activeThinkingId: null, streamingToolInput: '',
+          }
+        })
         if (toolName === 'TodoWrite' && Array.isArray((msg.input as any)?.todos)) {
           useCLITaskStore.getState().setTasksFromTodos((msg.input as any).todos, sessionId)
         } else if (TASK_TOOL_NAMES.has(toolName)) {
@@ -2374,6 +2506,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             remainingComputerUsePermissions.length > 0
 
           return {
+            connectionSnapshotReady: true,
             pendingPermissions,
             pendingPermission: remainingPermissions[remainingPermissions.length - 1] ?? null,
             pendingComputerUsePermissions,
@@ -2395,6 +2528,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       case 'message_complete': {
         const session = get().sessions[sessionId]
         if (!session) break
+        if (consumeAllPendingTaskToolUseIds(sessionId)) {
+          const cliTaskStore = useCLITaskStore.getState()
+          if (cliTaskStore.sessionId === sessionId) {
+            void cliTaskStore.refreshTasks(sessionId)
+          }
+        }
         if (session.suppressNextTaskNotificationResponse) {
           consumePendingDelta(sessionId)
           clearPendingToolInputDelta(sessionId)
@@ -3656,11 +3795,13 @@ function pathsReferToSameFile(left: string | undefined, right: string | undefine
   )
 }
 
-function extractRestoredUserDisplay(text: string): {
+type RestoredUserDisplay = {
   content: string
   attachments?: UIAttachment[]
   modelContent?: string
-} {
+}
+
+function extractRestoredUserDisplay(text: string): RestoredUserDisplay {
   const leading = extractLeadingFileReferences(text)
   const workspace = parseWorkspaceReferenceHistoryPrompt(leading.content)
   if (!workspace) return leading
@@ -3681,6 +3822,81 @@ function extractRestoredUserDisplay(text: string): {
   }
 }
 
+// ConversationService stores data-only files as `${randomUUID()}-${sanitizedName}`
+// and omits successfully inlined images from the replayed text content.
+const MATERIALIZED_UPLOAD_NAME_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}-(.+)$/i
+const IMAGE_ONLY_REPLAY_FALLBACK = 'Please analyze the attached image.'
+
+function isLikelyInlineImageAttachment(attachment: UIAttachment): boolean {
+  if (attachment.type === 'image') return true
+  if (attachment.mimeType?.startsWith('image/')) return true
+  const candidate = attachment.path ?? attachment.name
+  return /\.(png|jpe?g|gif|webp)$/i.test(candidate)
+}
+
+function replayAttachmentMatchesCurrent(
+  replayAttachment: UIAttachment,
+  currentAttachment: UIAttachment,
+): boolean {
+  if (pathsReferToSameFile(replayAttachment.path, currentAttachment.path)) return true
+  if (currentAttachment.path || !replayAttachment.path) return false
+
+  const replayName = getReferenceName(replayAttachment.path)
+  const materializedName = replayName.match(MATERIALIZED_UPLOAD_NAME_RE)?.[1]
+  if (!materializedName) return false
+
+  const currentName = currentAttachment.name.replace(/[^a-zA-Z0-9._-]/g, '_')
+  return Boolean(currentName) && materializedName === currentName
+}
+
+function replayAttachmentsMatchCurrent(
+  replayAttachments: UIAttachment[],
+  currentAttachments: UIAttachment[],
+): boolean {
+  if (currentAttachments.length === 0) return false
+
+  const unmatchedCurrent = new Set(currentAttachments.map((_, index) => index))
+  for (const replayAttachment of replayAttachments) {
+    const matchingIndex = currentAttachments.findIndex((currentAttachment, index) =>
+      unmatchedCurrent.has(index) && replayAttachmentMatchesCurrent(replayAttachment, currentAttachment),
+    )
+    if (matchingIndex < 0) return false
+    unmatchedCurrent.delete(matchingIndex)
+  }
+
+  return [...unmatchedCurrent].every((index) =>
+    isLikelyInlineImageAttachment(currentAttachments[index]!),
+  )
+}
+
+function replayMatchesCurrentUserMessage(
+  message: Extract<UIMessage, { type: 'user_text' }>,
+  replayDisplay: RestoredUserDisplay,
+  replayModelContent: string,
+): boolean {
+  const currentModelContent = (message.modelContent ?? message.content).trim()
+  if (currentModelContent === replayModelContent) return true
+
+  const currentAttachments = message.attachments ?? []
+  if (
+    message.content.trim() === '' &&
+    replayDisplay.content.trim() === IMAGE_ONLY_REPLAY_FALLBACK &&
+    !replayDisplay.attachments?.length &&
+    currentAttachments.length > 0 &&
+    currentAttachments.every(isLikelyInlineImageAttachment)
+  ) {
+    return true
+  }
+
+  const currentDisplay = extractRestoredUserDisplay(currentModelContent)
+  if (currentDisplay.content.trim() !== replayDisplay.content.trim()) return false
+
+  return replayAttachmentsMatchCurrent(
+    replayDisplay.attachments ?? [],
+    currentAttachments,
+  )
+}
+
 export function appendReplayedUserMessage(
   messages: UIMessage[],
   content: string,
@@ -3696,7 +3912,7 @@ export function appendReplayedUserMessage(
   if (!displayContent && !parsed.attachments?.length) return messages
 
   const modelContent = parsed.modelContent ?? sanitized
-  const currentTurnUserIndex = findCurrentTurnUserMessageIndex(messages, modelContent)
+  const currentTurnUserIndex = findCurrentTurnUserMessageIndex(messages, modelContent, parsed)
   if (currentTurnUserIndex >= 0) {
     const optimisticMessage = messages[currentTurnUserIndex]
     if (optimisticMessage?.type === 'user_text' && optimisticMessage.optimisticQueued) {
@@ -3768,13 +3984,14 @@ function mapQueuedDisplayAttachments(attachments?: AttachmentRef[]): UIAttachmen
 function findCurrentTurnUserMessageIndex(
   messages: UIMessage[],
   modelContent: string,
+  replayDisplay: RestoredUserDisplay,
 ): number {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]
     if (message?.type !== 'user_text') {
       continue
     }
-    return (message.modelContent ?? message.content).trim() === modelContent ? index : -1
+    return replayMatchesCurrentUserMessage(message, replayDisplay, modelContent) ? index : -1
   }
   return -1
 }

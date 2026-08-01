@@ -9,10 +9,13 @@ import {
 } from '../../services/mcp/client.js'
 import {
   addMcpConfig,
+  findProjectMcpConfigPath,
   getAllMcpConfigs,
   getClaudeCodeMcpConfigs,
   getMcpConfigByName,
   isMcpServerDisabled,
+  projectDirDeclaresMcpServers,
+  registerCwdProjectIfDeclaresMcpServers,
   removeMcpConfig,
   setMcpServerEnabled,
 } from '../../services/mcp/config.js'
@@ -98,6 +101,14 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined
 }
 
+function parseScopeParam(value: string | null): ConfigScope {
+  try {
+    return ensureConfigScope(value || undefined)
+  } catch (error) {
+    throw ApiError.badRequest(error instanceof Error ? error.message : String(error))
+  }
+}
+
 async function syncMcpToggleToSession(
   sessionId: string | undefined,
   serverName: string,
@@ -168,6 +179,16 @@ function serializeEditableConfig(config: ScopedMcpServerConfig): McpEditableConf
   }
 
   return { type: config.type }
+}
+
+function describeServerConfigLocation(name: string, scope: ConfigScope): string {
+  // Project scope inherits from parent directories, so the cwd's .mcp.json is
+  // not necessarily the file that declares this server. Point at the real one.
+  if (scope === 'project') {
+    return findProjectMcpConfigPath(name) ?? describeMcpConfigFilePath(scope)
+  }
+
+  return describeMcpConfigFilePath(scope)
 }
 
 function getSummary(config: ScopedMcpServerConfig): string {
@@ -307,7 +328,7 @@ function buildServerDto(
     status: status.status,
     statusLabel: status.statusLabel,
     statusDetail: status.statusDetail,
-    configLocation: describeMcpConfigFilePath(config.scope),
+    configLocation: describeServerConfigLocation(name, config.scope),
     summary: getSummary(config),
     canEdit,
     canRemove: EDITABLE_SCOPES.has(config.scope),
@@ -426,6 +447,11 @@ function cleanupSecureStorage(name: string, config: ScopedMcpServerConfig) {
 }
 
 async function listServers(): Promise<Response> {
+  // Self-heal the project registry: .mcp.json files written before target
+  // registration existed (pre-GH#1126 desktop builds, hand-edited files)
+  // become rediscoverable the first time their project is browsed.
+  registerCwdProjectIfDeclaresMcpServers()
+
   const { servers } = await getAllMcpConfigs()
   const visibleServers = Object.entries(servers)
     .filter(([name, config]) => isVisibleServer(name, config))
@@ -435,10 +461,19 @@ async function listServers(): Promise<Response> {
   })
 }
 
-function listProjectPathsWithPrivateMcp(): Response {
+// Every project path the settings page must query to see all configured MCP
+// servers: local-scope servers live in the registry entry itself
+// (projects[path].mcpServers), project-scope servers live in the path's
+// .mcp.json on disk. Missing the latter made shared servers vanish from the
+// list after an app restart (GH #1126).
+function listProjectPathsWithConfiguredMcp(): Response {
   const projects = getGlobalConfig().projects ?? {}
   const projectPaths = Object.entries(projects)
-    .filter(([, projectConfig]) => Object.keys(projectConfig.mcpServers ?? {}).length > 0)
+    .filter(
+      ([projectPath, projectConfig]) =>
+        Object.keys(projectConfig.mcpServers ?? {}).length > 0 ||
+        projectDirDeclaresMcpServers(projectPath),
+    )
     .map(([projectPath]) => projectPath)
     .sort((a, b) => a.localeCompare(b))
 
@@ -539,13 +574,24 @@ async function updateServer(name: string, body: Record<string, unknown>): Promis
 }
 
 async function deleteServer(name: string, url: URL): Promise<Response> {
-  const scope = ensureConfigScope(url.searchParams.get('scope') || undefined)
+  const scope = parseScopeParam(url.searchParams.get('scope'))
   const existing = getMcpConfigByName(name)
   if (!existing) {
     throw ApiError.notFound(`MCP server not found: ${name}`)
   }
 
-  await removeMcpConfig(name, scope)
+  if (!EDITABLE_SCOPES.has(scope)) {
+    throw ApiError.badRequest(`MCP server "${name}" cannot be removed from scope "${scope}"`)
+  }
+
+  try {
+    await removeMcpConfig(name, scope)
+  } catch (error) {
+    // Report why the config file could not be rewritten. Falling through to the
+    // generic handler would surface an opaque 500 with no actionable detail.
+    throw ApiError.badRequest(error instanceof Error ? error.message : String(error))
+  }
+
   cleanupSecureStorage(name, existing)
   await clearServerCache(name, existing).catch(() => {})
 
@@ -638,7 +684,7 @@ export async function handleMcpApi(
 
     return await runWithCwdOverride(resolveRequestCwd(url, body), async () => {
       if (req.method === 'GET' && serverName === 'project-paths' && !action) {
-        return listProjectPathsWithPrivateMcp()
+        return listProjectPathsWithConfiguredMcp()
       }
 
       if (req.method === 'GET' && !serverName) {

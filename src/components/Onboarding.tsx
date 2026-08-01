@@ -28,7 +28,7 @@ export function Onboarding({
   onDone
 }: Props): React.ReactNode {
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
-  // cc-haha startup is local-first; explicit login commands own remote auth.
+  // echoflow-code startup is local-first; explicit login commands own remote auth.
   const oauthEnabled = false;
   const [theme, setTheme] = useTheme();
   useEffect(() => {

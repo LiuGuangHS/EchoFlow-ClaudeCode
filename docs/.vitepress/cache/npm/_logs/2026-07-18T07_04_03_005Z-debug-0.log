@@ -1,0 +1,1624 @@
+0 verbose cli /home/zhijun/.nvm/versions/node/v22.20.0/bin/node /home/zhijun/.nvm/versions/node/v22.20.0/bin/npm
+1 info using npm@10.9.3
+2 info using node@v22.20.0
+3 silly config load:file:/home/zhijun/.nvm/versions/node/v22.20.0/lib/node_modules/npm/npmrc
+4 silly config load:file:/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/.npmrc
+5 silly config load:file:/home/zhijun/.npmrc
+6 silly config load:file:/home/zhijun/.nvm/versions/node/v22.20.0/etc/npmrc
+7 verbose title npm ci
+8 verbose argv "ci" "--loglevel" "error"
+9 verbose logfile logs-max:10 dir:/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/docs/.vitepress/cache/npm/_logs/2026-07-18T07_04_03_005Z-
+10 verbose logfile /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/docs/.vitepress/cache/npm/_logs/2026-07-18T07_04_03_005Z-debug-0.log
+11 silly logfile done cleaning log files
+12 silly packumentCache heap:2197815296 maxSize:549453824 maxEntrySize:274726912
+13 silly idealTree buildDeps
+14 silly fetch manifest react@>= 16.8.0 < 19.0.0
+15 silly packumentCache full:https://registry.npmmirror.com/react cache-miss
+16 http fetch GET https://registry.npmmirror.com/react attempt 1 failed with EPERM
+17 http fetch GET https://registry.npmmirror.com/react attempt 2 failed with EPERM
+18 http fetch GET https://registry.npmmirror.com/react attempt 3 failed with EPERM
+19 silly placeDep node_modules/@docsearch/js react@ OK for: @docsearch/react@3.8.2 want: >= 16.8.0 < 19.0.0
+20 warn ERESOLVE overriding peer dependency {
+20 warn ERESOLVE   code: 'ERESOLVE',
+20 warn ERESOLVE   edge: {
+20 warn ERESOLVE     type: 'peerOptional',
+20 warn ERESOLVE     name: 'react',
+20 warn ERESOLVE     spec: '>= 16.8.0 < 19.0.0',
+20 warn ERESOLVE     error: 'INVALID',
+20 warn ERESOLVE     from: {
+20 warn ERESOLVE       name: '@docsearch/react',
+20 warn ERESOLVE       version: '3.8.2',
+20 warn ERESOLVE       location: 'node_modules/@docsearch/js/node_modules/@docsearch/react',
+20 warn ERESOLVE       isWorkspace: false,
+20 warn ERESOLVE       dependents: [Array]
+20 warn ERESOLVE     }
+20 warn ERESOLVE   },
+20 warn ERESOLVE   dep: {
+20 warn ERESOLVE     name: 'react',
+20 warn ERESOLVE     version: undefined,
+20 warn ERESOLVE     errors: [ [FetchError] ],
+20 warn ERESOLVE     package: {},
+20 warn ERESOLVE     whileInstalling: {
+20 warn ERESOLVE       name: '@docsearch/react',
+20 warn ERESOLVE       version: '3.8.2',
+20 warn ERESOLVE       path: '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@docsearch/js/node_modules/@docsearch/react'
+20 warn ERESOLVE     },
+20 warn ERESOLVE     location: 'node_modules/react',
+20 warn ERESOLVE     isWorkspace: false,
+20 warn ERESOLVE     dependents: [ [Object] ]
+20 warn ERESOLVE   },
+20 warn ERESOLVE   force: false,
+20 warn ERESOLVE   isMine: false,
+20 warn ERESOLVE   strictPeerDeps: false,
+20 warn ERESOLVE   current: {
+20 warn ERESOLVE     name: 'react',
+20 warn ERESOLVE     version: undefined,
+20 warn ERESOLVE     errors: [ [FetchError] ],
+20 warn ERESOLVE     package: {},
+20 warn ERESOLVE     location: 'node_modules/@docsearch/js/node_modules/react',
+20 warn ERESOLVE     isWorkspace: false,
+20 warn ERESOLVE     dependents: []
+20 warn ERESOLVE   }
+20 warn ERESOLVE }
+21 silly reify moves {}
+22 silly audit bulk request {
+22 silly audit   '@alcalzone/ansi-tokenize': [ '0.2.5' ],
+22 silly audit   '@algolia/abtesting': [ '1.16.1' ],
+22 silly audit   '@algolia/autocomplete-core': [ '1.17.7' ],
+22 silly audit   '@algolia/autocomplete-plugin-algolia-insights': [ '1.17.7' ],
+22 silly audit   '@algolia/autocomplete-preset-algolia': [ '1.17.7' ],
+22 silly audit   '@algolia/autocomplete-shared': [ '1.17.7' ],
+22 silly audit   '@algolia/client-abtesting': [ '5.50.1' ],
+22 silly audit   '@algolia/client-analytics': [ '5.50.1' ],
+22 silly audit   '@algolia/client-common': [ '5.50.1' ],
+22 silly audit   '@algolia/client-insights': [ '5.50.1' ],
+22 silly audit   '@algolia/client-personalization': [ '5.50.1' ],
+22 silly audit   '@algolia/client-query-suggestions': [ '5.50.1' ],
+22 silly audit   '@algolia/client-search': [ '5.50.1' ],
+22 silly audit   '@algolia/ingestion': [ '1.50.1' ],
+22 silly audit   '@algolia/monitoring': [ '1.50.1' ],
+22 silly audit   '@algolia/recommend': [ '5.50.1' ],
+22 silly audit   '@algolia/requester-browser-xhr': [ '5.50.1' ],
+22 silly audit   '@algolia/requester-fetch': [ '5.50.1' ],
+22 silly audit   '@algolia/requester-node-http': [ '5.50.1' ],
+22 silly audit   '@antfu/install-pkg': [ '1.1.0' ],
+22 silly audit   '@anthropic-ai/claude-agent-sdk': [ '0.3.211' ],
+22 silly audit   '@anthropic-ai/claude-agent-sdk-darwin-arm64': [ '0.3.211' ],
+22 silly audit   '@anthropic-ai/claude-agent-sdk-darwin-x64': [ '0.3.211' ],
+22 silly audit   '@anthropic-ai/claude-agent-sdk-linux-arm64': [ '0.3.211' ],
+22 silly audit   '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': [ '0.3.211' ],
+22 silly audit   '@anthropic-ai/claude-agent-sdk-linux-x64': [ '0.3.211' ],
+22 silly audit   '@anthropic-ai/claude-agent-sdk-linux-x64-musl': [ '0.3.211' ],
+22 silly audit   '@anthropic-ai/claude-agent-sdk-win32-arm64': [ '0.3.211' ],
+22 silly audit   '@anthropic-ai/claude-agent-sdk-win32-x64': [ '0.3.211' ],
+22 silly audit   '@anthropic-ai/sandbox-runtime': [ '0.0.44' ],
+22 silly audit   commander: [ '12.1.0', '14.0.3', '7.2.0', '8.3.0', '2.20.3' ],
+22 silly audit   zod: [ '3.25.76', '4.3.6' ],
+22 silly audit   '@anthropic-ai/sdk': [ '0.93.0' ],
+22 silly audit   '@aws-crypto/crc32': [ '5.2.0' ],
+22 silly audit   '@aws-crypto/sha256-browser': [ '5.2.0' ],
+22 silly audit   '@smithy/is-array-buffer': [ '2.2.0', '4.2.2' ],
+22 silly audit   '@smithy/util-buffer-from': [ '2.2.0', '4.2.2' ],
+22 silly audit   '@smithy/util-utf8': [ '2.3.0', '4.2.2' ],
+22 silly audit   '@aws-crypto/sha256-js': [ '5.2.0' ],
+22 silly audit   '@aws-crypto/supports-web-crypto': [ '5.2.0' ],
+22 silly audit   '@aws-crypto/util': [ '5.2.0' ],
+22 silly audit   '@aws-sdk/client-bedrock-runtime': [ '3.1020.0' ],
+22 silly audit   '@aws-sdk/core': [ '3.973.26' ],
+22 silly audit   '@aws-sdk/credential-provider-env': [ '3.972.24' ],
+22 silly audit   '@aws-sdk/credential-provider-http': [ '3.972.26' ],
+22 silly audit   '@aws-sdk/credential-provider-ini': [ '3.972.27' ],
+22 silly audit   '@aws-sdk/credential-provider-login': [ '3.972.27' ],
+22 silly audit   '@aws-sdk/credential-provider-node': [ '3.972.28' ],
+22 silly audit   '@aws-sdk/credential-provider-process': [ '3.972.24' ],
+22 silly audit   '@aws-sdk/credential-provider-sso': [ '3.972.27' ],
+22 silly audit   '@aws-sdk/credential-provider-web-identity': [ '3.972.27' ],
+22 silly audit   '@aws-sdk/eventstream-handler-node': [ '3.972.12' ],
+22 silly audit   '@aws-sdk/middleware-eventstream': [ '3.972.8' ],
+22 silly audit   '@aws-sdk/middleware-host-header': [ '3.972.8' ],
+22 silly audit   '@aws-sdk/middleware-logger': [ '3.972.8' ],
+22 silly audit   '@aws-sdk/middleware-recursion-detection': [ '3.972.9' ],
+22 silly audit   '@aws-sdk/middleware-user-agent': [ '3.972.27' ],
+22 silly audit   '@aws-sdk/middleware-websocket': [ '3.972.14' ],
+22 silly audit   '@aws-sdk/nested-clients': [ '3.996.17' ],
+22 silly audit   '@aws-sdk/region-config-resolver': [ '3.972.10' ],
+22 silly audit   '@aws-sdk/token-providers': [ '3.1020.0' ],
+22 silly audit   '@aws-sdk/types': [ '3.973.6' ],
+22 silly audit   '@aws-sdk/util-endpoints': [ '3.996.5' ],
+22 silly audit   '@aws-sdk/util-format-url': [ '3.972.8' ],
+22 silly audit   '@aws-sdk/util-locate-window': [ '3.965.5' ],
+22 silly audit   '@aws-sdk/util-user-agent-browser': [ '3.972.8' ],
+22 silly audit   '@aws-sdk/util-user-agent-node': [ '3.973.13' ],
+22 silly audit   '@aws-sdk/xml-builder': [ '3.972.16' ],
+22 silly audit   '@aws/lambda-invoke-store': [ '0.2.4' ],
+22 silly audit   '@babel/helper-string-parser': [ '7.27.1' ],
+22 silly audit   '@babel/helper-validator-identifier': [ '7.28.5' ],
+22 silly audit   '@babel/parser': [ '7.29.2' ],
+22 silly audit   '@babel/runtime': [ '7.29.2' ],
+22 silly audit   '@babel/types': [ '7.29.0' ],
+22 silly audit   '@braintree/sanitize-url': [ '7.1.2', '6.0.4' ],
+22 silly audit   '@chevrotain/cst-dts-gen': [ '12.0.0' ],
+22 silly audit   '@chevrotain/gast': [ '12.0.0' ],
+22 silly audit   '@chevrotain/regexp-to-ast': [ '12.0.0' ],
+22 silly audit   '@chevrotain/types': [ '12.0.0' ],
+22 silly audit   '@chevrotain/utils': [ '12.0.0' ],
+22 silly audit   '@commander-js/extra-typings': [ '14.0.0' ],
+22 silly audit   '@docsearch/css': [ '3.8.2' ],
+22 silly audit   '@docsearch/js': [ '3.8.2' ],
+22 silly audit   '@docsearch/react': [ '3.8.2' ],
+22 silly audit   '@esbuild/aix-ppc64': [ '0.21.5' ],
+22 silly audit   '@esbuild/android-arm': [ '0.21.5' ],
+22 silly audit   '@esbuild/android-arm64': [ '0.21.5' ],
+22 silly audit   '@esbuild/android-x64': [ '0.21.5' ],
+22 silly audit   '@esbuild/darwin-arm64': [ '0.21.5' ],
+22 silly audit   '@esbuild/darwin-x64': [ '0.21.5' ],
+22 silly audit   '@esbuild/freebsd-arm64': [ '0.21.5' ],
+22 silly audit   '@esbuild/freebsd-x64': [ '0.21.5' ],
+22 silly audit   '@esbuild/linux-arm': [ '0.21.5' ],
+22 silly audit   '@esbuild/linux-arm64': [ '0.21.5' ],
+22 silly audit   '@esbuild/linux-ia32': [ '0.21.5' ],
+22 silly audit   '@esbuild/linux-loong64': [ '0.21.5' ],
+22 silly audit   '@esbuild/linux-mips64el': [ '0.21.5' ],
+22 silly audit   '@esbuild/linux-ppc64': [ '0.21.5' ],
+22 silly audit   '@esbuild/linux-riscv64': [ '0.21.5' ],
+22 silly audit   '@esbuild/linux-s390x': [ '0.21.5' ],
+22 silly audit   '@esbuild/linux-x64': [ '0.21.5' ],
+22 silly audit   '@esbuild/netbsd-x64': [ '0.21.5' ],
+22 silly audit   '@esbuild/openbsd-x64': [ '0.21.5' ],
+22 silly audit   '@esbuild/sunos-x64': [ '0.21.5' ],
+22 silly audit   '@esbuild/win32-arm64': [ '0.21.5' ],
+22 silly audit   '@esbuild/win32-ia32': [ '0.21.5' ],
+22 silly audit   '@esbuild/win32-x64': [ '0.21.5' ],
+22 silly audit   '@growthbook/growthbook': [ '1.6.5' ],
+22 silly audit   '@hono/node-server': [ '1.19.12' ],
+22 silly audit   '@iconify-json/simple-icons': [ '1.2.76' ],
+22 silly audit   '@iconify/types': [ '2.0.0' ],
+22 silly audit   '@iconify/utils': [ '3.1.0' ],
+22 silly audit   '@jridgewell/sourcemap-codec': [ '1.5.5' ],
+22 silly audit   '@mermaid-js/mermaid-mindmap': [ '9.3.0' ],
+22 silly audit   '@mermaid-js/parser': [ '1.1.0' ],
+22 silly audit   '@mixmark-io/domino': [ '2.2.0' ],
+22 silly audit   '@modelcontextprotocol/sdk': [ '1.29.0' ],
+22 silly audit   '@opentelemetry/api': [ '1.9.1' ],
+22 silly audit   '@opentelemetry/api-logs': [ '0.214.0' ],
+22 silly audit   '@opentelemetry/core': [ '2.6.1' ],
+22 silly audit   '@opentelemetry/resources': [ '2.6.1' ],
+22 silly audit   '@opentelemetry/sdk-logs': [ '0.214.0' ],
+22 silly audit   '@opentelemetry/sdk-metrics': [ '2.6.1' ],
+22 silly audit   '@opentelemetry/sdk-trace-base': [ '2.6.1' ],
+22 silly audit   '@opentelemetry/semantic-conventions': [ '1.40.0' ],
+22 silly audit   '@pondwader/socks5-server': [ '1.0.10' ],
+22 silly audit   '@rollup/rollup-android-arm-eabi': [ '4.60.1' ],
+22 silly audit   '@rollup/rollup-android-arm64': [ '4.60.1' ],
+22 silly audit   '@rollup/rollup-darwin-arm64': [ '4.60.1' ],
+22 silly audit   '@rollup/rollup-darwin-x64': [ '4.60.1' ],
+22 silly audit   '@rollup/rollup-freebsd-arm64': [ '4.60.1' ],
+22 silly audit   '@rollup/rollup-freebsd-x64': [ '4.60.1' ],
+22 silly audit   '@rollup/rollup-linux-arm-gnueabihf': [ '4.60.1' ],
+22 silly audit   '@rollup/rollup-linux-arm-musleabihf': [ '4.60.1' ],
+22 silly audit   '@rollup/rollup-linux-arm64-gnu': [ '4.60.1' ],
+22 silly audit   '@rollup/rollup-linux-arm64-musl': [ '4.60.1' ],
+22 silly audit   '@rollup/rollup-linux-loong64-gnu': [ '4.60.1' ],
+22 silly audit   '@rollup/rollup-linux-loong64-musl': [ '4.60.1' ],
+22 silly audit   '@rollup/rollup-linux-ppc64-gnu': [ '4.60.1' ],
+22 silly audit   '@rollup/rollup-linux-ppc64-musl': [ '4.60.1' ],
+22 silly audit   '@rollup/rollup-linux-riscv64-gnu': [ '4.60.1' ],
+22 silly audit   '@rollup/rollup-linux-riscv64-musl': [ '4.60.1' ],
+22 silly audit   '@rollup/rollup-linux-s390x-gnu': [ '4.60.1' ],
+22 silly audit   '@rollup/rollup-linux-x64-gnu': [ '4.60.1' ],
+22 silly audit   '@rollup/rollup-linux-x64-musl': [ '4.60.1' ],
+22 silly audit   '@rollup/rollup-openbsd-x64': [ '4.60.1' ],
+22 silly audit   '@rollup/rollup-openharmony-arm64': [ '4.60.1' ],
+22 silly audit   '@rollup/rollup-win32-arm64-msvc': [ '4.60.1' ],
+22 silly audit   '@rollup/rollup-win32-ia32-msvc': [ '4.60.1' ],
+22 silly audit   '@rollup/rollup-win32-x64-gnu': [ '4.60.1' ],
+22 silly audit   '@rollup/rollup-win32-x64-msvc': [ '4.60.1' ],
+22 silly audit   '@sec-ant/readable-stream': [ '0.4.1' ],
+22 silly audit   '@shikijs/core': [ '2.5.0' ],
+22 silly audit   '@shikijs/engine-javascript': [ '2.5.0' ],
+22 silly audit   '@shikijs/engine-oniguruma': [ '2.5.0' ],
+22 silly audit   '@shikijs/langs': [ '2.5.0' ],
+22 silly audit   '@shikijs/themes': [ '2.5.0' ],
+22 silly audit   '@shikijs/transformers': [ '2.5.0' ],
+22 silly audit   '@shikijs/types': [ '2.5.0' ],
+22 silly audit   '@shikijs/vscode-textmate': [ '10.0.2' ],
+22 silly audit   '@sindresorhus/merge-streams': [ '4.0.0' ],
+22 silly audit   '@smithy/config-resolver': [ '4.4.13' ],
+22 silly audit   '@smithy/core': [ '3.23.13' ],
+22 silly audit   '@smithy/credential-provider-imds': [ '4.2.12' ],
+22 silly audit   '@smithy/eventstream-codec': [ '4.2.12' ],
+22 silly audit   '@smithy/eventstream-serde-browser': [ '4.2.12' ],
+22 silly audit   '@smithy/eventstream-serde-config-resolver': [ '4.3.12' ],
+22 silly audit   '@smithy/eventstream-serde-node': [ '4.2.12' ],
+22 silly audit   '@smithy/eventstream-serde-universal': [ '4.2.12' ],
+22 silly audit   '@smithy/fetch-http-handler': [ '5.3.15' ],
+22 silly audit   '@smithy/hash-node': [ '4.2.12' ],
+22 silly audit   '@smithy/invalid-dependency': [ '4.2.12' ],
+22 silly audit   '@smithy/middleware-content-length': [ '4.2.12' ],
+22 silly audit   '@smithy/middleware-endpoint': [ '4.4.28' ],
+22 silly audit   '@smithy/middleware-retry': [ '4.4.46' ],
+22 silly audit   '@smithy/middleware-serde': [ '4.2.16' ],
+22 silly audit   '@smithy/middleware-stack': [ '4.2.12' ],
+22 silly audit   '@smithy/node-config-provider': [ '4.3.12' ],
+22 silly audit   '@smithy/node-http-handler': [ '4.5.1' ],
+22 silly audit   '@smithy/property-provider': [ '4.2.12' ],
+22 silly audit   '@smithy/protocol-http': [ '5.3.12' ],
+22 silly audit   '@smithy/querystring-builder': [ '4.2.12' ],
+22 silly audit   '@smithy/querystring-parser': [ '4.2.12' ],
+22 silly audit   '@smithy/service-error-classification': [ '4.2.12' ],
+22 silly audit   '@smithy/shared-ini-file-loader': [ '4.4.7' ],
+22 silly audit   '@smithy/signature-v4': [ '5.3.12' ],
+22 silly audit   '@smithy/smithy-client': [ '4.12.8' ],
+22 silly audit   '@smithy/types': [ '4.13.1' ],
+22 silly audit   '@smithy/url-parser': [ '4.2.12' ],
+22 silly audit   '@smithy/util-base64': [ '4.3.2' ],
+22 silly audit   '@smithy/util-body-length-browser': [ '4.2.2' ],
+22 silly audit   '@smithy/util-body-length-node': [ '4.2.3' ],
+22 silly audit   '@smithy/util-config-provider': [ '4.2.2' ],
+22 silly audit   '@smithy/util-defaults-mode-browser': [ '4.3.44' ],
+22 silly audit   '@smithy/util-defaults-mode-node': [ '4.2.48' ],
+22 silly audit   '@smithy/util-endpoints': [ '3.3.3' ],
+22 silly audit   '@smithy/util-hex-encoding': [ '4.2.2' ],
+22 silly audit   '@smithy/util-middleware': [ '4.2.12' ],
+22 silly audit   '@smithy/util-retry': [ '4.2.13' ],
+22 silly audit   '@smithy/util-stream': [ '4.5.21' ],
+22 silly audit   '@smithy/util-uri-escape': [ '4.2.2' ],
+22 silly audit   '@smithy/uuid': [ '1.1.2' ],
+22 silly audit   '@types/d3': [ '7.4.3' ],
+22 silly audit   '@types/d3-array': [ '3.2.2' ],
+22 silly audit   '@types/d3-axis': [ '3.0.6' ],
+22 silly audit   '@types/d3-brush': [ '3.0.6' ],
+22 silly audit   '@types/d3-chord': [ '3.0.6' ],
+22 silly audit   '@types/d3-color': [ '3.1.3' ],
+22 silly audit   '@types/d3-contour': [ '3.0.6' ],
+22 silly audit   '@types/d3-delaunay': [ '6.0.4' ],
+22 silly audit   '@types/d3-dispatch': [ '3.0.7' ],
+22 silly audit   '@types/d3-drag': [ '3.0.7' ],
+22 silly audit   '@types/d3-dsv': [ '3.0.7' ],
+22 silly audit   '@types/d3-ease': [ '3.0.2' ],
+22 silly audit   '@types/d3-fetch': [ '3.0.7' ],
+22 silly audit   '@types/d3-force': [ '3.0.10' ],
+22 silly audit   '@types/d3-format': [ '3.0.4' ],
+22 silly audit   '@types/d3-geo': [ '3.1.0' ],
+22 silly audit   '@types/d3-hierarchy': [ '3.1.7' ],
+22 silly audit   '@types/d3-interpolate': [ '3.0.4' ],
+22 silly audit   '@types/d3-path': [ '3.1.1' ],
+22 silly audit   '@types/d3-polygon': [ '3.0.2' ],
+22 silly audit   '@types/d3-quadtree': [ '3.0.6' ],
+22 silly audit   '@types/d3-random': [ '3.0.3' ],
+22 silly audit   '@types/d3-scale': [ '4.0.9' ],
+22 silly audit   '@types/d3-scale-chromatic': [ '3.1.0' ],
+22 silly audit   '@types/d3-selection': [ '3.0.11' ],
+22 silly audit   '@types/d3-shape': [ '3.1.8' ],
+22 silly audit   '@types/d3-time': [ '3.0.4' ],
+22 silly audit   '@types/d3-time-format': [ '4.0.3' ],
+22 silly audit   '@types/d3-timer': [ '3.0.2' ],
+22 silly audit   '@types/d3-transition': [ '3.0.9' ],
+22 silly audit   '@types/d3-zoom': [ '3.0.8' ],
+22 silly audit   '@types/estree': [ '1.0.8' ],
+22 silly audit   '@types/geojson': [ '7946.0.16' ],
+22 silly audit   '@types/hast': [ '3.0.4' ],
+22 silly audit   '@types/linkify-it': [ '5.0.0' ],
+22 silly audit   '@types/lodash': [ '4.17.24' ],
+22 silly audit   '@types/lodash-es': [ '4.17.12' ],
+22 silly audit   '@types/markdown-it': [ '14.1.2' ],
+22 silly audit   '@types/mdast': [ '4.0.4' ],
+22 silly audit   '@types/mdurl': [ '2.0.0' ],
+22 silly audit   '@types/trusted-types': [ '2.0.7' ],
+22 silly audit   '@types/unist': [ '3.0.3' ],
+22 silly audit   '@types/web-bluetooth': [ '0.0.21' ],
+22 silly audit   '@ungap/structured-clone': [ '1.3.0' ],
+22 silly audit   '@upsetjs/venn.js': [ '2.0.0' ],
+22 silly audit   '@vitejs/plugin-vue': [ '5.2.4' ],
+22 silly audit   '@vue/compiler-core': [ '3.5.32' ],
+22 silly audit   '@vue/compiler-dom': [ '3.5.32' ],
+22 silly audit   '@vue/compiler-sfc': [ '3.5.32' ],
+22 silly audit   '@vue/compiler-ssr': [ '3.5.32' ],
+22 silly audit   '@vue/devtools-api': [ '7.7.9' ],
+22 silly audit   '@vue/devtools-kit': [ '7.7.9' ],
+22 silly audit   '@vue/devtools-shared': [ '7.7.9' ],
+22 silly audit   '@vue/reactivity': [ '3.5.32' ],
+22 silly audit   '@vue/runtime-core': [ '3.5.32' ],
+22 silly audit   '@vue/runtime-dom': [ '3.5.32' ],
+22 silly audit   '@vue/server-renderer': [ '3.5.32' ],
+22 silly audit   '@vue/shared': [ '3.5.32' ],
+22 silly audit   '@vueuse/core': [ '12.8.2' ],
+22 silly audit   '@vueuse/integrations': [ '12.8.2' ],
+22 silly audit   '@vueuse/metadata': [ '12.8.2' ],
+22 silly audit   '@vueuse/shared': [ '12.8.2' ],
+22 silly audit   accepts: [ '2.0.0' ],
+22 silly audit   acorn: [ '8.16.0' ],
+22 silly audit   'agent-base': [ '8.0.0', '7.1.4' ],
+22 silly audit   ajv: [ '8.18.0' ],
+22 silly audit   'ajv-formats': [ '3.0.1' ],
+22 silly audit   algoliasearch: [ '5.50.1' ],
+22 silly audit   'ansi-escapes': [ '7.3.0' ],
+22 silly audit   'ansi-regex': [ '6.2.2', '5.0.1' ],
+22 silly audit   'ansi-styles': [ '6.2.3', '4.3.0' ],
+22 silly audit   asciichart: [ '1.5.25' ],
+22 silly audit   asynckit: [ '0.4.0' ],
+22 silly audit   'auto-bind': [ '5.0.1' ],
+22 silly audit   axios: [ '1.14.0' ],
+22 silly audit   'base64-js': [ '1.5.1' ],
+22 silly audit   'bidi-js': [ '1.0.3' ],
+22 silly audit   'bignumber.js': [ '9.3.1' ],
+22 silly audit   birpc: [ '2.9.0' ],
+22 silly audit   'body-parser': [ '2.2.2' ],
+22 silly audit   bowser: [ '2.14.1' ],
+22 silly audit   'buffer-equal-constant-time': [ '1.0.1' ],
+22 silly audit   bytes: [ '3.1.2' ],
+22 silly audit   'call-bind-apply-helpers': [ '1.0.2' ],
+22 silly audit   'call-bound': [ '1.0.4' ],
+22 silly audit   camelcase: [ '5.3.1' ],
+22 silly audit   ccount: [ '2.0.1' ],
+22 silly audit   chalk: [ '5.6.2' ],
+22 silly audit   'character-entities-html4': [ '2.1.0' ],
+22 silly audit   'character-entities-legacy': [ '3.0.0' ],
+22 silly audit   chevrotain: [ '12.0.0' ],
+22 silly audit   'chevrotain-allstar': [ '0.4.1' ],
+22 silly audit   chokidar: [ '5.0.0' ],
+22 silly audit   'cli-boxes': [ '4.0.1', '3.0.0' ],
+22 silly audit   'cli-cursor': [ '4.0.0' ],
+22 silly audit   'cli-truncate': [ '5.2.0' ],
+22 silly audit   cliui: [ '6.0.0' ],
+22 silly audit   'emoji-regex': [ '8.0.0', '10.6.0' ],
+22 silly audit   'is-fullwidth-code-point': [ '3.0.0', '5.1.0' ],
+22 silly audit   'string-width': [ '4.2.3', '7.2.0', '8.2.0' ],
+22 silly audit   'strip-ansi': [ '6.0.1', '7.2.0' ],
+22 silly audit   'wrap-ansi': [ '6.2.0', '9.0.2', '10.0.0' ],
+22 silly audit   'code-excerpt': [ '4.0.0' ],
+22 silly audit   'color-convert': [ '2.0.1' ],
+22 silly audit   'color-name': [ '1.1.4' ],
+22 silly audit   'combined-stream': [ '1.0.8' ],
+22 silly audit   'comma-separated-tokens': [ '2.0.3' ],
+22 silly audit   confbox: [ '0.1.8' ],
+22 silly audit   'content-disposition': [ '1.0.1' ],
+22 silly audit   'content-type': [ '1.0.5' ],
+22 silly audit   'convert-to-spaces': [ '2.0.1' ],
+22 silly audit   cookie: [ '0.7.2' ],
+22 silly audit   'cookie-signature': [ '1.2.2' ],
+22 silly audit   'copy-anything': [ '4.0.5' ],
+22 silly audit   cors: [ '2.8.6' ],
+22 silly audit   'cose-base': [ '1.0.3', '2.2.0' ],
+22 silly audit   'cross-spawn': [ '7.0.6' ],
+22 silly audit   cssfilter: [ '0.0.10' ],
+22 silly audit   csstype: [ '3.2.3' ],
+22 silly audit   cytoscape: [ '3.33.2' ],
+22 silly audit   'cytoscape-cose-bilkent': [ '4.1.0' ],
+22 silly audit   'cytoscape-fcose': [ '2.2.0' ],
+22 silly audit   'layout-base': [ '2.0.1', '1.0.2' ],
+22 silly audit   d3: [ '7.9.0' ],
+22 silly audit   'd3-array': [ '3.2.4', '2.12.1' ],
+22 silly audit   'd3-axis': [ '3.0.0' ],
+22 silly audit   'd3-brush': [ '3.0.0' ],
+22 silly audit   'd3-chord': [ '3.0.1' ],
+22 silly audit   'd3-color': [ '3.1.0' ],
+22 silly audit   'd3-contour': [ '4.0.2' ],
+22 silly audit   'd3-delaunay': [ '6.0.4' ],
+22 silly audit   'd3-dispatch': [ '3.0.1' ],
+22 silly audit   'd3-drag': [ '3.0.0' ],
+22 silly audit   'd3-dsv': [ '3.0.1' ],
+22 silly audit   'iconv-lite': [ '0.6.3', '0.7.2' ],
+22 silly audit   'd3-ease': [ '3.0.1' ],
+22 silly audit   'd3-fetch': [ '3.0.1' ],
+22 silly audit   'd3-force': [ '3.0.0' ],
+22 silly audit   'd3-format': [ '3.1.2' ],
+22 silly audit   'd3-geo': [ '3.1.1' ],
+22 silly audit   'd3-hierarchy': [ '3.1.2' ],
+22 silly audit   'd3-interpolate': [ '3.0.1' ],
+22 silly audit   'd3-path': [ '3.1.0', '1.0.9' ],
+22 silly audit   'd3-polygon': [ '3.0.1' ],
+22 silly audit   'd3-quadtree': [ '3.0.1' ],
+22 silly audit   'd3-random': [ '3.0.1' ],
+22 silly audit   'd3-sankey': [ '0.12.3' ],
+22 silly audit   'd3-shape': [ '1.3.7', '3.2.0' ],
+22 silly audit   internmap: [ '1.0.1', '2.0.3' ],
+22 silly audit   'd3-scale': [ '4.0.2' ],
+22 silly audit   'd3-scale-chromatic': [ '3.1.0' ],
+22 silly audit   'd3-selection': [ '3.0.0' ],
+22 silly audit   'd3-time': [ '3.1.0' ],
+22 silly audit   'd3-time-format': [ '4.1.0' ],
+22 silly audit   'd3-timer': [ '3.0.1' ],
+22 silly audit   'd3-transition': [ '3.0.1' ],
+22 silly audit   'd3-zoom': [ '3.0.0' ],
+22 silly audit   'dagre-d3-es': [ '7.0.14' ],
+22 silly audit   'data-uri-to-buffer': [ '4.0.1' ],
+22 silly audit   dayjs: [ '1.11.20' ],
+22 silly audit   debug: [ '4.4.3' ],
+22 silly audit   decamelize: [ '1.2.0' ],
+22 silly audit   delaunator: [ '5.1.0' ],
+22 silly audit   'delayed-stream': [ '1.0.0' ],
+22 silly audit   depd: [ '2.0.0' ],
+22 silly audit   dequal: [ '2.0.3' ],
+22 silly audit   devlop: [ '1.1.0' ],
+22 silly audit   diff: [ '8.0.4' ],
+22 silly audit   dijkstrajs: [ '1.0.3' ],
+22 silly audit   'dom-mutator': [ '0.6.0' ],
+22 silly audit   dompurify: [ '3.4.0' ],
+22 silly audit   'dunder-proto': [ '1.0.1' ],
+22 silly audit   'ecdsa-sig-formatter': [ '1.0.11' ],
+22 silly audit   'ee-first': [ '1.1.1' ],
+22 silly audit   'emoji-regex-xs': [ '1.0.0' ],
+22 silly audit   encodeurl: [ '2.0.0' ],
+22 silly audit   entities: [ '7.0.1' ],
+22 silly audit   'env-paths': [ '4.0.0' ],
+22 silly audit   environment: [ '1.1.0' ],
+22 silly audit   'es-define-property': [ '1.0.1' ],
+22 silly audit   'es-errors': [ '1.3.0' ],
+22 silly audit   'es-object-atoms': [ '1.1.1' ],
+22 silly audit   'es-set-tostringtag': [ '2.1.0' ],
+22 silly audit   'es-toolkit': [ '1.45.1' ],
+22 silly audit   esbuild: [ '0.21.5' ],
+22 silly audit   'escape-html': [ '1.0.3' ],
+22 silly audit   'escape-string-regexp': [ '2.0.0' ],
+22 silly audit   'estree-walker': [ '2.0.2' ],
+22 silly audit   etag: [ '1.8.1' ],
+22 silly audit   eventsource: [ '3.0.7' ],
+22 silly audit   'eventsource-parser': [ '3.0.6' ],
+22 silly audit   execa: [ '9.6.1' ],
+22 silly audit   express: [ '5.2.1' ],
+22 silly audit   'express-rate-limit': [ '8.3.2' ],
+22 silly audit   extend: [ '3.0.2' ],
+22 silly audit   'fast-deep-equal': [ '3.1.3' ],
+22 silly audit   'fast-uri': [ '3.1.0' ],
+22 silly audit   'fast-xml-builder': [ '1.1.4' ],
+22 silly audit   'fast-xml-parser': [ '5.5.8' ],
+22 silly audit   'fetch-blob': [ '3.2.0' ],
+22 silly audit   fflate: [ '0.8.3' ],
+22 silly audit   figures: [ '6.1.0' ],
+22 silly audit   finalhandler: [ '2.1.1' ],
+22 silly audit   'find-up': [ '4.1.0' ],
+22 silly audit   'focus-trap': [ '7.8.0' ],
+22 silly audit   'follow-redirects': [ '1.16.0' ],
+22 silly audit   'form-data': [ '4.0.5' ],
+22 silly audit   'mime-db': [ '1.52.0', '1.54.0' ],
+22 silly audit   'mime-types': [ '2.1.35', '3.0.2' ],
+22 silly audit   'formdata-polyfill': [ '4.0.10' ],
+22 silly audit   forwarded: [ '0.2.0' ],
+22 silly audit   fresh: [ '2.0.0' ],
+22 silly audit   fsevents: [ '2.3.3' ],
+22 silly audit   'function-bind': [ '1.1.2' ],
+22 silly audit   'fuse.js': [ '7.1.0' ],
+22 silly audit   gaxios: [ '7.1.4' ],
+22 silly audit   'https-proxy-agent': [ '7.0.6', '8.0.0' ],
+22 silly audit   'gcp-metadata': [ '8.1.2' ],
+22 silly audit   'get-caller-file': [ '2.0.5' ],
+22 silly audit   'get-east-asian-width': [ '1.5.0' ],
+22 silly audit   'get-intrinsic': [ '1.3.0' ],
+22 silly audit   'get-proto': [ '1.0.1' ],
+22 silly audit   'get-stream': [ '9.0.1' ],
+22 silly audit   'google-auth-library': [ '10.6.2' ],
+22 silly audit   'google-logging-utils': [ '1.1.3' ],
+22 silly audit   gopd: [ '1.2.0' ],
+22 silly audit   'graceful-fs': [ '4.2.11' ],
+22 silly audit   'hachure-fill': [ '0.5.2' ],
+22 silly audit   'has-flag': [ '5.0.1' ],
+22 silly audit   'has-symbols': [ '1.1.0' ],
+22 silly audit   'has-tostringtag': [ '1.0.2' ],
+22 silly audit   hasown: [ '2.0.2' ],
+22 silly audit   'hast-util-to-html': [ '9.0.5' ],
+22 silly audit   'hast-util-whitespace': [ '3.0.0' ],
+22 silly audit   'highlight.js': [ '11.11.1' ],
+22 silly audit   hono: [ '4.12.9' ],
+22 silly audit   hookable: [ '5.5.3' ],
+22 silly audit   'html-void-elements': [ '3.0.0' ],
+22 silly audit   'http-errors': [ '2.0.1' ],
+22 silly audit   'human-signals': [ '8.0.1' ],
+22 silly audit   ignore: [ '7.0.5' ],
+22 silly audit   'indent-string': [ '5.0.0' ],
+22 silly audit   inherits: [ '2.0.4' ],
+22 silly audit   ink: [ '6.8.0' ],
+22 silly audit   'signal-exit': [ '3.0.7', '4.1.0' ],
+22 silly audit   'ip-address': [ '10.1.0' ],
+22 silly audit   'ipaddr.js': [ '1.9.1' ],
+22 silly audit   'is-in-ci': [ '2.0.0' ],
+22 silly audit   'is-plain-obj': [ '4.1.0' ],
+22 silly audit   'is-promise': [ '4.0.0' ],
+22 silly audit   'is-safe-filename': [ '0.1.1' ],
+22 silly audit   'is-stream': [ '4.0.1' ],
+22 silly audit   'is-unicode-supported': [ '2.1.0' ],
+22 silly audit   'is-what': [ '5.5.0' ],
+22 silly audit   isexe: [ '2.0.0' ],
+22 silly audit   jose: [ '6.2.2' ],
+22 silly audit   'json-bigint': [ '1.0.0' ],
+22 silly audit   'json-schema-to-ts': [ '3.1.1' ],
+22 silly audit   'json-schema-traverse': [ '1.0.0' ],
+22 silly audit   'json-schema-typed': [ '8.0.2' ],
+22 silly audit   'jsonc-parser': [ '3.3.1' ],
+22 silly audit   jwa: [ '2.0.1' ],
+22 silly audit   jws: [ '4.0.1' ],
+22 silly audit   katex: [ '0.16.45' ],
+22 silly audit   khroma: [ '2.1.0' ],
+22 silly audit   langium: [ '4.2.2' ],
+22 silly audit   'locate-path': [ '5.0.0' ],
+22 silly audit   'lodash-es': [ '4.17.23' ],
+22 silly audit   'lodash.debounce': [ '4.0.8' ],
+22 silly audit   'lru-cache': [ '11.2.7' ],
+22 silly audit   'magic-string': [ '0.30.21' ],
+22 silly audit   'mark.js': [ '8.11.1' ],
+22 silly audit   marked: [ '17.0.5', '16.4.2' ],
+22 silly audit   'math-intrinsics': [ '1.1.0' ],
+22 silly audit   'mdast-util-to-hast': [ '13.2.1' ],
+22 silly audit   'media-typer': [ '1.1.0' ],
+22 silly audit   'medium-zoom': [ '1.1.0' ],
+22 silly audit   'merge-descriptors': [ '2.0.0' ],
+22 silly audit   mermaid: [ '11.14.0' ],
+22 silly audit   'micromark-util-character': [ '2.1.1' ],
+22 silly audit   'micromark-util-encode': [ '2.0.1' ],
+22 silly audit   'micromark-util-sanitize-uri': [ '2.0.1' ],
+22 silly audit   'micromark-util-symbol': [ '2.0.1' ],
+22 silly audit   'micromark-util-types': [ '2.0.2' ],
+22 silly audit   'mimic-fn': [ '2.1.0' ],
+22 silly audit   minisearch: [ '7.2.0' ],
+22 silly audit   mitt: [ '3.0.1' ],
+22 silly audit   mlly: [ '1.8.2' ],
+22 silly audit   ms: [ '2.1.3' ],
+22 silly audit   nanoid: [ '3.3.11' ],
+22 silly audit   negotiator: [ '1.0.0' ],
+22 silly audit   'node-domexception': [ '1.0.0' ],
+22 silly audit   'node-fetch': [ '3.3.2' ],
+22 silly audit   'non-layered-tidy-tree-layout': [ '2.0.2' ],
+22 silly audit   'npm-run-path': [ '6.0.0' ],
+22 silly audit   'path-key': [ '4.0.0', '3.1.1' ],
+22 silly audit   'object-assign': [ '4.1.1' ],
+22 silly audit   'object-inspect': [ '1.13.4' ],
+22 silly audit   'on-finished': [ '2.4.1' ],
+22 silly audit   once: [ '1.4.0' ],
+22 silly audit   onetime: [ '5.1.2' ],
+22 silly audit   'oniguruma-to-es': [ '3.1.1' ],
+22 silly audit   'p-limit': [ '2.3.0' ],
+22 silly audit   'p-locate': [ '4.1.0' ],
+22 silly audit   'p-map': [ '7.0.4' ],
+22 silly audit   'p-try': [ '2.2.0' ],
+22 silly audit   'package-manager-detector': [ '1.6.0' ],
+22 silly audit   'parse-ms': [ '4.0.0' ],
+22 silly audit   parseurl: [ '1.3.3' ],
+22 silly audit   'patch-console': [ '2.0.0' ],
+22 silly audit   'path-data-parser': [ '0.1.0' ],
+22 silly audit   'path-exists': [ '4.0.0' ],
+22 silly audit   'path-expression-matcher': [ '1.2.0' ],
+22 silly audit   'path-to-regexp': [ '8.4.1' ],
+22 silly audit   pathe: [ '2.0.3' ],
+22 silly audit   'perfect-debounce': [ '1.0.0' ],
+22 silly audit   picocolors: [ '1.1.1' ],
+22 silly audit   picomatch: [ '4.0.4' ],
+22 silly audit   'pkce-challenge': [ '5.0.1' ],
+22 silly audit   'pkg-types': [ '1.3.1' ],
+22 silly audit   pngjs: [ '5.0.0' ],
+22 silly audit   'points-on-curve': [ '0.2.0' ],
+22 silly audit   'points-on-path': [ '0.2.1' ],
+22 silly audit   postcss: [ '8.5.8' ],
+22 silly audit   preact: [ '10.29.1' ],
+22 silly audit   'pretty-ms': [ '9.3.0' ],
+22 silly audit   'proper-lockfile': [ '4.1.2' ],
+22 silly audit   'property-information': [ '7.1.0' ],
+22 silly audit   'proxy-addr': [ '2.0.7' ],
+22 silly audit   'proxy-from-env': [ '2.1.0' ],
+22 silly audit   qrcode: [ '1.5.4' ],
+22 silly audit   qs: [ '6.15.0' ],
+22 silly audit   'range-parser': [ '1.2.1' ],
+22 silly audit   'raw-body': [ '3.0.2' ],
+22 silly audit   react: [ '19.2.4' ],
+22 silly audit   'react-reconciler': [ '0.33.0' ],
+22 silly audit   readdirp: [ '5.0.0' ],
+22 silly audit   regex: [ '6.1.0' ],
+22 silly audit   'regex-recursion': [ '6.0.2' ],
+22 silly audit   'regex-utilities': [ '2.3.0' ],
+22 silly audit   'require-directory': [ '2.1.1' ],
+22 silly audit   'require-from-string': [ '2.0.2' ],
+22 silly audit   'require-main-filename': [ '2.0.0' ],
+22 silly audit   'restore-cursor': [ '4.0.0' ],
+22 silly audit   retry: [ '0.12.0' ],
+22 silly audit   rfdc: [ '1.4.1' ],
+22 silly audit   'robust-predicates': [ '3.0.3' ],
+22 silly audit   rollup: [ '4.60.1' ],
+22 silly audit   roughjs: [ '4.6.6' ],
+22 silly audit   router: [ '2.2.0' ],
+22 silly audit   rw: [ '1.3.3' ],
+22 silly audit   'safe-buffer': [ '5.2.1' ],
+22 silly audit   'safer-buffer': [ '2.1.2' ],
+22 silly audit   scheduler: [ '0.27.0' ],
+22 silly audit   'search-insights': [ '2.17.3' ],
+22 silly audit   semver: [ '7.7.4' ],
+22 silly audit   send: [ '1.2.1' ],
+22 silly audit   'serve-static': [ '2.2.1' ],
+22 silly audit   'set-blocking': [ '2.0.0' ],
+22 silly audit   setprototypeof: [ '1.2.0' ],
+22 silly audit   'shebang-command': [ '2.0.0' ],
+22 silly audit   'shebang-regex': [ '3.0.0' ],
+22 silly audit   'shell-quote': [ '1.8.3' ],
+22 silly audit   shiki: [ '2.5.0' ],
+22 silly audit   'side-channel': [ '1.1.0' ],
+22 silly audit   'side-channel-list': [ '1.0.0' ],
+22 silly audit   'side-channel-map': [ '1.0.1' ],
+22 silly audit   'side-channel-weakmap': [ '1.0.2' ],
+22 silly audit   'slice-ansi': [ '8.0.0' ],
+22 silly audit   'source-map-js': [ '1.2.1' ],
+22 silly audit   'space-separated-tokens': [ '2.0.2' ],
+22 silly audit   speakingurl: [ '14.0.1' ],
+22 silly audit   'stack-utils': [ '2.0.6' ],
+22 silly audit   statuses: [ '2.0.2' ],
+22 silly audit   'stringify-entities': [ '4.0.4' ],
+22 silly audit   'strip-final-newline': [ '4.0.0' ],
+22 silly audit   strnum: [ '2.2.2' ],
+22 silly audit   stylis: [ '4.3.6' ],
+22 silly audit   superjson: [ '2.2.6' ],
+22 silly audit   'supports-color': [ '10.2.2' ],
+22 silly audit   'supports-hyperlinks': [ '4.4.0' ],
+22 silly audit   tabbable: [ '6.4.0' ],
+22 silly audit   'tagged-tag': [ '1.0.0' ],
+22 silly audit   'terminal-size': [ '4.0.1' ],
+22 silly audit   tinyexec: [ '1.1.1' ],
+22 silly audit   toidentifier: [ '1.0.1' ],
+22 silly audit   'tree-kill': [ '1.2.2' ],
+22 silly audit   'trim-lines': [ '3.0.1' ],
+22 silly audit   'ts-algebra': [ '2.0.0' ],
+22 silly audit   'ts-dedent': [ '2.2.0' ],
+22 silly audit   tslib: [ '2.8.1' ],
+22 silly audit   turndown: [ '7.2.4' ],
+22 silly audit   'type-fest': [ '5.5.0' ],
+22 silly audit   'type-is': [ '2.0.1' ],
+22 silly audit   ufo: [ '1.6.3' ],
+22 silly audit   undici: [ '7.24.6' ],
+22 silly audit   'unicorn-magic': [ '0.3.0' ],
+22 silly audit   'unist-util-is': [ '6.0.1' ],
+22 silly audit   'unist-util-position': [ '5.0.0' ],
+22 silly audit   'unist-util-stringify-position': [ '4.0.0' ],
+22 silly audit   'unist-util-visit': [ '5.1.0' ],
+22 silly audit   'unist-util-visit-parents': [ '6.0.2' ],
+22 silly audit   unpipe: [ '1.0.0' ],
+22 silly audit   'usehooks-ts': [ '3.1.1' ],
+22 silly audit   uuid: [ '11.1.0' ],
+22 silly audit   vary: [ '1.1.2' ],
+22 silly audit   vfile: [ '6.0.3' ],
+22 silly audit   'vfile-message': [ '4.0.3' ],
+22 silly audit   vite: [ '5.4.21' ],
+22 silly audit   vitepress: [ '1.6.4' ],
+22 silly audit   'vitepress-plugin-mermaid': [ '2.0.17' ],
+22 silly audit   'vscode-jsonrpc': [ '8.2.1', '8.2.0' ],
+22 silly audit   'vscode-languageserver': [ '9.0.1' ],
+22 silly audit   'vscode-languageserver-protocol': [ '3.17.5' ],
+22 silly audit   'vscode-languageserver-textdocument': [ '1.0.12' ],
+22 silly audit   'vscode-languageserver-types': [ '3.17.5' ],
+22 silly audit   'vscode-uri': [ '3.1.0' ],
+22 silly audit   vue: [ '3.5.32' ],
+22 silly audit   'web-streams-polyfill': [ '3.3.3' ],
+22 silly audit   which: [ '2.0.2' ],
+22 silly audit   'which-module': [ '2.0.1' ],
+22 silly audit   'widest-line': [ '6.0.0' ],
+22 silly audit   wrappy: [ '1.0.2' ],
+22 silly audit   ws: [ '8.20.0' ],
+22 silly audit   xss: [ '1.0.15' ],
+22 silly audit   y18n: [ '4.0.3' ],
+22 silly audit   yaml: [ '2.8.3' ],
+22 silly audit   yargs: [ '15.4.1' ],
+22 silly audit   'yargs-parser': [ '18.1.3' ],
+22 silly audit   yoctocolors: [ '2.1.2' ],
+22 silly audit   'yoga-layout': [ '3.2.1' ],
+22 silly audit   'zod-to-json-schema': [ '3.25.2' ],
+22 silly audit   zwitch: [ '2.0.4' ]
+22 silly audit }
+23 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/fsevents
+24 silly reify mark deleted [ '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/fsevents' ]
+25 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-win32-x64-msvc
+26 silly reify mark deleted [
+26 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-win32-x64-msvc'
+26 silly reify ]
+27 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-win32-x64-gnu
+28 silly reify mark deleted [
+28 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-win32-x64-gnu'
+28 silly reify ]
+29 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-win32-ia32-msvc
+30 silly reify mark deleted [
+30 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-win32-ia32-msvc'
+30 silly reify ]
+31 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-win32-arm64-msvc
+32 silly reify mark deleted [
+32 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-win32-arm64-msvc'
+32 silly reify ]
+33 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-openharmony-arm64
+34 silly reify mark deleted [
+34 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-openharmony-arm64'
+34 silly reify ]
+35 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-openbsd-x64
+36 silly reify mark deleted [
+36 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-openbsd-x64'
+36 silly reify ]
+37 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-linux-s390x-gnu
+38 silly reify mark deleted [
+38 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-linux-s390x-gnu'
+38 silly reify ]
+39 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-linux-riscv64-musl
+40 silly reify mark deleted [
+40 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-linux-riscv64-musl'
+40 silly reify ]
+41 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-linux-riscv64-gnu
+42 silly reify mark deleted [
+42 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-linux-riscv64-gnu'
+42 silly reify ]
+43 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-linux-ppc64-musl
+44 silly reify mark deleted [
+44 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-linux-ppc64-musl'
+44 silly reify ]
+45 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-linux-ppc64-gnu
+46 silly reify mark deleted [
+46 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-linux-ppc64-gnu'
+46 silly reify ]
+47 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-linux-loong64-musl
+48 silly reify mark deleted [
+48 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-linux-loong64-musl'
+48 silly reify ]
+49 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-linux-loong64-gnu
+50 silly reify mark deleted [
+50 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-linux-loong64-gnu'
+50 silly reify ]
+51 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-linux-arm64-musl
+52 silly reify mark deleted [
+52 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-linux-arm64-musl'
+52 silly reify ]
+53 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-linux-arm64-gnu
+54 silly reify mark deleted [
+54 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-linux-arm64-gnu'
+54 silly reify ]
+55 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-linux-arm-musleabihf
+56 silly reify mark deleted [
+56 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-linux-arm-musleabihf'
+56 silly reify ]
+57 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-linux-arm-gnueabihf
+58 silly reify mark deleted [
+58 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-linux-arm-gnueabihf'
+58 silly reify ]
+59 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-freebsd-x64
+60 silly reify mark deleted [
+60 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-freebsd-x64'
+60 silly reify ]
+61 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-freebsd-arm64
+62 silly reify mark deleted [
+62 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-freebsd-arm64'
+62 silly reify ]
+63 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-darwin-x64
+64 silly reify mark deleted [
+64 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-darwin-x64'
+64 silly reify ]
+65 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-darwin-arm64
+66 silly reify mark deleted [
+66 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-darwin-arm64'
+66 silly reify ]
+67 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-android-arm64
+68 silly reify mark deleted [
+68 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-android-arm64'
+68 silly reify ]
+69 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-android-arm-eabi
+70 silly reify mark deleted [
+70 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@rollup/rollup-android-arm-eabi'
+70 silly reify ]
+71 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/win32-x64
+72 silly reify mark deleted [
+72 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/win32-x64'
+72 silly reify ]
+73 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/win32-ia32
+74 silly reify mark deleted [
+74 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/win32-ia32'
+74 silly reify ]
+75 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/win32-arm64
+76 silly reify mark deleted [
+76 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/win32-arm64'
+76 silly reify ]
+77 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/sunos-x64
+78 silly reify mark deleted [
+78 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/sunos-x64'
+78 silly reify ]
+79 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/openbsd-x64
+80 silly reify mark deleted [
+80 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/openbsd-x64'
+80 silly reify ]
+81 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/netbsd-x64
+82 silly reify mark deleted [
+82 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/netbsd-x64'
+82 silly reify ]
+83 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/linux-s390x
+84 silly reify mark deleted [
+84 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/linux-s390x'
+84 silly reify ]
+85 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/linux-riscv64
+86 silly reify mark deleted [
+86 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/linux-riscv64'
+86 silly reify ]
+87 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/linux-ppc64
+88 silly reify mark deleted [
+88 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/linux-ppc64'
+88 silly reify ]
+89 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/linux-mips64el
+90 silly reify mark deleted [
+90 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/linux-mips64el'
+90 silly reify ]
+91 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/linux-loong64
+92 silly reify mark deleted [
+92 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/linux-loong64'
+92 silly reify ]
+93 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/linux-ia32
+94 silly reify mark deleted [
+94 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/linux-ia32'
+94 silly reify ]
+95 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/linux-arm64
+96 silly reify mark deleted [
+96 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/linux-arm64'
+96 silly reify ]
+97 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/linux-arm
+98 silly reify mark deleted [
+98 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/linux-arm'
+98 silly reify ]
+99 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/freebsd-x64
+100 silly reify mark deleted [
+100 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/freebsd-x64'
+100 silly reify ]
+101 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/freebsd-arm64
+102 silly reify mark deleted [
+102 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/freebsd-arm64'
+102 silly reify ]
+103 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/darwin-x64
+104 silly reify mark deleted [
+104 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/darwin-x64'
+104 silly reify ]
+105 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/darwin-arm64
+106 silly reify mark deleted [
+106 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/darwin-arm64'
+106 silly reify ]
+107 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/android-x64
+108 silly reify mark deleted [
+108 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/android-x64'
+108 silly reify ]
+109 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/android-arm64
+110 silly reify mark deleted [
+110 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/android-arm64'
+110 silly reify ]
+111 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/android-arm
+112 silly reify mark deleted [
+112 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/android-arm'
+112 silly reify ]
+113 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/aix-ppc64
+114 silly reify mark deleted [
+114 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@esbuild/aix-ppc64'
+114 silly reify ]
+115 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@anthropic-ai/claude-agent-sdk-win32-x64
+116 silly reify mark deleted [
+116 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@anthropic-ai/claude-agent-sdk-win32-x64'
+116 silly reify ]
+117 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@anthropic-ai/claude-agent-sdk-win32-arm64
+118 silly reify mark deleted [
+118 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@anthropic-ai/claude-agent-sdk-win32-arm64'
+118 silly reify ]
+119 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@anthropic-ai/claude-agent-sdk-linux-arm64-musl
+120 silly reify mark deleted [
+120 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@anthropic-ai/claude-agent-sdk-linux-arm64-musl'
+120 silly reify ]
+121 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@anthropic-ai/claude-agent-sdk-linux-arm64
+122 silly reify mark deleted [
+122 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@anthropic-ai/claude-agent-sdk-linux-arm64'
+122 silly reify ]
+123 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@anthropic-ai/claude-agent-sdk-darwin-x64
+124 silly reify mark deleted [
+124 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@anthropic-ai/claude-agent-sdk-darwin-x64'
+124 silly reify ]
+125 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64
+126 silly reify mark deleted [
+126 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64'
+126 silly reify ]
+127 silly audit bulk request failed undefined
+128 verbose audit error FetchError: request to https://registry.npmmirror.com/-/npm/v1/security/audits/quick failed, reason: connect EPERM 127.0.0.1:7890 - Local (undefined:undefined)
+128 verbose audit error     at ClientRequest.<anonymous> (/home/zhijun/.nvm/versions/node/v22.20.0/lib/node_modules/npm/node_modules/minipass-fetch/lib/index.js:130:14)
+128 verbose audit error     at ClientRequest.emit (node:events:519:28)
+128 verbose audit error     at emitErrorEvent (node:_http_client:105:11)
+128 verbose audit error     at _destroy (node:_http_client:898:9)
+128 verbose audit error     at onSocketNT (node:_http_client:918:5)
+128 verbose audit error     at process.processTicksAndRejections (node:internal/process/task_queues:91:21) {
+128 verbose audit error   code: 'EPERM',
+128 verbose audit error   errno: 'EPERM',
+128 verbose audit error   syscall: 'connect',
+128 verbose audit error   address: '127.0.0.1',
+128 verbose audit error   port: 7890,
+128 verbose audit error   type: 'system'
+128 verbose audit error }
+129 silly audit error undefined
+130 silly audit report null
+131 http cache zod-to-json-schema@https://registry.npmmirror.com/zod-to-json-schema/-/zod-to-json-schema-3.25.2.tgz 1ms (cache hit)
+132 http cache zwitch@https://registry.npmmirror.com/zwitch/-/zwitch-2.0.4.tgz 0ms (cache hit)
+133 http cache yoctocolors@https://registry.npmmirror.com/yoctocolors/-/yoctocolors-2.1.2.tgz 0ms (cache hit)
+134 http cache zod@https://registry.npmmirror.com/zod/-/zod-4.3.6.tgz 0ms (cache hit)
+135 http cache yargs-parser@https://registry.npmmirror.com/yargs-parser/-/yargs-parser-18.1.3.tgz 0ms (cache hit)
+136 http cache yoga-layout@https://registry.npmmirror.com/yoga-layout/-/yoga-layout-3.2.1.tgz 0ms (cache hit)
+137 http cache yargs@https://registry.npmmirror.com/yargs/-/yargs-15.4.1.tgz 0ms (cache hit)
+138 http cache yaml@https://registry.npmmirror.com/yaml/-/yaml-2.8.3.tgz 0ms (cache hit)
+139 http cache y18n@https://registry.npmmirror.com/y18n/-/y18n-4.0.3.tgz 0ms (cache hit)
+140 http cache xss@https://registry.npmmirror.com/xss/-/xss-1.0.15.tgz 0ms (cache hit)
+141 http cache ws@https://registry.npmmirror.com/ws/-/ws-8.20.0.tgz 0ms (cache hit)
+142 http cache wrappy@https://registry.npmmirror.com/wrappy/-/wrappy-1.0.2.tgz 0ms (cache hit)
+143 http cache wrap-ansi@https://registry.npmmirror.com/wrap-ansi/-/wrap-ansi-10.0.0.tgz 0ms (cache hit)
+144 http cache which-module@https://registry.npmmirror.com/which-module/-/which-module-2.0.1.tgz 0ms (cache hit)
+145 http cache web-streams-polyfill@https://registry.npmmirror.com/web-streams-polyfill/-/web-streams-polyfill-3.3.3.tgz 0ms (cache hit)
+146 http cache vue@https://registry.npmmirror.com/vue/-/vue-3.5.32.tgz 0ms (cache hit)
+147 http cache vscode-uri@https://registry.npmmirror.com/vscode-uri/-/vscode-uri-3.1.0.tgz 0ms (cache hit)
+148 http cache which@https://registry.npmmirror.com/which/-/which-2.0.2.tgz 0ms (cache hit)
+149 http cache vscode-languageserver-types@https://registry.npmmirror.com/vscode-languageserver-types/-/vscode-languageserver-types-3.17.5.tgz 0ms (cache hit)
+150 http cache vscode-languageserver-textdocument@https://registry.npmmirror.com/vscode-languageserver-textdocument/-/vscode-languageserver-textdocument-1.0.12.tgz 0ms (cache hit)
+151 http cache vscode-languageserver@https://registry.npmmirror.com/vscode-languageserver/-/vscode-languageserver-9.0.1.tgz 0ms (cache hit)
+152 http cache vscode-jsonrpc@https://registry.npmmirror.com/vscode-jsonrpc/-/vscode-jsonrpc-8.2.1.tgz 0ms (cache hit)
+153 http cache vitepress-plugin-mermaid@https://registry.npmmirror.com/vitepress-plugin-mermaid/-/vitepress-plugin-mermaid-2.0.17.tgz 0ms (cache hit)
+154 http cache vitepress@https://registry.npmmirror.com/vitepress/-/vitepress-1.6.4.tgz 0ms (cache hit)
+155 http cache vite@https://registry.npmmirror.com/vite/-/vite-5.4.21.tgz 0ms (cache hit)
+156 http cache vfile-message@https://registry.npmmirror.com/vfile-message/-/vfile-message-4.0.3.tgz 0ms (cache hit)
+157 http cache vfile@https://registry.npmmirror.com/vfile/-/vfile-6.0.3.tgz 0ms (cache hit)
+158 http cache uuid@https://registry.npmmirror.com/uuid/-/uuid-11.1.0.tgz 0ms (cache hit)
+159 http cache vary@https://registry.npmmirror.com/vary/-/vary-1.1.2.tgz 0ms (cache hit)
+160 http cache usehooks-ts@https://registry.npmmirror.com/usehooks-ts/-/usehooks-ts-3.1.1.tgz 0ms (cache hit)
+161 http cache vscode-languageserver-protocol@https://registry.npmmirror.com/vscode-languageserver-protocol/-/vscode-languageserver-protocol-3.17.5.tgz 0ms (cache hit)
+162 http cache unpipe@https://registry.npmmirror.com/unpipe/-/unpipe-1.0.0.tgz 0ms (cache hit)
+163 http cache widest-line@https://registry.npmmirror.com/widest-line/-/widest-line-6.0.0.tgz 0ms (cache hit)
+164 http cache unist-util-visit-parents@https://registry.npmmirror.com/unist-util-visit-parents/-/unist-util-visit-parents-6.0.2.tgz 0ms (cache hit)
+165 http cache unist-util-visit@https://registry.npmmirror.com/unist-util-visit/-/unist-util-visit-5.1.0.tgz 0ms (cache hit)
+166 http cache unist-util-stringify-position@https://registry.npmmirror.com/unist-util-stringify-position/-/unist-util-stringify-position-4.0.0.tgz 0ms (cache hit)
+167 http cache unist-util-position@https://registry.npmmirror.com/unist-util-position/-/unist-util-position-5.0.0.tgz 0ms (cache hit)
+168 http cache unist-util-is@https://registry.npmmirror.com/unist-util-is/-/unist-util-is-6.0.1.tgz 0ms (cache hit)
+169 http cache unicorn-magic@https://registry.npmmirror.com/unicorn-magic/-/unicorn-magic-0.3.0.tgz 0ms (cache hit)
+170 http cache undici@https://registry.npmmirror.com/undici/-/undici-7.24.6.tgz 0ms (cache hit)
+171 http cache ufo@https://registry.npmmirror.com/ufo/-/ufo-1.6.3.tgz 0ms (cache hit)
+172 http cache type-is@https://registry.npmmirror.com/type-is/-/type-is-2.0.1.tgz 0ms (cache hit)
+173 http cache type-fest@https://registry.npmmirror.com/type-fest/-/type-fest-5.5.0.tgz 0ms (cache hit)
+174 http cache turndown@https://registry.npmmirror.com/turndown/-/turndown-7.2.4.tgz 0ms (cache hit)
+175 http cache ts-dedent@https://registry.npmmirror.com/ts-dedent/-/ts-dedent-2.2.0.tgz 0ms (cache hit)
+176 http cache tslib@https://registry.npmmirror.com/tslib/-/tslib-2.8.1.tgz 0ms (cache hit)
+177 http cache ts-algebra@https://registry.npmmirror.com/ts-algebra/-/ts-algebra-2.0.0.tgz 0ms (cache hit)
+178 http cache tree-kill@https://registry.npmmirror.com/tree-kill/-/tree-kill-1.2.2.tgz 0ms (cache hit)
+179 http cache trim-lines@https://registry.npmmirror.com/trim-lines/-/trim-lines-3.0.1.tgz 0ms (cache hit)
+180 http cache toidentifier@https://registry.npmmirror.com/toidentifier/-/toidentifier-1.0.1.tgz 0ms (cache hit)
+181 http cache terminal-size@https://registry.npmmirror.com/terminal-size/-/terminal-size-4.0.1.tgz 0ms (cache hit)
+182 http cache tagged-tag@https://registry.npmmirror.com/tagged-tag/-/tagged-tag-1.0.0.tgz 0ms (cache hit)
+183 http cache supports-hyperlinks@https://registry.npmmirror.com/supports-hyperlinks/-/supports-hyperlinks-4.4.0.tgz 0ms (cache hit)
+184 http cache supports-color@https://registry.npmmirror.com/supports-color/-/supports-color-10.2.2.tgz 0ms (cache hit)
+185 http cache tabbable@https://registry.npmmirror.com/tabbable/-/tabbable-6.4.0.tgz 0ms (cache hit)
+186 http cache superjson@https://registry.npmmirror.com/superjson/-/superjson-2.2.6.tgz 0ms (cache hit)
+187 http cache tinyexec@https://registry.npmmirror.com/tinyexec/-/tinyexec-1.1.1.tgz 0ms (cache hit)
+188 http cache stylis@https://registry.npmmirror.com/stylis/-/stylis-4.3.6.tgz 0ms (cache hit)
+189 http cache strip-final-newline@https://registry.npmmirror.com/strip-final-newline/-/strip-final-newline-4.0.0.tgz 0ms (cache hit)
+190 http cache strip-ansi@https://registry.npmmirror.com/strip-ansi/-/strip-ansi-7.2.0.tgz 0ms (cache hit)
+191 http cache strnum@https://registry.npmmirror.com/strnum/-/strnum-2.2.2.tgz 0ms (cache hit)
+192 http cache stringify-entities@https://registry.npmmirror.com/stringify-entities/-/stringify-entities-4.0.4.tgz 0ms (cache hit)
+193 http cache statuses@https://registry.npmmirror.com/statuses/-/statuses-2.0.2.tgz 0ms (cache hit)
+194 http cache stack-utils@https://registry.npmmirror.com/stack-utils/-/stack-utils-2.0.6.tgz 0ms (cache hit)
+195 http cache speakingurl@https://registry.npmmirror.com/speakingurl/-/speakingurl-14.0.1.tgz 0ms (cache hit)
+196 http cache space-separated-tokens@https://registry.npmmirror.com/space-separated-tokens/-/space-separated-tokens-2.0.2.tgz 0ms (cache hit)
+197 http cache source-map-js@https://registry.npmmirror.com/source-map-js/-/source-map-js-1.2.1.tgz 0ms (cache hit)
+198 http cache slice-ansi@https://registry.npmmirror.com/slice-ansi/-/slice-ansi-8.0.0.tgz 0ms (cache hit)
+199 http cache signal-exit@https://registry.npmmirror.com/signal-exit/-/signal-exit-4.1.0.tgz 0ms (cache hit)
+200 http cache string-width@https://registry.npmmirror.com/string-width/-/string-width-8.2.0.tgz 0ms (cache hit)
+201 http cache side-channel-weakmap@https://registry.npmmirror.com/side-channel-weakmap/-/side-channel-weakmap-1.0.2.tgz 0ms (cache hit)
+202 http cache side-channel-map@https://registry.npmmirror.com/side-channel-map/-/side-channel-map-1.0.1.tgz 0ms (cache hit)
+203 http cache side-channel-list@https://registry.npmmirror.com/side-channel-list/-/side-channel-list-1.0.0.tgz 0ms (cache hit)
+204 http cache side-channel@https://registry.npmmirror.com/side-channel/-/side-channel-1.1.0.tgz 0ms (cache hit)
+205 http cache shiki@https://registry.npmmirror.com/shiki/-/shiki-2.5.0.tgz 0ms (cache hit)
+206 http cache shebang-regex@https://registry.npmmirror.com/shebang-regex/-/shebang-regex-3.0.0.tgz 0ms (cache hit)
+207 http cache shell-quote@https://registry.npmmirror.com/shell-quote/-/shell-quote-1.8.3.tgz 0ms (cache hit)
+208 http cache shebang-command@https://registry.npmmirror.com/shebang-command/-/shebang-command-2.0.0.tgz 0ms (cache hit)
+209 http cache setprototypeof@https://registry.npmmirror.com/setprototypeof/-/setprototypeof-1.2.0.tgz 0ms (cache hit)
+210 http cache set-blocking@https://registry.npmmirror.com/set-blocking/-/set-blocking-2.0.0.tgz 0ms (cache hit)
+211 http cache send@https://registry.npmmirror.com/send/-/send-1.2.1.tgz 0ms (cache hit)
+212 http cache serve-static@https://registry.npmmirror.com/serve-static/-/serve-static-2.2.1.tgz 0ms (cache hit)
+213 http cache semver@https://registry.npmmirror.com/semver/-/semver-7.7.4.tgz 0ms (cache hit)
+214 http cache search-insights@https://registry.npmmirror.com/search-insights/-/search-insights-2.17.3.tgz 0ms (cache hit)
+215 http cache scheduler@https://registry.npmmirror.com/scheduler/-/scheduler-0.27.0.tgz 0ms (cache hit)
+216 http cache safer-buffer@https://registry.npmmirror.com/safer-buffer/-/safer-buffer-2.1.2.tgz 0ms (cache hit)
+217 http cache safe-buffer@https://registry.npmmirror.com/safe-buffer/-/safe-buffer-5.2.1.tgz 0ms (cache hit)
+218 http cache rw@https://registry.npmmirror.com/rw/-/rw-1.3.3.tgz 0ms (cache hit)
+219 http cache rollup@https://registry.npmmirror.com/rollup/-/rollup-4.60.1.tgz 0ms (cache hit)
+220 http cache router@https://registry.npmmirror.com/router/-/router-2.2.0.tgz 0ms (cache hit)
+221 http cache roughjs@https://registry.npmmirror.com/roughjs/-/roughjs-4.6.6.tgz 0ms (cache hit)
+222 http cache robust-predicates@https://registry.npmmirror.com/robust-predicates/-/robust-predicates-3.0.3.tgz 0ms (cache hit)
+223 http cache rfdc@https://registry.npmmirror.com/rfdc/-/rfdc-1.4.1.tgz 0ms (cache hit)
+224 http cache retry@https://registry.npmmirror.com/retry/-/retry-0.12.0.tgz 0ms (cache hit)
+225 http cache require-main-filename@https://registry.npmmirror.com/require-main-filename/-/require-main-filename-2.0.0.tgz 0ms (cache hit)
+226 http cache restore-cursor@https://registry.npmmirror.com/restore-cursor/-/restore-cursor-4.0.0.tgz 0ms (cache hit)
+227 http cache require-from-string@https://registry.npmmirror.com/require-from-string/-/require-from-string-2.0.2.tgz 0ms (cache hit)
+228 http cache regex-utilities@https://registry.npmmirror.com/regex-utilities/-/regex-utilities-2.3.0.tgz 0ms (cache hit)
+229 http cache regex-recursion@https://registry.npmmirror.com/regex-recursion/-/regex-recursion-6.0.2.tgz 0ms (cache hit)
+230 http cache require-directory@https://registry.npmmirror.com/require-directory/-/require-directory-2.1.1.tgz 0ms (cache hit)
+231 http cache regex@https://registry.npmmirror.com/regex/-/regex-6.1.0.tgz 0ms (cache hit)
+232 http cache readdirp@https://registry.npmmirror.com/readdirp/-/readdirp-5.0.0.tgz 0ms (cache hit)
+233 http cache react-reconciler@https://registry.npmmirror.com/react-reconciler/-/react-reconciler-0.33.0.tgz 0ms (cache hit)
+234 http cache raw-body@https://registry.npmmirror.com/raw-body/-/raw-body-3.0.2.tgz 0ms (cache hit)
+235 http cache react@https://registry.npmmirror.com/react/-/react-19.2.4.tgz 0ms (cache hit)
+236 http cache qs@https://registry.npmmirror.com/qs/-/qs-6.15.0.tgz 0ms (cache hit)
+237 http cache range-parser@https://registry.npmmirror.com/range-parser/-/range-parser-1.2.1.tgz 0ms (cache hit)
+238 http cache qrcode@https://registry.npmmirror.com/qrcode/-/qrcode-1.5.4.tgz 0ms (cache hit)
+239 http cache proxy-from-env@https://registry.npmmirror.com/proxy-from-env/-/proxy-from-env-2.1.0.tgz 0ms (cache hit)
+240 http cache proxy-addr@https://registry.npmmirror.com/proxy-addr/-/proxy-addr-2.0.7.tgz 0ms (cache hit)
+241 http cache property-information@https://registry.npmmirror.com/property-information/-/property-information-7.1.0.tgz 0ms (cache hit)
+242 http cache proper-lockfile@https://registry.npmmirror.com/proper-lockfile/-/proper-lockfile-4.1.2.tgz 0ms (cache hit)
+243 http cache pretty-ms@https://registry.npmmirror.com/pretty-ms/-/pretty-ms-9.3.0.tgz 0ms (cache hit)
+244 http cache preact@https://registry.npmmirror.com/preact/-/preact-10.29.1.tgz 0ms (cache hit)
+245 http cache postcss@https://registry.npmmirror.com/postcss/-/postcss-8.5.8.tgz 0ms (cache hit)
+246 http cache points-on-curve@https://registry.npmmirror.com/points-on-curve/-/points-on-curve-0.2.0.tgz 0ms (cache hit)
+247 http cache pngjs@https://registry.npmmirror.com/pngjs/-/pngjs-5.0.0.tgz 0ms (cache hit)
+248 http cache pkce-challenge@https://registry.npmmirror.com/pkce-challenge/-/pkce-challenge-5.0.1.tgz 0ms (cache hit)
+249 http cache pkg-types@https://registry.npmmirror.com/pkg-types/-/pkg-types-1.3.1.tgz 0ms (cache hit)
+250 http cache points-on-path@https://registry.npmmirror.com/points-on-path/-/points-on-path-0.2.1.tgz 0ms (cache hit)
+251 http cache picomatch@https://registry.npmmirror.com/picomatch/-/picomatch-4.0.4.tgz 0ms (cache hit)
+252 http cache picocolors@https://registry.npmmirror.com/picocolors/-/picocolors-1.1.1.tgz 0ms (cache hit)
+253 http cache perfect-debounce@https://registry.npmmirror.com/perfect-debounce/-/perfect-debounce-1.0.0.tgz 0ms (cache hit)
+254 http cache pathe@https://registry.npmmirror.com/pathe/-/pathe-2.0.3.tgz 0ms (cache hit)
+255 http cache path-to-regexp@https://registry.npmmirror.com/path-to-regexp/-/path-to-regexp-8.4.1.tgz 0ms (cache hit)
+256 http cache path-expression-matcher@https://registry.npmmirror.com/path-expression-matcher/-/path-expression-matcher-1.2.0.tgz 0ms (cache hit)
+257 http cache path-key@https://registry.npmmirror.com/path-key/-/path-key-3.1.1.tgz 0ms (cache hit)
+258 http cache path-exists@https://registry.npmmirror.com/path-exists/-/path-exists-4.0.0.tgz 0ms (cache hit)
+259 http cache patch-console@https://registry.npmmirror.com/patch-console/-/patch-console-2.0.0.tgz 0ms (cache hit)
+260 http cache parseurl@https://registry.npmmirror.com/parseurl/-/parseurl-1.3.3.tgz 0ms (cache hit)
+261 http cache parse-ms@https://registry.npmmirror.com/parse-ms/-/parse-ms-4.0.0.tgz 0ms (cache hit)
+262 http cache package-manager-detector@https://registry.npmmirror.com/package-manager-detector/-/package-manager-detector-1.6.0.tgz 0ms (cache hit)
+263 http cache p-try@https://registry.npmmirror.com/p-try/-/p-try-2.2.0.tgz 0ms (cache hit)
+264 http cache p-map@https://registry.npmmirror.com/p-map/-/p-map-7.0.4.tgz 0ms (cache hit)
+265 http cache p-locate@https://registry.npmmirror.com/p-locate/-/p-locate-4.1.0.tgz 0ms (cache hit)
+266 http cache p-limit@https://registry.npmmirror.com/p-limit/-/p-limit-2.3.0.tgz 0ms (cache hit)
+267 http cache oniguruma-to-es@https://registry.npmmirror.com/oniguruma-to-es/-/oniguruma-to-es-3.1.1.tgz 0ms (cache hit)
+268 http cache onetime@https://registry.npmmirror.com/onetime/-/onetime-5.1.2.tgz 0ms (cache hit)
+269 http cache once@https://registry.npmmirror.com/once/-/once-1.4.0.tgz 0ms (cache hit)
+270 http cache on-finished@https://registry.npmmirror.com/on-finished/-/on-finished-2.4.1.tgz 0ms (cache hit)
+271 http cache object-inspect@https://registry.npmmirror.com/object-inspect/-/object-inspect-1.13.4.tgz 0ms (cache hit)
+272 http cache path-data-parser@https://registry.npmmirror.com/path-data-parser/-/path-data-parser-0.1.0.tgz 0ms (cache hit)
+273 http cache object-assign@https://registry.npmmirror.com/object-assign/-/object-assign-4.1.1.tgz 0ms (cache hit)
+274 http cache npm-run-path@https://registry.npmmirror.com/npm-run-path/-/npm-run-path-6.0.0.tgz 0ms (cache hit)
+275 http cache node-fetch@https://registry.npmmirror.com/node-fetch/-/node-fetch-3.3.2.tgz 0ms (cache hit)
+276 http cache node-domexception@https://registry.npmmirror.com/node-domexception/-/node-domexception-1.0.0.tgz 0ms (cache hit)
+277 http cache negotiator@https://registry.npmmirror.com/negotiator/-/negotiator-1.0.0.tgz 0ms (cache hit)
+278 http cache ms@https://registry.npmmirror.com/ms/-/ms-2.1.3.tgz 0ms (cache hit)
+279 http cache nanoid@https://registry.npmmirror.com/nanoid/-/nanoid-3.3.11.tgz 0ms (cache hit)
+280 http cache mlly@https://registry.npmmirror.com/mlly/-/mlly-1.8.2.tgz 0ms (cache hit)
+281 http cache mitt@https://registry.npmmirror.com/mitt/-/mitt-3.0.1.tgz 0ms (cache hit)
+282 http cache minisearch@https://registry.npmmirror.com/minisearch/-/minisearch-7.2.0.tgz 0ms (cache hit)
+283 http cache mimic-fn@https://registry.npmmirror.com/mimic-fn/-/mimic-fn-2.1.0.tgz 0ms (cache hit)
+284 http cache non-layered-tidy-tree-layout@https://registry.npmmirror.com/non-layered-tidy-tree-layout/-/non-layered-tidy-tree-layout-2.0.2.tgz 0ms (cache hit)
+285 http cache mime-db@https://registry.npmmirror.com/mime-db/-/mime-db-1.54.0.tgz 0ms (cache hit)
+286 http cache micromark-util-types@https://registry.npmmirror.com/micromark-util-types/-/micromark-util-types-2.0.2.tgz 0ms (cache hit)
+287 http cache micromark-util-symbol@https://registry.npmmirror.com/micromark-util-symbol/-/micromark-util-symbol-2.0.1.tgz 0ms (cache hit)
+288 http cache mime-types@https://registry.npmmirror.com/mime-types/-/mime-types-3.0.2.tgz 0ms (cache hit)
+289 http cache micromark-util-sanitize-uri@https://registry.npmmirror.com/micromark-util-sanitize-uri/-/micromark-util-sanitize-uri-2.0.1.tgz 1ms (cache hit)
+290 http cache micromark-util-encode@https://registry.npmmirror.com/micromark-util-encode/-/micromark-util-encode-2.0.1.tgz 0ms (cache hit)
+291 http cache micromark-util-character@https://registry.npmmirror.com/micromark-util-character/-/micromark-util-character-2.1.1.tgz 0ms (cache hit)
+292 http cache mermaid@https://registry.npmmirror.com/mermaid/-/mermaid-11.14.0.tgz 0ms (cache hit)
+293 http cache merge-descriptors@https://registry.npmmirror.com/merge-descriptors/-/merge-descriptors-2.0.0.tgz 0ms (cache hit)
+294 http cache media-typer@https://registry.npmmirror.com/media-typer/-/media-typer-1.1.0.tgz 0ms (cache hit)
+295 http cache mdast-util-to-hast@https://registry.npmmirror.com/mdast-util-to-hast/-/mdast-util-to-hast-13.2.1.tgz 0ms (cache hit)
+296 http cache math-intrinsics@https://registry.npmmirror.com/math-intrinsics/-/math-intrinsics-1.1.0.tgz 0ms (cache hit)
+297 http cache marked@https://registry.npmmirror.com/marked/-/marked-17.0.5.tgz 0ms (cache hit)
+298 http cache mark.js@https://registry.npmmirror.com/mark.js/-/mark.js-8.11.1.tgz 0ms (cache hit)
+299 http cache magic-string@https://registry.npmmirror.com/magic-string/-/magic-string-0.30.21.tgz 0ms (cache hit)
+300 http cache lru-cache@https://registry.npmmirror.com/lru-cache/-/lru-cache-11.2.7.tgz 0ms (cache hit)
+301 http cache lodash.debounce@https://registry.npmmirror.com/lodash.debounce/-/lodash.debounce-4.0.8.tgz 0ms (cache hit)
+302 http cache lodash-es@https://registry.npmmirror.com/lodash-es/-/lodash-es-4.17.23.tgz 0ms (cache hit)
+303 http cache locate-path@https://registry.npmmirror.com/locate-path/-/locate-path-5.0.0.tgz 0ms (cache hit)
+304 http cache layout-base@https://registry.npmmirror.com/layout-base/-/layout-base-1.0.2.tgz 0ms (cache hit)
+305 http cache langium@https://registry.npmmirror.com/langium/-/langium-4.2.2.tgz 0ms (cache hit)
+306 http cache khroma@https://registry.npmmirror.com/khroma/-/khroma-2.1.0.tgz 0ms (cache hit)
+307 http cache katex@https://registry.npmmirror.com/katex/-/katex-0.16.45.tgz 0ms (cache hit)
+308 http cache jws@https://registry.npmmirror.com/jws/-/jws-4.0.1.tgz 0ms (cache hit)
+309 http cache jwa@https://registry.npmmirror.com/jwa/-/jwa-2.0.1.tgz 0ms (cache hit)
+310 http cache jsonc-parser@https://registry.npmmirror.com/jsonc-parser/-/jsonc-parser-3.3.1.tgz 0ms (cache hit)
+311 http cache json-schema-typed@https://registry.npmmirror.com/json-schema-typed/-/json-schema-typed-8.0.2.tgz 0ms (cache hit)
+312 http cache json-schema-traverse@https://registry.npmmirror.com/json-schema-traverse/-/json-schema-traverse-1.0.0.tgz 0ms (cache hit)
+313 http cache json-schema-to-ts@https://registry.npmmirror.com/json-schema-to-ts/-/json-schema-to-ts-3.1.1.tgz 0ms (cache hit)
+314 http cache medium-zoom@https://registry.npmmirror.com/medium-zoom/-/medium-zoom-1.1.0.tgz 0ms (cache hit)
+315 http cache json-bigint@https://registry.npmmirror.com/json-bigint/-/json-bigint-1.0.0.tgz 0ms (cache hit)
+316 http cache jose@https://registry.npmmirror.com/jose/-/jose-6.2.2.tgz 0ms (cache hit)
+317 http cache isexe@https://registry.npmmirror.com/isexe/-/isexe-2.0.0.tgz 0ms (cache hit)
+318 http cache is-what@https://registry.npmmirror.com/is-what/-/is-what-5.5.0.tgz 0ms (cache hit)
+319 http cache is-unicode-supported@https://registry.npmmirror.com/is-unicode-supported/-/is-unicode-supported-2.1.0.tgz 0ms (cache hit)
+320 http cache is-safe-filename@https://registry.npmmirror.com/is-safe-filename/-/is-safe-filename-0.1.1.tgz 0ms (cache hit)
+321 http cache is-stream@https://registry.npmmirror.com/is-stream/-/is-stream-4.0.1.tgz 0ms (cache hit)
+322 http cache is-promise@https://registry.npmmirror.com/is-promise/-/is-promise-4.0.0.tgz 0ms (cache hit)
+323 http cache is-in-ci@https://registry.npmmirror.com/is-in-ci/-/is-in-ci-2.0.0.tgz 0ms (cache hit)
+324 http cache is-fullwidth-code-point@https://registry.npmmirror.com/is-fullwidth-code-point/-/is-fullwidth-code-point-5.1.0.tgz 0ms (cache hit)
+325 http cache ipaddr.js@https://registry.npmmirror.com/ipaddr.js/-/ipaddr.js-1.9.1.tgz 0ms (cache hit)
+326 http cache internmap@https://registry.npmmirror.com/internmap/-/internmap-2.0.3.tgz 0ms (cache hit)
+327 http cache ip-address@https://registry.npmmirror.com/ip-address/-/ip-address-10.1.0.tgz 0ms (cache hit)
+328 http cache ink@https://registry.npmmirror.com/ink/-/ink-6.8.0.tgz 0ms (cache hit)
+329 http cache inherits@https://registry.npmmirror.com/inherits/-/inherits-2.0.4.tgz 0ms (cache hit)
+330 http cache ignore@https://registry.npmmirror.com/ignore/-/ignore-7.0.5.tgz 0ms (cache hit)
+331 http cache iconv-lite@https://registry.npmmirror.com/iconv-lite/-/iconv-lite-0.7.2.tgz 0ms (cache hit)
+332 http cache human-signals@https://registry.npmmirror.com/human-signals/-/human-signals-8.0.1.tgz 0ms (cache hit)
+333 http cache https-proxy-agent@https://registry.npmmirror.com/https-proxy-agent/-/https-proxy-agent-8.0.0.tgz 0ms (cache hit)
+334 http cache http-errors@https://registry.npmmirror.com/http-errors/-/http-errors-2.0.1.tgz 0ms (cache hit)
+335 http cache is-plain-obj@https://registry.npmmirror.com/is-plain-obj/-/is-plain-obj-4.1.0.tgz 0ms (cache hit)
+336 http cache indent-string@https://registry.npmmirror.com/indent-string/-/indent-string-5.0.0.tgz 0ms (cache hit)
+337 http cache html-void-elements@https://registry.npmmirror.com/html-void-elements/-/html-void-elements-3.0.0.tgz 0ms (cache hit)
+338 http cache hookable@https://registry.npmmirror.com/hookable/-/hookable-5.5.3.tgz 0ms (cache hit)
+339 http cache hono@https://registry.npmmirror.com/hono/-/hono-4.12.9.tgz 0ms (cache hit)
+340 http cache highlight.js@https://registry.npmmirror.com/highlight.js/-/highlight.js-11.11.1.tgz 0ms (cache hit)
+341 http cache hast-util-whitespace@https://registry.npmmirror.com/hast-util-whitespace/-/hast-util-whitespace-3.0.0.tgz 0ms (cache hit)
+342 http cache hast-util-to-html@https://registry.npmmirror.com/hast-util-to-html/-/hast-util-to-html-9.0.5.tgz 0ms (cache hit)
+343 http cache hasown@https://registry.npmmirror.com/hasown/-/hasown-2.0.2.tgz 0ms (cache hit)
+344 http cache has-symbols@https://registry.npmmirror.com/has-symbols/-/has-symbols-1.1.0.tgz 0ms (cache hit)
+345 http cache has-tostringtag@https://registry.npmmirror.com/has-tostringtag/-/has-tostringtag-1.0.2.tgz 0ms (cache hit)
+346 http cache has-flag@https://registry.npmmirror.com/has-flag/-/has-flag-5.0.1.tgz 0ms (cache hit)
+347 http cache graceful-fs@https://registry.npmmirror.com/graceful-fs/-/graceful-fs-4.2.11.tgz 0ms (cache hit)
+348 http cache gopd@https://registry.npmmirror.com/gopd/-/gopd-1.2.0.tgz 0ms (cache hit)
+349 http cache google-logging-utils@https://registry.npmmirror.com/google-logging-utils/-/google-logging-utils-1.1.3.tgz 0ms (cache hit)
+350 http cache hachure-fill@https://registry.npmmirror.com/hachure-fill/-/hachure-fill-0.5.2.tgz 0ms (cache hit)
+351 http cache google-auth-library@https://registry.npmmirror.com/google-auth-library/-/google-auth-library-10.6.2.tgz 0ms (cache hit)
+352 http cache get-intrinsic@https://registry.npmmirror.com/get-intrinsic/-/get-intrinsic-1.3.0.tgz 0ms (cache hit)
+353 http cache get-proto@https://registry.npmmirror.com/get-proto/-/get-proto-1.0.1.tgz 0ms (cache hit)
+354 http cache get-east-asian-width@https://registry.npmmirror.com/get-east-asian-width/-/get-east-asian-width-1.5.0.tgz 0ms (cache hit)
+355 http cache get-stream@https://registry.npmmirror.com/get-stream/-/get-stream-9.0.1.tgz 0ms (cache hit)
+356 http cache get-caller-file@https://registry.npmmirror.com/get-caller-file/-/get-caller-file-2.0.5.tgz 0ms (cache hit)
+357 http cache gaxios@https://registry.npmmirror.com/gaxios/-/gaxios-7.1.4.tgz 0ms (cache hit)
+358 http cache fuse.js@https://registry.npmmirror.com/fuse.js/-/fuse.js-7.1.0.tgz 0ms (cache hit)
+359 http cache function-bind@https://registry.npmmirror.com/function-bind/-/function-bind-1.1.2.tgz 0ms (cache hit)
+360 http cache fresh@https://registry.npmmirror.com/fresh/-/fresh-2.0.0.tgz 0ms (cache hit)
+361 http cache forwarded@https://registry.npmmirror.com/forwarded/-/forwarded-0.2.0.tgz 0ms (cache hit)
+362 http cache formdata-polyfill@https://registry.npmmirror.com/formdata-polyfill/-/formdata-polyfill-4.0.10.tgz 0ms (cache hit)
+363 http cache follow-redirects@https://registry.npmmirror.com/follow-redirects/-/follow-redirects-1.16.0.tgz 0ms (cache hit)
+364 http cache form-data@https://registry.npmmirror.com/form-data/-/form-data-4.0.5.tgz 0ms (cache hit)
+365 http cache find-up@https://registry.npmmirror.com/find-up/-/find-up-4.1.0.tgz 0ms (cache hit)
+366 http cache focus-trap@https://registry.npmmirror.com/focus-trap/-/focus-trap-7.8.0.tgz 0ms (cache hit)
+367 http cache finalhandler@https://registry.npmmirror.com/finalhandler/-/finalhandler-2.1.1.tgz 0ms (cache hit)
+368 http cache figures@https://registry.npmmirror.com/figures/-/figures-6.1.0.tgz 0ms (cache hit)
+369 http cache fflate@https://registry.npmmirror.com/fflate/-/fflate-0.8.3.tgz 0ms (cache hit)
+370 http cache fetch-blob@https://registry.npmmirror.com/fetch-blob/-/fetch-blob-3.2.0.tgz 0ms (cache hit)
+371 http cache fast-xml-builder@https://registry.npmmirror.com/fast-xml-builder/-/fast-xml-builder-1.1.4.tgz 0ms (cache hit)
+372 http cache fast-xml-parser@https://registry.npmmirror.com/fast-xml-parser/-/fast-xml-parser-5.5.8.tgz 0ms (cache hit)
+373 http cache fast-uri@https://registry.npmmirror.com/fast-uri/-/fast-uri-3.1.0.tgz 0ms (cache hit)
+374 http cache gcp-metadata@https://registry.npmmirror.com/gcp-metadata/-/gcp-metadata-8.1.2.tgz 0ms (cache hit)
+375 http cache fast-deep-equal@https://registry.npmmirror.com/fast-deep-equal/-/fast-deep-equal-3.1.3.tgz 0ms (cache hit)
+376 http cache express-rate-limit@https://registry.npmmirror.com/express-rate-limit/-/express-rate-limit-8.3.2.tgz 0ms (cache hit)
+377 http cache extend@https://registry.npmmirror.com/extend/-/extend-3.0.2.tgz 0ms (cache hit)
+378 http cache express@https://registry.npmmirror.com/express/-/express-5.2.1.tgz 0ms (cache hit)
+379 http cache execa@https://registry.npmmirror.com/execa/-/execa-9.6.1.tgz 0ms (cache hit)
+380 http cache eventsource@https://registry.npmmirror.com/eventsource/-/eventsource-3.0.7.tgz 0ms (cache hit)
+381 http cache etag@https://registry.npmmirror.com/etag/-/etag-1.8.1.tgz 0ms (cache hit)
+382 http cache estree-walker@https://registry.npmmirror.com/estree-walker/-/estree-walker-2.0.2.tgz 0ms (cache hit)
+383 http cache escape-html@https://registry.npmmirror.com/escape-html/-/escape-html-1.0.3.tgz 0ms (cache hit)
+384 http cache esbuild@https://registry.npmmirror.com/esbuild/-/esbuild-0.21.5.tgz 0ms (cache hit)
+385 http cache es-toolkit@https://registry.npmmirror.com/es-toolkit/-/es-toolkit-1.45.1.tgz 0ms (cache hit)
+386 http cache escape-string-regexp@https://registry.npmmirror.com/escape-string-regexp/-/escape-string-regexp-2.0.0.tgz 0ms (cache hit)
+387 http cache es-set-tostringtag@https://registry.npmmirror.com/es-set-tostringtag/-/es-set-tostringtag-2.1.0.tgz 0ms (cache hit)
+388 http cache eventsource-parser@https://registry.npmmirror.com/eventsource-parser/-/eventsource-parser-3.0.6.tgz 0ms (cache hit)
+389 http cache es-errors@https://registry.npmmirror.com/es-errors/-/es-errors-1.3.0.tgz 0ms (cache hit)
+390 http cache es-object-atoms@https://registry.npmmirror.com/es-object-atoms/-/es-object-atoms-1.1.1.tgz 0ms (cache hit)
+391 http cache es-define-property@https://registry.npmmirror.com/es-define-property/-/es-define-property-1.0.1.tgz 0ms (cache hit)
+392 http cache env-paths@https://registry.npmmirror.com/env-paths/-/env-paths-4.0.0.tgz 0ms (cache hit)
+393 http cache entities@https://registry.npmmirror.com/entities/-/entities-7.0.1.tgz 0ms (cache hit)
+394 http cache emoji-regex-xs@https://registry.npmmirror.com/emoji-regex-xs/-/emoji-regex-xs-1.0.0.tgz 0ms (cache hit)
+395 http cache encodeurl@https://registry.npmmirror.com/encodeurl/-/encodeurl-2.0.0.tgz 0ms (cache hit)
+396 http cache emoji-regex@https://registry.npmmirror.com/emoji-regex/-/emoji-regex-10.6.0.tgz 0ms (cache hit)
+397 http cache ee-first@https://registry.npmmirror.com/ee-first/-/ee-first-1.1.1.tgz 0ms (cache hit)
+398 http cache dunder-proto@https://registry.npmmirror.com/dunder-proto/-/dunder-proto-1.0.1.tgz 0ms (cache hit)
+399 http cache ecdsa-sig-formatter@https://registry.npmmirror.com/ecdsa-sig-formatter/-/ecdsa-sig-formatter-1.0.11.tgz 0ms (cache hit)
+400 http cache dompurify@https://registry.npmmirror.com/dompurify/-/dompurify-3.4.0.tgz 0ms (cache hit)
+401 http cache dom-mutator@https://registry.npmmirror.com/dom-mutator/-/dom-mutator-0.6.0.tgz 0ms (cache hit)
+402 http cache dijkstrajs@https://registry.npmmirror.com/dijkstrajs/-/dijkstrajs-1.0.3.tgz 0ms (cache hit)
+403 http cache devlop@https://registry.npmmirror.com/devlop/-/devlop-1.1.0.tgz 0ms (cache hit)
+404 http cache diff@https://registry.npmmirror.com/diff/-/diff-8.0.4.tgz 1ms (cache hit)
+405 http cache dequal@https://registry.npmmirror.com/dequal/-/dequal-2.0.3.tgz 0ms (cache hit)
+406 http cache depd@https://registry.npmmirror.com/depd/-/depd-2.0.0.tgz 0ms (cache hit)
+407 http cache delayed-stream@https://registry.npmmirror.com/delayed-stream/-/delayed-stream-1.0.0.tgz 0ms (cache hit)
+408 http cache decamelize@https://registry.npmmirror.com/decamelize/-/decamelize-1.2.0.tgz 0ms (cache hit)
+409 http cache delaunator@https://registry.npmmirror.com/delaunator/-/delaunator-5.1.0.tgz 0ms (cache hit)
+410 http cache debug@https://registry.npmmirror.com/debug/-/debug-4.4.3.tgz 0ms (cache hit)
+411 http cache dayjs@https://registry.npmmirror.com/dayjs/-/dayjs-1.11.20.tgz 0ms (cache hit)
+412 http cache data-uri-to-buffer@https://registry.npmmirror.com/data-uri-to-buffer/-/data-uri-to-buffer-4.0.1.tgz 0ms (cache hit)
+413 http cache d3-zoom@https://registry.npmmirror.com/d3-zoom/-/d3-zoom-3.0.0.tgz 0ms (cache hit)
+414 http cache dagre-d3-es@https://registry.npmmirror.com/dagre-d3-es/-/dagre-d3-es-7.0.14.tgz 0ms (cache hit)
+415 http cache d3-timer@https://registry.npmmirror.com/d3-timer/-/d3-timer-3.0.1.tgz 0ms (cache hit)
+416 http cache d3-transition@https://registry.npmmirror.com/d3-transition/-/d3-transition-3.0.1.tgz 0ms (cache hit)
+417 http cache environment@https://registry.npmmirror.com/environment/-/environment-1.1.0.tgz 0ms (cache hit)
+418 http cache d3-time-format@https://registry.npmmirror.com/d3-time-format/-/d3-time-format-4.1.0.tgz 0ms (cache hit)
+419 http cache d3-time@https://registry.npmmirror.com/d3-time/-/d3-time-3.1.0.tgz 0ms (cache hit)
+420 http cache d3-shape@https://registry.npmmirror.com/d3-shape/-/d3-shape-3.2.0.tgz 0ms (cache hit)
+421 http cache d3-scale-chromatic@https://registry.npmmirror.com/d3-scale-chromatic/-/d3-scale-chromatic-3.1.0.tgz 0ms (cache hit)
+422 http cache d3-selection@https://registry.npmmirror.com/d3-selection/-/d3-selection-3.0.0.tgz 0ms (cache hit)
+423 http cache d3-scale@https://registry.npmmirror.com/d3-scale/-/d3-scale-4.0.2.tgz 0ms (cache hit)
+424 http cache d3-sankey@https://registry.npmmirror.com/d3-sankey/-/d3-sankey-0.12.3.tgz 0ms (cache hit)
+425 http cache d3-random@https://registry.npmmirror.com/d3-random/-/d3-random-3.0.1.tgz 0ms (cache hit)
+426 http cache d3-quadtree@https://registry.npmmirror.com/d3-quadtree/-/d3-quadtree-3.0.1.tgz 0ms (cache hit)
+427 http cache d3-path@https://registry.npmmirror.com/d3-path/-/d3-path-3.1.0.tgz 0ms (cache hit)
+428 http cache d3-interpolate@https://registry.npmmirror.com/d3-interpolate/-/d3-interpolate-3.0.1.tgz 0ms (cache hit)
+429 http cache d3-hierarchy@https://registry.npmmirror.com/d3-hierarchy/-/d3-hierarchy-3.1.2.tgz 0ms (cache hit)
+430 http cache d3-polygon@https://registry.npmmirror.com/d3-polygon/-/d3-polygon-3.0.1.tgz 0ms (cache hit)
+431 http cache d3-geo@https://registry.npmmirror.com/d3-geo/-/d3-geo-3.1.1.tgz 0ms (cache hit)
+432 http cache d3-format@https://registry.npmmirror.com/d3-format/-/d3-format-3.1.2.tgz 0ms (cache hit)
+433 http cache d3-force@https://registry.npmmirror.com/d3-force/-/d3-force-3.0.0.tgz 0ms (cache hit)
+434 http cache d3-dsv@https://registry.npmmirror.com/d3-dsv/-/d3-dsv-3.0.1.tgz 0ms (cache hit)
+435 http cache d3-ease@https://registry.npmmirror.com/d3-ease/-/d3-ease-3.0.1.tgz 0ms (cache hit)
+436 http cache d3-drag@https://registry.npmmirror.com/d3-drag/-/d3-drag-3.0.0.tgz 0ms (cache hit)
+437 http cache d3-dispatch@https://registry.npmmirror.com/d3-dispatch/-/d3-dispatch-3.0.1.tgz 0ms (cache hit)
+438 http cache d3-contour@https://registry.npmmirror.com/d3-contour/-/d3-contour-4.0.2.tgz 0ms (cache hit)
+439 http cache d3-color@https://registry.npmmirror.com/d3-color/-/d3-color-3.1.0.tgz 0ms (cache hit)
+440 http cache d3-delaunay@https://registry.npmmirror.com/d3-delaunay/-/d3-delaunay-6.0.4.tgz 0ms (cache hit)
+441 http cache d3-chord@https://registry.npmmirror.com/d3-chord/-/d3-chord-3.0.1.tgz 0ms (cache hit)
+442 http cache d3-axis@https://registry.npmmirror.com/d3-axis/-/d3-axis-3.0.0.tgz 0ms (cache hit)
+443 http cache d3-brush@https://registry.npmmirror.com/d3-brush/-/d3-brush-3.0.0.tgz 0ms (cache hit)
+444 http cache d3-array@https://registry.npmmirror.com/d3-array/-/d3-array-3.2.4.tgz 0ms (cache hit)
+445 http cache d3@https://registry.npmmirror.com/d3/-/d3-7.9.0.tgz 0ms (cache hit)
+446 http cache cytoscape-fcose@https://registry.npmmirror.com/cytoscape-fcose/-/cytoscape-fcose-2.2.0.tgz 0ms (cache hit)
+447 http cache cytoscape-cose-bilkent@https://registry.npmmirror.com/cytoscape-cose-bilkent/-/cytoscape-cose-bilkent-4.1.0.tgz 0ms (cache hit)
+448 http cache cytoscape@https://registry.npmmirror.com/cytoscape/-/cytoscape-3.33.2.tgz 0ms (cache hit)
+449 http cache csstype@https://registry.npmmirror.com/csstype/-/csstype-3.2.3.tgz 0ms (cache hit)
+450 http cache cssfilter@https://registry.npmmirror.com/cssfilter/-/cssfilter-0.0.10.tgz 0ms (cache hit)
+451 http cache d3-fetch@https://registry.npmmirror.com/d3-fetch/-/d3-fetch-3.0.1.tgz 0ms (cache hit)
+452 http cache cose-base@https://registry.npmmirror.com/cose-base/-/cose-base-1.0.3.tgz 0ms (cache hit)
+453 http cache cross-spawn@https://registry.npmmirror.com/cross-spawn/-/cross-spawn-7.0.6.tgz 0ms (cache hit)
+454 http cache cors@https://registry.npmmirror.com/cors/-/cors-2.8.6.tgz 0ms (cache hit)
+455 http cache copy-anything@https://registry.npmmirror.com/copy-anything/-/copy-anything-4.0.5.tgz 0ms (cache hit)
+456 http cache cookie-signature@https://registry.npmmirror.com/cookie-signature/-/cookie-signature-1.2.2.tgz 0ms (cache hit)
+457 http cache convert-to-spaces@https://registry.npmmirror.com/convert-to-spaces/-/convert-to-spaces-2.0.1.tgz 0ms (cache hit)
+458 http cache cookie@https://registry.npmmirror.com/cookie/-/cookie-0.7.2.tgz 0ms (cache hit)
+459 http cache content-type@https://registry.npmmirror.com/content-type/-/content-type-1.0.5.tgz 0ms (cache hit)
+460 http cache content-disposition@https://registry.npmmirror.com/content-disposition/-/content-disposition-1.0.1.tgz 0ms (cache hit)
+461 http cache comma-separated-tokens@https://registry.npmmirror.com/comma-separated-tokens/-/comma-separated-tokens-2.0.3.tgz 0ms (cache hit)
+462 http cache commander@https://registry.npmmirror.com/commander/-/commander-14.0.3.tgz 0ms (cache hit)
+463 http cache combined-stream@https://registry.npmmirror.com/combined-stream/-/combined-stream-1.0.8.tgz 0ms (cache hit)
+464 http cache confbox@https://registry.npmmirror.com/confbox/-/confbox-0.1.8.tgz 0ms (cache hit)
+465 http cache color-name@https://registry.npmmirror.com/color-name/-/color-name-1.1.4.tgz 0ms (cache hit)
+466 http cache color-convert@https://registry.npmmirror.com/color-convert/-/color-convert-2.0.1.tgz 0ms (cache hit)
+467 http cache code-excerpt@https://registry.npmmirror.com/code-excerpt/-/code-excerpt-4.0.0.tgz 1ms (cache hit)
+468 http cache cliui@https://registry.npmmirror.com/cliui/-/cliui-6.0.0.tgz 0ms (cache hit)
+469 http cache cli-truncate@https://registry.npmmirror.com/cli-truncate/-/cli-truncate-5.2.0.tgz 0ms (cache hit)
+470 http cache cli-cursor@https://registry.npmmirror.com/cli-cursor/-/cli-cursor-4.0.0.tgz 0ms (cache hit)
+471 http cache cli-boxes@https://registry.npmmirror.com/cli-boxes/-/cli-boxes-4.0.1.tgz 0ms (cache hit)
+472 http cache chokidar@https://registry.npmmirror.com/chokidar/-/chokidar-5.0.0.tgz 0ms (cache hit)
+473 http cache chevrotain-allstar@https://registry.npmmirror.com/chevrotain-allstar/-/chevrotain-allstar-0.4.1.tgz 0ms (cache hit)
+474 http cache chevrotain@https://registry.npmmirror.com/chevrotain/-/chevrotain-12.0.0.tgz 0ms (cache hit)
+475 http cache character-entities-legacy@https://registry.npmmirror.com/character-entities-legacy/-/character-entities-legacy-3.0.0.tgz 0ms (cache hit)
+476 http cache character-entities-html4@https://registry.npmmirror.com/character-entities-html4/-/character-entities-html4-2.1.0.tgz 0ms (cache hit)
+477 http cache chalk@https://registry.npmmirror.com/chalk/-/chalk-5.6.2.tgz 0ms (cache hit)
+478 http cache ccount@https://registry.npmmirror.com/ccount/-/ccount-2.0.1.tgz 0ms (cache hit)
+479 http cache camelcase@https://registry.npmmirror.com/camelcase/-/camelcase-5.3.1.tgz 0ms (cache hit)
+480 http cache call-bound@https://registry.npmmirror.com/call-bound/-/call-bound-1.0.4.tgz 0ms (cache hit)
+481 http cache call-bind-apply-helpers@https://registry.npmmirror.com/call-bind-apply-helpers/-/call-bind-apply-helpers-1.0.2.tgz 0ms (cache hit)
+482 http cache bytes@https://registry.npmmirror.com/bytes/-/bytes-3.1.2.tgz 0ms (cache hit)
+483 http cache bowser@https://registry.npmmirror.com/bowser/-/bowser-2.14.1.tgz 0ms (cache hit)
+484 http cache buffer-equal-constant-time@https://registry.npmmirror.com/buffer-equal-constant-time/-/buffer-equal-constant-time-1.0.1.tgz 0ms (cache hit)
+485 http cache body-parser@https://registry.npmmirror.com/body-parser/-/body-parser-2.2.2.tgz 0ms (cache hit)
+486 http cache birpc@https://registry.npmmirror.com/birpc/-/birpc-2.9.0.tgz 0ms (cache hit)
+487 http cache bignumber.js@https://registry.npmmirror.com/bignumber.js/-/bignumber.js-9.3.1.tgz 0ms (cache hit)
+488 http cache bidi-js@https://registry.npmmirror.com/bidi-js/-/bidi-js-1.0.3.tgz 0ms (cache hit)
+489 http cache base64-js@https://registry.npmmirror.com/base64-js/-/base64-js-1.5.1.tgz 0ms (cache hit)
+490 http cache axios@https://registry.npmmirror.com/axios/-/axios-1.14.0.tgz 0ms (cache hit)
+491 http cache auto-bind@https://registry.npmmirror.com/auto-bind/-/auto-bind-5.0.1.tgz 0ms (cache hit)
+492 http cache asynckit@https://registry.npmmirror.com/asynckit/-/asynckit-0.4.0.tgz 0ms (cache hit)
+493 http cache ansi-styles@https://registry.npmmirror.com/ansi-styles/-/ansi-styles-6.2.3.tgz 0ms (cache hit)
+494 http cache asciichart@https://registry.npmmirror.com/asciichart/-/asciichart-1.5.25.tgz 0ms (cache hit)
+495 http cache ansi-regex@https://registry.npmmirror.com/ansi-regex/-/ansi-regex-6.2.2.tgz 0ms (cache hit)
+496 http cache ansi-escapes@https://registry.npmmirror.com/ansi-escapes/-/ansi-escapes-7.3.0.tgz 0ms (cache hit)
+497 http cache algoliasearch@https://registry.npmmirror.com/algoliasearch/-/algoliasearch-5.50.1.tgz 0ms (cache hit)
+498 http cache ajv-formats@https://registry.npmmirror.com/ajv-formats/-/ajv-formats-3.0.1.tgz 0ms (cache hit)
+499 http cache ajv@https://registry.npmmirror.com/ajv/-/ajv-8.18.0.tgz 0ms (cache hit)
+500 http cache agent-base@https://registry.npmmirror.com/agent-base/-/agent-base-8.0.0.tgz 0ms (cache hit)
+501 http cache acorn@https://registry.npmmirror.com/acorn/-/acorn-8.16.0.tgz 0ms (cache hit)
+502 http cache accepts@https://registry.npmmirror.com/accepts/-/accepts-2.0.0.tgz 0ms (cache hit)
+503 http cache @vueuse/metadata@https://registry.npmmirror.com/@vueuse/metadata/-/metadata-12.8.2.tgz 0ms (cache hit)
+504 http cache @vueuse/shared@https://registry.npmmirror.com/@vueuse/shared/-/shared-12.8.2.tgz 0ms (cache hit)
+505 http cache @vueuse/integrations@https://registry.npmmirror.com/@vueuse/integrations/-/integrations-12.8.2.tgz 0ms (cache hit)
+506 http cache @vueuse/core@https://registry.npmmirror.com/@vueuse/core/-/core-12.8.2.tgz 0ms (cache hit)
+507 http cache @vue/shared@https://registry.npmmirror.com/@vue/shared/-/shared-3.5.32.tgz 0ms (cache hit)
+508 http cache @vue/server-renderer@https://registry.npmmirror.com/@vue/server-renderer/-/server-renderer-3.5.32.tgz 0ms (cache hit)
+509 http cache @vue/reactivity@https://registry.npmmirror.com/@vue/reactivity/-/reactivity-3.5.32.tgz 0ms (cache hit)
+510 http cache @vue/runtime-dom@https://registry.npmmirror.com/@vue/runtime-dom/-/runtime-dom-3.5.32.tgz 0ms (cache hit)
+511 http cache @vue/runtime-core@https://registry.npmmirror.com/@vue/runtime-core/-/runtime-core-3.5.32.tgz 0ms (cache hit)
+512 http cache @vue/devtools-shared@https://registry.npmmirror.com/@vue/devtools-shared/-/devtools-shared-7.7.9.tgz 0ms (cache hit)
+513 http cache @vue/devtools-kit@https://registry.npmmirror.com/@vue/devtools-kit/-/devtools-kit-7.7.9.tgz 0ms (cache hit)
+514 http cache @vue/devtools-api@https://registry.npmmirror.com/@vue/devtools-api/-/devtools-api-7.7.9.tgz 0ms (cache hit)
+515 http cache @vue/compiler-sfc@https://registry.npmmirror.com/@vue/compiler-sfc/-/compiler-sfc-3.5.32.tgz 0ms (cache hit)
+516 http cache @vue/compiler-ssr@https://registry.npmmirror.com/@vue/compiler-ssr/-/compiler-ssr-3.5.32.tgz 0ms (cache hit)
+517 http cache @vue/compiler-core@https://registry.npmmirror.com/@vue/compiler-core/-/compiler-core-3.5.32.tgz 0ms (cache hit)
+518 http cache @vue/compiler-dom@https://registry.npmmirror.com/@vue/compiler-dom/-/compiler-dom-3.5.32.tgz 1ms (cache hit)
+519 http cache @vitejs/plugin-vue@https://registry.npmmirror.com/@vitejs/plugin-vue/-/plugin-vue-5.2.4.tgz 0ms (cache hit)
+520 http cache @upsetjs/venn.js@https://registry.npmmirror.com/@upsetjs/venn.js/-/venn.js-2.0.0.tgz 0ms (cache hit)
+521 http cache @ungap/structured-clone@https://registry.npmmirror.com/@ungap/structured-clone/-/structured-clone-1.3.0.tgz 0ms (cache hit)
+522 http cache @types/web-bluetooth@https://registry.npmmirror.com/@types/web-bluetooth/-/web-bluetooth-0.0.21.tgz 0ms (cache hit)
+523 http cache @types/unist@https://registry.npmmirror.com/@types/unist/-/unist-3.0.3.tgz 0ms (cache hit)
+524 http cache @types/trusted-types@https://registry.npmmirror.com/@types/trusted-types/-/trusted-types-2.0.7.tgz 0ms (cache hit)
+525 http cache @types/mdurl@https://registry.npmmirror.com/@types/mdurl/-/mdurl-2.0.0.tgz 0ms (cache hit)
+526 http cache @types/mdast@https://registry.npmmirror.com/@types/mdast/-/mdast-4.0.4.tgz 0ms (cache hit)
+527 http cache @types/lodash-es@https://registry.npmmirror.com/@types/lodash-es/-/lodash-es-4.17.12.tgz 0ms (cache hit)
+528 http cache @types/markdown-it@https://registry.npmmirror.com/@types/markdown-it/-/markdown-it-14.1.2.tgz 0ms (cache hit)
+529 http cache @types/lodash@https://registry.npmmirror.com/@types/lodash/-/lodash-4.17.24.tgz 0ms (cache hit)
+530 http cache @types/hast@https://registry.npmmirror.com/@types/hast/-/hast-3.0.4.tgz 0ms (cache hit)
+531 http cache @types/linkify-it@https://registry.npmmirror.com/@types/linkify-it/-/linkify-it-5.0.0.tgz 0ms (cache hit)
+532 http cache @types/geojson@https://registry.npmmirror.com/@types/geojson/-/geojson-7946.0.16.tgz 0ms (cache hit)
+533 http cache @types/estree@https://registry.npmmirror.com/@types/estree/-/estree-1.0.8.tgz 0ms (cache hit)
+534 http cache @types/d3-zoom@https://registry.npmmirror.com/@types/d3-zoom/-/d3-zoom-3.0.8.tgz 0ms (cache hit)
+535 http cache @types/d3-transition@https://registry.npmmirror.com/@types/d3-transition/-/d3-transition-3.0.9.tgz 0ms (cache hit)
+536 http cache @types/d3-timer@https://registry.npmmirror.com/@types/d3-timer/-/d3-timer-3.0.2.tgz 0ms (cache hit)
+537 http cache @types/d3-time-format@https://registry.npmmirror.com/@types/d3-time-format/-/d3-time-format-4.0.3.tgz 0ms (cache hit)
+538 http cache @types/d3-time@https://registry.npmmirror.com/@types/d3-time/-/d3-time-3.0.4.tgz 0ms (cache hit)
+539 http cache @types/d3-shape@https://registry.npmmirror.com/@types/d3-shape/-/d3-shape-3.1.8.tgz 0ms (cache hit)
+540 http cache @types/d3-selection@https://registry.npmmirror.com/@types/d3-selection/-/d3-selection-3.0.11.tgz 0ms (cache hit)
+541 http cache @types/d3-scale-chromatic@https://registry.npmmirror.com/@types/d3-scale-chromatic/-/d3-scale-chromatic-3.1.0.tgz 0ms (cache hit)
+542 http cache @types/d3-random@https://registry.npmmirror.com/@types/d3-random/-/d3-random-3.0.3.tgz 0ms (cache hit)
+543 http cache @types/d3-scale@https://registry.npmmirror.com/@types/d3-scale/-/d3-scale-4.0.9.tgz 0ms (cache hit)
+544 http cache @types/d3-quadtree@https://registry.npmmirror.com/@types/d3-quadtree/-/d3-quadtree-3.0.6.tgz 0ms (cache hit)
+545 http cache @types/d3-polygon@https://registry.npmmirror.com/@types/d3-polygon/-/d3-polygon-3.0.2.tgz 0ms (cache hit)
+546 http cache @types/d3-path@https://registry.npmmirror.com/@types/d3-path/-/d3-path-3.1.1.tgz 0ms (cache hit)
+547 http cache @types/d3-interpolate@https://registry.npmmirror.com/@types/d3-interpolate/-/d3-interpolate-3.0.4.tgz 0ms (cache hit)
+548 http cache @types/d3-format@https://registry.npmmirror.com/@types/d3-format/-/d3-format-3.0.4.tgz 0ms (cache hit)
+549 http cache @types/d3-force@https://registry.npmmirror.com/@types/d3-force/-/d3-force-3.0.10.tgz 0ms (cache hit)
+550 http cache @types/d3-fetch@https://registry.npmmirror.com/@types/d3-fetch/-/d3-fetch-3.0.7.tgz 0ms (cache hit)
+551 http cache @types/d3-ease@https://registry.npmmirror.com/@types/d3-ease/-/d3-ease-3.0.2.tgz 0ms (cache hit)
+552 http cache @types/d3-dsv@https://registry.npmmirror.com/@types/d3-dsv/-/d3-dsv-3.0.7.tgz 0ms (cache hit)
+553 http cache @types/d3-drag@https://registry.npmmirror.com/@types/d3-drag/-/d3-drag-3.0.7.tgz 0ms (cache hit)
+554 http cache @types/d3-dispatch@https://registry.npmmirror.com/@types/d3-dispatch/-/d3-dispatch-3.0.7.tgz 0ms (cache hit)
+555 http cache @types/d3-delaunay@https://registry.npmmirror.com/@types/d3-delaunay/-/d3-delaunay-6.0.4.tgz 0ms (cache hit)
+556 http cache @types/d3-hierarchy@https://registry.npmmirror.com/@types/d3-hierarchy/-/d3-hierarchy-3.1.7.tgz 0ms (cache hit)
+557 http cache @types/d3-contour@https://registry.npmmirror.com/@types/d3-contour/-/d3-contour-3.0.6.tgz 0ms (cache hit)
+558 http cache @types/d3-geo@https://registry.npmmirror.com/@types/d3-geo/-/d3-geo-3.1.0.tgz 0ms (cache hit)
+559 http cache @types/d3-chord@https://registry.npmmirror.com/@types/d3-chord/-/d3-chord-3.0.6.tgz 0ms (cache hit)
+560 http cache @types/d3-color@https://registry.npmmirror.com/@types/d3-color/-/d3-color-3.1.3.tgz 0ms (cache hit)
+561 http cache @types/d3-brush@https://registry.npmmirror.com/@types/d3-brush/-/d3-brush-3.0.6.tgz 0ms (cache hit)
+562 http cache @types/d3-axis@https://registry.npmmirror.com/@types/d3-axis/-/d3-axis-3.0.6.tgz 0ms (cache hit)
+563 http cache @types/d3@https://registry.npmmirror.com/@types/d3/-/d3-7.4.3.tgz 0ms (cache hit)
+564 http cache @types/d3-array@https://registry.npmmirror.com/@types/d3-array/-/d3-array-3.2.2.tgz 0ms (cache hit)
+565 http cache @smithy/uuid@https://registry.npmmirror.com/@smithy/uuid/-/uuid-1.1.2.tgz 0ms (cache hit)
+566 http cache @smithy/util-utf8@https://registry.npmmirror.com/@smithy/util-utf8/-/util-utf8-4.2.2.tgz 0ms (cache hit)
+567 http cache @smithy/util-uri-escape@https://registry.npmmirror.com/@smithy/util-uri-escape/-/util-uri-escape-4.2.2.tgz 0ms (cache hit)
+568 http cache @smithy/util-stream@https://registry.npmmirror.com/@smithy/util-stream/-/util-stream-4.5.21.tgz 0ms (cache hit)
+569 http cache @smithy/util-middleware@https://registry.npmmirror.com/@smithy/util-middleware/-/util-middleware-4.2.12.tgz 0ms (cache hit)
+570 http cache @smithy/util-retry@https://registry.npmmirror.com/@smithy/util-retry/-/util-retry-4.2.13.tgz 0ms (cache hit)
+571 http cache @smithy/util-endpoints@https://registry.npmmirror.com/@smithy/util-endpoints/-/util-endpoints-3.3.3.tgz 0ms (cache hit)
+572 http cache @smithy/util-hex-encoding@https://registry.npmmirror.com/@smithy/util-hex-encoding/-/util-hex-encoding-4.2.2.tgz 0ms (cache hit)
+573 http cache @smithy/util-defaults-mode-node@https://registry.npmmirror.com/@smithy/util-defaults-mode-node/-/util-defaults-mode-node-4.2.48.tgz 0ms (cache hit)
+574 http cache @smithy/util-defaults-mode-browser@https://registry.npmmirror.com/@smithy/util-defaults-mode-browser/-/util-defaults-mode-browser-4.3.44.tgz 0ms (cache hit)
+575 http cache @smithy/util-config-provider@https://registry.npmmirror.com/@smithy/util-config-provider/-/util-config-provider-4.2.2.tgz 0ms (cache hit)
+576 http cache @smithy/util-buffer-from@https://registry.npmmirror.com/@smithy/util-buffer-from/-/util-buffer-from-4.2.2.tgz 0ms (cache hit)
+577 http cache @smithy/util-body-length-node@https://registry.npmmirror.com/@smithy/util-body-length-node/-/util-body-length-node-4.2.3.tgz 0ms (cache hit)
+578 http cache @smithy/util-body-length-browser@https://registry.npmmirror.com/@smithy/util-body-length-browser/-/util-body-length-browser-4.2.2.tgz 0ms (cache hit)
+579 http cache @smithy/util-base64@https://registry.npmmirror.com/@smithy/util-base64/-/util-base64-4.3.2.tgz 0ms (cache hit)
+580 http cache @smithy/url-parser@https://registry.npmmirror.com/@smithy/url-parser/-/url-parser-4.2.12.tgz 0ms (cache hit)
+581 http cache @smithy/types@https://registry.npmmirror.com/@smithy/types/-/types-4.13.1.tgz 0ms (cache hit)
+582 http cache @smithy/smithy-client@https://registry.npmmirror.com/@smithy/smithy-client/-/smithy-client-4.12.8.tgz 0ms (cache hit)
+583 http cache @smithy/signature-v4@https://registry.npmmirror.com/@smithy/signature-v4/-/signature-v4-5.3.12.tgz 0ms (cache hit)
+584 http cache @smithy/shared-ini-file-loader@https://registry.npmmirror.com/@smithy/shared-ini-file-loader/-/shared-ini-file-loader-4.4.7.tgz 0ms (cache hit)
+585 http cache @smithy/service-error-classification@https://registry.npmmirror.com/@smithy/service-error-classification/-/service-error-classification-4.2.12.tgz 0ms (cache hit)
+586 http cache @smithy/querystring-parser@https://registry.npmmirror.com/@smithy/querystring-parser/-/querystring-parser-4.2.12.tgz 0ms (cache hit)
+587 http cache @smithy/querystring-builder@https://registry.npmmirror.com/@smithy/querystring-builder/-/querystring-builder-4.2.12.tgz 0ms (cache hit)
+588 http cache @smithy/protocol-http@https://registry.npmmirror.com/@smithy/protocol-http/-/protocol-http-5.3.12.tgz 0ms (cache hit)
+589 http cache @smithy/property-provider@https://registry.npmmirror.com/@smithy/property-provider/-/property-provider-4.2.12.tgz 0ms (cache hit)
+590 http cache @smithy/node-http-handler@https://registry.npmmirror.com/@smithy/node-http-handler/-/node-http-handler-4.5.1.tgz 0ms (cache hit)
+591 http cache @smithy/middleware-stack@https://registry.npmmirror.com/@smithy/middleware-stack/-/middleware-stack-4.2.12.tgz 0ms (cache hit)
+592 http cache @smithy/node-config-provider@https://registry.npmmirror.com/@smithy/node-config-provider/-/node-config-provider-4.3.12.tgz 0ms (cache hit)
+593 http cache @smithy/middleware-serde@https://registry.npmmirror.com/@smithy/middleware-serde/-/middleware-serde-4.2.16.tgz 0ms (cache hit)
+594 http cache @smithy/middleware-content-length@https://registry.npmmirror.com/@smithy/middleware-content-length/-/middleware-content-length-4.2.12.tgz 0ms (cache hit)
+595 http cache @smithy/middleware-endpoint@https://registry.npmmirror.com/@smithy/middleware-endpoint/-/middleware-endpoint-4.4.28.tgz 0ms (cache hit)
+596 http cache @smithy/invalid-dependency@https://registry.npmmirror.com/@smithy/invalid-dependency/-/invalid-dependency-4.2.12.tgz 0ms (cache hit)
+597 http cache @smithy/hash-node@https://registry.npmmirror.com/@smithy/hash-node/-/hash-node-4.2.12.tgz 0ms (cache hit)
+598 http cache @smithy/middleware-retry@https://registry.npmmirror.com/@smithy/middleware-retry/-/middleware-retry-4.4.46.tgz 0ms (cache hit)
+599 http cache @smithy/is-array-buffer@https://registry.npmmirror.com/@smithy/is-array-buffer/-/is-array-buffer-4.2.2.tgz 0ms (cache hit)
+600 http cache @smithy/fetch-http-handler@https://registry.npmmirror.com/@smithy/fetch-http-handler/-/fetch-http-handler-5.3.15.tgz 0ms (cache hit)
+601 http cache @smithy/eventstream-serde-universal@https://registry.npmmirror.com/@smithy/eventstream-serde-universal/-/eventstream-serde-universal-4.2.12.tgz 0ms (cache hit)
+602 http cache @smithy/eventstream-serde-node@https://registry.npmmirror.com/@smithy/eventstream-serde-node/-/eventstream-serde-node-4.2.12.tgz 0ms (cache hit)
+603 http cache @smithy/eventstream-serde-config-resolver@https://registry.npmmirror.com/@smithy/eventstream-serde-config-resolver/-/eventstream-serde-config-resolver-4.3.12.tgz 0ms (cache hit)
+604 http cache @smithy/eventstream-codec@https://registry.npmmirror.com/@smithy/eventstream-codec/-/eventstream-codec-4.2.12.tgz 0ms (cache hit)
+605 http cache @smithy/credential-provider-imds@https://registry.npmmirror.com/@smithy/credential-provider-imds/-/credential-provider-imds-4.2.12.tgz 0ms (cache hit)
+606 http cache @smithy/config-resolver@https://registry.npmmirror.com/@smithy/config-resolver/-/config-resolver-4.4.13.tgz 0ms (cache hit)
+607 http cache @smithy/core@https://registry.npmmirror.com/@smithy/core/-/core-3.23.13.tgz 0ms (cache hit)
+608 http cache @sindresorhus/merge-streams@https://registry.npmmirror.com/@sindresorhus/merge-streams/-/merge-streams-4.0.0.tgz 0ms (cache hit)
+609 http cache @shikijs/vscode-textmate@https://registry.npmmirror.com/@shikijs/vscode-textmate/-/vscode-textmate-10.0.2.tgz 0ms (cache hit)
+610 http cache @shikijs/types@https://registry.npmmirror.com/@shikijs/types/-/types-2.5.0.tgz 0ms (cache hit)
+611 http cache @shikijs/themes@https://registry.npmmirror.com/@shikijs/themes/-/themes-2.5.0.tgz 0ms (cache hit)
+612 http cache @shikijs/transformers@https://registry.npmmirror.com/@shikijs/transformers/-/transformers-2.5.0.tgz 0ms (cache hit)
+613 http cache @shikijs/langs@https://registry.npmmirror.com/@shikijs/langs/-/langs-2.5.0.tgz 0ms (cache hit)
+614 http cache @shikijs/engine-oniguruma@https://registry.npmmirror.com/@shikijs/engine-oniguruma/-/engine-oniguruma-2.5.0.tgz 0ms (cache hit)
+615 http cache @shikijs/engine-javascript@https://registry.npmmirror.com/@shikijs/engine-javascript/-/engine-javascript-2.5.0.tgz 0ms (cache hit)
+616 http cache @shikijs/core@https://registry.npmmirror.com/@shikijs/core/-/core-2.5.0.tgz 0ms (cache hit)
+617 http cache @sec-ant/readable-stream@https://registry.npmmirror.com/@sec-ant/readable-stream/-/readable-stream-0.4.1.tgz 0ms (cache hit)
+618 http cache @rollup/rollup-linux-x64-musl@https://registry.npmmirror.com/@rollup/rollup-linux-x64-musl/-/rollup-linux-x64-musl-4.60.1.tgz 0ms (cache hit)
+619 http cache @rollup/rollup-linux-x64-gnu@https://registry.npmmirror.com/@rollup/rollup-linux-x64-gnu/-/rollup-linux-x64-gnu-4.60.1.tgz 0ms (cache hit)
+620 http cache @smithy/eventstream-serde-browser@https://registry.npmmirror.com/@smithy/eventstream-serde-browser/-/eventstream-serde-browser-4.2.12.tgz 0ms (cache hit)
+621 http cache @pondwader/socks5-server@https://registry.npmmirror.com/@pondwader/socks5-server/-/socks5-server-1.0.10.tgz 0ms (cache hit)
+622 http cache @opentelemetry/semantic-conventions@https://registry.npmmirror.com/@opentelemetry/semantic-conventions/-/semantic-conventions-1.40.0.tgz 0ms (cache hit)
+623 http cache @opentelemetry/sdk-trace-base@https://registry.npmmirror.com/@opentelemetry/sdk-trace-base/-/sdk-trace-base-2.6.1.tgz 0ms (cache hit)
+624 http cache @opentelemetry/sdk-logs@https://registry.npmmirror.com/@opentelemetry/sdk-logs/-/sdk-logs-0.214.0.tgz 0ms (cache hit)
+625 http cache @opentelemetry/sdk-metrics@https://registry.npmmirror.com/@opentelemetry/sdk-metrics/-/sdk-metrics-2.6.1.tgz 0ms (cache hit)
+626 http cache @opentelemetry/resources@https://registry.npmmirror.com/@opentelemetry/resources/-/resources-2.6.1.tgz 0ms (cache hit)
+627 http cache @opentelemetry/core@https://registry.npmmirror.com/@opentelemetry/core/-/core-2.6.1.tgz 0ms (cache hit)
+628 http cache @opentelemetry/api-logs@https://registry.npmmirror.com/@opentelemetry/api-logs/-/api-logs-0.214.0.tgz 0ms (cache hit)
+629 http cache @opentelemetry/api@https://registry.npmmirror.com/@opentelemetry/api/-/api-1.9.1.tgz 0ms (cache hit)
+630 http cache @modelcontextprotocol/sdk@https://registry.npmmirror.com/@modelcontextprotocol/sdk/-/sdk-1.29.0.tgz 0ms (cache hit)
+631 http cache @mixmark-io/domino@https://registry.npmmirror.com/@mixmark-io/domino/-/domino-2.2.0.tgz 0ms (cache hit)
+632 http cache @mermaid-js/parser@https://registry.npmmirror.com/@mermaid-js/parser/-/parser-1.1.0.tgz 0ms (cache hit)
+633 http cache @mermaid-js/mermaid-mindmap@https://registry.npmmirror.com/@mermaid-js/mermaid-mindmap/-/mermaid-mindmap-9.3.0.tgz 0ms (cache hit)
+634 http cache @jridgewell/sourcemap-codec@https://registry.npmmirror.com/@jridgewell/sourcemap-codec/-/sourcemap-codec-1.5.5.tgz 0ms (cache hit)
+635 http cache @iconify/types@https://registry.npmmirror.com/@iconify/types/-/types-2.0.0.tgz 0ms (cache hit)
+636 http cache @iconify/utils@https://registry.npmmirror.com/@iconify/utils/-/utils-3.1.0.tgz 0ms (cache hit)
+637 http cache @hono/node-server@https://registry.npmmirror.com/@hono/node-server/-/node-server-1.19.12.tgz 0ms (cache hit)
+638 http cache @iconify-json/simple-icons@https://registry.npmmirror.com/@iconify-json/simple-icons/-/simple-icons-1.2.76.tgz 0ms (cache hit)
+639 http cache @growthbook/growthbook@https://registry.npmmirror.com/@growthbook/growthbook/-/growthbook-1.6.5.tgz 0ms (cache hit)
+640 http cache @esbuild/linux-x64@https://registry.npmmirror.com/@esbuild/linux-x64/-/linux-x64-0.21.5.tgz 0ms (cache hit)
+641 http cache @docsearch/js@https://registry.npmmirror.com/@docsearch/js/-/js-3.8.2.tgz 0ms (cache hit)
+642 http cache @docsearch/css@https://registry.npmmirror.com/@docsearch/css/-/css-3.8.2.tgz 0ms (cache hit)
+643 http cache @commander-js/extra-typings@https://registry.npmmirror.com/@commander-js/extra-typings/-/extra-typings-14.0.0.tgz 0ms (cache hit)
+644 http cache @chevrotain/utils@https://registry.npmmirror.com/@chevrotain/utils/-/utils-12.0.0.tgz 0ms (cache hit)
+645 http cache @chevrotain/types@https://registry.npmmirror.com/@chevrotain/types/-/types-12.0.0.tgz 0ms (cache hit)
+646 http cache @chevrotain/regexp-to-ast@https://registry.npmmirror.com/@chevrotain/regexp-to-ast/-/regexp-to-ast-12.0.0.tgz 0ms (cache hit)
+647 http cache @chevrotain/gast@https://registry.npmmirror.com/@chevrotain/gast/-/gast-12.0.0.tgz 0ms (cache hit)
+648 http cache @chevrotain/cst-dts-gen@https://registry.npmmirror.com/@chevrotain/cst-dts-gen/-/cst-dts-gen-12.0.0.tgz 0ms (cache hit)
+649 http cache @braintree/sanitize-url@https://registry.npmmirror.com/@braintree/sanitize-url/-/sanitize-url-7.1.2.tgz 0ms (cache hit)
+650 http cache @babel/types@https://registry.npmmirror.com/@babel/types/-/types-7.29.0.tgz 0ms (cache hit)
+651 http cache @babel/runtime@https://registry.npmmirror.com/@babel/runtime/-/runtime-7.29.2.tgz 0ms (cache hit)
+652 http cache @babel/helper-validator-identifier@https://registry.npmmirror.com/@babel/helper-validator-identifier/-/helper-validator-identifier-7.28.5.tgz 0ms (cache hit)
+653 http cache @babel/parser@https://registry.npmmirror.com/@babel/parser/-/parser-7.29.2.tgz 0ms (cache hit)
+654 http cache @aws/lambda-invoke-store@https://registry.npmmirror.com/@aws/lambda-invoke-store/-/lambda-invoke-store-0.2.4.tgz 0ms (cache hit)
+655 http cache @babel/helper-string-parser@https://registry.npmmirror.com/@babel/helper-string-parser/-/helper-string-parser-7.27.1.tgz 0ms (cache hit)
+656 http cache @aws-sdk/xml-builder@https://registry.npmmirror.com/@aws-sdk/xml-builder/-/xml-builder-3.972.16.tgz 0ms (cache hit)
+657 http cache @aws-sdk/util-user-agent-node@https://registry.npmmirror.com/@aws-sdk/util-user-agent-node/-/util-user-agent-node-3.973.13.tgz 0ms (cache hit)
+658 http cache @aws-sdk/util-user-agent-browser@https://registry.npmmirror.com/@aws-sdk/util-user-agent-browser/-/util-user-agent-browser-3.972.8.tgz 0ms (cache hit)
+659 http cache @aws-sdk/util-endpoints@https://registry.npmmirror.com/@aws-sdk/util-endpoints/-/util-endpoints-3.996.5.tgz 0ms (cache hit)
+660 http cache @aws-sdk/util-locate-window@https://registry.npmmirror.com/@aws-sdk/util-locate-window/-/util-locate-window-3.965.5.tgz 0ms (cache hit)
+661 http cache @aws-sdk/types@https://registry.npmmirror.com/@aws-sdk/types/-/types-3.973.6.tgz 0ms (cache hit)
+662 http cache @aws-sdk/token-providers@https://registry.npmmirror.com/@aws-sdk/token-providers/-/token-providers-3.1020.0.tgz 0ms (cache hit)
+663 http cache @aws-sdk/util-format-url@https://registry.npmmirror.com/@aws-sdk/util-format-url/-/util-format-url-3.972.8.tgz 0ms (cache hit)
+664 http cache @aws-sdk/region-config-resolver@https://registry.npmmirror.com/@aws-sdk/region-config-resolver/-/region-config-resolver-3.972.10.tgz 0ms (cache hit)
+665 http cache @aws-sdk/middleware-websocket@https://registry.npmmirror.com/@aws-sdk/middleware-websocket/-/middleware-websocket-3.972.14.tgz 0ms (cache hit)
+666 http cache @aws-sdk/middleware-recursion-detection@https://registry.npmmirror.com/@aws-sdk/middleware-recursion-detection/-/middleware-recursion-detection-3.972.9.tgz 0ms (cache hit)
+667 http cache @aws-sdk/middleware-logger@https://registry.npmmirror.com/@aws-sdk/middleware-logger/-/middleware-logger-3.972.8.tgz 0ms (cache hit)
+668 http cache @aws-sdk/nested-clients@https://registry.npmmirror.com/@aws-sdk/nested-clients/-/nested-clients-3.996.17.tgz 0ms (cache hit)
+669 http cache @aws-sdk/middleware-host-header@https://registry.npmmirror.com/@aws-sdk/middleware-host-header/-/middleware-host-header-3.972.8.tgz 0ms (cache hit)
+670 http cache @aws-sdk/middleware-eventstream@https://registry.npmmirror.com/@aws-sdk/middleware-eventstream/-/middleware-eventstream-3.972.8.tgz 0ms (cache hit)
+671 http cache @aws-sdk/middleware-user-agent@https://registry.npmmirror.com/@aws-sdk/middleware-user-agent/-/middleware-user-agent-3.972.27.tgz 0ms (cache hit)
+672 http cache @aws-sdk/credential-provider-web-identity@https://registry.npmmirror.com/@aws-sdk/credential-provider-web-identity/-/credential-provider-web-identity-3.972.27.tgz 0ms (cache hit)
+673 http cache @aws-sdk/eventstream-handler-node@https://registry.npmmirror.com/@aws-sdk/eventstream-handler-node/-/eventstream-handler-node-3.972.12.tgz 0ms (cache hit)
+674 http cache @aws-sdk/credential-provider-process@https://registry.npmmirror.com/@aws-sdk/credential-provider-process/-/credential-provider-process-3.972.24.tgz 0ms (cache hit)
+675 http cache @aws-sdk/credential-provider-login@https://registry.npmmirror.com/@aws-sdk/credential-provider-login/-/credential-provider-login-3.972.27.tgz 0ms (cache hit)
+676 http cache @aws-sdk/credential-provider-node@https://registry.npmmirror.com/@aws-sdk/credential-provider-node/-/credential-provider-node-3.972.28.tgz 0ms (cache hit)
+677 http cache @aws-sdk/credential-provider-ini@https://registry.npmmirror.com/@aws-sdk/credential-provider-ini/-/credential-provider-ini-3.972.27.tgz 0ms (cache hit)
+678 http cache @aws-sdk/credential-provider-env@https://registry.npmmirror.com/@aws-sdk/credential-provider-env/-/credential-provider-env-3.972.24.tgz 0ms (cache hit)
+679 http cache @aws-sdk/credential-provider-http@https://registry.npmmirror.com/@aws-sdk/credential-provider-http/-/credential-provider-http-3.972.26.tgz 0ms (cache hit)
+680 http cache @aws-sdk/credential-provider-sso@https://registry.npmmirror.com/@aws-sdk/credential-provider-sso/-/credential-provider-sso-3.972.27.tgz 0ms (cache hit)
+681 http cache @aws-sdk/core@https://registry.npmmirror.com/@aws-sdk/core/-/core-3.973.26.tgz 0ms (cache hit)
+682 http cache @aws-sdk/client-bedrock-runtime@https://registry.npmmirror.com/@aws-sdk/client-bedrock-runtime/-/client-bedrock-runtime-3.1020.0.tgz 0ms (cache hit)
+683 http cache @aws-crypto/util@https://registry.npmmirror.com/@aws-crypto/util/-/util-5.2.0.tgz 0ms (cache hit)
+684 http cache @aws-crypto/supports-web-crypto@https://registry.npmmirror.com/@aws-crypto/supports-web-crypto/-/supports-web-crypto-5.2.0.tgz 0ms (cache hit)
+685 http cache @aws-crypto/sha256-browser@https://registry.npmmirror.com/@aws-crypto/sha256-browser/-/sha256-browser-5.2.0.tgz 0ms (cache hit)
+686 http cache @aws-crypto/sha256-js@https://registry.npmmirror.com/@aws-crypto/sha256-js/-/sha256-js-5.2.0.tgz 0ms (cache hit)
+687 http cache @aws-crypto/crc32@https://registry.npmmirror.com/@aws-crypto/crc32/-/crc32-5.2.0.tgz 0ms (cache hit)
+688 http cache @anthropic-ai/sandbox-runtime@https://registry.npmmirror.com/@anthropic-ai/sandbox-runtime/-/sandbox-runtime-0.0.44.tgz 0ms (cache hit)
+689 http cache @anthropic-ai/claude-agent-sdk-linux-x64-musl@https://registry.npmmirror.com/@anthropic-ai/claude-agent-sdk-linux-x64-musl/-/claude-agent-sdk-linux-x64-musl-0.3.211.tgz 0ms (cache hit)
+690 http cache @anthropic-ai/sdk@https://registry.npmmirror.com/@anthropic-ai/sdk/-/sdk-0.93.0.tgz 0ms (cache hit)
+691 http cache @anthropic-ai/claude-agent-sdk-linux-x64@https://registry.npmmirror.com/@anthropic-ai/claude-agent-sdk-linux-x64/-/claude-agent-sdk-linux-x64-0.3.211.tgz 0ms (cache hit)
+692 http cache @anthropic-ai/claude-agent-sdk@https://registry.npmmirror.com/@anthropic-ai/claude-agent-sdk/-/claude-agent-sdk-0.3.211.tgz 0ms (cache hit)
+693 http cache @antfu/install-pkg@https://registry.npmmirror.com/@antfu/install-pkg/-/install-pkg-1.1.0.tgz 0ms (cache hit)
+694 http cache @algolia/requester-node-http@https://registry.npmmirror.com/@algolia/requester-node-http/-/requester-node-http-5.50.1.tgz 0ms (cache hit)
+695 http cache @algolia/requester-browser-xhr@https://registry.npmmirror.com/@algolia/requester-browser-xhr/-/requester-browser-xhr-5.50.1.tgz 0ms (cache hit)
+696 http cache @algolia/requester-fetch@https://registry.npmmirror.com/@algolia/requester-fetch/-/requester-fetch-5.50.1.tgz 0ms (cache hit)
+697 http cache @algolia/recommend@https://registry.npmmirror.com/@algolia/recommend/-/recommend-5.50.1.tgz 0ms (cache hit)
+698 http cache @algolia/monitoring@https://registry.npmmirror.com/@algolia/monitoring/-/monitoring-1.50.1.tgz 0ms (cache hit)
+699 http cache @algolia/client-search@https://registry.npmmirror.com/@algolia/client-search/-/client-search-5.50.1.tgz 0ms (cache hit)
+700 http cache @algolia/ingestion@https://registry.npmmirror.com/@algolia/ingestion/-/ingestion-1.50.1.tgz 0ms (cache hit)
+701 http cache @algolia/client-query-suggestions@https://registry.npmmirror.com/@algolia/client-query-suggestions/-/client-query-suggestions-5.50.1.tgz 0ms (cache hit)
+702 http cache @algolia/client-personalization@https://registry.npmmirror.com/@algolia/client-personalization/-/client-personalization-5.50.1.tgz 0ms (cache hit)
+703 http cache @algolia/client-insights@https://registry.npmmirror.com/@algolia/client-insights/-/client-insights-5.50.1.tgz 0ms (cache hit)
+704 http cache @algolia/client-abtesting@https://registry.npmmirror.com/@algolia/client-abtesting/-/client-abtesting-5.50.1.tgz 0ms (cache hit)
+705 http cache @algolia/client-common@https://registry.npmmirror.com/@algolia/client-common/-/client-common-5.50.1.tgz 0ms (cache hit)
+706 http cache @algolia/client-analytics@https://registry.npmmirror.com/@algolia/client-analytics/-/client-analytics-5.50.1.tgz 0ms (cache hit)
+707 http cache @algolia/autocomplete-preset-algolia@https://registry.npmmirror.com/@algolia/autocomplete-preset-algolia/-/autocomplete-preset-algolia-1.17.7.tgz 0ms (cache hit)
+708 http cache @algolia/autocomplete-shared@https://registry.npmmirror.com/@algolia/autocomplete-shared/-/autocomplete-shared-1.17.7.tgz 0ms (cache hit)
+709 http cache @algolia/autocomplete-plugin-algolia-insights@https://registry.npmmirror.com/@algolia/autocomplete-plugin-algolia-insights/-/autocomplete-plugin-algolia-insights-1.17.7.tgz 0ms (cache hit)
+710 http cache @algolia/abtesting@https://registry.npmmirror.com/@algolia/abtesting/-/abtesting-1.16.1.tgz 0ms (cache hit)
+711 http cache strip-ansi@https://registry.npmmirror.com/strip-ansi/-/strip-ansi-6.0.1.tgz 0ms (cache hit)
+712 http cache string-width@https://registry.npmmirror.com/string-width/-/string-width-4.2.3.tgz 0ms (cache hit)
+713 http cache is-fullwidth-code-point@https://registry.npmmirror.com/is-fullwidth-code-point/-/is-fullwidth-code-point-3.0.0.tgz 0ms (cache hit)
+714 http cache ansi-regex@https://registry.npmmirror.com/ansi-regex/-/ansi-regex-5.0.1.tgz 0ms (cache hit)
+715 http cache @algolia/autocomplete-core@https://registry.npmmirror.com/@algolia/autocomplete-core/-/autocomplete-core-1.17.7.tgz 0ms (cache hit)
+716 http cache commander@https://registry.npmmirror.com/commander/-/commander-2.20.3.tgz 0ms (cache hit)
+717 http cache vscode-jsonrpc@https://registry.npmmirror.com/vscode-jsonrpc/-/vscode-jsonrpc-8.2.0.tgz 0ms (cache hit)
+718 http cache signal-exit@https://registry.npmmirror.com/signal-exit/-/signal-exit-3.0.7.tgz 0ms (cache hit)
+719 http cache signal-exit@https://registry.npmmirror.com/signal-exit/-/signal-exit-3.0.7.tgz 0ms (cache hit)
+720 http cache path-key@https://registry.npmmirror.com/path-key/-/path-key-4.0.0.tgz 0ms (cache hit)
+721 http cache marked@https://registry.npmmirror.com/marked/-/marked-16.4.2.tgz 0ms (cache hit)
+722 http cache commander@https://registry.npmmirror.com/commander/-/commander-8.3.0.tgz 0ms (cache hit)
+723 http cache emoji-regex@https://registry.npmmirror.com/emoji-regex/-/emoji-regex-8.0.0.tgz 0ms (cache hit)
+724 http cache wrap-ansi@https://registry.npmmirror.com/wrap-ansi/-/wrap-ansi-9.0.2.tgz 0ms (cache hit)
+725 http cache cli-boxes@https://registry.npmmirror.com/cli-boxes/-/cli-boxes-3.0.0.tgz 0ms (cache hit)
+726 http cache signal-exit@https://registry.npmmirror.com/signal-exit/-/signal-exit-3.0.7.tgz 0ms (cache hit)
+727 http cache https-proxy-agent@https://registry.npmmirror.com/https-proxy-agent/-/https-proxy-agent-7.0.6.tgz 0ms (cache hit)
+728 http cache agent-base@https://registry.npmmirror.com/agent-base/-/agent-base-7.1.4.tgz 0ms (cache hit)
+729 http cache string-width@https://registry.npmmirror.com/string-width/-/string-width-7.2.0.tgz 0ms (cache hit)
+730 http cache mime-types@https://registry.npmmirror.com/mime-types/-/mime-types-2.1.35.tgz 0ms (cache hit)
+731 http cache mime-db@https://registry.npmmirror.com/mime-db/-/mime-db-1.52.0.tgz 0ms (cache hit)
+732 http cache @alcalzone/ansi-tokenize@https://registry.npmmirror.com/@alcalzone/ansi-tokenize/-/ansi-tokenize-0.2.5.tgz 0ms (cache hit)
+733 http cache internmap@https://registry.npmmirror.com/internmap/-/internmap-1.0.1.tgz 0ms (cache hit)
+734 http cache d3-shape@https://registry.npmmirror.com/d3-shape/-/d3-shape-1.3.7.tgz 0ms (cache hit)
+735 http cache d3-path@https://registry.npmmirror.com/d3-path/-/d3-path-1.0.9.tgz 0ms (cache hit)
+736 http cache iconv-lite@https://registry.npmmirror.com/iconv-lite/-/iconv-lite-0.6.3.tgz 0ms (cache hit)
+737 http cache commander@https://registry.npmmirror.com/commander/-/commander-7.2.0.tgz 0ms (cache hit)
+738 http cache layout-base@https://registry.npmmirror.com/layout-base/-/layout-base-2.0.1.tgz 0ms (cache hit)
+739 http cache wrap-ansi@https://registry.npmmirror.com/wrap-ansi/-/wrap-ansi-6.2.0.tgz 0ms (cache hit)
+740 http cache strip-ansi@https://registry.npmmirror.com/strip-ansi/-/strip-ansi-6.0.1.tgz 0ms (cache hit)
+741 http cache cose-base@https://registry.npmmirror.com/cose-base/-/cose-base-2.2.0.tgz 0ms (cache hit)
+742 http cache string-width@https://registry.npmmirror.com/string-width/-/string-width-4.2.3.tgz 0ms (cache hit)
+743 http cache emoji-regex@https://registry.npmmirror.com/emoji-regex/-/emoji-regex-8.0.0.tgz 0ms (cache hit)
+744 http cache is-fullwidth-code-point@https://registry.npmmirror.com/is-fullwidth-code-point/-/is-fullwidth-code-point-3.0.0.tgz 0ms (cache hit)
+745 http cache ansi-styles@https://registry.npmmirror.com/ansi-styles/-/ansi-styles-4.3.0.tgz 0ms (cache hit)
+746 http cache ansi-regex@https://registry.npmmirror.com/ansi-regex/-/ansi-regex-5.0.1.tgz 0ms (cache hit)
+747 http cache @braintree/sanitize-url@https://registry.npmmirror.com/@braintree/sanitize-url/-/sanitize-url-6.0.4.tgz 0ms (cache hit)
+748 http cache d3-array@https://registry.npmmirror.com/d3-array/-/d3-array-2.12.1.tgz 0ms (cache hit)
+749 http cache @docsearch/react@https://registry.npmmirror.com/@docsearch/react/-/react-3.8.2.tgz 0ms (cache hit)
+750 http cache @smithy/util-utf8@https://registry.npmmirror.com/@smithy/util-utf8/-/util-utf8-2.3.0.tgz 0ms (cache hit)
+751 http cache @smithy/util-buffer-from@https://registry.npmmirror.com/@smithy/util-buffer-from/-/util-buffer-from-2.2.0.tgz 0ms (cache hit)
+752 http cache @smithy/is-array-buffer@https://registry.npmmirror.com/@smithy/is-array-buffer/-/is-array-buffer-2.2.0.tgz 0ms (cache hit)
+753 http cache @smithy/util-buffer-from@https://registry.npmmirror.com/@smithy/util-buffer-from/-/util-buffer-from-2.2.0.tgz 0ms (cache hit)
+754 http cache zod@https://registry.npmmirror.com/zod/-/zod-3.25.76.tgz 0ms (cache hit)
+755 http cache @smithy/is-array-buffer@https://registry.npmmirror.com/@smithy/is-array-buffer/-/is-array-buffer-2.2.0.tgz 0ms (cache hit)
+756 http cache commander@https://registry.npmmirror.com/commander/-/commander-12.1.0.tgz 0ms (cache hit)
+757 http cache @smithy/util-utf8@https://registry.npmmirror.com/@smithy/util-utf8/-/util-utf8-2.3.0.tgz 0ms (cache hit)
+758 silly tarball no local data for @anthropic-ai/claude-agent-sdk-linux-x64-musl@https://registry.npmmirror.com/@anthropic-ai/claude-agent-sdk-linux-x64-musl/-/claude-agent-sdk-linux-x64-musl-0.3.211.tgz. Extracting by manifest.
+759 silly tarball no local data for @anthropic-ai/sdk@https://registry.npmmirror.com/@anthropic-ai/sdk/-/sdk-0.93.0.tgz. Extracting by manifest.
+760 silly tarball no local data for @anthropic-ai/claude-agent-sdk-linux-x64@https://registry.npmmirror.com/@anthropic-ai/claude-agent-sdk-linux-x64/-/claude-agent-sdk-linux-x64-0.3.211.tgz. Extracting by manifest.
+761 silly tarball no local data for @anthropic-ai/claude-agent-sdk@https://registry.npmmirror.com/@anthropic-ai/claude-agent-sdk/-/claude-agent-sdk-0.3.211.tgz. Extracting by manifest.
+762 http fetch GET https://registry.npmmirror.com/@anthropic-ai/claude-agent-sdk/-/claude-agent-sdk-0.3.211.tgz attempt 1 failed with EPERM
+763 http fetch GET https://registry.npmmirror.com/@anthropic-ai/claude-agent-sdk-linux-x64/-/claude-agent-sdk-linux-x64-0.3.211.tgz attempt 1 failed with EPERM
+764 http fetch GET https://registry.npmmirror.com/@anthropic-ai/sdk/-/sdk-0.93.0.tgz attempt 1 failed with EPERM
+765 http fetch GET https://registry.npmmirror.com/@anthropic-ai/claude-agent-sdk-linux-x64-musl/-/claude-agent-sdk-linux-x64-musl-0.3.211.tgz attempt 1 failed with EPERM
+766 warn deprecated node-domexception@1.0.0: Use your platform's native DOMException instead
+767 http fetch GET https://registry.npmmirror.com/@anthropic-ai/claude-agent-sdk/-/claude-agent-sdk-0.3.211.tgz attempt 2 failed with EPERM
+768 http fetch GET https://registry.npmmirror.com/@anthropic-ai/claude-agent-sdk-linux-x64/-/claude-agent-sdk-linux-x64-0.3.211.tgz attempt 2 failed with EPERM
+769 http fetch GET https://registry.npmmirror.com/@anthropic-ai/sdk/-/sdk-0.93.0.tgz attempt 2 failed with EPERM
+770 http fetch GET https://registry.npmmirror.com/@anthropic-ai/claude-agent-sdk-linux-x64-musl/-/claude-agent-sdk-linux-x64-musl-0.3.211.tgz attempt 2 failed with EPERM
+771 http fetch GET https://registry.npmmirror.com/@anthropic-ai/claude-agent-sdk/-/claude-agent-sdk-0.3.211.tgz attempt 3 failed with EPERM
+772 http fetch GET https://registry.npmmirror.com/@anthropic-ai/claude-agent-sdk-linux-x64/-/claude-agent-sdk-linux-x64-0.3.211.tgz attempt 3 failed with EPERM
+773 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64
+774 silly reify mark deleted [
+774 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64'
+774 silly reify ]
+775 http fetch GET https://registry.npmmirror.com/@anthropic-ai/sdk/-/sdk-0.93.0.tgz attempt 3 failed with EPERM
+776 http fetch GET https://registry.npmmirror.com/@anthropic-ai/claude-agent-sdk-linux-x64-musl/-/claude-agent-sdk-linux-x64-musl-0.3.211.tgz attempt 3 failed with EPERM
+777 verbose reify failed optional dependency /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64-musl
+778 silly reify mark deleted [
+778 silly reify   '/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64-musl'
+778 silly reify ]
+779 verbose type system
+780 verbose stack FetchError: request to https://registry.npmmirror.com/@anthropic-ai/sdk/-/sdk-0.93.0.tgz failed, reason: connect EPERM 127.0.0.1:7890 - Local (undefined:undefined)
+780 verbose stack     at ClientRequest.<anonymous> (/home/zhijun/.nvm/versions/node/v22.20.0/lib/node_modules/npm/node_modules/minipass-fetch/lib/index.js:130:14)
+780 verbose stack     at ClientRequest.emit (node:events:519:28)
+780 verbose stack     at emitErrorEvent (node:_http_client:105:11)
+780 verbose stack     at _destroy (node:_http_client:898:9)
+780 verbose stack     at onSocketNT (node:_http_client:918:5)
+780 verbose stack     at processTicksAndRejections (node:internal/process/task_queues:91:21)
+780 verbose stack     at runNextTicks (node:internal/process/task_queues:69:3)
+780 verbose stack     at listOnTimeout (node:internal/timers:549:9)
+780 verbose stack     at process.processTimers (node:internal/timers:523:7)
+781 error code EPERM
+782 error syscall connect
+783 error errno EPERM
+784 error FetchError: request to https://registry.npmmirror.com/@anthropic-ai/sdk/-/sdk-0.93.0.tgz failed, reason: connect EPERM 127.0.0.1:7890 - Local (undefined:undefined)
+784 error     at ClientRequest.<anonymous> (/home/zhijun/.nvm/versions/node/v22.20.0/lib/node_modules/npm/node_modules/minipass-fetch/lib/index.js:130:14)
+784 error     at ClientRequest.emit (node:events:519:28)
+784 error     at emitErrorEvent (node:_http_client:105:11)
+784 error     at _destroy (node:_http_client:898:9)
+784 error     at onSocketNT (node:_http_client:918:5)
+784 error     at processTicksAndRejections (node:internal/process/task_queues:91:21)
+784 error     at runNextTicks (node:internal/process/task_queues:69:3)
+784 error     at listOnTimeout (node:internal/timers:549:9)
+784 error     at process.processTimers (node:internal/timers:523:7) {
+784 error   code: 'EPERM',
+784 error   errno: 'EPERM',
+784 error   syscall: 'connect',
+784 error   address: '127.0.0.1',
+784 error   port: 7890,
+784 error   type: 'system'
+784 error }
+785 error
+785 error The operation was rejected by your operating system.
+785 error It is likely you do not have the permissions to access this file as the current user
+785 error
+785 error If you believe this might be a permissions issue, please double-check the
+785 error permissions of the file and its containing directories, or try running
+785 error the command again as root/Administrator.
+786 silly unfinished npm timer reify 1784358314807
+787 silly unfinished npm timer reify:unpack 1784358314978
+788 silly unfinished npm timer reifyNode:node_modules/@anthropic-ai/sdk 1784358314981
+789 silly unfinished npm timer reifyNode:node_modules/@anthropic-ai/claude-agent-sdk 1784358314981
+790 verbose cwd /home/zhijun/WorkSpace/EchoFlow-ClaudeCode
+791 verbose os Linux 6.18.33.2-microsoft-standard-WSL2
+792 verbose node v22.20.0
+793 verbose npm  v10.9.3
+794 verbose exit 1
+795 verbose code 1
+796 error A complete log of this run can be found in: /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/docs/.vitepress/cache/npm/_logs/2026-07-18T07_04_03_005Z-debug-0.log

@@ -13,15 +13,18 @@ import {
 } from '../services/titleService.js'
 import { sessionService } from '../services/sessionService.js'
 import { hahaOpenAIOAuthService } from '../services/hahaOpenAIOAuthService.js'
+import { SYSTEM_PROXY_URL_ENV } from '../services/networkSettings.js'
 import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 
 describe('titleService', () => {
   let tmpDir: string
   let originalConfigDir: string | undefined
+  let originalSystemProxyUrl: string | undefined
   let originalFetch: typeof globalThis.fetch
 
   beforeEach(async () => {
     originalConfigDir = process.env.CLAUDE_CONFIG_DIR
+    originalSystemProxyUrl = process.env[SYSTEM_PROXY_URL_ENV]
     originalFetch = globalThis.fetch
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'title-service-test-'))
     process.env.CLAUDE_CONFIG_DIR = tmpDir
@@ -31,6 +34,7 @@ describe('titleService', () => {
     globalThis.fetch = originalFetch
     hahaOpenAIOAuthService.dispose()
     restoreEnv('CLAUDE_CONFIG_DIR', originalConfigDir)
+    restoreEnv(SYSTEM_PROXY_URL_ENV, originalSystemProxyUrl)
     await fs.rm(tmpDir, { recursive: true, force: true })
   })
 
@@ -297,6 +301,17 @@ describe('titleService', () => {
   })
 
   test('generates titles when ChatGPT Official OAuth is active', async () => {
+    const systemProxyUrl = 'http://127.0.0.1:17890'
+    process.env[SYSTEM_PROXY_URL_ENV] = systemProxyUrl
+    await fs.writeFile(
+      path.join(tmpDir, 'settings.json'),
+      JSON.stringify({
+        network: {
+          proxy: { mode: 'system', url: '' },
+        },
+      }),
+      'utf-8',
+    )
     const providerService = new ProviderService()
     await providerService.activateProvider('openai-official')
     await hahaOpenAIOAuthService.saveTokens({
@@ -311,6 +326,7 @@ describe('titleService', () => {
       url: string
       headers: Record<string, string>
       body: Record<string, unknown>
+      proxy?: string
     }> = []
     globalThis.fetch = (async (input, init) => {
       const headers = new Headers(init?.headers)
@@ -318,6 +334,7 @@ describe('titleService', () => {
         url: String(input),
         headers: Object.fromEntries(headers.entries()),
         body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+        proxy: (init as RequestInit & { proxy?: string } | undefined)?.proxy,
       })
       return new Response([
         'event: response.completed',
@@ -334,6 +351,7 @@ describe('titleService', () => {
     expect(upstreamCalls[0].headers.authorization).toBe('Bearer access-for-title')
     expect(upstreamCalls[0].headers['chatgpt-account-id']).toBe('acct_title')
     expect(upstreamCalls[0].body.stream).toBe(true)
+    expect(upstreamCalls[0].proxy).toBe(systemProxyUrl)
   })
 
   test('honors the configured provider auth strategy for title generation', async () => {

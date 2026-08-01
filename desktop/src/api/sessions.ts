@@ -1,10 +1,20 @@
 import { api } from './client'
+import type { SlashCommandOption } from '../types/slashCommand'
 import type { AgentTaskNotification } from '../types/chat'
-import type { SessionListItem, MessageEntry } from '../types/session'
+import type { LocalIndexStatus, SessionListItem, MessageEntry } from '../types/session'
 import type { PermissionMode } from '../types/settings'
 import type { TraceCallRecord, TraceSession } from '../types/trace'
 
-type SessionsResponse = { sessions: SessionListItem[]; total: number }
+export type SessionsResponse = {
+  sessions: SessionListItem[]
+  total: number
+  index?: LocalIndexStatus
+}
+export type PetSessionRuntimeStatus = 'waiting' | 'failed' | 'review' | 'running' | 'idle'
+export type SessionChatStatusResponse = {
+  state: 'idle' | 'thinking' | 'compacting' | 'tool_executing'
+  activityState: PetSessionRuntimeStatus
+}
 type MessagesResponse = {
   messages: MessageEntry[]
   taskNotifications?: AgentTaskNotification[]
@@ -270,6 +280,13 @@ export type WorkspaceTreeResult = {
   error?: string
 }
 
+export type WorkspaceSearchResult = {
+  state: 'ok'
+  query: string
+  truncated: boolean
+  entries: WorkspaceTreeEntry[]
+}
+
 export type WorkspaceDiffResult = {
   state: 'ok' | 'missing' | 'not_git_repo' | 'error'
   path: string
@@ -321,6 +338,10 @@ export const sessionsApi = {
     return api.get<MessagesResponse>(`/api/sessions/${sessionId}/messages`)
   },
 
+  getChatStatus(sessionId: string, signal?: AbortSignal) {
+    return api.get<SessionChatStatusResponse>(`/api/sessions/${sessionId}/chat/status`, { signal })
+  },
+
   getTrace(sessionId: string) {
     return api.get<TraceSession>(`/api/sessions/${sessionId}/trace`)
   },
@@ -367,7 +388,7 @@ export const sessionsApi = {
   },
 
   getSlashCommands(sessionId: string) {
-    return api.get<{ commands: Array<{ name: string; description: string; argumentHint?: string }> }>(`/api/sessions/${sessionId}/slash-commands`)
+    return api.get<{ commands: SlashCommandOption[] }>(`/api/sessions/${sessionId}/slash-commands`)
   },
 
   getInspection(sessionId: string, options?: { includeContext?: boolean; timeout?: number; contextOnly?: boolean }) {
@@ -390,6 +411,11 @@ export const sessionsApi = {
 
   getWorkspaceTree(sessionId: string, workspacePath = '') {
     return api.get<WorkspaceTreeResult>(buildWorkspacePath(sessionId, 'tree', workspacePath))
+  },
+
+  searchWorkspace(sessionId: string, query: string) {
+    const params = new URLSearchParams({ query })
+    return api.get<WorkspaceSearchResult>(`/api/sessions/${sessionId}/workspace/search?${params}`)
   },
 
   getWorkspaceFile(sessionId: string, workspacePath: string) {

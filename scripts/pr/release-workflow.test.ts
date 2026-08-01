@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 
 describe('release desktop workflow', () => {
   function readReleaseWorkflow() {
@@ -28,6 +28,18 @@ describe('release desktop workflow', () => {
     expect(workflow).not.toContain('quality-preflight')
     expect(workflow).not.toContain('bun run verify')
     expect(workflow).toContain('name: Build (${{ matrix.label }})')
+  })
+
+  test('version tags have exactly one desktop release publisher', () => {
+    const releasePublishers = readdirSync('.github/workflows')
+      .filter(fileName => fileName.endsWith('.yml'))
+      .filter((fileName) => {
+        const workflow = readFileSync(`.github/workflows/${fileName}`, 'utf8')
+        return workflow.includes("tags: ['v*.*.*']")
+          && workflow.includes('softprops/action-gh-release@v2')
+      })
+
+    expect(releasePublishers).toEqual(['release-desktop.yml'])
   })
 
   test('desktop build workflows keep Bun compile cache on the runner work drive', () => {
@@ -62,7 +74,62 @@ describe('release desktop workflow', () => {
     }
   })
 
-  test('development desktop artifacts include packaged installers and update files', () => {
+  test('desktop build workflows install the Bun version declared by packageManager', () => {
+    for (const workflowPath of [
+      '.github/workflows/build-desktop-dev.yml',
+      '.github/workflows/release-desktop.yml',
+    ]) {
+      const workflow = readFileSync(workflowPath, 'utf8')
+      const setupBunStepCount = workflow.match(/uses: oven-sh\/setup-bun@v2/g)?.length ?? 0
+      const packageVersionCount = workflow.match(/bun-version-file: package\.json/g)?.length ?? 0
+
+      expect(setupBunStepCount, workflowPath).toBeGreaterThan(0)
+      expect(packageVersionCount, workflowPath).toBe(setupBunStepCount)
+      expect(workflow, workflowPath).not.toContain('bun-version: latest')
+    }
+  })
+
+  test('Windows x64 builds execute the compiled sidecar before packaging', () => {
+    for (const workflowPath of [
+      '.github/workflows/build-desktop-dev.yml',
+      '.github/workflows/release-desktop.yml',
+    ]) {
+      const workflow = readFileSync(workflowPath, 'utf8')
+      const smokeStep = extractStep(workflow, 'Verify compiled Windows sidecar startup')
+
+      expect(smokeStep, workflowPath).toContain(
+        "if: matrix.smoke_platform == 'windows' && matrix.arch == 'x64'",
+      )
+      expect(smokeStep, workflowPath).toContain('working-directory: desktop')
+      expect(smokeStep, workflowPath).toContain("ECHOFLOW_COMPILED_SIDECAR_SMOKE_STARTS: '20'")
+      expect(smokeStep, workflowPath).toContain('bun run test:compiled-sidecar-smoke')
+      expect(workflow.indexOf('Build sidecars'), workflowPath).toBeLessThan(
+        workflow.indexOf('Verify compiled Windows sidecar startup'),
+      )
+      expect(workflow.indexOf('Verify compiled Windows sidecar startup'), workflowPath)
+        .toBeLessThan(workflow.indexOf('Build renderer and Electron bundles'))
+    }
+  })
+
+  test('desktop build workflows prepare the pinned ripgrep asset before sidecars', () => {
+    for (const workflowPath of [
+      '.github/workflows/build-desktop-dev.yml',
+      '.github/workflows/release-desktop.yml',
+    ]) {
+      const workflow = readFileSync(workflowPath, 'utf8')
+      const prepareStep = extractStep(workflow, 'Prepare bundled ripgrep')
+
+      expect(prepareStep, workflowPath).toContain(
+        'SIDECAR_TARGET_TRIPLE: ${{ matrix.target_triple }}',
+      )
+      expect(prepareStep, workflowPath).toContain('bun run prepare:ripgrep')
+      expect(workflow.indexOf('Prepare bundled ripgrep')).toBeLessThan(
+        workflow.indexOf('Build sidecars'),
+      )
+    }
+  })
+
+  test('development desktop artifacts exclude unpacked macOS app bundles and updater-only files', () => {
     const workflow = readFileSync('.github/workflows/build-desktop-dev.yml', 'utf8')
     const collectStep = workflow.match(
       /- name: Collect artifacts[\s\S]*?(?:\n\s{6}- name:|$)/,
@@ -262,6 +329,8 @@ describe('release desktop workflow', () => {
     }
     expect(buildJob).toContain('target_triple: aarch64-pc-windows-msvc')
     expect(buildJob).toContain('builder_args: --win nsis --arm64')
+    expect(buildJob).toContain('builder_args: --linux AppImage deb rpm --x64')
+    expect(buildJob).toContain('builder_args: --linux AppImage deb rpm --arm64')
     expect(buildJob).toContain('EchoFlow-Code-${APP_VERSION}-win-arm64.exe')
     expect(buildJob).toContain('EchoFlow-Code-${APP_VERSION}-win-arm64.exe.blockmap')
     expect(buildJob).not.toContain('Claude-Code-Haha')
@@ -291,6 +360,7 @@ describe('release desktop workflow', () => {
     expect(publishJob).toContain('artifacts/release-assets/**/*.exe')
     expect(publishJob).toContain('artifacts/release-assets/**/*.AppImage')
     expect(publishJob).toContain('artifacts/release-assets/**/*.deb')
+    expect(publishJob).toContain('artifacts/release-assets/**/*.rpm')
     expect(publishJob).toContain('artifacts/release-assets/**/*.blockmap')
     expect(publishJob).toContain('artifacts/update-metadata-standard/*.yml')
     expect(publishJob).toContain('desktop/scripts/install-macos-unsigned.sh')
@@ -340,8 +410,10 @@ describe('release desktop workflow', () => {
       `EchoFlow-Code-${version}-mac-x64.zip.blockmap`,
       `EchoFlow-Code-${version}-linux-x86_64.AppImage`,
       `EchoFlow-Code-${version}-linux-amd64.deb`,
+      `EchoFlow-Code-${version}-linux-x86_64.rpm`,
       `EchoFlow-Code-${version}-linux-arm64.AppImage`,
       `EchoFlow-Code-${version}-linux-arm64.deb`,
+      `EchoFlow-Code-${version}-linux-aarch64.rpm`,
       `EchoFlow-Code-${version}-win-x64.exe`,
       `EchoFlow-Code-${version}-win-x64.exe.blockmap`,
       `EchoFlow-Code-${version}-win-arm64.exe`,
@@ -371,6 +443,7 @@ describe('release desktop workflow', () => {
     expect(expectedReleaseAssets.filter((name) => name.endsWith('.zip')).length).toBe(2)
     expect(expectedReleaseAssets.filter((name) => name.endsWith('.AppImage')).length).toBe(2)
     expect(expectedReleaseAssets.filter((name) => name.endsWith('.deb')).length).toBe(2)
+    expect(expectedReleaseAssets.filter((name) => name.endsWith('.rpm')).length).toBe(2)
     expect(expectedReleaseAssets.filter((name) => name.endsWith('.exe')).length).toBe(2)
     expect(expectedReleaseAssets.some((name) => name.includes('-linux-') && name.endsWith('.blockmap'))).toBe(false)
     for (const platform of ['mac', 'linux', 'win']) {
@@ -395,8 +468,10 @@ describe('release desktop workflow', () => {
       'EchoFlow-Code-${APP_VERSION}-mac-x64.zip',
       'EchoFlow-Code-${APP_VERSION}-linux-x86_64.AppImage',
       'EchoFlow-Code-${APP_VERSION}-linux-amd64.deb',
+      'EchoFlow-Code-${APP_VERSION}-linux-x86_64.rpm',
       'EchoFlow-Code-${APP_VERSION}-linux-arm64.AppImage',
       'EchoFlow-Code-${APP_VERSION}-linux-arm64.deb',
+      'EchoFlow-Code-${APP_VERSION}-linux-aarch64.rpm',
       'EchoFlow-Code-${APP_VERSION}-win-x64.exe',
       'EchoFlow-Code-${APP_VERSION}-win-x64.exe.blockmap',
       'EchoFlow-Code-${APP_VERSION}-win-arm64.exe',
@@ -512,7 +587,7 @@ describe('release desktop workflow', () => {
     expect(installerHook).toContain('ReadEnvStr $2 APPDATA')
     expect(installerHook).toContain('ReadEnvStr $3 USERPROFILE')
     expect(installerHook).toContain('ReadEnvStr $6 CLAUDE_CONFIG_DIR')
-    expect(installerHook).toContain('ReadEnvStr $7 CC_HAHA_APP_PORTABLE_DIR')
+    expect(installerHook).toContain('ReadEnvStr $7 ECHOFLOW_APP_PORTABLE_DIR')
     expect(installerHook).toContain('No registered installation needs legacy data recovery')
     expect(installerHook).toContain('Var ccHahaPerUserInstallLocation')
     expect(installerHook).toContain('Var ccHahaPerMachineInstallLocation')
@@ -529,11 +604,12 @@ describe('release desktop workflow', () => {
     expect(recoveryHelper).toContain('function Assert-TreeManifestsEqual')
     expect(recoveryHelper).toContain('function Write-AppModeAtomically')
     expect(recoveryHelper).toContain('[IO.File]::Replace')
-    expect(recoveryHelper).toContain('GetFinalPathNameByHandle')
+    expect(recoveryHelper).not.toContain('Add-Type')
+    expect(recoveryHelper).toContain('function Assert-NoReparsePointInPath')
     expect(recoveryHelper).toContain('robocopy.exe')
     expect(recoveryHelper).not.toMatch(/\/XC|\/XN|\/XO/)
     expect(recoveryHelper).toContain('Multiple distinct legacy data sources')
-    expect(recoveryHelper).toContain('Active CLAUDE_CONFIG_DIR is managed outside Claude Code Haha')
+    expect(recoveryHelper).toContain('Active CLAUDE_CONFIG_DIR is managed outside EchoFlow Code')
     expect(recoveryHelper).toContain('Test-LexicalPathAtOrBelow')
     expect(recoveryHelper).toContain('-SharedInstallDirs @($PerMachineInstallDir)')
     expect(recoveryHelper).toContain("function Invoke-LegacyRecovery {\n  param(\n    [Parameter(Mandatory = $true)][AllowEmptyCollection()][AllowEmptyString()][string[]]$InstallDirs")
@@ -574,6 +650,22 @@ describe('release desktop workflow', () => {
     expect(installerSmoke).toContain('$Stage completed successfully.')
     expect(installerSmoke).toContain('Fresh install did not create the application executable')
     expect(installerSmoke).toContain('Reinstall removed the application executable')
+    expect(installerSmoke).toContain("'中文 安装目录\\EchoFlow Code'")
+    expect(installerSmoke).toContain('Invoke-InstalledApplicationSmoke')
+    expect(installerSmoke).toContain('ECHOFLOW_ELECTRON_WINDOW_SMOKE_LOG')
+    expect(installerSmoke).toContain('desktop-server-state.json')
+    expect(installerSmoke).toContain('"reason":"after-final-show"')
+    expect(installerSmoke).toContain('"http://127.0.0.1:$port/health"')
+    expect(installerSmoke).toContain('"http://127.0.0.1:$port/"')
+    expect(installerSmoke).toContain('Installed application Unicode-path smoke passed')
+
+    const compiledSidecarSmoke = readFileSync(
+      'desktop/scripts/build-sidecars.test.ts',
+      'utf8',
+    )
+    expect(compiledSidecarSmoke).toContain("'中文 安装目录'")
+    expect(compiledSidecarSmoke).toContain("'中文 用户目录'")
+    expect(compiledSidecarSmoke).toContain('copyFile(builtExecutable, executable)')
   })
 })
 

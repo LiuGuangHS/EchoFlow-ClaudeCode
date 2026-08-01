@@ -13,6 +13,7 @@ import { useSettingsStore } from '../../stores/settingsStore'
 import type { SavedProvider } from '../../types/provider'
 import type { RuntimeSelection } from '../../types/runtime'
 import type { ModelInfo, ReasoningEffortLevel } from '../../types/settings'
+import { useDismissable } from '@/hooks/useDismissable'
 import { useMobileViewport } from '../../hooks/useMobileViewport'
 import { isDesktopRuntime } from '../../lib/desktopRuntime'
 import { resolveDefaultRuntimeSelection } from '../../lib/runtimeSelection'
@@ -23,7 +24,7 @@ import {
   GROK_OFFICIAL_MODELS,
   GROK_OFFICIAL_PROVIDER_ID,
 } from '../../constants/grokOfficialProvider'
-import { MobileBottomSheet } from '../shared/MobileBottomSheet'
+import { MobileBottomSheet } from '@/components/ui/MobileBottomSheet'
 import { ReasoningEffortPopover } from './ReasoningEffortPopover'
 
 type ProviderChoice = {
@@ -41,6 +42,7 @@ type Props = {
   runtimeKey?: string
   disabled?: boolean
   compact?: boolean
+  fluid?: boolean
 }
 
 export type ModelSelectorHandle = {
@@ -73,6 +75,18 @@ function officialChoices(
     isDefault,
     models,
   }
+}
+
+function mergeOfficialModels(availableModels: ModelInfo[]): ModelInfo[] {
+  const merged = [...OFFICIAL_MODELS]
+  const knownIds = new Set(merged.map(model => model.id))
+  for (const model of availableModels) {
+    if (!knownIds.has(model.id)) {
+      knownIds.add(model.id)
+      merged.push(model)
+    }
+  }
+  return merged
 }
 
 function buildProviderModels(
@@ -120,7 +134,7 @@ function buildProviderChoices(
   grokOfficialLoggedIn: boolean,
 ): ProviderChoice[] {
   const claudeOfficialModels = activeId === null && availableModels.length > 0
-    ? availableModels
+    ? mergeOfficialModels(availableModels)
     : OFFICIAL_MODELS
   const openAIOfficialModels = activeId === OPENAI_OFFICIAL_PROVIDER_ID && availableModels.length > 0
     ? availableModels
@@ -171,6 +185,7 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
   runtimeKey,
   disabled = false,
   compact = false,
+  fluid = false,
 }: Props = {}, selectorRef) {
   const t = useTranslation()
   const isMobileBrowser = useMobileViewport() && !isDesktopRuntime()
@@ -251,28 +266,17 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
     open: openSelector,
   }), [openSelector])
 
-  useEffect(() => {
-    if (!open) return
-    const handleClick = (e: MouseEvent) => {
-      const target = e.target as Node
-      if (
-        ref.current &&
-        !ref.current.contains(target) &&
-        !dropdownRef.current?.contains(target)
-      ) {
-        setOpen(false)
-      }
-    }
-    const handleEsc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('mousedown', handleClick)
-    document.addEventListener('keydown', handleEsc)
-    return () => {
-      document.removeEventListener('mousedown', handleClick)
-      document.removeEventListener('keydown', handleEsc)
-    }
-  }, [open])
+  const closeSelector = useCallback(() => setOpen(false), [])
+
+  // `ref` is the trigger row; `dropdownRef` is the portalled panel (or the
+  // mobile sheet). `stopEscapePropagation` keeps one Escape from closing both
+  // this dropdown and a dialog it was opened inside.
+  useDismissable({
+    open,
+    refs: [ref, dropdownRef],
+    onDismiss: closeSelector,
+    stopEscapePropagation: true,
+  })
 
   const updateDropdownPosition = useCallback(() => {
     const anchor = ref.current
@@ -412,9 +416,9 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
 
   const dropdownContent = (
     <>
-      <div className={`overflow-y-auto ${isMobileBrowser ? 'p-1' : 'p-3'}`} style={{ maxHeight: isMobileBrowser ? undefined : dropdownPosition?.maxHeight }}>
+      <div className={`overflow-y-auto ${isMobileBrowser ? 'p-1' : 'p-1.5'}`} style={{ maxHeight: isMobileBrowser ? undefined : dropdownPosition?.maxHeight }}>
         {!isMobileBrowser && (
-          <div className="mb-2 px-1 text-[10px] font-bold uppercase tracking-widest text-[var(--color-outline)]">
+          <div className="mb-1 px-3 pt-1.5 text-[10px] font-bold uppercase tracking-widest text-[var(--color-text-tertiary)]">
             {t('model.configuration')}
           </div>
         )}
@@ -423,8 +427,8 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
           <div className="space-y-3">
             {providerChoices.map((choice) => (
               <div key={choice.providerId ?? 'official'} className="space-y-1.5">
-                <div className="flex items-center justify-between px-2 pt-1">
-                  <span className="truncate text-[11px] font-semibold tracking-[0.01em] text-[var(--color-text-secondary)]">
+                <div className="flex items-center justify-between gap-2 px-3 pt-1">
+                  <span className="truncate text-xs font-semibold text-[var(--color-text-tertiary)]">
                     {choice.providerName}
                   </span>
                   {choice.isDefault && (
@@ -459,33 +463,31 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
                           })
                         }}
                         className={`
-                          w-full rounded-lg border px-3 text-left transition-colors
-                          ${isMobileBrowser ? 'min-h-[56px] py-3' : 'py-2.5'}
+                          w-full rounded-[var(--radius-md)] border px-3 text-left transition-colors
+                          ${isMobileBrowser ? 'min-h-[56px] py-3' : 'py-2'}
                           ${isSelected
                             ? 'border-[var(--color-model-option-selected-border)] bg-[var(--color-model-option-selected-bg)]'
                             : 'border-transparent hover:bg-[var(--color-surface-hover)]'
                           }
                         `}
                       >
-                        <div className="flex items-start gap-3">
-                          <div className={`mt-0.5 flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full border-2 ${
-                            isSelected ? 'border-[var(--color-brand)]' : 'border-[var(--color-outline)]'
-                          }`}>
-                            {isSelected && (
-                              <div className="h-2 w-2 rounded-full bg-[var(--color-brand)]" />
-                            )}
-                          </div>
-
+                        <div className="flex items-center gap-3">
                           <div className="min-w-0 flex-1">
-                            <div className="truncate text-sm font-semibold text-[var(--color-text-primary)]">
+                            {/* Model ids are identifiers, so they sit in the
+                                mono face alongside paths and token counts. */}
+                            <div className="truncate font-mono text-[13px] font-medium text-[var(--color-text-primary)]">
                               {model.name}
                             </div>
                             {model.description && (
-                              <div className="mt-0.5 truncate pr-[6px] text-[10px] text-[var(--color-text-tertiary)]">
+                              <div className="mt-0.5 truncate pr-[6px] text-[11px] text-[var(--color-text-tertiary)]">
                                 {model.description}
                               </div>
                             )}
                           </div>
+
+                          {isSelected && (
+                            <span className="material-symbols-outlined flex-shrink-0 text-[16px] text-[var(--color-brand)]">check</span>
+                          )}
                         </div>
                       </button>
                     )
@@ -510,8 +512,8 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
                     setOpen(false)
                   }}
                   className={`
-                    w-full rounded-lg px-3 text-left transition-colors
-                    ${isMobileBrowser ? 'min-h-[56px] py-3' : 'py-2.5'}
+                    w-full rounded-[var(--radius-md)] px-3 text-left transition-colors
+                    ${isMobileBrowser ? 'min-h-[56px] py-3' : 'py-2'}
                     ${isSelected
                       ? 'border border-[var(--color-model-option-selected-border)] bg-[var(--color-model-option-selected-bg)]'
                       : 'hover:bg-[var(--color-surface-hover)]'
@@ -519,22 +521,18 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
                   `}
                 >
                   <div className="flex items-center gap-3">
-                    <div className={`flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full border-2 ${
-                      isSelected ? 'border-[var(--color-brand)]' : 'border-[var(--color-outline)]'
-                    }`}>
-                      {isSelected && (
-                        <div className="h-2 w-2 rounded-full bg-[var(--color-brand)]" />
-                      )}
-                    </div>
-
                     <div className="min-w-0 flex-1">
-                      <div className="text-sm font-semibold text-[var(--color-text-primary)]">{model.name}</div>
+                      <div className="truncate font-mono text-[13px] font-medium text-[var(--color-text-primary)]">{model.name}</div>
                       {model.description && (
-                        <div className="mt-0.5 truncate text-[10px] text-[var(--color-text-tertiary)]">
+                        <div className="mt-0.5 truncate text-[11px] text-[var(--color-text-tertiary)]">
                           {model.description}
                         </div>
                       )}
                     </div>
+
+                    {isSelected && (
+                      <span className="material-symbols-outlined flex-shrink-0 text-[16px] text-[var(--color-brand)]">check</span>
+                    )}
                   </div>
                 </button>
               )
@@ -564,7 +562,7 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
       <div
         ref={dropdownRef}
         data-testid="model-selector-dropdown"
-        className="fixed z-[80] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] shadow-[var(--shadow-dropdown)]"
+        className="fixed z-[var(--z-dropdown)] rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] shadow-[var(--shadow-overlay)]"
         style={{
           top: dropdownPosition.top,
           bottom: dropdownPosition.bottom,
@@ -579,8 +577,18 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
     : null
 
   return (
-    <div className="relative min-w-0 shrink-0">
-      <div ref={ref} className={`flex min-w-0 items-stretch rounded-full bg-[var(--color-surface-container-low)] transition-colors hover:bg-[var(--color-surface-hover)] ${disabled ? 'opacity-50' : ''}`}>
+    <div
+      data-testid="model-selector-shell"
+      className={`relative min-w-0 ${fluid ? 'flex-1' : 'shrink-0'}`}
+    >
+      {/* No fill at rest: on the composer row the model name is type, not a
+          control chip — the handoff reserves filled pills for the permission
+          and context chips and gives this one a hover ground only. */}
+      {/* On the phone composer this sits between two 44px buttons and opens a
+          bottom sheet, so both halves stretch to the same 44px touch target
+          `PermissionModeSelector` uses; `compact` alone would also shrink the
+          desktop composer, which narrows for the right panel, not for touch. */}
+      <div ref={ref} className={`flex min-w-0 items-stretch rounded-[var(--radius-md)] transition-colors hover:bg-[var(--color-surface-hover)] ${isMobileBrowser ? 'min-h-11' : ''} ${fluid ? 'w-full' : ''} ${disabled ? 'opacity-50' : ''}`}>
         <button
           onClick={() => {
             if (disabled) return
@@ -590,11 +598,15 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
           disabled={disabled}
           aria-label={buttonProviderLabel ? `${buttonModelLabel}, ${buttonProviderLabel}` : undefined}
           title={buttonProviderLabel ? `${buttonProviderLabel} · ${buttonModelLabel}` : undefined}
-          className={`flex min-w-0 items-center gap-2 rounded-l-full text-xs font-medium text-[var(--color-text-secondary)] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] disabled:cursor-not-allowed ${
-            compact ? 'max-w-[112px] py-1.5 pl-2.5 pr-1' : 'max-w-[220px] py-1.5 pl-3 pr-1'
+          // `focus-visible:rounded-*` restores the other pair of corners while
+          // focused. The ring traces `border-radius`, so on the half-rounded
+          // halves of this segmented control it otherwise drew a box that was
+          // rounded down one side and square down the other.
+          className={`flex min-w-0 items-center gap-2 rounded-l-[var(--radius-md)] text-xs font-medium text-[var(--color-text-secondary)] outline-none transition-colors focus-visible:rounded-[var(--radius-md)] focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)] disabled:cursor-not-allowed ${
+            compact ? `${fluid ? 'flex-1' : ''} max-w-[112px] py-1.5 pl-2.5 pr-1` : 'max-w-[220px] py-2 pl-2.5 pr-1'
           }`}
         >
-          <span className={`${compact ? 'text-xs' : 'text-sm'} min-w-0 flex-1 truncate font-semibold text-[var(--color-text-primary)]`}>
+          <span className={`${compact ? 'text-xs' : 'text-[15px]'} min-w-0 flex-1 truncate font-semibold text-[var(--color-text-primary)]`}>
             {buttonModelLabel}
           </span>
           {!canEditRuntimeEffort && !compact && buttonProviderLabel && (
@@ -602,7 +614,7 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
               {buttonProviderLabel}
             </span>
           )}
-          <span className="material-symbols-outlined flex-shrink-0 text-[12px]">expand_more</span>
+          <span className="material-symbols-outlined flex-shrink-0 text-[12px] text-[var(--color-text-tertiary)]">expand_more</span>
         </button>
 
         {canEditRuntimeEffort && selectedRuntimeEffort && runtimeEffortOptions.length > 0 && (
@@ -617,7 +629,7 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
               setOpen(false)
               setEffortOpen(!effortOpen)
             }}
-            className={`rounded-r-full pr-3 text-[var(--color-text-tertiary)] outline-none transition-colors hover:text-[var(--color-text-secondary)] focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] disabled:cursor-not-allowed ${compact ? 'pl-1 text-[10px]' : 'pl-1.5 text-xs'}`}
+            className={`rounded-r-[var(--radius-md)] pr-2.5 text-[var(--color-text-secondary)] outline-none transition-colors hover:text-[var(--color-text-primary)] focus-visible:rounded-[var(--radius-md)] focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)] disabled:cursor-not-allowed ${compact ? 'pl-1 text-[10px]' : 'pl-1.5 text-[13.5px]'}`}
           >
             {effortLabels[selectedRuntimeEffort]}
           </button>

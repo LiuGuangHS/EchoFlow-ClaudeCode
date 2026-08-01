@@ -31,11 +31,11 @@ describe('resolveSidecarInvocation', () => {
     })
   })
 
-  it('keeps legacy claude-haha invocations compatible with cli mode', () => {
+  it('keeps legacy echoflow-code invocations compatible with cli mode', () => {
     expect(
       resolveSidecarInvocation(
         ['plugin', 'install', 'demo'],
-        '/Users/demo/.local/bin/claude-haha',
+        '/Users/demo/.local/bin/echoflow-code',
         null,
       ),
     ).toEqual({

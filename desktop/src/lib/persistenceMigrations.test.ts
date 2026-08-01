@@ -106,6 +106,73 @@ describe('desktop persistence migrations', () => {
     expect(window.localStorage.getItem('echoflow-code-theme')).toBe('white')
   })
 
+  test('renames the retired light theme to warm-classic instead of resetting it', () => {
+    // `light` was the warm workspace, labelled 经典暖色 in the picker. Falling
+    // through to the enum check would drop it and silently reset those
+    // installs to pure white, which reads as the app forgetting the setting.
+    window.localStorage.setItem('echoflow-code-theme', 'light')
+
+    const report = runDesktopPersistenceMigrations()
+
+    expect(report.migratedKeys).toContain('echoflow-code-theme')
+    expect(window.localStorage.getItem('echoflow-code-theme')).toBe('warm-classic')
+  })
+
+  test('applies the same rename to the light half of follow-the-system', () => {
+    // The preference holds a theme name too, so a rename that only reached the
+    // applied theme would silently reset which palette daytime returns to.
+    window.localStorage.setItem('echoflow-code-light-theme', 'light')
+
+    const report = runDesktopPersistenceMigrations()
+
+    expect(report.migratedKeys).toContain('echoflow-code-light-theme')
+    expect(window.localStorage.getItem('echoflow-code-light-theme')).toBe('warm-classic')
+  })
+
+  test('preserves every palette introduced by the redesign', () => {
+    for (const theme of ['white', 'paper', 'warm-classic', 'celadon', 'dark', 'ink-blue']) {
+      window.localStorage.setItem('echoflow-code-theme', theme)
+
+      const report = runDesktopPersistenceMigrations()
+
+      expect(report.migratedKeys, `${theme} should survive startup migration`).not.toContain('echoflow-code-theme')
+      expect(window.localStorage.getItem('echoflow-code-theme')).toBe(theme)
+    }
+  })
+
+  test('drops a malformed follow-the-system flag rather than reading it as opted in', () => {
+    // Anything but 0/1 has to go: an unset flag is how a fresh install is
+    // recognised, and a junk value would make that inference unpredictable.
+    window.localStorage.setItem('echoflow-code-follow-system-theme', 'yes')
+    // A dark palette is not a valid light half, and vice versa.
+    window.localStorage.setItem('echoflow-code-light-theme', 'ink-blue')
+    window.localStorage.setItem('echoflow-code-dark-theme', 'celadon')
+
+    const report = runDesktopPersistenceMigrations()
+
+    expect(report.migratedKeys).toContain('echoflow-code-follow-system-theme')
+    expect(report.migratedKeys).toContain('echoflow-code-light-theme')
+    expect(report.migratedKeys).toContain('echoflow-code-dark-theme')
+    expect(window.localStorage.getItem('echoflow-code-follow-system-theme')).toBeNull()
+    expect(window.localStorage.getItem('echoflow-code-light-theme')).toBeNull()
+    expect(window.localStorage.getItem('echoflow-code-dark-theme')).toBeNull()
+  })
+
+  test('preserves a valid follow-the-system flag and both ground preferences', () => {
+    window.localStorage.setItem('echoflow-code-follow-system-theme', '1')
+    window.localStorage.setItem('echoflow-code-light-theme', 'celadon')
+    window.localStorage.setItem('echoflow-code-dark-theme', 'ink-blue')
+
+    const report = runDesktopPersistenceMigrations()
+
+    expect(report.migratedKeys).not.toContain('echoflow-code-follow-system-theme')
+    expect(report.migratedKeys).not.toContain('echoflow-code-light-theme')
+    expect(report.migratedKeys).not.toContain('echoflow-code-dark-theme')
+    expect(window.localStorage.getItem('echoflow-code-follow-system-theme')).toBe('1')
+    expect(window.localStorage.getItem('echoflow-code-light-theme')).toBe('celadon')
+    expect(window.localStorage.getItem('echoflow-code-dark-theme')).toBe('ink-blue')
+  })
+
   test('preserves every supported locale during startup migration', () => {
     for (const locale of ['en', 'zh', 'zh-TW', 'jp', 'kr']) {
       window.localStorage.setItem('echoflow-code-locale', locale)
@@ -133,15 +200,15 @@ describe('desktop persistence migrations', () => {
     expect(window.localStorage.getItem('echoflow-code-app-zoom')).toBeNull()
   })
 
-  test('does not auto-migrate legacy cc-haha UI zoom storage', () => {
-    window.localStorage.setItem('cc-haha-ui-zoom', '1.25')
+  test('does not auto-migrate legacy echoflow-code UI zoom storage', () => {
+    window.localStorage.setItem('echoflow-code-ui-zoom', '1.25')
 
     const report = runDesktopPersistenceMigrations()
 
-    expect(report.migratedKeys).not.toContain('cc-haha-ui-zoom')
+    expect(report.migratedKeys).not.toContain('echoflow-code-ui-zoom')
     expect(report.migratedKeys).not.toContain('echoflow-code-app-zoom')
     expect(window.localStorage.getItem('echoflow-code-app-zoom')).toBeNull()
-    expect(window.localStorage.getItem('cc-haha-ui-zoom')).toBe('1.25')
+    expect(window.localStorage.getItem('echoflow-code-ui-zoom')).toBe('1.25')
   })
 
   test('does not throw if schema version persistence is blocked', () => {
