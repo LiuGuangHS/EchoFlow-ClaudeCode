@@ -15,7 +15,7 @@
   },
   {
     "id": "echoflowai",
-    "name": "清云（EchoFlow）API",
+    "name": "清云 API",
     "baseUrl": "https://api.echoflow.cn",
     "apiFormat": "anthropic",
     "defaultModels": {

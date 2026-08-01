@@ -7,7 +7,7 @@ import {
   getOpenAICodexContextWindowForModel,
 } from '../../services/openaiAuth/models.js'
 import { MODEL_CONTEXT_WINDOWS_ENV_KEY } from '../../utils/model/modelContextWindows.js'
-import { getHahaOpenAIOAuthFilePath } from './hahaOpenAIOAuthService.js'
+import { getEchoFlowOpenAIOAuthFilePath } from './echoFlowOpenAIOAuthService.js'
 import {
   OPENAI_OFFICIAL_PROVIDER_ID,
   type SavedProvider,
@@ -59,7 +59,7 @@ export function buildOpenAIOfficialRuntimeEnv(): Record<string, string> {
   const modelContextWindows = OPENAI_OFFICIAL_PROVIDER.modelContextWindows ?? {}
   return {
     [OPENAI_OAUTH_PROVIDER_ENV_KEY]: '1',
-    [OPENAI_CODEX_OAUTH_FILE_ENV_KEY]: getHahaOpenAIOAuthFilePath(),
+    [OPENAI_CODEX_OAUTH_FILE_ENV_KEY]: getEchoFlowOpenAIOAuthFilePath(),
     ...(Object.keys(modelContextWindows).length > 0 && {
       [MODEL_CONTEXT_WINDOWS_ENV_KEY]: JSON.stringify(modelContextWindows),
     }),

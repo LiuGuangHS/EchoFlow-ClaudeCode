@@ -513,7 +513,7 @@ describe('WorkspacePanel', () => {
         [sessionId]: {
           state: 'ok',
           workDir: '/repo',
-          repoName: 'claude-code-haha',
+          repoName: 'echoflow-code',
           branch: 'main',
           isGitRepo: true,
           changedFiles: [
@@ -532,7 +532,7 @@ describe('WorkspacePanel', () => {
     expect(navigatorHeader.tagName).toBe('HEADER')
     expect(navigatorHeader.textContent).toContain('Changed files')
     expect(view.getByRole('button', { name: /Refresh/ })).toBeTruthy()
-    expect(view.queryByText('claude-code-haha')).toBeNull()
+    expect(view.queryByText('echoflow-code')).toBeNull()
     expect(view.queryByText('main')).toBeNull()
 
     const filter = view.getByPlaceholderText('Filter changed files...')

@@ -1,34 +1,29 @@
 import { api } from './client'
 
-export interface EchoFlowModelOption {
-  id: string
-  name: string
-  type: 'chat' | 'image' | 'embedding' | 'other'
-  owned_by?: string
-}
-
 export interface EchoFlowTokenOption {
   id: string
   name: string
-  key: string
+  keyPreview: string
   status?: string
   remainQuota?: number
   unlimitedQuota?: boolean
 }
 
-export type EchoFlowValidationError = 'missing_token' | 'token_invalid' | 'service_unavailable' | 'invalid_response'
-
-export interface EchoFlowValidationResult {
-  valid: boolean
+export interface EchoFlowAccount {
+  userId: string
   balance?: number
   userGroup?: string
   username?: string
-  models?: EchoFlowModelOption[]
   tokens?: EchoFlowTokenOption[]
-  error?: EchoFlowValidationError
+  refreshedAt?: number
 }
 
 export const echoflowApi = {
-  validateManagementToken: (userId: string, managementToken: string) =>
-    api.post<EchoFlowValidationResult>('/api/echoflow/validate-management-token', { userId, managementToken }),
+  getAccount: () => api.get<{ account: EchoFlowAccount | null }>('/api/echoflow'),
+  bindAccount: (userId: string, managementToken: string) =>
+    api.post<{ account: EchoFlowAccount }>('/api/echoflow/account', { userId, managementToken }),
+  refreshAccount: () => api.put<{ account: EchoFlowAccount }>('/api/echoflow/account', {}),
+  selectToken: (tokenId: string, providerId?: string) =>
+    api.post<{ provider: { id: string } }>('/api/echoflow/select-token', { tokenId, ...(providerId ? { providerId } : {}) }),
+  disconnectAccount: () => api.delete<{ ok: true }>('/api/echoflow/account'),
 }

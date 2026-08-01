@@ -6,6 +6,7 @@ import { getEchoFlowConfigDir, getEchoFlowInternalDir, ensureEchoFlowConfigRoot 
 import { isOpenAIOfficialProviderId } from './openaiOfficialProvider.js'
 import { isGrokOfficialProviderId } from './grokOfficialProvider.js'
 import { BUILT_IN_PROVIDER_IDS } from '../types/provider.js'
+import { EchoFlowApiService } from './echoflowApiService.js'
 
 export const CURRENT_PROVIDER_INDEX_SCHEMA_VERSION = 2
 
@@ -185,6 +186,42 @@ function migrateProvidersIndex(value: unknown): JsonObject {
     activeId,
     providers,
     providerOrder: normalizeProviderOrder(rawProviderOrder, providers),
+  }
+}
+
+async function migrateLegacyEchoFlowAccount(
+  echoFlowDir: string,
+  report: MigrationReport,
+): Promise<void> {
+  const providersPath = path.join(echoFlowDir, 'providers.json')
+  try {
+    const providers = await readJsonFile(providersPath)
+    if (providers.missing || !isRecord(providers.value) || !Array.isArray(providers.value.providers)) return
+
+    const management = providers.value.providers
+      .map((provider) => isRecord(provider) ? provider.echoflowManagement : undefined)
+      .find((value): value is { userId: string; managementToken: string } =>
+        isRecord(value) && typeof value.userId === 'string' && typeof value.managementToken === 'string',
+      )
+    if (!management) return
+
+    const migrated = await new EchoFlowApiService().migrateLegacyAccount(
+      management.userId,
+      management.managementToken,
+    )
+    const sanitizedProviders = providers.value.providers.map((provider) => {
+      if (!isRecord(provider)) return provider
+      const { echoflowManagement: _management, echoflowToken: _token, ...sanitized } = provider
+      return sanitized
+    })
+
+    await backupFile(providersPath, 'bak-before-migration')
+    await writeJsonFile(providersPath, { ...providers.value, providers: sanitizedProviders })
+    if (migrated) report.migratedEntries.push('providers.json -> echoflow/qingyun-account.json')
+    report.migratedEntries.push('echoflow/providers.json')
+  } catch (error) {
+    if (error instanceof SyntaxError) return
+    report.failures.push(`qingyun account: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 
@@ -375,6 +412,7 @@ async function runPersistentStorageMigrations(configDir: string): Promise<Migrat
   await ensureEchoFlowConfigRoot(configDir)
 
   await migrateLegacyRootProviders(configDir, echoFlowDir, report)
+  await migrateLegacyEchoFlowAccount(echoFlowDir, report)
 
   await migrateJsonEntry(
     path.join(echoFlowDir, 'providers.json'),

@@ -122,11 +122,11 @@ const PROJECT_PINNED_STORAGE_KEY = 'echoflow-code-sidebar-pinned-projects'
 const PROJECT_HIDDEN_STORAGE_KEY = 'echoflow-code-sidebar-hidden-projects'
 const PROJECT_ORGANIZATION_STORAGE_KEY = 'echoflow-code-sidebar-project-organization'
 const PROJECT_SORT_STORAGE_KEY = 'echoflow-code-sidebar-project-sort'
-const LEGACY_PROJECT_ORDER_STORAGE_KEY = 'echoflow-code-sidebar-project-order'
-const LEGACY_PROJECT_PINNED_STORAGE_KEY = 'echoflow-code-sidebar-pinned-projects'
-const LEGACY_PROJECT_HIDDEN_STORAGE_KEY = 'echoflow-code-sidebar-hidden-projects'
-const LEGACY_PROJECT_ORGANIZATION_STORAGE_KEY = 'echoflow-code-sidebar-project-organization'
-const LEGACY_PROJECT_SORT_STORAGE_KEY = 'echoflow-code-sidebar-project-sort'
+const LEGACY_PROJECT_ORDER_STORAGE_KEY = 'cc-haha-sidebar-project-order'
+const LEGACY_PROJECT_PINNED_STORAGE_KEY = 'cc-haha-sidebar-pinned-projects'
+const LEGACY_PROJECT_HIDDEN_STORAGE_KEY = 'cc-haha-sidebar-hidden-projects'
+const LEGACY_PROJECT_ORGANIZATION_STORAGE_KEY = 'cc-haha-sidebar-project-organization'
+const LEGACY_PROJECT_SORT_STORAGE_KEY = 'cc-haha-sidebar-project-sort'
 
 function makeSession(
   id: string,
@@ -315,7 +315,7 @@ describe('Sidebar', () => {
 
     const region = screen.getByTestId('sidebar-title-region')
 
-    expect(region).toHaveTextContent('echoflow-code')
+    expect(region).toHaveTextContent('EchoFlow Code')
     expect(region).not.toHaveTextContent('Claude Code')
   })
 
@@ -1258,7 +1258,7 @@ describe('Sidebar', () => {
 
     // Scope to the wordmark's own row — the GitHub link in the same header is
     // also an svg and would answer a looser query.
-    const brandRow = () => screen.getByText('haha').closest('div')
+    const brandRow = () => screen.getByText('EchoFlow').closest('div')
 
     // Expanded, the name carries the brand and the mark beside it is clutter.
     expect(brandRow()?.querySelector('svg')).toBeNull()
@@ -1269,7 +1269,7 @@ describe('Sidebar', () => {
 
     // Collapsed, the copy is width-clamped to zero, so the mark is the only
     // thing left to identify the app.
-    expect(brandRow()?.querySelector('svg')).not.toBeNull()
+    expect(screen.getByTestId('sidebar-title-region').querySelector('svg')).not.toBeNull()
   })
 
   it('renders search controls without the removed embedded project filter', () => {

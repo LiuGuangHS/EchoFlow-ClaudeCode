@@ -261,7 +261,7 @@ describe('Electron terminal service', () => {
     prepareNodePtyRuntime(source, cache)
 
     const cachedEntry = path.join(cache, 'index.js')
-    execFileSync('/usr/bin/xattr', ['-w', 'com.apple.quarantine', '0381;00000000;Chrome;CC-HAHA-TEST', cachedEntry])
+    execFileSync('/usr/bin/xattr', ['-w', 'com.apple.quarantine', '0381;00000000;Chrome;ECHOFLOW-TEST', cachedEntry])
     execFileSync('/usr/bin/xattr', ['-p', 'com.apple.quarantine', cachedEntry], { stdio: 'ignore' })
     fs.chmodSync(cachedEntry, 0o500)
 

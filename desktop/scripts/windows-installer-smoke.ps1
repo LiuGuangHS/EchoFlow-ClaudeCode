@@ -106,7 +106,7 @@ function Test-IsProcessElevated {
 }
 
 # The exact image names installer.nsh falls back to when PowerShell is
-# unavailable (see CcHahaFindInstallProcess's findstr list). Without a CLR the
+# unavailable (see EchoFlowFindInstallProcess's findstr list). Without a CLR the
 # installer cannot resolve paths, so it matches on these names alone and any
 # process carrying one -- whoever started it -- reads as "the app is still
 # running". Keep this in sync with installer.nsh.

@@ -2,18 +2,18 @@
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-horizontal-dark.png">
-    <img src="docs/images/logo-horizontal.png" alt="EchoFlow Code" width="480">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-horizontal-dark.svg">
+    <img src="docs/images/logo-horizontal.svg" alt="EchoFlow Code" width="480">
   </picture>
 </p>
 
 <div align="center">
 
-[![GitHub Stars](https://img.shields.io/github/stars/NanmiCoder/cc-haha?style=social)](https://github.com/NanmiCoder/cc-haha/stargazers)
-[![GitHub Forks](https://img.shields.io/github/forks/NanmiCoder/cc-haha?style=social)](https://github.com/NanmiCoder/cc-haha/network/members)
-[![GitHub Issues](https://img.shields.io/github/issues/NanmiCoder/cc-haha)](https://github.com/NanmiCoder/cc-haha/issues)
-[![GitHub Pull Requests](https://img.shields.io/github/issues-pr/NanmiCoder/cc-haha)](https://github.com/NanmiCoder/cc-haha/pulls)
-[![License](https://img.shields.io/badge/License-MIT-blue)](https://github.com/NanmiCoder/cc-haha/blob/main/LICENSE)
+[![GitHub Stars](https://img.shields.io/github/stars/LiuGuangHS/EchoFlow-ClaudeCode?style=social)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/stargazers)
+[![GitHub Forks](https://img.shields.io/github/forks/LiuGuangHS/EchoFlow-ClaudeCode?style=social)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/network/members)
+[![GitHub Issues](https://img.shields.io/github/issues/LiuGuangHS/EchoFlow-ClaudeCode)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/issues)
+[![GitHub Pull Requests](https://img.shields.io/github/issues-pr/LiuGuangHS/EchoFlow-ClaudeCode)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/pulls)
+[![License](https://img.shields.io/badge/License-MIT-blue)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/LICENSE)
 [![中文](https://img.shields.io/badge/🇨🇳_简体中文-当前-blue)](README.zh-CN.md)
 [![English](https://img.shields.io/badge/🇺🇸_English-Available-green)](README.md)
 [![Docs](https://img.shields.io/badge/📖_文档站点-Visit-FF7A00)](https://code.echoflow.cn)
@@ -37,7 +37,7 @@ EchoFlow Code 的桌面端把会话、多项目、分支 / Worktree、代码改�
 v0.5.0 做了一次全量 UI 重设计（「纸·墨·印」），六套配色可跟随系统深浅色切换。下面六张都拍自 v0.5.0 真机。
 
 <p align="center">
-  <a href="https://github.com/NanmiCoder/cc-haha/releases"><img src="https://img.shields.io/badge/⬇_下载桌面端-macOS_%7C_Windows_%7C_Linux-FF7A00?style=for-the-badge" alt="下载桌面端"></a>
+  <a href="https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases"><img src="https://img.shields.io/badge/⬇_下载桌面端-macOS_%7C_Windows_%7C_Linux-FF7A00?style=for-the-badge" alt="下载桌面端"></a>
   &nbsp;
   <a href="docs/start/install.md"><img src="https://img.shields.io/badge/📖_安装指南-Guide-gray?style=for-the-badge" alt="安装指南"></a>
 </p>
@@ -59,7 +59,7 @@ v0.5.0 做了一次全量 UI 重设计（「纸·墨·印」），六套配色�
 
 ## 安装桌面端
 
-1. 前往 [Releases](https://github.com/NanmiCoder/cc-haha/releases) 下载 macOS / Windows / Linux 桌面端安装包。
+1. 前往 [Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases) 下载 macOS / Windows / Linux 桌面端安装包。
 2. 首次启动后，在桌面端设置里配置模型提供商、API Key 和默认模型。
 3. 正式 macOS Release 需要经过签名和公证；如果安装的是 draft/unsigned 临时包，首次打开可能仍需手动放行。Windows 未签名安装包可能出现 SmartScreen 提示，点「更多信息」→「仍要运行」即可。详见 [桌面端安装指南](docs/start/install.md)。
 
@@ -142,7 +142,7 @@ cp .env.example .env
 
 ## 用户交流群
 
-使用过程中有问题、想反馈 Bug，或者想看看别人怎么用，欢迎扫码加入 echoflow-code 飞书用户群。也可以直接来 [Issues](https://github.com/NanmiCoder/cc-haha/issues) 提问。
+使用过程中有问题、想反馈 Bug，或者想看看别人怎么用，欢迎扫码加入 echoflow-code 飞书用户群。也可以直接来 [Issues](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/issues) 提问。
 
 <p align="center">
   <img src="docs/images/community/feishu-group-qr.png" width="300" alt="echoflow-code 飞书用户群二维码">
@@ -171,6 +171,8 @@ cp .env.example .env
 - [Electron](https://github.com/electron/electron)：跨端桌面应用能力与工程实践。
 - [cc-switch](https://github.com/farion1231/cc-switch)：模型供应商配置能力参考。
 - [LINUX DO](https://linux.do/)：新的理想型开发者社区。
+- [NanmiCoder/cc-haha](https://github.com/NanmiCoder/cc-haha)：上游原始项目，为 EchoFlow Code 的持续二开迭代奠定基础。
+- [LiuGuangHS/EchoFlow-ClaudeCode](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode)：上游原始项目，为 EchoFlow Code 的持续二开迭代奠定基础。
 
 ---
 
@@ -178,10 +180,10 @@ cp .env.example .env
 
 如果这个项目对你有帮助，欢迎点一个 ⭐ Star，让更多人发现 EchoFlow Code。
 
-<a href="https://www.star-history.com/#NanmiCoder/cc-haha&Date">
+<a href="https://www.star-history.com/#LiuGuangHS/EchoFlow-ClaudeCode&Date">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=NanmiCoder/cc-haha&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=NanmiCoder/cc-haha&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=NanmiCoder/cc-haha&type=Date" />
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=LiuGuangHS/EchoFlow-ClaudeCode&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=LiuGuangHS/EchoFlow-ClaudeCode&type=Date" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=LiuGuangHS/EchoFlow-ClaudeCode&type=Date" />
   </picture>
 </a>

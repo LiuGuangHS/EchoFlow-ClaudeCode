@@ -11,7 +11,7 @@ import {
   GROK_OFFICIAL_PROVIDER_ID,
   type SavedProvider,
 } from '../types/provider.js'
-import { getHahaGrokOAuthFilePath } from './hahaGrokOAuthService.js'
+import { getEchoFlowGrokOAuthFilePath } from './echoFlowGrokOAuthService.js'
 
 export { GROK_OFFICIAL_PROVIDER_ID, GROK_OAUTH_FILE_ENV_KEY }
 export const GROK_OFFICIAL_PROVIDER_NAME = 'Grok Official'
@@ -48,7 +48,7 @@ export const GROK_OFFICIAL_PROVIDER: SavedProvider = {
 export function buildGrokOfficialRuntimeEnv(): Record<string, string> {
   return {
     [GROK_OAUTH_PROVIDER_ENV_KEY]: '1',
-    [GROK_OAUTH_FILE_ENV_KEY]: getHahaGrokOAuthFilePath(),
+    [GROK_OAUTH_FILE_ENV_KEY]: getEchoFlowGrokOAuthFilePath(),
     [MODEL_CONTEXT_WINDOWS_ENV_KEY]: JSON.stringify(modelContextWindows),
     ANTHROPIC_MODEL: GROK_DEFAULT_MAIN_MODEL,
     ANTHROPIC_DEFAULT_HAIKU_MODEL: GROK_DEFAULT_HAIKU_MODEL,

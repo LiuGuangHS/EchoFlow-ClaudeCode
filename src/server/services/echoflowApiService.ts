@@ -1,3 +1,8 @@
+import * as fs from 'fs/promises'
+import * as path from 'path'
+import { randomBytes } from 'node:crypto'
+import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
+
 export type EchoFlowApiErrorCode = 'token_invalid' | 'service_unavailable' | 'invalid_response'
 
 export class EchoFlowApiError extends Error {
@@ -16,13 +21,6 @@ export interface EchoFlowUserInfo {
   username: string
 }
 
-export interface EchoFlowModelOption {
-  id: string
-  name: string
-  type: 'chat' | 'image' | 'embedding' | 'other'
-  owned_by?: string
-}
-
 export interface EchoFlowTokenOption {
   id: string
   name: string
@@ -32,8 +30,73 @@ export interface EchoFlowTokenOption {
   unlimitedQuota?: boolean
 }
 
+export type EchoFlowTokenSummary = Omit<EchoFlowTokenOption, 'key'> & {
+  keyPreview: string
+}
+
+export type EchoFlowAccount = {
+  userId: string
+  balance?: number
+  userGroup?: string
+  username?: string
+  tokens?: EchoFlowTokenSummary[]
+  refreshedAt?: number
+}
+
+type StoredEchoFlowAccount = {
+  userId: string
+  managementToken: string
+  balance?: number
+  userGroup?: string
+  username?: string
+  tokens?: EchoFlowTokenOption[]
+  refreshedAt?: number
+}
+
 export class EchoFlowApiService {
   constructor(private baseUrl = 'https://api.echoflow.cn') {}
+
+  async getAccount(): Promise<EchoFlowAccount | null> {
+    const account = await this.readAccount()
+    return account ? toPublicAccount(account) : null
+  }
+
+  async migrateLegacyAccount(userId: string, managementToken: string): Promise<boolean> {
+    if (await this.readAccount()) return false
+    await this.writeAccount({ userId, managementToken })
+    return true
+  }
+
+  async bindAccount(userId: string, managementToken: string): Promise<EchoFlowAccount> {
+    const account = await this.refreshWithCredentials(userId, managementToken)
+    const stored = { ...account, managementToken }
+    await this.writeAccount(stored)
+    return toPublicAccount(stored)
+  }
+
+  async refreshAccount(): Promise<EchoFlowAccount> {
+    const account = await this.readAccount()
+    if (!account) throw new EchoFlowApiError('token_invalid')
+    const refreshed = await this.refreshWithCredentials(account.userId, account.managementToken)
+    const stored = { ...refreshed, managementToken: account.managementToken }
+    await this.writeAccount(stored)
+    return toPublicAccount(stored)
+  }
+
+  async selectAccountToken(id: string): Promise<EchoFlowTokenOption> {
+    const account = await this.readAccount()
+    const token = account?.tokens?.find((candidate) => candidate.id === id)
+    if (!token) throw new EchoFlowApiError('token_invalid')
+    return token
+  }
+
+  async disconnectAccount(): Promise<void> {
+    try {
+      await fs.unlink(this.getAccountPath())
+    } catch (error) {
+      if (errnoCode(error) !== 'ENOENT') throw error
+    }
+  }
 
   async validateManagementToken(userId: string, token: string): Promise<EchoFlowUserInfo> {
     const data = await this.fetchManagementApi<{ success?: boolean; message?: string; data?: { quota?: number; group?: string; username?: string } }>(
@@ -46,18 +109,17 @@ export class EchoFlowApiService {
       throw new EchoFlowApiError(isAuthFailure(data.message) ? 'token_invalid' : 'service_unavailable')
     }
 
-    const d = data.data ?? {}
+    const account = data.data ?? {}
     return {
-      balance: typeof d.quota === 'number' ? d.quota / 500000 : 0,
-      userGroup: d.group ?? 'default',
-      username: d.username ?? '',
+      balance: typeof account.quota === 'number' ? account.quota / 500000 : 0,
+      userGroup: account.group ?? 'default',
+      username: account.username ?? '',
     }
   }
 
   async listTokens(userId: string, token: string): Promise<EchoFlowTokenOption[]> {
     const data = await this.fetchManagementApi<{
       success?: boolean
-      message?: string
       data?: unknown[] | { items?: unknown[]; tokens?: unknown[]; records?: unknown[] }
     }>('/api/token/?p=0&size=100', userId, token)
 
@@ -75,22 +137,50 @@ export class EchoFlowApiService {
     return rawList.map(normalizeToken).filter((item): item is EchoFlowTokenOption => !!item)
   }
 
-  async listModels(token: string): Promise<EchoFlowModelOption[]> {
-    const res = await fetch(`${this.baseUrl}/v1/models`, {
-      headers: { Authorization: `Bearer ${token}` },
-    }).catch(() => null)
-    if (!res?.ok) return []
-    const data = await res.json().catch(() => null) as { data?: Array<{ id: string; owned_by?: string }> } | null
-    return (data?.data ?? []).map((m) => ({
-      id: m.id,
-      name: m.id,
-      type: inferModelType(m.id),
-      owned_by: m.owned_by,
-    }))
+  private async refreshWithCredentials(userId: string, managementToken: string): Promise<EchoFlowAccount> {
+    const trimmedUserId = userId.trim()
+    const trimmedToken = managementToken.trim()
+    if (!trimmedUserId || !trimmedToken) throw new EchoFlowApiError('token_invalid')
+
+    const user = await this.validateManagementToken(trimmedUserId, trimmedToken)
+    const tokens = await this.listTokens(trimmedUserId, trimmedToken)
+    return {
+      ...user,
+      userId: trimmedUserId,
+      tokens,
+      refreshedAt: Date.now(),
+    }
   }
 
-  private async fetchManagementApi<T>(path: string, userId: string, token: string): Promise<T> {
-    const res = await fetch(`${this.baseUrl}${path}`, {
+  private getAccountPath(): string {
+    return path.join(getEchoFlowInternalDir(getEchoFlowConfigDir()), 'qingyun-account.json')
+  }
+
+  private async readAccount(): Promise<StoredEchoFlowAccount | null> {
+    try {
+      const parsed = JSON.parse(await fs.readFile(this.getAccountPath(), 'utf-8')) as unknown
+      return isStoredAccount(parsed) ? parsed : null
+    } catch (error) {
+      if (errnoCode(error) === 'ENOENT') return null
+      throw error
+    }
+  }
+
+  private async writeAccount(account: StoredEchoFlowAccount): Promise<void> {
+    const accountPath = this.getAccountPath()
+    await fs.mkdir(path.dirname(accountPath), { recursive: true })
+    const temporaryPath = `${accountPath}.tmp.${randomBytes(3).toString('hex')}`
+    try {
+      await fs.writeFile(temporaryPath, `${JSON.stringify(account, null, 2)}\n`, { encoding: 'utf-8', mode: 0o600 })
+      await fs.rename(temporaryPath, accountPath)
+    } catch (error) {
+      await fs.unlink(temporaryPath).catch(() => {})
+      throw error
+    }
+  }
+
+  private async fetchManagementApi<T>(pathname: string, userId: string, token: string): Promise<T> {
+    const response = await fetch(`${this.baseUrl}${pathname}`, {
       headers: {
         'content-type': 'application/json',
         'new-api-user': userId,
@@ -98,11 +188,49 @@ export class EchoFlowApiService {
       },
     }).catch(() => { throw new EchoFlowApiError('service_unavailable') })
 
-    if (res.status === 401 || res.status === 403) throw new EchoFlowApiError('token_invalid', res.status)
-    if (!res.ok) throw new EchoFlowApiError(res.status >= 500 ? 'service_unavailable' : 'token_invalid', res.status)
+    if (response.status === 401 || response.status === 403) throw new EchoFlowApiError('token_invalid', response.status)
+    if (!response.ok) throw new EchoFlowApiError(response.status >= 500 ? 'service_unavailable' : 'token_invalid', response.status)
 
-    return await res.json().catch(() => { throw new EchoFlowApiError('invalid_response', res.status) }) as T
+    return await response.json().catch(() => { throw new EchoFlowApiError('invalid_response', response.status) }) as T
   }
+}
+
+function toPublicAccount(account: StoredEchoFlowAccount): EchoFlowAccount {
+  return {
+    userId: account.userId,
+    ...(typeof account.balance === 'number' ? { balance: account.balance } : {}),
+    ...(account.userGroup ? { userGroup: account.userGroup } : {}),
+    ...(account.username ? { username: account.username } : {}),
+    ...(account.tokens ? { tokens: account.tokens.map(toTokenSummary) } : {}),
+    ...(typeof account.refreshedAt === 'number' ? { refreshedAt: account.refreshedAt } : {}),
+  }
+}
+
+function toTokenSummary(token: EchoFlowTokenOption): EchoFlowTokenSummary {
+  return {
+    id: token.id,
+    name: token.name,
+    ...(token.status ? { status: token.status } : {}),
+    ...(typeof token.remainQuota === 'number' ? { remainQuota: token.remainQuota } : {}),
+    ...(typeof token.unlimitedQuota === 'boolean' ? { unlimitedQuota: token.unlimitedQuota } : {}),
+    keyPreview: maskKey(token.key),
+  }
+}
+
+function maskKey(key: string): string {
+  return key.length <= 8 ? '••••••••' : `${key.slice(0, 3)}-••••${key.slice(-4)}`
+}
+
+function isStoredAccount(value: unknown): value is StoredEchoFlowAccount {
+  return !!value && typeof value === 'object' &&
+    typeof (value as { userId?: unknown }).userId === 'string' &&
+    typeof (value as { managementToken?: unknown }).managementToken === 'string'
+}
+
+function errnoCode(error: unknown): string | undefined {
+  return error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+    ? error.code
+    : undefined
 }
 
 function normalizeToken(value: unknown): EchoFlowTokenOption | null {
@@ -146,11 +274,4 @@ function isAuthFailure(message: string | undefined): boolean {
     lower.includes('未授权') ||
     lower.includes('认证') ||
     lower.includes('鉴权')
-}
-
-function inferModelType(id: string): EchoFlowModelOption['type'] {
-  const lower = id.toLowerCase()
-  if (lower.includes('embed')) return 'embedding'
-  if (lower.includes('dall') || lower.includes('image') || lower.includes('flux') || lower.includes('stable') || lower.includes('midjourney')) return 'image'
-  return 'chat'
 }

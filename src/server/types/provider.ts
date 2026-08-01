@@ -66,19 +66,6 @@ export const ModelContextWindowsSchema = z.record(
 export const ToolSearchEnabledSchema = z.boolean()
 export const DisableExperimentalBetasSchema = z.boolean()
 
-export const EchoFlowManagementSchema = z.object({
-  userId: z.string().min(1),
-  managementToken: z.string().min(1),
-})
-
-export const EchoFlowTokenSchema = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1),
-  status: z.string().optional(),
-  remainQuota: z.number().optional(),
-  unlimitedQuota: z.boolean().optional(),
-})
-
 export const SavedProviderSchema = z.object({
   id: z.string(),
   presetId: z.string(),
@@ -92,8 +79,6 @@ export const SavedProviderSchema = z.object({
   model1mSupport: Model1mSupportSchema.optional(),
   autoCompactWindow: AutoCompactWindowSchema.optional(),
   modelContextWindows: ModelContextWindowsSchema.optional(),
-  echoflowManagement: EchoFlowManagementSchema.optional(),
-  echoflowToken: EchoFlowTokenSchema.optional(),
   toolSearchEnabled: ToolSearchEnabledSchema.optional(),
   disableExperimentalBetas: DisableExperimentalBetasSchema.optional(),
   notes: z.string().optional(),
@@ -118,8 +103,6 @@ export const CreateProviderSchema = z.object({
   model1mSupport: Model1mSupportSchema.optional(),
   autoCompactWindow: AutoCompactWindowSchema.optional(),
   modelContextWindows: ModelContextWindowsSchema.optional(),
-  echoflowManagement: EchoFlowManagementSchema.optional(),
-  echoflowToken: EchoFlowTokenSchema.optional(),
   toolSearchEnabled: ToolSearchEnabledSchema.optional(),
   disableExperimentalBetas: DisableExperimentalBetasSchema.optional(),
   notes: z.string().optional(),
@@ -136,8 +119,6 @@ export const UpdateProviderSchema = z.object({
   model1mSupport: Model1mSupportSchema.nullable().optional(),
   autoCompactWindow: AutoCompactWindowSchema.nullable().optional(),
   modelContextWindows: ModelContextWindowsSchema.nullable().optional(),
-  echoflowManagement: EchoFlowManagementSchema.nullable().optional(),
-  echoflowToken: EchoFlowTokenSchema.nullable().optional(),
   toolSearchEnabled: ToolSearchEnabledSchema.optional(),
   disableExperimentalBetas: DisableExperimentalBetasSchema.optional(),
   notes: z.string().optional(),

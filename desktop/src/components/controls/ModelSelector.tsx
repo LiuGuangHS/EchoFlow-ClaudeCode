@@ -17,9 +17,9 @@ import { useDismissable } from '@/hooks/useDismissable'
 import { useMobileViewport } from '../../hooks/useMobileViewport'
 import { isDesktopRuntime } from '../../lib/desktopRuntime'
 import { resolveDefaultRuntimeSelection } from '../../lib/runtimeSelection'
-import { useHahaOAuthStore } from '../../stores/hahaOAuthStore'
-import { useHahaOpenAIOAuthStore } from '../../stores/hahaOpenAIOAuthStore'
-import { useHahaGrokOAuthStore } from '../../stores/hahaGrokOAuthStore'
+import { useEchoFlowOAuthStore } from '../../stores/echoFlowOAuthStore'
+import { useEchoFlowOpenAIOAuthStore } from '../../stores/echoFlowOpenAIOAuthStore'
+import { useEchoFlowGrokOAuthStore } from '../../stores/echoFlowGrokOAuthStore'
 import {
   GROK_OFFICIAL_MODELS,
   GROK_OFFICIAL_PROVIDER_ID,
@@ -202,12 +202,12 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
     isLoading: providersLoading,
     fetchProviders,
   } = useProviderStore()
-  const claudeOAuthStatus = useHahaOAuthStore((s) => s.status)
-  const fetchClaudeOAuthStatus = useHahaOAuthStore((s) => s.fetchStatus)
-  const openAIOAuthStatus = useHahaOpenAIOAuthStore((s) => s.status)
-  const fetchOpenAIOAuthStatus = useHahaOpenAIOAuthStore((s) => s.fetchStatus)
-  const grokOAuthStatus = useHahaGrokOAuthStore((s) => s.status)
-  const fetchGrokOAuthStatus = useHahaGrokOAuthStore((s) => s.fetchStatus)
+  const claudeOAuthStatus = useEchoFlowOAuthStore((s) => s.status)
+  const fetchClaudeOAuthStatus = useEchoFlowOAuthStore((s) => s.fetchStatus)
+  const openAIOAuthStatus = useEchoFlowOpenAIOAuthStore((s) => s.status)
+  const fetchOpenAIOAuthStatus = useEchoFlowOpenAIOAuthStore((s) => s.fetchStatus)
+  const grokOAuthStatus = useEchoFlowGrokOAuthStore((s) => s.status)
+  const fetchGrokOAuthStatus = useEchoFlowGrokOAuthStore((s) => s.fetchStatus)
   const runtimeSelection = useSessionRuntimeStore((state) =>
     runtimeKey ? state.selections[runtimeKey] : undefined,
   )

@@ -70,14 +70,14 @@ beforeEach(async () => {
   tmpHome = await fs.mkdtemp(path.join(os.tmpdir(), 'market-service-test-'))
   originalClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR
   process.env.CLAUDE_CONFIG_DIR = path.join(tmpHome, '.claude')
-  delete process.env.HAHA_MARKET_DISABLE_PROVIDERS
+  delete process.env.ECHOFLOW_MARKET_DISABLE_PROVIDERS
 })
 
 afterEach(async () => {
   globalThis.fetch = originalFetch
   if (originalClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR
   else process.env.CLAUDE_CONFIG_DIR = originalClaudeConfigDir
-  delete process.env.HAHA_MARKET_DISABLE_PROVIDERS
+  delete process.env.ECHOFLOW_MARKET_DISABLE_PROVIDERS
   await fs.rm(tmpHome, { recursive: true, force: true })
 })
 

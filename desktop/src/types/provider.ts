@@ -28,19 +28,6 @@ export type Model1mSupport = {
 
 export type ModelContextWindows = Record<string, number>
 
-export type EchoFlowManagement = {
-  userId: string
-  managementToken: string
-}
-
-export type EchoFlowTokenMetadata = {
-  id: string
-  name: string
-  status?: string
-  remainQuota?: number
-  unlimitedQuota?: boolean
-}
-
 export type SavedProvider = {
   id: string
   presetId: string
@@ -54,8 +41,6 @@ export type SavedProvider = {
   model1mSupport?: Model1mSupport
   autoCompactWindow?: number
   modelContextWindows?: ModelContextWindows
-  echoflowManagement?: EchoFlowManagement
-  echoflowToken?: EchoFlowTokenMetadata
   toolSearchEnabled?: boolean
   disableExperimentalBetas?: boolean
   notes?: string
@@ -73,8 +58,6 @@ export type CreateProviderInput = {
   model1mSupport?: Model1mSupport
   autoCompactWindow?: number
   modelContextWindows?: ModelContextWindows
-  echoflowManagement?: EchoFlowManagement
-  echoflowToken?: EchoFlowTokenMetadata
   toolSearchEnabled?: boolean
   disableExperimentalBetas?: boolean
   notes?: string
@@ -91,8 +74,6 @@ export type UpdateProviderInput = {
   model1mSupport?: Model1mSupport | null
   autoCompactWindow?: number | null
   modelContextWindows?: ModelContextWindows | null
-  echoflowManagement?: EchoFlowManagement | null
-  echoflowToken?: EchoFlowTokenMetadata | null
   toolSearchEnabled?: boolean
   disableExperimentalBetas?: boolean
   notes?: string

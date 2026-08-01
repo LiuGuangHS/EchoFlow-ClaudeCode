@@ -17,9 +17,9 @@ import { handlePluginsApi } from './api/plugins.js'
 import { handleSkillsApi } from './api/skills.js'
 import { handleMarketApi } from './api/market.js'
 import { handleComputerUseApi } from './api/computer-use.js'
-import { handleHahaOAuthApi } from './api/haha-oauth.js'
-import { handleHahaOpenAIOAuthApi } from './api/haha-openai-oauth.js'
-import { handleHahaGrokOAuthApi } from './api/haha-grok-oauth.js'
+import { handleEchoFlowOAuthApi } from './api/echoflow-oauth.js'
+import { handleEchoFlowOpenAIOAuthApi } from './api/echoflow-openai-oauth.js'
+import { handleEchoFlowGrokOAuthApi } from './api/echoflow-grok-oauth.js'
 import { handleMcpApi } from './api/mcp.js'
 import { handleDiagnosticsApi } from './api/diagnostics.js'
 import { handleDoctorApi } from './api/doctor.js'
@@ -81,14 +81,17 @@ export async function handleApiRequest(req: Request, url: URL): Promise<Response
     case 'providers':
       return handleProvidersApi(req, url, segments)
 
+    case 'echoflow-oauth':
     case 'haha-oauth':
-      return handleHahaOAuthApi(req, url, segments)
+      return handleEchoFlowOAuthApi(req, url, segments)
 
+    case 'echoflow-openai-oauth':
     case 'haha-openai-oauth':
-      return handleHahaOpenAIOAuthApi(req, url, segments)
+      return handleEchoFlowOpenAIOAuthApi(req, url, segments)
 
+    case 'echoflow-grok-oauth':
     case 'haha-grok-oauth':
-      return handleHahaGrokOAuthApi(req, url, segments)
+      return handleEchoFlowGrokOAuthApi(req, url, segments)
 
     case 'adapters':
       // Adapter protocols pull in platform SDKs that are unnecessary for the

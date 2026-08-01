@@ -323,7 +323,7 @@ describe('ConversationService', () => {
 
   test('buildChildEnv pins desktop memory to the current sanitized project directory', async () => {
     const service = new ConversationService() as any
-    const workDir = path.join(tmpDir, 'workspace', 'myself_code', 'claude-code-haha')
+    const workDir = path.join(tmpDir, 'workspace', 'myself_code', 'echoflow-code')
     await fs.mkdir(workDir, { recursive: true })
 
     const env = (await service.buildChildEnv(workDir)) as Record<string, string>
@@ -487,8 +487,8 @@ describe('ConversationService', () => {
       'utf-8',
     )
 
-    const { hahaOAuthService } = await import('../services/hahaOAuthService.js')
-    await hahaOAuthService.saveTokens({
+    const { echoFlowOAuthService } = await import('../services/echoFlowOAuthService.js')
+    await echoFlowOAuthService.saveTokens({
       accessToken: 'haha-fresh-token',
       refreshToken: 'haha-refresh-xxx',
       expiresAt: Date.now() + 30 * 60_000,
@@ -504,8 +504,8 @@ describe('ConversationService', () => {
   })
 
   test('sendMessage updates a running official OAuth CLI token before the user turn', async () => {
-    const { hahaOAuthService } = await import('../services/hahaOAuthService.js')
-    await hahaOAuthService.saveTokens({
+    const { echoFlowOAuthService } = await import('../services/echoFlowOAuthService.js')
+    await echoFlowOAuthService.saveTokens({
       accessToken: 'fresh-after-wake-token',
       refreshToken: 'refresh-xxx',
       expiresAt: Date.now() + 30 * 60_000,
@@ -668,8 +668,8 @@ describe('ConversationService', () => {
       'utf-8',
     )
 
-    const { hahaOAuthService } = await import('../services/hahaOAuthService.js')
-    await hahaOAuthService.saveTokens({
+    const { echoFlowOAuthService } = await import('../services/echoFlowOAuthService.js')
+    await echoFlowOAuthService.saveTokens({
       accessToken: 'haha-token-should-not-be-used',
       refreshToken: null,
       expiresAt: null,
@@ -917,8 +917,8 @@ describe('ConversationService', () => {
       'utf-8',
     )
 
-    const { hahaOAuthService } = await import('../services/hahaOAuthService.js')
-    await hahaOAuthService.saveTokens({
+    const { echoFlowOAuthService } = await import('../services/echoFlowOAuthService.js')
+    await echoFlowOAuthService.saveTokens({
       accessToken: 'forced-official-token',
       refreshToken: 'forced-official-refresh',
       expiresAt: Date.now() + 30 * 60_000,
@@ -940,8 +940,8 @@ describe('ConversationService', () => {
     const providerService = new ProviderService()
     await providerService.activateProvider('openai-official')
 
-    const { hahaOAuthService } = await import('../services/hahaOAuthService.js')
-    await hahaOAuthService.saveTokens({
+    const { echoFlowOAuthService } = await import('../services/echoFlowOAuthService.js')
+    await echoFlowOAuthService.saveTokens({
       accessToken: 'claude-oauth-token-that-must-not-be-used',
       refreshToken: 'claude-refresh-token',
       expiresAt: Date.now() + 30 * 60_000,

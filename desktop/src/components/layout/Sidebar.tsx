@@ -687,7 +687,7 @@ export function Sidebar({ isMobile = false, onRequestClose }: SidebarProps) {
           <div className={`flex min-w-0 items-center ${expanded ? 'gap-2.5 pl-3' : 'justify-center'}`}>
             {!expanded ? <BrandSeal size="sm" /> : null}
             {/* One form, at every width. The header used to carry "Claude Code
-                Haha" and swap to this below ~230px of title region, which meant
+                EchoFlow Code" and swap to this below ~230px of title region, which meant
                 the app answered to two names depending on how the sidebar was
                 dragged. It goes by the short one. */}
             <span

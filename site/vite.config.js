@@ -16,7 +16,7 @@ const imageMimeTypes = {
 
 function docsManifestPlugin() {
   return {
-    name: 'claude-code-haha-docs-manifest',
+    name: 'echoflow-code-docs-manifest',
     async buildStart() {
       await generateDocsManifest()
     },

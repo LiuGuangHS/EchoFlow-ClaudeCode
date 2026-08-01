@@ -22,12 +22,12 @@ export const LEGACY_LOCAL_STORAGE_TARGET_KEYS = {
 } as const
 
 const RULES: MigrationRule[] = [
-  { legacyKeys: ['echoflow-code-open-tabs'], targetKey: LEGACY_LOCAL_STORAGE_TARGET_KEYS.openTabs },
-  { legacyKeys: ['echoflow-code-session-runtime'], targetKey: LEGACY_LOCAL_STORAGE_TARGET_KEYS.sessionRuntime },
-  { legacyKeys: ['echoflow-code-theme'], targetKey: LEGACY_LOCAL_STORAGE_TARGET_KEYS.theme },
-  { legacyKeys: ['echoflow-code-locale'], targetKey: LEGACY_LOCAL_STORAGE_TARGET_KEYS.locale },
-  { legacyKeys: ['echoflow-code-app-zoom', 'echoflow-code-ui-zoom'], targetKey: LEGACY_LOCAL_STORAGE_TARGET_KEYS.appZoom },
-  { legacyKeys: ['echoflow-code-dismissed-update-version'], targetKey: LEGACY_LOCAL_STORAGE_TARGET_KEYS.dismissedUpdateVersion },
+  { legacyKeys: ['cc-haha-open-tabs'], targetKey: LEGACY_LOCAL_STORAGE_TARGET_KEYS.openTabs },
+  { legacyKeys: ['cc-haha-session-runtime'], targetKey: LEGACY_LOCAL_STORAGE_TARGET_KEYS.sessionRuntime },
+  { legacyKeys: ['cc-haha-theme'], targetKey: LEGACY_LOCAL_STORAGE_TARGET_KEYS.theme },
+  { legacyKeys: ['cc-haha-locale'], targetKey: LEGACY_LOCAL_STORAGE_TARGET_KEYS.locale },
+  { legacyKeys: ['cc-haha-app-zoom', 'cc-haha-ui-zoom', 'echoflow-code-ui-zoom'], targetKey: LEGACY_LOCAL_STORAGE_TARGET_KEYS.appZoom },
+  { legacyKeys: ['cc-haha-dismissed-update-version'], targetKey: LEGACY_LOCAL_STORAGE_TARGET_KEYS.dismissedUpdateVersion },
 ]
 
 function defaultStorage(): StorageLike | null {

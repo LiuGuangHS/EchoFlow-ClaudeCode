@@ -1,15 +1,13 @@
-import { useState } from 'react'
-import { Eye, EyeOff, ExternalLink, LogIn, Settings } from 'lucide-react'
-import { useProviderStore } from '../../stores/providerStore'
-import { useTranslation } from '../../i18n'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Eye, EyeOff, ExternalLink, Plus, RefreshCw, Settings, Trash2, Unlink } from 'lucide-react'
+import { echoflowApi, type EchoFlowAccount } from '../../api/echoflow'
 import { getDesktopHost } from '../../lib/desktopHost'
-import { echoflowApi, type EchoFlowModelOption, type EchoFlowTokenOption } from '../../api/echoflow'
+import { useProviderStore } from '../../stores/providerStore'
+import type { SavedProvider } from '../../types/provider'
 
 const ECHOFLOW_BASE_URL = 'https://api.echoflow.cn'
-const ECHOFLOW_GET_TOKEN_URL = 'https://api.echoflow.cn/console/personal'
-const ECHOFLOW_PROVIDER_NAME = '清云（EchoFlow）API'
+const ECHOFLOW_CONSOLE_URL = 'https://api.echoflow.cn/console/personal'
 const ECHOFLOW_PRESET_ID = 'echoflowai'
-
 const DEFAULT_MODELS = {
   main: 'claude-sonnet-4-6',
   haiku: 'claude-haiku-4-5',
@@ -17,352 +15,310 @@ const DEFAULT_MODELS = {
   opus: 'claude-opus-4-7',
 }
 
-function getDefaultModelSelection(chatModels: EchoFlowModelOption[]) {
-  const main = chatModels.find((m) => m.id === DEFAULT_MODELS.main)?.id ?? chatModels[0]?.id ?? DEFAULT_MODELS.main
-  const haiku = chatModels.find((m) => m.id.toLowerCase().includes('haiku'))?.id ??
-    chatModels.find((m) => m.id === DEFAULT_MODELS.haiku)?.id ??
-    main
-  const sonnet = chatModels.find((m) => m.id.toLowerCase().includes('sonnet'))?.id ?? main
-  const opus = chatModels.find((m) => m.id.toLowerCase().includes('opus'))?.id ?? main
-  return { main, haiku, sonnet, opus }
-}
-
 type Props = {
-  onOpenConfigModal: () => void
+  activeId: string | null
+  providers: SavedProvider[]
+  onEdit: (provider: SavedProvider) => void
 }
 
-export function EchoFlowAPIOfficialLogin({ onOpenConfigModal }: Props) {
-  const t = useTranslation()
-  const { providers, createProvider, updateProvider, activateProvider, fetchProviders } = useProviderStore()
+function formatRefreshedAt(value: number): string {
+  return new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(value)
+}
 
-  const echoflowProviders = providers.filter((p) => p.presetId === ECHOFLOW_PRESET_ID)
-  const savedManagement = echoflowProviders.find((p) => p.echoflowManagement)?.echoflowManagement
-
-  const [userId, setUserId] = useState(savedManagement?.userId ?? '')
-  const [mgmtToken, setMgmtToken] = useState(savedManagement?.managementToken ?? '')
-  const [showMgmtToken, setShowMgmtToken] = useState(false)
-  const [isValidating, setIsValidating] = useState(false)
-  const [validationInfo, setValidationInfo] = useState<{ balance: number; userGroup: string; models: EchoFlowModelOption[]; tokens: EchoFlowTokenOption[] } | null>(null)
-  const [validationError, setValidationError] = useState<string | null>(null)
-  const [selectedMainModel, setSelectedMainModel] = useState(DEFAULT_MODELS.main)
-  const [selectedHaikuModel, setSelectedHaikuModel] = useState(DEFAULT_MODELS.haiku)
-  const [selectedSonnetModel, setSelectedSonnetModel] = useState(DEFAULT_MODELS.sonnet)
-  const [selectedOpusModel, setSelectedOpusModel] = useState(DEFAULT_MODELS.opus)
-  const [selectedTokenKey, setSelectedTokenKey] = useState('')
-  const [isConnecting, setIsConnecting] = useState(false)
+export function EchoFlowAPIOfficialLogin({ activeId, providers, onEdit }: Props) {
+  const { createProvider, updateProvider, deleteProvider, activateProvider, fetchProviders } = useProviderStore()
+  const qingyunProviders = useMemo(
+    () => providers.filter((provider) => provider.presetId === ECHOFLOW_PRESET_ID),
+    [providers],
+  )
+  const [account, setAccount] = useState<EchoFlowAccount | null>(null)
+  const [userId, setUserId] = useState('')
+  const [managementToken, setManagementToken] = useState('')
+  const [showManagementToken, setShowManagementToken] = useState(false)
+  const [showKeys, setShowKeys] = useState<Record<string, boolean>>({})
+  const [keyValues, setKeyValues] = useState<Record<string, string>>({})
+  const [draftKeys, setDraftKeys] = useState<string[]>(['draft-0'])
+  const draftIdRef = useRef(1)
+  const [isSavingAccount, setIsSavingAccount] = useState(false)
+  const [isUpdatingAccount, setIsUpdatingAccount] = useState(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  const [isSavingKey, setIsSavingKey] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const handleValidate = async () => {
-    const trimmedToken = mgmtToken.trim()
-    if (!trimmedToken) return
-    setIsValidating(true)
-    setValidationError(null)
-    setValidationInfo(null)
-    try {
-      const trimmedUserId = userId.trim()
-      if (!trimmedUserId) {
-        setValidationError(t('settings.echoflowAPIOfficialLogin.userIdPlaceholder'))
-        return
-      }
-      const result = await echoflowApi.validateManagementToken(trimmedUserId, trimmedToken)
-      if (!result.valid) {
-        setValidationError(result.error === 'token_invalid'
-          ? t('settings.echoflowAPIOfficialLogin.tokenInvalid')
-          : t('settings.echoflowAPIOfficialLogin.serviceUnavailable'))
-        return
-      }
-      const chatModels = (result.models ?? []).filter((m) => m.type === 'chat')
-      const tokens = (result.tokens ?? []).filter((token) => token.key.trim())
-      const selection = getDefaultModelSelection(chatModels)
-      setSelectedMainModel(selection.main)
-      setSelectedHaikuModel(selection.haiku)
-      setSelectedSonnetModel(selection.sonnet)
-      setSelectedOpusModel(selection.opus)
-      setSelectedTokenKey(tokens[0]?.key ?? '')
-      setValidationInfo({ balance: result.balance ?? 0, userGroup: result.userGroup ?? 'default', models: chatModels, tokens })
-    } catch {
-      setValidationError(t('settings.echoflowAPIOfficialLogin.serviceUnavailable'))
-    } finally {
-      setIsValidating(false)
-    }
+  useEffect(() => {
+    void echoflowApi.getAccount()
+      .then(({ account }) => {
+        setAccount(account)
+        setUserId(account?.userId ?? '')
+      })
+      .catch(() => setError('无法读取清云账户信息。'))
+  }, [])
+
+  const setKeyValue = (id: string, value: string) => {
+    setKeyValues((current) => ({ ...current, [id]: value }))
   }
 
-  const resetValidationState = () => {
-    setValidationInfo(null)
-    setValidationError(null)
-    setSelectedMainModel(DEFAULT_MODELS.main)
-    setSelectedHaikuModel(DEFAULT_MODELS.haiku)
-    setSelectedSonnetModel(DEFAULT_MODELS.sonnet)
-    setSelectedOpusModel(DEFAULT_MODELS.opus)
-    setSelectedTokenKey('')
-  }
+  const getKeyValue = (provider: SavedProvider) => keyValues[provider.id] ?? provider.apiKey
 
-  const handleUserIdChange = (value: string) => {
-    setUserId(value)
-    resetValidationState()
-  }
-
-  const handleManagementTokenChange = (value: string) => {
-    setMgmtToken(value)
-    resetValidationState()
-  }
-
-  const handleCallTokenChange = (value: string) => {
-    setSelectedTokenKey(value)
-    const existingProvider = echoflowProviders.find((provider) => provider.apiKey === value)
-    if (!existingProvider) return
-    setSelectedMainModel(existingProvider.models.main)
-    setSelectedHaikuModel(existingProvider.models.haiku)
-    setSelectedSonnetModel(existingProvider.models.sonnet)
-    setSelectedOpusModel(existingProvider.models.opus)
-  }
-
-  const handleConnect = async () => {
-    const apiKey = selectedTokenKey.trim()
-    if (!apiKey) {
-      setError(t('settings.echoflowAPIOfficialLogin.callTokenRequired'))
-      return
-    }
-    setIsConnecting(true)
+  const saveAccount = async () => {
+    if (!userId.trim() || !managementToken.trim() || isSavingAccount) return
+    setIsSavingAccount(true)
     setError(null)
     try {
-      const main = selectedMainModel || DEFAULT_MODELS.main
-      const haiku = selectedHaikuModel || main
-      const sonnet = selectedSonnetModel || main
-      const opus = selectedOpusModel || main
-      const models = { main, haiku, sonnet, opus }
-      const echoflowManagement = { userId: userId.trim(), managementToken: mgmtToken.trim() }
-      const selectedToken = callTokens.find((token) => token.key === apiKey)
-      const tokenName = selectedToken?.name || selectedToken?.id || t('settings.echoflowAPIOfficialLogin.callTokenFallbackName')
-      const echoflowToken = selectedToken
-        ? {
-            id: selectedToken.id,
-            name: tokenName,
-            ...(selectedToken.status ? { status: selectedToken.status } : {}),
-            ...(typeof selectedToken.remainQuota === 'number' ? { remainQuota: selectedToken.remainQuota } : {}),
-            ...(typeof selectedToken.unlimitedQuota === 'boolean' ? { unlimitedQuota: selectedToken.unlimitedQuota } : {}),
-          }
-        : undefined
-      const existingProvider = echoflowProviders.find((provider) => provider.apiKey === apiKey)
-      if (existingProvider) {
-        await updateProvider(existingProvider.id, {
-          apiKey,
-          models,
-          apiFormat: 'anthropic',
-          echoflowManagement,
-          ...(echoflowToken ? { echoflowToken } : {}),
-        })
-        await activateProvider(existingProvider.id)
-      } else {
-        const provider = await createProvider({
-          presetId: ECHOFLOW_PRESET_ID,
-          name: `${ECHOFLOW_PROVIDER_NAME} - ${tokenName}`,
-          baseUrl: ECHOFLOW_BASE_URL,
-          apiKey,
-          apiFormat: 'anthropic',
-          authStrategy: 'auth_token',
-          models,
-          echoflowManagement,
-          ...(echoflowToken ? { echoflowToken } : {}),
-        })
-        await activateProvider(provider.id)
-      }
-      await fetchProviders()
-      setValidationInfo(null)
-      setSelectedTokenKey('')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setIsConnecting(false)
-    }
-  }
-
-  const openExternalPage = async (url: string) => {
-    try {
-      await getDesktopHost().shell.open(url)
+      const { account } = await echoflowApi.bindAccount(userId, managementToken)
+      setAccount(account)
+      setManagementToken('')
     } catch {
-      window.open(url, '_blank', 'noopener,noreferrer')
+      setError('账户绑定失败，请检查用户 ID 和系统访问令牌。')
+    } finally {
+      setIsSavingAccount(false)
     }
   }
 
-  const chatModels = validationInfo?.models ?? []
-  const callTokens = validationInfo?.tokens ?? []
-  const canConnect = validationInfo !== null && selectedTokenKey.trim() !== '' && selectedMainModel.trim() !== ''
+  const updateAccountToken = async () => {
+    if (!userId.trim() || !managementToken.trim() || isUpdatingAccount) return
+    setIsUpdatingAccount(true)
+    setError(null)
+    try {
+      const { account } = await echoflowApi.bindAccount(userId, managementToken)
+      setAccount(account)
+      setManagementToken('')
+    } catch {
+      setError('更新系统访问令牌失败。')
+    } finally {
+      setIsUpdatingAccount(false)
+    }
+  }
 
-  const inputBase = 'w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:border-[var(--color-brand)] focus:outline-none transition-colors'
-  const selectBase = 'w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-xs text-[var(--color-text-primary)] focus:border-[var(--color-brand)] focus:outline-none'
+  const refreshAccount = async () => {
+    if (isRefreshing) return
+    setIsRefreshing(true)
+    setError(null)
+    try {
+      const { account } = await echoflowApi.refreshAccount()
+      setAccount(account)
+    } catch {
+      setError('刷新失败，请更新系统访问令牌后重试。')
+    } finally {
+      setIsRefreshing(false)
+    }
+  }
+
+  const disconnectAccount = async () => {
+    try {
+      await echoflowApi.disconnectAccount()
+      setAccount(null)
+      setUserId('')
+      setManagementToken('')
+    } catch {
+      setError('解除账户失败。')
+    }
+  }
+
+  const activate = async (provider: SavedProvider) => {
+    setIsSavingKey(provider.id)
+    try {
+      await activateProvider(provider.id)
+      await fetchProviders()
+    } catch {
+      setError('启用清云 API Key 失败。')
+    } finally {
+      setIsSavingKey(null)
+    }
+  }
+
+  const saveProviderKey = async (provider: SavedProvider) => {
+    const apiKey = getKeyValue(provider).trim()
+    if (!apiKey || isSavingKey) return
+    setIsSavingKey(provider.id)
+    try {
+      await updateProvider(provider.id, { apiKey })
+      await fetchProviders()
+    } catch {
+      setError('保存 API Key 失败。')
+    } finally {
+      setIsSavingKey(null)
+    }
+  }
+
+  const saveDraft = async (draftId: string, shouldActivate: boolean) => {
+    const apiKey = (keyValues[draftId] ?? '').trim()
+    if (!apiKey || isSavingKey) return
+    setIsSavingKey(draftId)
+    try {
+      const provider = await createProvider({
+        presetId: ECHOFLOW_PRESET_ID,
+        name: `清云 API #${qingyunProviders.length + 1}`,
+        baseUrl: ECHOFLOW_BASE_URL,
+        apiKey,
+        apiFormat: 'anthropic',
+        authStrategy: 'auth_token',
+        models: DEFAULT_MODELS,
+      })
+      if (shouldActivate) await activateProvider(provider.id)
+      setDraftKeys((current) => current.filter((id) => id !== draftId))
+      setKeyValues((current) => {
+        const { [draftId]: _draft, ...rest } = current
+        return rest
+      })
+      await fetchProviders()
+    } catch {
+      setError('保存清云 API Key 失败。')
+    } finally {
+      setIsSavingKey(null)
+    }
+  }
+
+  const addDraft = () => {
+    const draftId = `draft-${draftIdRef.current}`
+    draftIdRef.current += 1
+    setDraftKeys((current) => [...current, draftId])
+  }
+
+  const removeProvider = async (provider: SavedProvider) => {
+    if (provider.id === activeId) {
+      setError('请先启用其他服务商，再删除当前清云 API Key。')
+      return
+    }
+    try {
+      await deleteProvider(provider.id)
+      await fetchProviders()
+    } catch {
+      setError('删除清云 API Key 失败。')
+    }
+  }
+
+  const selectAccountKey = async (tokenId: string, rowId: string, provider?: SavedProvider) => {
+    if (!tokenId || isSavingKey) return
+    setIsSavingKey(rowId)
+    try {
+      const { provider: selectedProvider } = await echoflowApi.selectToken(tokenId, provider?.id)
+      if (!provider && qingyunProviders.length === 0) await activateProvider(selectedProvider.id)
+      if (!provider) setDraftKeys((current) => current.filter((id) => id !== rowId))
+      await fetchProviders()
+    } catch {
+      setError('选择账户 API Key 失败。')
+    } finally {
+      setIsSavingKey(null)
+    }
+  }
+
+  const openConsole = async () => {
+    try {
+      await getDesktopHost().shell.open(ECHOFLOW_CONSOLE_URL)
+    } catch {
+      window.open(ECHOFLOW_CONSOLE_URL, '_blank', 'noopener,noreferrer')
+    }
+  }
+
+  const inputBase = 'min-w-0 flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:border-[var(--color-brand)] focus:outline-none'
+  const tokenOptions = account?.tokens ?? []
+  const accountSummary = account?.balance === undefined
+    ? '尚未同步'
+    : `余额：¥${account.balance.toFixed(2)} · ${account.userGroup ?? 'default'} · ${account.refreshedAt ? formatRefreshedAt(account.refreshedAt) : '尚未同步'}`
+
+  const renderKeyRow = (id: string, provider?: SavedProvider) => {
+    const key = provider ? getKeyValue(provider) : keyValues[id] ?? ''
+    const isActive = provider?.id === activeId
+    const isSaving = isSavingKey === id
+    return (
+      <div key={id} className="flex flex-col gap-2 rounded-lg border border-[var(--color-border-separator)] bg-[var(--color-surface-container-low)] p-3">
+        <div className="flex items-center justify-between gap-2 text-xs text-[var(--color-text-secondary)]">
+          <span className="font-medium text-[var(--color-text-primary)]">{provider?.name ?? '新的清云 API 配置'}</span>
+          {isActive && <span className="text-[var(--color-success)]">● 当前使用</span>}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <div className="relative flex min-w-[220px] flex-1">
+            <input
+              type={showKeys[id] ? 'text' : 'password'}
+              value={key}
+              onChange={(event) => setKeyValue(id, event.target.value)}
+              placeholder="粘贴 API Key"
+              className={`${inputBase} pr-9`}
+            />
+            <button
+              type="button"
+              onClick={() => setShowKeys((current) => ({ ...current, [id]: !current[id] }))}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)]"
+              aria-label={showKeys[id] ? '隐藏 API Key' : '显示 API Key'}
+            >
+              {showKeys[id] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          </div>
+          {account && (
+            <select
+              value=""
+              onChange={(event) => {
+                if (event.target.value) void selectAccountKey(event.target.value, id, provider)
+              }}
+              className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 text-sm text-[var(--color-text-primary)]"
+            >
+              <option value="">选择账户 API Key</option>
+              {tokenOptions.map((token) => (
+                <option key={token.id} value={token.id}>
+                  {token.name} · {token.keyPreview}
+                </option>
+              ))}
+            </select>
+          )}
+          {provider ? (
+            <>
+              <button type="button" onClick={() => void saveProviderKey(provider)} disabled={isSaving || !key.trim()} className="rounded-md border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-text-secondary)] disabled:opacity-50">保存</button>
+              <button type="button" onClick={() => void activate(provider)} disabled={isSaving || isActive} className="rounded-md bg-[var(--color-brand)] px-3 py-2 text-sm font-medium text-white disabled:opacity-50">{isActive ? '已启用' : '启用'}</button>
+              <button type="button" onClick={() => onEdit(provider)} className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-text-secondary)]"><Settings className="h-4 w-4" />详细配置</button>
+              {!isActive && <button type="button" onClick={() => void removeProvider(provider)} className="rounded-md border border-[var(--color-border)] px-3 py-2 text-[var(--color-error)]"><Trash2 className="h-4 w-4" /></button>}
+            </>
+          ) : (
+            <button type="button" onClick={() => void saveDraft(id, qingyunProviders.length === 0)} disabled={isSaving || !key.trim()} className="rounded-md bg-[var(--color-brand)] px-3 py-2 text-sm font-medium text-white disabled:opacity-50">{qingyunProviders.length === 0 ? '保存并启用' : '保存'}</button>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col gap-3">
-      {/* Guide text */}
-      <p className="text-[11px] leading-5 text-[var(--color-text-secondary)]">
-        {t('settings.echoflowAPIOfficialLogin.managementTokenGuide')}
-      </p>
-
-      {/* External link buttons */}
-      <div className="flex flex-wrap items-center gap-1.5">
-        <button
-          type="button"
-          onClick={() => void openExternalPage(ECHOFLOW_GET_TOKEN_URL)}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-brand)] px-3 py-1.5 text-xs font-medium text-white transition hover:brightness-105"
-        >
-          <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-          {t('settings.echoflowAPIOfficialLogin.goGetToken')}
-        </button>
-        <button
-          type="button"
-          onClick={onOpenConfigModal}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-xs font-medium text-[var(--color-text-secondary)] transition hover:bg-[var(--color-surface-hover)]"
-        >
-          <Settings className="h-3.5 w-3.5" aria-hidden="true" />
-          {t('settings.echoflowAPIOfficialLogin.connectModeManualKey')}
-        </button>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs text-[var(--color-text-secondary)]">在控制台生成并输入 API Key 后即可使用清云模型。</p>
+        <button type="button" onClick={() => void openConsole()} className="inline-flex items-center gap-1 text-xs text-[var(--color-brand)] hover:underline"><ExternalLink className="h-3.5 w-3.5" />前往清云 API</button>
       </div>
 
-      {/* User ID + management token row */}
-      <div className="grid grid-cols-[160px_1fr] gap-2">
-        <input
-          type="text"
-          value={userId}
-          onChange={(e) => handleUserIdChange(e.target.value)}
-          placeholder={t('settings.echoflowAPIOfficialLogin.userIdPlaceholder')}
-          className={inputBase}
-        />
-        <div className="relative">
-          <input
-            type={showMgmtToken ? 'text' : 'password'}
-            value={mgmtToken}
-            onChange={(e) => handleManagementTokenChange(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && mgmtToken.trim()) void handleValidate() }}
-            placeholder={t('settings.echoflowAPIOfficialLogin.managementTokenPlaceholder')}
-            className={`${inputBase} pr-9`}
-          />
-          <button
-            type="button"
-            onClick={() => setShowMgmtToken(!showMgmtToken)}
-            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] transition-colors"
-          >
-            {showMgmtToken ? <EyeOff className="h-4 w-4" aria-hidden="true" /> : <Eye className="h-4 w-4" aria-hidden="true" />}
-          </button>
-        </div>
+      <div className="flex flex-col gap-2">
+        {qingyunProviders.map((provider) => renderKeyRow(provider.id, provider))}
+        {draftKeys.map((id) => renderKeyRow(id))}
+        <button type="button" onClick={addDraft} className="inline-flex w-fit items-center gap-1 rounded-md border border-dashed border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-text-secondary)]"><Plus className="h-4 w-4" />添加 API Key</button>
       </div>
 
-      <button
-        type="button"
-        onClick={handleValidate}
-        disabled={isValidating || !userId.trim() || !mgmtToken.trim()}
-        className="inline-flex items-center justify-center gap-1.5 rounded-md bg-[image:var(--gradient-btn-primary)] px-3 py-2 text-xs text-[var(--color-btn-primary-fg)] shadow-[var(--shadow-button-primary)] transition-opacity hover:brightness-105 disabled:opacity-50"
-      >
-        {isValidating ? t('settings.echoflowAPIOfficialLogin.validating') : t('settings.echoflowAPIOfficialLogin.validateToken')}
-      </button>
-
-      {validationError && <div className="text-xs text-[var(--color-error)]">{validationError}</div>}
-
-      {/* Validation success panel */}
-      {validationInfo && (
-        <div className="flex flex-col gap-2.5 rounded-[var(--radius-md)] border border-[var(--color-success)]/30 bg-[var(--color-success)]/6 px-3 py-2.5">
-          <div className="flex items-center gap-4 text-xs text-[var(--color-text-secondary)]">
-            <span>
-              {t('settings.echoflowAPIOfficialLogin.balance')}:{' '}
-              <span className="font-medium text-[var(--color-text-primary)]">¥{validationInfo.balance.toFixed(2)}</span>
-            </span>
-            <span>
-              {t('settings.echoflowAPIOfficialLogin.userGroup')}:{' '}
-              <span className="font-medium text-[var(--color-text-primary)]">{validationInfo.userGroup}</span>
-            </span>
+      <div className="border-t border-[var(--color-border-separator)] pt-4">
+        <div className="mb-2 text-sm font-semibold text-[var(--color-text-primary)]">绑定清云账户，直接选择 API Key</div>
+        <p className="mb-3 text-xs text-[var(--color-text-secondary)]">绑定后可同步余额和已有 API Key；也可以继续手动粘贴 API Key。</p>
+        {!account ? (
+          <div className="flex flex-col gap-2">
+            <div className="grid gap-2 sm:grid-cols-[160px_1fr]">
+              <input value={userId} onChange={(event) => setUserId(event.target.value)} placeholder="用户 ID" className={inputBase} />
+              <div className="relative">
+                <input type={showManagementToken ? 'text' : 'password'} value={managementToken} onChange={(event) => setManagementToken(event.target.value)} placeholder="系统访问令牌" className={`${inputBase} pr-9`} />
+                <button type="button" onClick={() => setShowManagementToken((current) => !current)} className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)]">{showManagementToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button>
+              </div>
+            </div>
+            <button type="button" onClick={() => void saveAccount()} disabled={isSavingAccount || !userId.trim() || !managementToken.trim()} className="w-fit rounded-md bg-[var(--color-brand)] px-3 py-2 text-sm font-medium text-white disabled:opacity-50">{isSavingAccount ? '绑定中...' : '绑定账户'}</button>
           </div>
-          {callTokens.length > 0 ? (
-            <div>
-              <label className="mb-1 block text-[11px] font-medium text-[var(--color-text-secondary)]">
-                {t('settings.echoflowAPIOfficialLogin.selectCallToken')}
-              </label>
-              <select value={selectedTokenKey} onChange={(e) => handleCallTokenChange(e.target.value)} className={selectBase}>
-                {callTokens.map((token) => (
-                  <option key={`${token.id}-${token.key}`} value={token.key}>
-                    {token.name || token.id || token.key}
-                  </option>
-                ))}
-              </select>
-              <p className="mt-1 text-[11px] text-[var(--color-text-tertiary)]">{t('settings.echoflowAPIOfficialLogin.callTokenHint')}</p>
-            </div>
-          ) : (
-            <div className="rounded-[var(--radius-sm)] border border-[var(--color-warning)]/30 bg-[var(--color-warning)]/8 px-2.5 py-2 text-[11px] leading-5 text-[var(--color-text-secondary)]">
-              {t('settings.echoflowAPIOfficialLogin.noCallTokens')}
-            </div>
-          )}
-          <div>
-            <label className="mb-2 block text-[11px] font-medium text-[var(--color-text-secondary)]">
-              {t('settings.echoflowAPIOfficialLogin.modelMapping')}
-            </label>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="mb-1 block text-[11px] text-[var(--color-text-tertiary)]">
-                  {t('settings.echoflowAPIOfficialLogin.selectMainModel')}
-                </label>
-                {chatModels.length > 0 ? (
-                  <select value={selectedMainModel} onChange={(e) => setSelectedMainModel(e.target.value)} className={selectBase}>
-                    {chatModels.map((m) => <option key={m.id} value={m.id}>{m.id}</option>)}
-                  </select>
-                ) : (
-                  <input type="text" value={selectedMainModel} onChange={(e) => setSelectedMainModel(e.target.value)} placeholder={DEFAULT_MODELS.main} className={`${selectBase} px-3`} />
-                )}
+        ) : (
+          <div className="flex flex-col gap-2 rounded-lg bg-[var(--color-surface-container-low)] p-3 text-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2"><span>账户：{account.userId}</span><span>{accountSummary}</span></div>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <div className="relative flex-1">
+                <input type={showManagementToken ? 'text' : 'password'} value={managementToken} onChange={(event) => setManagementToken(event.target.value)} placeholder="更新系统访问令牌" className={`${inputBase} pr-9`} />
+                <button type="button" onClick={() => setShowManagementToken((current) => !current)} className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)]">{showManagementToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button>
               </div>
-              <div>
-                <label className="mb-1 block text-[11px] text-[var(--color-text-tertiary)]">
-                  {t('settings.echoflowAPIOfficialLogin.selectHaikuModel')}
-                </label>
-                {chatModels.length > 0 ? (
-                  <select value={selectedHaikuModel} onChange={(e) => setSelectedHaikuModel(e.target.value)} className={selectBase}>
-                    {chatModels.map((m) => <option key={m.id} value={m.id}>{m.id}</option>)}
-                  </select>
-                ) : (
-                  <input type="text" value={selectedHaikuModel} onChange={(e) => setSelectedHaikuModel(e.target.value)} placeholder={DEFAULT_MODELS.haiku} className={`${selectBase} px-3`} />
-                )}
-              </div>
-              <div>
-                <label className="mb-1 block text-[11px] text-[var(--color-text-tertiary)]">
-                  {t('settings.echoflowAPIOfficialLogin.selectSonnetModel')}
-                </label>
-                {chatModels.length > 0 ? (
-                  <select value={selectedSonnetModel} onChange={(e) => setSelectedSonnetModel(e.target.value)} className={selectBase}>
-                    {chatModels.map((m) => <option key={m.id} value={m.id}>{m.id}</option>)}
-                  </select>
-                ) : (
-                  <input type="text" value={selectedSonnetModel} onChange={(e) => setSelectedSonnetModel(e.target.value)} placeholder={DEFAULT_MODELS.sonnet} className={`${selectBase} px-3`} />
-                )}
-              </div>
-              <div>
-                <label className="mb-1 block text-[11px] text-[var(--color-text-tertiary)]">
-                  {t('settings.echoflowAPIOfficialLogin.selectOpusModel')}
-                </label>
-                {chatModels.length > 0 ? (
-                  <select value={selectedOpusModel} onChange={(e) => setSelectedOpusModel(e.target.value)} className={selectBase}>
-                    {chatModels.map((m) => <option key={m.id} value={m.id}>{m.id}</option>)}
-                  </select>
-                ) : (
-                  <input type="text" value={selectedOpusModel} onChange={(e) => setSelectedOpusModel(e.target.value)} placeholder={DEFAULT_MODELS.opus} className={`${selectBase} px-3`} />
-                )}
-              </div>
+              <button type="button" onClick={() => void updateAccountToken()} disabled={isUpdatingAccount || !managementToken.trim()} className="rounded-md border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-text-secondary)] disabled:opacity-50">{isUpdatingAccount ? '更新中...' : '更新令牌'}</button>
+              <button type="button" onClick={() => void refreshAccount()} disabled={isRefreshing} className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-text-secondary)]"><RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />刷新账户与 API Key</button>
+              <button type="button" onClick={() => void disconnectAccount()} className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-text-secondary)]"><Unlink className="h-4 w-4" />解除绑定</button>
             </div>
           </div>
-          {chatModels.length === 0 && (
-            <p className="text-[11px] text-[var(--color-text-tertiary)]">{t('settings.echoflowAPIOfficialLogin.modelFetchFailed')}</p>
-          )}
-        </div>
-      )}
-
-      {/* Connect button */}
-      <button
-        type="button"
-        onClick={handleConnect}
-        disabled={isConnecting || !canConnect}
-        className="inline-flex items-center justify-center gap-2 rounded-md bg-[image:var(--gradient-btn-primary)] px-4 py-2 text-sm text-[var(--color-btn-primary-fg)] shadow-[var(--shadow-button-primary)] transition-opacity hover:brightness-105 disabled:opacity-50"
-      >
-        <LogIn className="h-4 w-4" aria-hidden="true" />
-        {isConnecting ? '...' : t('settings.echoflowAPIOfficialLogin.saveProvider')}
-      </button>
-
-      {error && <div className="text-xs text-[var(--color-error)]">{error}</div>}
+        )}
+      </div>
+      {error && <p className="text-xs text-[var(--color-error)]">{error}</p>}
     </div>
   )
 }

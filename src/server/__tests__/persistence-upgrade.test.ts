@@ -312,6 +312,67 @@ describe('persistent storage upgrade migrations', () => {
     expect(quarantined.length).toBe(1)
   })
 
+  test('moves legacy Qingyun credentials into dedicated storage and removes them from providers', async () => {
+    const currentDir = echoFlowDir()
+    await fs.mkdir(currentDir, { recursive: true })
+    await fs.writeFile(
+      path.join(currentDir, 'providers.json'),
+      JSON.stringify({
+        schemaVersion: CURRENT_PROVIDER_INDEX_SCHEMA_VERSION,
+        activeId: null,
+        providers: [{
+          id: 'echoflow-api',
+          presetId: 'echoflow-api',
+          name: 'EchoFlow API',
+          apiKey: 'provider-key',
+          baseUrl: 'https://api.echoflow.cn',
+          models: { main: 'model', haiku: 'model', sonnet: 'model', opus: 'model' },
+          echoflowManagement: { userId: '106452', managementToken: 'management-token' },
+          echoflowToken: 'legacy-token',
+        }, {
+          id: 'echoflow-api-secondary',
+          presetId: 'echoflow-api',
+          name: 'EchoFlow API secondary',
+          apiKey: 'provider-key-secondary',
+          baseUrl: 'https://api.echoflow.cn',
+          models: { main: 'model', haiku: 'model', sonnet: 'model', opus: 'model' },
+          echoflowManagement: { userId: '106453', managementToken: 'second-management-token' },
+          echoflowToken: 'second-legacy-token',
+        }],
+      }, null, 2),
+      'utf-8',
+    )
+
+    const report = await ensurePersistentStorageUpgraded()
+
+    expect(report.failures).toEqual([])
+    expect(report.migratedEntries).toContain('providers.json -> echoflow/qingyun-account.json')
+    const account = JSON.parse(await fs.readFile(path.join(currentDir, 'qingyun-account.json'), 'utf-8')) as {
+      userId?: string
+      managementToken?: string
+    }
+    expect(account).toEqual({ userId: '106452', managementToken: 'management-token' })
+    const providers = await fs.readFile(path.join(currentDir, 'providers.json'), 'utf-8')
+    expect(providers).not.toContain('management-token')
+    expect(providers).not.toContain('legacy-token')
+    expect(providers).not.toContain('second-management-token')
+    expect(providers).not.toContain('second-legacy-token')
+  })
+
+  test('quarantines malformed providers index after skipping account extraction', async () => {
+    const currentDir = echoFlowDir()
+    await fs.mkdir(currentDir, { recursive: true })
+    await fs.writeFile(path.join(currentDir, 'providers.json'), '{"providers":', 'utf-8')
+
+    const report = await ensurePersistentStorageUpgraded()
+
+    expect(report.failures).toEqual([])
+    expect(report.migratedEntries).toContain('echoflow/providers.json')
+    expect(JSON.parse(await fs.readFile(path.join(currentDir, 'providers.json'), 'utf-8'))).toEqual({})
+    const quarantined = (await listFiles(currentDir)).filter((file) => file.startsWith('providers.json.invalid-'))
+    expect(quarantined).toHaveLength(1)
+  })
+
   test('upgrades existing DeepSeek managed env to follow global thinking settings', async () => {
     const currentDir = echoFlowDir()
     await fs.mkdir(currentDir, { recursive: true })

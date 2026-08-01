@@ -16,7 +16,7 @@ CLI 目前只从源码运行，没有单独的安装包。
 先装好 [Git](https://git-scm.com/downloads) 和 [Bun](https://bun.sh)，然后：
 
 ```bash
-git clone https://github.com/NanmiCoder/cc-haha.git
+git clone https://github.com/LiuGuangHS/EchoFlow-ClaudeCode.git
 cd echoflow-code
 bun install
 ```
@@ -64,10 +64,10 @@ macOS 和 Linux 在 `~/.bashrc` 或 `~/.zshrc` 中添加：
 
 ```bash
 # 方式一：加入 PATH（推荐）
-export PATH="$HOME/path/to/claude-code-haha/bin:$PATH"
+export PATH="$HOME/path/to/echoflow-code/bin:$PATH"
 
 # 方式二：alias
-alias echoflow-code="$HOME/path/to/claude-code-haha/bin/echoflow-code"
+alias echoflow-code="$HOME/path/to/echoflow-code/bin/echoflow-code"
 ```
 
 改完重新加载：
@@ -79,7 +79,7 @@ source ~/.zshrc  # 或 source ~/.bashrc
 Windows 的 Git Bash 同样在 `~/.bashrc` 中加 `PATH`：
 
 ```bash
-export PATH="$HOME/path/to/claude-code-haha/bin:$PATH"
+export PATH="$HOME/path/to/echoflow-code/bin:$PATH"
 ```
 
 验证方式是换个目录再启动，然后问它「当前目录是什么」：

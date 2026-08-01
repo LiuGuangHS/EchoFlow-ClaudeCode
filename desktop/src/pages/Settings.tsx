@@ -102,7 +102,6 @@ import { copyTextToClipboard } from '@/lib/clipboard'
 const NETWORK_TIMEOUT_MIN_SECONDS = 30
 const NETWORK_TIMEOUT_MAX_SECONDS = 1800
 const NETWORK_TIMEOUT_STEP_SECONDS = 30
-const ECHOFLOW_REGISTER_URL = 'https://api.echoflow.cn/register'
 const MOBILE_APP_DOWNLOAD_URL = 'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest'
 const SETTINGS_CHECKBOX_INPUT_CLASS = 'settings-checkbox-input peer'
 const BUILT_IN_OUTPUT_STYLE_TRANSLATION_KEYS = {
@@ -424,7 +423,6 @@ function ProviderSettings() {
   const [createInitialPresetId, setCreateInitialPresetId] = useState<string | undefined>(undefined)
   const [showCcSwitchImport, setShowCcSwitchImport] = useState(false)
   const [pendingDeleteProvider, setPendingDeleteProvider] = useState<SavedProvider | null>(null)
-  const [showEchoFlowAPILogin, setShowEchoFlowAPILogin] = useState(false)
   const [isDeletingProvider, setIsDeletingProvider] = useState(false)
   const [testResults, setTestResults] = useState<Record<string, { loading: boolean; result?: ProviderTestResult }>>({})
   const sensors = useSensors(
@@ -483,10 +481,11 @@ function ProviderSettings() {
     await fetchSettings()
   }
 
-  const hasEchoFlowAPIProvider = providers.some((provider) => provider.presetId === 'echoflowai')
-  const showEchoFlowAPIOfficialLogin = showEchoFlowAPILogin || !hasEchoFlowAPIProvider
   const providerItems = useMemo(
-    () => buildProviderListItems(providers, providerOrder),
+    () => buildProviderListItems(
+      providers.filter((provider) => provider.presetId !== 'echoflowai'),
+      providerOrder,
+    ),
     [providerOrder, providers],
   )
 
@@ -494,12 +493,20 @@ function ProviderSettings() {
     const { active, over } = event
     if (!over || active.id === over.id) return
 
-    const ids = providerItems.map((item) => item.id)
-    const oldIndex = ids.indexOf(String(active.id))
-    const newIndex = ids.indexOf(String(over.id))
+    const visibleIds = providerItems.map((item) => item.id)
+    const oldIndex = visibleIds.indexOf(String(active.id))
+    const newIndex = visibleIds.indexOf(String(over.id))
     if (oldIndex === -1 || newIndex === -1) return
 
-    void reorderProviders(arrayMove(ids, oldIndex, newIndex))
+    const reorderedVisibleIds = arrayMove(visibleIds, oldIndex, newIndex)
+    const visibleIdSet = new Set(visibleIds)
+    let reorderedIndex = 0
+    const fullOrder = normalizeProviderOrder(providerOrder, providers).flatMap((id) => {
+      if (!visibleIdSet.has(id)) return [id]
+      const reorderedId = reorderedVisibleIds[reorderedIndex++]
+      return reorderedId ? [reorderedId] : []
+    })
+    void reorderProviders(fullOrder)
   }
 
   const isClaudeOfficialActive = hasLoadedProviders && activeId === null
@@ -532,43 +539,24 @@ function ProviderSettings() {
         )}
       />
 
-      {/* Official providers — always visible at top */}
       <div
         data-testid="echoflow-api-official-provider"
-        className="relative flex flex-col rounded-xl border border-[var(--color-border)] transition-all mb-2 hover:border-[var(--color-border-focus)] cursor-pointer"
+        className="relative mb-2 flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)]"
       >
-        <div
-          className="flex items-center gap-4 px-4 py-3.5"
-          onClick={() => setShowEchoFlowAPILogin(true)}
-        >
-          <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${hasEchoFlowAPIProvider ? 'bg-[var(--color-success)]' : 'bg-[var(--color-text-tertiary)]'}`} />
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold text-[var(--color-text-primary)]">{t('settings.providers.echoflowAPIOfficialName')}</span>
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation()
-                  openExternalUrl(ECHOFLOW_REGISTER_URL)
-                }}
-                className="inline-flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-1.5 py-0.5 text-[10px] font-medium leading-none text-[var(--color-brand)] transition-colors hover:border-[var(--color-border-focus)] hover:bg-[var(--color-surface-hover)]"
-              >
-                {t('settings.echoflowAPIOfficialLogin.goRegister')}
-                <span className="material-symbols-outlined text-[12px]">open_in_new</span>
-              </button>
-            </div>
-            <div className="text-xs text-[var(--color-text-tertiary)] mt-0.5">{t('settings.providers.echoflowAPIOfficialDesc')}</div>
+        <div className="flex items-center gap-4 px-4 py-3.5">
+          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${activeId && providers.some((provider) => provider.id === activeId && provider.presetId === 'echoflowai') ? 'bg-[var(--color-success)]' : 'bg-[var(--color-text-tertiary)]'}`} />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold text-[var(--color-text-primary)]">清云 API 官方</div>
+            <div className="mt-0.5 text-xs text-[var(--color-text-tertiary)]">https://api.echoflow.cn · Claude / OpenAI 兼容协议</div>
           </div>
         </div>
-
-        {showEchoFlowAPIOfficialLogin && (
-          <div className="px-4 pb-4 pt-3 border-t border-[var(--color-border-separator)]">
-            <EchoFlowAPIOfficialLogin onOpenConfigModal={() => {
-              setCreateInitialPresetId('echoflowai')
-              setShowCreateModal(true)
-            }} />
-          </div>
-        )}
+        <div className="border-t border-[var(--color-border-separator)] px-4 pb-4 pt-3">
+          <EchoFlowAPIOfficialLogin
+            activeId={activeId}
+            providers={providers}
+            onEdit={setEditingProvider}
+          />
+        </div>
       </div>
 
       <DndContext

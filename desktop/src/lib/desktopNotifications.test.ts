@@ -153,7 +153,7 @@ describe('desktopNotifications', () => {
       body: 'Approve command execution',
       id: expect.any(Number),
       extra: {
-        ccHahaTarget: JSON.stringify(target),
+        echoFlowTarget: JSON.stringify(target),
       },
     }))
   })
@@ -460,9 +460,11 @@ describe('desktopNotifications', () => {
     expect(nativeRegistered).toBe(true)
     expect(pluginRegistered).toBe(true)
     nativeCallback({ payload: { target: JSON.stringify(sessionTarget) } })
+    pluginCallback({ extra: { echoFlowTarget: JSON.stringify(scheduledTarget) } })
     pluginCallback({ extra: { ccHahaTarget: JSON.stringify(scheduledTarget) } })
 
     expect(onTarget).toHaveBeenCalledWith(sessionTarget)
+    expect(onTarget).toHaveBeenCalledTimes(3)
     expect(onTarget).toHaveBeenCalledWith(scheduledTarget)
 
     cleanup()

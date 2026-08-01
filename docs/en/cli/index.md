@@ -16,7 +16,7 @@ The CLI runs from source only. There is no separate installer for it.
 Install [Git](https://git-scm.com/downloads) and [Bun](https://bun.sh) first, then:
 
 ```bash
-git clone https://github.com/NanmiCoder/cc-haha.git
+git clone https://github.com/LiuGuangHS/EchoFlow-ClaudeCode.git
 cd echoflow-code
 bun install
 ```
@@ -64,10 +64,10 @@ On macOS and Linux, add this to `~/.bashrc` or `~/.zshrc`:
 
 ```bash
 # Option 1: add to PATH (recommended)
-export PATH="$HOME/path/to/claude-code-haha/bin:$PATH"
+export PATH="$HOME/path/to/echoflow-code/bin:$PATH"
 
 # Option 2: alias
-alias echoflow-code="$HOME/path/to/claude-code-haha/bin/echoflow-code"
+alias echoflow-code="$HOME/path/to/echoflow-code/bin/echoflow-code"
 ```
 
 Reload the shell config:
@@ -79,7 +79,7 @@ source ~/.zshrc  # or source ~/.bashrc
 On Windows, add the same `PATH` line to `~/.bashrc` under Git Bash:
 
 ```bash
-export PATH="$HOME/path/to/claude-code-haha/bin:$PATH"
+export PATH="$HOME/path/to/echoflow-code/bin:$PATH"
 ```
 
 To verify, start it from a different directory and ask what the current directory is:

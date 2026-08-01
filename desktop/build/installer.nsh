@@ -3,16 +3,16 @@
 !define /ifndef INSTALL_REGISTRY_KEY "Software\${APP_GUID}"
 !define /ifndef UNINSTALL_REGISTRY_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${UNINSTALL_APP_KEY}"
 Var pid
-Var ccHahaProcessDiagnostic
+Var echoFlowProcessDiagnostic
 
 !ifndef BUILD_UNINSTALLER
-Var ccHahaRecoveryDone
-Var ccHahaPerUserInstallLocation
-Var ccHahaPerMachineInstallLocation
-Var ccHahaPerUserUninstallString
-Var ccHahaPerMachineUninstallString
+Var echoFlowRecoveryDone
+Var echoFlowPerUserInstallLocation
+Var echoFlowPerMachineInstallLocation
+Var echoFlowPerUserUninstallString
+Var echoFlowPerMachineUninstallString
 
-Function CcHahaUninstallerParent
+Function EchoFlowUninstallerParent
   Exch $R0
   Push $R1
   Push $R2
@@ -62,7 +62,7 @@ Function CcHahaUninstallerParent
     Exch $R0
 FunctionEnd
 
-Function CcHahaFinalInstallDir
+Function EchoFlowFinalInstallDir
   Exch $R0
   Push $R1
   Push $R2
@@ -94,7 +94,7 @@ Function CcHahaFinalInstallDir
     Exch $R0
 FunctionEnd
 
-Function CcHahaCanSkipLegacyRecovery
+Function EchoFlowCanSkipLegacyRecovery
   Push $R3
   Push $R0
   Push $R1
@@ -104,16 +104,16 @@ Function CcHahaCanSkipLegacyRecovery
   ${If} $8 != "trusted-user"
     Goto echoflow_skip_recovery_done
   ${EndIf}
-  ${If} $ccHahaPerUserInstallLocation == ""
+  ${If} $echoFlowPerUserInstallLocation == ""
     Goto echoflow_skip_recovery_done
   ${EndIf}
-  ${If} $ccHahaPerMachineInstallLocation != ""
+  ${If} $echoFlowPerMachineInstallLocation != ""
     Goto echoflow_skip_recovery_done
   ${EndIf}
-  ${If} $ccHahaPerMachineUninstallString != ""
+  ${If} $echoFlowPerMachineUninstallString != ""
     Goto echoflow_skip_recovery_done
   ${EndIf}
-  StrCmp $ccHahaPerUserInstallLocation $INSTDIR 0 echoflow_skip_recovery_done
+  StrCmp $echoFlowPerUserInstallLocation $INSTDIR 0 echoflow_skip_recovery_done
 
   ReadEnvStr $R1 APPDATA
   ${If} $R1 == ""
@@ -126,7 +126,7 @@ Function CcHahaCanSkipLegacyRecovery
   ${EndIf}
   StrCpy $R0 "0"
 
-  IfFileExists "$ccHahaPerUserInstallLocation\CLAUDE_CONFIG_DIR\*.*" echoflow_skip_recovery_done 0
+  IfFileExists "$echoFlowPerUserInstallLocation\CLAUDE_CONFIG_DIR\*.*" echoflow_skip_recovery_done 0
   IfFileExists "$R1\EchoFlow Code\app-mode.json" echoflow_check_default_mode 0
   StrCpy $R0 "1"
   Goto echoflow_skip_recovery_done
@@ -159,7 +159,7 @@ Function CcHahaCanSkipLegacyRecovery
     Exch $R3
 FunctionEnd
 
-Function CcHahaRecoverLegacy
+Function EchoFlowRecoverLegacy
   ReadRegStr $4 HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation
   ReadRegStr $5 HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation
   ReadRegStr $R0 HKCU "${UNINSTALL_REGISTRY_KEY}" UninstallString
@@ -171,7 +171,7 @@ Function CcHahaRecoverLegacy
   ${If} $4 == ""
   ${AndIf} $R0 != ""
     Push $R0
-    Call CcHahaUninstallerParent
+    Call EchoFlowUninstallerParent
     Pop $4
   ${EndIf}
   ReadRegStr $R1 HKLM "${UNINSTALL_REGISTRY_KEY}" UninstallString
@@ -183,12 +183,12 @@ Function CcHahaRecoverLegacy
   ${If} $5 == ""
   ${AndIf} $R1 != ""
     Push $R1
-    Call CcHahaUninstallerParent
+    Call EchoFlowUninstallerParent
     Pop $5
   ${EndIf}
 
   Push "$INSTDIR"
-  Call CcHahaFinalInstallDir
+  Call EchoFlowFinalInstallDir
   Pop $9
 
   ${If} $4 == ""
@@ -223,26 +223,26 @@ Function CcHahaRecoverLegacy
   Pop $1
 FunctionEnd
 
-!macro CcHahaRunLegacyRecovery
-  ${If} $ccHahaRecoveryDone != "1"
-    ReadRegStr $ccHahaPerUserInstallLocation HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation
-    ReadRegStr $ccHahaPerMachineInstallLocation HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation
-    ReadRegStr $ccHahaPerUserUninstallString HKCU "${UNINSTALL_REGISTRY_KEY}" UninstallString
-    ReadRegStr $ccHahaPerMachineUninstallString HKLM "${UNINSTALL_REGISTRY_KEY}" UninstallString
+!macro EchoFlowRunLegacyRecovery
+  ${If} $echoFlowRecoveryDone != "1"
+    ReadRegStr $echoFlowPerUserInstallLocation HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation
+    ReadRegStr $echoFlowPerMachineInstallLocation HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation
+    ReadRegStr $echoFlowPerUserUninstallString HKCU "${UNINSTALL_REGISTRY_KEY}" UninstallString
+    ReadRegStr $echoFlowPerMachineUninstallString HKLM "${UNINSTALL_REGISTRY_KEY}" UninstallString
     !ifdef UNINSTALL_REGISTRY_KEY_2
-      ${If} $ccHahaPerUserUninstallString == ""
-        ReadRegStr $ccHahaPerUserUninstallString HKCU "${UNINSTALL_REGISTRY_KEY_2}" UninstallString
+      ${If} $echoFlowPerUserUninstallString == ""
+        ReadRegStr $echoFlowPerUserUninstallString HKCU "${UNINSTALL_REGISTRY_KEY_2}" UninstallString
       ${EndIf}
-      ${If} $ccHahaPerMachineUninstallString == ""
-        ReadRegStr $ccHahaPerMachineUninstallString HKLM "${UNINSTALL_REGISTRY_KEY_2}" UninstallString
+      ${If} $echoFlowPerMachineUninstallString == ""
+        ReadRegStr $echoFlowPerMachineUninstallString HKLM "${UNINSTALL_REGISTRY_KEY_2}" UninstallString
       ${EndIf}
     !endif
 
-    ${If} $ccHahaPerUserInstallLocation == ""
-    ${AndIf} $ccHahaPerMachineInstallLocation == ""
-    ${AndIf} $ccHahaPerUserUninstallString == ""
-    ${AndIf} $ccHahaPerMachineUninstallString == ""
-      StrCpy $ccHahaRecoveryDone "1"
+    ${If} $echoFlowPerUserInstallLocation == ""
+    ${AndIf} $echoFlowPerMachineInstallLocation == ""
+    ${AndIf} $echoFlowPerUserUninstallString == ""
+    ${AndIf} $echoFlowPerMachineUninstallString == ""
+      StrCpy $echoFlowRecoveryDone "1"
       DetailPrint "No registered installation needs legacy data recovery"
     ${Else}
       StrCpy $8 "trusted-user"
@@ -254,16 +254,16 @@ FunctionEnd
         StrCpy $8 "trusted-uac-outer"
       ${EndIf}
 
-      Call CcHahaCanSkipLegacyRecovery
+      Call EchoFlowCanSkipLegacyRecovery
       Pop $R0
       ${If} $R0 == "1"
-        StrCpy $ccHahaRecoveryDone "1"
+        StrCpy $echoFlowRecoveryDone "1"
         DetailPrint "No legacy data candidates found for the registered per-user installation"
       ${Else}
         ${If} ${UAC_IsInnerInstance}
-          !insertmacro UAC_AsUser_Call Function CcHahaRecoverLegacy ${UAC_SYNCREGISTERS}|${UAC_SYNCOUTDIR}|${UAC_SYNCINSTDIR}
+          !insertmacro UAC_AsUser_Call Function EchoFlowRecoverLegacy ${UAC_SYNCREGISTERS}|${UAC_SYNCOUTDIR}|${UAC_SYNCINSTDIR}
         ${Else}
-          Call CcHahaRecoverLegacy
+          Call EchoFlowRecoverLegacy
         ${EndIf}
 
         ${If} $0 != "0"
@@ -276,7 +276,7 @@ FunctionEnd
           SetErrorLevel 20
           Quit
         ${EndIf}
-        StrCpy $ccHahaRecoveryDone "1"
+        StrCpy $echoFlowRecoveryDone "1"
         DetailPrint "Legacy EchoFlow Code data safety check completed"
       ${EndIf}
     ${EndIf}
@@ -284,13 +284,13 @@ FunctionEnd
 !macroend
 !endif
 
-!macro CcHahaFindInstallProcess _FILE _RETURN
+!macro EchoFlowFindInstallProcess _FILE _RETURN
   ${If} $IsPowerShellAvailable == 0
     nsExec::ExecToStack '"$PowerShellPath" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\check-install-processes.ps1" -InstallDir "$INSTDIR" -ProcessName "${_FILE}" -Action Find -InstallerPid "$pid" -InstallerParentPid "$1"'
     Pop ${_RETURN}
-    Pop $ccHahaProcessDiagnostic
-    ${If} $ccHahaProcessDiagnostic != ""
-      DetailPrint "$ccHahaProcessDiagnostic"
+    Pop $echoFlowProcessDiagnostic
+    ${If} $echoFlowProcessDiagnostic != ""
+      DetailPrint "$echoFlowProcessDiagnostic"
     ${EndIf}
   ${Else}
     Delete "$PLUGINSDIR\echoflow-code-processes.csv"
@@ -301,25 +301,25 @@ FunctionEnd
     !endif
     Pop ${_RETURN}
     ${If} ${_RETURN} != 0
-      StrCpy $ccHahaProcessDiagnostic "PowerShell unavailable and tasklist process enumeration failed (exit code ${_RETURN}); blocking setup."
+      StrCpy $echoFlowProcessDiagnostic "PowerShell unavailable and tasklist process enumeration failed (exit code ${_RETURN}); blocking setup."
       StrCpy ${_RETURN} 0
     ${Else}
       nsExec::Exec '"$SYSDIR\findstr.exe" /I /L /C:"${_FILE}" /C:"claude-sidecar-x86_64-pc-windows-msvc.exe" /C:"claude-sidecar-aarch64-pc-windows-msvc.exe" /C:"claude-sidecar.exe" /C:"OpenConsole.exe" /C:"winpty-agent.exe" /C:"rg.exe" "$PLUGINSDIR\echoflow-code-processes.csv"'
       Pop ${_RETURN}
       ${If} ${_RETURN} == 0
-        StrCpy $ccHahaProcessDiagnostic "PowerShell unavailable; the main app, a known sidecar, or a bundled terminal/search helper is running with an unknown path. Close it manually."
+        StrCpy $echoFlowProcessDiagnostic "PowerShell unavailable; the main app, a known sidecar, or a bundled terminal/search helper is running with an unknown path. Close it manually."
       ${ElseIf} ${_RETURN} == 1
-        StrCpy $ccHahaProcessDiagnostic "PowerShell unavailable; exact-image fallback found no main app, known sidecar, or bundled terminal/search helper. Differently named child processes cannot be attributed without path data."
+        StrCpy $echoFlowProcessDiagnostic "PowerShell unavailable; exact-image fallback found no main app, known sidecar, or bundled terminal/search helper. Differently named child processes cannot be attributed without path data."
       ${Else}
-        StrCpy $ccHahaProcessDiagnostic "PowerShell unavailable and fallback process filtering failed (exit code ${_RETURN}); blocking setup."
+        StrCpy $echoFlowProcessDiagnostic "PowerShell unavailable and fallback process filtering failed (exit code ${_RETURN}); blocking setup."
         StrCpy ${_RETURN} 0
       ${EndIf}
     ${EndIf}
-    DetailPrint "$ccHahaProcessDiagnostic"
+    DetailPrint "$echoFlowProcessDiagnostic"
   ${EndIf}
 !macroend
 
-!macro CcHahaKillInstallProcess _FILE _FORCE
+!macro EchoFlowKillInstallProcess _FILE _FORCE
   Push $0
   ${If} ${_FORCE} == 1
     StrCpy $0 "KillForce"
@@ -330,13 +330,13 @@ FunctionEnd
   ${If} $IsPowerShellAvailable == 0
     nsExec::ExecToStack '"$PowerShellPath" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\check-install-processes.ps1" -InstallDir "$INSTDIR" -ProcessName "${_FILE}" -Action "$0" -InstallerPid "$pid" -InstallerParentPid "$1"'
     Pop $0
-    Pop $ccHahaProcessDiagnostic
-    ${If} $ccHahaProcessDiagnostic != ""
-      DetailPrint "$ccHahaProcessDiagnostic"
+    Pop $echoFlowProcessDiagnostic
+    ${If} $echoFlowProcessDiagnostic != ""
+      DetailPrint "$echoFlowProcessDiagnostic"
     ${EndIf}
   ${Else}
-    StrCpy $ccHahaProcessDiagnostic "PowerShell unavailable; refusing to terminate by image name because the executable path is unknown. Close the app manually."
-    DetailPrint "$ccHahaProcessDiagnostic"
+    StrCpy $echoFlowProcessDiagnostic "PowerShell unavailable; refusing to terminate by image name because the executable path is unknown. Close the app manually."
+    DetailPrint "$echoFlowProcessDiagnostic"
   ${EndIf}
   Pop $0
 !macroend
@@ -345,14 +345,14 @@ FunctionEnd
   InitPluginsDir
   File /oname=$PLUGINSDIR\check-install-processes.ps1 "${BUILD_RESOURCES_DIR}\check-install-processes.ps1"
   !insertmacro IS_POWERSHELL_AVAILABLE
-  StrCpy $ccHahaProcessDiagnostic ""
+  StrCpy $echoFlowProcessDiagnostic ""
   ${GetProcessInfo} 0 $pid $1 $2 $3 $4
   ${If} $3 != "${APP_EXECUTABLE_FILENAME}"
     ${If} ${isUpdated}
       Sleep 300
     ${EndIf}
 
-    !insertmacro CcHahaFindInstallProcess "${APP_EXECUTABLE_FILENAME}" $R0
+    !insertmacro EchoFlowFindInstallProcess "${APP_EXECUTABLE_FILENAME}" $R0
     ${If} $R0 == 0
       ${If} ${isUpdated}
         Sleep 1000
@@ -364,17 +364,17 @@ FunctionEnd
 
       echoflow_stop_process:
         DetailPrint "$(appClosing)"
-        !insertmacro CcHahaKillInstallProcess "${APP_EXECUTABLE_FILENAME}" 0
+        !insertmacro EchoFlowKillInstallProcess "${APP_EXECUTABLE_FILENAME}" 0
         Sleep 300
         StrCpy $R1 0
 
       echoflow_process_retry:
         IntOp $R1 $R1 + 1
-        !insertmacro CcHahaFindInstallProcess "${APP_EXECUTABLE_FILENAME}" $R0
+        !insertmacro EchoFlowFindInstallProcess "${APP_EXECUTABLE_FILENAME}" $R0
         ${If} $R0 == 0
           Sleep 1000
-          !insertmacro CcHahaKillInstallProcess "${APP_EXECUTABLE_FILENAME}" 1
-          !insertmacro CcHahaFindInstallProcess "${APP_EXECUTABLE_FILENAME}" $R0
+          !insertmacro EchoFlowKillInstallProcess "${APP_EXECUTABLE_FILENAME}" 1
+          !insertmacro EchoFlowFindInstallProcess "${APP_EXECUTABLE_FILENAME}" $R0
           ${If} $R0 == 0
             DetailPrint `Waiting for "${PRODUCT_NAME}" to close.`
             Sleep 2000
@@ -386,7 +386,7 @@ FunctionEnd
         ${EndIf}
 
         ${If} $R1 > 1
-          MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(appCannotBeClosed)$\r$\n$\r$\n$ccHahaProcessDiagnostic" /SD IDCANCEL IDRETRY echoflow_process_retry
+          MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(appCannotBeClosed)$\r$\n$\r$\n$echoFlowProcessDiagnostic" /SD IDCANCEL IDRETRY echoflow_process_retry
           SetErrorLevel 22
           Quit
         ${Else}
@@ -397,26 +397,26 @@ FunctionEnd
     ${EndIf}
   ${EndIf}
   !ifndef BUILD_UNINSTALLER
-    !insertmacro CcHahaRunLegacyRecovery
+    !insertmacro EchoFlowRunLegacyRecovery
   !endif
 !macroend
 
 !ifndef BUILD_UNINSTALLER
 !macro customPageAfterChangeDir
-  Function CcHahaRecoveryBeforeInstall
+  Function EchoFlowRecoveryBeforeInstall
     ${If} ${UAC_IsInnerInstance}
-      !insertmacro CcHahaRunLegacyRecovery
+      !insertmacro EchoFlowRunLegacyRecovery
     ${EndIf}
     Abort
   FunctionEnd
-  Page custom CcHahaRecoveryBeforeInstall
+  Page custom EchoFlowRecoveryBeforeInstall
 !macroend
 
 !macro customInit
-  StrCpy $ccHahaRecoveryDone "0"
+  StrCpy $echoFlowRecoveryDone "0"
   ${If} ${UAC_IsInnerInstance}
   ${AndIf} ${Silent}
-    !insertmacro CcHahaRunLegacyRecovery
+    !insertmacro EchoFlowRunLegacyRecovery
   ${EndIf}
 !macroend
 !endif

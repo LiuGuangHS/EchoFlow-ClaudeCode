@@ -36,7 +36,7 @@ import {
 } from '../../services/openaiAuth/models.js'
 import { GROK_DEFAULT_MAIN_MODEL } from '../../services/grokAuth/models.js'
 import { getGrokModelCatalog } from '../../services/grokAuth/modelCatalog.js'
-import { hahaGrokOAuthService } from '../services/hahaGrokOAuthService.js'
+import { echoFlowGrokOAuthService } from '../services/echoFlowGrokOAuthService.js'
 import { diagnosticsService } from '../services/diagnosticsService.js'
 import {
   buildConversationTitleInput,
@@ -3066,7 +3066,7 @@ async function getGrokReasoningEfforts(modelId: string): Promise<{
   defaultEffort?: string
   supportedEfforts: string[]
 }> {
-  const tokens = await hahaGrokOAuthService.ensureFreshTokens()
+  const tokens = await echoFlowGrokOAuthService.ensureFreshTokens()
   const catalog = await getGrokModelCatalog({
     ...(tokens?.accessToken ? { accessToken: tokens.accessToken } : {}),
     accountKey: tokens?.email ?? (tokens ? 'authenticated-default' : 'logged-out'),

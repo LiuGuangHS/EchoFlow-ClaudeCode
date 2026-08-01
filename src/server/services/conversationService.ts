@@ -85,15 +85,15 @@ const AUTO_MEMORY_DIRNAME = 'memory'
 export const DESKTOP_CLI_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 6_000
 const DESKTOP_BRIDGE_ENV_KEYS = [
   'ECHOFLOW_COMPUTER_USE_HOST_BUNDLE_ID',
-  'ECHOFLOW_COMPUTER_USE_HOST_BUNDLE_ID',
+  'CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID',
   'ECHOFLOW_DESKTOP_SERVER_URL',
-  'ECHOFLOW_DESKTOP_SERVER_URL',
+  'CC_HAHA_DESKTOP_SERVER_URL',
   'ECHOFLOW_DESKTOP_AWAIT_MCP',
-  'ECHOFLOW_DESKTOP_AWAIT_MCP',
+  'CC_HAHA_DESKTOP_AWAIT_MCP',
   'ECHOFLOW_DESKTOP_AWAIT_MCP_TIMEOUT_MS',
-  'ECHOFLOW_DESKTOP_AWAIT_MCP_TIMEOUT_MS',
+  'CC_HAHA_DESKTOP_AWAIT_MCP_TIMEOUT_MS',
   'ECHOFLOW_SKIP_DOTENV',
-  'ECHOFLOW_SKIP_DOTENV',
+  'CC_HAHA_SKIP_DOTENV',
 ] as const
 
 /**
@@ -1682,8 +1682,8 @@ export class ConversationService {
     try {
       // deferred import: avoids instantiating the OAuth singleton on every
       // ConversationService construction — only loaded when official mode hits.
-      const { hahaOAuthService } = await import('./hahaOAuthService.js')
-      const token = await hahaOAuthService.ensureFreshAccessToken()
+      const { echoFlowOAuthService } = await import('./echoFlowOAuthService.js')
+      const token = await echoFlowOAuthService.ensureFreshAccessToken()
       if (token) {
         env.CLAUDE_CODE_OAUTH_TOKEN = token
       }
@@ -1704,8 +1704,8 @@ export class ConversationService {
 
     let token: string | null = null
     try {
-      const { hahaOAuthService } = await import('./hahaOAuthService.js')
-      token = await hahaOAuthService.ensureFreshAccessToken()
+      const { echoFlowOAuthService } = await import('./echoFlowOAuthService.js')
+      token = await echoFlowOAuthService.ensureFreshAccessToken()
     } catch (err) {
       console.error(
         '[conversationService] refresh official OAuth token before turn failed:',

@@ -12,7 +12,7 @@ import {
   saveAiTitle,
 } from '../services/titleService.js'
 import { sessionService } from '../services/sessionService.js'
-import { hahaOpenAIOAuthService } from '../services/hahaOpenAIOAuthService.js'
+import { echoFlowOpenAIOAuthService } from '../services/echoFlowOpenAIOAuthService.js'
 import { SYSTEM_PROXY_URL_ENV } from '../services/networkSettings.js'
 import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 
@@ -32,7 +32,7 @@ describe('titleService', () => {
 
   afterEach(async () => {
     globalThis.fetch = originalFetch
-    hahaOpenAIOAuthService.dispose()
+    echoFlowOpenAIOAuthService.dispose()
     restoreEnv('CLAUDE_CONFIG_DIR', originalConfigDir)
     restoreEnv(SYSTEM_PROXY_URL_ENV, originalSystemProxyUrl)
     await fs.rm(tmpDir, { recursive: true, force: true })
@@ -314,7 +314,7 @@ describe('titleService', () => {
     )
     const providerService = new ProviderService()
     await providerService.activateProvider('openai-official')
-    await hahaOpenAIOAuthService.saveTokens({
+    await echoFlowOpenAIOAuthService.saveTokens({
       accessToken: 'access-for-title',
       refreshToken: 'refresh-for-title',
       expiresAt: Date.now() + 60 * 60_000,

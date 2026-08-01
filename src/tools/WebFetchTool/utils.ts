@@ -89,7 +89,7 @@ export function shouldSkipWebFetchPreflight(
   // actual target URL being reachable through the configured provider path.
   return Boolean(
     process.env.ECHOFLOW_DESKTOP_SERVER_URL ||
-      process.env.ECHOFLOW_DESKTOP_SERVER_URL,
+      process.env.CC_HAHA_DESKTOP_SERVER_URL,
   )
 }
 

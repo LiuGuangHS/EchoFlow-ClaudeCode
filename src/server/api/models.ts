@@ -33,7 +33,7 @@ import {
   GROK_OFFICIAL_PROVIDER_NAME,
   isGrokOfficialProviderId,
 } from '../services/grokOfficialProvider.js'
-import { hahaGrokOAuthService } from '../services/hahaGrokOAuthService.js'
+import { echoFlowGrokOAuthService } from '../services/echoFlowGrokOAuthService.js'
 
 // ─── Fallback models (used when no provider is configured) ────────────────────
 
@@ -182,7 +182,7 @@ function buildGrokModelList(catalog: GrokModelCatalogEntry[]): ApiModelInfo[] {
 }
 
 async function getGrokModelList(): Promise<ApiModelInfo[]> {
-  const tokens = await hahaGrokOAuthService.ensureFreshTokens()
+  const tokens = await echoFlowGrokOAuthService.ensureFreshTokens()
   return buildGrokModelList(await getGrokModelCatalog({
     ...(tokens?.accessToken ? { accessToken: tokens.accessToken } : {}),
     accountKey: tokens?.email ?? (tokens ? 'authenticated-default' : 'logged-out'),

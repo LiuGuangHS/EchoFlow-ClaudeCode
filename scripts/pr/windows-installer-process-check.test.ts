@@ -11,8 +11,8 @@ describe('Windows installer process matching', () => {
 
     expect(installerHook).not.toContain('!insertmacro _CHECK_APP_RUNNING')
     expect(installerHook).toContain('check-install-processes.ps1')
-    expect(installerHook).toContain('!macro CcHahaFindInstallProcess')
-    expect(installerHook).toContain('!macro CcHahaKillInstallProcess')
+    expect(installerHook).toContain('!macro EchoFlowFindInstallProcess')
+    expect(installerHook).toContain('!macro EchoFlowKillInstallProcess')
     expect(installerHook).toContain('-InstallerPid "$pid"')
     expect(installerHook).toContain('-InstallerParentPid "$1"')
     expect(installerHook).toContain('tasklist /FI "USERNAME eq %USERNAME%" /FO CSV /NH >')

@@ -21,12 +21,12 @@ import {
   isOpenAIOfficialProviderId,
 } from './openaiOfficialProvider.js'
 import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
-import { hahaOpenAIOAuthService } from './hahaOpenAIOAuthService.js'
+import { echoFlowOpenAIOAuthService } from './echoFlowOpenAIOAuthService.js'
 import {
   GROK_OFFICIAL_PROVIDER,
   isGrokOfficialProviderId,
 } from './grokOfficialProvider.js'
-import { hahaGrokOAuthService } from './hahaGrokOAuthService.js'
+import { echoFlowGrokOAuthService } from './echoFlowGrokOAuthService.js'
 import {
   CURRENT_PROVIDER_INDEX_SCHEMA_VERSION,
   ensurePersistentStorageUpgraded,
@@ -120,8 +120,6 @@ function buildSavedProvider(input: CreateProviderInput): SavedProvider {
     ...(input.model1mSupport !== undefined && { model1mSupport: input.model1mSupport }),
     ...(input.autoCompactWindow !== undefined && { autoCompactWindow: input.autoCompactWindow }),
     ...(input.modelContextWindows !== undefined && { modelContextWindows: input.modelContextWindows }),
-    ...(input.echoflowManagement !== undefined && { echoflowManagement: input.echoflowManagement }),
-    ...(input.echoflowToken !== undefined && { echoflowToken: input.echoflowToken }),
     toolSearchEnabled: input.toolSearchEnabled ?? true,
     ...(input.disableExperimentalBetas === true && { disableExperimentalBetas: true }),
     ...(input.notes !== undefined && { notes: input.notes }),
@@ -292,8 +290,6 @@ export class ProviderService {
       ...(input.model1mSupport !== undefined && input.model1mSupport !== null && { model1mSupport: input.model1mSupport }),
       ...(typeof input.autoCompactWindow === 'number' && { autoCompactWindow: input.autoCompactWindow }),
       ...(input.modelContextWindows !== undefined && input.modelContextWindows !== null && { modelContextWindows: input.modelContextWindows }),
-      ...(input.echoflowManagement !== undefined && input.echoflowManagement !== null && { echoflowManagement: input.echoflowManagement }),
-      ...(input.echoflowToken !== undefined && input.echoflowToken !== null && { echoflowToken: input.echoflowToken }),
       ...(input.toolSearchEnabled !== undefined && { toolSearchEnabled: input.toolSearchEnabled }),
       ...(input.disableExperimentalBetas === true && { disableExperimentalBetas: true }),
       ...(input.notes !== undefined && { notes: input.notes }),
@@ -306,12 +302,6 @@ export class ProviderService {
     }
     if (input.modelContextWindows === null) {
       delete updated.modelContextWindows
-    }
-    if (input.echoflowManagement === null) {
-      delete updated.echoflowManagement
-    }
-    if (input.echoflowToken === null) {
-      delete updated.echoflowToken
     }
     if (input.disableExperimentalBetas === false) {
       delete updated.disableExperimentalBetas
@@ -486,7 +476,7 @@ export class ProviderService {
     const index = await this.readIndex()
     if (index.activeId) {
       if (isOpenAIOfficialProviderId(index.activeId)) {
-        const tokens = await hahaOpenAIOAuthService.ensureFreshTokens()
+        const tokens = await echoFlowOpenAIOAuthService.ensureFreshTokens()
         if (tokens?.accessToken && tokens.refreshToken) {
           return {
             hasAuth: true,
@@ -501,7 +491,7 @@ export class ProviderService {
         }
       }
       if (isGrokOfficialProviderId(index.activeId)) {
-        const tokens = await hahaGrokOAuthService.ensureFreshTokens()
+        const tokens = await echoFlowGrokOAuthService.ensureFreshTokens()
         if (tokens?.accessToken && tokens.refreshToken) {
           return {
             hasAuth: true,

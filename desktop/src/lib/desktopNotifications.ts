@@ -29,7 +29,8 @@ type NativeNotificationSender = (options: NativeNotificationPayload) => Promise<
 export type DesktopNotificationPermission = NotificationPermission | 'unsupported'
 type PluginPermissionState = DesktopNotificationPermission | 'prompt' | 'prompt-with-rationale'
 
-const TARGET_EXTRA_KEY = 'ccHahaTarget'
+const TARGET_EXTRA_KEY = 'echoFlowTarget'
+const LEGACY_TARGET_EXTRA_KEY = 'ccHahaTarget'
 const notifiedKeys = new Set<string>()
 const pendingKeys = new Set<string>()
 const lastNotificationAtByScope = new Map<string, number>()
@@ -176,13 +177,17 @@ function notificationTargetFromPayload(payload: unknown): DesktopNotificationTar
   const extra = record.extra && typeof record.extra === 'object'
     ? record.extra as Record<string, unknown>
     : null
-  const extraTarget = extra ? notificationTargetFromPayload(extra[TARGET_EXTRA_KEY]) : null
+  const extraTarget = extra
+    ? notificationTargetFromPayload(extra[TARGET_EXTRA_KEY]) ?? notificationTargetFromPayload(extra[LEGACY_TARGET_EXTRA_KEY])
+    : null
   if (extraTarget) return extraTarget
 
   const data = record.data && typeof record.data === 'object'
     ? record.data as Record<string, unknown>
     : null
-  const dataTarget = data ? notificationTargetFromPayload(data[TARGET_EXTRA_KEY]) : null
+  const dataTarget = data
+    ? notificationTargetFromPayload(data[TARGET_EXTRA_KEY]) ?? notificationTargetFromPayload(data[LEGACY_TARGET_EXTRA_KEY])
+    : null
   if (dataTarget) return dataTarget
 
   const id = typeof record.id === 'number' ? record.id : null

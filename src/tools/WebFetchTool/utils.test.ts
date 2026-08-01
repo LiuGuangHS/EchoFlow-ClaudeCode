@@ -3,11 +3,11 @@ import { shouldSkipWebFetchPreflight } from './utils.js'
 
 describe('shouldSkipWebFetchPreflight', () => {
   const originalEchoFlowDesktopServerUrl = process.env.ECHOFLOW_DESKTOP_SERVER_URL
-  const originalDesktopServerUrl = process.env.ECHOFLOW_DESKTOP_SERVER_URL
+  const originalDesktopServerUrl = process.env.CC_HAHA_DESKTOP_SERVER_URL
 
   beforeEach(() => {
     delete process.env.ECHOFLOW_DESKTOP_SERVER_URL
-    delete process.env.ECHOFLOW_DESKTOP_SERVER_URL
+    delete process.env.CC_HAHA_DESKTOP_SERVER_URL
   })
 
   afterEach(() => {
@@ -17,11 +17,12 @@ describe('shouldSkipWebFetchPreflight', () => {
       process.env.ECHOFLOW_DESKTOP_SERVER_URL = originalEchoFlowDesktopServerUrl
     }
     if (originalDesktopServerUrl === undefined) {
-      delete process.env.ECHOFLOW_DESKTOP_SERVER_URL
+      delete process.env.CC_HAHA_DESKTOP_SERVER_URL
     } else {
-      process.env.ECHOFLOW_DESKTOP_SERVER_URL = originalDesktopServerUrl
+      process.env.CC_HAHA_DESKTOP_SERVER_URL = originalDesktopServerUrl
     }
   })
+
 
   test('respects explicit true from settings', () => {
     expect(
@@ -44,7 +45,7 @@ describe('shouldSkipWebFetchPreflight', () => {
   })
 
   test('keeps legacy desktop server env compatible', () => {
-    process.env.ECHOFLOW_DESKTOP_SERVER_URL = 'http://127.0.0.1:3456'
+    process.env.CC_HAHA_DESKTOP_SERVER_URL = 'http://127.0.0.1:3456'
 
     expect(shouldSkipWebFetchPreflight({})).toBe(true)
   })

@@ -17,9 +17,9 @@ vi.mock('../../lib/desktopRuntime', async (importOriginal) => {
 
 import { ModelSelector } from './ModelSelector'
 import { useChatStore } from '../../stores/chatStore'
-import { useHahaOAuthStore } from '../../stores/hahaOAuthStore'
-import { useHahaOpenAIOAuthStore } from '../../stores/hahaOpenAIOAuthStore'
-import { useHahaGrokOAuthStore } from '../../stores/hahaGrokOAuthStore'
+import { useEchoFlowOAuthStore } from '../../stores/echoFlowOAuthStore'
+import { useEchoFlowOpenAIOAuthStore } from '../../stores/echoFlowOpenAIOAuthStore'
+import { useEchoFlowGrokOAuthStore } from '../../stores/echoFlowGrokOAuthStore'
 import { useProviderStore } from '../../stores/providerStore'
 import { useSessionRuntimeStore } from '../../stores/sessionRuntimeStore'
 import { useSettingsStore } from '../../stores/settingsStore'
@@ -44,15 +44,15 @@ afterEach(() => {
   useProviderStore.setState(useProviderStore.getInitialState(), true)
   useSessionRuntimeStore.setState(useSessionRuntimeStore.getInitialState(), true)
   useChatStore.setState(useChatStore.getInitialState(), true)
-  useHahaOAuthStore.setState(useHahaOAuthStore.getInitialState(), true)
-  useHahaOpenAIOAuthStore.setState(useHahaOpenAIOAuthStore.getInitialState(), true)
-  useHahaGrokOAuthStore.setState(useHahaGrokOAuthStore.getInitialState(), true)
+  useEchoFlowOAuthStore.setState(useEchoFlowOAuthStore.getInitialState(), true)
+  useEchoFlowOpenAIOAuthStore.setState(useEchoFlowOpenAIOAuthStore.getInitialState(), true)
+  useEchoFlowGrokOAuthStore.setState(useEchoFlowGrokOAuthStore.getInitialState(), true)
 })
 
 beforeEach(() => {
-  useHahaOAuthStore.setState({ fetchStatus: async () => {} })
-  useHahaOpenAIOAuthStore.setState({ fetchStatus: async () => {} })
-  useHahaGrokOAuthStore.setState({ fetchStatus: async () => {} })
+  useEchoFlowOAuthStore.setState({ fetchStatus: async () => {} })
+  useEchoFlowOpenAIOAuthStore.setState({ fetchStatus: async () => {} })
+  useEchoFlowGrokOAuthStore.setState({ fetchStatus: async () => {} })
 })
 
 describe('ModelSelector', () => {
@@ -62,7 +62,7 @@ describe('ModelSelector', () => {
       { id: 'claude-sonnet-4-6', name: 'Sonnet 4.6', description: 'Legacy Sonnet', context: '200k' },
       { id: 'claude-haiku-4-5', name: 'Haiku 4.5', description: 'Legacy Haiku', context: '200k' },
     ]
-    useHahaOAuthStore.setState({
+    useEchoFlowOAuthStore.setState({
       status: {
         loggedIn: true,
         expiresAt: null,
@@ -97,8 +97,8 @@ describe('ModelSelector', () => {
   it('does not query official OAuth status when mounted', () => {
     const fetchClaudeStatus = vi.fn(async () => {})
     const fetchOpenAIStatus = vi.fn(async () => {})
-    useHahaOAuthStore.setState({ fetchStatus: fetchClaudeStatus })
-    useHahaOpenAIOAuthStore.setState({ fetchStatus: fetchOpenAIStatus })
+    useEchoFlowOAuthStore.setState({ fetchStatus: fetchClaudeStatus })
+    useEchoFlowOpenAIOAuthStore.setState({ fetchStatus: fetchOpenAIStatus })
     useSettingsStore.setState({
       locale: 'en',
       availableModels: MODELS,
@@ -121,8 +121,8 @@ describe('ModelSelector', () => {
   it('queries official OAuth status once when the runtime dropdown is opened', async () => {
     const fetchClaudeStatus = vi.fn(async () => {})
     const fetchOpenAIStatus = vi.fn(async () => {})
-    useHahaOAuthStore.setState({ fetchStatus: fetchClaudeStatus })
-    useHahaOpenAIOAuthStore.setState({ fetchStatus: fetchOpenAIStatus })
+    useEchoFlowOAuthStore.setState({ fetchStatus: fetchClaudeStatus })
+    useEchoFlowOpenAIOAuthStore.setState({ fetchStatus: fetchOpenAIStatus })
     useSettingsStore.setState({
       locale: 'en',
       availableModels: MODELS,
@@ -165,8 +165,8 @@ describe('ModelSelector', () => {
   it('does not query official OAuth status for plain model dropdowns', async () => {
     const fetchClaudeStatus = vi.fn(async () => {})
     const fetchOpenAIStatus = vi.fn(async () => {})
-    useHahaOAuthStore.setState({ fetchStatus: fetchClaudeStatus })
-    useHahaOpenAIOAuthStore.setState({ fetchStatus: fetchOpenAIStatus })
+    useEchoFlowOAuthStore.setState({ fetchStatus: fetchClaudeStatus })
+    useEchoFlowOpenAIOAuthStore.setState({ fetchStatus: fetchOpenAIStatus })
     useSettingsStore.setState({
       locale: 'en',
       availableModels: MODELS,
@@ -443,7 +443,7 @@ describe('ModelSelector', () => {
       },
     ]
     const setSessionRuntime = vi.fn()
-    useHahaOpenAIOAuthStore.setState({
+    useEchoFlowOpenAIOAuthStore.setState({
       status: { loggedIn: true, expiresAt: null, email: null, accountId: null },
       fetchStatus: async () => {},
     })
@@ -502,7 +502,7 @@ describe('ModelSelector', () => {
         supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
       },
     ]
-    useHahaOpenAIOAuthStore.setState({
+    useEchoFlowOpenAIOAuthStore.setState({
       status: { loggedIn: true, expiresAt: null, email: null, accountId: null },
       fetchStatus: async () => {},
     })
@@ -568,7 +568,7 @@ describe('ModelSelector', () => {
       context: '',
       supportedReasoningEfforts: [],
     }]
-    useHahaGrokOAuthStore.setState({
+    useEchoFlowGrokOAuthStore.setState({
       status: { loggedIn: true, expiresAt: null, email: 'grok@example.com' },
       fetchStatus: async () => {},
     })
@@ -608,7 +608,7 @@ describe('ModelSelector', () => {
       defaultReasoningEffort: 'high',
       supportedReasoningEfforts: ['low', 'medium', 'high'],
     }]
-    useHahaGrokOAuthStore.setState({
+    useEchoFlowGrokOAuthStore.setState({
       status: { loggedIn: true, expiresAt: null, email: 'grok@example.com' },
       fetchStatus: async () => {},
     })
@@ -644,9 +644,9 @@ describe('ModelSelector', () => {
   })
 
   it('hides official provider sections when OAuth is not logged in', async () => {
-    useHahaOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
-    useHahaOpenAIOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
-    useHahaGrokOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
+    useEchoFlowOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
+    useEchoFlowOpenAIOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
+    useEchoFlowGrokOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
     useSettingsStore.setState({
       locale: 'en',
       availableModels: MODELS,

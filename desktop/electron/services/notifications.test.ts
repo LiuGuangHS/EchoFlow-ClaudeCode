@@ -47,7 +47,7 @@ describe('Electron notification service', () => {
         id: 1,
         title: 'Done',
         body: 'Task complete',
-        extra: { ccHahaTarget: JSON.stringify(target) },
+        extra: { echoFlowTarget: JSON.stringify(target) },
         target,
       },
       onAction,
@@ -66,7 +66,7 @@ describe('Electron notification service', () => {
     handlers.get('click')?.()
     expect(onAction).toHaveBeenCalledWith({
       id: 1,
-      extra: { ccHahaTarget: JSON.stringify(target) },
+      extra: { echoFlowTarget: JSON.stringify(target) },
       target,
       action: 'click',
     })

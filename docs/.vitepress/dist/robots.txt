@@ -1,4 +1,0 @@
-User-agent: *
-Allow: /
-
-Sitemap: https://code.echoflow.cn/sitemap.xml
