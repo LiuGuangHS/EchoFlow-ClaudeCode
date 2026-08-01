@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAdapterStore } from '../stores/adapterStore'
 import { useTranslation } from '../i18n'
-import { Input } from '../components/shared/Input'
-import { Button } from '../components/shared/Button'
-import { DirectoryPicker } from '../components/shared/DirectoryPicker'
-import { ConfirmDialog } from '../components/shared/ConfirmDialog'
+import { Input } from '@/components/ui/Input'
+import { Button } from '@/components/ui/Button'
+import { LoadingState } from '@/components/ui/LoadingState'
+import { DirectoryPicker } from '@/components/composite/DirectoryPicker'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import QRCode from 'qrcode'
 
 type ImTab = 'telegram' | 'feishu' | 'wechat' | 'dingtalk' | 'whatsapp'
@@ -256,9 +257,9 @@ export function AdapterSettings() {
     setSaveStatus('idle')
     setSaveError('')
     try {
-      const patch: Record<string, unknown> = {}
-
-      if (defaultProjectDir) patch.defaultProjectDir = defaultProjectDir
+      const patch: Record<string, unknown> = {
+        defaultProjectDir,
+      }
 
       const tgUsers = tgAllowedUsers
         .split(',')
@@ -268,7 +269,7 @@ export function AdapterSettings() {
         .filter((n) => !isNaN(n))
 
       patch.telegram = {
-        botToken: tgBotToken || undefined,
+        botToken: tgBotToken,
         allowedUsers: tgUsers.length ? tgUsers : [],
       }
 
@@ -278,10 +279,10 @@ export function AdapterSettings() {
         .filter(Boolean)
 
       patch.feishu = {
-        appId: fsAppId || undefined,
-        appSecret: fsAppSecret || undefined,
-        encryptKey: fsEncryptKey || undefined,
-        verificationToken: fsVerificationToken || undefined,
+        appId: fsAppId,
+        appSecret: fsAppSecret,
+        encryptKey: fsEncryptKey,
+        verificationToken: fsVerificationToken,
         allowedUsers: fsUsers.length ? fsUsers : [],
         streamingCard: fsStreamingCard,
       }
@@ -292,7 +293,6 @@ export function AdapterSettings() {
         .filter(Boolean)
 
       patch.wechat = {
-        ...config.wechat,
         allowedUsers: wcUsers.length ? wcUsers : [],
       }
 
@@ -302,7 +302,6 @@ export function AdapterSettings() {
         .filter(Boolean)
 
       patch.whatsapp = {
-        ...config.whatsapp,
         allowedUsers: waUsers.length ? waUsers : [],
       }
 
@@ -312,11 +311,11 @@ export function AdapterSettings() {
         .filter(Boolean)
 
       patch.dingtalk = {
-        clientId: dtClientId || undefined,
-        clientSecret: dtClientSecret || undefined,
+        clientId: dtClientId,
+        clientSecret: dtClientSecret,
         allowedUsers: dtUsers.length ? dtUsers : [],
-        endpoint: dtEndpoint || undefined,
-        permissionCardTemplateId: dtPermissionCardTemplateId || undefined,
+        endpoint: dtEndpoint,
+        permissionCardTemplateId: dtPermissionCardTemplateId,
       }
 
       await updateConfig(patch)
@@ -488,24 +487,30 @@ export function AdapterSettings() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center py-12 text-[var(--color-text-tertiary)]">
-        <span className="material-symbols-outlined animate-spin text-[20px] mr-2">progress_activity</span>
-        Loading...
+      <div className="flex items-center justify-center py-12">
+        <LoadingState label={t('common.loading')} variant="inline" size="md" />
       </div>
     )
   }
 
   return (
     <div className="max-w-2xl space-y-8">
-      {/* Description */}
+      {/* Page header. The pane opened straight onto its description, the only
+          one of the sixteen sections without a title. */}
       <div>
-        <p className="text-sm leading-6 text-[var(--color-text-secondary)]">
+        <h2
+          className="mb-1.5 text-[24px] font-semibold leading-tight text-[var(--color-text-primary)]"
+          style={{ fontFamily: 'var(--font-headline)' }}
+        >
+          {t('settings.tab.adapters')}
+        </h2>
+        <p className="text-[13.5px] leading-6 text-[var(--color-text-secondary)]">
           {t('settings.adapters.description')}{' '}
           <a
             href={IM_CONFIG_DOCS_URL}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 font-medium text-[var(--color-brand)] transition-colors hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-bg)]"
+            className="inline-flex items-center gap-1 font-medium text-[var(--color-brand)] transition-colors hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-background)]"
           >
             {t('settings.adapters.configurationDocs')}
             <span className="material-symbols-outlined text-[14px]" aria-hidden="true">open_in_new</span>
@@ -515,7 +520,7 @@ export function AdapterSettings() {
       </div>
 
       {/* Pairing */}
-      <section className="rounded-xl border border-[var(--color-border)] overflow-hidden">
+      <section className="rounded-[var(--radius-xl)] border border-[var(--color-border)] overflow-hidden">
         <div className="flex items-center gap-2 px-4 py-3 bg-[var(--color-surface-hover)] border-b border-[var(--color-border)]">
           <span className="material-symbols-outlined text-[18px] text-[var(--color-text-secondary)]">link</span>
           <span className="text-sm font-semibold text-[var(--color-text-primary)]">{t('settings.adapters.pairing')}</span>
@@ -558,7 +563,7 @@ export function AdapterSettings() {
                 {allPairedUsers.map((user) => (
                   <div
                     key={`${user.platform}-${user.userId}`}
-                    className="flex items-center justify-between px-3 py-2 rounded-lg bg-[var(--color-surface-hover)]"
+                    className="flex items-center justify-between px-3 py-2 rounded-[var(--radius-lg)] bg-[var(--color-surface-hover)]"
                   >
                     <div className="flex items-center gap-2">
                       <span className="text-xs px-1.5 py-0.5 rounded bg-[var(--color-surface)] text-[var(--color-text-secondary)]">
@@ -569,12 +574,13 @@ export function AdapterSettings() {
                         {new Date(user.pairedAt).toLocaleDateString()}
                       </span>
                     </div>
-                    <button
+                    <Button
+                      variant="danger-outline"
+                      size="sm"
                       onClick={() => handleUnbind(user.platform, user.userId)}
-                      className="text-xs text-[var(--color-error)] hover:underline cursor-pointer"
                     >
                       {t('settings.adapters.unbind')}
-                    </button>
+                    </Button>
                   </div>
                 ))}
               </div>
@@ -594,15 +600,22 @@ export function AdapterSettings() {
         <label className="text-sm font-medium text-[var(--color-text-primary)]">
           {t('settings.adapters.defaultProject')}
         </label>
-        <DirectoryPicker value={defaultProjectDir} onChange={setDefaultProjectDir} />
+        <div className="flex items-center gap-2">
+          <DirectoryPicker value={defaultProjectDir} onChange={setDefaultProjectDir} />
+          {defaultProjectDir && (
+            <Button variant="ghost" size="sm" onClick={() => setDefaultProjectDir('')}>
+              {t('settings.adapters.clearDefaultProject')}
+            </Button>
+          )}
+        </div>
         <p className="text-xs text-[var(--color-text-tertiary)]">
           {t('settings.adapters.defaultProjectHint')}
         </p>
       </div>
 
       {/* IM Adapter Tabs */}
-      <section className="rounded-xl border border-[var(--color-border)] overflow-hidden">
-        <div role="tablist" aria-label="IM adapter" className="flex items-stretch border-b border-[var(--color-border)] bg-[var(--color-surface-hover)]">
+      <section className="rounded-[var(--radius-xl)] border border-[var(--color-border)] overflow-hidden">
+        <div role="tablist" aria-label={t('settings.adapters.imTabs')} className="flex items-stretch border-b border-[var(--color-border)] bg-[var(--color-surface-hover)]">
           <ImTabButton
             label={t('settings.adapters.telegram')}
             active={activeIm === 'telegram'}
@@ -633,7 +646,7 @@ export function AdapterSettings() {
         {activeIm === 'feishu' && (
           <div className="p-4 space-y-4">
             {!hasSavedFeishuCredentials && (
-              <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+              <div className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="flex min-w-0 gap-3">
                     <span className="material-symbols-outlined mt-0.5 text-[20px] text-[var(--color-brand)]">smart_toy</span>
@@ -715,7 +728,7 @@ export function AdapterSettings() {
 
         {activeIm === 'wechat' && (
           <div className="p-4 space-y-4">
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3">
+            <div className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3">
               <div className="flex items-center justify-between gap-4">
                 <div>
                   <div className="text-sm font-medium text-[var(--color-text-primary)]">
@@ -742,7 +755,7 @@ export function AdapterSettings() {
                   <img
                     src={wechatQrUrl}
                     alt={t('settings.adapters.wechatQrAlt')}
-                    className="h-40 w-40 rounded-lg border border-[var(--color-border)] bg-white object-contain p-2"
+                    className="h-40 w-40 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-white object-contain p-2"
                   />
                   <div className="pt-2 text-sm text-[var(--color-text-secondary)]">
                     {wechatStatus || t('settings.adapters.wechatWaiting')}
@@ -769,7 +782,7 @@ export function AdapterSettings() {
 
         {activeIm === 'dingtalk' && (
           <div className="p-4 space-y-4">
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3">
+            <div className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3">
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <h4 className="text-sm font-semibold text-[var(--color-text-primary)]">{t('settings.adapters.dingtalkQrTitle')}</h4>
@@ -793,7 +806,7 @@ export function AdapterSettings() {
                     <img
                       src={dtRegistration.qrDataUrl}
                       alt={t('settings.adapters.dingtalkQrAlt')}
-                      className="h-40 w-40 rounded-lg border border-[var(--color-border)] bg-white object-contain p-2"
+                      className="h-40 w-40 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-white object-contain p-2"
                     />
                   ) : null}
                   <div className="min-w-0 flex-1 space-y-2">
@@ -883,7 +896,7 @@ export function AdapterSettings() {
 
         {activeIm === 'whatsapp' && (
           <div className="p-4 space-y-4">
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3">
+            <div className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3">
               <div className="flex items-center justify-between gap-4">
                 <div>
                   <div className="text-sm font-medium text-[var(--color-text-primary)]">
@@ -914,7 +927,7 @@ export function AdapterSettings() {
                   <img
                     src={whatsappQrUrl}
                     alt={t('settings.adapters.whatsappQrAlt')}
-                    className="h-40 w-40 rounded-lg border border-[var(--color-border)] bg-white object-contain p-2"
+                    className="h-40 w-40 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-white object-contain p-2"
                   />
                   <div className="pt-2 text-sm text-[var(--color-text-secondary)]">
                     {whatsappStatus || t('settings.adapters.whatsappWaiting')}

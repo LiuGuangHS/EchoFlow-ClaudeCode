@@ -1,17 +1,24 @@
 import { spawn, spawnSync, type ChildProcessByStdio } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import {
+  constants as fsConstants,
   closeSync,
   existsSync,
+  fchmodSync,
   fstatSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
   readSync,
+  realpathSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs'
 import type { Readable } from 'node:stream'
+import http from 'node:http'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
@@ -23,7 +30,8 @@ export const SERVER_STARTUP_TIMEOUT_MS = 30_000
 export const SERVER_STARTUP_LOG_LIMIT = 80
 export const HOST_DIAGNOSTICS_LINE_LIMIT = 80
 export const HOST_DIAGNOSTICS_BYTE_LIMIT = 256 * 1024
-export const ELECTRON_DIAGNOSTICS_FILE_ENV = 'CC_HAHA_ELECTRON_DIAGNOSTICS_FILE'
+export const ELECTRON_DIAGNOSTICS_FILE_ENV = 'ECHOFLOW_ELECTRON_DIAGNOSTICS_FILE'
+export const RIPGREP_PATH_ENV = 'ECHOFLOW_RIPGREP_PATH'
 const HOST_DIAGNOSTICS_LINE_BYTE_LIMIT = 4096
 // Shared with the Tauri shell (src-tauri/src/lib.rs) so both desktop builds
 // reuse the same sticky port across restarts (issue #767).
@@ -51,7 +59,11 @@ const PROXY_ENV_KEYS = [
   'HTTPS_PROXY',
   'http_proxy',
   'https_proxy',
+  'ALL_PROXY',
+  'all_proxy',
 ] as const
+export const SYSTEM_PROXY_BRIDGE_ENV = 'ECHOFLOW_SYSTEM_PROXY_URL'
+export const SYSTEM_PROXY_ERROR_ENV = 'ECHOFLOW_SYSTEM_PROXY_ERROR'
 const LOOPBACK_NO_PROXY_ENTRIES = ['localhost', '127.0.0.1', '::1'] as const
 
 export function resolveHostTriple(platform = process.platform, arch = process.arch): string {
@@ -67,6 +79,43 @@ export function resolveHostTriple(platform = process.platform, arch = process.ar
 export function resolveSidecarExecutable(desktopRoot: string, triple = resolveHostTriple()): string {
   const base = path.join(desktopRoot, 'src-tauri', 'binaries', `claude-sidecar-${triple}`)
   return process.platform === 'win32' ? `${base}.exe` : base
+}
+
+export function resolveBundledRipgrepExecutable(
+  desktopRoot: string,
+  triple = resolveHostTriple(),
+): string {
+  const extension = triple.includes('windows') ? '.exe' : ''
+  return path.join(desktopRoot, 'src-tauri', 'binaries', `rg${extension}`)
+}
+
+function withBundledRipgrepPath(
+  env: NodeJS.ProcessEnv,
+  desktopRoot: string,
+): NodeJS.ProcessEnv {
+  const bundledRipgrep = resolveBundledRipgrepExecutable(desktopRoot)
+  const explicitRipgrep = env[RIPGREP_PATH_ENV]?.trim()
+  const selectedRipgrep = explicitRipgrep && existsSync(explicitRipgrep)
+    ? explicitRipgrep
+    : existsSync(bundledRipgrep)
+      ? bundledRipgrep
+      : null
+  if (!selectedRipgrep) return env
+
+  const pathKey = process.platform === 'win32'
+    ? Object.keys(env).find(key => key.toLowerCase() === 'path') ?? 'Path'
+    : 'PATH'
+  const currentPath = env[pathKey] ?? ''
+  const ripgrepDirectory = path.dirname(selectedRipgrep)
+  const nextPath = currentPath
+    ? `${currentPath}${path.delimiter}${ripgrepDirectory}`
+    : ripgrepDirectory
+
+  return {
+    ...env,
+    [pathKey]: nextPath,
+    [RIPGREP_PATH_ENV]: explicitRipgrep || bundledRipgrep,
+  }
 }
 
 export function httpToWebSocketUrl(serverHttpUrl: string): string {
@@ -145,19 +194,26 @@ export async function reserveServerPort(
 
 export function claudeConfigDir(
   env: NodeJS.ProcessEnv = process.env,
+  homeDir: string = os.homedir(),
+): string {
+  return env.CLAUDE_CONFIG_DIR?.trim() || path.join(homeDir, '.claude')
+}
+
+function echoFlowInternalDir(
+  env: NodeJS.ProcessEnv = process.env,
   homeDir = os.homedir(),
 ): string {
-  return env.CLAUDE_CONFIG_DIR || path.join(homeDir, '.claude')
+  return path.join(claudeConfigDir(env, homeDir), 'echoflow-code')
 }
 
 export function electronHostDiagnosticsFile(
   env: NodeJS.ProcessEnv = process.env,
   homeDir = os.homedir(),
 ): string {
-  return path.join(claudeConfigDir(env, homeDir), 'cc-haha', 'diagnostics', 'electron-host.log')
+  return path.join(echoFlowInternalDir(env, homeDir), 'diagnostics', 'electron-host.log')
 }
 
-/** Parse h5Access.fixedPort out of cc-haha/settings.json contents. */
+/** Parse h5Access.fixedPort out of echoflow-code/settings.json contents. */
 export function parseH5FixedPort(contents: string): number | null {
   let value: unknown
   try {
@@ -175,7 +231,7 @@ export function parseH5FixedPort(contents: string): number | null {
 
 export function readH5FixedPort(env: NodeJS.ProcessEnv = process.env): number | null {
   try {
-    const settingsPath = path.join(claudeConfigDir(env), 'cc-haha', 'settings.json')
+    const settingsPath = path.join(echoFlowInternalDir(env), 'settings.json')
     return parseH5FixedPort(readFileSync(settingsPath, 'utf-8'))
   } catch {
     return null
@@ -235,27 +291,46 @@ export async function waitForServer(host: string, port: number, timeoutMs = SERV
 }
 
 async function assertServerHealth(healthUrl: string, timeoutMs: number): Promise<void> {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), timeoutMs)
-  try {
-    const response = await fetch(healthUrl, {
-      cache: 'no-store',
-      signal: controller.signal,
+  await new Promise<void>((resolve, reject) => {
+    const request = http.get(healthUrl, {
+      agent: false,
+      headers: {
+        Accept: 'application/json',
+        Connection: 'close',
+      },
+    }, response => {
+      const chunks: Buffer[] = []
+      response.on('data', chunk => chunks.push(Buffer.from(chunk)))
+      response.on('error', reject)
+      response.on('end', () => {
+        if (response.statusCode === undefined || response.statusCode < 200 || response.statusCode >= 300) {
+          reject(new Error(`healthcheck returned ${response.statusCode ?? 'no status'}`))
+          return
+        }
+
+        const contentType = response.headers['content-type'] ?? ''
+        if (!contentType.toLowerCase().includes('application/json')) {
+          reject(new Error(`healthcheck returned non-JSON response from ${healthUrl}`))
+          return
+        }
+
+        try {
+          const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown
+          if (!body || typeof body !== 'object' || !('status' in body) || body.status !== 'ok') {
+            reject(new Error(`healthcheck returned invalid response from ${healthUrl}`))
+            return
+          }
+          resolve()
+        } catch {
+          reject(new Error(`healthcheck returned invalid response from ${healthUrl}`))
+        }
+      })
     })
-    if (!response.ok) throw new Error(`healthcheck returned ${response.status}`)
-
-    const contentType = response.headers.get('content-type') ?? ''
-    if (!contentType.toLowerCase().includes('application/json')) {
-      throw new Error(`healthcheck returned non-JSON response from ${healthUrl}`)
-    }
-
-    const body = await response.json().catch(() => null)
-    if (!body || typeof body !== 'object' || !('status' in body) || body.status !== 'ok') {
-      throw new Error(`healthcheck returned invalid response from ${healthUrl}`)
-    }
-  } finally {
-    clearTimeout(timeout)
-  }
+    request.setTimeout(timeoutMs, () => {
+      request.destroy(new Error(`healthcheck timed out after ${timeoutMs}ms`))
+    })
+    request.on('error', reject)
+  })
 }
 
 function sleep(ms: number): Promise<void> {
@@ -275,10 +350,14 @@ export function appendHostDiagnostic(
   { homeDir = os.homedir() }: { homeDir?: string } = {},
 ): void {
   if (!filePath) return
-  const tempPath = `${filePath}.${process.pid}.tmp`
+  const tempPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`
+  let tempDescriptor: number | undefined
   try {
     const sanitized = sanitizeHostDiagnostic(line, homeDir)
     if (!sanitized) return
+    const diagnosticsDir = path.dirname(filePath)
+    ensurePrivateHostDiagnosticsDirectory(diagnosticsDir)
+    assertRegularHostDiagnosticsFileOrMissing(filePath)
     const existing = readHostDiagnosticsTail(filePath)
     const lines = existing.trimEnd()
       ? existing.trimEnd().split('\n').map(entry => sanitizeHostDiagnostic(entry, homeDir)).filter(Boolean)
@@ -292,13 +371,30 @@ export function appendHostDiagnostic(
       boundedLines.unshift(entry)
       retainedBytes += entryBytes
     }
-    mkdirSync(path.dirname(filePath), { recursive: true })
-    writeFileSync(tempPath, `${boundedLines.join('\n')}\n`, {
-      encoding: 'utf-8',
-      mode: 0o600,
-    })
+    const noFollow = process.platform === 'win32' ? 0 : fsConstants.O_NOFOLLOW
+    tempDescriptor = openSync(
+      tempPath,
+      fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY | noFollow,
+      0o600,
+    )
+    if (!fstatSync(tempDescriptor).isFile()) {
+      throw new Error(`Refusing non-regular Electron diagnostics file: ${tempPath}`)
+    }
+    if (process.platform !== 'win32') fchmodSync(tempDescriptor, 0o600)
+    writeFileSync(tempDescriptor, `${boundedLines.join('\n')}\n`, 'utf-8')
+    closeSync(tempDescriptor)
+    tempDescriptor = undefined
+    ensurePrivateHostDiagnosticsDirectory(diagnosticsDir)
+    assertRegularHostDiagnosticsFileOrMissing(filePath)
     renameSync(tempPath, filePath)
   } catch {
+    if (tempDescriptor !== undefined) {
+      try {
+        closeSync(tempDescriptor)
+      } catch {
+        // Best-effort cleanup must not mask the original diagnostics failure.
+      }
+    }
     try {
       rmSync(tempPath, { force: true })
     } catch {
@@ -308,10 +404,97 @@ export function appendHostDiagnostic(
   }
 }
 
+function ensurePrivateHostDiagnosticsDirectory(directory: string): void {
+  const parent = path.dirname(directory)
+  const rootBoundary = path.basename(directory) === 'diagnostics' &&
+      path.basename(parent) === 'echoflow-code'
+    ? path.dirname(parent)
+    : parent
+  mkdirSync(rootBoundary, { recursive: true, mode: 0o700 })
+  const boundaryStats = lstatSync(rootBoundary)
+  if (
+    (!boundaryStats.isDirectory() && !boundaryStats.isSymbolicLink()) ||
+    (boundaryStats.isSymbolicLink() && !statSync(rootBoundary).isDirectory())
+  ) {
+    throw new Error(`Refusing non-directory Electron diagnostics root: ${rootBoundary}`)
+  }
+  const rootRealPath = realpathSync(rootBoundary)
+  const relative = path.relative(rootBoundary, directory)
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`Refusing Electron diagnostics directory outside its managed root: ${directory}`)
+  }
+
+  let current = rootBoundary
+  for (const segment of relative.split(path.sep).filter(Boolean)) {
+    current = path.join(current, segment)
+    let stats
+    try {
+      stats = lstatSync(current)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      try {
+        mkdirSync(current, { mode: 0o700 })
+      } catch (mkdirError) {
+        if ((mkdirError as NodeJS.ErrnoException).code !== 'EEXIST') throw mkdirError
+      }
+      stats = lstatSync(current)
+    }
+    if (stats.isSymbolicLink()) {
+      throw new Error(`Refusing symbolic link for Electron diagnostics directory: ${current}`)
+    }
+    if (!stats.isDirectory()) {
+      throw new Error(`Refusing non-directory Electron diagnostics path: ${current}`)
+    }
+    const currentRealPath = realpathSync(current)
+    const realRelative = path.relative(rootRealPath, currentRealPath)
+    if (
+      realRelative === '..' ||
+      realRelative.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(realRelative)
+    ) {
+      throw new Error(`Refusing Electron diagnostics directory outside its managed root: ${current}`)
+    }
+  }
+
+  const finalStats = lstatSync(directory)
+  if (finalStats.isSymbolicLink() || !finalStats.isDirectory()) {
+    throw new Error(`Refusing unsafe Electron diagnostics directory: ${directory}`)
+  }
+  if (process.platform !== 'win32') {
+    const descriptor = openSync(
+      directory,
+      fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW,
+    )
+    try {
+      if (!fstatSync(descriptor).isDirectory()) {
+        throw new Error(`Refusing non-directory Electron diagnostics path: ${directory}`)
+      }
+      fchmodSync(descriptor, 0o700)
+    } finally {
+      closeSync(descriptor)
+    }
+  }
+}
+
+function assertRegularHostDiagnosticsFileOrMissing(filePath: string): void {
+  try {
+    const stats = lstatSync(filePath)
+    if (stats.isSymbolicLink()) {
+      throw new Error(`Refusing symbolic link for Electron diagnostics file: ${filePath}`)
+    }
+    if (!stats.isFile()) {
+      throw new Error(`Refusing non-regular Electron diagnostics file: ${filePath}`)
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+}
+
 function readHostDiagnosticsTail(filePath: string): string {
   let descriptor: number | undefined
   try {
-    descriptor = openSync(filePath, 'r')
+    const noFollow = process.platform === 'win32' ? 0 : fsConstants.O_NOFOLLOW
+    descriptor = openSync(filePath, fsConstants.O_RDONLY | noFollow)
     const size = fstatSync(descriptor).size
     const length = Math.min(size, HOST_DIAGNOSTICS_BYTE_LIMIT)
     const buffer = Buffer.alloc(length)
@@ -365,46 +548,51 @@ export function formatStartupError(message: string, logs: string[]): string {
   return `${message}\n\nRecent server logs:\n${logText}`
 }
 
-export function proxyUrlFromElectronProxyRules(rules: string | undefined): string | undefined {
-  if (!rules) return undefined
-
-  for (const rawRule of rules.split(';')) {
-    const rule = rawRule.trim()
-    if (!rule || /^DIRECT$/i.test(rule)) continue
-
-    const match = rule.match(/^(PROXY|HTTPS)\s+(.+)$/i)
-    if (!match) continue
-
-    const scheme = match[1]!.toUpperCase() === 'HTTPS' ? 'https' : 'http'
-    const hostPort = match[2]!.trim()
-    if (!hostPort) continue
-
-    return `${scheme}://${hostPort}`
-  }
-
-  return undefined
+export function clearProxyEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env = { ...baseEnv }
+  for (const key of PROXY_ENV_KEYS) delete env[key]
+  delete env[SYSTEM_PROXY_BRIDGE_ENV]
+  delete env[SYSTEM_PROXY_ERROR_ENV]
+  const noProxy = mergeLoopbackNoProxy(env.no_proxy || env.NO_PROXY)
+  return { ...env, NO_PROXY: noProxy, no_proxy: noProxy }
 }
 
-export function mergeProxyEnv(
+export function withSystemProxyBridgeEnv(
   baseEnv: NodeJS.ProcessEnv,
-  proxyUrl: string | undefined,
+  bridgeUrl: string,
 ): NodeJS.ProcessEnv {
-  if (!proxyUrl) return baseEnv
-  if (PROXY_ENV_KEYS.some(key => baseEnv[key])) {
-    const noProxy = mergeLoopbackNoProxy(baseEnv.no_proxy || baseEnv.NO_PROXY)
-    return { ...baseEnv, NO_PROXY: noProxy, no_proxy: noProxy }
-  }
-
-  const noProxy = mergeLoopbackNoProxy(baseEnv.no_proxy || baseEnv.NO_PROXY)
-
   return {
-    ...baseEnv,
-    HTTP_PROXY: proxyUrl,
-    HTTPS_PROXY: proxyUrl,
-    http_proxy: proxyUrl,
-    https_proxy: proxyUrl,
-    NO_PROXY: noProxy,
-    no_proxy: noProxy,
+    ...clearProxyEnv(baseEnv),
+    [SYSTEM_PROXY_BRIDGE_ENV]: bridgeUrl,
+  }
+}
+
+export function withSystemProxyErrorEnv(
+  baseEnv: NodeJS.ProcessEnv,
+  error: unknown,
+): NodeJS.ProcessEnv {
+  const message = error instanceof Error ? error.message : String(error)
+  const sanitized = sanitizeHostDiagnostic(message).replace(/\s+/g, ' ').trim()
+    || 'unknown bridge startup error'
+  return {
+    ...clearProxyEnv(baseEnv),
+    [SYSTEM_PROXY_ERROR_ENV]: `System proxy bridge unavailable: ${sanitized}`,
+  }
+}
+
+export function withAdapterProxyBridgeEnv(
+  baseEnv: NodeJS.ProcessEnv,
+  bridgeUrl: string,
+): NodeJS.ProcessEnv {
+  const env = clearProxyEnv(baseEnv)
+  return {
+    ...env,
+    HTTP_PROXY: bridgeUrl,
+    HTTPS_PROXY: bridgeUrl,
+    http_proxy: bridgeUrl,
+    https_proxy: bridgeUrl,
+    ALL_PROXY: bridgeUrl,
+    all_proxy: bridgeUrl,
   }
 }
 
@@ -478,7 +666,7 @@ export function createServerPlan({
   return {
     command: resolveSidecarExecutable(desktopRoot),
     args: ['server', '--app-root', appRoot, '--host', bindHost, '--port', String(port)],
-    env: buildSidecarEnv(env, h5DistDir),
+    env: buildSidecarEnv(withBundledRipgrepPath(env, desktopRoot), h5DistDir),
   }
 }
 
@@ -501,7 +689,7 @@ export function createAdapterPlan({
     command: resolveSidecarExecutable(desktopRoot),
     args: ['adapters', '--app-root', appRoot, flag],
     env: {
-      ...buildSidecarEnv(env, h5DistDir),
+      ...buildSidecarEnv(withBundledRipgrepPath(env, desktopRoot), h5DistDir),
       ADAPTER_SERVER_URL: httpToWebSocketUrl(serverUrl),
     },
   }
@@ -521,8 +709,31 @@ export function spawnSidecar(plan: SidecarPlan, deps: SpawnSidecarDeps = {}): Si
 
 export type KillSidecarDeps = {
   platform?: NodeJS.Platform
+  env?: NodeJS.ProcessEnv
   spawnAsync?: typeof spawn
   spawnSyncFn?: typeof spawnSync
+}
+
+function getWindowsEnv(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  const normalizedName = name.toLowerCase()
+  return Object.entries(env)
+    .find(([key, value]) => key.toLowerCase() === normalizedName && value)?.[1]
+}
+
+export function resolveWindowsTaskkillExecutable(env: NodeJS.ProcessEnv = process.env): string {
+  const systemRoot = getWindowsEnv(env, 'SystemRoot') ?? getWindowsEnv(env, 'windir')
+  return systemRoot
+    ? path.win32.join(systemRoot, 'System32', 'taskkill.exe')
+    : 'taskkill.exe'
+}
+
+function fallbackToDirectSidecarKill(child: SidecarChild, error: unknown) {
+  console.error('[desktop] taskkill failed; falling back to direct sidecar termination', error)
+  try {
+    child.kill()
+  } catch (fallbackError) {
+    console.error('[desktop] direct sidecar termination failed', fallbackError)
+  }
 }
 
 /**
@@ -534,10 +745,24 @@ export type KillSidecarDeps = {
 export function killSidecar(child: SidecarChild, sync = false, deps: KillSidecarDeps = {}) {
   const platform = deps.platform ?? process.platform
   if (platform === 'win32' && child.pid) {
+    const command = resolveWindowsTaskkillExecutable(deps.env)
     const args = ['/F', '/T', '/PID', String(child.pid)]
     const options = { stdio: 'ignore', windowsHide: true } as const
-    if (sync) (deps.spawnSyncFn ?? spawnSync)('taskkill', args, options)
-    else (deps.spawnAsync ?? spawn)('taskkill', args, options)
+    if (sync) {
+      try {
+        const result = (deps.spawnSyncFn ?? spawnSync)(command, args, options)
+        if (result.error) fallbackToDirectSidecarKill(child, result.error)
+      } catch (error) {
+        fallbackToDirectSidecarKill(child, error)
+      }
+    } else {
+      try {
+        const killer = (deps.spawnAsync ?? spawn)(command, args, options)
+        killer.once('error', error => fallbackToDirectSidecarKill(child, error))
+      } catch (error) {
+        fallbackToDirectSidecarKill(child, error)
+      }
+    }
     return
   }
   child.kill()

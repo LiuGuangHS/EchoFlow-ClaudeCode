@@ -118,6 +118,8 @@ const chatContractPrefixes = [
 const persistencePrefixes = [
   'src/server/services/persistentStorageMigrations',
   'src/server/__tests__/persistence-upgrade',
+  'src/server/services/desktopUiPreferencesService',
+  'src/server/__tests__/desktop-ui-preferences',
   'desktop/src/lib/persistenceMigrations',
   'scripts/quality-gate/persistence-upgrade',
 ]
@@ -135,14 +137,14 @@ const policyExactPaths = new Set([
   '.github/pull_request_template.md',
   'AGENTS.md',
   'CONTRIBUTING.md',
-  'docs/en/guide/contributing.md',
-  'docs/guide/contributing.md',
+  'docs/en/internals/contributing.md',
+  'docs/internals/contributing.md',
   'package.json',
 ])
 
 const docsExactPaths = new Set([
   'README.md',
-  'README.en.md',
+  'README.zh-CN.md',
   'package.json',
   'package-lock.json',
   '.github/workflows/deploy-docs.yml',
@@ -206,6 +208,7 @@ function areasForPath(path: string): ChangeArea[] {
 
   if (
     path.startsWith('docs/') ||
+    path.startsWith('site/') ||
     path.startsWith('release-notes/') ||
     docsExactPaths.has(path)
   ) {
@@ -328,6 +331,7 @@ export function evaluateChangePolicy(
   const touchesDocs = files.some((file) => (
     !isAgentInstructionPath(file) && (
       file.startsWith('docs/') ||
+      file.startsWith('site/') ||
       file.startsWith('release-notes/') ||
       docsExactPaths.has(file)
     )

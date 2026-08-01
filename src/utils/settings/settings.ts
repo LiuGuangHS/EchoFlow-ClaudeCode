@@ -18,7 +18,7 @@ import { writeFileSyncAndFlush_DEPRECATED } from '../file.js'
 import { readFileSync } from '../fileRead.js'
 import { getFsImplementation, safeResolvePath } from '../fsOperations.js'
 import { addFileGlobRuleToGitignore } from '../git/gitignore.js'
-import { safeParseJSON } from '../json.js'
+import { safeParseJSON, safeParseJSONWithoutCache } from '../json.js'
 import { logError } from '../log.js'
 import { getPlatform } from '../platform.js'
 import { clone, jsonStringify } from '../slowOperations.js'
@@ -210,11 +210,11 @@ function parseSettingsFileUncached(path: string): {
       return { settings: {}, errors: [] }
     }
 
-    const data = safeParseJSON(content, false)
+    const rawData = safeParseJSON(content, false)
 
     // Filter invalid permission rules before schema validation so one bad
     // rule doesn't cause the entire settings file to be rejected.
-    const ruleWarnings = filterInvalidPermissionRules(data, path)
+    const { data, warnings: ruleWarnings } = filterInvalidPermissionRules(rawData, path)
 
     const result = SettingsSchema().safeParse(data)
 
@@ -236,14 +236,17 @@ function parseSettingsFileUncached(path: string): {
  * @param source The source of the settings
  * @returns The root path of the settings file
  */
-export function getSettingsRootPathForSource(source: SettingSource): string {
+export function getSettingsRootPathForSource(
+  source: SettingSource,
+  projectRootOverride?: string,
+): string {
   switch (source) {
     case 'userSettings':
       return resolve(getClaudeConfigHomeDir())
     case 'policySettings':
     case 'projectSettings':
     case 'localSettings': {
-      return resolve(getOriginalCwd())
+      return resolve(projectRootOverride ?? getOriginalCwd())
     }
     case 'flagSettings': {
       const path = getFlagSettingsPath()
@@ -273,17 +276,18 @@ function getUserSettingsFilePath(): string {
 
 export function getSettingsFilePathForSource(
   source: SettingSource,
+  projectRootOverride?: string,
 ): string | undefined {
   switch (source) {
     case 'userSettings':
       return join(
-        getSettingsRootPathForSource(source),
+        getSettingsRootPathForSource(source, projectRootOverride),
         getUserSettingsFilePath(),
       )
     case 'projectSettings':
     case 'localSettings': {
       return join(
-        getSettingsRootPathForSource(source),
+        getSettingsRootPathForSource(source, projectRootOverride),
         getRelativeSettingsFilePathForSource(source),
       )
     }
@@ -308,7 +312,11 @@ export function getRelativeSettingsFilePathForSource(
 
 export function getSettingsForSource(
   source: SettingSource,
+  projectRootOverride?: string,
 ): SettingsJson | null {
+  if (projectRootOverride) {
+    return getSettingsForSourceUncached(source, projectRootOverride)
+  }
   const cached = getCachedSettingsForSource(source)
   if (cached !== undefined) return cached
   const result = getSettingsForSourceUncached(source)
@@ -318,6 +326,7 @@ export function getSettingsForSource(
 
 function getSettingsForSourceUncached(
   source: SettingSource,
+  projectRootOverride?: string,
 ): SettingsJson | null {
   // For policySettings: first source wins (remote > HKLM/plist > file > HKCU)
   if (source === 'policySettings') {
@@ -344,7 +353,10 @@ function getSettingsForSourceUncached(
     return null
   }
 
-  const settingsFilePath = getSettingsFilePathForSource(source)
+  const settingsFilePath = getSettingsFilePathForSource(
+    source,
+    projectRootOverride,
+  )
   const { settings: fileSettings } = settingsFilePath
     ? parseSettingsFile(settingsFilePath)
     : { settings: null }
@@ -416,6 +428,7 @@ export function getPolicySettingsOrigin():
 export function updateSettingsForSource(
   source: EditableSettingSource,
   settings: SettingsJson,
+  projectRootOverride?: string,
 ): { error: Error | null } {
   if (
     (source as unknown) === 'policySettings' ||
@@ -425,7 +438,7 @@ export function updateSettingsForSource(
   }
 
   // Create the folder if needed
-  const filePath = getSettingsFilePathForSource(source)
+  const filePath = getSettingsFilePathForSource(source, projectRootOverride)
   if (!filePath) {
     return { error: null }
   }
@@ -437,7 +450,10 @@ export function updateSettingsForSource(
     // cache — mergeWith below mutates its target (including nested refs),
     // and mutating the cached object would leak unpersisted state if the
     // write fails before resetSettingsCache().
-    let existingSettings = getSettingsForSourceUncached(source)
+    let existingSettings = getSettingsForSourceUncached(
+      source,
+      projectRootOverride,
+    )
 
     // If validation failed, check if file exists with a JSON syntax error
     if (!existingSettings) {
@@ -451,7 +467,11 @@ export function updateSettingsForSource(
         // File doesn't exist — fall through to merge with empty settings
       }
       if (content !== null) {
-        const rawData = safeParseJSON(content)
+        // Must be an uncached parse: the mergeWith below mutates this object
+        // (including nested refs), and editing a shared safeParseJSON cache
+        // entry would corrupt every later parse of byte-identical settings
+        // content (same bug family as GH #1126).
+        const rawData = safeParseJSONWithoutCache(content)
         if (rawData === null) {
           // JSON syntax error - return validation error instead of overwriting
           // safeParseJSON will already log the error, so we'll just return the error here
@@ -509,7 +529,7 @@ export function updateSettingsForSource(
       // Okay to add to gitignore async without awaiting
       void addFileGlobRuleToGitignore(
         getRelativeSettingsFilePathForSource('localSettings'),
-        getOriginalCwd(),
+        projectRootOverride ?? getOriginalCwd(),
       )
     }
   } catch (e) {

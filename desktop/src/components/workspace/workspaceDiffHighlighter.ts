@@ -24,6 +24,11 @@ export interface WorkspaceDiffHighlightResult {
   wordRangesByRowId: Record<string, WorkspaceDiffWordRange[]>
 }
 
+export interface WorkspaceCodeHighlightResult {
+  engine: 'shiki' | 'plain'
+  tokensByLine: WorkspaceDiffHighlightToken[][]
+}
+
 interface WordSegment extends WorkspaceDiffWordRange {
   text: string
 }
@@ -220,6 +225,31 @@ const workspaceDiffShikiTheme: ThemeRegistration = {
   ],
 }
 
+const workspaceCodeShikiTheme: ThemeRegistration = {
+  name: 'codex-workspace-code',
+  type: 'dark',
+  fg: 'var(--color-code-fg)',
+  bg: 'transparent',
+  settings: [
+    { settings: { foreground: 'var(--color-code-fg)', background: 'transparent' } },
+    { scope: ['comment', 'punctuation.definition.comment'], settings: { foreground: 'var(--color-code-comment)', fontStyle: 'italic' } },
+    { scope: ['string', 'string.quoted', 'string.template', 'string.other.link'], settings: { foreground: 'var(--color-code-string)' } },
+    { scope: ['string.regexp'], settings: { foreground: 'var(--color-primary-container)' } },
+    { scope: ['keyword', 'keyword.control', 'storage', 'storage.type', 'storage.modifier'], settings: { foreground: 'var(--color-code-keyword)' } },
+    { scope: ['keyword.operator'], settings: { foreground: 'var(--color-code-keyword)' } },
+    { scope: ['entity.name.function', 'support.function', 'meta.function-call'], settings: { foreground: 'var(--color-code-function)' } },
+    { scope: ['entity.name.type', 'support.type', 'support.class', 'entity.name.class', 'entity.other.inherited-class'], settings: { foreground: 'var(--color-code-type)' } },
+    { scope: ['variable.parameter'], settings: { foreground: 'var(--color-code-parameter)' } },
+    { scope: ['variable.other.property', 'support.type.property-name', 'meta.object-literal.key'], settings: { foreground: 'var(--color-code-property)' } },
+    { scope: ['variable.other.constant', 'variable.other.enummember'], settings: { foreground: 'var(--color-code-type)' } },
+    { scope: ['constant.numeric', 'constant.language'], settings: { foreground: 'var(--color-code-number)' } },
+    { scope: ['punctuation', 'meta.brace', 'meta.bracket'], settings: { foreground: 'var(--color-code-punctuation)' } },
+    { scope: ['entity.name.tag', 'punctuation.definition.tag'], settings: { foreground: 'var(--color-code-keyword)' } },
+    { scope: ['entity.other.attribute-name'], settings: { foreground: 'var(--color-code-property)' } },
+    { scope: ['meta.decorator', 'punctuation.decorator'], settings: { foreground: 'var(--color-code-type)' } },
+  ],
+}
+
 const workspaceDiffLanguageLoaders: Record<string, () => Promise<LanguageRegistration[]>> = {
   bash: () => import('@shikijs/langs/bash').then((module) => module.default),
   c: () => import('@shikijs/langs/c').then((module) => module.default),
@@ -313,7 +343,7 @@ const workspaceDiffLanguagePromises = new Map<string, Promise<void>>()
 
 function getWorkspaceDiffHighlighter() {
   workspaceDiffHighlighterPromise ??= createHighlighterCore({
-    themes: [workspaceDiffShikiTheme],
+    themes: [workspaceDiffShikiTheme, workspaceCodeShikiTheme],
     langs: [],
     engine: createOnigurumaEngine(import('shiki/wasm')),
   })
@@ -346,6 +376,12 @@ export function getWorkspaceDiffShikiLanguage(path: string) {
   if (name === '.gitignore') return 'text'
   const extension = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1) : ''
   return shikiLanguageAliases[extension] ?? 'text'
+}
+
+export function getWorkspaceCodeShikiLanguage(language: string) {
+  const normalized = language.trim().toLowerCase()
+  if (workspaceDiffLanguageLoaders[normalized]) return normalized
+  return shikiLanguageAliases[normalized] ?? 'text'
 }
 
 function tokenizeWords(value: string): WordSegment[] {
@@ -534,5 +570,34 @@ export async function highlightWorkspaceDiff({
     return { engine: 'shiki', tokensByRowId, wordRangesByRowId }
   } catch {
     return { engine: 'plain', tokensByRowId: {}, wordRangesByRowId }
+  }
+}
+
+export async function highlightWorkspaceCode({
+  value,
+  language,
+}: {
+  value: string
+  language: string
+}): Promise<WorkspaceCodeHighlightResult> {
+  try {
+    const highlighter = await getWorkspaceDiffHighlighter()
+    const normalizedLanguage = getWorkspaceCodeShikiLanguage(language)
+    await ensureWorkspaceDiffLanguage(highlighter, normalizedLanguage)
+    const result = highlighter.codeToTokens(value, {
+      lang: workspaceDiffLanguageLoaders[normalizedLanguage] ? normalizedLanguage : 'text',
+      theme: workspaceCodeShikiTheme,
+      tokenizeMaxLineLength: WORKSPACE_DIFF_TOKENIZE_MAX_LINE_LENGTH,
+    })
+    return {
+      engine: 'shiki',
+      tokensByLine: result.tokens.map((line) => line.map((token) => ({
+        content: token.content,
+        color: token.color,
+        fontStyle: token.fontStyle,
+      }))),
+    }
+  } catch {
+    return { engine: 'plain', tokensByLine: [] }
   }
 }

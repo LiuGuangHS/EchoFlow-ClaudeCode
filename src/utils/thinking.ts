@@ -14,7 +14,7 @@ export type ThinkingConfig =
   | { type: 'disabled' }
 
 export const ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY = 'ECHOFLOW_SEND_DISABLED_THINKING'
-export const LEGACY_CC_HAHA_SEND_DISABLED_THINKING_ENV_KEY = 'CC_HAHA_SEND_DISABLED_THINKING'
+export const LEGACY_ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY = 'ECHOFLOW_SEND_DISABLED_THINKING'
 
 /**
  * Build-time gate (feature) + runtime gate (GrowthBook). The build flag
@@ -104,6 +104,11 @@ export function modelSupportsThinking(model: string): boolean {
   // IMPORTANT: Do not change thinking support without notifying the model
   // launch DRI and research. This can greatly affect model quality and bashing.
   const canonical = getCanonicalName(model)
+  // Fable uses always-on adaptive thinking. Keep this after the provider
+  // capability override so an explicitly incompatible 3P route can opt out.
+  if (canonical.includes('claude-fable-5')) {
+    return true
+  }
   const provider = getAPIProvider()
   // 1P and Foundry: all Claude 4+ models (including Haiku 4.5)
   if (
@@ -120,7 +125,11 @@ export function modelSupportsThinking(model: string): boolean {
 }
 
 export function modelRequiresThinking(model: string): boolean {
-  return get3PModelCapabilityOverride(model, 'required_thinking') === true
+  const required3P = get3PModelCapabilityOverride(model, 'required_thinking')
+  if (required3P !== undefined) {
+    return required3P
+  }
+  return getCanonicalName(model).includes('claude-fable-5')
 }
 
 export function resolveModelThinkingEnabled(
@@ -142,6 +151,11 @@ export function modelSupportsAdaptiveThinking(model: string): boolean {
     return supported3P
   }
   const canonical = getCanonicalName(model)
+  // Fable rejects disabled/manual thinking and always uses adaptive thinking.
+  // Explicit 3P capability declarations above remain authoritative.
+  if (canonical.includes('claude-fable-5')) {
+    return true
+  }
   const provider = getAPIProvider()
   const isFirstPartyBaseUrl =
     provider === 'firstParty' && isFirstPartyAnthropicBaseUrl()
@@ -150,8 +164,14 @@ export function modelSupportsAdaptiveThinking(model: string): boolean {
     return false
   }
 
-  // Supported by a subset of Claude 4 models
-  if (canonical.includes('opus-4-6') || canonical.includes('sonnet-4-6')) {
+  // Supported by current Claude Code flagship models.
+  if (
+    canonical.includes('sonnet-5') ||
+    canonical.includes('opus-4-8') ||
+    canonical.includes('opus-4-7') ||
+    canonical.includes('opus-4-6') ||
+    canonical.includes('sonnet-4-6')
+  ) {
     return true
   }
   // Exclude any other known legacy models (allowlist above catches 4-6 variants first)
@@ -197,6 +217,6 @@ export function shouldEnableThinkingByDefault(): boolean {
 export function shouldSendExplicitDisabledThinking(): boolean {
   return (
     isEnvTruthy(process.env[ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY]) ||
-    isEnvTruthy(process.env[LEGACY_CC_HAHA_SEND_DISABLED_THINKING_ENV_KEY])
+    isEnvTruthy(process.env[LEGACY_ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY])
   )
 }

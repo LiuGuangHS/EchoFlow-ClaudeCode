@@ -97,15 +97,13 @@ async function requestGrokTokens(
   options: GrokTokenFetchOptions,
 ): Promise<GrokOAuthTokenResponse> {
   const fetchOverride = options.fetchOverride ?? globalThis.fetch
-  const proxyOptions = options.proxyUrl
-    ? getGrokProxyFetchOptions(options.proxyUrl)
-    : {}
+  const proxyOptions = resolveGrokProxyFetchOptions(options.proxyUrl)
   const response = await fetchOverride(GROK_OAUTH_TOKEN_ENDPOINT, {
     method: 'POST',
     headers: {
       Accept: 'application/json',
       'Content-Type': 'application/x-www-form-urlencoded',
-      'User-Agent': 'cc-haha-grok-oauth/1.0',
+      'User-Agent': 'echoflow-code-grok-oauth/1.0',
     },
     body: body.toString(),
     ...(options.timeoutMs
@@ -123,8 +121,21 @@ async function requestGrokTokens(
   return (await response.json()) as GrokOAuthTokenResponse
 }
 
+type GrokProxyFetchOptionsResolver = (
+  proxyUrl: string | null,
+) => Promise<RequestInit>
+
+/** @internal Exported for deterministic proxy-mode contract tests. */
+export async function resolveGrokProxyFetchOptions(
+  proxyUrl: string | null | undefined,
+  resolve: GrokProxyFetchOptionsResolver = getGrokProxyFetchOptions,
+): Promise<RequestInit> {
+  if (proxyUrl === undefined) return {}
+  return resolve(proxyUrl)
+}
+
 async function getGrokProxyFetchOptions(
-  proxyUrl: string,
+  proxyUrl: string | null,
 ): Promise<RequestInit> {
   const { getProxyFetchOptions } = await import('../../utils/proxy.js')
   return getProxyFetchOptions({ proxyUrl })

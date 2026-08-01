@@ -22,7 +22,11 @@ import {
 import { sanitizeToolNameForAnalytics } from 'src/services/analytics/metadata.js'
 import type { AgentId } from 'src/types/ids.js'
 import { companionIntroText } from '../buddy/prompt.js'
-import { NO_CONTENT_MESSAGE } from '../constants/messages.js'
+import {
+  NO_CONTENT_MESSAGE,
+  REJECT_MESSAGE,
+  REJECT_MESSAGE_WITH_REASON_PREFIX,
+} from '../constants/messages.js'
 import { OUTPUT_STYLE_CONFIG } from '../constants/outputStyles.js'
 import {
   type BusinessErrorCode,
@@ -215,10 +219,7 @@ export const INTERRUPT_MESSAGE_FOR_TOOL_USE =
   '[Request interrupted by user for tool use]'
 export const CANCEL_MESSAGE =
   "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed."
-export const REJECT_MESSAGE =
-  "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed."
-export const REJECT_MESSAGE_WITH_REASON_PREFIX =
-  "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\n"
+export { REJECT_MESSAGE, REJECT_MESSAGE_WITH_REASON_PREFIX }
 export const SUBAGENT_REJECT_MESSAGE =
   'Permission for this tool use was denied. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). Try a different approach or report the limitation to complete your task.'
 export const SUBAGENT_REJECT_MESSAGE_WITH_REASON_PREFIX =
@@ -2082,6 +2083,8 @@ export function normalizeMessagesForAPI(
   }
 
   const result: (UserMessage | AssistantMessage)[] = []
+  const assistantIndexByMessageId = new Map<string, number>()
+  let indexedResultLength = 0
   reorderedMessages
     .filter(
       (
@@ -2271,33 +2274,57 @@ export function normalizeMessagesForAPI(
             },
           }
 
-          // Find a previous assistant message with the same message ID and merge.
-          // Walk backwards, skipping tool results and different-ID assistants,
-          // since concurrent agents (teammates) can interleave streaming content
-          // blocks from multiple API responses with different message IDs.
-          for (let i = result.length - 1; i >= 0; i--) {
-            const msg = result[i]!
-
-            if (msg.type !== 'assistant' && !isToolResultMessage(msg)) {
-              break
+          // Index each result message once so interleaved assistant fragments
+          // can be merged without repeatedly scanning the full tool-result chain.
+          // A normal user message is a hard turn boundary, matching the previous
+          // backward scan's stopping condition.
+          for (; indexedResultLength < result.length; indexedResultLength++) {
+            const indexedMessage = result[indexedResultLength]!
+            if (indexedMessage.type === 'assistant') {
+              assistantIndexByMessageId.set(
+                indexedMessage.message.id,
+                indexedResultLength,
+              )
+            } else if (!isToolResultMessage(indexedMessage)) {
+              assistantIndexByMessageId.clear()
             }
+          }
 
-            if (msg.type === 'assistant') {
-              if (msg.message.id === normalizedMessage.message.id) {
-                result[i] = mergeAssistantMessages(msg, normalizedMessage)
-                return
-              }
-              continue
-            }
+          const existingIndex = assistantIndexByMessageId.get(
+            normalizedMessage.message.id,
+          )
+          const existingMessage =
+            existingIndex === undefined ? undefined : result[existingIndex]
+          if (
+            existingIndex !== undefined &&
+            existingMessage?.type === 'assistant'
+          ) {
+            result[existingIndex] = mergeAssistantMessages(
+              existingMessage,
+              normalizedMessage,
+            )
+            return
           }
 
           result.push(normalizedMessage)
           return
         }
         case 'attachment': {
-          const rawAttachmentMessage = normalizeAttachmentForAPI(
-            message.attachment,
-          )
+          let rawAttachmentMessage: UserMessage[]
+          try {
+            rawAttachmentMessage = normalizeAttachmentForAPI(message.attachment)
+          } catch (error) {
+            const attachmentType = (message as {
+              attachment?: { type?: unknown }
+            }).attachment?.type
+            logForDebugging(
+              `Dropping malformed attachment during API normalization: ${
+                typeof attachmentType === 'string' ? attachmentType : 'unknown'
+              }: ${error instanceof Error ? error.message : String(error)}`,
+              { level: 'warn' },
+            )
+            return
+          }
           const attachmentMessage = checkStatsigFeatureGate_CACHED_MAY_BE_STALE(
             'tengu_chair_sermon',
           )

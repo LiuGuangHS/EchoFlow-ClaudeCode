@@ -28,12 +28,14 @@ vi.mock('../../i18n', () => ({
     const translations: Record<string, string> = {
       'sidebar.newSession': 'New Session',
       'sidebar.scheduled': 'Scheduled',
+      'sidebar.market': 'Skills Market',
       'sidebar.settings': 'Settings',
       'sidebar.searchPlaceholder': 'Search sessions',
       'sidebar.noSessions': 'No sessions',
       'sidebar.noMatching': 'No matching sessions',
       'sidebar.sessionListFailed': 'Session list failed',
       'sidebar.refreshSessions': 'Refresh sessions',
+      'sidebar.indexDegraded': 'Using standard history loading',
       'search.global.trigger': 'Search chats',
       'sidebar.projects': 'Projects',
       'sidebar.projectMenu': 'Project menu',
@@ -120,11 +122,11 @@ const PROJECT_PINNED_STORAGE_KEY = 'echoflow-code-sidebar-pinned-projects'
 const PROJECT_HIDDEN_STORAGE_KEY = 'echoflow-code-sidebar-hidden-projects'
 const PROJECT_ORGANIZATION_STORAGE_KEY = 'echoflow-code-sidebar-project-organization'
 const PROJECT_SORT_STORAGE_KEY = 'echoflow-code-sidebar-project-sort'
-const LEGACY_PROJECT_ORDER_STORAGE_KEY = 'cc-haha-sidebar-project-order'
-const LEGACY_PROJECT_PINNED_STORAGE_KEY = 'cc-haha-sidebar-pinned-projects'
-const LEGACY_PROJECT_HIDDEN_STORAGE_KEY = 'cc-haha-sidebar-hidden-projects'
-const LEGACY_PROJECT_ORGANIZATION_STORAGE_KEY = 'cc-haha-sidebar-project-organization'
-const LEGACY_PROJECT_SORT_STORAGE_KEY = 'cc-haha-sidebar-project-sort'
+const LEGACY_PROJECT_ORDER_STORAGE_KEY = 'echoflow-code-sidebar-project-order'
+const LEGACY_PROJECT_PINNED_STORAGE_KEY = 'echoflow-code-sidebar-pinned-projects'
+const LEGACY_PROJECT_HIDDEN_STORAGE_KEY = 'echoflow-code-sidebar-hidden-projects'
+const LEGACY_PROJECT_ORGANIZATION_STORAGE_KEY = 'echoflow-code-sidebar-project-organization'
+const LEGACY_PROJECT_SORT_STORAGE_KEY = 'echoflow-code-sidebar-project-sort'
 
 function makeSession(
   id: string,
@@ -247,6 +249,7 @@ describe('Sidebar', () => {
       activeSessionId: null,
       isLoading: false,
       error: null,
+      indexStatus: null,
       isBatchMode: false,
       selectedSessionIds: new Set(),
       fetchSessions,
@@ -300,6 +303,20 @@ describe('Sidebar', () => {
     expect(useTabStore.getState().activeTabId).toBe('session-new-1')
     expect(screen.getByRole('complementary')).not.toHaveAttribute('data-desktop-drag-region')
     expect(screen.getByTestId('sidebar-title-region')).toHaveAttribute('data-desktop-drag-region')
+  })
+
+  // The header used to render both "EchoFlow Code" and "echoflow-code" and hide
+  // one with a container query, so the app answered to two names depending on
+  // how far the sidebar had been dragged. Only the short one ships now — and
+  // the long one must not linger in the DOM, since a display-hidden copy still
+  // reaches screen readers and in-page search.
+  it('renders one wordmark and it is the short one', () => {
+    render(<Sidebar />)
+
+    const region = screen.getByTestId('sidebar-title-region')
+
+    expect(region).toHaveTextContent('echoflow-code')
+    expect(region).not.toHaveTextContent('Claude Code')
   })
 
   it('groups sessions by project and expands overflow rows', () => {
@@ -449,7 +466,7 @@ describe('Sidebar', () => {
     expect(projectGroupNames().slice(0, 3)).toEqual(['beta', 'alpha', 'gamma'])
   })
 
-  it('does not auto-read or migrate legacy cc-haha sidebar storage', () => {
+  it('does not auto-read or migrate legacy echoflow-code sidebar storage', () => {
     window.localStorage.setItem(LEGACY_PROJECT_ORDER_STORAGE_KEY, JSON.stringify([
       '/workspace/beta',
       '/workspace/alpha',
@@ -908,6 +925,29 @@ describe('Sidebar', () => {
     expect(screen.getAllByText('worktree')).toHaveLength(1)
   })
 
+  it('does not label a cleaned worktree as a missing project directory', () => {
+    const now = new Date().toISOString()
+    useSessionStore.setState({
+      sessions: [{
+        ...makeSession(
+          'cleaned-worktree',
+          'Cleaned Worktree Session',
+          '/workspace/repo/.claude/worktrees/desktop-main-12345678',
+          now,
+        ),
+        projectRoot: '/workspace/repo',
+        workDirExists: false,
+        workspaceState: 'worktree_removed',
+      }],
+    })
+
+    render(<Sidebar />)
+
+    expect(screen.getByRole('button', { name: /Cleaned Worktree Session/ })).toBeInTheDocument()
+    expect(screen.queryByText('Missing')).not.toBeInTheDocument()
+    expect(screen.getByText('worktree')).toBeInTheDocument()
+  })
+
   it('keeps a Windows drive root session separate from sessions in child projects', () => {
     const now = new Date().toISOString()
     useSessionStore.setState({
@@ -931,7 +971,7 @@ describe('Sidebar', () => {
     const now = new Date().toISOString()
     useSessionStore.setState({
       sessions: [
-        makeSession('child-1', 'Child Session', 'D:\\workspace\\code\\cc-haha', now),
+        makeSession('child-1', 'Child Session', 'D:\\workspace\\code\\echoflow-code', now),
       ],
     })
     useTabStore.setState({
@@ -946,7 +986,7 @@ describe('Sidebar', () => {
     })
 
     await waitFor(() => {
-      expect(createSession).toHaveBeenCalledWith('D:\\workspace\\code\\cc-haha')
+      expect(createSession).toHaveBeenCalledWith('D:\\workspace\\code\\echoflow-code')
     })
     expect(JSON.parse(window.localStorage.getItem(PROJECT_HIDDEN_STORAGE_KEY) ?? '[]')).toEqual(['D:\\'])
     expect(desktopUiPreferencesApiMock.updateSidebarPreferences).not.toHaveBeenCalled()
@@ -1213,6 +1253,25 @@ describe('Sidebar', () => {
     expect(screen.getByRole('complementary')).toHaveAttribute('data-state', 'open')
   })
 
+  it('shows the brand mark only on the rail, where the wordmark is clamped away', async () => {
+    render(<Sidebar />)
+
+    // Scope to the wordmark's own row — the GitHub link in the same header is
+    // also an svg and would answer a looser query.
+    const brandRow = () => screen.getByText('haha').closest('div')
+
+    // Expanded, the name carries the brand and the mark beside it is clutter.
+    expect(brandRow()?.querySelector('svg')).toBeNull()
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Collapse sidebar' }))
+    })
+
+    // Collapsed, the copy is width-clamped to zero, so the mark is the only
+    // thing left to identify the app.
+    expect(brandRow()?.querySelector('svg')).not.toBeNull()
+  })
+
   it('renders search controls without the removed embedded project filter', () => {
     render(<Sidebar />)
 
@@ -1257,6 +1316,7 @@ describe('Sidebar', () => {
     render(<Sidebar isMobile onRequestClose={onRequestClose} />)
 
     expect(screen.queryByRole('button', { name: 'Scheduled' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Skills Market' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Settings' })).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /Open Session/ }))
@@ -1272,6 +1332,19 @@ describe('Sidebar', () => {
     expect(onRequestClose).toHaveBeenCalledTimes(2)
   })
 
+  it('keeps the market entry available in desktop navigation', () => {
+    render(<Sidebar />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Skills Market' }))
+
+    expect(useTabStore.getState().activeTabId).toBe('__market__')
+    expect(useTabStore.getState().tabs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ sessionId: '__market__', title: 'Skills Market', type: 'market' }),
+      ]),
+    )
+  })
+
   it('shows a loading state instead of an empty session list while initial fetch is pending', () => {
     useSessionStore.setState({ isLoading: true, sessions: [] })
 
@@ -1279,6 +1352,329 @@ describe('Sidebar', () => {
 
     expect(screen.getByText('Loading...')).toBeInTheDocument()
     expect(screen.queryByText('No sessions')).not.toBeInTheDocument()
+  })
+
+  // Indexing is background housekeeping the user cannot act on, so a partially
+  // built index must look exactly like a finished one: rows visible, no counter.
+  it('keeps indexed rows visible while building without surfacing progress', () => {
+    useSessionStore.setState({
+      sessions: [makeSession('indexed-row', 'Indexed row', '/workspace/alpha', '2026-07-15T00:00:00.000Z')],
+      indexStatus: {
+        mode: 'on',
+        state: 'building',
+        discovered: 10,
+        indexed: 2,
+        degradedSources: 0,
+        databaseBytes: 4096,
+        walBytes: 0,
+        lastUpdatedAt: '2026-07-15T00:00:00.000Z',
+        lastErrorCode: null,
+      },
+    })
+
+    render(<Sidebar />)
+
+    expect(screen.getByRole('button', { name: /Indexed row/ })).toBeInTheDocument()
+    expect(screen.queryByTestId('sidebar-index-progress')).not.toBeInTheDocument()
+    expect(screen.queryByText(/2\s*\/\s*10/)).not.toBeInTheDocument()
+    expect(screen.getByRole('status')).toBeEmptyDOMElement()
+  })
+
+  it.each(['ready', 'off'] as const)('hides visible index status when state is %s', (state) => {
+    useSessionStore.setState({
+      sessions: [makeSession('ready-row', 'Ready row', '/workspace/alpha', '2026-07-15T00:00:00.000Z')],
+      indexStatus: {
+        mode: state === 'off' ? 'off' : 'on',
+        state,
+        discovered: 1,
+        indexed: 1,
+        degradedSources: 0,
+        databaseBytes: 4096,
+        walBytes: 0,
+        lastUpdatedAt: '2026-07-15T00:00:00.000Z',
+        lastErrorCode: null,
+      },
+    })
+
+    render(<Sidebar />)
+
+    expect(screen.queryByTestId('sidebar-index-progress')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('sidebar-index-degraded')).not.toBeInTheDocument()
+  })
+
+  it('shows degraded fallback inline without emitting an error toast', () => {
+    useSessionStore.setState({
+      sessions: [makeSession('fallback-row', 'Fallback row', '/workspace/alpha', '2026-07-15T00:00:00.000Z')],
+      error: null,
+      indexStatus: {
+        mode: 'on',
+        state: 'degraded',
+        discovered: 2,
+        indexed: 1,
+        degradedSources: 1,
+        databaseBytes: 4096,
+        walBytes: 0,
+        lastUpdatedAt: '2026-07-15T00:00:00.000Z',
+        lastErrorCode: 'source_unreadable',
+      },
+    })
+
+    render(<Sidebar />)
+
+    expect(screen.getByRole('button', { name: /Fallback row/ })).toBeInTheDocument()
+    expect(screen.getByTestId('sidebar-index-degraded')).toHaveTextContent('Using standard history loading')
+    expect(screen.queryByText('Session list failed')).not.toBeInTheDocument()
+    expect(addToast).not.toHaveBeenCalled()
+  })
+
+  it('announces a session list failure and offers a retry', () => {
+    useSessionStore.setState({ sessions: [], isLoading: false, error: 'upstream exploded' })
+
+    render(<Sidebar />)
+
+    const alert = screen.getByRole('alert')
+    expect(alert).toHaveTextContent('Session list failed')
+    expect(alert).toHaveTextContent('upstream exploded')
+
+    fetchSessions.mockClear()
+    fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }))
+    expect(fetchSessions).toHaveBeenCalled()
+  })
+
+  it('does not claim there are no sessions while the list is failing', () => {
+    useSessionStore.setState({ sessions: [], isLoading: false, error: 'upstream exploded' })
+
+    render(<Sidebar />)
+
+    // Showing "no sessions" next to the failure reads as "the list is empty",
+    // which is a different fact from "we could not load the list".
+    expect(screen.queryByText('No sessions')).not.toBeInTheDocument()
+  })
+
+  it('says there are no sessions once the list loads empty', () => {
+    useSessionStore.setState({ sessions: [], isLoading: false, error: null })
+
+    render(<Sidebar />)
+
+    expect(screen.getByText('No sessions')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('keeps the initial loading state during an empty first build', () => {
+    useSessionStore.setState({
+      sessions: [],
+      isLoading: true,
+      indexStatus: {
+        mode: 'on',
+        state: 'building',
+        discovered: 10,
+        indexed: 0,
+        degradedSources: 0,
+        databaseBytes: 4096,
+        walBytes: 0,
+        lastUpdatedAt: '2026-07-15T00:00:00.000Z',
+        lastErrorCode: null,
+      },
+    })
+
+    render(<Sidebar />)
+
+    expect(screen.getByText('Loading...')).toBeInTheDocument()
+    expect(screen.queryByText('No sessions')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('sidebar-index-progress')).not.toBeInTheDocument()
+  })
+
+  it('keeps row, scroll container, active state, and selection stable across progress ticks', () => {
+    const session = makeSession('stable-row', 'Stable row', '/workspace/alpha', '2026-07-15T00:00:00.000Z')
+    useSessionStore.setState({
+      sessions: [session],
+      isBatchMode: true,
+      selectedSessionIds: new Set([session.id]),
+      indexStatus: {
+        mode: 'on',
+        state: 'building',
+        discovered: 10,
+        indexed: 2,
+        degradedSources: 0,
+        databaseBytes: 4096,
+        walBytes: 0,
+        lastUpdatedAt: '2026-07-15T00:00:00.000Z',
+        lastErrorCode: null,
+      },
+    })
+    useTabStore.setState({
+      tabs: [{ sessionId: session.id, title: session.title, type: 'session', status: 'idle' }],
+      activeTabId: session.id,
+    })
+    render(<Sidebar />)
+
+    const row = screen.getByRole('button', { name: /Stable row/ })
+    const scrollArea = screen.getByTestId('sidebar-session-scroll-area')
+    scrollArea.scrollTop = 37
+
+    act(() => {
+      useSessionStore.setState((current) => ({
+        indexStatus: current.indexStatus && { ...current.indexStatus, indexed: 3 },
+      }))
+    })
+
+    expect(screen.getByRole('button', { name: /Stable row/ })).toBe(row)
+    expect(screen.getByTestId('sidebar-session-scroll-area')).toBe(scrollArea)
+    expect(scrollArea.scrollTop).toBe(37)
+    expect(row).toHaveClass('sidebar-session-row--selected')
+    expect(useTabStore.getState().activeTabId).toBe(session.id)
+  })
+
+  it('keeps the first visible session anchored when building inserts a newer row above it', () => {
+    const anchored = makeSession('anchored-row', 'Anchored row', '/workspace/alpha', '2026-07-15T00:00:01.000Z')
+    const older = makeSession('older-row', 'Older row', '/workspace/alpha', '2026-07-15T00:00:00.000Z')
+    useSessionStore.setState({
+      sessions: [anchored, older],
+      indexStatus: {
+        mode: 'on',
+        state: 'building',
+        discovered: 10,
+        indexed: 2,
+        degradedSources: 0,
+        databaseBytes: 4096,
+        walBytes: 0,
+        lastUpdatedAt: '2026-07-15T00:00:00.000Z',
+        lastErrorCode: null,
+      },
+    })
+
+    const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      const isScrollArea = this.dataset.testid === 'sidebar-session-scroll-area'
+      const insertedRowsMounted = ['Inserted row', 'Top row', 'Ready row']
+        .filter((title) => document.querySelector(`[title="${title}"]`))
+        .length
+      const top = isScrollArea
+        ? 0
+        : this.getAttribute('data-sidebar-session-id') === anchored.id
+          ? 20 + insertedRowsMounted * 30
+          : this.getAttribute('data-sidebar-session-id') === older.id
+            ? 50 + insertedRowsMounted * 30
+            : 20
+      const height = isScrollArea ? 200 : 30
+      return {
+        x: 0,
+        y: top,
+        top,
+        right: 300,
+        bottom: top + height,
+        left: 0,
+        width: 300,
+        height,
+        toJSON: () => ({}),
+      }
+    })
+
+    try {
+      render(<Sidebar />)
+      const scrollArea = screen.getByTestId('sidebar-session-scroll-area')
+      scrollArea.scrollTop = 40
+
+      act(() => {
+        useSessionStore.setState({
+          sessions: [
+            makeSession('inserted-row', 'Inserted row', '/workspace/alpha', '2026-07-15T00:00:02.000Z'),
+            anchored,
+            older,
+          ],
+          indexStatus: {
+            ...useSessionStore.getState().indexStatus!,
+            indexed: 3,
+            lastUpdatedAt: '2026-07-15T00:00:01.000Z',
+          },
+        })
+      })
+
+      expect(screen.getByRole('button', { name: /Anchored row/ })).toBeInTheDocument()
+      expect(scrollArea.scrollTop).toBe(70)
+
+      scrollArea.scrollTop = 0
+      act(() => {
+        useSessionStore.setState({
+          sessions: [
+            makeSession('top-row', 'Top row', '/workspace/alpha', '2026-07-15T00:00:03.000Z'),
+            ...useSessionStore.getState().sessions,
+          ],
+          indexStatus: {
+            ...useSessionStore.getState().indexStatus!,
+            indexed: 4,
+            lastUpdatedAt: '2026-07-15T00:00:02.000Z',
+          },
+        })
+      })
+      expect(scrollArea.scrollTop).toBe(0)
+
+      scrollArea.scrollTop = 40
+      act(() => {
+        useSessionStore.setState({
+          sessions: [
+            makeSession('ready-row', 'Ready row', '/workspace/alpha', '2026-07-15T00:00:04.000Z'),
+            ...useSessionStore.getState().sessions,
+          ],
+          indexStatus: {
+            ...useSessionStore.getState().indexStatus!,
+            state: 'ready',
+            indexed: 10,
+            lastUpdatedAt: '2026-07-15T00:00:03.000Z',
+          },
+        })
+      })
+      expect(scrollArea.scrollTop).toBe(40)
+    } finally {
+      rectSpy.mockRestore()
+    }
+  })
+
+  // The live region exists for the one transition a user can perceive: history
+  // is being served the slow way. Building/ready/off are silent there too, so a
+  // screen reader is not told about work that needs no reaction.
+  it.each(['building', 'ready', 'off'] as const)('stays silent in the live region while %s', (state) => {
+    useSessionStore.setState({
+      sessions: [makeSession('live-row', 'Live row', '/workspace/alpha', '2026-07-15T00:00:00.000Z')],
+      indexStatus: {
+        mode: state === 'off' ? 'off' : 'on',
+        state,
+        discovered: 10,
+        indexed: state === 'building' ? 2 : 10,
+        degradedSources: 0,
+        databaseBytes: 4096,
+        walBytes: 0,
+        lastUpdatedAt: '2026-07-15T00:00:00.000Z',
+        lastErrorCode: null,
+      },
+    })
+
+    render(<Sidebar />)
+
+    expect(screen.getByRole('status')).toBeEmptyDOMElement()
+  })
+
+  it('announces the degraded fallback in the live region', () => {
+    useSessionStore.setState({
+      sessions: [makeSession('live-row', 'Live row', '/workspace/alpha', '2026-07-15T00:00:00.000Z')],
+      indexStatus: {
+        mode: 'on',
+        state: 'degraded',
+        discovered: 10,
+        indexed: 2,
+        degradedSources: 1,
+        databaseBytes: 4096,
+        walBytes: 0,
+        lastUpdatedAt: '2026-07-15T00:00:00.000Z',
+        lastErrorCode: 'source_unreadable',
+      },
+    })
+
+    render(<Sidebar />)
+
+    const liveRegion = screen.getByRole('status')
+    expect(liveRegion).toHaveTextContent('Using standard history loading')
+    expect(liveRegion).not.toHaveTextContent('2/10')
+    expect(screen.getByTestId('sidebar-index-degraded')).toHaveAttribute('aria-hidden', 'true')
   })
 
   it('refreshes sessions manually and through low-frequency visible polling', async () => {
@@ -1361,6 +1757,60 @@ describe('Sidebar', () => {
     Object.defineProperty(document, 'visibilityState', {
       configurable: true,
       value: originalVisibility,
+    })
+  })
+
+  // The whole drawer is touch-only: it has no hover, and nothing can be focused
+  // through `pointer-events: none`. Every control gated on `group-hover` was
+  // therefore either dead or an invisible tap target, and the 53 tests above
+  // never saw it because they all render the desktop sidebar.
+  describe('touch drawer controls', () => {
+    const renderWithProject = (isMobile: boolean) => {
+      useSessionStore.setState({
+        sessions: [makeSession('alpha-1', 'Alpha newest', '/workspace/alpha', new Date('2026-05-15T10:00:00.000Z').toISOString())],
+      })
+      return render(<Sidebar isMobile={isMobile} />)
+    }
+
+    it('keeps the project row actions hover-gated on desktop', () => {
+      renderWithProject(false)
+
+      const actions = screen.getByRole('button', { name: 'Project actions for alpha' })
+      expect(actions).toHaveClass('h-7', 'w-7')
+      expect(actions.parentElement).toHaveClass('pointer-events-none', 'opacity-0')
+    })
+
+    it('leaves the project row actions tappable at 44px in the drawer', () => {
+      renderWithProject(true)
+
+      const actions = screen.getByRole('button', { name: 'Project actions for alpha' })
+      const create = screen.getByRole('button', { name: 'New session in alpha' })
+      expect(actions).toHaveClass('h-11', 'w-11')
+      expect(create).toHaveClass('h-11', 'w-11')
+      // Both live in one row, so they need a gap wide enough not to catch a
+      // thumb aimed at the other.
+      expect(actions.parentElement).toHaveClass('opacity-100', 'gap-1.5')
+      expect(actions.parentElement).not.toHaveClass('pointer-events-none')
+    })
+
+    it('stops rendering the projects header actions as an invisible tap target', () => {
+      renderWithProject(true)
+
+      // These kept `pointer-events` while sitting at `opacity: 0` — visually
+      // absent on a phone, yet still firing on tap.
+      const menu = screen.getByRole('button', { name: 'Project menu' })
+      expect(menu).toHaveClass('h-11', 'w-11')
+      expect(menu.parentElement).toHaveClass('opacity-100')
+      expect(menu.parentElement).not.toHaveClass('opacity-0')
+    })
+
+    it('raises the search row and overflow toggle to the touch minimum', () => {
+      renderWithProject(true)
+
+      expect(screen.getByRole('button', { name: 'Refresh sessions' })).toHaveClass('h-11', 'w-11')
+      expect(screen.getByRole('button', { name: 'Batch manage' })).toHaveClass('h-11', 'w-11')
+      // Same flex row as the two above; at h-9 it left the row ragged.
+      expect(screen.getAllByRole('button', { name: 'Search chats' })[0]).toHaveClass('h-11')
     })
   })
 })

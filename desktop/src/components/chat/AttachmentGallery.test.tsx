@@ -1,14 +1,43 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom'
-import { fireEvent, render } from '@testing-library/react'
+import { fireEvent, render, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { browserHost } from '../../lib/desktopHost/browserHost'
+import { useOpenTargetStore } from '../../stores/openTargetStore'
 import { useSettingsStore } from '../../stores/settingsStore'
+import { useUIStore } from '../../stores/uiStore'
 import { AttachmentGallery } from './AttachmentGallery'
 
 describe('AttachmentGallery', () => {
+  const openPath = vi.fn().mockResolvedValue(undefined)
+
   beforeEach(() => {
+    vi.clearAllMocks()
     useSettingsStore.setState({ locale: 'en' })
+    useUIStore.setState({ toasts: [] })
+    useOpenTargetStore.setState({
+      targets: [
+        { id: 'code', kind: 'ide', label: 'VS Code', icon: 'vscode', platform: 'darwin' },
+        { id: 'finder', kind: 'file_manager', label: 'Finder', icon: 'finder', platform: 'darwin' },
+      ],
+      fetchedAt: Date.now(),
+      loading: false,
+      error: null,
+    })
+    window.desktopHost = {
+      ...browserHost,
+      kind: 'electron',
+      isDesktop: true,
+      capabilities: {
+        ...browserHost.capabilities,
+        shell: true,
+      },
+      shell: {
+        ...browserHost.shell,
+        openPath,
+      },
+    }
   })
 
   it('renders diff comments as note-first composer cards with side-aware locations', () => {
@@ -76,6 +105,114 @@ describe('AttachmentGallery', () => {
     expect(document.body.textContent).not.toContain(':L')
   })
 
+  it.each([
+    ['report.pdf', 'PDF', 'picture_as_pdf'],
+    ['brief.docx', 'DOCX', 'docs'],
+    ['budget.xlsx', 'XLSX', 'table_chart'],
+    ['launch.pptx', 'PPTX', 'slideshow'],
+    ['sources.zip', 'ZIP', 'folder_zip'],
+    ['notes.md', 'MD', 'markdown'],
+  ])('renders a type-specific visual for %s', (name, extension, icon) => {
+    const view = render(
+      <AttachmentGallery
+        attachments={[{
+          type: 'file',
+          name,
+        }]}
+      />,
+    )
+
+    expect(view.container.querySelector(`[data-file-extension="${extension}"]`)).toBeInTheDocument()
+    expect(view.getByText(icon)).toBeInTheDocument()
+  })
+
+  it('opens an absolute desktop attachment with the system default app', async () => {
+    const path = '/Users/example/Desktop/report.pdf'
+    const view = render(
+      <AttachmentGallery
+        attachments={[{
+          type: 'file',
+          name: 'report.pdf',
+          path,
+        }]}
+      />,
+    )
+
+    fireEvent.click(view.getByRole('button', { name: 'Open report.pdf' }))
+
+    await waitFor(() => expect(openPath).toHaveBeenCalledWith(path))
+  })
+
+  it('keeps relative and pathless attachments non-interactive', () => {
+    const view = render(
+      <AttachmentGallery
+        attachments={[
+          { type: 'file', name: 'relative.md', path: 'docs/relative.md' },
+          { type: 'file', name: 'detached.pdf' },
+        ]}
+      />,
+    )
+
+    expect(view.queryByRole('button', { name: 'Open relative.md' })).not.toBeInTheDocument()
+    expect(view.queryByRole('button', { name: 'Open detached.pdf' })).not.toBeInTheDocument()
+    expect(openPath).not.toHaveBeenCalled()
+  })
+
+  it('keeps absolute attachments non-interactive outside the desktop runtime', () => {
+    window.desktopHost = browserHost
+    const view = render(
+      <AttachmentGallery
+        attachments={[{
+          type: 'file',
+          name: 'report.pdf',
+          path: '/Users/example/Desktop/report.pdf',
+        }]}
+      />,
+    )
+
+    expect(view.queryByRole('button', { name: 'Open report.pdf' })).not.toBeInTheDocument()
+    expect(view.queryByRole('button', { name: 'Open with' })).not.toBeInTheDocument()
+  })
+
+  it('shows a localized toast when the local file cannot be opened', async () => {
+    openPath.mockRejectedValueOnce(new Error('missing'))
+    const view = render(
+      <AttachmentGallery
+        attachments={[{
+          type: 'file',
+          name: 'missing.pdf',
+          path: '/Users/example/Desktop/missing.pdf',
+        }]}
+      />,
+    )
+
+    fireEvent.click(view.getByRole('button', { name: 'Open missing.pdf' }))
+
+    await waitFor(() => {
+      expect(useUIStore.getState().toasts.at(-1)?.message).toBe(
+        'Could not open missing.pdf. The file may have been moved or deleted.',
+      )
+    })
+  })
+
+  it('reuses the Open With menu for IDE and file-manager destinations', async () => {
+    const view = render(
+      <AttachmentGallery
+        attachments={[{
+          type: 'file',
+          name: 'report.pdf',
+          path: '/Users/example/Desktop/report.pdf',
+        }]}
+      />,
+    )
+
+    fireEvent.click(view.getByRole('button', { name: 'Open with' }))
+
+    expect(await view.findByText('Open in VS Code')).toBeInTheDocument()
+    expect(view.getByText('Reveal in Finder')).toBeInTheDocument()
+    expect(openPath).not.toHaveBeenCalled()
+  })
+
   it('removes a quoted workspace attachment by id', () => {
     const onRemove = vi.fn()
 
@@ -115,13 +252,80 @@ describe('AttachmentGallery', () => {
 
     expect(view.getByRole('button', { name: 'Open <h1>' })).toBeTruthy()
     const noteChip = view.getByLabelText('Selection note: 这个标题更轻一点')
-    const tooltip = view.getByRole('tooltip')
     expect(noteChip.textContent).toContain('<h1>')
     expect(noteChip.getAttribute('title')).toBe('这个标题更轻一点')
+
+    // The note used to be a sibling span kept in the DOM and revealed by
+    // `group-hover/selection:` classes. It is now the shared `Tooltip`, which
+    // mounts into a portal only while hovered/focused — so the assertions moved
+    // from "present but CSS-hidden" to "appears on pointer enter".
+    expect(view.queryByRole('tooltip')).toBeNull()
+
+    fireEvent.mouseEnter(noteChip)
+
+    const tooltip = view.getByRole('tooltip')
     expect(noteChip).toHaveAttribute('aria-describedby', tooltip.id)
-    expect(tooltip).toHaveTextContent('修改内容')
+    // Was the literal '修改内容': the heading was hard-coded Chinese and so
+    // rendered untranslated under every locale. This suite runs under `en`.
+    expect(tooltip).toHaveTextContent('Requested changes')
     expect(tooltip).toHaveTextContent('这个标题更轻一点')
-    expect(tooltip.className).toContain('group-hover/selection:visible')
+
+    fireEvent.mouseLeave(noteChip)
+    expect(view.queryByRole('tooltip')).toBeNull()
+  })
+
+  it('previews a path-only pasted image instead of a file chip', () => {
+    const path = '/Users/nanmi/Desktop/6代码仓库.png'
+    const view = render(
+      <AttachmentGallery
+        variant="message"
+        attachments={[{ id: 'pasted-1', type: 'image', name: '6代码仓库.png', path }]}
+      />,
+    )
+
+    const image = view.getByRole('img', { name: '6代码仓库.png' })
+    expect(image).toHaveAttribute(
+      'src',
+      `http://127.0.0.1:3456/api/filesystem/file?path=${encodeURIComponent(path)}`,
+    )
+    expect(view.container.querySelector('[data-file-extension]')).not.toBeInTheDocument()
+  })
+
+  it('opens the path-only image preview in the gallery modal', async () => {
+    const view = render(
+      <AttachmentGallery
+        variant="composer"
+        attachments={[{ id: 'pasted-1', type: 'image', name: 'shot.png', path: '/Users/nanmi/Desktop/shot.png' }]}
+      />,
+    )
+
+    fireEvent.click(view.getByRole('button', { name: 'Open shot.png' }))
+
+    expect(await view.findByText('1 / 1')).toBeInTheDocument()
+  })
+
+  it('falls back to the file card when a path-only image cannot be loaded', () => {
+    const view = render(
+      <AttachmentGallery
+        attachments={[{ id: 'pasted-1', type: 'image', name: 'moved.png', path: '/Volumes/external/moved.png' }]}
+      />,
+    )
+
+    fireEvent.error(view.getByRole('img', { name: 'moved.png' }))
+
+    expect(view.queryByRole('img', { name: 'moved.png' })).not.toBeInTheDocument()
+    expect(view.container.querySelector('[data-file-extension="PNG"]')).toBeInTheDocument()
+  })
+
+  it('keeps relative image paths on the file card', () => {
+    const view = render(
+      <AttachmentGallery
+        attachments={[{ id: 'relative-1', type: 'image', name: 'diagram.png', path: 'docs/diagram.png' }]}
+      />,
+    )
+
+    expect(view.queryByRole('img')).not.toBeInTheDocument()
+    expect(view.container.querySelector('[data-file-extension="PNG"]')).toBeInTheDocument()
   })
 
   it('localizes diff sides and remove actions in Chinese', () => {

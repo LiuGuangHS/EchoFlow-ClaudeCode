@@ -28,7 +28,7 @@ const SCREENSHOT_JPEG_QUALITY = 0.75
 const MOVE_SETTLE_MS = 50
 const hostBundleId =
   process.env.ECHOFLOW_COMPUTER_USE_HOST_BUNDLE_ID ||
-  process.env.CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID ||
+  process.env.ECHOFLOW_COMPUTER_USE_HOST_BUNDLE_ID ||
   CLI_HOST_BUNDLE_ID
 
 type PythonDisplayGeometry = DisplayGeometry

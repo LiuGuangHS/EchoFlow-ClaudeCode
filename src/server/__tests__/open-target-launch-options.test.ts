@@ -19,7 +19,7 @@ describe('open target launch options', () => {
   })
 
   it.skipIf(process.platform === 'win32')('uses those options in the production launcher', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'cc-haha-open-target-launch-'))
+    const root = await mkdtemp(join(tmpdir(), 'echoflow-code-open-target-launch-'))
     const binDir = join(root, 'bin')
     const targetDir = join(root, 'target')
     const commandPath = join(binDir, 'code')

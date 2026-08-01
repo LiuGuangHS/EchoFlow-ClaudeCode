@@ -31,6 +31,7 @@ export type Tab = {
   sourceTurnKey?: string
   sourceElementId?: string
   subagentToolUseId?: string
+  subagentTaskId?: string
 }
 
 export type WorkbenchTabOrigin = {
@@ -54,7 +55,7 @@ type TabStore = {
   openTerminalTab: (cwd?: string, terminalRuntimeId?: string) => string
   openWorkbenchTab: (sessionId: string, title?: string, origin?: WorkbenchTabOrigin) => string
   returnFromWorkbench: (tabId: string) => void
-  openSubagentTab: (sourceSessionId: string, toolUseId: string, title?: string) => string
+  openSubagentTab: (sourceSessionId: string, toolUseId: string, title?: string, taskId?: string) => string
   closeTab: (sessionId: string) => void
   setActiveTab: (sessionId: string) => void
   updateTabTitle: (sessionId: string, title: string) => void
@@ -218,7 +219,7 @@ export const useTabStore = create<TabStore>((set, get) => ({
     get().closeTab(tabId)
   },
 
-  openSubagentTab: (sourceSessionId, toolUseId, title = 'SubAgent') => {
+  openSubagentTab: (sourceSessionId, toolUseId, title = 'SubAgent', taskId) => {
     const tabId = `${SUBAGENT_TAB_PREFIX}${sourceSessionId}__${toolUseId}`
     const { tabs } = get()
     const existing = tabs.find((tab) => tab.sessionId === tabId)
@@ -229,6 +230,7 @@ export const useTabStore = create<TabStore>((set, get) => ({
       status: 'idle',
       sourceSessionId,
       subagentToolUseId: toolUseId,
+      ...(taskId ? { subagentTaskId: taskId } : {}),
     }
 
     set({
@@ -370,10 +372,12 @@ export const useTabStore = create<TabStore>((set, get) => ({
             return { sessionId: PERSISTENT_SPECIAL_TAB_IDS[specialType], title: t.title, type: specialType, status: 'idle' as const }
           }
           if (t.type === 'trace' && t.traceSessionId) {
+            // Titled with the traced session, same as a freshly opened trace
+            // tab — the tab bar's glyph is what marks it as a trace.
             const sourceTitle = sessions.find((s) => s.id === t.traceSessionId)?.title || t.title
             return {
               sessionId: `${TRACE_TAB_PREFIX}${t.traceSessionId}`,
-              title: sourceTitle === t.title ? t.title : `Trace: ${sourceTitle}`,
+              title: sourceTitle,
               type: 'trace' as const,
               status: 'idle' as const,
               traceSessionId: t.traceSessionId,

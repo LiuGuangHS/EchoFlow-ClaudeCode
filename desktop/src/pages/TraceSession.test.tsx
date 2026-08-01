@@ -3,6 +3,8 @@ import '@testing-library/jest-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TraceSession } from './TraceSession'
 import { sessionsApi } from '../api/sessions'
+import { tracesApi } from '../api/traces'
+import type { TraceSessionRevision } from '../api/traces'
 import { useSessionStore } from '../stores/sessionStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { clearTraceCallCache } from '../lib/trace/callCache'
@@ -15,6 +17,12 @@ vi.mock('../api/sessions', () => ({
     getTrace: vi.fn(),
     getMessages: vi.fn(),
     getTraceCall: vi.fn(),
+  },
+}))
+
+vi.mock('../api/traces', () => ({
+  tracesApi: {
+    getRevision: vi.fn(),
   },
 }))
 
@@ -164,6 +172,12 @@ describe('TraceSession', () => {
     vi.mocked(sessionsApi.getTrace).mockResolvedValue(baseTrace)
     vi.mocked(sessionsApi.getMessages).mockResolvedValue({ messages: baseMessages })
     vi.mocked(sessionsApi.getTraceCall).mockResolvedValue({ call: fullCall })
+    vi.mocked(tracesApi.getRevision).mockResolvedValue({
+      sessionId: SESSION_ID,
+      revision: 1,
+      changed: false,
+      reset: false,
+    })
     useSessionStore.setState({
       sessions: [{
         id: SESSION_ID,
@@ -384,6 +398,11 @@ describe('TraceSession', () => {
   })
 
   it('applies poll updates and short-circuits identical snapshots', async () => {
+    vi.mocked(tracesApi.getRevision)
+      .mockResolvedValueOnce({ sessionId: SESSION_ID, revision: 1, changed: true, reset: false })
+      .mockResolvedValueOnce({ sessionId: SESSION_ID, revision: 2, changed: true, reset: false })
+      .mockResolvedValueOnce({ sessionId: SESSION_ID, revision: 3, changed: true, reset: false })
+      .mockResolvedValue({ sessionId: SESSION_ID, revision: 4, changed: true, reset: false })
     vi.mocked(sessionsApi.getTrace)
       .mockResolvedValueOnce(baseTrace)
       .mockResolvedValueOnce(baseTrace)
@@ -405,7 +424,7 @@ describe('TraceSession', () => {
     await waitFor(() => expect(vi.mocked(sessionsApi.getTrace).mock.calls.length).toBeGreaterThanOrEqual(3))
 
     await screen.findByText('claude-sonnet-4-5 x2')
-    expect(sessionsApi.getTraceCall).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(sessionsApi.getTraceCall).mock.calls.length).toBeGreaterThan(1)
     const detail = within(screen.getByTestId('trace-detail'))
     expect(detail.getByRole('heading', { level: 2, name: 'claude-sonnet-4-5' })).toBeInTheDocument()
   })
@@ -415,18 +434,59 @@ describe('TraceSession', () => {
 
     await renderReady(20)
 
-    await waitFor(() => expect(vi.mocked(sessionsApi.getTrace).mock.calls.length).toBeGreaterThanOrEqual(3))
+    await waitFor(() => expect(vi.mocked(tracesApi.getRevision).mock.calls.length).toBeGreaterThanOrEqual(3))
+    expect(sessionsApi.getTrace).toHaveBeenCalledTimes(1)
     expect(sessionsApi.getMessages).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses the revision cursor for unchanged polls without refetching the full trace', async () => {
+    await renderReady(20)
+
+    await waitFor(() => expect(vi.mocked(tracesApi.getRevision).mock.calls.length).toBeGreaterThanOrEqual(2))
+    expect(sessionsApi.getTrace).toHaveBeenCalledTimes(1)
+    expect(sessionsApi.getMessages).toHaveBeenCalledTimes(1)
+    expect(tracesApi.getRevision).toHaveBeenLastCalledWith(SESSION_ID, 1, undefined)
+  })
+
+  it('serializes slow revision probes so stale polls cannot overwrite newer state', async () => {
+    let resolveProbe: ((value: {
+      sessionId: string
+      revision: number
+      changed: boolean
+      reset: boolean
+    }) => void) | undefined
+    vi.mocked(tracesApi.getRevision)
+      .mockResolvedValueOnce({ sessionId: SESSION_ID, revision: 1, changed: true, reset: false })
+      .mockImplementationOnce(() => new Promise(resolve => {
+        resolveProbe = resolve
+      }))
+      .mockResolvedValue({ sessionId: SESSION_ID, revision: 2, changed: false, reset: false })
+
+    await renderReady(10)
+    await waitFor(() => expect(tracesApi.getRevision).toHaveBeenCalledTimes(2))
+    await new Promise(resolve => setTimeout(resolve, 35))
+    expect(tracesApi.getRevision).toHaveBeenCalledTimes(2)
+    expect(sessionsApi.getTrace).toHaveBeenCalledTimes(1)
+
+    resolveProbe?.({ sessionId: SESSION_ID, revision: 2, changed: true, reset: false })
+    await waitFor(() => expect(sessionsApi.getTrace).toHaveBeenCalledTimes(2))
   })
 
   it('refetches messages when only the trace message signature changes', async () => {
     const pendingMessages = baseMessages.filter((message) => message.type !== 'tool_result')
+    let resolveRefreshedMessages!: (value: { messages: MessageEntry[] }) => void
+    const refreshedMessages = new Promise<{ messages: MessageEntry[] }>((resolve) => {
+      resolveRefreshedMessages = resolve
+    })
     vi.mocked(sessionsApi.getTrace)
       .mockResolvedValueOnce({ ...baseTrace, messageSignature: '3:tool-use' })
       .mockResolvedValue({ ...baseTrace, messageSignature: '4:tool-result' })
+    vi.mocked(tracesApi.getRevision)
+      .mockResolvedValueOnce({ sessionId: SESSION_ID, revision: 1, changed: true, reset: false })
+      .mockResolvedValue({ sessionId: SESSION_ID, revision: 2, changed: true, reset: false })
     vi.mocked(sessionsApi.getMessages)
       .mockResolvedValueOnce({ messages: pendingMessages })
-      .mockResolvedValue({ messages: baseMessages })
+      .mockReturnValue(refreshedMessages)
 
     await renderReady(20)
 
@@ -434,7 +494,8 @@ describe('TraceSession', () => {
     fireEvent.click(tree.getByText('Bash'))
 
     await waitFor(() => expect(sessionsApi.getMessages).toHaveBeenCalledTimes(2))
-    expect(within(screen.getByTestId('trace-detail')).getByText('file.txt')).toBeInTheDocument()
+    resolveRefreshedMessages({ messages: baseMessages })
+    expect(await within(screen.getByTestId('trace-detail')).findByText('file.txt')).toBeInTheDocument()
   })
 
   it('applies poll updates when a call changes without changing row counts', async () => {
@@ -459,6 +520,9 @@ describe('TraceSession', () => {
     vi.mocked(sessionsApi.getTrace)
       .mockResolvedValueOnce(pendingTrace)
       .mockResolvedValue(completedTrace)
+    vi.mocked(tracesApi.getRevision)
+      .mockResolvedValueOnce({ sessionId: SESSION_ID, revision: 1, changed: true, reset: false })
+      .mockResolvedValue({ sessionId: SESSION_ID, revision: 2, changed: true, reset: false })
 
     await renderReady(20)
 
@@ -466,6 +530,75 @@ describe('TraceSession', () => {
     const diagnosis = within(screen.getByTestId('trace-diagnosis'))
     expect(diagnosis.getByText('error')).toBeInTheDocument()
     expect(diagnosis.getByText('Model call failed')).toBeInTheDocument()
+  })
+
+  it('refetches a terminal call detail when the trace revision token changes', async () => {
+    let resolveUpdatedRevision: ((revision: TraceSessionRevision) => void) | undefined
+    const updatedRevision = new Promise<TraceSessionRevision>((resolve) => {
+      resolveUpdatedRevision = resolve
+    })
+    const updatedCall = makeCall({
+      response: {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: {
+          contentType: 'json',
+          bytes: 128,
+          sha256: 'c'.repeat(64),
+          preview: JSON.stringify({
+            model: 'claude-sonnet-4-5',
+            content: [{ type: 'text', text: 'Updated full record' }],
+            stop_reason: 'end_turn',
+          }),
+          truncated: false,
+        },
+      },
+    })
+    vi.mocked(tracesApi.getRevision)
+      .mockResolvedValueOnce({
+        sessionId: SESSION_ID,
+        revision: 1,
+        revisionToken: 'epoch-a:1',
+        changed: true,
+        reset: false,
+      })
+      .mockReturnValue(updatedRevision)
+    vi.mocked(sessionsApi.getTrace)
+      .mockResolvedValueOnce(baseTrace)
+      .mockResolvedValue({
+        ...baseTrace,
+        summary: { ...baseTrace.summary, totalOutputTokens: 848 },
+        calls: [updatedCall],
+      })
+    vi.mocked(sessionsApi.getTraceCall)
+      .mockResolvedValueOnce({ call: fullCall })
+      .mockResolvedValue({ call: updatedCall })
+
+    await renderReady(20)
+    await waitFor(() => expect(tracesApi.getRevision).toHaveBeenCalled())
+    fireEvent.click(within(screen.getByTestId('trace-tree')).getByText('claude-sonnet-4-5'))
+    await waitFor(
+      () => expect(screen.getByText('Hi from the full record')).toBeInTheDocument(),
+      { timeout: 5_000 },
+    )
+
+    resolveUpdatedRevision?.({
+      sessionId: SESSION_ID,
+      revision: 2,
+      revisionToken: 'epoch-a:2',
+      changed: true,
+      reset: false,
+    })
+
+    await waitFor(
+      () => expect(sessionsApi.getTraceCall).toHaveBeenCalledTimes(2),
+      { timeout: 5_000 },
+    )
+    expect(await screen.findByText('Updated full record')).toBeInTheDocument()
+    expect(within(screen.getByTestId('trace-detail')).getByRole('heading', {
+      level: 2,
+      name: 'claude-sonnet-4-5',
+    })).toBeInTheDocument()
   })
 
   it('keeps section collapse state scoped to each trace session instance', async () => {
@@ -549,5 +682,56 @@ describe('TraceSession', () => {
     render(<TraceSession sessionId={SESSION_ID} standalone pollIntervalMs={60_000} />)
 
     expect(await screen.findByRole('heading', { level: 1, name: 'Trace API title' })).toBeInTheDocument()
+  })
+
+  it('offers a way back to the list when opened as a tab', async () => {
+    const onBack = vi.fn()
+    render(<TraceSession sessionId={SESSION_ID} onBack={onBack} pollIntervalMs={60_000} />)
+    await screen.findByTestId('trace-split-layout')
+
+    const back = within(screen.getByTestId('trace-header')).getByRole('button', { name: 'Back to list' })
+    fireEvent.click(back)
+
+    expect(onBack).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the way back available while the trace is still loading', async () => {
+    let releaseTrace: (value: TraceSessionData) => void = () => {}
+    vi.mocked(sessionsApi.getTrace).mockReturnValue(
+      new Promise<TraceSessionData>((resolve) => { releaseTrace = resolve }),
+    )
+    const onBack = vi.fn()
+
+    render(<TraceSession sessionId={SESSION_ID} onBack={onBack} pollIntervalMs={60_000} />)
+
+    expect(await screen.findByTestId('trace-skeleton')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Back to list' }))
+    expect(onBack).toHaveBeenCalledTimes(1)
+
+    releaseTrace(baseTrace)
+    await screen.findByTestId('trace-split-layout')
+  })
+
+  it('keeps the way back available when the trace fails to load', async () => {
+    // The failure state is exactly where being stranded hurts most: there is no
+    // content to act on, so the exit has to survive the error path.
+    vi.mocked(sessionsApi.getTrace).mockRejectedValue(new Error('boom'))
+    const onBack = vi.fn()
+
+    render(<TraceSession sessionId={SESSION_ID} onBack={onBack} pollIntervalMs={60_000} />)
+
+    expect(await screen.findByText('Failed to load trace')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Back to list' }))
+
+    expect(onBack).toHaveBeenCalledTimes(1)
+  })
+
+  it('hides the way back in the standalone window, which has no list behind it', async () => {
+    render(<TraceSession sessionId={SESSION_ID} standalone pollIntervalMs={60_000} />)
+    await screen.findByTestId('trace-split-layout')
+
+    expect(screen.queryByRole('button', { name: 'Back to list' })).not.toBeInTheDocument()
+    // The standalone window also drops "open in window" — it is already one.
+    expect(screen.queryByRole('button', { name: 'Open in separate window' })).not.toBeInTheDocument()
   })
 })

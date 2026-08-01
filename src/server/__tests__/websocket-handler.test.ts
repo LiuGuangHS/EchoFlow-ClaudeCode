@@ -3,6 +3,7 @@ import type { ServerWebSocket } from 'bun'
 import {
   __markPrewarmPendingForTests,
   __markActiveTurnForTests,
+  __refreshDisconnectedTurnCleanupWatcherForTests,
   __registerPendingUserTurnForTests,
   __markPrewarmedForTests,
   __resetWebSocketHandlerStateForTests,
@@ -20,13 +21,14 @@ import { conversationService } from '../services/conversationService.js'
 import { computerUseApprovalService } from '../services/computerUseApprovalService.js'
 import { sessionService } from '../services/sessionService.js'
 
-function makeClientSocket(sessionId: string) {
+function makeClientSocket(sessionId: string, clientKind: 'full' | 'pet' = 'full') {
   const sent: string[] = []
   return {
     data: {
       sessionId,
       connectedAt: Date.now(),
       channel: 'client',
+      clientKind,
       sdkToken: null,
       serverPort: 0,
       serverHost: '127.0.0.1',
@@ -187,6 +189,66 @@ describe('WebSocket handler session isolation', () => {
     })
   })
 
+  it('gives pet clients only sanitized state and denies privileged client messages', () => {
+    const sessionId = `pet-capability-${crypto.randomUUID()}`
+    const ws = makeClientSocket(sessionId, 'pet')
+    let outputCallback: ((message: unknown) => void) | null = null
+    spyOn(conversationService, 'hasSession').mockReturnValue(true)
+    spyOn(conversationService, 'onOutput').mockImplementation((_sid, callback) => {
+      outputCallback = callback
+    })
+    spyOn(conversationService, 'removeOutputCallback').mockImplementation(() => {})
+    spyOn(conversationService, 'getPendingPermissionRequests').mockReturnValue([{
+      requestId: 'pet-hidden-request',
+      toolName: 'Read',
+      input: { file_path: '/Users/alice/private.txt' },
+    }])
+    const clearSessionTranscript = spyOn(sessionService, 'clearSessionTranscript')
+
+    handleWebSocket.open(ws)
+    outputCallback?.({
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: 'private transcript text' }] },
+    })
+    outputCallback?.({ type: 'system', subtype: 'status', status: 'compacting' })
+    handleWebSocket.message(ws, JSON.stringify({
+      type: 'set_permission_mode',
+      mode: 'bypassPermissions',
+    }))
+    handleWebSocket.message(ws, JSON.stringify({ type: 'ping' }))
+    handleWebSocket.message(ws, JSON.stringify({ type: 'user_message', content: '/clear' }))
+
+    const sent = ws.sent.map((payload) => JSON.parse(payload))
+    expect(sent).toContainEqual({ type: 'connected', sessionId })
+    expect(sent).toContainEqual({
+      type: 'permission_requests_snapshot',
+      toolRequestIds: [],
+      computerUseRequestIds: [],
+      turnActive: false,
+    })
+    expect(sent).toContainEqual({
+      type: 'error',
+      message: 'Pet action failed. Open the session for details.',
+      code: 'PET_CAPABILITY_DENIED',
+    })
+    expect(sent).toContainEqual({ type: 'pong' })
+    expect(clearSessionTranscript).not.toHaveBeenCalled()
+    expect(sent).not.toContainEqual(expect.objectContaining({ type: 'permission_request' }))
+    expect(JSON.stringify(sent)).not.toContain('/Users/alice/private.txt')
+    expect(JSON.stringify(sent)).not.toContain('private transcript text')
+  })
+
+  it('keeps only the selected pet session socket active', () => {
+    const first = makeClientSocket(`pet-first-${crypto.randomUUID()}`, 'pet')
+    const second = makeClientSocket(`pet-second-${crypto.randomUUID()}`, 'pet')
+
+    handleWebSocket.open(first)
+    handleWebSocket.open(second)
+
+    expect(first.close).toHaveBeenCalledWith(1000, 'Pet session switched')
+    expect(second.close).not.toHaveBeenCalled()
+  })
+
   it('tracks and replays pending Computer Use requests when a client reconnects', async () => {
     const sessionId = `computer-use-reconnect-${crypto.randomUUID()}`
     const first = makeClientSocket(sessionId)
@@ -268,6 +330,27 @@ describe('WebSocket handler session isolation', () => {
     })
   })
 
+  it('does not let a stopped turn fallback kill a replacement turn', () => {
+    const sessionId = `stopped-turn-replaced-${crypto.randomUUID()}`
+    const ws = makeClientSocket(sessionId)
+    const setTimeoutSpy = spyOn(globalThis, 'setTimeout').mockImplementation(() => 1 as any)
+    const sendInterrupt = spyOn(conversationService, 'sendInterrupt').mockImplementation(() => {})
+    const stopSession = spyOn(conversationService, 'stopSession').mockImplementation(() => {})
+    spyOn(conversationService, 'hasSession').mockReturnValue(true)
+    __markActiveTurnForTests(sessionId)
+
+    handleWebSocket.message(ws, JSON.stringify({ type: 'stop_generation' }))
+
+    expect(sendInterrupt).toHaveBeenCalledWith(sessionId)
+    expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 3_000)
+    const expireForceKill = setTimeoutSpy.mock.calls[0]?.[0] as (() => void) | undefined
+
+    __registerPendingUserTurnForTests(sessionId)
+    expireForceKill?.()
+
+    expect(stopSession).not.toHaveBeenCalled()
+  })
+
   it('forwards background task stop requests to the CLI control channel', async () => {
     const sessionId = `stop-background-${crypto.randomUUID()}`
     const ws = makeClientSocket(sessionId)
@@ -319,6 +402,57 @@ describe('WebSocket handler session isolation', () => {
       type: 'background_task_stop_failed',
       taskId: '',
       message: 'Background task id is required',
+    })
+  })
+
+  it('persists terminal task notifications before forwarding them to the client', async () => {
+    const sessionId = `task-notification-${crypto.randomUUID()}`
+    const ws = makeClientSocket(sessionId)
+    let outputCallback: ((cliMsg: any) => void) | null = null
+    spyOn(conversationService, 'hasSession').mockReturnValue(true)
+    spyOn(conversationService, 'onOutput').mockImplementation((_sid, callback) => {
+      outputCallback = callback
+    })
+    const append = spyOn(sessionService, 'appendSessionTaskNotification').mockResolvedValue()
+
+    handleWebSocket.open(ws)
+    ws.sent.length = 0
+
+    const completed = {
+      type: 'system',
+      subtype: 'task_notification',
+      uuid: 'terminal-task-event-1',
+      task_id: 'agent-task-1',
+      tool_use_id: 'agent-tool-1',
+      status: 'completed',
+      summary: 'Background task completed',
+      timestamp: '2026-07-18T00:01:00.000Z',
+    }
+    outputCallback?.(completed)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(append).toHaveBeenCalledTimes(1)
+    expect(ws.sent.map((payload) => JSON.parse(payload))).toContainEqual({
+      type: 'system_notification',
+      subtype: 'task_notification',
+      data: completed,
+    })
+
+    // A running notification is UI activity, not a terminal state that should
+    // be restored after restart. It must forward without another persistence.
+    const running = {
+      ...completed,
+      uuid: 'running-task-event-1',
+      status: 'running',
+    }
+    outputCallback?.(running)
+
+    expect(append).toHaveBeenCalledTimes(1)
+    expect(ws.sent.map((payload) => JSON.parse(payload))).toContainEqual({
+      type: 'system_notification',
+      subtype: 'task_notification',
+      data: running,
     })
   })
 
@@ -397,6 +531,85 @@ describe('WebSocket handler session isolation', () => {
     expect(setTimeoutSpy.mock.calls[0]?.[1]).toBeGreaterThan(30_000)
   })
 
+  it('bounds an active turn waiting on permission after the last client disconnects', () => {
+    const sessionId = `active-permission-disconnect-${crypto.randomUUID()}`
+    const ws = makeClientSocket(sessionId)
+    const setTimeoutSpy = spyOn(globalThis, 'setTimeout').mockImplementation(() => 0 as any)
+    spyOn(conversationService, 'getPendingPermissionRequests').mockReturnValue([
+      {
+        requestId: 'request-bash-1',
+        toolName: 'Bash',
+        input: { command: 'echo hello' },
+      },
+    ])
+    let turnCompleteCallback: ((cliMsg: any) => void) | null = null
+    spyOn(conversationService, 'onOutput').mockImplementation((_sid, callback) => {
+      turnCompleteCallback = callback
+    })
+    spyOn(conversationService, 'removeOutputCallback').mockImplementation(() => {})
+    const stopSession = spyOn(conversationService, 'stopSession').mockImplementation(() => {})
+
+    handleWebSocket.open(ws)
+    __markActiveTurnForTests(sessionId)
+    setTimeoutSpy.mockClear()
+
+    handleWebSocket.close(ws, 1006, 'permission prompt abandoned')
+
+    expect(setTimeoutSpy).toHaveBeenCalledTimes(1)
+    expect(setTimeoutSpy.mock.calls[0]?.[1]).toBe(30 * 60_000)
+    expect(turnCompleteCallback).not.toBeNull()
+
+    const expirePermissionWait = setTimeoutSpy.mock.calls[0]?.[0] as (() => void) | undefined
+    expirePermissionWait?.()
+    expect(stopSession).toHaveBeenCalledWith(sessionId)
+  })
+
+  it('starts the permission cleanup bound when disconnect happens before the turn is sent', () => {
+    const sessionId = `late-permission-disconnect-${crypto.randomUUID()}`
+    const ws = makeClientSocket(sessionId)
+    const setTimeoutSpy = spyOn(globalThis, 'setTimeout').mockImplementation(() => 0 as any)
+    const pendingRequests = spyOn(conversationService, 'getPendingPermissionRequests')
+      .mockReturnValue([])
+    let turnOutputCallback: ((cliMsg: any) => void) | null = null
+    let cliSessionReady = false
+    spyOn(conversationService, 'onOutput').mockImplementation((_sid, callback) => {
+      // ConversationService.onOutput is a no-op until startSession has inserted
+      // the session. This was the gap hidden by the previous regression test.
+      if (cliSessionReady) turnOutputCallback = callback
+    })
+    spyOn(conversationService, 'removeOutputCallback').mockImplementation(() => {})
+
+    handleWebSocket.open(ws)
+    // Mirrors the real H5 race: user_message has synchronously claimed the
+    // turn, but CLI startup has not completed and messageSent is still false.
+    __registerPendingUserTurnForTests(sessionId)
+    setTimeoutSpy.mockClear()
+    handleWebSocket.close(ws, 1006, 'renderer closed before permission prompt')
+
+    expect(setTimeoutSpy).not.toHaveBeenCalled()
+    expect(turnOutputCallback).toBeNull()
+
+    // CLI startup finishes while the H5 tab remains closed. handleUserMessage
+    // refreshes the watcher immediately before sending the queued turn.
+    cliSessionReady = true
+    __refreshDisconnectedTurnCleanupWatcherForTests(sessionId)
+    expect(turnOutputCallback).not.toBeNull()
+
+    pendingRequests.mockReturnValue([{
+      requestId: 'late-request-1',
+      toolName: 'Bash',
+      input: { command: 'echo later' },
+    }])
+    ;(turnOutputCallback as ((cliMsg: any) => void) | null)?.({
+      type: 'control_request',
+      request_id: 'late-request-1',
+      request: { subtype: 'can_use_tool', tool_name: 'Bash' },
+    })
+
+    expect(setTimeoutSpy).toHaveBeenCalledTimes(1)
+    expect(setTimeoutSpy.mock.calls[0]?.[1]).toBe(30 * 60_000)
+  })
+
   it('does not forward prewarm startup status to a reconnecting client', async () => {
     const sessionId = `prewarm-reconnect-${crypto.randomUUID()}`
     const second = makeClientSocket(sessionId)
@@ -452,6 +665,169 @@ describe('WebSocket handler session isolation', () => {
     expect(setTimeoutSpy).toHaveBeenCalled()
     // Timer body still hasn't run, so the process is not killed yet.
     expect(stopSession).not.toHaveBeenCalled()
+  })
+
+  it('keeps the last disconnected client session alive until all background tasks finish', () => {
+    const sessionId = `background-task-disconnect-${crypto.randomUUID()}`
+    const ws = makeClientSocket(sessionId, 'pet')
+    const setTimeoutSpy = spyOn(globalThis, 'setTimeout').mockImplementation(() => 0 as any)
+    const stopSession = spyOn(conversationService, 'stopSession').mockImplementation(() => {})
+    spyOn(conversationService, 'getPendingPermissionRequests').mockReturnValue([])
+    spyOn(conversationService, 'hasSession').mockReturnValue(true)
+
+    const outputCallbacks: Array<(cliMsg: any) => void> = []
+    spyOn(conversationService, 'onOutput').mockImplementation((_sid, callback) => {
+      outputCallbacks.push(callback)
+    })
+    spyOn(conversationService, 'removeOutputCallback').mockImplementation(() => {})
+
+    handleWebSocket.open(ws)
+    outputCallbacks[0]?.({
+      type: 'system',
+      subtype: 'task_started',
+      task_id: 'agent-task-1',
+      tool_use_id: 'agent-tool-1',
+      description: 'Verify the desktop app',
+      task_type: 'local_agent',
+    })
+    outputCallbacks[0]?.({
+      type: 'system',
+      subtype: 'task_notification',
+      task_id: 'shell-task-1',
+      tool_use_id: 'shell-tool-1',
+      status: 'running',
+      output_file: '',
+      summary: 'Running the focused tests',
+    })
+    setTimeoutSpy.mockClear()
+
+    handleWebSocket.close(ws, 1000, 'pet closed')
+
+    expect(setTimeoutSpy).not.toHaveBeenCalled()
+    expect(stopSession).not.toHaveBeenCalled()
+    expect(outputCallbacks).toHaveLength(2)
+
+    outputCallbacks[1]?.({
+      type: 'system',
+      subtype: 'task_notification',
+      task_id: 'agent-task-1',
+      tool_use_id: 'agent-tool-1',
+      status: 'completed',
+      output_file: '',
+      summary: 'Desktop verification passed',
+    })
+
+    expect(setTimeoutSpy).not.toHaveBeenCalled()
+    expect(stopSession).not.toHaveBeenCalled()
+
+    outputCallbacks[1]?.({
+      type: 'system',
+      subtype: 'task_notification',
+      task_id: 'shell-task-1',
+      tool_use_id: 'shell-tool-1',
+      status: 'completed',
+      output_file: '',
+      summary: 'Focused tests passed',
+    })
+
+    expect(setTimeoutSpy).toHaveBeenCalledTimes(1)
+    expect(setTimeoutSpy.mock.calls[0]?.[1]).toBe(30_000)
+    expect(stopSession).not.toHaveBeenCalled()
+
+    const expireIdleGrace = setTimeoutSpy.mock.calls[0]?.[0] as (() => void) | undefined
+    expireIdleGrace?.()
+    expect(stopSession).toHaveBeenCalledWith(sessionId)
+  })
+
+  it('cancels an armed idle timer when a background task starts late', () => {
+    const sessionId = `late-background-task-${crypto.randomUUID()}`
+    const ws = makeClientSocket(sessionId, 'pet')
+    const setTimeoutSpy = spyOn(globalThis, 'setTimeout').mockImplementation(() => 123 as any)
+    const clearTimeoutSpy = spyOn(globalThis, 'clearTimeout').mockImplementation(() => {})
+    const stopSession = spyOn(conversationService, 'stopSession').mockImplementation(() => {})
+    spyOn(conversationService, 'getPendingPermissionRequests').mockReturnValue([])
+    spyOn(conversationService, 'hasSession').mockReturnValue(true)
+    const outputCallbacks: Array<(cliMsg: any) => void> = []
+    spyOn(conversationService, 'onOutput').mockImplementation((_sid, callback) => {
+      outputCallbacks.push(callback)
+    })
+    spyOn(conversationService, 'removeOutputCallback').mockImplementation(() => {})
+
+    handleWebSocket.open(ws)
+    setTimeoutSpy.mockClear()
+    handleWebSocket.close(ws, 1000, 'pet closed while idle')
+
+    expect(setTimeoutSpy).toHaveBeenCalledTimes(1)
+    expect(outputCallbacks).toHaveLength(2)
+    outputCallbacks[1]?.({
+      type: 'system',
+      subtype: 'task_started',
+      task_id: 'late-task-1',
+      tool_use_id: 'late-tool-1',
+      description: 'Started after the idle timer was armed',
+      task_type: 'local_agent',
+    })
+
+    expect(clearTimeoutSpy).toHaveBeenCalledWith(123)
+    expect(stopSession).not.toHaveBeenCalled()
+
+    outputCallbacks[1]?.({
+      type: 'system',
+      subtype: 'task_notification',
+      task_id: 'late-task-1',
+      tool_use_id: 'late-tool-1',
+      status: 'completed',
+      output_file: '',
+      summary: 'Late task completed',
+    })
+
+    expect(setTimeoutSpy).toHaveBeenCalledTimes(2)
+    const expireIdleGrace = setTimeoutSpy.mock.calls[1]?.[0] as (() => void) | undefined
+    expireIdleGrace?.()
+    expect(stopSession).toHaveBeenCalledWith(sessionId)
+  })
+
+  it('keeps the pending-permission disconnect bound when a background task starts late', () => {
+    const sessionId = `permission-bound-background-task-${crypto.randomUUID()}`
+    const ws = makeClientSocket(sessionId, 'pet')
+    const setTimeoutSpy = spyOn(globalThis, 'setTimeout').mockImplementation(() => 456 as any)
+    const clearTimeoutSpy = spyOn(globalThis, 'clearTimeout').mockImplementation(() => {})
+    const stopSession = spyOn(conversationService, 'stopSession').mockImplementation(() => {})
+    spyOn(conversationService, 'getPendingPermissionRequests').mockReturnValue([{
+      requestId: 'permission-1',
+      toolName: 'Bash',
+      input: { command: 'echo pending' },
+    }])
+    spyOn(conversationService, 'hasSession').mockReturnValue(true)
+    const outputCallbacks: Array<(cliMsg: any) => void> = []
+    spyOn(conversationService, 'onOutput').mockImplementation((_sid, callback) => {
+      outputCallbacks.push(callback)
+    })
+    spyOn(conversationService, 'removeOutputCallback').mockImplementation(() => {})
+
+    handleWebSocket.open(ws)
+    __markActiveTurnForTests(sessionId)
+    setTimeoutSpy.mockClear()
+    clearTimeoutSpy.mockClear()
+    handleWebSocket.close(ws, 1000, 'pet closed while awaiting permission')
+
+    expect(setTimeoutSpy).toHaveBeenCalledTimes(1)
+    expect(setTimeoutSpy.mock.calls[0]?.[1]).toBe(30 * 60_000)
+    expect(outputCallbacks).toHaveLength(2)
+
+    outputCallbacks[1]?.({
+      type: 'system',
+      subtype: 'task_started',
+      task_id: 'late-task-with-permission-1',
+      tool_use_id: 'late-tool-with-permission-1',
+      description: 'Started while permission was pending',
+      task_type: 'local_agent',
+    })
+
+    expect(clearTimeoutSpy).not.toHaveBeenCalledWith(456)
+    const expirePermissionBound = setTimeoutSpy.mock.calls[0]?.[0] as (() => void) | undefined
+    expirePermissionBound?.()
+    expect(stopSession).toHaveBeenCalledWith(sessionId)
   })
 
   it('uses the configured disconnect grace period for an idle session', () => {

@@ -3,6 +3,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import type { Dirent } from 'node:fs'
 import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
+import { AGENT_SKILLS_DIR, isAgentSkillsDirectoryEnabled } from '../../skills/skillRoots.js'
 import { ProvidersIndexSchema } from '../types/provider.js'
 import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 import { diagnosticsService } from './diagnosticsService.js'
@@ -166,6 +167,7 @@ export class DoctorService {
   private async buildTargets(): Promise<DoctorTarget[]> {
     const echoFlowConfigDir = this.usesConfigDirOverride ? this.configDir : getEchoFlowConfigDir()
     const echoFlowDir = getEchoFlowInternalDir(echoFlowConfigDir)
+    const agentSkillsEnabled = isAgentSkillsDirectoryEnabled()
     const targets: DoctorTarget[] = [
       this.jsonTarget('user-settings', 'User settings', 'user', path.join(this.configDir, 'settings.json')),
       this.jsonTarget(
@@ -188,6 +190,17 @@ export class DoctorService {
         path.join(this.configDir, 'adapter-sessions.json'),
       ),
       this.directoryTarget('user-skills', 'User skills', 'user', path.join(this.configDir, 'skills')),
+      // Skipped entirely when cross-client discovery is off: reporting a
+      // directory the loader ignores — with an entry count, no less — reads as
+      // "these skills are in use".
+      ...(agentSkillsEnabled ? [this.directoryTarget(
+        'user-agent-skills',
+        'User skills (.agents)',
+        'user',
+        // Anchored on this.homeDir, not the process home: the doctor's home is
+        // injectable and every other user target already honors it.
+        path.join(this.homeDir, AGENT_SKILLS_DIR, 'skills'),
+      )] : []),
       this.directoryTarget('teams', 'Teams', 'user', path.join(this.configDir, 'teams')),
       this.directoryTarget('plugins', 'Plugins', 'user', path.join(this.configDir, 'plugins')),
       this.directoryTarget(
@@ -208,7 +221,7 @@ export class DoctorService {
         'grok-oauth',
         'Grok OAuth tokens',
         'user',
-        path.join(this.configDir, 'cc-haha', 'grok-oauth.json'),
+        path.join(this.configDir, 'echoflow-code', 'grok-oauth.json'),
       ),
     ]
 
@@ -226,6 +239,12 @@ export class DoctorService {
           'project',
           path.join(this.projectRoot, '.claude', 'skills'),
         ),
+        ...(agentSkillsEnabled ? [this.directoryTarget(
+          'project-agent-skills',
+          'Project skills (.agents)',
+          'project',
+          path.join(this.projectRoot, AGENT_SKILLS_DIR, 'skills'),
+        )] : []),
         this.jsonTarget(
           'project-mcp',
           'Project MCP config',

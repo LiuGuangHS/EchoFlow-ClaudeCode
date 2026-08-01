@@ -156,6 +156,131 @@ describe('cliTaskStore', () => {
     ])
   })
 
+  it('coalesces overlapping task polls for the same session', async () => {
+    let resolvePoll: ((value: { tasks: CLITask[] }) => void) | null = null
+    vi.mocked(cliTasksApi.getTasksForList).mockImplementation(
+      () => new Promise((resolve) => {
+        resolvePoll = resolve
+      }),
+    )
+
+    const first = useCLITaskStore.getState().fetchSessionTasks('session-1')
+    const second = useCLITaskStore.getState().fetchSessionTasks('session-1')
+
+    expect(cliTasksApi.getTasksForList).toHaveBeenCalledTimes(1)
+    resolvePoll!({ tasks: [makeTask('session-1')] })
+    await Promise.all([first, second])
+
+    expect(useCLITaskStore.getState().tasks).toHaveLength(1)
+  })
+
+  it('ignores an older task response that finishes after a newer refresh', async () => {
+    let resolveOlder: ((value: { tasks: CLITask[] }) => void) | null = null
+    let resolveNewer: ((value: { tasks: CLITask[] }) => void) | null = null
+
+    vi.mocked(cliTasksApi.getTasksForList)
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveOlder = resolve
+      }))
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveNewer = resolve
+      }))
+
+    useCLITaskStore.setState({
+      sessionId: 'session-1',
+      tasks: [makeTask('session-1', 'pending')],
+      expanded: true,
+      completedAndDismissed: false,
+      dismissedCompletionKey: null,
+    })
+
+    const olderRequest = useCLITaskStore.getState().fetchSessionTasks('session-1')
+    const newerRequest = useCLITaskStore.getState().refreshTasks('session-1')
+
+    resolveNewer!({ tasks: [makeTask('session-1', 'completed')] })
+    await newerRequest
+    resolveOlder!({ tasks: [makeTask('session-1', 'in_progress')] })
+    await olderRequest
+
+    expect(useCLITaskStore.getState().tasks).toMatchObject([
+      { taskListId: 'session-1', status: 'completed' },
+    ])
+  })
+
+  it('applies an older successful response when a newer refresh fails', async () => {
+    let resolveOlder: ((value: { tasks: CLITask[] }) => void) | null = null
+    let rejectNewer: ((reason: Error) => void) | null = null
+
+    vi.mocked(cliTasksApi.getTasksForList)
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveOlder = resolve
+      }))
+      .mockImplementationOnce(() => new Promise((_, reject) => {
+        rejectNewer = reject
+      }))
+
+    useCLITaskStore.setState({
+      sessionId: 'session-1',
+      tasks: [],
+      expanded: false,
+      completedAndDismissed: false,
+      dismissedCompletionKey: null,
+    })
+
+    const olderRequest = useCLITaskStore.getState().fetchSessionTasks('session-1')
+    const newerRequest = useCLITaskStore.getState().refreshTasks('session-1')
+
+    rejectNewer!(new Error('temporary failure'))
+    await newerRequest
+    resolveOlder!({ tasks: [makeTask('session-1', 'completed')] })
+    await olderRequest
+
+    expect(useCLITaskStore.getState().tasks).toMatchObject([
+      { taskListId: 'session-1', status: 'completed' },
+    ])
+  })
+
+  it('preserves known tasks when polling fails transiently', async () => {
+    const knownTasks = [makeTask('session-1', 'in_progress')]
+    vi.mocked(cliTasksApi.getTasksForList).mockRejectedValueOnce(new Error('temporary failure'))
+
+    useCLITaskStore.setState({
+      sessionId: 'session-1',
+      tasks: knownTasks,
+      expanded: true,
+      completedAndDismissed: false,
+      dismissedCompletionKey: null,
+    })
+
+    await useCLITaskStore.getState().fetchSessionTasks('session-1')
+
+    expect(useCLITaskStore.getState()).toMatchObject({
+      sessionId: 'session-1',
+      tasks: knownTasks,
+      expanded: true,
+    })
+  })
+
+  it('stays empty when the initial fetch for a new session fails', async () => {
+    vi.mocked(cliTasksApi.getTasksForList).mockRejectedValueOnce(new Error('temporary failure'))
+
+    useCLITaskStore.setState({
+      sessionId: 'session-1',
+      tasks: [makeTask('session-1', 'in_progress')],
+      expanded: true,
+      completedAndDismissed: false,
+      dismissedCompletionKey: null,
+    })
+
+    await useCLITaskStore.getState().fetchSessionTasks('session-2')
+
+    expect(useCLITaskStore.getState()).toMatchObject({
+      sessionId: 'session-2',
+      tasks: [],
+      expanded: false,
+    })
+  })
+
   it('marks completed tasks dismissed for the currently tracked session by default', () => {
     useCLITaskStore.setState({
       sessionId: 'session-1',

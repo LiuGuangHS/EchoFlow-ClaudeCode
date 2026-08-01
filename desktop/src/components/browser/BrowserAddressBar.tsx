@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { ArrowLeft, ArrowRight, Loader2, RotateCw } from 'lucide-react'
+import { ArrowLeft, ArrowRight, RotateCw } from 'lucide-react'
+import { IconButton } from '@/components/ui/IconButton'
+import { Spinner } from '@/components/ui/Spinner'
+import { useTranslation } from '../../i18n'
 import { isHtmlFilePath } from '../../lib/htmlPreviewPolicy'
 
 type Props = {
@@ -16,6 +19,7 @@ type Props = {
 }
 
 export function BrowserAddressBar({ url, canGoBack, canGoForward, loading = false, onNavigate, onBack, onForward, onReload, rightActions }: Props) {
+  const t = useTranslation()
   const [draft, setDraft] = useState(url)
   useEffect(() => { setDraft(url) }, [url])
 
@@ -24,17 +28,23 @@ export function BrowserAddressBar({ url, canGoBack, canGoForward, loading = fals
       data-testid="browser-address-bar"
       className="relative flex h-11 items-center gap-1 border-b border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] px-2"
     >
-      <button aria-label="后退" disabled={!canGoBack} onClick={onBack} className="p-1 disabled:opacity-40"><ArrowLeft size={16} /></button>
-      <button aria-label="前进" disabled={!canGoForward} onClick={onForward} className="p-1 disabled:opacity-40"><ArrowRight size={16} /></button>
-      <button aria-label="刷新" aria-busy={loading} onClick={onReload} className="p-1">
-        {loading ? <Loader2 size={16} className="animate-spin" /> : <RotateCw size={16} />}
-      </button>
+      <IconButton icon={<ArrowLeft size={16} />} label={t('browser.back')} size="xs" disabled={!canGoBack} onClick={onBack} />
+      <IconButton icon={<ArrowRight size={16} />} label={t('browser.forward')} size="xs" disabled={!canGoForward} onClick={onForward} />
+      {/* `aria-busy` stays explicit: the reload button must remain clickable while
+          loading, so IconButton's `loading` prop (which disables) is not used. */}
+      <IconButton
+        icon={loading ? <Spinner size={16} /> : <RotateCw size={16} />}
+        label={t('browser.reload')}
+        size="xs"
+        aria-busy={loading}
+        onClick={onReload}
+      />
       <form className="min-w-0 flex-1" onSubmit={(e) => { e.preventDefault(); onNavigate(normalizeBrowserAddress(draft)) }}>
         <input
-          className="w-full rounded-md bg-[var(--color-surface)] px-2 py-1 text-xs text-[var(--color-text-primary)]"
+          className="w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1 font-mono text-xs text-[var(--color-text-primary)] outline-none transition-[border-color,box-shadow] duration-150 ease-out placeholder:font-[var(--font-body)] placeholder:text-[var(--color-text-tertiary)] hover:border-[var(--color-outline)] focus-visible:border-[var(--color-border-focus)] focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          placeholder="输入网址..."
+          placeholder={t('browser.addressPlaceholder')}
           spellCheck={false}
         />
       </form>
@@ -46,7 +56,7 @@ export function BrowserAddressBar({ url, canGoBack, canGoForward, loading = fals
       {loading && (
         <div
           role="progressbar"
-          aria-label="加载中"
+          aria-label={t('browser.loading')}
           data-testid="browser-loading-bar"
           className="progress-indeterminate-track pointer-events-none absolute inset-x-0 bottom-0 h-0.5"
         />

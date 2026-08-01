@@ -118,7 +118,7 @@ describe('provider settings isolation', () => {
     expect(await originalSettingsExists()).toBe(false)
   })
 
-  test('activation preserves unrelated cc-haha settings and env', async () => {
+  test('activation preserves unrelated echoflow-code settings and env', async () => {
     await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
     await fs.writeFile(
       path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'),

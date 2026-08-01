@@ -39,7 +39,12 @@ vi.mock('../../pages/TerminalSettings', () => ({
 }))
 
 vi.mock('../../pages/TraceSession', () => ({
-  TraceSession: ({ sessionId }: { sessionId: string }) => <div data-testid="trace-session">trace:{sessionId}</div>,
+  TraceSession: ({ sessionId, onBack }: { sessionId: string; onBack?: () => void }) => (
+    <div data-testid="trace-session">
+      trace:{sessionId}
+      {onBack ? <button type="button" onClick={onBack}>back</button> : null}
+    </div>
+  ),
 }))
 
 vi.mock('../../pages/TraceList', () => ({
@@ -47,8 +52,8 @@ vi.mock('../../pages/TraceList', () => ({
 }))
 
 vi.mock('../../pages/SubagentRunPage', () => ({
-  SubagentRunPage: ({ sourceSessionId, toolUseId, title }: { sourceSessionId: string; toolUseId: string; title: string }) => (
-    <div data-testid="subagent-run-page">{sourceSessionId}:{toolUseId}:{title}</div>
+  SubagentRunPage: ({ sourceSessionId, taskId, toolUseId, title }: { sourceSessionId: string; taskId?: string; toolUseId: string; title: string }) => (
+    <div data-testid="subagent-run-page">{sourceSessionId}:{toolUseId}:{taskId}:{title}</div>
   ),
 }))
 
@@ -59,13 +64,15 @@ vi.mock('../workbench/WorkbenchTab', () => ({
 }))
 
 import { ContentRouter } from './ContentRouter'
-import { MARKET_TAB_ID, useTabStore } from '../../stores/tabStore'
+import { MARKET_TAB_ID, SETTINGS_TAB_ID, useTabStore } from '../../stores/tabStore'
+import { useUIStore } from '../../stores/uiStore'
 
 describe('ContentRouter tab surfaces', () => {
   afterEach(() => {
     cleanup()
     previewBridgeMock.close.mockClear()
     useTabStore.setState({ tabs: [], activeTabId: null })
+    useUIStore.setState({ pendingSettingsTab: null })
   })
 
   it('renders the active terminal tab as main content', () => {
@@ -147,6 +154,30 @@ describe('ContentRouter tab surfaces', () => {
     expect(screen.queryByTestId('active-session')).not.toBeInTheDocument()
   })
 
+  it('walks a trace tab back to the list and closes the tab behind it', () => {
+    useTabStore.setState({
+      tabs: [
+        { sessionId: 'session-1', title: 'Chat', type: 'session', status: 'idle' },
+        {
+          sessionId: '__trace__session-1',
+          title: 'Chat',
+          type: 'trace',
+          status: 'idle',
+          traceSessionId: 'session-1',
+        },
+      ],
+      activeTabId: '__trace__session-1',
+    })
+
+    render(<ContentRouter />)
+    fireEvent.click(screen.getByRole('button', { name: 'back' }))
+
+    const { tabs, activeTabId } = useTabStore.getState()
+    expect(activeTabId).toBe(SETTINGS_TAB_ID)
+    expect(tabs.some((tab) => tab.sessionId === '__trace__session-1')).toBe(false)
+    expect(useUIStore.getState().pendingSettingsTab).toBe('trace')
+  })
+
   it('renders the trace list tab without mounting the chat session surface', () => {
     useTabStore.setState({
       tabs: [{
@@ -173,13 +204,14 @@ describe('ContentRouter tab surfaces', () => {
         status: 'idle',
         sourceSessionId: 'session-1',
         subagentToolUseId: 'tool-1',
+        subagentTaskId: 'agent-1',
       }],
       activeTabId: '__subagent__session-1__tool-1',
     })
 
     render(<ContentRouter />)
 
-    expect(screen.getByTestId('subagent-run-page')).toHaveTextContent('session-1:tool-1:Kuhn')
+    expect(screen.getByTestId('subagent-run-page')).toHaveTextContent('session-1:tool-1:agent-1:Kuhn')
     expect(screen.queryByTestId('active-session')).not.toBeInTheDocument()
   })
 

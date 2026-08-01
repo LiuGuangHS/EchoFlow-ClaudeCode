@@ -135,6 +135,7 @@ async function performInstall(source: MarketSource, slug: string): Promise<Insta
 
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'haha-market-install-'))
   try {
+    let actualTotalSize = 0
     for (const file of files) {
       if (!isSafeRelativeFilePath(file.path)) {
         throw new ApiError(422, `Unsafe file path in skill: ${file.path}`, MARKET_ERROR_CODES.notInstallable)
@@ -144,6 +145,21 @@ async function performInstall(source: MarketSource, slug: string): Promise<Insta
         fetched = await providers[source].fetchFile(slug, file.path)
       } catch (error) {
         throw toUpstreamApiError(error)
+      }
+      if (fetched.size > MARKET_LIMITS.maxFileSize) {
+        throw new ApiError(
+          422,
+          `Skill file exceeds the actual size limit: ${file.path}`,
+          MARKET_ERROR_CODES.notInstallable,
+        )
+      }
+      actualTotalSize += fetched.size
+      if (actualTotalSize > MARKET_LIMITS.maxTotalSize) {
+        throw new ApiError(
+          422,
+          `Skill files exceed the actual total size limit: ${slug}`,
+          MARKET_ERROR_CODES.notInstallable,
+        )
       }
       if (file.sha256 && sha256Hex(fetched.content) !== file.sha256.toLowerCase()) {
         throw new ApiError(
@@ -213,13 +229,26 @@ export async function uninstallMarketSkill(source: MarketSource, slug: string): 
     throw ApiError.badRequest(`Invalid skill slug: ${slug}`)
   }
   const target = path.join(getMarketSkillsDir(), dirName)
+  let targetStat
   try {
-    await fs.stat(target)
+    targetStat = await fs.lstat(target)
   } catch {
     throw new ApiError(404, `Skill is not installed: ${slug}`, MARKET_ERROR_CODES.notInstalled)
   }
+  if (!targetStat.isDirectory() || targetStat.isSymbolicLink()) {
+    throw new ApiError(
+      409,
+      `Skill directory is not a managed directory: ${dirName}`,
+      MARKET_ERROR_CODES.notManaged,
+    )
+  }
   const meta = await readMarketMeta(dirName)
-  if (!meta) {
+  if (
+    !meta
+    || meta.source !== source
+    || meta.slug !== slug
+    || meta.id !== `${source}:${slug}`
+  ) {
     // Never delete directories the market didn't create.
     throw new ApiError(
       409,

@@ -1,15 +1,24 @@
 import { describe, expect, test } from 'bun:test'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
-  DEFAULT_DESKTOP_GRANT_FLAGS,
+  buildPreAuthorizedAppGrants,
+  loadStoredComputerUseConfigResult,
+  parseStoredComputerUseConfig,
   resolveStoredComputerUseConfig,
 } from './preauthorizedConfig.js'
 
 describe('resolveStoredComputerUseConfig', () => {
-  test('keeps desktop grant flags enabled by default even without authorized apps', () => {
+  test('keeps desktop grant flags disabled until explicitly granted', () => {
     expect(resolveStoredComputerUseConfig()).toEqual({
       enabled: true,
       authorizedApps: [],
-      grantFlags: DEFAULT_DESKTOP_GRANT_FLAGS,
+      grantFlags: {
+        clipboardRead: false,
+        clipboardWrite: false,
+        systemKeyCombos: false,
+      },
       pythonPath: null,
     })
   })
@@ -21,23 +30,52 @@ describe('resolveStoredComputerUseConfig', () => {
     })
   })
 
-  test('merges stored grant flags without discarding unspecified defaults', () => {
+  test('honors explicit grant flags without enabling unspecified grants', () => {
     expect(
       resolveStoredComputerUseConfig({
         grantFlags: {
-          clipboardRead: false,
+          clipboardRead: true,
         },
       }),
     ).toEqual({
       enabled: true,
       authorizedApps: [],
       grantFlags: {
-        clipboardRead: false,
-        clipboardWrite: true,
-        systemKeyCombos: true,
+        clipboardRead: true,
+        clipboardWrite: false,
+        systemKeyCombos: false,
       },
       pythonPath: null,
     })
+  })
+
+  test('fails closed when the stored config file is missing', async () => {
+    const configDir = await mkdtemp(join(tmpdir(), 'echoflow-code-cu-config-'))
+    const originalConfigDir = process.env.CLAUDE_CONFIG_DIR
+    process.env.CLAUDE_CONFIG_DIR = configDir
+
+    try {
+      await expect(loadStoredComputerUseConfigResult()).resolves.toEqual({
+        config: {
+          enabled: true,
+          authorizedApps: [],
+          grantFlags: {
+            clipboardRead: false,
+            clipboardWrite: false,
+            systemKeyCombos: false,
+          },
+          pythonPath: null,
+        },
+        error: null,
+      })
+    } finally {
+      if (originalConfigDir === undefined) {
+        delete process.env.CLAUDE_CONFIG_DIR
+      } else {
+        process.env.CLAUDE_CONFIG_DIR = originalConfigDir
+      }
+      await rm(configDir, { recursive: true, force: true })
+    }
   })
 
   test('normalizes a stored custom Python interpreter path', () => {
@@ -51,5 +89,72 @@ describe('resolveStoredComputerUseConfig', () => {
     expect(resolveStoredComputerUseConfig({ pythonPath: '' })).toMatchObject({
       pythonPath: null,
     })
+  })
+
+  test('rejects malformed persisted security fields instead of enabling them by coercion', () => {
+    expect(parseStoredComputerUseConfig({ enabled: 'false' })).toBeNull()
+    expect(parseStoredComputerUseConfig({
+      grantFlags: { clipboardWrite: 'yes' },
+    })).toBeNull()
+    expect(parseStoredComputerUseConfig({
+      authorizedApps: [{ bundleId: '', displayName: 'Preview' }],
+    })).toBeNull()
+    expect(parseStoredComputerUseConfig({
+      enabled: false,
+      grantFlags: {
+        clipboardRead: false,
+        clipboardWrite: true,
+      },
+      futureField: 'preserved by newer versions',
+    })).toEqual({
+      enabled: false,
+      grantFlags: {
+        clipboardRead: false,
+        clipboardWrite: true,
+      },
+      futureField: 'preserved by newer versions',
+    })
+  })
+
+  test('derives least-privilege tiers and filters policy-denied pre-authorizations', () => {
+    expect(
+      buildPreAuthorizedAppGrants([
+        {
+          bundleId: 'com.google.Chrome',
+          displayName: 'Google Chrome',
+        },
+        {
+          bundleId: 'com.apple.Terminal',
+          displayName: 'Terminal',
+        },
+        {
+          bundleId: 'com.apple.Preview',
+          displayName: 'Preview',
+        },
+        {
+          bundleId: 'com.spotify.client',
+          displayName: 'Spotify',
+        },
+      ], 1234),
+    ).toEqual([
+      {
+        bundleId: 'com.google.Chrome',
+        displayName: 'Google Chrome',
+        grantedAt: 1234,
+        tier: 'read',
+      },
+      {
+        bundleId: 'com.apple.Terminal',
+        displayName: 'Terminal',
+        grantedAt: 1234,
+        tier: 'click',
+      },
+      {
+        bundleId: 'com.apple.Preview',
+        displayName: 'Preview',
+        grantedAt: 1234,
+        tier: 'full',
+      },
+    ])
   })
 })

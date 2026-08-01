@@ -76,7 +76,7 @@ export function createSandboxedTestEnvironment(
     TMP: tempHome,
     TMPDIR: tempHome,
     BUN_OPTIONS: '--no-env-file',
-    CC_HAHA_DISABLE_TERMINAL_SHELL_ENV: '1',
+    ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV: '1',
     NODE_ENV: 'test',
     ...overrides,
   }, source)

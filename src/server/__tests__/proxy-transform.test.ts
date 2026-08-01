@@ -197,6 +197,18 @@ describe('anthropicToOpenaiChat', () => {
     expect(result.reasoning_effort).toBe('high')
   })
 
+  test('preserves xhigh output_config effort for OpenAI-compatible chat providers', () => {
+    const req: AnthropicRequest = {
+      model: 'gpt-5.6-luna',
+      max_tokens: 100,
+      messages: [{ role: 'user', content: 'Hi' }],
+      output_config: { effort: 'xhigh' },
+    }
+
+    const result = anthropicToOpenaiChat(req)
+    expect(result.reasoning_effort).toBe('xhigh')
+  })
+
   test('clamps max output_config effort to high for OpenAI-compatible chat providers', () => {
     const req: AnthropicRequest = {
       model: 'longcat',
@@ -542,12 +554,151 @@ describe('anthropicToOpenaiResponses', () => {
       }],
     }
     const result = anthropicToOpenaiResponses(req)
-    const fco = result.input.find((i) => i.type === 'function_call_output')
-    expect(fco).toBeDefined()
-    if (fco && fco.type === 'function_call_output') {
-      expect(fco.call_id).toBe('tc_1')
-      expect(fco.output).toBe('found it')
+    expect(result.input).toEqual([{
+      type: 'function_call_output',
+      call_id: 'tc_1',
+      output: 'found it',
+    }])
+  })
+
+  test('preserves text-only tool_result arrays as strings', () => {
+    const req: AnthropicRequest = {
+      model: 'gpt-4o',
+      max_tokens: 100,
+      messages: [{
+        role: 'user',
+        content: [{
+          type: 'tool_result',
+          tool_use_id: 'tc_2',
+          content: [
+            { type: 'text', text: 'first' },
+            { type: 'text', text: 'second' },
+          ],
+        }],
+      }],
     }
+
+    const result = anthropicToOpenaiResponses(req)
+
+    expect(result.input).toEqual([{
+      type: 'function_call_output',
+      call_id: 'tc_2',
+      output: 'first\nsecond',
+    }])
+  })
+
+  test('preserves image-only tool_result content', () => {
+    const req: AnthropicRequest = {
+      model: 'gpt-4o',
+      max_tokens: 100,
+      messages: [{
+        role: 'user',
+        content: [{
+          type: 'tool_result',
+          tool_use_id: 'read_1',
+          content: [{
+            type: 'image',
+            source: { type: 'base64', media_type: 'image/png', data: 'AAECAwQ=' },
+          }],
+        }],
+      }],
+    }
+
+    const result = anthropicToOpenaiResponses(req)
+
+    expect(result.input).toEqual([{
+      type: 'function_call_output',
+      call_id: 'read_1',
+      output: [{
+        type: 'input_image',
+        image_url: 'data:image/png;base64,AAECAwQ=',
+      }],
+    }])
+  })
+
+  test('preserves mixed tool_result content in order', () => {
+    const req: AnthropicRequest = {
+      model: 'gpt-4o',
+      max_tokens: 100,
+      messages: [{
+        role: 'user',
+        content: [{
+          type: 'tool_result',
+          tool_use_id: 'read_2',
+          content: [
+            { type: 'text', text: 'before' },
+            {
+              type: 'image',
+              source: { type: 'base64', media_type: 'image/jpeg', data: '/9j/AA==' },
+            },
+            { type: 'text', text: 'after' },
+          ],
+        }],
+      }],
+    }
+
+    const result = anthropicToOpenaiResponses(req)
+
+    expect(result.input).toEqual([{
+      type: 'function_call_output',
+      call_id: 'read_2',
+      output: [
+        { type: 'input_text', text: 'before' },
+        { type: 'input_image', image_url: 'data:image/jpeg;base64,/9j/AA==' },
+        { type: 'input_text', text: 'after' },
+      ],
+    }])
+  })
+
+  test('preserves message and tool_result item order', () => {
+    const req: AnthropicRequest = {
+      model: 'gpt-4o',
+      max_tokens: 100,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: 'before result' },
+          { type: 'tool_result', tool_use_id: 'read_3', content: 'result' },
+          { type: 'text', text: 'after result' },
+        ],
+      }],
+    }
+
+    const result = anthropicToOpenaiResponses(req)
+
+    expect(result.input).toEqual([
+      { type: 'message', role: 'user', content: 'before result' },
+      { type: 'function_call_output', call_id: 'read_3', output: 'result' },
+      { type: 'message', role: 'user', content: 'after result' },
+    ])
+  })
+
+  test('preserves mixed text and image message content', () => {
+    const req: AnthropicRequest = {
+      model: 'gpt-4o',
+      max_tokens: 100,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Describe this image' },
+          {
+            type: 'image',
+            source: { type: 'base64', media_type: 'image/png', data: 'AAECAwQ=' },
+          },
+        ],
+      }],
+    }
+
+    const result = anthropicToOpenaiResponses(req)
+
+    expect(result.input).toEqual([{
+      type: 'message',
+      role: 'user',
+      content: [
+        { type: 'input_text', text: 'Describe this image' },
+        { type: 'input_image', image_url: 'data:image/png;base64,AAECAwQ=' },
+      ],
+    }])
   })
 
   test('thinking → reasoning', () => {
@@ -574,6 +725,18 @@ describe('anthropicToOpenaiResponses', () => {
     expect(result.reasoning).toEqual({ effort: 'high' })
   })
 
+  test('preserves xhigh output_config effort for Responses API', () => {
+    const req: AnthropicRequest = {
+      model: 'gpt-5.6-luna',
+      max_tokens: 100,
+      messages: [{ role: 'user', content: 'Hi' }],
+      output_config: { effort: 'xhigh' },
+    }
+
+    const result = anthropicToOpenaiResponses(req)
+    expect(result.reasoning).toEqual({ effort: 'xhigh' })
+  })
+
   test('clamps max output_config effort for Responses API', () => {
     const req: AnthropicRequest = {
       model: 'gpt-5.5',
@@ -596,6 +759,66 @@ describe('anthropicToOpenaiResponses', () => {
     const result = anthropicToOpenaiResponses(req)
     expect((result as Record<string, unknown>).stop).toBeUndefined()
     expect((result as Record<string, unknown>).stop_sequences).toBeUndefined()
+  })
+
+  // Responses names the function inline. The nested {function:{name}} shape is
+  // Chat Completions syntax and strict upstreams (xAI) reject it.
+  test('tool_choice type=tool names the function inline, not nested', () => {
+    const req: AnthropicRequest = {
+      model: 'gpt-4o',
+      max_tokens: 100,
+      messages: [{ role: 'user', content: 'Hi' }],
+      tools: [{ name: 'get_weather', input_schema: { type: 'object' } }],
+      tool_choice: { type: 'tool', name: 'get_weather' },
+    }
+    const result = anthropicToOpenaiResponses(req)
+    expect(result.tool_choice).toEqual({ type: 'function', name: 'get_weather' })
+  })
+
+  test('drops tool_choice when the request carries no tools', () => {
+    for (const choice of [
+      { type: 'auto' },
+      { type: 'any' },
+      { type: 'tool', name: 'get_weather' },
+    ]) {
+      const result = anthropicToOpenaiResponses({
+        model: 'gpt-4o',
+        max_tokens: 100,
+        messages: [{ role: 'user', content: 'Hi' }],
+        tool_choice: choice,
+      } as AnthropicRequest)
+      expect(result.tools).toBeUndefined()
+      expect(result.tool_choice).toBeUndefined()
+    }
+  })
+
+  test('drops a tool_choice orphaned by tool filtering', () => {
+    const result = anthropicToOpenaiResponses({
+      model: 'gpt-4o',
+      max_tokens: 100,
+      messages: [{ role: 'user', content: 'Hi' }],
+      // BatchTool is filtered out of the tool list, so a choice naming it
+      // would point at a tool the upstream never receives.
+      tools: [{ name: 'BatchTool', input_schema: { type: 'object' } }],
+      tool_choice: { type: 'tool', name: 'BatchTool' },
+    } as AnthropicRequest)
+    expect(result.tools).toBeUndefined()
+    expect(result.tool_choice).toBeUndefined()
+  })
+
+  test('keeps a tool_choice whose target survives filtering', () => {
+    const result = anthropicToOpenaiResponses({
+      model: 'gpt-4o',
+      max_tokens: 100,
+      messages: [{ role: 'user', content: 'Hi' }],
+      tools: [
+        { name: 'BatchTool', input_schema: { type: 'object' } },
+        { name: 'get_weather', input_schema: { type: 'object' } },
+      ],
+      tool_choice: { type: 'tool', name: 'get_weather' },
+    } as AnthropicRequest)
+    expect(result.tools).toHaveLength(1)
+    expect(result.tool_choice).toEqual({ type: 'function', name: 'get_weather' })
   })
 })
 

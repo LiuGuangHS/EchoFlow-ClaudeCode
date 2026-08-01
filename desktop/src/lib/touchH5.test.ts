@@ -391,6 +391,24 @@ describe('visual viewport fit', () => {
   })
 })
 
+describe('touch-H5 document contract', () => {
+  const html = readFileSync(join(__dirname, '../../index.html'), 'utf-8')
+
+  // iOS parses the viewport meta once, while the document loads. lockIOSViewport
+  // rewrites it later and cannot turn safe areas on retroactively — with the
+  // markup missing cover, every env(safe-area-inset-*) below stays 0px and the
+  // browser paints its own gray bar behind the status bar.
+  it('ships viewport-fit=cover in the markup rather than relying on the runtime rewrite', () => {
+    const viewport = html.match(/<meta name="viewport" content="([^"]*)"/)?.[1]
+    expect(viewport, 'index.html lost its viewport meta').toBeTruthy()
+    expect(viewport).toContain('viewport-fit=cover')
+  })
+
+  it('declares a theme-color meta for the browser chrome to pick up', () => {
+    expect(html).toMatch(/<meta name="theme-color" content="#[0-9A-Fa-f]{6}" \/>/)
+  })
+})
+
 describe('touch-H5 stylesheet contract', () => {
   const css = readFileSync(join(__dirname, '../theme/globals.css'), 'utf-8')
 
@@ -419,8 +437,12 @@ describe('touch-H5 stylesheet contract', () => {
     expect(css).toMatch(/html\[data-touch-h5\]\[data-touch-h5-keyboard\] \.app-shell-viewport \{\s*\n\s*padding-bottom: 0px;/)
   })
 
-  it('keeps message action bars always visible on touch', () => {
-    expect(css).toMatch(/html\[data-touch-h5\] \[data-message-actions\] \{\s*\n\s*opacity: 1;\s*\n\s*pointer-events: auto;/)
+  it('keeps message action bars visible in the mobile shell without relying on touch detection', () => {
+    expect(css).toMatch(/\.app-shell--mobile \[data-message-actions\],\s*\nhtml\[data-touch-h5\] \[data-message-actions\] \{\s*\n\s*opacity: 1;\s*\n\s*pointer-events: auto;/)
+    // 2.75rem = 44px, the platform minimum for primary touch targets. These
+    // buttons shipped at 40px because IconButton's size doc had the 40/44
+    // tiers reversed.
+    expect(css).toMatch(/\.app-shell--mobile \[data-message-actions\] button \{\s*\n\s*width: 2\.75rem;/)
   })
 
   it('disables paint skipping for the trace-window rows too', () => {

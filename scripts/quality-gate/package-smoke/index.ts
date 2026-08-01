@@ -171,6 +171,33 @@ function normalizePath(targetPath: string) {
   return targetPath.replaceAll('\\', '/')
 }
 
+function bundledRipgrepNeedle(platform: PackageSmokePlatform) {
+  return platform === 'windows' ? '/rg.exe' : '/rg'
+}
+
+function addBundledRipgrepLicenseChecks(
+  report: PackageSmokeReport,
+  rootDir: string,
+  sidecarDir: string,
+  platformLabel: string,
+) {
+  addPresenceCheck(
+    report,
+    rootDir,
+    `${platformLabel} ripgrep build manifest`,
+    join(sidecarDir, 'ripgrep-manifest.json'),
+  )
+  const licensesDir = join(sidecarDir, 'ripgrep-licenses')
+  for (const fileName of ['COPYING', 'LICENSE-MIT', 'UNLICENSE']) {
+    addPresenceCheck(
+      report,
+      rootDir,
+      `${platformLabel} ripgrep license (${fileName})`,
+      join(licensesDir, fileName),
+    )
+  }
+}
+
 function walkPaths(rootDir: string, options?: { directoriesOnly?: boolean }) {
   if (!existsSync(rootDir)) {
     return [] as string[]
@@ -511,6 +538,7 @@ function inspectMacosArtifacts(rootDir: string, report: PackageSmokeReport, opti
   const unpackedDir = join(resourcesDir, 'app.asar.unpacked')
   const nodePtyDir = join(unpackedDir, 'node_modules', 'node-pty')
   const prebuildsDir = join(nodePtyDir, 'prebuilds')
+  const sidecarDir = join(unpackedDir, 'src-tauri', 'binaries')
 
   addPresenceCheck(report, rootDir, 'macOS Info.plist', join(contentsDir, 'Info.plist'))
   addPresenceCheck(report, rootDir, 'macOS app executable', join(contentsDir, 'MacOS', report.productName))
@@ -528,8 +556,17 @@ function inspectMacosArtifacts(rootDir: string, report: PackageSmokeReport, opti
     report,
     rootDir,
     'macOS unpacked sidecar binary',
-    findMatches(join(unpackedDir, 'src-tauri', 'binaries'), (candidate) => normalizePath(candidate).includes('/claude-sidecar-')),
-    join(unpackedDir, 'src-tauri', 'binaries'),
+    findMatches(sidecarDir, (candidate) => normalizePath(candidate).includes('/claude-sidecar-')),
+    sidecarDir,
+  )
+  addBundledRipgrepLicenseChecks(report, rootDir, sidecarDir, 'macOS')
+  addMatchCheck(
+    report,
+    rootDir,
+    'macOS bundled ripgrep binary',
+    findMatches(sidecarDir, candidate =>
+      normalizePath(candidate).endsWith(bundledRipgrepNeedle('macos'))),
+    sidecarDir,
   )
   addMatchCheck(
     report,
@@ -634,6 +671,15 @@ function inspectWindowsArtifacts(rootDir: string, report: PackageSmokeReport) {
     addMatchCheck(
       report,
       rootDir,
+      report.arch ? `Windows ${report.arch} bundled ripgrep binary` : 'Windows bundled ripgrep binary',
+      findMatches(sidecarDir, candidate =>
+        normalizePath(candidate).endsWith(bundledRipgrepNeedle('windows'))),
+      sidecarDir,
+    )
+    addBundledRipgrepLicenseChecks(report, rootDir, sidecarDir, 'Windows')
+    addMatchCheck(
+      report,
+      rootDir,
       report.arch ? `Windows ${report.arch} node-pty native module` : 'Windows node-pty native module',
       findMatches(join(nodePtyDir, 'prebuilds'), (candidate) => normalizePath(candidate).includes(nodePtyNeedle) && normalizePath(candidate).endsWith('/pty.node')),
       join(nodePtyDir, 'prebuilds'),
@@ -683,7 +729,9 @@ function findWindowsUnpackedDir(artifactsDir: string, arch?: 'x64' | 'arm64'): s
 function inspectLinuxArtifacts(rootDir: string, report: PackageSmokeReport) {
   const packagedArtifacts = findMatches(
     report.artifactsDir,
-    (candidate) => candidate.endsWith('.AppImage') || candidate.endsWith('.deb'),
+    (candidate) => candidate.endsWith('.AppImage')
+      || candidate.endsWith('.deb')
+      || candidate.endsWith('.rpm'),
   )
   const unpackedDir = findLinuxUnpackedDir(report.artifactsDir)
   const updateMetadata = findMatches(report.artifactsDir, (candidate) => /latest-linux(?:-[a-z0-9]+)?\.yml$/.test(candidate))
@@ -691,7 +739,11 @@ function inspectLinuxArtifacts(rootDir: string, report: PackageSmokeReport) {
   const releaseMode = report.packageKind === 'release' || (report.packageKind === 'auto' && (packagedArtifacts.length > 0 || updateMetadata.length > 0))
 
   report.packagedArtifacts.push(...packagedArtifacts.map((candidate) => ({
-    label: candidate.endsWith('.deb') ? 'Linux deb package' : 'Linux AppImage',
+    label: candidate.endsWith('.deb')
+      ? 'Linux deb package'
+      : candidate.endsWith('.rpm')
+        ? 'Linux RPM package'
+        : 'Linux AppImage',
     path: toRelative(rootDir, candidate),
   })))
   report.optionalArtifacts.push(...appImageBlockmaps.map((candidate) => ({
@@ -709,23 +761,24 @@ function inspectLinuxArtifacts(rootDir: string, report: PackageSmokeReport) {
     addMatchCheck(
       report,
       rootDir,
-      'linux packaged artifact (.AppImage or .deb)',
+      'linux packaged artifact (.AppImage, .deb, or .rpm)',
       packagedArtifacts,
       report.artifactsDir,
     )
   } else if (!unpackedDir) {
     report.missingChecks.push({
-      label: 'linux packaged artifact (.AppImage or .deb)',
+      label: 'linux packaged artifact (.AppImage, .deb, or .rpm)',
       path: toRelative(rootDir, report.artifactsDir),
     })
   } else {
-    report.notes.push('No .AppImage or .deb was found; treating linux-unpacked as a directory-only development package.')
+    report.notes.push('No .AppImage, .deb, or .rpm was found; treating linux-unpacked as a directory-only development package.')
   }
 
   if (unpackedDir) {
     const resourcesDir = join(unpackedDir, 'resources')
     const unpackedResourcesDir = join(resourcesDir, 'app.asar.unpacked')
     const nodePtyDir = join(unpackedResourcesDir, 'node_modules', 'node-pty')
+    const sidecarDir = join(unpackedResourcesDir, 'src-tauri', 'binaries')
     addPresenceCheck(report, rootDir, 'Linux app.asar', join(resourcesDir, 'app.asar'))
     addInstalledUpdateMetadataCheck(
       report,
@@ -739,8 +792,17 @@ function inspectLinuxArtifacts(rootDir: string, report: PackageSmokeReport) {
       report,
       rootDir,
       'Linux unpacked sidecar binary',
-      findMatches(join(unpackedResourcesDir, 'src-tauri', 'binaries'), (candidate) => normalizePath(candidate).includes('/claude-sidecar-')),
-      join(unpackedResourcesDir, 'src-tauri', 'binaries'),
+      findMatches(sidecarDir, (candidate) => normalizePath(candidate).includes('/claude-sidecar-')),
+      sidecarDir,
+    )
+    addBundledRipgrepLicenseChecks(report, rootDir, sidecarDir, 'Linux')
+    addMatchCheck(
+      report,
+      rootDir,
+      'Linux bundled ripgrep binary',
+      findMatches(sidecarDir, candidate =>
+        normalizePath(candidate).endsWith(bundledRipgrepNeedle('linux'))),
+      sidecarDir,
     )
     addMatchCheck(
       report,

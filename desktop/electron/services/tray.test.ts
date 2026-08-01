@@ -1,33 +1,8 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { tmpdir } from 'node:os'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { installTray, resolveTrayIconPath, shouldInstallTray } from './tray'
-
-const trayMocksKey = '__electronTrayMocks'
-
-vi.mock('electron', () => {
-  const getMocks = () => {
-    const globalMocks = globalThis as Record<string, unknown>
-    return (globalMocks[trayMocksKey] ??= createElectronTrayMocks()) as ReturnType<typeof createElectronTrayMocks>
-  }
-
-  return {
-    Menu: {
-      buildFromTemplate: (...args: Parameters<ReturnType<typeof createElectronTrayMocks>['buildFromTemplate']>) =>
-        getMocks().buildFromTemplate(...args),
-    },
-    Tray: function MockTray(...args: unknown[]) {
-      const mocks = getMocks()
-      mocks.Tray(...args)
-      return mocks.tray
-    },
-    nativeImage: {
-      createFromPath: (...args: Parameters<ReturnType<typeof createElectronTrayMocks>['createFromPath']>) =>
-        getMocks().createFromPath(...args),
-    },
-  }
-})
 
 function createElectronTrayMocks() {
   const handlers = new Map<string, () => void>()
@@ -48,10 +23,6 @@ function createElectronTrayMocks() {
 }
 
 describe('Electron tray service', () => {
-  afterEach(() => {
-    delete (globalThis as Record<string, unknown>)[trayMocksKey]
-  })
-
   it('uses the existing desktop icon assets for the tray icon', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'electron-tray-'))
     try {
@@ -84,7 +55,6 @@ describe('Electron tray service', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'electron-tray-install-'))
     try {
       const trayMocks = createElectronTrayMocks()
-      ;(globalThis as Record<string, unknown>)[trayMocksKey] = trayMocks
       const iconPath = path.join(root, 'src-tauri', 'icons', 'icon.png')
       mkdirSync(path.dirname(iconPath), { recursive: true })
       writeFileSync(iconPath, 'png')
@@ -96,6 +66,15 @@ describe('Electron tray service', () => {
         desktopRoot: root,
         show,
         quit,
+        electronRuntime: {
+          Menu: {
+            buildFromTemplate: trayMocks.buildFromTemplate,
+          },
+          Tray: trayMocks.Tray.mockImplementation(() => trayMocks.tray),
+          nativeImage: {
+            createFromPath: trayMocks.createFromPath,
+          },
+        } as never,
       })
 
       expect(trayMocks.createFromPath).toHaveBeenCalledWith(iconPath)

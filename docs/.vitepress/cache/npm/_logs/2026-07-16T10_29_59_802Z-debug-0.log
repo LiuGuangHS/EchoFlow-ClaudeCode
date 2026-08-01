@@ -1,0 +1,18 @@
+0 verbose cli /tmp/node-v24.3.0-linux-x64/bin/node /tmp/node-v24.3.0-linux-x64/bin/npm
+1 info using npm@11.4.2
+2 info using node@v24.3.0
+3 silly config load:file:/tmp/node-v24.3.0-linux-x64/lib/node_modules/npm/npmrc
+4 silly config load:file:/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/.npmrc
+5 silly config load:file:/home/zhijun/.npmrc
+6 silly config load:file:/tmp/node-v24.3.0-linux-x64/etc/npmrc
+7 verbose title npm run docs:build
+8 verbose argv "run" "--loglevel" "error" "docs:build"
+9 verbose logfile logs-max:10 dir:/home/zhijun/WorkSpace/EchoFlow-ClaudeCode/docs/.vitepress/cache/npm/_logs/2026-07-16T10_29_59_802Z-
+10 verbose logfile /home/zhijun/WorkSpace/EchoFlow-ClaudeCode/docs/.vitepress/cache/npm/_logs/2026-07-16T10_29_59_802Z-debug-0.log
+11 silly logfile done cleaning log files
+12 verbose cwd /home/zhijun/WorkSpace/EchoFlow-ClaudeCode
+13 verbose os Linux 6.18.33.2-microsoft-standard-WSL2
+14 verbose node v24.3.0
+15 verbose npm  v11.4.2
+16 verbose exit 0
+17 info ok

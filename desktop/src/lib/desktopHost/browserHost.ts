@@ -6,6 +6,7 @@ import type {
   NotificationPermissionState,
 } from './types'
 import { buildTraceWindowUrl } from '../traceLaunch'
+import { readBrowserLanguages } from '../../i18n/locale'
 
 const browserCapabilities: DesktopHostCapabilities = {
   appMode: false,
@@ -51,6 +52,18 @@ export const browserHost: DesktopHost = {
     async getVersion() {
       return '0.1.0'
     },
+    async getLocalePreference() {
+      return null
+    },
+    async setLocalePreference() {
+      // Browser/H5 preferences stay in renderer localStorage.
+    },
+    async getPreferredSystemLanguages() {
+      return readBrowserLanguages()
+    },
+    async onLocaleChanged() {
+      return noopUnlisten
+    },
   },
   commands: {
     async invoke() {
@@ -70,6 +83,12 @@ export const browserHost: DesktopHost = {
         return
       }
       unsupported('Writing clipboard text')
+    },
+  },
+  files: {
+    getPathForFile(file) {
+      const legacyPath = (file as File & { path?: unknown }).path
+      return typeof legacyPath === 'string' ? legacyPath : ''
     },
   },
   events: {
@@ -101,6 +120,59 @@ export const browserHost: DesktopHost = {
         return
       }
       unsupported('Opening trace windows')
+    },
+  },
+  pets: {
+    async list() {
+      unsupported('Custom pets')
+    },
+    async createFromImage() {
+      unsupported('Creating custom pets')
+    },
+    async createFromAtlas() {
+      unsupported('Creating custom pets')
+    },
+    async pickSourceSheet() {
+      unsupported('Creating custom pets')
+    },
+    async createFromAtlasBytes() {
+      unsupported('Creating custom pets')
+    },
+    async openFolder() {
+      unsupported('Opening the custom pets folder')
+    },
+    async show() {
+      unsupported('Showing the companion pet')
+    },
+    async hide() {
+      unsupported('Hiding the companion pet')
+    },
+    async showContextMenu() {
+      unsupported('Showing the companion pet context menu')
+    },
+    async dragWindow() {
+      unsupported('Dragging the companion pet window')
+    },
+    async setIgnoreMouseEvents() {
+      unsupported('Changing companion pet mouse passthrough')
+    },
+    async setInteractiveRegions() {
+      unsupported('Changing companion pet interaction regions')
+    },
+    async focusMainWindow() {
+      unsupported('Focusing the main desktop window')
+    },
+    async focusSession() {
+      unsupported('Focusing a pet session')
+    },
+    async onPanelPlacementChanged() {
+      return noopUnlisten
+    },
+    async onNavigateSession() {
+      return noopUnlisten
+    },
+    async onVisibilityChanged() {
+      return noopUnlisten
     },
   },
   dialogs: {
@@ -258,5 +330,10 @@ export const browserHost: DesktopHost = {
     async set() {
       unsupported('Native app zoom')
     },
+  },
+  appearance: {
+    // No native chrome to keep in sync in a browser tab; the CSS theme is the
+    // whole story there, so reporting it is a no-op rather than an error.
+    async setApplied() {},
   },
 }

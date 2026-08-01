@@ -1,12 +1,25 @@
 import { describe, expect, it, vi } from 'vitest'
+import { EventEmitter } from 'node:events'
 import net from 'node:net'
 import http from 'node:http'
 import path from 'node:path'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import {
   appendHostDiagnostic,
   buildSidecarEnv,
+  clearProxyEnv,
   createAdapterPlan,
   createServerPlan,
   electronHostDiagnosticsFile,
@@ -14,19 +27,25 @@ import {
   HOST_DIAGNOSTICS_BYTE_LIMIT,
   HOST_DIAGNOSTICS_LINE_LIMIT,
   killSidecar,
-  mergeProxyEnv,
   parseH5FixedPort,
   preferredServerPorts,
-  proxyUrlFromElectronProxyRules,
   pushStartupLog,
   readH5FixedPort,
   readLastServerPort,
   reserveLocalPort,
   reserveServerPort,
+  resolveBundledRipgrepExecutable,
   resolveHostTriple,
+  resolveWindowsTaskkillExecutable,
+  RIPGREP_PATH_ENV,
   SERVER_STATE_FILE,
+  SYSTEM_PROXY_BRIDGE_ENV,
+  SYSTEM_PROXY_ERROR_ENV,
   spawnSidecar,
   waitForServer,
+  withAdapterProxyBridgeEnv,
+  withSystemProxyBridgeEnv,
+  withSystemProxyErrorEnv,
   windowsPowerShellOverride,
   writeLastServerPort,
   type SidecarChild,
@@ -56,19 +75,19 @@ function close(server: http.Server): Promise<void> {
 
 describe('Electron sidecar manager', () => {
   it('places the Electron host log in the active server diagnostics directory', () => {
-    const portableDir = path.join(tmpdir(), 'cc-haha-portable-diagnostics')
+    const portableDir = path.join(tmpdir(), 'echoflow-code-portable-diagnostics')
 
     expect(electronHostDiagnosticsFile(
       { CLAUDE_CONFIG_DIR: portableDir },
       path.join(tmpdir(), 'unused-home'),
-    )).toBe(path.join(portableDir, 'cc-haha', 'diagnostics', 'electron-host.log'))
+    )).toBe(path.join(portableDir, 'echoflow-code', 'diagnostics', 'electron-host.log'))
   })
 
   it('resolves the default Electron host log without consulting real user state', () => {
-    const isolatedHome = path.resolve(path.sep, '__cc_haha_injected_test_home__')
+    const isolatedHome = path.resolve(path.sep, '__echoflow_injected_test_home__')
 
     expect(electronHostDiagnosticsFile({}, isolatedHome)).toBe(
-      path.join(isolatedHome, '.claude', 'cc-haha', 'diagnostics', 'electron-host.log'),
+      path.join(isolatedHome, '.claude', 'echoflow-code', 'diagnostics', 'electron-host.log'),
     )
   })
 
@@ -77,6 +96,7 @@ describe('Electron sidecar manager', () => {
     expect(resolveHostTriple('darwin', 'x64')).toBe('x86_64-apple-darwin')
     expect(resolveHostTriple('win32', 'x64')).toBe('x86_64-pc-windows-msvc')
     expect(resolveHostTriple('win32', 'arm64')).toBe('aarch64-pc-windows-msvc')
+    expect(resolveHostTriple('linux', 'x64')).toBe('x86_64-unknown-linux-gnu')
     expect(resolveHostTriple('linux', 'arm64')).toBe('aarch64-unknown-linux-gnu')
   })
 
@@ -102,21 +122,78 @@ describe('Electron sidecar manager', () => {
   })
 
   it('can keep sidecar binaries and H5 assets unpacked while pointing app-root at app.asar', () => {
+    const resourcesRoot = path.resolve(path.sep, 'Applications', 'App.app', 'Contents', 'Resources')
+    const desktopRoot = path.join(resourcesRoot, 'app.asar.unpacked')
+    const appRoot = path.join(resourcesRoot, 'app.asar')
+    const h5DistDir = path.join(desktopRoot, 'dist')
     const plan = createServerPlan({
-      desktopRoot: '/Applications/App.app/Contents/Resources/app.asar.unpacked',
-      appRoot: '/Applications/App.app/Contents/Resources/app.asar',
-      h5DistDir: '/Applications/App.app/Contents/Resources/app.asar.unpacked/dist',
+      desktopRoot,
+      appRoot,
+      h5DistDir,
       port: 49321,
       env: {},
     })
 
-    expect(plan.command).toContain('/Applications/App.app/Contents/Resources/app.asar.unpacked/src-tauri/binaries/claude-sidecar-')
-    expect(plan.args).toContain('/Applications/App.app/Contents/Resources/app.asar')
-    expect(plan.env.CLAUDE_H5_DIST_DIR).toBe('/Applications/App.app/Contents/Resources/app.asar.unpacked/dist')
+    expect(plan.command).toContain(path.join(desktopRoot, 'src-tauri', 'binaries', 'claude-sidecar-'))
+    expect(plan.args).toContain(appRoot)
+    expect(plan.env.CLAUDE_H5_DIST_DIR).toBe(h5DistDir)
+  })
+
+  it('passes the packaged ripgrep path to the server and its CLI children', () => {
+    const desktopRoot = mkdtempSync(path.join(tmpdir(), 'echoflow-code-ripgrep-plan-'))
+    try {
+      const bundledRipgrep = resolveBundledRipgrepExecutable(desktopRoot)
+      mkdirSync(path.dirname(bundledRipgrep), { recursive: true })
+      writeFileSync(bundledRipgrep, 'fixture')
+
+      const plan = createServerPlan({
+        desktopRoot,
+        appRoot: '/app',
+        port: 49321,
+        env: {},
+      })
+
+      expect(plan.env[RIPGREP_PATH_ENV]).toBe(bundledRipgrep)
+      const pathValue = Object.entries(plan.env)
+        .find(([key]) => key.toLowerCase() === 'path')?.[1]
+      expect(pathValue?.split(path.delimiter)).toContain(
+        path.dirname(bundledRipgrep),
+      )
+
+      const adapter = createAdapterPlan({
+        desktopRoot,
+        appRoot: '/app',
+        serverUrl: 'http://127.0.0.1:49321',
+        flag: '--telegram',
+        env: {},
+      })
+      expect(adapter.env[RIPGREP_PATH_ENV]).toBe(bundledRipgrep)
+    } finally {
+      rmSync(desktopRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('preserves an explicit ripgrep override', () => {
+    const customDir = mkdtempSync(path.join(tmpdir(), 'echoflow-code-custom-ripgrep-'))
+    try {
+      const customRipgrep = path.join(customDir, 'rg')
+      writeFileSync(customRipgrep, 'fixture')
+      const plan = createServerPlan({
+        desktopRoot: '/app/desktop',
+        appRoot: '/app',
+        port: 49321,
+        env: { PATH: '/usr/bin', [RIPGREP_PATH_ENV]: customRipgrep },
+      })
+
+      expect(plan.env[RIPGREP_PATH_ENV]).toBe(customRipgrep)
+      expect(plan.env.PATH?.split(path.delimiter)).toContain(customDir)
+    } finally {
+      rmSync(customDir, { recursive: true, force: true })
+    }
   })
 
   it('passes portable config and adapter server URL through the sidecar env', () => {
-    const configDir = mkdtempSync(path.join(tmpdir(), 'cc-haha-config-'))
+    const configDir = mkdtempSync(path.join(tmpdir(), 'echoflow-code-config-'))
     try {
       const env = buildSidecarEnv({ CLAUDE_CONFIG_DIR: configDir }, '/app/dist')
       expect(env.CLAUDE_CONFIG_DIR).toBe(configDir)
@@ -145,31 +222,63 @@ describe('Electron sidecar manager', () => {
     }
   })
 
-  it('converts Electron system proxy rules into sidecar proxy env', () => {
-    expect(proxyUrlFromElectronProxyRules('DIRECT')).toBeUndefined()
-    expect(proxyUrlFromElectronProxyRules('SOCKS5 127.0.0.1:7891; DIRECT')).toBeUndefined()
-    expect(proxyUrlFromElectronProxyRules('PROXY 127.0.0.1:7897; DIRECT')).toBe('http://127.0.0.1:7897')
-    expect(proxyUrlFromElectronProxyRules('HTTPS proxy.example:8443; DIRECT')).toBe('https://proxy.example:8443')
+  it('isolates the server from inherited proxy env and exposes only the dynamic bridge URL', () => {
+    const baseEnv = {
+      HTTP_PROXY: 'http://stale.example:8080',
+      HTTPS_PROXY: 'http://stale.example:8080',
+      http_proxy: 'http://stale.example:8080',
+      https_proxy: 'http://stale.example:8080',
+      ALL_PROXY: 'socks5://stale.example:1080',
+      all_proxy: 'socks5://stale.example:1080',
+      NO_PROXY: '.corp.local',
+    }
+    const bridgeUrl = 'http://127.0.0.1:49123'
+    const serverEnv = withSystemProxyBridgeEnv(baseEnv, bridgeUrl)
 
-    const env = mergeProxyEnv({}, 'http://127.0.0.1:7897')
-    expect(env.HTTP_PROXY).toBe('http://127.0.0.1:7897')
-    expect(env.HTTPS_PROXY).toBe('http://127.0.0.1:7897')
-    expect(env.http_proxy).toBe('http://127.0.0.1:7897')
-    expect(env.https_proxy).toBe('http://127.0.0.1:7897')
-    expect(env.NO_PROXY).toContain('127.0.0.1')
-    expect(env.no_proxy).toContain('localhost')
+    expect(serverEnv[SYSTEM_PROXY_BRIDGE_ENV]).toBe(bridgeUrl)
+    expect(serverEnv.HTTP_PROXY).toBeUndefined()
+    expect(serverEnv.HTTPS_PROXY).toBeUndefined()
+    expect(serverEnv.http_proxy).toBeUndefined()
+    expect(serverEnv.https_proxy).toBeUndefined()
+    expect(serverEnv.ALL_PROXY).toBeUndefined()
+    expect(serverEnv.all_proxy).toBeUndefined()
+    expect(serverEnv.NO_PROXY).toBe('.corp.local,localhost,127.0.0.1,::1')
+    expect(clearProxyEnv(baseEnv).HTTP_PROXY).toBeUndefined()
   })
 
-  it('does not override explicit sidecar proxy environment and still preserves loopback bypasses', () => {
-    const env = mergeProxyEnv(
-      { HTTPS_PROXY: 'http://manual.example:8080', NO_PROXY: '.corp.local' },
-      'http://system.example:8080',
-    )
+  it('exposes a sanitized system proxy failure without leaving a direct-fallback proxy env', () => {
+    const env = withSystemProxyErrorEnv({
+      HTTP_PROXY: 'http://stale.example:8080',
+      HTTPS_PROXY: 'http://stale.example:8080',
+      ALL_PROXY: 'socks5://stale.example:1080',
+      [SYSTEM_PROXY_BRIDGE_ENV]: 'http://127.0.0.1:49123',
+    }, new Error('bridge failed for https://user:password@proxy.example/path with sk-secret12345678'))
 
-    expect(env.HTTPS_PROXY).toBe('http://manual.example:8080')
     expect(env.HTTP_PROXY).toBeUndefined()
-    expect(env.NO_PROXY).toBe('.corp.local,localhost,127.0.0.1,::1')
-    expect(env.no_proxy).toBe('.corp.local,localhost,127.0.0.1,::1')
+    expect(env.HTTPS_PROXY).toBeUndefined()
+    expect(env.ALL_PROXY).toBeUndefined()
+    expect(env[SYSTEM_PROXY_BRIDGE_ENV]).toBeUndefined()
+    expect(env[SYSTEM_PROXY_ERROR_ENV]).toContain('System proxy bridge unavailable: bridge failed')
+    expect(env[SYSTEM_PROXY_ERROR_ENV]).toContain('https://[REDACTED]@proxy.example/path')
+    expect(env[SYSTEM_PROXY_ERROR_ENV]).not.toContain('password')
+    expect(env[SYSTEM_PROXY_ERROR_ENV]).not.toContain('sk-secret')
+  })
+
+  it('routes adapter sidecars explicitly through the dynamic bridge', () => {
+    const bridgeUrl = 'http://127.0.0.1:49123'
+    const env = withAdapterProxyBridgeEnv({
+      HTTPS_PROXY: 'http://stale.example:8080',
+      ALL_PROXY: 'socks5://stale.example:1080',
+      [SYSTEM_PROXY_BRIDGE_ENV]: bridgeUrl,
+    }, bridgeUrl)
+
+    expect(env.HTTP_PROXY).toBe(bridgeUrl)
+    expect(env.HTTPS_PROXY).toBe(bridgeUrl)
+    expect(env.http_proxy).toBe(bridgeUrl)
+    expect(env.https_proxy).toBe(bridgeUrl)
+    expect(env.ALL_PROXY).toBe(bridgeUrl)
+    expect(env.all_proxy).toBe(bridgeUrl)
+    expect(env.NO_PROXY).toContain('127.0.0.1')
   })
 
   it('keeps startup logs bounded', () => {
@@ -197,7 +306,7 @@ describe('Electron sidecar manager', () => {
   })
 
   it('appends only a bounded sanitized Electron host-log tail', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'cc-haha-electron-host-'))
+    const dir = mkdtempSync(path.join(tmpdir(), 'echoflow-code-electron-host-'))
     const logPath = path.join(dir, 'electron-host.log')
     const homeDir = path.join(dir, 'private-home')
     try {
@@ -228,13 +337,105 @@ describe('Electron sidecar manager', () => {
       expect(contents).not.toContain(homeDir)
       expect(lines).toHaveLength(HOST_DIAGNOSTICS_LINE_LIMIT)
       expect(lines[0]).toBe('line 6')
+      if (process.platform !== 'win32') {
+        expect(statSync(logPath).mode & 0o777).toBe(0o600)
+      }
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
   })
 
+  it('creates the Electron diagnostics directory with private permissions', () => {
+    if (process.platform === 'win32') return
+    const dir = mkdtempSync(path.join(tmpdir(), 'echoflow-code-electron-host-mode-'))
+    const diagnosticsDir = path.join(dir, 'echoflow-code', 'diagnostics')
+    const logPath = path.join(diagnosticsDir, 'electron-host.log')
+    try {
+      appendHostDiagnostic(logPath, 'private mode probe')
+
+      expect(statSync(diagnosticsDir).mode & 0o777).toBe(0o700)
+      expect(statSync(logPath).mode & 0o777).toBe(0o600)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a symlinked Electron diagnostics directory without changing its target', () => {
+    if (process.platform === 'win32') return
+    const dir = mkdtempSync(path.join(tmpdir(), 'echoflow-code-electron-host-symlink-dir-'))
+    const diagnosticsDir = path.join(dir, 'echoflow-code', 'diagnostics')
+    const unrelatedDir = path.join(dir, 'unrelated')
+    const unrelatedLog = path.join(unrelatedDir, 'electron-host.log')
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      mkdirSync(path.dirname(diagnosticsDir), { recursive: true })
+      mkdirSync(unrelatedDir, { mode: 0o755 })
+      writeFileSync(unrelatedLog, 'unrelated\n', { mode: 0o644 })
+      symlinkSync(unrelatedDir, diagnosticsDir, 'dir')
+
+      appendHostDiagnostic(path.join(diagnosticsDir, 'electron-host.log'), 'must not escape')
+
+      expect(statSync(unrelatedDir).mode & 0o777).toBe(0o755)
+      expect(statSync(unrelatedLog).mode & 0o777).toBe(0o644)
+      expect(readFileSync(unrelatedLog, 'utf-8')).toBe('unrelated\n')
+      expect(errorSpy).toHaveBeenCalledWith('[desktop] failed to persist Electron host diagnostics')
+    } finally {
+      errorSpy.mockRestore()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects an ancestor symlink before creating Electron diagnostics outside the config root', () => {
+    if (process.platform === 'win32') return
+    const dir = mkdtempSync(path.join(tmpdir(), 'echoflow-code-electron-host-symlink-parent-'))
+    const configDir = path.join(dir, 'config')
+    const unrelatedDir = path.join(dir, 'unrelated')
+    const diagnosticsDir = path.join(configDir, 'echoflow-code', 'diagnostics')
+    const unrelatedDiagnosticsDir = path.join(unrelatedDir, 'diagnostics')
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      mkdirSync(configDir)
+      mkdirSync(unrelatedDiagnosticsDir, { recursive: true, mode: 0o755 })
+      symlinkSync(unrelatedDir, path.join(configDir, 'echoflow-code'), 'dir')
+
+      appendHostDiagnostic(path.join(diagnosticsDir, 'electron-host.log'), 'must not escape')
+
+      expect(statSync(unrelatedDiagnosticsDir).mode & 0o777).toBe(0o755)
+      expect(existsSync(path.join(unrelatedDiagnosticsDir, 'electron-host.log'))).toBe(false)
+      expect(errorSpy).toHaveBeenCalledWith('[desktop] failed to persist Electron host diagnostics')
+    } finally {
+      errorSpy.mockRestore()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a symlinked Electron diagnostics file without copying its target', () => {
+    if (process.platform === 'win32') return
+    const dir = mkdtempSync(path.join(tmpdir(), 'echoflow-code-electron-host-symlink-file-'))
+    const diagnosticsDir = path.join(dir, 'echoflow-code', 'diagnostics')
+    const logPath = path.join(diagnosticsDir, 'electron-host.log')
+    const unrelatedLog = path.join(dir, 'unrelated.log')
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      mkdirSync(diagnosticsDir, { recursive: true })
+      writeFileSync(unrelatedLog, 'PRIVATE_UNRELATED_CONTENT\n', { mode: 0o644 })
+      chmodSync(unrelatedLog, 0o644)
+      symlinkSync(unrelatedLog, logPath, 'file')
+
+      appendHostDiagnostic(logPath, 'must not copy target')
+
+      expect(lstatSync(logPath).isSymbolicLink()).toBe(true)
+      expect(statSync(unrelatedLog).mode & 0o777).toBe(0o644)
+      expect(readFileSync(unrelatedLog, 'utf-8')).toBe('PRIVATE_UNRELATED_CONTENT\n')
+      expect(errorSpy).toHaveBeenCalledWith('[desktop] failed to persist Electron host diagnostics')
+    } finally {
+      errorSpy.mockRestore()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('bounds and re-sanitizes an oversized pre-existing host diagnostics file', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'cc-haha-electron-host-existing-'))
+    const dir = mkdtempSync(path.join(tmpdir(), 'echoflow-code-electron-host-existing-'))
     const logPath = path.join(dir, 'electron-host.log')
     const homeDir = path.join(dir, 'private-home')
     try {
@@ -259,7 +460,7 @@ describe('Electron sidecar manager', () => {
   })
 
   it('does not crash Electron when the host diagnostics destination cannot be written', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'cc-haha-electron-host-failure-'))
+    const dir = mkdtempSync(path.join(tmpdir(), 'echoflow-code-electron-host-failure-'))
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     try {
       expect(() => appendHostDiagnostic(dir, 'sidecar failed')).not.toThrow()
@@ -287,21 +488,90 @@ describe('Electron sidecar manager', () => {
 
   it('uses async taskkill on Windows by default', () => {
     const child = fakeChild(777)
-    const spawnAsync = vi.fn()
+    const taskkill = new EventEmitter()
+    const spawnAsync = vi.fn(() => taskkill)
     const spawnSyncFn = vi.fn()
-    killSidecar(child, false, { platform: 'win32', spawnAsync: spawnAsync as never, spawnSyncFn: spawnSyncFn as never })
-    expect(spawnAsync).toHaveBeenCalledWith('taskkill', ['/F', '/T', '/PID', '777'], { stdio: 'ignore', windowsHide: true })
+    killSidecar(child, false, {
+      platform: 'win32',
+      env: { SystemRoot: 'C:\\Windows' },
+      spawnAsync: spawnAsync as never,
+      spawnSyncFn: spawnSyncFn as never,
+    })
+    expect(spawnAsync).toHaveBeenCalledWith('C:\\Windows\\System32\\taskkill.exe', ['/F', '/T', '/PID', '777'], { stdio: 'ignore', windowsHide: true })
     expect(spawnSyncFn).not.toHaveBeenCalled()
     expect(child.kill).not.toHaveBeenCalled()
+  })
+
+  it('falls back without crashing when async taskkill is unavailable on Windows', () => {
+    const child = fakeChild(777)
+    const taskkill = new EventEmitter()
+    const spawnAsync = vi.fn(() => taskkill)
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    try {
+      killSidecar(child, false, {
+        platform: 'win32',
+        env: { SystemRoot: 'C:\\Windows' },
+        spawnAsync: spawnAsync as never,
+      })
+
+      const error = Object.assign(new Error('spawn taskkill ENOENT'), { code: 'ENOENT' })
+      expect(() => taskkill.emit('error', error)).not.toThrow()
+      expect(child.kill).toHaveBeenCalledTimes(1)
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[desktop] taskkill failed; falling back to direct sidecar termination',
+        error,
+      )
+    } finally {
+      errorSpy.mockRestore()
+    }
   })
 
   it('uses synchronous taskkill on Windows during shutdown to avoid orphaned sidecars', () => {
     const child = fakeChild(777)
     const spawnAsync = vi.fn()
-    const spawnSyncFn = vi.fn()
-    killSidecar(child, true, { platform: 'win32', spawnAsync: spawnAsync as never, spawnSyncFn: spawnSyncFn as never })
-    expect(spawnSyncFn).toHaveBeenCalledWith('taskkill', ['/F', '/T', '/PID', '777'], { stdio: 'ignore', windowsHide: true })
+    const spawnSyncFn = vi.fn(() => ({ error: undefined }))
+    killSidecar(child, true, {
+      platform: 'win32',
+      env: { SystemRoot: 'C:\\Windows' },
+      spawnAsync: spawnAsync as never,
+      spawnSyncFn: spawnSyncFn as never,
+    })
+    expect(spawnSyncFn).toHaveBeenCalledWith('C:\\Windows\\System32\\taskkill.exe', ['/F', '/T', '/PID', '777'], { stdio: 'ignore', windowsHide: true })
     expect(spawnAsync).not.toHaveBeenCalled()
+    expect(child.kill).not.toHaveBeenCalled()
+  })
+
+  it('falls back when synchronous taskkill is unavailable on Windows', () => {
+    const child = fakeChild(777)
+    const error = Object.assign(new Error('spawnSync taskkill ENOENT'), { code: 'ENOENT' })
+    const spawnSyncFn = vi.fn(() => ({ error }))
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    try {
+      killSidecar(child, true, {
+        platform: 'win32',
+        env: { SystemRoot: 'C:\\Windows' },
+        spawnSyncFn: spawnSyncFn as never,
+      })
+
+      expect(child.kill).toHaveBeenCalledTimes(1)
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[desktop] taskkill failed; falling back to direct sidecar termination',
+        error,
+      )
+    } finally {
+      errorSpy.mockRestore()
+    }
+  })
+
+  it('resolves taskkill from Windows system directories without relying on PATH', () => {
+    expect(resolveWindowsTaskkillExecutable({ SYSTEMROOT: 'D:\\Windows' }))
+      .toBe('D:\\Windows\\System32\\taskkill.exe')
+    expect(resolveWindowsTaskkillExecutable({ windir: 'E:\\WinDir' }))
+      .toBe('E:\\WinDir\\System32\\taskkill.exe')
+    expect(resolveWindowsTaskkillExecutable({}))
+      .toBe('taskkill.exe')
   })
 
   it('hides Windows console windows when launching sidecars', () => {
@@ -376,9 +646,9 @@ describe('Electron sidecar manager', () => {
       expect(preferredServerPorts(env)).toEqual([50123])
 
       // An explicit fixed port wins over the sticky port.
-      mkdirSync(path.join(configDir, 'cc-haha'), { recursive: true })
+      mkdirSync(path.join(configDir, 'echoflow-code'), { recursive: true })
       writeFileSync(
-        path.join(configDir, 'cc-haha', 'settings.json'),
+        path.join(configDir, 'echoflow-code', 'settings.json'),
         JSON.stringify({ h5Access: { fixedPort: 28670 } }),
         'utf-8',
       )
@@ -461,6 +731,27 @@ describe('Electron sidecar manager', () => {
       await expect(waitForServer('127.0.0.1', port, 300)).rejects.toThrow(
         /desktop server did not report healthy at http:\/\/127\.0\.0\.1:\d+\/health/,
       )
+    } finally {
+      await close(server)
+    }
+  })
+
+  it('isolates health probes from the shared HTTP connection pool', async () => {
+    const connections = new Set<number>()
+    const connectionHeaders: string[] = []
+    const server = http.createServer((request, response) => {
+      connections.add(request.socket.remotePort!)
+      connectionHeaders.push(request.headers.connection ?? '')
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ status: 'ok' }))
+    })
+    const port = await listen(server)
+
+    try {
+      await waitForServer('127.0.0.1', port, 1_000)
+      await waitForServer('127.0.0.1', port, 1_000)
+      expect(connections.size).toBe(2)
+      expect(connectionHeaders).toEqual(['close', 'close'])
     } finally {
       await close(server)
     }

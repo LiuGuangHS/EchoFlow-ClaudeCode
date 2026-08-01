@@ -11,6 +11,7 @@ import {
   WORKBENCH_TAB_PREFIX,
   useTabStore,
   type Tab,
+  type TabType,
 } from '../../stores/tabStore'
 import { useChatStore } from '../../stores/chatStore'
 import { useSessionStore } from '../../stores/sessionStore'
@@ -19,19 +20,54 @@ import { useWorkspacePanelStore } from '../../stores/workspacePanelStore'
 import { useTerminalPanelStore } from '../../stores/terminalPanelStore'
 import { useCLITaskStore } from '../../stores/cliTaskStore'
 import { useTeamStore } from '../../stores/teamStore'
+import { StatusDot } from '@/components/ui/Badge'
+import { IconButton } from '@/components/ui/IconButton'
+import { useDismissable } from '@/hooks/useDismissable'
 import { useTranslation } from '../../i18n'
 import { getDesktopHost } from '../../lib/desktopHost'
 import { hasRunningBackgroundTasks } from '../../lib/backgroundTasks'
 import { WindowControls, showWindowControls } from './WindowControls'
 import { OpenProjectMenu } from './OpenProjectMenu'
 import { Folder, FolderOpen, SquareTerminal } from 'lucide-react'
-import { ActionDialog } from '../shared/ActionDialog'
+import { ActionDialog } from '@/components/ui/ActionDialog'
 import { buildSessionActivityModel, hasVisibleSessionActivity } from '../activity/sessionActivityModel'
 import { SessionActivityButton } from '../activity/SessionActivityButton'
 import { useActivityPanelStore } from '../../stores/activityPanelStore'
+import { getSessionBrowsablePath } from '../../lib/sessionWorkspace'
 
-const TAB_WIDTH = 180
 const DRAG_START_THRESHOLD = 4
+// Fraction of the visible strip a chevron press travels. Tabs size to their
+// titles, so a fixed pixel step would overshoot a row of short ones and
+// undershoot a row of long ones; leaving a quarter behind keeps the tab you
+// were looking at on screen as an anchor.
+const SCROLL_STEP_RATIO = 0.75
+// `nearest` on both axes: bring the tab fully on screen with the smallest
+// possible move, and leave a tab that is already whole exactly where it is.
+const REVEAL_ACTIVE_TAB: ScrollIntoViewOptions = {
+  block: 'nearest',
+  inline: 'nearest',
+  behavior: 'smooth',
+}
+// Subpixel slack for the "is the active tab whole?" test. Without it a strip
+// whose edges land on fractional pixels reports the tab as clipped on every
+// single resize and re-scrolls forever.
+const TAB_VISIBILITY_TOLERANCE = 1
+// One glyph per *non-chat* tab kind: the glyph says "this tab is not a
+// conversation". Chat tabs deliberately have none — a bubble on every tab in a
+// strip that is mostly chats is pure noise, and the slot it occupied is worth
+// more as title. `trace` and `traces` share the Settings rail's glyph on
+// purpose — a trace tab should read as that section, not as another chat.
+const TAB_TYPE_ICON: Partial<Record<TabType, string>> = {
+  settings: 'settings',
+  scheduled: 'schedule',
+  market: 'storefront',
+  terminal: 'terminal',
+  trace: 'account_tree',
+  traces: 'account_tree',
+  workbench: 'view_sidebar',
+  subagent: 'smart_toy',
+}
+const TAB_TYPE_ICON_FALLBACK = 'tab'
 const desktopHost = getDesktopHost()
 const isDesktopRuntime = desktopHost.isDesktop
 const EMPTY_DISMISSED_BACKGROUND_TASK_KEYS: readonly string[] = []
@@ -83,8 +119,8 @@ export function TabBar() {
   const activeSession = useSessionStore((state) =>
     activeTabId ? state.sessions.find((session) => session.id === activeTabId) : undefined,
   )
-  const openProjectPath = isActiveSessionTab && activeSession?.workDirExists !== false
-    ? activeSession?.workDir ?? null
+  const openProjectPath = isActiveSessionTab
+    ? getSessionBrowsablePath(activeSession) ?? null
     : null
   // The right-side panel is now a single unified "workbench" with a per-session
   // mode (file ↔ browser). The folder/browser toolbar buttons reflect whether
@@ -145,6 +181,9 @@ export function TabBar() {
 
   const moveTab = useTabStore((s) => s.moveTab)
   const scrollRef = useRef<HTMLDivElement>(null)
+  // Set the moment the user drives the strip themselves, cleared when they
+  // switch tabs. See `realignActiveTab`.
+  const userScrolledRef = useRef(false)
   const [canScrollLeft, setCanScrollLeft] = useState(false)
   const [canScrollRight, setCanScrollRight] = useState(false)
   const [contextMenu, setContextMenu] = useState<{ sessionId: string; x: number; y: number } | null>(null)
@@ -156,6 +195,7 @@ export function TabBar() {
   const pendingDragRef = useRef<{ index: number; startX: number; startY: number } | null>(null)
   const suppressClickRef = useRef(false)
   const tabRefs = useRef(new Map<string, HTMLDivElement | null>())
+  const contextMenuRef = useRef<HTMLDivElement>(null)
   const t = useTranslation()
   const runningSessionIds = useMemo(() => {
     const ids = new Set<string>()
@@ -175,45 +215,101 @@ export function TabBar() {
     setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 1)
   }, [])
 
+  // Keeping the active tab whole is an invariant the strip has to re-establish
+  // after its own width changes, not something a single scroll on activation
+  // can settle. The chevrons are why: they are `w-7` siblings of this region,
+  // so the moment `updateScrollState` decides the strip overflows they take
+  // 28px each out of it — *after* the activation scroll has already landed on
+  // a scrollLeft computed without them. Measured on a 1280px window with seven
+  // tabs: the scroll stopped at 108 when the reachable end had moved to 164,
+  // and the last tab lost exactly those 56px off its right edge, taking the
+  // close button with it. Not merely hidden — the button's centre sat past the
+  // strip, so `elementFromPoint` there returned the toolbar's terminal button
+  // and the tab could not be closed at all. Window resizes, sidebar drags and
+  // the toolbar's own conditional buttons narrow the region the same way.
+  const realignActiveTab = useCallback(() => {
+    // Once the user has driven the strip with a chevron, where it sits is what
+    // they asked for, and the active tab being half off the edge is an
+    // ordinary consequence of scrolling a row. Only reinstate the invariant
+    // when the position is still ours to choose. Width alone cannot stand in
+    // for this: a chevron retires when its end is reached and rejoins when it
+    // is left, so a plain user scroll narrows the strip mid-flight and looks
+    // exactly like the layout event this guards against — measured, the view
+    // snapped straight back and the left end became unreachable.
+    if (userScrolledRef.current) return
+
+    const el = scrollRef.current
+    if (!el) return
+    const currentActiveTabId = useTabStore.getState().activeTabId
+    if (!currentActiveTabId) return
+    const activeTabEl = tabRefs.current.get(currentActiveTabId)
+    if (!activeTabEl) return
+
+    const strip = el.getBoundingClientRect()
+    const tab = activeTabEl.getBoundingClientRect()
+
+    // Already whole. The tolerance is for subpixel layout, which would
+    // otherwise report a clip on every resize and scroll forever.
+    if (
+      tab.left >= strip.left - TAB_VISIBILITY_TOLERANCE &&
+      tab.right <= strip.right + TAB_VISIBILITY_TOLERANCE
+    ) return
+
+    activeTabEl.scrollIntoView(REVEAL_ACTIVE_TAB)
+  }, [])
+
   useEffect(() => {
     updateScrollState()
     const el = scrollRef.current
     if (!el) return
     el.addEventListener('scroll', updateScrollState)
-    const ro = new ResizeObserver(updateScrollState)
+    const ro = new ResizeObserver(() => {
+      updateScrollState()
+      realignActiveTab()
+    })
     ro.observe(el)
     return () => {
       el.removeEventListener('scroll', updateScrollState)
       ro.disconnect()
     }
-  }, [updateScrollState, tabs.length])
+  }, [realignActiveTab, updateScrollState, tabs.length])
 
   useEffect(() => {
     if (!activeTabId) return
     const activeTabEl = tabRefs.current.get(activeTabId)
     if (!activeTabEl) return
 
-    activeTabEl.scrollIntoView({
-      block: 'nearest',
-      inline: 'nearest',
-      behavior: 'smooth',
-    })
+    // Switching tabs hands the position back to the strip: wherever the user
+    // had scrolled to, they have now named a tab they want to see.
+    userScrolledRef.current = false
+    // Unconditional, unlike the resize path: a tab that has just been activated
+    // has to come on screen even from completely outside the strip.
+    activeTabEl.scrollIntoView(REVEAL_ACTIVE_TAB)
 
     const frame = window.requestAnimationFrame(updateScrollState)
     return () => window.cancelAnimationFrame(frame)
   }, [activeTabId, tabs.length, updateScrollState])
 
-  useEffect(() => {
-    if (!contextMenu) return
-    const close = () => setContextMenu(null)
-    document.addEventListener('click', close)
-    return () => document.removeEventListener('click', close)
-  }, [contextMenu])
+  const closeContextMenu = useCallback(() => setContextMenu(null), [])
+
+  // Every item in the menu clears `contextMenu` itself, so excluding the menu
+  // from "outside" keeps the previous behavior while dropping the hand-rolled
+  // document listener.
+  useDismissable({
+    open: contextMenu !== null,
+    refs: [contextMenuRef],
+    onDismiss: closeContextMenu,
+  })
 
   const scroll = (direction: 'left' | 'right') => {
     const el = scrollRef.current
     if (!el) return
-    el.scrollBy({ left: direction === 'left' ? -TAB_WIDTH : TAB_WIDTH, behavior: 'smooth' })
+    const step = el.clientWidth * SCROLL_STEP_RATIO
+    // The chevrons are the only way to drive the strip by hand — it is
+    // `overflow-x-hidden`, so wheel and trackpad do not reach it — which makes
+    // this the one place that has to hand the position over to the user.
+    userScrolledRef.current = true
+    el.scrollBy({ left: direction === 'left' ? -step : step, behavior: 'smooth' })
   }
 
   const closeTabWithCleanup = useCallback((tab: Tab) => {
@@ -396,11 +492,27 @@ export function TabBar() {
     <div
       data-testid="tab-bar"
       data-desktop-drag-region={isDesktopRuntime ? true : undefined}
-      className="flex min-h-11 items-stretch bg-[var(--color-surface-container)] select-none border-b border-[var(--color-border)]"
+      /*
+        The strip is frame, not paper: it sits on the sidebar's ground so the
+        active tab can be filled with `--color-surface` and read as a sheet
+        lifted off the desk, continuous with the content below it. Painting the
+        strip `--color-surface` instead collapses strip, active tab and content
+        into one flat plane, which is what #1123 reported as "粗犷".
+
+        Deliberately *not* darkened into a Chrome-style trough: keeping it on
+        the sidebar's exact ground is what stops the titlebar reading as a
+        separate band across the top of the window. The cost is that the
+        selected tab's fill is only 1.05–1.10:1 against it, so the shape has to
+        be carried by `--color-tab-edge` on the tab itself (see TabItem).
+
+        No `border-b`: the selected tab's bottom edge has to run straight into
+        the content below it, and a rule across the whole strip cuts through it.
+      */
+      className="flex min-h-[52px] items-stretch bg-[var(--color-surface-sidebar)] select-none"
     >
 
       {canScrollLeft && (
-        <button onClick={() => scroll('left')} className="flex h-11 w-7 flex-shrink-0 items-center justify-center text-[var(--color-text-tertiary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]">
+        <button type="button" onClick={() => scroll('left')} aria-label={t('tabs.scrollLeft')} className="flex h-[52px] w-7 flex-shrink-0 items-center justify-center text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-border-focus)]">
           <span className="material-symbols-outlined text-[16px]">chevron_left</span>
         </button>
       )}
@@ -409,36 +521,57 @@ export function TabBar() {
         ref={scrollRef}
         data-testid="tab-bar-scroll-region"
         data-desktop-drag-region={isDesktopRuntime ? true : undefined}
-        className="flex-1 flex items-stretch overflow-x-hidden"
+        /*
+          `pt-[6px]` is the shoulder: 52px strip minus 6px leaves the 46px tab,
+          and those 6px are what makes the rounded top read as rounded rather
+          than as a corner clipped by the window frame. The strip, not the tab,
+          owns the giveback, so it stays inside the window drag region.
+        */
+        className="flex-1 flex items-stretch gap-[2px] overflow-x-hidden pt-[6px]"
         onDragOver={(e) => e.preventDefault()}
       >
-        {tabs.map((tab, index) => (
-          <TabItem
-            key={tab.sessionId}
-            ref={(node) => { tabRefs.current.set(tab.sessionId, node) }}
-            tab={tab}
-            isRunning={runningSessionIds.has(tab.sessionId)}
-            isActive={tab.sessionId === activeTabId}
-            isDragOver={dragOverIndex === index}
-            isDragging={tab.sessionId === draggingSessionId}
-            dragOffsetX={tab.sessionId === draggingSessionId ? dragOffsetX : 0}
-            runningLabel={t('tabs.sessionRunning')}
-            onClick={() => handleTabClick(tab.sessionId)}
-            onClose={() => handleClose(tab.sessionId)}
-            onContextMenu={(e) => handleContextMenu(e, tab.sessionId)}
-            onMouseDown={(event) => handleTabMouseDown(event, index)}
-          />
-        ))}
+        {tabs.map((tab, index) => {
+          const displayTitle = tab.type === 'settings'
+            ? t('settings.title')
+            : (tab.title || t('tabs.untitled'))
+          return (
+            <TabItem
+              key={tab.sessionId}
+              ref={(node) => { tabRefs.current.set(tab.sessionId, node) }}
+              tab={tab}
+              displayTitle={displayTitle}
+              closeLabel={t('tabs.closeTab', { title: displayTitle })}
+              isRunning={runningSessionIds.has(tab.sessionId)}
+              isActive={tab.sessionId === activeTabId}
+              isDragOver={dragOverIndex === index}
+              isDragging={tab.sessionId === draggingSessionId}
+              dragOffsetX={tab.sessionId === draggingSessionId ? dragOffsetX : 0}
+              runningLabel={t('tabs.sessionRunning')}
+              onClick={() => handleTabClick(tab.sessionId)}
+              onClose={() => handleClose(tab.sessionId)}
+              onContextMenu={(e) => handleContextMenu(e, tab.sessionId)}
+              onMouseDown={(event) => handleTabMouseDown(event, index)}
+            />
+          )
+        })}
       </div>
 
-      <div className="flex shrink-0 items-center gap-1 border-l border-[var(--color-border)]/70 px-2">
+      {/*
+        Same hairline as the one between two idle tabs, drawn the same way: a
+        16px rule rather than a full-height `border-l`, because a 52px line
+        standing next to a row of 16px ones reads as a different kind of
+        divider. `--color-border` is not an option for either — calibrated
+        against paper, it all but disappears on the trough (1.12:1 on 素白),
+        which left the toolbar looking welded to the last tab.
+      */}
+      <div className="relative flex shrink-0 items-center gap-1 px-2 before:absolute before:left-0 before:top-1/2 before:h-4 before:w-px before:-translate-y-1/2 before:bg-[var(--color-tab-separator)]">
         {showActivityButton && activeTabId && (
           <SessionActivityButton sessionId={activeTabId} />
         )}
         {isDesktopRuntime && isActiveSessionTab && (
           <OpenProjectMenu path={openProjectPath} />
         )}
-        <ToolbarIconButton
+        <IconButton
           icon={<SquareTerminal size={17} strokeWidth={1.9} />}
           label={t('tabs.openTerminal')}
           onClick={() => {
@@ -448,10 +581,13 @@ export function TabBar() {
             }
             useTabStore.getState().openTerminalTab()
           }}
-          active={isTerminalPanelOpen}
+          size="md"
+          tone={isTerminalPanelOpen ? 'default' : 'muted'}
+          pressed={isTerminalPanelOpen}
+          data-active={isTerminalPanelOpen ? 'true' : 'false'}
         />
         {isActiveSessionTab && activeTabId && (
-          <ToolbarIconButton
+          <IconButton
             icon={isWorkspacePanelOpen ? <FolderOpen size={18} strokeWidth={1.9} /> : <Folder size={18} strokeWidth={1.9} />}
             label={t(isWorkspacePanelOpen ? 'tabs.hideWorkspace' : 'tabs.showWorkspace')}
             onClick={() => {
@@ -463,7 +599,10 @@ export function TabBar() {
                 workbench.openPanel(activeTabId)
               }
             }}
-            active={isWorkspacePanelOpen}
+            size="md"
+            tone={isWorkspacePanelOpen ? 'default' : 'muted'}
+            pressed={isWorkspacePanelOpen}
+            data-active={isWorkspacePanelOpen ? 'true' : 'false'}
           />
         )}
       </div>
@@ -473,12 +612,12 @@ export function TabBar() {
           data-testid="tab-bar-drag-gutter"
           data-desktop-drag-region
           aria-hidden="true"
-          className={`min-h-11 flex-shrink-0 ${showWindowControls ? 'w-3' : 'w-4'}`}
+          className={`min-h-[52px] flex-shrink-0 ${showWindowControls ? 'w-3' : 'w-4'}`}
         />
       )}
 
       {canScrollRight && (
-        <button onClick={() => scroll('right')} className="flex h-11 w-7 flex-shrink-0 items-center justify-center text-[var(--color-text-tertiary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]">
+        <button type="button" onClick={() => scroll('right')} aria-label={t('tabs.scrollRight')} className="flex h-[52px] w-7 flex-shrink-0 items-center justify-center text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-border-focus)]">
           <span className="material-symbols-outlined text-[16px]">chevron_right</span>
         </button>
       )}
@@ -487,37 +626,38 @@ export function TabBar() {
 
       {contextMenu && (
         <div
-          className="fixed z-50 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-md)] py-1 min-w-[160px]"
-          style={{ left: contextMenu.x, top: contextMenu.y, boxShadow: 'var(--shadow-dropdown)' }}
+          ref={contextMenuRef}
+          className="fixed z-[var(--z-dropdown)] min-w-[180px] overflow-hidden rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] py-2 shadow-[var(--shadow-dropdown)]"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
         >
           <button
             onClick={() => { handleClose(contextMenu.sessionId); setContextMenu(null) }}
-            className="w-full px-3 py-1.5 text-xs text-left text-[var(--color-text-primary)] hover:bg-[var(--color-surface-hover)]"
+            className="w-full px-4 py-2 text-left text-[13px] text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-surface-hover)]"
           >
             {t('tabs.close')}
           </button>
           <button
             onClick={() => handleCloseOthers(contextMenu.sessionId)}
-            className="w-full px-3 py-1.5 text-xs text-left text-[var(--color-text-primary)] hover:bg-[var(--color-surface-hover)]"
+            className="w-full px-4 py-2 text-left text-[13px] text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-surface-hover)]"
           >
             {t('tabs.closeOthers')}
           </button>
           <button
             onClick={() => handleCloseLeft(contextMenu.sessionId)}
-            className="w-full px-3 py-1.5 text-xs text-left text-[var(--color-text-primary)] hover:bg-[var(--color-surface-hover)]"
+            className="w-full px-4 py-2 text-left text-[13px] text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-surface-hover)]"
           >
             {t('tabs.closeLeft')}
           </button>
           <button
             onClick={() => handleCloseRight(contextMenu.sessionId)}
-            className="w-full px-3 py-1.5 text-xs text-left text-[var(--color-text-primary)] hover:bg-[var(--color-surface-hover)]"
+            className="w-full px-4 py-2 text-left text-[13px] text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-surface-hover)]"
           >
             {t('tabs.closeRight')}
           </button>
-          <div className="my-1 border-t border-[var(--color-border)]" />
+          <div className="my-1.5 border-t border-[var(--color-border)]" />
           <button
             onClick={handleCloseAll}
-            className="w-full px-3 py-1.5 text-xs text-left text-[var(--color-text-primary)] hover:bg-[var(--color-surface-hover)]"
+            className="w-full px-4 py-2 text-left text-[13px] text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-surface-hover)]"
           >
             {t('tabs.closeAll')}
           </button>
@@ -567,6 +707,8 @@ export function TabBar() {
 
 const TabItem = forwardRef<HTMLDivElement, {
   tab: Tab
+  displayTitle: string
+  closeLabel: string
   isRunning: boolean
   isActive: boolean
   isDragOver: boolean
@@ -577,97 +719,103 @@ const TabItem = forwardRef<HTMLDivElement, {
   onClose: () => void
   onContextMenu: (e: React.MouseEvent) => void
   onMouseDown: (event: React.MouseEvent) => void
-}>(({ tab, isRunning, isActive, isDragOver, isDragging, dragOffsetX, runningLabel, onClick, onClose, onContextMenu, onMouseDown }, ref) => {
+}>(({ tab, displayTitle, closeLabel, isRunning, isActive, isDragOver, isDragging, dragOffsetX, runningLabel, onClick, onClose, onContextMenu, onMouseDown }, ref) => {
+  // Chat tabs carry no glyph at all; the dot only appears when there is
+  // something to say. Everything else identifies its section with one.
+  const leadingGlyph = isSessionTab(tab)
+    ? (isRunning
+      ? <StatusDot tone="brand" pulse label={runningLabel} />
+      : tab.status === 'error'
+        ? <StatusDot tone="danger" />
+        : null)
+    : (
+      <span className="material-symbols-outlined text-[14px] leading-none text-[var(--color-text-tertiary)]">
+        {TAB_TYPE_ICON[tab.type] ?? TAB_TYPE_ICON_FALLBACK}
+      </span>
+    )
+
   return (
     <div
       ref={ref}
       data-dragging={isDragging ? 'true' : 'false'}
+      data-active={isActive ? 'true' : 'false'}
       onClick={onClick}
       onMouseDown={onMouseDown}
       onContextMenu={onContextMenu}
       className={`
-        tab-bar-interactive group relative flex min-h-11 flex-shrink-0 items-center gap-1.5 px-3
-        ${isDragging ? 'z-20 cursor-grabbing' : 'cursor-grab'}
-        transition-[background-color,box-shadow,opacity,transform] duration-150 ease-out
-        ${isActive
-          ? 'bg-[var(--color-surface)] shadow-[inset_0_-2px_0_var(--color-brand)]'
-          : 'bg-transparent hover:bg-[var(--color-surface-hover)]'
+        tab-bar-interactive tab-strip-item group relative flex min-h-[46px] min-w-[140px] max-w-[200px] flex-shrink-0 items-center rounded-t-[8px] border border-b-0 px-3
+        ${isDragging ? 'z-[var(--z-sticky)] cursor-grabbing' : 'cursor-grab'}
+        transition-[background-color,border-color,box-shadow,opacity,transform] duration-150 ease-out
+        ${isActive || isDragging
+          // A document tab, still not a pill: the bottom edge stays square and
+          // borderless so paper runs unbroken from the tab into the view below.
+          // What a pill would add — a full radius, a drop shadow, and clearance
+          // from the content — stays banned; only the top two corners round.
+          //
+          // The border is load-bearing, not decoration. The strip is the
+          // sidebar's own ground, which puts this fill at 1.05–1.10:1 against
+          // it in all six themes: without an outline the corners are invisible
+          // and there is nothing to see. `--color-border` cannot stand in — it
+          // is calibrated against paper and lands at 1.12:1 on the trough.
+          ? 'border-[var(--color-tab-edge)] bg-[var(--color-surface)]'
+          // Hover rises toward paper, it does not fall away from it. The
+          // obvious `--color-surface-hover` is wrong here: it is tuned for
+          // hovering *on* paper, so on the two ink themes it lands brighter
+          // than paper itself (dark #2B271F vs #201D17) and a hovered tab
+          // outshines the selected one. Sharing paper with the active tab and
+          // letting the outline plus the label weight carry selection makes
+          // the active state strictly stronger in all six themes.
+          //
+          // It gets the weaker of the two outlines rather than none: the same
+          // 1.05–1.10:1 that hides the selected tab's corners hides a hovered
+          // tab's too, so without it hover is a fill with no discernible
+          // shape. Three legible tiers — no outline, hairline, full edge.
+          : 'border-transparent bg-transparent hover:border-[var(--color-tab-separator)] hover:bg-[var(--color-surface)]'
         }
-        ${isDragging ? 'opacity-95 shadow-[0_10px_24px_rgba(0,0,0,0.18)] ring-1 ring-[var(--color-border)]' : ''}
-        ${isDragOver ? 'before:absolute before:left-0 before:top-[4px] before:bottom-[4px] before:w-[3px] before:bg-[var(--color-brand)] before:rounded-full before:shadow-[0_0_0_1px_rgba(255,255,255,0.25)]' : ''}
+        ${isDragging ? 'opacity-95 shadow-[var(--shadow-overlay)]' : ''}
+        ${isDragOver ? 'before:absolute before:left-0 before:top-[4px] before:bottom-[4px] before:w-[3px] before:bg-[var(--color-brand)] before:rounded-full' : ''}
       `}
       style={{
-        width: TAB_WIDTH,
-        maxWidth: TAB_WIDTH,
         transform: isDragging ? `translateX(${dragOffsetX}px) scale(1.02)` : undefined,
       }}
     >
-      {tab.type === 'session' && isRunning && (
-        <span
-          className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-[var(--color-success)] animate-pulse"
-          aria-label={runningLabel}
-          title={runningLabel}
-        />
-      )}
-      {tab.type === 'session' && tab.status === 'error' && (
-        <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-error)] flex-shrink-0" />
-      )}
-      {tab.type === 'settings' && (
-        <span className="material-symbols-outlined text-[14px] flex-shrink-0 text-[var(--color-text-tertiary)]">settings</span>
-      )}
-      {tab.type === 'scheduled' && (
-        <span className="material-symbols-outlined text-[14px] flex-shrink-0 text-[var(--color-text-tertiary)]">schedule</span>
-      )}
-      {tab.type === 'terminal' && (
-        <span className="material-symbols-outlined text-[14px] flex-shrink-0 text-[var(--color-text-tertiary)]">terminal</span>
-      )}
-      {tab.type === 'workbench' && (
-        <span className="material-symbols-outlined text-[14px] flex-shrink-0 text-[var(--color-text-tertiary)]">view_sidebar</span>
-      )}
-
-      <span className={`flex-1 truncate text-xs ${isActive ? 'text-[var(--color-text-primary)] font-medium' : 'text-[var(--color-text-secondary)]'}`}>
-        {tab.title || 'Untitled'}
+      {/*
+        One slot, not a run of conditional siblings, and it animates its own
+        width rather than appearing. The status dot used to be *inserted* ahead
+        of the label, so a session shoved its own title sideways the moment it
+        started running and pulled it back when it finished. Now that idle chat
+        tabs have no glyph the slot has to collapse, so the jump is spread over
+        150ms instead. That is also why the gap is per-child margin: flex `gap`
+        is charged between children whatever their width, so a zero-width slot
+        would still cost 6px.
+      */}
+      <span
+        className={`flex h-[14px] flex-shrink-0 items-center justify-center overflow-hidden transition-[width,margin-right] duration-150 ease-out ${leadingGlyph ? 'mr-1.5 w-[14px]' : 'mr-0 w-0'}`}
+      >
+        {leadingGlyph}
       </span>
 
-      <button
-        type="button"
-        aria-label={`Close ${tab.title || 'Untitled'}`}
-        onMouseDown={(e) => { e.stopPropagation() }}
-        onClick={(e) => { e.stopPropagation(); onClose() }}
-        className="flex-shrink-0 -mr-1 inline-flex h-6 w-6 items-center justify-center rounded-md bg-transparent p-0 opacity-0 transition-[background-color,opacity,color] text-[var(--color-text-tertiary)] group-hover:opacity-100 hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-secondary)] focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]"
-      >
-        <span className="material-symbols-outlined text-[13px] leading-none">close</span>
-      </button>
+      <span className={`min-w-0 flex-1 truncate text-xs ${isActive ? 'text-[var(--color-text-primary)] font-medium' : 'text-[var(--color-text-secondary)]'}`}>
+        {displayTitle}
+      </span>
+
+      {/*
+        The fade lives on the wrapper, not on the button: `IconButton` pins
+        `transition-colors`, which does not cover opacity, and a competing
+        `transition-[…]` in `className` would resolve by stylesheet order.
+      */}
+      <span className="-mr-1 ml-1.5 flex-shrink-0 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100">
+        <IconButton
+          icon="close"
+          label={closeLabel}
+          onMouseDown={(e) => { e.stopPropagation() }}
+          onClick={(e) => { e.stopPropagation(); onClose() }}
+          size="xs"
+          tone="muted"
+          showTooltip={false}
+        />
+      </span>
     </div>
   )
 })
 TabItem.displayName = 'TabItem'
-
-function ToolbarIconButton({
-  icon,
-  label,
-  onClick,
-  active = false,
-}: {
-  icon: React.ReactNode
-  label: string
-  onClick: () => void
-  active?: boolean
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      onClick={onClick}
-      data-active={active ? 'true' : 'false'}
-      className={`inline-flex h-8 w-8 items-center justify-center rounded-[10px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)] ${
-        active
-          ? 'bg-[var(--color-surface-hover)] text-[var(--color-text-primary)]'
-          : 'text-[var(--color-text-tertiary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]'
-      }`}
-    >
-      {icon}
-    </button>
-  )
-}

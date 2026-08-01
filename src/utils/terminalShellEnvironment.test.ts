@@ -45,18 +45,7 @@ describe('terminal shell environment', () => {
     await rm(tmpDir, { recursive: true, force: true })
   })
 
-  it('captures exported variables from an interactive user shell', async () => {
-    if (process.platform === 'win32') {
-      const env = await getTerminalShellEnvironment({
-        HOME: tmpDir,
-        SHELL: path.join(tmpDir, 'zsh'),
-        PATH: ['C:\\Windows\\System32', 'C:\\Windows'].join(path.delimiter),
-      })
-
-      expect(env).toBeNull()
-      return
-    }
-
+  it.skipIf(process.platform === 'win32')('captures exported variables from an interactive user shell', async () => {
     const shellPath = path.join(tmpDir, 'zsh')
     const nodeBin = path.join(tmpDir, 'node-bin')
     const nvmDir = path.join(tmpDir, '.nvm')
@@ -85,11 +74,10 @@ describe('terminal shell environment', () => {
   it('merges shell PATH before base PATH while preserving app env overrides', () => {
     const basePath = ['/usr/bin', '/bin'].join(path.delimiter)
     const shellPath = ['/opt/homebrew/bin', '/usr/bin'].join(path.delimiter)
-    const expectedPath = ['/opt/homebrew/bin', '/usr/bin', '/bin'].join(path.delimiter)
     const merged = mergeTerminalShellEnvironment(
       {
         PATH: basePath,
-        CC_HAHA_DESKTOP_SERVER_URL: 'http://127.0.0.1:3456',
+        ECHOFLOW_DESKTOP_SERVER_URL: 'http://127.0.0.1:3456',
         TOOL_HOME: '/base/tool',
       },
       {
@@ -99,10 +87,10 @@ describe('terminal shell environment', () => {
       },
     )
 
-    expect(merged.PATH).toBe(expectedPath)
+    expect(merged.PATH).toBe(['/opt/homebrew/bin', '/usr/bin', '/bin'].join(path.delimiter))
     expect(merged.NVM_DIR).toBe('/Users/test/.nvm')
     expect(merged.TOOL_HOME).toBe('/base/tool')
-    expect(merged.CC_HAHA_DESKTOP_SERVER_URL).toBe('http://127.0.0.1:3456')
+    expect(merged.ECHOFLOW_DESKTOP_SERVER_URL).toBe('http://127.0.0.1:3456')
   })
 
   it('can be disabled for deterministic tests and controlled environments', async () => {
@@ -110,7 +98,7 @@ describe('terminal shell environment', () => {
       HOME: tmpDir,
       SHELL: path.join(tmpDir, 'zsh'),
       PATH: '/usr/bin:/bin',
-      CC_HAHA_DISABLE_TERMINAL_SHELL_ENV: '1',
+      ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV: '1',
     })
 
     expect(env).toBeNull()

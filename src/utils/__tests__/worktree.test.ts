@@ -53,7 +53,7 @@ describe('createAgentWorktree', () => {
     originalCwd = getOriginalCwd()
     originalConfigDir = process.env.CLAUDE_CONFIG_DIR
 
-    tempDir = mkdtempSync(join(tmpdir(), 'cc-haha-agent-worktree-'))
+    tempDir = mkdtempSync(join(tmpdir(), 'echoflow-code-agent-worktree-'))
     repoDir = join(tempDir, 'repo')
     const originDir = join(tempDir, 'origin.git')
     mkdirSync(repoDir, { recursive: true })

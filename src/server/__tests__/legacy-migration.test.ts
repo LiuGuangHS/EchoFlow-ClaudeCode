@@ -67,7 +67,7 @@ describe('legacy migration service', () => {
     await fs.rm(apiHomeDir, { recursive: true, force: true })
   })
 
-  test('status discovers legacy home cc-haha provider settings and OAuth files', async () => {
+  test('status discovers legacy home echoflow-code provider settings and OAuth files', async () => {
     await writeJson(path.join(legacyHomeDir, 'cc-haha', 'providers.json'), {
       activeId: 'provider-1',
       providers: [],
@@ -85,7 +85,7 @@ describe('legacy migration service', () => {
     ]))
   })
 
-  test('run copies legacy cc-haha files into echoflow storage without deleting sources', async () => {
+  test('run copies legacy echoflow-code files into echoflow storage without deleting sources', async () => {
     const sourceProviders = path.join(tempDir, 'cc-haha', 'providers.json')
     const sourceSettings = path.join(tempDir, 'cc-haha', 'settings.json')
     await writeJson(sourceProviders, {
@@ -132,7 +132,7 @@ describe('legacy migration service', () => {
     })
   })
 
-  test('invalid cc-haha provider index does not block root provider fallback', async () => {
+  test('invalid echoflow-code provider index does not block root provider fallback', async () => {
     await writeJson(path.join(tempDir, 'cc-haha', 'providers.json'), {
       notProviders: true,
     })
@@ -159,7 +159,7 @@ describe('legacy migration service', () => {
     })
   })
 
-  test('current root providers take priority over legacy home cc-haha providers', async () => {
+  test('current root providers take priority over legacy home echoflow-code providers', async () => {
     await writeJson(path.join(legacyHomeDir, 'cc-haha', 'providers.json'), {
       activeId: 'home-provider',
       providers: [{
@@ -226,9 +226,9 @@ describe('legacy migration service', () => {
     })
   })
 
-  test('root provider conversion does not overwrite settings claimed by current cc-haha settings', async () => {
+  test('root provider conversion does not overwrite settings claimed by current echoflow-code settings', async () => {
     await writeJson(path.join(tempDir, 'cc-haha', 'settings.json'), {
-      env: { ANTHROPIC_AUTH_TOKEN: 'cc-haha-token' },
+      env: { ANTHROPIC_AUTH_TOKEN: 'echoflow-code-token' },
     })
     await writeJson(path.join(tempDir, 'providers.json'), {
       activeModel: 'legacy-sonnet',
@@ -252,7 +252,7 @@ describe('legacy migration service', () => {
       expect.objectContaining({ source: 'current-root-providers', target: 'settings', status: 'migrated' }),
     ]))
     expect(await readJson(path.join(getEchoFlowInternalDir(tempDir), 'settings.json'))).toMatchObject({
-      env: { ANTHROPIC_AUTH_TOKEN: 'cc-haha-token' },
+      env: { ANTHROPIC_AUTH_TOKEN: 'echoflow-code-token' },
     })
   })
 

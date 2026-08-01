@@ -72,6 +72,9 @@ export async function* withStreamRetry(
           model:
             model as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
         });
+        for (const bufferedMessage of error.bufferedMessages) {
+          yield bufferedMessage;
+        }
         yield getAssistantMessageFromError(error.originalError, model, {
           messages,
         });

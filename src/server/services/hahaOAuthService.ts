@@ -30,6 +30,11 @@ import type {
   SubscriptionType,
 } from '../../services/oauth/types.js'
 import { getOauthConfig } from '../../constants/oauth.js'
+import {
+  getNetworkProxyFetchOptions,
+  getNetworkProxyUrl,
+  loadNetworkSettings,
+} from './networkSettings.js'
 import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 
 export type StoredOAuthTokens = {
@@ -48,9 +53,13 @@ export type OAuthSession = {
   createdAt: number
 }
 
-type RefreshFn = (refreshToken: string, opts?: { scopes?: string[] }) => Promise<OAuthTokens>
+type RefreshFn = (
+  refreshToken: string,
+  opts?: { scopes?: string[]; proxyUrl?: string | null },
+) => Promise<OAuthTokens>
 type FetchProfileFn = (
   accessToken: string,
+  opts?: { proxyUrl?: string | null },
 ) => Promise<{ subscriptionType: SubscriptionType | null }>
 
 const SESSION_TTL_MS = 5 * 60 * 1000
@@ -165,7 +174,10 @@ export class HahaOAuthService {
       session.codeVerifier,
       session.serverPort,
     )
-    const profile = await this.fetchProfileFn(response.access_token)
+    const networkSettings = await loadNetworkSettings()
+    const profile = await this.fetchProfileFn(response.access_token, {
+      proxyUrl: getNetworkProxyUrl(networkSettings),
+    })
 
     const tokens: StoredOAuthTokens = {
       accessToken: response.access_token,
@@ -197,11 +209,14 @@ export class HahaOAuthService {
     const timeoutId = setTimeout(() => controller.abort(), 15_000)
     let res: Response
     try {
-      res = await fetch(getOauthConfig().TOKEN_URL, {
+      const tokenUrl = getOauthConfig().TOKEN_URL
+      const networkSettings = await loadNetworkSettings()
+      res = await fetch(tokenUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody),
         signal: controller.signal,
+        ...getNetworkProxyFetchOptions(networkSettings, tokenUrl),
       })
     } finally {
       clearTimeout(timeoutId)
@@ -225,8 +240,10 @@ export class HahaOAuthService {
     if (!tokens.refreshToken) return null
 
     try {
+      const networkSettings = await loadNetworkSettings()
       const refreshed = await this.refreshFn(tokens.refreshToken, {
         scopes: tokens.scopes,
+        proxyUrl: getNetworkProxyUrl(networkSettings),
       })
       const updated: StoredOAuthTokens = {
         accessToken: refreshed.accessToken,

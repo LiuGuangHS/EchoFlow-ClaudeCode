@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   classifyH5Request,
   isLoopbackHost,
+  requiresLocalAccessCredential,
   shouldBlockDisabledH5Access,
   shouldRequireH5Token,
 } from '../h5AccessPolicy.js'
@@ -75,7 +76,12 @@ describe('h5AccessPolicy', () => {
     expect(shouldRequireH5Token({ request, url: new URL(request.url), h5Enabled: true, context: localContext })).toBe(false)
   })
 
-  test('keeps loopback browser origins tokenless for local dev capability routes', () => {
+  test('requires the local process credential for loopback browser origins when configured', () => {
+    const desktopContext = {
+      clientAddress: '127.0.0.1',
+      localAccessTokenConfigured: true,
+      localAccessAuthorized: false,
+    }
     for (const pathname of [
       '/api/status',
       '/api/adapters',
@@ -93,17 +99,26 @@ describe('h5AccessPolicy', () => {
         const request = req(`http://127.0.0.1:3456${pathname}`, {
           headers: { Origin: origin },
         })
-        expect(classifyH5Request(request, new URL(request.url), localContext)).toBe('local-trusted')
-        expect(shouldRequireH5Token({ request, url: new URL(request.url), h5Enabled: true, context: localContext })).toBe(false)
+        expect(classifyH5Request(request, new URL(request.url), desktopContext)).toBe('h5-browser')
+        expect(shouldRequireH5Token({ request, url: new URL(request.url), h5Enabled: true, context: desktopContext })).toBe(true)
         expect(shouldBlockDisabledH5Access({
           request,
           url: new URL(request.url),
           h5Enabled: false,
           explicitAuthRequired: false,
-          context: localContext,
-        })).toBe(false)
+          context: desktopContext,
+        })).toBe(true)
       }
     }
+  })
+
+  test('keeps loopback browser origins usable for tokenless local development servers', () => {
+    const request = req('http://127.0.0.1:3456/api/status', {
+      headers: { Origin: 'http://localhost:5173' },
+    })
+
+    expect(classifyH5Request(request, new URL(request.url), localContext)).toBe('local-trusted')
+    expect(shouldRequireH5Token({ request, url: new URL(request.url), h5Enabled: true, context: localContext })).toBe(false)
   })
 
   test('does not trust adapter requests from non-loopback browser origins', () => {
@@ -193,9 +208,7 @@ describe('h5AccessPolicy', () => {
     }
   })
 
-  test('requires the configured local credential even when a proxy perfectly mimics loopback', () => {
-    const request = req('http://127.0.0.1:3456/api/h5-access')
-    const url = new URL(request.url)
+  test('requires the configured local credential to reach the H5 control plane', () => {
     const unauthorizedContext = {
       clientAddress: '127.0.0.1',
       localAccessTokenConfigured: true,
@@ -206,15 +219,209 @@ describe('h5AccessPolicy', () => {
       localAccessAuthorized: true,
     }
 
-    expect(classifyH5Request(request, url, unauthorizedContext)).toBe('h5-browser')
-    expect(shouldBlockDisabledH5Access({
-      request,
-      url,
-      h5Enabled: false,
-      explicitAuthRequired: false,
-      context: unauthorizedContext,
-    })).toBe(true)
-    expect(classifyH5Request(request, url, authorizedContext)).toBe('local-trusted')
+    for (const pathname of ['/api/h5-access', '/api/h5-access/enable']) {
+      expect(requiresLocalAccessCredential(pathname, unauthorizedContext)).toBe(true)
+      expect(requiresLocalAccessCredential(pathname, authorizedContext)).toBe(false)
+    }
+
+    // Verifying a token the phone already holds is not a control-plane change,
+    // and an unmanaged (tokenless) server must not lock itself out either.
+    expect(requiresLocalAccessCredential('/api/h5-access/verify', unauthorizedContext)).toBe(false)
+    expect(requiresLocalAccessCredential('/api/h5-access', { clientAddress: '127.0.0.1' })).toBe(false)
+  })
+
+  test('keeps ordinary loopback capabilities usable without the desktop process token', () => {
+    // The desktop shell injects a process token, but the OAuth success page the
+    // system browser opens, a `/preview-fs` link and plain `curl` can never
+    // carry it. Gating loopback behind that token 401'd all of them.
+    const desktopContext = {
+      clientAddress: '127.0.0.1',
+      localAccessTokenConfigured: true,
+      localAccessAuthorized: false,
+    }
+
+    for (const pathname of [
+      '/api/haha-grok-oauth/success',
+      '/api/sessions',
+      '/preview-fs/session-1/index.html',
+      '/ws/session-1',
+    ]) {
+      const request = req(`http://127.0.0.1:3456${pathname}`)
+      const url = new URL(request.url)
+
+      expect(classifyH5Request(request, url, desktopContext)).toBe('local-trusted')
+      expect(shouldRequireH5Token({ request, url, h5Enabled: true, context: desktopContext })).toBe(false)
+      expect(shouldBlockDisabledH5Access({
+        request,
+        url,
+        h5Enabled: false,
+        explicitAuthRequired: false,
+        context: desktopContext,
+      })).toBe(false)
+    }
+  })
+
+  test('does not extend loopback trust to cross-site subresource loads', () => {
+    // `<img src="http://127.0.0.1:3456/api/...">` from a malicious page reaches
+    // us without an Origin header; only Fetch Metadata separates it from a real
+    // local navigation.
+    const request = req('http://127.0.0.1:3456/api/sessions', {
+      headers: {
+        'Sec-Fetch-Site': 'cross-site',
+        'Sec-Fetch-Mode': 'no-cors',
+        'Sec-Fetch-Dest': 'image',
+      },
+    })
+    expect(classifyH5Request(request, new URL(request.url), localContext)).toBe('h5-browser')
+
+    for (const headers of [
+      // The OAuth provider redirecting the browser back to us.
+      { 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Dest': 'document' },
+      // The user opening the URL from the address bar or `shell.open`.
+      { 'Sec-Fetch-Site': 'none', 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Dest': 'document' },
+      // The local H5 shell calling its own API.
+      { 'Sec-Fetch-Site': 'same-origin', 'Sec-Fetch-Mode': 'cors', 'Sec-Fetch-Dest': 'empty' },
+    ]) {
+      const allowed = req('http://127.0.0.1:3456/api/sessions', { headers })
+      expect(classifyH5Request(allowed, new URL(allowed.url), localContext)).toBe('local-trusted')
+    }
+  })
+
+  test('allows same-origin static assets only within their preview filesystem capability', () => {
+    const desktopContext = {
+      clientAddress: '127.0.0.1',
+      localAccessTokenConfigured: true,
+      localAccessAuthorized: false,
+    }
+    const origin = 'http://127.0.0.1:3456'
+    const cases = [
+      {
+        requestPath: '/preview-fs/session-1/site/assets/app.js',
+        refererPath: '/preview-fs/session-1/site/index.html',
+      },
+      {
+        requestPath: '/local-file/Users/alice/site/assets/app.js',
+        refererPath: '/local-file/Users/alice/site/index.html',
+      },
+    ]
+
+    for (const { requestPath, refererPath } of cases) {
+      const request = req(`${origin}${requestPath}`, {
+        headers: {
+          Origin: origin,
+          Referer: `${origin}${refererPath}`,
+          'Sec-Fetch-Site': 'same-origin',
+          'Sec-Fetch-Mode': 'cors',
+          'Sec-Fetch-Dest': 'script',
+        },
+      })
+      const url = new URL(request.url)
+
+      expect(classifyH5Request(request, url, desktopContext)).toBe('local-trusted')
+      expect(shouldRequireH5Token({
+        request,
+        url,
+        h5Enabled: true,
+        context: desktopContext,
+      })).toBe(false)
+      expect(shouldBlockDisabledH5Access({
+        request,
+        url,
+        h5Enabled: false,
+        explicitAuthRequired: false,
+        context: desktopContext,
+      })).toBe(false)
+    }
+  })
+
+  test('does not extend preview asset trust across sessions, directories or capability classes', () => {
+    const desktopContext = {
+      clientAddress: '127.0.0.1',
+      localAccessTokenConfigured: true,
+      localAccessAuthorized: false,
+    }
+    const origin = 'http://127.0.0.1:3456'
+    const cases = [
+      {
+        requestPath: '/preview-fs/session-2/site/assets/app.js',
+        refererPath: '/preview-fs/session-1/site/index.html',
+        destination: 'script',
+      },
+      {
+        requestPath: '/local-file/Users/alice/secrets/token.js',
+        refererPath: '/local-file/Users/alice/site/index.html',
+        destination: 'script',
+      },
+      {
+        requestPath: '/api/status',
+        refererPath: '/preview-fs/session-1/site/index.html',
+        destination: 'empty',
+      },
+      {
+        requestPath: '/api/h5-access',
+        refererPath: '/preview-fs/session-1/site/index.html',
+        destination: 'empty',
+      },
+      {
+        requestPath: '/proxy/provider/v1/messages',
+        refererPath: '/preview-fs/session-1/site/index.html',
+        destination: 'empty',
+      },
+      {
+        requestPath: '/ws/session-1',
+        refererPath: '/preview-fs/session-1/site/index.html',
+        destination: 'empty',
+      },
+      {
+        requestPath: '/sdk/session-1',
+        refererPath: '/preview-fs/session-1/site/index.html',
+        destination: 'empty',
+      },
+    ]
+
+    for (const { requestPath, refererPath, destination } of cases) {
+      const request = req(`${origin}${requestPath}`, {
+        headers: {
+          Origin: origin,
+          Referer: `${origin}${refererPath}`,
+          'Sec-Fetch-Site': 'same-origin',
+          'Sec-Fetch-Mode': 'cors',
+          'Sec-Fetch-Dest': destination,
+        },
+      })
+
+      expect(classifyH5Request(request, new URL(request.url), desktopContext))
+        .toBe('h5-browser')
+    }
+
+    const originlessCrossDirectoryScript = req(
+      `${origin}/preview-fs/session-1/secret.js`,
+      {
+        headers: {
+          Referer: `${origin}/preview-fs/session-1/site/index.html`,
+          'Sec-Fetch-Site': 'same-origin',
+          'Sec-Fetch-Mode': 'no-cors',
+          'Sec-Fetch-Dest': 'script',
+        },
+      },
+    )
+    expect(classifyH5Request(
+      originlessCrossDirectoryScript,
+      new URL(originlessCrossDirectoryScript.url),
+      desktopContext,
+    )).toBe('h5-browser')
+
+    const external = req(`${origin}/preview-fs/session-1/site/assets/app.js`, {
+      headers: {
+        Origin: 'https://attacker.example',
+        Referer: 'https://attacker.example/',
+        'Sec-Fetch-Site': 'cross-site',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Dest': 'script',
+      },
+    })
+    expect(classifyH5Request(external, new URL(external.url), desktopContext))
+      .toBe('h5-browser')
   })
 
   test('does not grant internal SDK trust to a request carrying proxy traces', () => {

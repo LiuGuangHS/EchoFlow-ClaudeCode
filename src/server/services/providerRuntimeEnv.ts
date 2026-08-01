@@ -4,7 +4,7 @@ import * as path from 'path'
 import { MODEL_CONTEXT_WINDOWS_ENV_KEY } from '../../utils/model/modelContextWindows.js'
 import {
   ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
-  LEGACY_CC_HAHA_SEND_DISABLED_THINKING_ENV_KEY,
+  LEGACY_ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
 } from '../../utils/thinking.js'
 import { PROVIDER_PRESETS } from '../config/providerPresets.js'
 import type {
@@ -42,6 +42,10 @@ export const MANAGED_PROVIDER_ENV_KEYS = [
   'ENABLE_TOOL_SEARCH',
   'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS',
   'ANTHROPIC_MODEL',
+  'ANTHROPIC_DEFAULT_FABLE_MODEL',
+  'ANTHROPIC_DEFAULT_FABLE_MODEL_DESCRIPTION',
+  'ANTHROPIC_DEFAULT_FABLE_MODEL_NAME',
+  'ANTHROPIC_DEFAULT_FABLE_MODEL_SUPPORTED_CAPABILITIES',
   'ANTHROPIC_DEFAULT_HAIKU_MODEL',
   'ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES',
   'ANTHROPIC_DEFAULT_SONNET_MODEL',
@@ -54,7 +58,7 @@ export const MANAGED_PROVIDER_ENV_KEYS = [
   ATTRIBUTION_HEADER_ENV_KEY,
   MODEL_CONTEXT_WINDOWS_ENV_KEY,
   ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
-  LEGACY_CC_HAHA_SEND_DISABLED_THINKING_ENV_KEY,
+  LEGACY_ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
   OPENAI_OAUTH_PROVIDER_ENV_KEY,
   LEGACY_OPENAI_OAUTH_PROVIDER_ENV_KEY,
   OPENAI_CODEX_OAUTH_FILE_ENV_KEY,
@@ -62,8 +66,11 @@ export const MANAGED_PROVIDER_ENV_KEYS = [
   GROK_OAUTH_FILE_ENV_KEY,
 ] as const
 
-const CUSTOM_PROVIDER_MODEL_CAPABILITIES = 'thinking,effort,adaptive_thinking,max_effort'
+const CUSTOM_PROVIDER_MODEL_CAPABILITIES =
+  'thinking,effort,adaptive_thinking,xhigh_effort,max_effort'
 const XIAOMI_MIMO_MODEL_CAPABILITIES = 'thinking'
+const KIMI_K3_MODEL_CAPABILITIES = 'thinking,required_thinking,effort,max_effort'
+const KIMI_CODING_FALLBACK_MODEL_CAPABILITIES = 'thinking,required_thinking'
 const AUTH_ENV_KEYS = new Set(['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'])
 const MODEL_SLOTS = ['main', 'haiku', 'sonnet', 'opus'] as const
 
@@ -75,6 +82,7 @@ function isProviderModels(value: unknown): value is SavedProvider['models'] {
   return (
     isRecord(value) &&
     typeof value.main === 'string' &&
+    (value.fable === undefined || typeof value.fable === 'string') &&
     typeof value.haiku === 'string' &&
     typeof value.sonnet === 'string' &&
     typeof value.opus === 'string'
@@ -124,7 +132,7 @@ function isSavedProvider(value: unknown): value is SavedProvider {
   )
 }
 
-function normalizeToolSearchEnabled(value: unknown): boolean {
+export function normalizeToolSearchEnabled(value: unknown): boolean {
   if (typeof value === 'boolean') return value
   if (typeof value === 'number') return value !== 0
   if (typeof value === 'string') {
@@ -137,7 +145,7 @@ function normalizeToolSearchEnabled(value: unknown): boolean {
   return true
 }
 
-function normalizeDisableExperimentalBetas(value: unknown): boolean {
+export function normalizeDisableExperimentalBetas(value: unknown): boolean {
   if (typeof value === 'boolean') return value
   if (typeof value === 'number') return value !== 0
   if (typeof value === 'string') {
@@ -152,6 +160,7 @@ export function normalizeModelMapping(models: SavedProvider['models']): SavedPro
   const main = models.main.trim()
   return {
     main,
+    ...(models.fable?.trim() ? { fable: models.fable.trim() } : {}),
     haiku: models.haiku.trim() || main,
     sonnet: models.sonnet.trim() || main,
     opus: models.opus.trim() || main,
@@ -183,6 +192,7 @@ function applyModel1mSupportMapping(
 ): SavedProvider['models'] {
   return {
     main: applyModel1mSupport(models.main, model1mSupport?.main),
+    ...(models.fable ? { fable: models.fable.trim() } : {}),
     haiku: applyModel1mSupport(models.haiku, model1mSupport?.haiku),
     sonnet: applyModel1mSupport(models.sonnet, model1mSupport?.sonnet),
     opus: applyModel1mSupport(models.opus, model1mSupport?.opus),
@@ -333,6 +343,42 @@ function getCustomProviderModelCapabilities(
   return CUSTOM_PROVIDER_MODEL_CAPABILITIES
 }
 
+function getKimiModelCapabilities(model: string): string {
+  const normalized = model
+    .trim()
+    .replace(/\[1m\]$/i, '')
+    .replace(/:1m$/i, '')
+    .toLowerCase()
+  return normalized === 'k3'
+    ? KIMI_K3_MODEL_CAPABILITIES
+    : KIMI_CODING_FALLBACK_MODEL_CAPABILITIES
+}
+
+function getProviderCapabilityEnv(
+  provider: SavedProvider,
+  models: SavedProvider['models'],
+): Record<string, string> {
+  if (provider.presetId === 'custom') {
+    const capabilities = getCustomProviderModelCapabilities(provider, models)
+    return {
+      ...(models.fable
+        ? { ANTHROPIC_DEFAULT_FABLE_MODEL_SUPPORTED_CAPABILITIES: capabilities }
+        : {}),
+      ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES: capabilities,
+      ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES: capabilities,
+      ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES: capabilities,
+    }
+  }
+  if (provider.presetId === 'kimi') {
+    return {
+      ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES: getKimiModelCapabilities(models.haiku),
+      ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES: getKimiModelCapabilities(models.sonnet),
+      ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES: getKimiModelCapabilities(models.opus),
+    }
+  }
+  return {}
+}
+
 export function buildProviderAuthEnv(
   provider: SavedProvider,
   presetDefaultEnv: Record<string, string>,
@@ -398,19 +444,11 @@ export function buildProviderManagedEnv(
   }
 
   const presetDefaultEnv = getPresetDefaultEnv(provider.presetId)
-  const customProviderCapabilities = getCustomProviderModelCapabilities(provider, models)
-  const customProviderCapabilityEnv =
-    provider.presetId === 'custom'
-      ? {
-          ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES: customProviderCapabilities,
-          ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES: customProviderCapabilities,
-          ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES: customProviderCapabilities,
-        }
-      : {}
+  const providerCapabilityEnv = getProviderCapabilityEnv(provider, models)
 
   return {
     ...omitAuthEnv(presetDefaultEnv),
-    ...customProviderCapabilityEnv,
+    ...providerCapabilityEnv,
     ...(provider.autoCompactWindow !== undefined && {
       CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(provider.autoCompactWindow),
     }),
@@ -426,6 +464,9 @@ export function buildProviderManagedEnv(
     ANTHROPIC_BASE_URL: baseUrl,
     ...buildProviderAuthEnv(provider, presetDefaultEnv, needsProxy),
     ANTHROPIC_MODEL: runtimeModels.main,
+    ...(runtimeModels.fable && {
+      ANTHROPIC_DEFAULT_FABLE_MODEL: runtimeModels.fable,
+    }),
     ANTHROPIC_DEFAULT_HAIKU_MODEL: runtimeModels.haiku,
     ANTHROPIC_DEFAULT_SONNET_MODEL: runtimeModels.sonnet,
     ANTHROPIC_DEFAULT_OPUS_MODEL: runtimeModels.opus,
@@ -462,7 +503,7 @@ export function readActiveProviderManagedEnv(
 
 export function activeProviderNeedsProxy(configDir: string): boolean {
   try {
-    const raw = fs.readFileSync(path.join(configDir, 'cc-haha', 'providers.json'), 'utf-8')
+    const raw = fs.readFileSync(path.join(getEchoFlowInternalDir(configDir), 'providers.json'), 'utf-8')
     const index = normalizeProvidersIndex(JSON.parse(raw))
     if (
       !index?.activeId ||

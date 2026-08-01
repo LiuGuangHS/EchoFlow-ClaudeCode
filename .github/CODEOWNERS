@@ -6,8 +6,8 @@
 /AGENTS.md @LiuGuangHS
 **/AGENTS.md @LiuGuangHS
 /CONTRIBUTING.md @LiuGuangHS
-/docs/en/guide/contributing.md @LiuGuangHS
-/docs/guide/contributing.md @LiuGuangHS
+/docs/en/internals/contributing.md @LiuGuangHS
+/docs/internals/contributing.md @LiuGuangHS
 /scripts/pr/ @LiuGuangHS
 /scripts/quality-gate/ @LiuGuangHS
 

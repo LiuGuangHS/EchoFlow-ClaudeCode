@@ -12,13 +12,17 @@ import { execFileNoThrowWithCwd } from '../../utils/execFileNoThrow.js'
 import { findGitRoot, gitExe } from '../../utils/git.js'
 import { ripGrep } from '../../utils/ripgrep.js'
 import { getInitialSettings } from '../../utils/settings/settings.js'
-import { isWithinRegisteredFilesystemRoot } from '../services/filesystemAccessRoots.js'
+import {
+  canonicalizeFilesystemAccessPath,
+  isWithinRegisteredFilesystemRoot,
+} from '../services/filesystemAccessRoots.js'
+import { canonicalizeExistingFilesystemPath } from '../services/filesystemPathSecurity.js'
 import {
   isSameOrInsidePathForPlatform,
   normalizeDriveRootPathForPlatform,
 } from '../services/windowsDrivePath.js'
 
-type FilesystemEntry = {
+export type FilesystemEntry = {
   name: string
   path: string
   isDirectory: boolean
@@ -30,7 +34,28 @@ type ScoredFilesystemEntry = FilesystemEntry & {
 }
 
 const FILE_SEARCH_TIMEOUT_MS = 10_000
+const FILE_SEARCH_FALLBACK_MAX_DIRECTORIES = 5_000
+const FILE_SEARCH_FALLBACK_MAX_FILES = 20_000
 const VCS_METADATA_DIRECTORY_NAMES = new Set(['.git', '.svn', '.hg', '.bzr', '.jj', '.sl'])
+
+type ProjectSearchDependencies = {
+  ripGrepFn?: (
+    args: string[],
+    target: string,
+    abortSignal: AbortSignal,
+  ) => Promise<string[]>
+  fallbackOptions?: {
+    searchQuery?: string
+    timeoutMs?: number
+    maxDirectories?: number
+    maxFiles?: number
+  }
+}
+
+type SearchIgnoreContext = {
+  baseRelativePath: string
+  matcher: ReturnType<typeof ignore>
+}
 
 const IMAGE_MIME_TYPES: Record<string, string> = {
   '.png': 'image/png',
@@ -53,10 +78,11 @@ function isVcsMetadataDirectoryName(name: string): boolean {
 }
 
 export function isAllowedFilesystemPath(targetPath: string): boolean {
-  const resolvedPath = path.resolve(normalizeDriveRootPathForPlatform(targetPath))
-  const homeDir = path.resolve(os.homedir())
+  const resolvedPath = canonicalizeFilesystemAccessPath(targetPath)
+  const homeDir = canonicalizeFilesystemAccessPath(os.homedir())
+  const temporaryDir = canonicalizeFilesystemAccessPath('/tmp')
 
-  if (isWithinRoot(resolvedPath, homeDir) || isWithinRoot(resolvedPath, '/tmp')) {
+  if (isWithinRoot(resolvedPath, homeDir) || isWithinRoot(resolvedPath, temporaryDir)) {
     return true
   }
 
@@ -65,7 +91,7 @@ export function isAllowedFilesystemPath(targetPath: string): boolean {
   }
 
   // macOS reports /tmp as /private/tmp via native folder pickers and realpath().
-  if (process.platform === 'darwin' && isWithinRoot(resolvedPath, '/private/tmp')) {
+  if (process.platform === 'darwin' && isWithinRoot(resolvedPath, canonicalizeFilesystemAccessPath('/private/tmp'))) {
     return true
   }
 
@@ -91,12 +117,18 @@ async function handleServeFile(url: URL): Promise<Response> {
   }
 
   const resolvedPath = path.resolve(normalizeDriveRootPathForPlatform(filePath))
-
-  if (!isAllowedFilesystemPath(resolvedPath)) {
+  const canonicalPath = await canonicalizeExistingFilesystemPath(resolvedPath)
+  if (!canonicalPath) {
+    if (!isAllowedFilesystemPath(resolvedPath)) {
+      return json({ error: 'Access denied: path outside allowed directory' }, 403)
+    }
+    return json({ error: 'File not found' }, 404)
+  }
+  if (!isAllowedFilesystemPath(canonicalPath)) {
     return json({ error: 'Access denied: path outside allowed directory' }, 403)
   }
 
-  const ext = path.extname(resolvedPath).toLowerCase()
+  const ext = path.extname(canonicalPath).toLowerCase()
   const mimeType = IMAGE_MIME_TYPES[ext]
 
   if (!mimeType) {
@@ -104,7 +136,7 @@ async function handleServeFile(url: URL): Promise<Response> {
   }
 
   try {
-    const stat = fs.statSync(resolvedPath)
+    const stat = fs.statSync(canonicalPath)
     if (!stat.isFile()) {
       return json({ error: 'Not a file' }, 400)
     }
@@ -113,7 +145,7 @@ async function handleServeFile(url: URL): Promise<Response> {
       return json({ error: 'File too large' }, 400)
     }
 
-    const data = fs.readFileSync(resolvedPath)
+    const data = fs.readFileSync(canonicalPath)
     return new Response(data, {
       status: 200,
       headers: {
@@ -130,8 +162,14 @@ async function handleServeFile(url: URL): Promise<Response> {
 async function handleBrowse(url: URL): Promise<Response> {
   const targetPath = url.searchParams.get('path') || os.homedir() || '/'
   const resolvedPath = path.resolve(normalizeDriveRootPathForPlatform(targetPath))
-
-  if (!isAllowedFilesystemPath(resolvedPath)) {
+  const canonicalPath = await canonicalizeExistingFilesystemPath(resolvedPath)
+  if (!canonicalPath) {
+    if (!isAllowedFilesystemPath(resolvedPath)) {
+      return json({ error: 'Access denied: path outside allowed directory' }, 403)
+    }
+    return json({ error: 'Cannot read directory: path not found', path: resolvedPath }, 404)
+  }
+  if (!isAllowedFilesystemPath(canonicalPath)) {
     return json({ error: 'Access denied: path outside allowed directory' }, 403)
   }
 
@@ -140,26 +178,26 @@ async function handleBrowse(url: URL): Promise<Response> {
   const maxResults = Math.min(parseInt(url.searchParams.get('maxResults') || '200', 10), 200)
 
   try {
-    const stat = fs.statSync(resolvedPath)
+    const stat = fs.statSync(canonicalPath)
     if (!stat.isDirectory()) {
-      return json({ error: 'Not a directory', path: resolvedPath }, 400)
+      return json({ error: 'Not a directory', path: canonicalPath }, 400)
     }
 
     if (searchQuery) {
-      const results = await searchFilesystemEntries(resolvedPath, searchQuery, {
+      const results = await searchFilesystemEntries(canonicalPath, searchQuery, {
         includeFiles,
         maxResults,
       })
 
       return json({
-        currentPath: resolvedPath,
-        parentPath: path.dirname(resolvedPath),
+        currentPath: canonicalPath,
+        parentPath: path.dirname(canonicalPath),
         entries: results,
         query: searchQuery,
       })
     }
 
-    const entries = fs.readdirSync(resolvedPath, { withFileTypes: true })
+    const entries = fs.readdirSync(canonicalPath, { withFileTypes: true })
 
     // Browse mode: show dot-prefixed project entries while keeping VCS internals hidden.
     const filtered = entries.filter((e) => {
@@ -170,7 +208,7 @@ async function handleBrowse(url: URL): Promise<Response> {
     const entries_list = filtered
       .map((e) => ({
         name: e.name,
-        path: path.join(resolvedPath, e.name),
+        path: path.join(canonicalPath, e.name),
         isDirectory: e.isDirectory(),
         relativePath: e.name,
       }))
@@ -180,24 +218,29 @@ async function handleBrowse(url: URL): Promise<Response> {
       })
 
     return json({
-      currentPath: resolvedPath,
-      parentPath: path.dirname(resolvedPath),
+      currentPath: canonicalPath,
+      parentPath: path.dirname(canonicalPath),
       entries: entries_list,
     })
   } catch (err) {
-    return json({ error: `Cannot read directory: ${err}`, path: resolvedPath }, 500)
+    return json({ error: `Cannot read directory: ${err}`, path: canonicalPath }, 500)
   }
 }
 
-async function searchFilesystemEntries(
+export async function searchFilesystemEntries(
   rootPath: string,
   searchQuery: string,
-  options: { includeFiles: boolean; maxResults: number },
+  options: { includeFiles: boolean; includeDirectories?: boolean; maxResults: number },
 ): Promise<FilesystemEntry[]> {
   const normalizedQuery = normalizeSearchText(searchQuery)
   if (!normalizedQuery) return []
 
-  const candidates = await getSearchCandidates(rootPath, options.includeFiles)
+  const candidates = await getSearchCandidates(
+    rootPath,
+    options.includeFiles,
+    options.includeDirectories ?? true,
+    normalizedQuery,
+  )
   const results = candidates
     .map((entry): ScoredFilesystemEntry | null => {
       const relativePath = entry.relativePath ?? entry.name
@@ -221,20 +264,29 @@ async function searchFilesystemEntries(
     .map(({ score: _score, ...entry }) => entry)
 }
 
-async function getSearchCandidates(rootPath: string, includeFiles: boolean): Promise<FilesystemEntry[]> {
-  const files = await getProjectSearchFiles(rootPath)
+async function getSearchCandidates(
+  rootPath: string,
+  includeFiles: boolean,
+  includeDirectories: boolean,
+  searchQuery: string,
+): Promise<FilesystemEntry[]> {
+  const files = await getProjectSearchFiles(rootPath, {
+    fallbackOptions: { searchQuery },
+  })
   const entries = new Map<string, FilesystemEntry>()
 
   for (const filePath of files) {
     const normalizedFile = normalizeRelativePath(filePath)
     if (!normalizedFile || !isRelativeInsideRoot(normalizedFile)) continue
 
-    let currentDir = path.posix.dirname(normalizedFile)
-    while (currentDir !== '.') {
-      addCandidate(entries, rootPath, currentDir, true)
-      const parent = path.posix.dirname(currentDir)
-      if (parent === currentDir) break
-      currentDir = parent
+    if (includeDirectories) {
+      let currentDir = path.posix.dirname(normalizedFile)
+      while (currentDir !== '.') {
+        addCandidate(entries, rootPath, currentDir, true)
+        const parent = path.posix.dirname(currentDir)
+        if (parent === currentDir) break
+        currentDir = parent
+      }
     }
 
     if (includeFiles) {
@@ -255,14 +307,29 @@ function addCandidate(entries: Map<string, FilesystemEntry>, rootPath: string, r
   })
 }
 
-async function getProjectSearchFiles(rootPath: string): Promise<string[]> {
+export async function getProjectSearchFiles(
+  rootPath: string,
+  dependencies: ProjectSearchDependencies = {},
+): Promise<string[]> {
   const respectGitignore = shouldRespectGitignore()
   const gitFiles = await getFilesUsingGit(rootPath, respectGitignore)
-  if (gitFiles !== null) {
+  if (gitFiles !== null && gitFiles.length > 0) {
     return gitFiles
   }
 
-  return getFilesUsingRipgrep(rootPath, respectGitignore)
+  try {
+    return await getFilesUsingRipgrep(
+      rootPath,
+      respectGitignore,
+      dependencies.ripGrepFn ?? ripGrep,
+    )
+  } catch {
+    return getFilesUsingFilesystem(
+      rootPath,
+      respectGitignore,
+      dependencies.fallbackOptions,
+    )
+  }
 }
 
 function shouldRespectGitignore(): boolean {
@@ -306,7 +373,11 @@ async function getFilesUsingGit(rootPath: string, respectGitignore: boolean): Pr
   return [...new Set(normalized)]
 }
 
-async function getFilesUsingRipgrep(rootPath: string, respectGitignore: boolean): Promise<string[]> {
+async function getFilesUsingRipgrep(
+  rootPath: string,
+  respectGitignore: boolean,
+  ripGrepFn: NonNullable<ProjectSearchDependencies['ripGrepFn']>,
+): Promise<string[]> {
   const rgArgs = [
     '--files',
     '--follow',
@@ -328,7 +399,11 @@ async function getFilesUsingRipgrep(rootPath: string, respectGitignore: boolean)
     rgArgs.push('--no-ignore-vcs')
   }
 
-  const files = await ripGrep(rgArgs, rootPath, AbortSignal.timeout(FILE_SEARCH_TIMEOUT_MS))
+  const files = await ripGrepFn(
+    rgArgs,
+    rootPath,
+    AbortSignal.timeout(FILE_SEARCH_TIMEOUT_MS),
+  )
   let normalized = files
     .map(filePath => normalizeRipgrepPath(filePath, rootPath))
     .filter((filePath): filePath is string => filePath !== null)
@@ -339,6 +414,178 @@ async function getFilesUsingRipgrep(rootPath: string, respectGitignore: boolean)
   }
 
   return normalized
+}
+
+async function getFilesUsingFilesystem(
+  rootPath: string,
+  respectGitignore: boolean,
+  options: NonNullable<ProjectSearchDependencies['fallbackOptions']> = {},
+): Promise<string[]> {
+  const deadline = Date.now() + (options.timeoutMs ?? FILE_SEARCH_TIMEOUT_MS)
+  const maxDirectories = options.maxDirectories ?? FILE_SEARCH_FALLBACK_MAX_DIRECTORIES
+  const maxFiles = options.maxFiles ?? FILE_SEARCH_FALLBACK_MAX_FILES
+  const searchQuery = normalizeSearchText(options.searchQuery ?? '')
+  const files: string[] = []
+  const directories: Array<{
+    absolutePath: string
+    relativePath: string
+    ignoreContexts: SearchIgnoreContext[]
+  }> = [{ absolutePath: rootPath, relativePath: '', ignoreContexts: [] }]
+  let directoryIndex = 0
+  let visitedDirectories = 0
+
+  while (
+    directoryIndex < directories.length &&
+    visitedDirectories < maxDirectories &&
+    files.length < maxFiles &&
+    Date.now() < deadline
+  ) {
+    const current = directories[directoryIndex]
+    directoryIndex += 1
+    if (!current) continue
+    visitedDirectories += 1
+
+    let entries: fs.Dirent[]
+    try {
+      entries = await fs.promises.readdir(current.absolutePath, {
+        withFileTypes: true,
+      })
+    } catch {
+      continue
+    }
+
+    entries.sort((left, right) => {
+      if (left.isDirectory() !== right.isDirectory()) {
+        return left.isDirectory() ? -1 : 1
+      }
+      return left.name.localeCompare(right.name)
+    })
+
+    const localIgnore = loadDirectorySearchIgnorePatterns(
+      current.absolutePath,
+      respectGitignore,
+    )
+    const ignoreContexts = localIgnore
+      ? [
+          ...current.ignoreContexts,
+          {
+            baseRelativePath: current.relativePath,
+            matcher: localIgnore,
+          },
+        ]
+      : current.ignoreContexts
+
+    for (const entry of entries) {
+      const relativePath = normalizeRelativePath(
+        current.relativePath
+          ? `${current.relativePath}/${entry.name}`
+          : entry.name,
+      )
+
+      if (entry.isDirectory()) {
+        if (isVcsMetadataDirectoryName(entry.name)) continue
+        if (isIgnoredBySearchContexts(ignoreContexts, relativePath, true)) continue
+        directories.push({
+          absolutePath: path.join(current.absolutePath, entry.name),
+          relativePath,
+          ignoreContexts,
+        })
+        continue
+      }
+
+      if (
+        !entry.isFile() ||
+        isIgnoredBySearchContexts(ignoreContexts, relativePath, false) ||
+        (searchQuery && !matchesFilesystemFallbackQuery(relativePath, searchQuery))
+      ) {
+        continue
+      }
+      files.push(relativePath)
+      if (files.length >= maxFiles) break
+    }
+  }
+
+  return files
+}
+
+function loadDirectorySearchIgnorePatterns(
+  directoryPath: string,
+  includeGitignore: boolean,
+): ReturnType<typeof ignore> | null {
+  const matcher = ignore()
+  let hasPatterns = false
+  const ignoreFiles = includeGitignore
+    ? ['.gitignore', '.ignore', '.rgignore']
+    : ['.ignore', '.rgignore']
+
+  for (const fileName of ignoreFiles) {
+    try {
+      matcher.add(fs.readFileSync(path.join(directoryPath, fileName), 'utf8'))
+      hasPatterns = true
+    } catch {
+      // Missing or unreadable ignore files should not break suggestions.
+    }
+  }
+
+  return hasPatterns ? matcher : null
+}
+
+function isIgnoredBySearchContexts(
+  contexts: SearchIgnoreContext[],
+  relativePath: string,
+  isDirectory: boolean,
+): boolean {
+  let ignored = false
+
+  for (const context of contexts) {
+    const scopedPath = context.baseRelativePath
+      ? path.posix.relative(context.baseRelativePath, relativePath)
+      : relativePath
+    if (!isRelativeInsideRoot(scopedPath)) continue
+
+    const result = context.matcher.test(
+      isDirectory ? `${scopedPath}/` : scopedPath,
+    )
+    if (result.ignored) ignored = true
+    if (result.unignored) ignored = false
+  }
+
+  return ignored
+}
+
+function matchesFilesystemFallbackQuery(
+  relativePath: string,
+  searchQuery: string,
+): boolean {
+  if (
+    scoreFilesystemEntry(
+      path.posix.basename(relativePath),
+      relativePath,
+      searchQuery,
+      false,
+    ) > 0
+  ) {
+    return true
+  }
+
+  let directoryPath = path.posix.dirname(relativePath)
+  while (directoryPath !== '.') {
+    if (
+      scoreFilesystemEntry(
+        path.posix.basename(directoryPath),
+        directoryPath,
+        searchQuery,
+        true,
+      ) > 0
+    ) {
+      return true
+    }
+    const parentPath = path.posix.dirname(directoryPath)
+    if (parentPath === directoryPath) break
+    directoryPath = parentPath
+  }
+
+  return false
 }
 
 function normalizeGitPath(filePath: string, repoRoot: string, rootPath: string): string | null {

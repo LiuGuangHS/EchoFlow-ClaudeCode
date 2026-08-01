@@ -5,11 +5,13 @@ import './theme/globals.css'
 import { initializeAppZoom } from './lib/appZoom'
 import { initializeTouchH5 } from './lib/touchH5'
 import { runDesktopPersistenceMigrations } from './lib/persistenceMigrations'
+import { getDesktopHost } from './lib/desktopHost'
+import { initializeLocale } from './i18n/locale'
 
 declare global {
   interface Window {
-    __CC_HAHA_BOOTSTRAPPED__?: boolean
-    __CC_HAHA_SHOW_STARTUP_ERROR__?: (reason: unknown) => void
+    __ECHOFLOW_BOOTSTRAPPED__?: boolean
+    __ECHOFLOW_SHOW_STARTUP_ERROR__?: (reason: unknown) => void
   }
 }
 
@@ -20,13 +22,24 @@ type DesktopBootstrapModules = [
   { initializeTheme: () => void },
 ]
 
+export function isPetWindowLocation(search = window.location.search): boolean {
+  return new URLSearchParams(search).get('petWindow') === '1'
+}
+
 function loadDesktopBootstrapModules() {
+  const appModule = isPetWindowLocation()
+    ? import('./features/pets/PetApp').then(({ PetApp }) => ({ App: PetApp }))
+    : import('./App')
   return Promise.all([
-    import('./App'),
+    appModule,
     import('./components/ErrorBoundary'),
     import('./lib/diagnosticsCapture'),
     import('./stores/uiStore'),
   ])
+}
+
+if (isPetWindowLocation()) {
+  document.documentElement.dataset.windowKind = 'pet'
 }
 
 export async function bootstrapDesktopApp(
@@ -34,6 +47,7 @@ export async function bootstrapDesktopApp(
   loadModules: () => Promise<DesktopBootstrapModules> = loadDesktopBootstrapModules,
 ) {
   try {
+    await initializeLocale(getDesktopHost().app)
     const [{ App }, { ErrorBoundary }, { installClientDiagnosticsCapture }, { initializeTheme }] = await loadModules()
     initializeTheme()
     installClientDiagnosticsCapture()
@@ -49,12 +63,12 @@ export async function bootstrapDesktopApp(
         </ErrorBoundary>
       </React.StrictMode>,
     )
-    window.__CC_HAHA_BOOTSTRAPPED__ = true
+    window.__ECHOFLOW_BOOTSTRAPPED__ = true
   } catch (error) {
     console.error('[desktop] Failed to bootstrap app', error)
     if (root) {
-      if (window.__CC_HAHA_SHOW_STARTUP_ERROR__) {
-        window.__CC_HAHA_SHOW_STARTUP_ERROR__(error)
+      if (window.__ECHOFLOW_SHOW_STARTUP_ERROR__) {
+        window.__ECHOFLOW_SHOW_STARTUP_ERROR__(error)
       } else {
         root.textContent = error instanceof Error ? error.message : String(error)
       }

@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { getProxyFetchOptions, shouldBypassProxy } from './proxy.js'
+import {
+  getAxiosProxyOptions,
+  getProxyFetchOptions,
+  shouldBypassProxy,
+} from './proxy.js'
 
 const originalEnv = {
   HTTP_PROXY: process.env.HTTP_PROXY,
@@ -21,12 +25,12 @@ describe('proxy environment handling', () => {
   afterEach(restoreEnv)
 
   test('bypasses proxy fetch options for loopback provider proxy targets', () => {
-    process.env.HTTP_PROXY = 'http://127.0.0.1:1181'
-    process.env.HTTPS_PROXY = 'http://127.0.0.1:1181'
-    process.env.NO_PROXY = 'localhost,127.0.0.1,::1'
     delete process.env.http_proxy
     delete process.env.https_proxy
     delete process.env.no_proxy
+    process.env.HTTP_PROXY = 'http://127.0.0.1:1181'
+    process.env.HTTPS_PROXY = 'http://127.0.0.1:1181'
+    process.env.NO_PROXY = 'localhost,127.0.0.1,::1'
 
     expect(shouldBypassProxy('http://127.0.0.1:3456/proxy/providers/p1/v1/messages')).toBe(true)
     expect(getProxyFetchOptions({
@@ -36,12 +40,12 @@ describe('proxy environment handling', () => {
   })
 
   test('bypasses bracketed IPv6 loopback targets for plain ::1 NO_PROXY entries', () => {
-    process.env.HTTP_PROXY = 'http://127.0.0.1:1181'
-    process.env.HTTPS_PROXY = 'http://127.0.0.1:1181'
-    process.env.NO_PROXY = '::1'
     delete process.env.http_proxy
     delete process.env.https_proxy
     delete process.env.no_proxy
+    process.env.HTTP_PROXY = 'http://127.0.0.1:1181'
+    process.env.HTTPS_PROXY = 'http://127.0.0.1:1181'
+    process.env.NO_PROXY = '::1'
 
     expect(shouldBypassProxy('http://[::1]:3456/api/status')).toBe(true)
     expect(getProxyFetchOptions({
@@ -62,17 +66,27 @@ describe('proxy environment handling', () => {
   })
 
   test('keeps proxy fetch options for external provider targets', () => {
-    process.env.HTTP_PROXY = 'http://127.0.0.1:1181'
-    process.env.HTTPS_PROXY = 'http://127.0.0.1:1181'
-    process.env.NO_PROXY = 'localhost,127.0.0.1,::1'
     delete process.env.http_proxy
     delete process.env.https_proxy
     delete process.env.no_proxy
+    process.env.HTTP_PROXY = 'http://127.0.0.1:1181'
+    process.env.HTTPS_PROXY = 'http://127.0.0.1:1181'
+    process.env.NO_PROXY = 'localhost,127.0.0.1,::1'
 
     expect(shouldBypassProxy('https://api.example.com/v1/messages')).toBe(false)
     expect(getProxyFetchOptions({
       forAnthropicAPI: true,
       targetUrl: 'https://api.example.com',
     }).proxy).toBe('http://127.0.0.1:1181')
+  })
+
+  test('distinguishes inherited, direct, and explicit Axios proxy routing', () => {
+    expect(getAxiosProxyOptions(undefined)).toEqual({})
+    expect(getAxiosProxyOptions(null)).toEqual({ proxy: false })
+
+    const explicit = getAxiosProxyOptions('http://user:password@127.0.0.1:17890')
+    expect(explicit.proxy).toBe(false)
+    expect(explicit.httpAgent).toBeDefined()
+    expect(explicit.httpsAgent).toBe(explicit.httpAgent)
   })
 })

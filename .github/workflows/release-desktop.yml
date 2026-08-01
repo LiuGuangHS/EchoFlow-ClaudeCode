@@ -89,13 +89,13 @@ jobs:
             arch: x64
           - platform: ubuntu-22.04
             target_triple: x86_64-unknown-linux-gnu
-            builder_args: --linux AppImage deb --x64
+            builder_args: --linux AppImage deb rpm --x64
             label: Linux-x64
             smoke_platform: linux
             arch: x64
           - platform: ubuntu-22.04-arm
             target_triple: aarch64-unknown-linux-gnu
-            builder_args: --linux AppImage deb --arm64
+            builder_args: --linux AppImage deb rpm --arm64
             label: Linux-ARM64
             smoke_platform: linux
             arch: arm64
@@ -140,12 +140,12 @@ jobs:
         if: contains(matrix.platform, 'ubuntu')
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential curl wget file libfuse2
+          sudo apt-get install -y build-essential curl wget file libfuse2 rpm
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version-file: package.json
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -168,12 +168,25 @@ jobs:
         working-directory: desktop
         run: bun run test:windows-storage-recovery
 
+      - name: Prepare bundled ripgrep
+        working-directory: desktop
+        env:
+          SIDECAR_TARGET_TRIPLE: ${{ matrix.target_triple }}
+        run: bun run prepare:ripgrep
+
       - name: Build sidecars
         working-directory: desktop
         env:
           BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-install-cache
           SIDECAR_TARGET_TRIPLE: ${{ matrix.target_triple }}
         run: bun run build:sidecars
+
+      - name: Verify compiled Windows sidecar startup
+        if: matrix.smoke_platform == 'windows' && matrix.arch == 'x64'
+        working-directory: desktop
+        env:
+          ECHOFLOW_COMPILED_SIDECAR_SMOKE_STARTS: '20'
+        run: bun run test:compiled-sidecar-smoke
 
       - name: Build renderer and Electron bundles
         working-directory: desktop
@@ -426,6 +439,7 @@ jobs:
               expected=(
                 "EchoFlow-Code-${APP_VERSION}-linux-x86_64.AppImage"
                 "EchoFlow-Code-${APP_VERSION}-linux-amd64.deb"
+                "EchoFlow-Code-${APP_VERSION}-linux-x86_64.rpm"
                 "latest-linux.yml"
               )
               ;;
@@ -433,6 +447,7 @@ jobs:
               expected=(
                 "EchoFlow-Code-${APP_VERSION}-linux-arm64.AppImage"
                 "EchoFlow-Code-${APP_VERSION}-linux-arm64.deb"
+                "EchoFlow-Code-${APP_VERSION}-linux-aarch64.rpm"
                 "latest-linux-arm64.yml"
               )
               ;;
@@ -491,6 +506,7 @@ jobs:
             desktop/build-artifacts/electron/*.exe
             desktop/build-artifacts/electron/*.AppImage
             desktop/build-artifacts/electron/*.deb
+            desktop/build-artifacts/electron/*.rpm
             desktop/build-artifacts/electron/*.blockmap
             desktop/build-artifacts/electron/*.yml
           if-no-files-found: error
@@ -539,7 +555,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version-file: package.json
 
       - name: Install root dependencies
         run: bun install
@@ -567,8 +583,10 @@ jobs:
             "EchoFlow-Code-${APP_VERSION}-mac-x64.zip.blockmap"
             "EchoFlow-Code-${APP_VERSION}-linux-x86_64.AppImage"
             "EchoFlow-Code-${APP_VERSION}-linux-amd64.deb"
+            "EchoFlow-Code-${APP_VERSION}-linux-x86_64.rpm"
             "EchoFlow-Code-${APP_VERSION}-linux-arm64.AppImage"
             "EchoFlow-Code-${APP_VERSION}-linux-arm64.deb"
+            "EchoFlow-Code-${APP_VERSION}-linux-aarch64.rpm"
             "EchoFlow-Code-${APP_VERSION}-win-x64.exe"
             "EchoFlow-Code-${APP_VERSION}-win-x64.exe.blockmap"
             "EchoFlow-Code-${APP_VERSION}-win-arm64.exe"
@@ -627,6 +645,7 @@ jobs:
             artifacts/release-assets/**/*.exe
             artifacts/release-assets/**/*.AppImage
             artifacts/release-assets/**/*.deb
+            artifacts/release-assets/**/*.rpm
             artifacts/release-assets/**/*.blockmap
             artifacts/update-metadata-standard/*.yml
             desktop/scripts/install-macos-unsigned.sh

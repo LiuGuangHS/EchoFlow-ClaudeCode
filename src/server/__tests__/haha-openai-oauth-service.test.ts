@@ -19,6 +19,11 @@ let tmpDir: string
 let originalConfigDir: string | undefined
 let service: HahaOpenAIOAuthService
 let callbackPort: number
+const originalSystemProxyUrl = process.env.ECHOFLOW_SYSTEM_PROXY_URL
+const originalHttpProxy = process.env.HTTP_PROXY
+const originalHttpsProxy = process.env.HTTPS_PROXY
+const originalLowerHttpProxy = process.env.http_proxy
+const originalLowerHttpsProxy = process.env.https_proxy
 
 async function getFreePort(): Promise<number> {
   return await new Promise((resolve, reject) => {
@@ -89,8 +94,18 @@ async function teardown() {
   } else {
     process.env.CLAUDE_CONFIG_DIR = originalConfigDir
   }
+  restoreEnv('ECHOFLOW_SYSTEM_PROXY_URL', originalSystemProxyUrl)
+  restoreEnv('HTTP_PROXY', originalHttpProxy)
+  restoreEnv('HTTPS_PROXY', originalHttpsProxy)
+  restoreEnv('http_proxy', originalLowerHttpProxy)
+  restoreEnv('https_proxy', originalLowerHttpsProxy)
   resetSettingsCache()
   await fs.rm(tmpDir, { recursive: true, force: true })
+}
+
+function restoreEnv(key: string, value: string | undefined): void {
+  if (value === undefined) delete process.env[key]
+  else process.env[key] = value
 }
 
 describe('HahaOpenAIOAuthService — file storage', () => {
@@ -298,6 +313,93 @@ describe('HahaOpenAIOAuthService — session management', () => {
         'http://127.0.0.1:7890',
       )
       expect(tokenRequestInit?.signal).toBeInstanceOf(AbortSignal)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  test('callback listener uses the captured system proxy instead of inherited proxy env', async () => {
+    const originalFetch = globalThis.fetch
+    process.env.ECHOFLOW_SYSTEM_PROXY_URL = 'http://127.0.0.1:7897'
+    process.env.HTTP_PROXY = 'http://stale-parent.example:8080'
+    process.env.HTTPS_PROXY = 'http://stale-parent.example:8080'
+    process.env.http_proxy = 'http://stale-parent.example:8080'
+    process.env.https_proxy = 'http://stale-parent.example:8080'
+    await fs.writeFile(
+      path.join(tmpDir, 'settings.json'),
+      JSON.stringify({
+        network: {
+          aiRequestTimeoutMs: 45_000,
+          proxy: { mode: 'system', url: '' },
+        },
+      }),
+      'utf-8',
+    )
+    resetSettingsCache()
+
+    const session = await service.startSession({ serverPort: 54321 })
+    let tokenRequestInit: RequestInit | undefined
+    globalThis.fetch = (async (_url, init) => {
+      tokenRequestInit = init
+      return Response.json({
+        access_token: 'openai-access-token',
+        refresh_token: 'openai-refresh-token',
+        expires_in: 3600,
+      })
+    }) as typeof fetch
+
+    try {
+      const res = await getLocalCallback(
+        `/auth/callback?code=auth-code&state=${session.state}`,
+      )
+
+      expect(res.status).toBe(200)
+      expect((tokenRequestInit as { proxy?: string } | undefined)?.proxy).toBe(
+        'http://127.0.0.1:7897',
+      )
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  test('callback listener disables inherited proxy env in direct mode', async () => {
+    const originalFetch = globalThis.fetch
+    process.env.ECHOFLOW_SYSTEM_PROXY_URL = 'http://127.0.0.1:7897'
+    process.env.HTTP_PROXY = 'http://stale-parent.example:8080'
+    process.env.HTTPS_PROXY = 'http://stale-parent.example:8080'
+    process.env.http_proxy = 'http://stale-parent.example:8080'
+    process.env.https_proxy = 'http://stale-parent.example:8080'
+    await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
+    await fs.writeFile(
+      path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'),
+      JSON.stringify({
+        network: {
+          aiRequestTimeoutMs: 45_000,
+          proxy: { mode: 'direct', url: '' },
+        },
+      }),
+      'utf-8',
+    )
+    resetSettingsCache()
+
+    const session = await service.startSession({ serverPort: 54321 })
+    let tokenRequestInit: RequestInit | undefined
+    globalThis.fetch = (async (_url, init) => {
+      tokenRequestInit = init
+      return Response.json({
+        access_token: 'openai-access-token',
+        refresh_token: 'openai-refresh-token',
+        expires_in: 3600,
+      })
+    }) as typeof fetch
+
+    try {
+      const res = await getLocalCallback(
+        `/auth/callback?code=auth-code&state=${session.state}`,
+      )
+
+      expect(res.status).toBe(200)
+      expect((tokenRequestInit as { proxy?: string } | undefined)?.proxy).toBeUndefined()
     } finally {
       globalThis.fetch = originalFetch
     }

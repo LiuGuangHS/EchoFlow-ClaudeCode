@@ -46,6 +46,11 @@ import { findGitRoot } from '../../utils/git.js'
 import { traceCaptureService, trimTraceCallPreviews } from '../services/traceCaptureService.js'
 import { getSubagentRunByTool } from '../services/subagentRunService.js'
 import { isValidPermissionMode } from '../services/settingsService.js'
+import { handleWorkspaceSearchRoute } from './workspaceSearch.js'
+import { localIndexCoordinator } from '../services/localIndex/coordinator.js'
+import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
+import { isPetAccessAuthorized } from '../localAccessAuth.js'
+import { PET_SESSION_LIMIT } from '../petAccessPolicy.js'
 
 const DEFAULT_GIT_INFO_COMMAND_TIMEOUT_MS = 3_000
 
@@ -74,7 +79,7 @@ export async function handleSessionsApi(
     if (!sessionId) {
       switch (req.method) {
         case 'GET':
-          return await listSessions(url)
+          return await listSessions(req, url)
         case 'POST':
           return await createSession(req)
         default:
@@ -190,7 +195,7 @@ export async function handleSessionsApi(
           { status: 405 }
         )
       }
-      return await getSessionInspection(sessionId, url)
+      return await getSessionInspection(req, sessionId, url)
     }
 
     if (subResource === 'workspace') {
@@ -226,7 +231,11 @@ export async function handleSessionsApi(
           { status: 404 }
         )
       }
-      const result = await getSubagentRunByTool(sessionId, toolUseId)
+      const result = await getSubagentRunByTool(
+        sessionId,
+        toolUseId,
+        url.searchParams.get('taskId') ?? undefined,
+      )
       if (!result) {
         throw ApiError.notFound(`SubAgent run not found: ${toolUseId}`)
       }
@@ -269,20 +278,44 @@ export async function handleSessionsApi(
 // Handler implementations
 // ============================================================================
 
-async function listSessions(url: URL): Promise<Response> {
+async function listSessions(req: Request, url: URL): Promise<Response> {
   const project = url.searchParams.get('project') || undefined
-  const limit = parseInt(url.searchParams.get('limit') || '20', 10)
+  const requestedLimit = parseInt(url.searchParams.get('limit') || '20', 10)
   const offset = parseInt(url.searchParams.get('offset') || '0', 10)
 
-  if (isNaN(limit) || limit < 0) {
+  if (isNaN(requestedLimit) || requestedLimit < 0) {
     throw ApiError.badRequest('Invalid limit parameter')
   }
   if (isNaN(offset) || offset < 0) {
     throw ApiError.badRequest('Invalid offset parameter')
   }
 
-  const result = await sessionService.listSessions({ project, limit, offset })
-  return Response.json(result)
+  const petAccess = isPetAccessAuthorized(req)
+  const limit = petAccess ? Math.min(requestedLimit, PET_SESSION_LIMIT) : requestedLimit
+  const result = await sessionService.listSessions({
+    ...(petAccess ? {} : { project }),
+    limit,
+    offset: petAccess ? 0 : offset,
+  })
+  if (petAccess) {
+    return Response.json({
+      sessions: result.sessions.map((session) => ({
+        id: session.id,
+        title: session.title,
+        createdAt: session.createdAt,
+        modifiedAt: session.modifiedAt,
+        messageCount: session.messageCount,
+        projectPath: '',
+        workDir: null,
+        workDirExists: false,
+      })),
+      total: result.sessions.length,
+    })
+  }
+  return Response.json({
+    ...result,
+    index: localIndexCoordinator.getPublicStatus(),
+  })
 }
 
 async function getSession(sessionId: string): Promise<Response> {
@@ -354,7 +387,7 @@ async function handleSessionWorkspaceRoute(
   url: URL,
   workspaceResource?: string,
 ): Promise<Response> {
-  await requireSessionWorkspace(sessionId)
+  const workDir = await requireSessionWorkspace(sessionId)
 
   switch (workspaceResource) {
     case 'status':
@@ -364,6 +397,8 @@ async function handleSessionWorkspaceRoute(
         sessionId,
         url.searchParams.get('path') || '',
       ))
+    case 'search':
+      return handleWorkspaceSearchRoute(workDir, url)
     case 'file':
       return await runWorkspaceRequest(() => workspaceService.readFile(
         sessionId,
@@ -558,25 +593,30 @@ function cleanupAdapterSessionMappings(sessionId: string): void {
 function mergeSessionSlashCommands(
   preferred: Array<{ name: string; description?: string; argumentHint?: string }>,
   fallback: SkillSlashCommand[],
-): Array<{ name: string; description: string; argumentHint?: string }> {
-  const merged = new Map<string, { name: string; description: string; argumentHint?: string }>()
+): SkillSlashCommand[] {
+  const fallbackByName = new Map(
+    fallback
+      .filter((command) => command.name)
+      .map((command) => [command.name, command] as const),
+  )
+  const merged = new Map<string, SkillSlashCommand>()
 
   for (const command of preferred) {
     if (!command.name) continue
+    const fallbackCommand = fallbackByName.get(command.name)
+    const argumentHint = command.argumentHint || fallbackCommand?.argumentHint
     merged.set(command.name, {
       name: command.name,
-      description: command.description || '',
-      ...(command.argumentHint ? { argumentHint: command.argumentHint } : {}),
+      description: command.description || fallbackCommand?.description || '',
+      ...(argumentHint ? { argumentHint } : {}),
+      kind: fallbackCommand?.kind ?? 'command',
+      ...(fallbackCommand?.source ? { source: fallbackCommand.source } : {}),
     })
   }
 
   for (const command of fallback) {
     if (!command.name || merged.has(command.name)) continue
-    merged.set(command.name, {
-      name: command.name,
-      description: command.description || '',
-      ...(command.argumentHint ? { argumentHint: command.argumentHint } : {}),
-    })
+    merged.set(command.name, command)
   }
 
   return [...merged.values()]
@@ -597,7 +637,7 @@ async function getSessionSlashCommands(sessionId: string): Promise<Response> {
   return Response.json({ commands: slashCommands })
 }
 
-async function getSessionInspection(sessionId: string, url: URL): Promise<Response> {
+async function getSessionInspection(req: Request, sessionId: string, url: URL): Promise<Response> {
   const includeContext = url.searchParams.get('includeContext') !== '0'
   const contextOnly = includeContext && url.searchParams.get('contextOnly') === '1'
   let transcriptSnapshot: Awaited<ReturnType<typeof sessionService.getInspectionTranscriptSnapshot>> | undefined
@@ -679,8 +719,10 @@ async function getSessionInspection(sessionId: string, url: URL): Promise<Respon
         sessionId,
         { subtype: 'get_context_usage', estimateOnly: true },
         20_000,
+        req.signal,
       )
     } catch (error) {
+      throwIfRequestAborted(req)
       errors.context = error instanceof Error ? error.message : String(error)
     }
     if (!response.context) {
@@ -692,16 +734,18 @@ async function getSessionInspection(sessionId: string, url: URL): Promise<Respon
   } else {
     const basicControlTimeoutMs = includeContext ? 10_000 : 4_000
     const [usageResult, contextResult, mcpResult] = await Promise.allSettled([
-      conversationService.requestControl(sessionId, { subtype: 'get_session_usage' }, basicControlTimeoutMs),
+      conversationService.requestControl(sessionId, { subtype: 'get_session_usage' }, basicControlTimeoutMs, req.signal),
       includeContext
         ? conversationService.requestControl(
             sessionId,
             { subtype: 'get_context_usage', estimateOnly: true },
             20_000,
+            req.signal,
           )
         : Promise.resolve(null),
-      conversationService.requestControl(sessionId, { subtype: 'mcp_status' }, basicControlTimeoutMs),
+      conversationService.requestControl(sessionId, { subtype: 'mcp_status' }, basicControlTimeoutMs, req.signal),
     ])
+    throwIfRequestAborted(req)
 
     if (usageResult.status === 'fulfilled') {
       const transcriptUsage = (await getTranscriptSnapshot())?.usage ?? null
@@ -743,6 +787,12 @@ async function getSessionInspection(sessionId: string, url: URL): Promise<Respon
   return Response.json(response)
 }
 
+function throwIfRequestAborted(req: Request): void {
+  if (!req.signal.aborted) return
+  if (req.signal.reason instanceof Error) throw req.signal.reason
+  throw new DOMException('The operation was aborted', 'AbortError')
+}
+
 function usageTokenTotal(usage: unknown): number {
   if (!usage || typeof usage !== 'object') return 0
   const record = usage as Record<string, unknown>
@@ -770,7 +820,7 @@ function sameResolvedPath(left: string | null | undefined, right: string | null 
 }
 
 function getGitInfoCommandTimeoutMs(): number {
-  const raw = process.env.CC_HAHA_GIT_INFO_TIMEOUT_MS
+  const raw = process.env.ECHOFLOW_GIT_INFO_TIMEOUT_MS
   if (!raw) return DEFAULT_GIT_INFO_COMMAND_TIMEOUT_MS
   const parsed = Number(raw)
   return Number.isFinite(parsed) && parsed > 0
@@ -1053,7 +1103,11 @@ type RecentProjectEntry = {
 }
 
 // In-memory cache for recent projects (TTL: 30s)
-let recentProjectsCache: { projects: RecentProjectEntry[]; timestamp: number } | null = null
+let recentProjectsCache: {
+  scope: string
+  projects: RecentProjectEntry[]
+  timestamp: number
+} | null = null
 const RECENT_PROJECTS_CACHE_TTL = 30_000
 const DESKTOP_WORKTREE_MARKER = '/.claude/worktrees/'
 
@@ -1071,15 +1125,22 @@ function isDesktopWorktreeBranchName(branch: string | null): boolean {
 
 async function getRecentProjects(url: URL): Promise<Response> {
   const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '10', 10) || 10, 1), 500)
-  const sessionScanLimit = Math.min(Math.max(limit * 8, 50), 200)
+  const sessionScanLimit = Math.min(Math.max(limit * 16, 100), 500)
+  const scope = path.resolve(getClaudeConfigHomeDir())
 
   // Return cached response if fresh
-  if (recentProjectsCache && Date.now() - recentProjectsCache.timestamp < RECENT_PROJECTS_CACHE_TTL) {
+  if (
+    recentProjectsCache?.scope === scope &&
+    Date.now() - recentProjectsCache.timestamp < RECENT_PROJECTS_CACHE_TTL
+  ) {
     return Response.json({ projects: recentProjectsCache.projects.slice(0, limit) })
   }
 
   const { sessions } = await sessionService.listSessions({ limit: sessionScanLimit })
-  const validSessions = sessions.filter((session) => session.workDirExists && session.workDir)
+  const validSessions = sessions.filter((session) => (
+    session.workspaceState !== 'missing' &&
+    (session.projectRoot || session.workDir)
+  ))
 
   // First pass: group by logical project root so worktrees stay under the same project.
   // Optimization: prefer s.projectRoot (already resolved by listSessions) and only fall back
@@ -1178,6 +1239,6 @@ async function getRecentProjects(url: URL): Promise<Response> {
   // Sort by most recent
   projects.sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt))
 
-  recentProjectsCache = { projects, timestamp: Date.now() }
+  recentProjectsCache = { scope, projects, timestamp: Date.now() }
   return Response.json({ projects: projects.slice(0, limit) })
 }

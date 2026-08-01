@@ -6,8 +6,8 @@ const EXPLICIT_MODES = new Set<SidecarMode>(['server', 'cli', 'adapters'])
 const DESKTOP_CLI_NAMES = new Set<string>([
   'echoflow-code',
   'echoflow-code.exe',
-  'claude-haha',
-  'claude-haha.exe',
+  'echoflow-code',
+  'echoflow-code.exe',
 ])
 
 type SidecarInvocation = {

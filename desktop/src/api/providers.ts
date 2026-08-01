@@ -7,14 +7,16 @@ import type {
   UpdateProviderInput,
   TestProviderConfigInput,
   ProviderTestResult,
+  CcSwitchScanResult,
+  CcSwitchImportResult,
+  ProviderModelsInput,
+  ProviderModelsResult,
 } from '../types/provider'
-import type { ProviderPreset } from '../types/providerPreset'
 
 type ProvidersResponse = { providers: SavedProvider[]; activeId: string | null }
 type ProvidersListResponse = ProvidersResponse & { providerOrder?: string[] }
 type ProvidersReorderResponse = { providers: SavedProvider[]; providerOrder?: string[] }
 type ProviderResponse = { provider: SavedProvider }
-type PresetsResponse = { presets: ProviderPreset[] }
 type TestResultResponse = { result: ProviderTestResult }
 type AuthStatusResponse = {
   hasAuth: boolean
@@ -25,10 +27,6 @@ type AuthStatusResponse = {
 export const providersApi = {
   list() {
     return api.get<ProvidersListResponse>('/api/providers')
-  },
-
-  presets() {
-    return api.get<PresetsResponse>('/api/providers/presets')
   },
 
   authStatus() {
@@ -67,11 +65,27 @@ export const providersApi = {
     return api.put<ProvidersReorderResponse>('/api/providers/reorder', { orderedIds })
   },
 
-  test(id: string, overrides?: { baseUrl?: string; modelId?: string; apiFormat?: string; authStrategy?: string }) {
+  test(id: string, overrides?: { modelId?: string }) {
     return api.post<TestResultResponse>(`/api/providers/${id}/test`, overrides)
   },
 
   testConfig(input: TestProviderConfigInput) {
     return api.post<TestResultResponse>('/api/providers/test', input)
+  },
+
+  scanCcSwitch() {
+    return api.get<CcSwitchScanResult>('/api/providers/cc-switch/scan')
+  },
+
+  importCcSwitch(sourceIds: string[]) {
+    return api.post<CcSwitchImportResult>('/api/providers/cc-switch/import', { sourceIds })
+  },
+
+  /**
+   * Upstream failures are reported as HTTP 200 with `ok: false`, so this only
+   * rejects when our own server is unreachable.
+   */
+  fetchModels(input: ProviderModelsInput) {
+    return api.post<ProviderModelsResult>('/api/providers/models', input)
   },
 }

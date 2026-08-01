@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type HTMLAttributes } from 'react'
 import { Sidebar } from './Sidebar'
 import { ContentRouter } from './ContentRouter'
-import { ToastContainer } from '../shared/Toast'
-import { UpdateChecker } from '../shared/UpdateChecker'
+import { ToastContainer } from '@/components/layout/Toast'
+import { UpdateChecker } from '@/components/layout/UpdateChecker'
+import { StatusDot } from '@/components/ui/Badge'
+import { IconButton } from '@/components/ui/IconButton'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useUIStore, type SettingsTab } from '../../stores/uiStore'
 import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts'
 import { useElectronWindowDragRegions } from '../../hooks/useElectronWindowDragRegions'
+import { useSidebarResize } from '../../hooks/useSidebarResize'
 import {
   H5ConnectionRequiredError,
   initializeDesktopServerUrl,
@@ -14,6 +17,8 @@ import {
   isH5ConnectionRequiredError,
 } from '../../lib/desktopRuntime'
 import { getDesktopHost } from '../../lib/desktopHost'
+import { desktopUiPreferencesApi } from '../../api/desktopUiPreferences'
+import { openDesktopNotificationTarget } from '../../lib/desktopNotificationNavigation'
 import { TabBar } from './TabBar'
 import { StartupErrorView } from './StartupErrorView'
 import { useTabStore, SETTINGS_TAB_ID } from '../../stores/tabStore'
@@ -24,6 +29,7 @@ import { H5ConnectionView } from './H5ConnectionView'
 import { useMobileViewport } from '../../hooks/useMobileViewport'
 import type { Tab } from '../../stores/tabStore'
 import { getTraceLaunchRequest } from '../../lib/traceLaunch'
+import { openTraceDetail } from '../../lib/traceNavigation'
 import { TraceList } from '../../pages/TraceList'
 import { TraceSession } from '../../pages/TraceSession'
 
@@ -48,11 +54,14 @@ export function AppShell() {
   const tabs = useTabStore((s) => s.tabs)
   const activeTabId = useTabStore((s) => s.activeTabId)
   const setActiveTab = useTabStore((s) => s.setActiveTab)
-  const activeSession = useSessionStore((s) =>
-    activeTabId ? s.sessions.find((session) => session.id === activeTabId) ?? null : null,
-  )
+  const sessions = useSessionStore((s) => s.sessions)
+  const activeSession = activeTabId
+    ? sessions.find((session) => session.id === activeTabId) ?? null
+    : null
   const wasMobileShellRef = useRef(false)
+  const sidebarWidth = useUIStore((s) => s.sidebarWidth)
   const effectiveSidebarOpen = isMobileShell ? mobileSidebarOpen : sidebarOpen
+  const sidebarResize = useSidebarResize(!isMobileShell)
   const activeTab = tabs.find((tab) => tab.sessionId === activeTabId)
   const isActiveChatTab = isChatTab(activeTab)
   const mobileSessionTitle = activeSession?.title || activeTab?.title || t('session.untitled')
@@ -68,6 +77,27 @@ export function AppShell() {
     isMobileShell && !effectiveSidebarOpen
       ? { 'aria-hidden': true, inert: '' }
       : {}
+
+  useEffect(() => {
+    const sessionStore = useSessionStore.getState()
+    if (activeSession) {
+      if (sessionStore.activeSessionId !== activeSession.id) {
+        sessionStore.setActiveSession(activeSession.id)
+      }
+      return
+    }
+    if (sessionStore.activeSessionId || activeTab?.type !== 'settings') return
+
+    const openSessionIds = new Set(
+      tabs.filter((tab) => tab.type === 'session').map((tab) => tab.sessionId),
+    )
+    // SessionStore keeps sessions most-recent-first; intersecting with restored
+    // tabs excludes Settings and synthetic teammate tabs.
+    const fallbackSession = sessions.find((session) => openSessionIds.has(session.id))
+    if (fallbackSession) {
+      sessionStore.setActiveSession(fallbackSession.id)
+    }
+  }, [activeSession, activeTab?.type, sessions, tabs])
 
   useEffect(() => {
     let cancelled = false
@@ -87,15 +117,27 @@ export function AppShell() {
           setReady(true)
         }
 
+        if (desktopRuntime && !traceLaunch.windowMode) {
+          void desktopUiPreferencesApi.getPreferences()
+            .then(({ preferences }) => {
+              if (preferences.pet.enabled) return getDesktopHost().pets.show()
+            })
+            .catch(() => undefined)
+        }
+
         void (async () => {
           if (traceLaunch.windowMode) return
 
           await useTabStore.getState().restoreTabs()
           if (cancelled) return
           if (traceLaunch.sessionId) {
-            useTabStore.getState().openTraceTab(
+            // A deep link arrives before the session list is in the store often
+            // enough that the id prefix is the only title we can guarantee.
+            const launchedSession = useSessionStore.getState().sessions
+              .find((session) => session.id === traceLaunch.sessionId)
+            openTraceDetail(
               traceLaunch.sessionId,
-              `Trace: ${traceLaunch.sessionId.slice(0, 8)}`,
+              launchedSession?.title || traceLaunch.sessionId.slice(0, 8),
             )
             return
           }
@@ -142,6 +184,31 @@ export function AppShell() {
       .catch(() => {})
     return () => { unlisten?.() }
   }, [])
+
+  useEffect(() => {
+    const host = getDesktopHost()
+    if (!host.isDesktop || !host.pets) return
+    let unlisten: (() => void) | undefined
+    let disposed = false
+    host.pets.onNavigateSession((sessionId) => {
+      openDesktopNotificationTarget({ type: 'session', sessionId })
+    })
+      .then((fn) => {
+        if (disposed) fn()
+        else unlisten = fn
+      })
+      .catch(() => {})
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!ready || !desktopRuntime || !isActiveChatTab || !activeTabId) return
+    void desktopUiPreferencesApi.updatePetPreferences({ lastSessionId: activeTabId })
+      .catch(() => undefined)
+  }, [activeTabId, desktopRuntime, isActiveChatTab, ready])
 
   useKeyboardShortcuts()
   useElectronWindowDragRegions()
@@ -226,13 +293,14 @@ export function AppShell() {
         <button
           type="button"
           data-testid="sidebar-backdrop"
-          className="app-shell-backdrop fixed inset-0 z-40 border-0 p-0"
+          className="app-shell-backdrop fixed inset-0 z-[var(--z-scrim)] border-0 p-0"
           aria-label={t('sidebar.collapse')}
           onClick={() => setEffectiveSidebarOpen(false)}
         />
       ) : null}
       <div
         id="sidebar-shell"
+        ref={sidebarResize.shellRef}
         data-testid="sidebar-shell"
         data-state={effectiveSidebarOpen ? 'open' : 'closed'}
         data-mobile={isMobileShell ? 'true' : 'false'}
@@ -241,6 +309,18 @@ export function AppShell() {
       >
         {!isMobileShell || effectiveSidebarOpen ? (
           <Sidebar isMobile={isMobileShell} onRequestClose={() => setEffectiveSidebarOpen(false)} />
+        ) : null}
+        {!isMobileShell ? (
+          <div
+            data-testid="sidebar-resize-handle"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label={t('sidebar.resize')}
+            aria-valuenow={effectiveSidebarOpen ? sidebarWidth : 0}
+            tabIndex={0}
+            className="sidebar-resize-handle"
+            {...sidebarResize.handleProps}
+          />
         ) : null}
       </div>
       <main
@@ -253,19 +333,15 @@ export function AppShell() {
             data-testid="mobile-session-header"
             className="flex shrink-0 items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2"
           >
-            <button
-              type="button"
+            <IconButton
               data-testid="mobile-sidebar-toggle"
+              icon={effectiveSidebarOpen ? 'close' : 'menu'}
+              label={effectiveSidebarOpen ? t('sidebar.collapse') : t('sidebar.expand')}
+              onClick={toggleEffectiveSidebar}
+              size="2xl"
               aria-controls="sidebar-shell"
               aria-expanded={effectiveSidebarOpen}
-              aria-label={effectiveSidebarOpen ? t('sidebar.collapse') : t('sidebar.expand')}
-              onClick={toggleEffectiveSidebar}
-              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]"
-            >
-              <span className="material-symbols-outlined text-[20px]">
-                {effectiveSidebarOpen ? 'close' : 'menu'}
-              </span>
-            </button>
+            />
             {isActiveChatTab ? (
               <div className="min-w-0 flex-1">
                 <h1 className="truncate text-[15px] font-bold leading-tight text-[var(--color-text-primary)]">
@@ -274,7 +350,7 @@ export function AppShell() {
                 <div className="mt-0.5 flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[10px] font-medium text-[var(--color-text-tertiary)]">
                   {activeTab?.status === 'running' ? (
                     <span className="flex shrink-0 items-center gap-1 text-[var(--color-text-secondary)]">
-                      <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-success)] animate-pulse-dot" />
+                      <StatusDot tone="success" pulse />
                       {t('session.active')}
                     </span>
                   ) : null}

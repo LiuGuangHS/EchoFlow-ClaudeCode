@@ -62,7 +62,7 @@ mock.module('../sideQuery.js', () => ({
 const { hasPermissionsToUseTool } = await import('./permissions.js')
 
 beforeAll(async () => {
-  configDir = await mkdtemp(join(tmpdir(), 'cc-haha-auto-mode-'))
+  configDir = await mkdtemp(join(tmpdir(), 'echoflow-code-auto-mode-'))
   process.env.CLAUDE_CONFIG_DIR = configDir
 })
 

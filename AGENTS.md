@@ -1,6 +1,13 @@
 # Repository Agent Contract
 
-This file is the operating contract for AI coding agents and human contributors working in this repository. Treat it as executable guidance: inspect the real code, make narrow changes, verify the affected behavior, and leave a handoff that another maintainer can trust.
+This file is the complete and authoritative operating contract for AI coding agents and human contributors working in this repository. Root `CLAUDE.md` is a short, session-loaded summary and must point here instead of duplicating detailed rules. If the two files diverge, this file wins.
+
+Treat this contract as executable guidance: inspect the real code, make narrow changes, verify the affected behavior, and leave a handoff that another maintainer can trust.
+
+## Language Policy
+- Repository-level agent instructions and operational rules are written in English.
+- Respond to the user in Chinese by default.
+- Keep commands, paths, identifiers, code symbols, and raw errors unchanged.
 
 ## Agent Operating Rules
 - Work autonomously on clear, reversible tasks. Do not stop to ask whether to proceed with obvious next steps; ask only for destructive actions, missing authority, or genuinely branching product decisions.
@@ -10,6 +17,29 @@ This file is the operating contract for AI coding agents and human contributors 
 - Prefer existing utilities, stores, services, command patterns, and test harnesses over new abstractions. Do not add dependencies unless the task explicitly requires them.
 - For cleanup/refactor/deslop work, write the cleanup plan first, lock existing behavior with regression tests when it is not already protected, then make one smell-focused pass at a time.
 - Do not commit generated artifacts: `artifacts/quality-runs/`, `artifacts/coverage/`, `.omx/`, `node_modules/`, `desktop/node_modules/`, `adapters/node_modules/`, `desktop/src-tauri/target/`, or local build outputs.
+
+## ECC-First Development
+ECC is the default toolset. Prefer `/ecc:plan`, `@code-reviewer`, `@architect`, `/ecc:code-review`, `/ecc:quality-gate`, and `/ecc:build-fix` over recreating their planning, review, validation, or repair workflows. ECC must enforce the fork policy below; upstream work follows the full safe-sync workflow.
+
+## Fork Identity & Provider Policy
+- Public/release brand: `EchoFlow Code`; executable/docs: `echoflow-code`.
+- When touching fork-owned identifiers, convert `cc-haha` → `echoflow`, `Claude-Code-Haha` → `EchoFlow-Code`, and `CC_HAHA_*` → `ECHOFLOW_*`. Retain historical names only for explicit compatibility, attribution, migration fixtures, or supported variables.
+- Retain upstream `Claude Code`, `Claude CLI`, `claude-code-*`, and `CLAUDE_CODE_*` terminology for upstream/runtime compatibility.
+- Fork calls to action and service links use EchoFlow surfaces, including `https://code.echoflow.cn/` and `https://api.echoflow.cn/`.
+- `src/server/config/providerPresets.json` contains only official vendor APIs, official local integrations, EchoFlow/Qingyun API, and custom. Do not automatically add third-party relay, sponsor/referral gateway, or promotional provider presets; reject (`jiekouai`, `shengsuanyun`, `teamorouter`) and referral URLs. Official vendor APIs and official OAuth integrations, including Grok Official, may be synchronized from upstream; private gateways use custom.
+
+## Safe Upstream Sync Workflow
+These are repository policies, not guarantees enforced by Git. Use them for every upstream merge.
+
+1. Start from a clean `main` worktree and inspect the configured remotes.
+2. Fetch `origin` normally. Fetch upstream branches without tags using `git fetch upstream +refs/heads/*:refs/remotes/upstream/* --prune`; upstream release tags can share names with fork release tags.
+3. Compare `main...origin/main` and `main...upstream/main` before merging.
+4. Merge upstream with a merge commit; do not rebase public `main`.
+5. Run `/ecc:plan "合并上游，保留修复，替换品牌名"`, use `@code-reviewer` on conflicted and high-risk files, and use `@architect` for provider-policy decisions.
+6. Resolve file contents intentionally; never apply blanket `--ours` or `--theirs`. Preserve the fork identity and provider policy, sponsor-free public docs, persistence compatibility, Electron release flow, and quality gates.
+7. Conflict analysis and worktree edits may be automated, but `git add` and `git commit` require explicit developer confirmation. Never stage or commit a conflict resolution automatically.
+8. After writing conflict resolutions, run `/ecc:code-review` and `/ecc:quality-gate` before asking the developer to stage or commit. If a build or type check fails, use `/ecc:build-fix`, rerun the narrow failed check, and run `bun run verify` before claiming the merge push-ready.
+9. Push `main` before or together with release tags, then verify the remote branch and tag targets.
 
 ## Engineering Behavior Guardrails
 These rules are adapted from Karpathy-style coding-agent guidelines. They bias toward caution and simplicity, but do not override the autonomy rule for clear, reversible work.
@@ -25,13 +55,14 @@ These rules are adapted from Karpathy-style coding-agent guidelines. They bias t
 ## Project Structure & Module Organization
 This is a Bun-based Coding Agent product with a CLI, local server, desktop app, IM adapters, docs, and release automation.
 
-- `bin/echoflow-code` is the executable entrypoint; `bun run start` and `./bin/echoflow-code` run the CLI locally. `bin/claude-haha` is a legacy compatibility shim only; do not use it in new docs or scripts.
+- `bin/echoflow-code` is the executable entrypoint; `bun run start` and `./bin/echoflow-code` run the CLI locally.
 - `src/` contains the CLI/runtime surface: `entrypoints/` for startup paths, `screens/` and `components/` for the Ink TUI, `commands/` for slash commands, `services/` for API/MCP/OAuth logic, `tools/` for agent tools, `utils/` for shared runtime helpers, and `server/` for the local API/WebSocket service.
 - `desktop/` contains the desktop product: React UI in `desktop/src/`, API clients in `desktop/src/api/`, shared UI in `desktop/src/components/`, Electron host code in `desktop/electron/`, legacy/shared assets in `desktop/src-tauri/`, and desktop build scripts in `desktop/scripts/`.
 - Desktop is Electron-first. `desktop/src-tauri/` is retained for icons, sidecar binaries, preview-agent resources, and compatibility assets. Do not treat `desktop/src-tauri/tauri.conf.json` as the release source of truth unless a task explicitly revives Tauri packaging.
 - `adapters/` contains IM adapter sidecars for Telegram, Feishu, WeChat, DingTalk, and shared adapter utilities.
-- `docs/` and `docs/en/` are VitePress documentation. Root screenshots and `docs/images/` are reference assets unless a task explicitly updates docs media.
-- `release-notes/`, `scripts/release.ts`, and `.github/workflows/` define release and CI behavior. Treat workflow changes as product changes because they alter what future agents and contributors can safely ship.
+- `site/` is the React documentation site and its build tooling. `docs/` and `docs/en/` are its Chinese and English Markdown content sources; keep counterparts aligned when both exist. Root screenshots and `docs/images/` are reference assets unless a task explicitly updates docs media.
+- `.github/workflows/`, `scripts/pr/`, and `scripts/quality-gate/` define CI routing and quality policy.
+- `release-notes/`, `scripts/release.ts`, and `.github/workflows/release-desktop.yml` define release behavior. Treat workflow changes as product changes because they alter what future agents and contributors can safely ship.
 
 ## Build, Test, and Development Commands
 Install root dependencies with `bun install`. Install desktop dependencies in `desktop/` when touching desktop UI/native code, and adapter dependencies in `adapters/` when touching IM adapters.
@@ -46,7 +77,7 @@ Install root dependencies with `bun install`. Install desktop dependencies in `d
 - `cd desktop && bun run lint`: run desktop TypeScript no-emit checks.
 - `cd desktop && bun run build:windows-x64`: package the Windows x64 Electron app from PowerShell; requires Bun/Bunx and Visual Studio 2022 Build Tools with the Desktop development with C++ workload.
 - `cd adapters && bun run test`: run all adapter tests; use `test:telegram`, `test:feishu`, `test:wechat`, or `test:dingtalk` for focused adapter work.
-- `bun run docs:dev` / `bun run docs:build`: preview or build the VitePress docs.
+- `bun run docs:dev` / `bun run docs:build`: preview or build the React/Vite documentation site.
 - `bun run check:impact`: print the changed-area impact report and recommended local checks.
 
 ## Verification Routing
@@ -89,12 +120,12 @@ Every feature, bugfix, and behavior change must ship with proof that matches the
 - Any change to local JSON, `localStorage`, or app config persistence formats must ship with a forward migration, an old-fixture regression test, and a persistence upgrade gate.
 - Run `bun run check:persistence-upgrade` for storage-shape changes. The change is blocked until migration tests, old fixtures, backup behavior, and unknown-field preservation pass.
 - `~/.claude/settings.json` is user-owned shared state: preserve unknown fields on read/write, merge additively, and never write a repo-owned global `schemaVersion` into it.
-- Desktop Doctor and any automatic repair path must be deny-by-default. One-click repair may only mutate allowlisted, regenerable desktop UI state such as `cc-haha-*` `localStorage` keys or native window state.
-- Public desktop and release branding is `EchoFlow Code`; the local executable is `echoflow-code`. Keep official upstream terminology such as `Claude Code`, `Claude CLI`, `claude-code-*`, and `CLAUDE_CODE_*` when it refers to the upstream product, compatibility contracts, or package/runtime semantics. Internal persistence paths such as `cc-haha-*` and `~/.claude/cc-haha/**` are legacy storage surfaces; do not rename them without a migration task, forward/backward compatibility tests, and explicit user-data preservation.
-- When merging upstream, preserve EchoFlow legacy migration paths by default unless the user explicitly says the migration window is closed. Official vendor APIs and official OAuth integrations, including Grok Official, may be synchronized from upstream. Do not automatically add third-party relay, sponsor/referral gateway, or promotional provider presets without explicit user approval; keep EchoFlowAPI as the default provider surface.
+- Desktop Doctor and any automatic repair path must be deny-by-default. One-click repair may only mutate allowlisted, regenerable desktop UI state such as `echoflow-code-*` `localStorage` keys or native window state.
+- `echoflow-code-*` `localStorage` keys and the `echoflow-code` internal directory are active persistence contracts. The resolved config root comes from `CLAUDE_CONFIG_DIR` or the platform data directory; `~/.claude/echoflow-code/**` remains a supported legacy migration source. Do not rename any of these surfaces without a migration task, forward/backward compatibility tests, and explicit user-data preservation.
+- When merging upstream, preserve EchoFlow migration sources by default unless the user explicitly says the migration window is closed.
 - Windows AppUserModelID must stay equal to `desktop/package.json` `build.appId`; it controls toast attribution and taskbar identity. Branding changes must update Electron identity tests.
 - Doctor and repair flows must never mutate chat transcripts, model/provider config, Skills, MCP config, plugin state, IM bindings, adapter sessions, OAuth tokens, or team/session records unless a future task explicitly adds a reviewed, backup-first manual repair flow.
-- Protected files include `~/.claude/projects/**/*.jsonl`, `~/.claude/settings.json`, project `.claude/settings.json`, `~/.claude/cc-haha/providers.json`, `~/.claude/cc-haha/settings.json`, `~/.claude/adapters.json`, `~/.claude/adapter-sessions.json`, `~/.claude/skills`, project `.claude/skills`, `.mcp.json`, managed MCP config, `~/.claude/plugins/**`, `~/.claude/teams/**`, and `~/.claude/cc-haha/*oauth*.json`. Diagnose these paths only with redaction by default.
+- Protected files include `~/.claude/projects/**/*.jsonl`, `~/.claude/settings.json`, project `.claude/settings.json`, providers/settings/OAuth files under the resolved EchoFlow config root or legacy `~/.claude/echoflow-code/`, `~/.claude/adapters.json`, `~/.claude/adapter-sessions.json`, `~/.claude/skills`, project `.claude/skills`, `.mcp.json`, managed MCP config, `~/.claude/plugins/**`, and `~/.claude/teams/**`. Diagnose these paths only with redaction by default.
 - If a persistence shape cannot be upgraded in place, the implementation is blocked until the upgrade path is explicit and tested.
 
 ## Desktop & UX Expectations
@@ -130,9 +161,9 @@ Every feature, bugfix, and behavior change must ship with proof that matches the
 - For Windows installer packaging, use `desktop/scripts/build-windows-x64.ps1` through `cd desktop && bun run build:windows-x64`; use `SKIP_INSTALL=1` only when dependencies are already installed, and `REBUILD_NATIVE=1` when Electron native dependencies such as `node-pty` need rebuilding.
 
 ## Docs Workflow Notes
-- The docs workflow `.github/workflows/deploy-docs.yml` uses `npm ci`, not Bun. When root `package.json` dependencies change, keep `package-lock.json` in the same commit or the docs build will fail.
+- The docs workflow `.github/workflows/deploy-docs.yml` installs from `site/package-lock.json` with `npm --prefix site ci`, builds the React site with `npm --prefix site run build`, and uploads `site/dist`. Keep `site/package.json` and `site/package-lock.json` aligned.
 - The docs workflow currently runs on Node 22. Avoid reintroducing older Node assumptions without checking dependency engine requirements.
-- Because `bun run check:docs` can rebuild root `node_modules`, run docs checks sequentially rather than in parallel with `verify`, `quality:pr`, `check:native`, or other commands that rely on the same dependency tree.
+- `bun run check:docs` operates on the isolated `site/` dependency tree. It may run alongside root Bun checks when machine resources allow, but avoid overlapping dependency installation commands within `site/`.
 
 ## Coding Style & Naming Conventions
 - Use TypeScript with 2-space indentation, ESM imports, and no semicolons.
@@ -153,3 +184,9 @@ Every feature, bugfix, and behavior change must ship with proof that matches the
   - `Tested:` and `Not-tested:` for verification evidence and gaps.
 - PRs should explain user-visible impact, link related issues, list verification steps, include screenshots for desktop/docs UI changes, and call out follow-up work or known gaps.
 - A PR description must include changed files, tests added or updated, coverage report path, E2E/live evidence or blocker, pass/fail/skip counts from the quality report when available, and remaining risk/rollback notes. A normal local agent handoff may be lighter: summarize changed files, focused tests/checks run, skipped full gates, and remaining risk/rollback notes.
+
+## Deeper Guides
+- Contributor workflow and quality lanes: `CONTRIBUTING.md` and `docs/internals/contributing.md`
+- Package scripts and path routing: `package.json` and `scripts/pr/change-policy.ts`
+- PR evidence contract: `.github/pull_request_template.md`
+- Desktop release and auto-update runbook: `docs/desktop/10-release-auto-update.md`

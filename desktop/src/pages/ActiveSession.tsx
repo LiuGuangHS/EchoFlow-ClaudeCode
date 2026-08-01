@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { RefObject } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { ReactElement, RefObject } from 'react'
 import { Target } from 'lucide-react'
 import {
   SCHEDULED_TAB_ID,
@@ -22,6 +22,9 @@ import {
   useTerminalPanelStore,
 } from '../stores/terminalPanelStore'
 import { useTranslation } from '../i18n'
+import { Button } from '@/components/ui/Button'
+import { LoadingState } from '@/components/ui/LoadingState'
+import { BrandSeal } from '@/components/composite/BrandSeal'
 import { MessageList } from '../components/chat/MessageList'
 import { ChatInput } from '../components/chat/ChatInput'
 import { ComputerUsePermissionModal } from '../components/chat/ComputerUsePermissionModal'
@@ -35,12 +38,12 @@ import type { TeamMember } from '../types/team'
 import { useMobileViewport } from '../hooks/useMobileViewport'
 import { isDesktopRuntime } from '../lib/desktopRuntime'
 import { formatTokenCount } from '../lib/formatTokenCount'
-import { publicAssetPath } from '../lib/publicAsset'
 import {
   createBackgroundTaskDismissKey,
   hasRunningBackgroundTasks as hasAnyRunningBackgroundTasks,
 } from '../lib/backgroundTasks'
 import { useActivityPanelStore } from '../stores/activityPanelStore'
+import { getSessionBrowsablePath, getSessionWorkspaceState } from '../lib/sessionWorkspace'
 
 const TASK_POLL_INTERVAL_MS = 1000
 const WORKSPACE_RESIZE_STEP = 32
@@ -70,9 +73,7 @@ function getTokenUsageTotal(usage: TokenUsage): number {
 }
 
 function getSessionTerminalCwd(session: SessionListItem | undefined) {
-  if (!session) return undefined
-  if (session.workDir && session.workDirExists !== false) return session.workDir
-  return session.projectPath || undefined
+  return getSessionBrowsablePath(session)
 }
 
 function ActiveGoalStrip({
@@ -105,7 +106,7 @@ function ActiveGoalStrip({
     <div
       data-testid="active-goal-strip"
       className={[
-        'mt-2 flex max-w-full items-center gap-2 rounded-[8px] border border-[var(--color-memory-border)] bg-[var(--color-memory-surface)] px-2.5 py-1.5',
+        'mt-2 flex max-w-full items-center gap-2 rounded-[var(--radius-sm)] border border-[var(--color-memory-border)] bg-[var(--color-memory-surface)] px-2.5 py-1.5',
         compact ? 'text-[11px]' : 'text-[12px]',
       ].join(' ')}
     >
@@ -400,6 +401,7 @@ export function ActiveSession() {
       ? sessionState.historyError || t('session.historyLoadFailed')
       : null
   const visibleMessageCount = messages.length > 0 ? messages.length : session?.messageCount ?? 0
+  const headerTitle = session?.title || t('session.untitled')
 
   const isActive = chatState !== 'idle' ||
     (trackedTaskSessionId === activeTabId && hasRunningTasks) ||
@@ -482,8 +484,8 @@ export function ActiveSession() {
     closeActivityPanel(activeTabId)
   }, [activeTabId, closeActivityPanel, isActivityPanelOpen, showWorkbench])
 
-  const handleOpenSubagentRun = useCallback((payload: { sessionId: string; toolUseId: string; title: string }) => {
-    useTabStore.getState().openSubagentTab(payload.sessionId, payload.toolUseId, payload.title)
+  const handleOpenSubagentRun = useCallback((payload: { sessionId: string; taskId?: string; toolUseId: string; title: string }) => {
+    useTabStore.getState().openSubagentTab(payload.sessionId, payload.toolUseId, payload.title, payload.taskId)
   }, [])
   const handleOpenTeamMember = useCallback((member: TeamMember) => {
     useTeamStore.getState().openMemberSession(member)
@@ -508,16 +510,32 @@ export function ActiveSession() {
 
   if (!activeTabId) return null
 
+  // The activity rail is an absolutely positioned overlay, so it no longer
+  // squeezes the column by itself — the column yields with padding instead.
+  const showActivityRail = Boolean(activityModel) &&
+    hasVisibleActivity &&
+    !showWorkbench &&
+    !isMobileLayout &&
+    !isMemberSession &&
+    isSessionTabState(activeTabId, activeTabType)
+  const isActivityRailOpen = showActivityRail && isActivityPanelOpen
+
   return (
     <div className="flex-1 flex relative overflow-hidden bg-background text-on-surface">
       <div data-testid="active-session-content-row" className="flex min-h-0 min-w-0 flex-1">
         <div
           data-testid="active-session-chat-column"
-          className={`relative flex min-h-0 min-w-0 flex-col overflow-hidden ${showRightPanel ? CHAT_COLUMN_WITH_WORKSPACE_CLASS : isMobileLayout ? 'flex-1' : 'min-w-[360px] flex-1'}`}
+          className={[
+            'relative flex min-h-0 min-w-0 flex-col overflow-hidden',
+            'transition-[padding] duration-200 ease-out motion-reduce:transition-none',
+            // 340px panel + 20px right inset leaves the 8px gap the handoff draws.
+            isActivityRailOpen ? 'pr-[352px]' : '',
+            showRightPanel ? CHAT_COLUMN_WITH_WORKSPACE_CLASS : isMobileLayout ? 'flex-1' : 'min-w-[360px] flex-1',
+          ].filter(Boolean).join(' ')}
         >
           {isMemberSession && (
             <div className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface-container)]">
-              <div className="mx-auto max-w-[860px] flex items-center justify-between gap-4 px-8 py-2">
+              <div className="mx-auto max-w-[900px] flex items-center justify-between gap-4 px-8 py-2">
                 <div className="min-w-0">
                   <div className="flex items-center gap-3">
                     {memberInfo?.status === 'running' && (
@@ -540,7 +558,10 @@ export function ActiveSession() {
                     {t('teams.memberSessionHint')}
                   </p>
                 </div>
-                <button
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="shrink-0"
                   onClick={() => {
                     if (activeTeam?.leadSessionId) {
                       useTabStore.getState().openTab(
@@ -551,11 +572,10 @@ export function ActiveSession() {
                     }
                   }}
                   disabled={!activeTeam?.leadSessionId}
-                  className="flex shrink-0 items-center gap-1 text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors disabled:opacity-50 disabled:hover:text-[var(--color-text-secondary)]"
+                  icon={<span className="material-symbols-outlined text-[14px]">arrow_back</span>}
                 >
-                  <span className="material-symbols-outlined text-[14px]">arrow_back</span>
                   {t('teams.backToLeader')}
-                </button>
+                </Button>
               </div>
             </div>
           )}
@@ -564,14 +584,14 @@ export function ActiveSession() {
             <div
               data-testid="empty-session-hero"
               className={[
-                'flex min-h-0 flex-1 flex-col items-center justify-center overflow-hidden px-8 pt-8',
+                'brand-seal-glow flex min-h-0 flex-1 flex-col items-center justify-center overflow-hidden px-8 pt-8',
                 compactEmptyHero ? 'pb-6' : 'pb-32',
               ].join(' ')}
             >
-              <div className="flex max-w-md flex-col items-center text-center">
+              <div className="flex max-w-[420px] flex-col items-center gap-[13px] text-center">
                 {isMemberSession ? (
                   <>
-                    <span className={`material-symbols-outlined mb-4 text-[var(--color-text-tertiary)] ${compactEmptyHero ? 'text-[36px]' : 'text-[48px]'}`}>smart_toy</span>
+                    <span className={`material-symbols-outlined text-[var(--color-text-tertiary)] ${compactEmptyHero ? 'text-[36px]' : 'text-[48px]'}`}>smart_toy</span>
                     <p className="text-[var(--color-text-secondary)]">
                       {memberInfo?.status === 'running'
                         ? `${memberInfo.role} ${t('teams.working')}`
@@ -580,15 +600,17 @@ export function ActiveSession() {
                   </>
                 ) : (
                   <>
-                    <img
-                      src={publicAssetPath('app-icon.png')}
-                      alt="EchoFlow Code"
-                      className={compactEmptyHero ? 'mb-4 h-16 w-16' : 'mb-6 h-24 w-24'}
-                    />
-                    <h1 className={`${compactEmptyHero ? 'mb-1 text-2xl' : 'mb-2 text-3xl'} font-extrabold tracking-tight text-[var(--color-text-primary)]`} style={{ fontFamily: 'var(--font-headline)' }}>
+                    <BrandSeal size={compactEmptyHero ? 'lg' : 'xl'} />
+                    <h1
+                      className={`${compactEmptyHero ? 'text-2xl' : 'text-[27px]'} font-bold tracking-tight text-[var(--color-text-primary)]`}
+                      style={{ fontFamily: 'var(--font-headline)' }}
+                    >
                       {t('empty.title')}
                     </h1>
-                    <p className={`mx-auto max-w-xs text-[var(--color-text-secondary)] ${compactEmptyHero ? 'text-sm' : ''}`} style={{ fontFamily: 'var(--font-body)' }}>
+                    <p
+                      className={`mx-auto -mt-1 text-[var(--color-text-secondary)] ${compactEmptyHero ? 'max-w-[280px] text-sm leading-6' : 'text-[15px] leading-[1.7]'}`}
+                      style={{ fontFamily: 'var(--font-body)' }}
+                    >
                       {t('empty.subtitle')}
                     </p>
                   </>
@@ -599,63 +621,66 @@ export function ActiveSession() {
             <>
               {!isMemberSession && !isMobileLayout && (
                 <div
+                  data-testid="session-header"
                   className={
                     showRightPanel
-                      ? 'flex w-full items-center border-b border-[var(--color-border)]/70 px-4 py-3'
-                      : 'w-full border-b border-outline-variant/10 px-4 py-3'
+                      ? 'flex w-full items-center border-b border-[var(--color-border)] px-4 py-2.5'
+                      : 'w-full border-b border-[var(--color-border)] px-9 py-3'
                   }
                 >
-                  <div className={showRightPanel ? 'min-w-0 flex-1' : 'mx-auto w-full max-w-[860px] min-w-0'}>
+                  <div className={showRightPanel ? 'min-w-0 flex-1' : 'mx-auto w-full max-w-[900px] min-w-0'}>
                     <div className="flex min-w-0 items-center gap-3">
                       <h1
-                        className={
-                          showRightPanel
-                            ? 'min-w-0 flex-1 truncate text-[15px] font-bold font-headline leading-tight text-on-surface'
-                            : 'min-w-0 flex-1 text-lg font-bold font-headline text-on-surface leading-tight'
-                        }
+                        className={`min-w-0 flex-1 truncate font-bold leading-tight tracking-[-0.2px] text-[var(--color-text-primary)] ${
+                          showRightPanel ? 'text-[15px]' : 'text-[17px]'
+                        }`}
+                        style={{ fontFamily: 'var(--font-headline)' }}
+                        title={headerTitle}
                       >
-                        {session?.title || t('session.untitled')}
+                        {headerTitle}
                       </h1>
                     </div>
-                    <div
-                      className={
-                        showRightPanel
-                          ? 'mt-1 flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[10px] font-medium text-outline'
-                          : 'flex items-center gap-2 text-[10px] text-outline font-medium mt-1'
-                      }
-                    >
-                      {isActive && (
-                        <span className="flex shrink-0 items-center gap-1">
-                          <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-success)] animate-pulse-dot" />
-                          {t('session.active')}
-                        </span>
-                      )}
-                      {totalTokens > 0 && (
-                        <>
-                          <span className="text-[var(--color-outline)]">·</span>
-                          <span title={t('common.tokens', { count: totalTokens.toLocaleString() })}>
+                    <div className="mt-1 flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[11px] text-[var(--color-text-tertiary)]">
+                      {[
+                        isActive && (
+                          <span key="active" className="flex shrink-0 items-center gap-1.5 text-[var(--color-text-secondary)]">
+                            <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-success)] animate-pulse-dot" />
+                            {t('session.active')}
+                          </span>
+                        ),
+                        totalTokens > 0 && (
+                          <span key="tokens" className="shrink-0" title={t('common.tokens', { count: totalTokens.toLocaleString() })}>
                             {t('common.tokens', { count: formatTokenCount(totalTokens) })}
                           </span>
-                        </>
-                      )}
-                      {lastUpdated && (
-                        <>
-                          <span className="shrink-0 text-[var(--color-outline)]">·</span>
-                          <span className="truncate">{t('session.lastUpdated', { time: lastUpdated })}</span>
-                        </>
-                      )}
-                      {!showRightPanel && visibleMessageCount > 0 && (
-                        <>
-                          <span className="text-[var(--color-outline)]">·</span>
-                          <span>{t('session.messages', { count: visibleMessageCount })}</span>
-                        </>
-                      )}
+                        ),
+                        lastUpdated && (
+                          <span key="updated" className="truncate">{t('session.lastUpdated', { time: lastUpdated })}</span>
+                        ),
+                        !showRightPanel && visibleMessageCount > 0 && (
+                          <span key="messages" className="shrink-0">{t('session.messages', { count: visibleMessageCount })}</span>
+                        ),
+                      ]
+                        .filter((part): part is ReactElement => Boolean(part))
+                        .map((part, index) => (
+                          <Fragment key={part.key}>
+                            {index > 0 && <span aria-hidden="true" className="shrink-0">·</span>}
+                            {part}
+                          </Fragment>
+                        ))}
                     </div>
-                    {session?.workDirExists === false && (
-                      <div className="mt-2 inline-flex max-w-full items-center gap-2 rounded-lg border border-[var(--color-error)]/20 bg-[var(--color-error)]/8 px-3 py-1.5 text-[11px] text-[var(--color-error)]">
-                        <span className="material-symbols-outlined text-[14px]">warning</span>
+                    {session && getSessionWorkspaceState(session) !== 'available' && (
+                      <div className={`mt-2 inline-flex max-w-full items-center gap-2 rounded-[var(--radius-md)] border px-3 py-1.5 text-[11px] ${
+                        getSessionWorkspaceState(session) === 'worktree_removed'
+                          ? 'border-[var(--color-border)] bg-[var(--color-surface-container)] text-[var(--color-text-secondary)]'
+                          : 'border-[var(--color-error)] bg-[var(--color-error-container)] text-[var(--color-on-error-container)]'
+                      }`}>
+                        <span className="material-symbols-outlined text-[14px]">
+                          {getSessionWorkspaceState(session) === 'worktree_removed' ? 'history' : 'warning'}
+                        </span>
                         <span className="truncate">
-                          {t('session.workspaceUnavailable', { dir: session.workDir || 'directory no longer exists' })}
+                          {getSessionWorkspaceState(session) === 'worktree_removed'
+                            ? t('session.worktreeRemoved', { dir: session.projectRoot || '' })
+                            : t('session.workspaceUnavailable', { dir: session.workDir || 'directory no longer exists' })}
                         </span>
                       </div>
                     )}
@@ -669,16 +694,15 @@ export function ActiveSession() {
               )}
 
               {isHistoryLoading ? (
-                <div role="status" className="flex flex-1 items-center justify-center p-8 text-sm text-[var(--color-text-secondary)]">
-                  <span className="material-symbols-outlined mr-2 animate-spin text-[18px]">progress_activity</span>
-                  {t('common.loading')}
+                <div className="flex flex-1 items-center justify-center p-8">
+                  <LoadingState label={t('common.loading')} variant="inline" size="md" />
                 </div>
               ) : historyError ? (
                 <div role="alert" className="flex flex-1 items-center justify-center p-8 text-sm text-[var(--color-error)]">
                   {historyError}
                 </div>
               ) : (
-                <MessageList compact={showRightPanel} />
+                <MessageList compact={showRightPanel} mobileLayout={isMobileLayout} />
               )}
             </>
           )}
@@ -730,7 +754,7 @@ export function ActiveSession() {
           ) : null}
         </div>
 
-        {activityModel && hasVisibleActivity && !showWorkbench && !isMobileLayout && !isMemberSession && isSessionTabState(activeTabId, activeTabType) ? (
+        {activityModel && showActivityRail ? (
           <SessionActivityPanel
             model={activityModel}
             open={isActivityPanelOpen}

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import {
   currentPackageSmokeArch,
   currentPackageSmokePlatform,
@@ -31,6 +31,21 @@ function writeFile(rootDir: string, relativePath: string, content = 'ok') {
   const fullPath = join(rootDir, relativePath)
   mkdirSync(dirname(fullPath), { recursive: true })
   writeFileSync(fullPath, content)
+
+  const fileName = basename(fullPath)
+  if (fileName.startsWith('claude-sidecar-')) {
+    const ripgrepName = fileName.endsWith('.exe') ? 'rg.exe' : 'rg'
+    writeFileSync(join(dirname(fullPath), ripgrepName), content)
+    writeFileSync(
+      join(dirname(fullPath), 'ripgrep-manifest.json'),
+      JSON.stringify({ targetTriple: fileName.replace(/^claude-sidecar-/, '').replace(/\.exe$/, '') }),
+    )
+    const licensesDir = join(dirname(fullPath), 'ripgrep-licenses')
+    mkdirSync(licensesDir, { recursive: true })
+    for (const licenseName of ['COPYING', 'LICENSE-MIT', 'UNLICENSE']) {
+      writeFileSync(join(licensesDir, licenseName), content)
+    }
+  }
 }
 
 const tempDirs: string[] = []
@@ -102,6 +117,34 @@ describe('packaged artifact inspection', () => {
     expect(report.passedChecks.some((check) => check.label.includes('update metadata referenced artifact'))).toBe(true)
     expect(report.passedChecks.some((check) => check.label.includes('macOS update artifact blockmap'))).toBe(true)
     expect(report.passedChecks.some((check) => check.label === 'macOS unpacked H5 shell')).toBe(true)
+  })
+
+  test('fails macOS inspection when bundled ripgrep is missing', async () => {
+    const rootDir = createRepoRoot()
+    tempDirs.push(rootDir)
+    const appRoot = 'desktop/build-artifacts/electron/mac-arm64/EchoFlow Code.app'
+    const sidecarRoot = `${appRoot}/Contents/Resources/app.asar.unpacked/src-tauri/binaries`
+
+    writeFile(rootDir, `${appRoot}/Contents/Info.plist`)
+    writeFile(rootDir, `${appRoot}/Contents/MacOS/EchoFlow Code`)
+    writeFile(rootDir, `${appRoot}/Contents/Resources/app.asar`)
+    writeFile(rootDir, `${appRoot}/Contents/Resources/app.asar.unpacked/dist/index.html`)
+    writeFile(rootDir, `${sidecarRoot}/claude-sidecar-aarch64-apple-darwin`)
+    writeFile(rootDir, `${appRoot}/Contents/Resources/app.asar.unpacked/node_modules/node-pty/package.json`)
+    writeFile(rootDir, `${appRoot}/Contents/Resources/app.asar.unpacked/node_modules/node-pty/prebuilds/darwin-arm64/pty.node`)
+    writeFile(rootDir, `${appRoot}/Contents/Resources/app.asar.unpacked/node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper`)
+    rmSync(join(rootDir, sidecarRoot, 'rg'))
+
+    const report = await inspectPackagedArtifacts(rootDir, {
+      platform: 'macos',
+      arch: 'arm64',
+      packageKind: 'dir',
+    })
+
+    expect(report.passed).toBe(false)
+    expect(report.missingChecks.some(
+      check => check.label === 'macOS bundled ripgrep binary',
+    )).toBe(true)
   })
 
   test('fails macOS inspection when the H5 shell is not unpacked for the sidecar', async () => {
@@ -320,14 +363,14 @@ describe('packaged artifact inspection', () => {
     const rootDir = createRepoRoot()
     tempDirs.push(rootDir)
 
-    writeFile(rootDir, 'desktop/build-artifacts/windows-arm64/Claude-Code-Haha-0.3.1-arm64.exe')
-    writeFile(rootDir, 'desktop/build-artifacts/windows-arm64/Claude-Code-Haha-0.3.1-arm64.exe.blockmap')
+    writeFile(rootDir, 'desktop/build-artifacts/windows-arm64/EchoFlow-Code-0.3.1-arm64.exe')
+    writeFile(rootDir, 'desktop/build-artifacts/windows-arm64/EchoFlow-Code-0.3.1-arm64.exe.blockmap')
     writeFile(rootDir, 'desktop/build-artifacts/windows-arm64/win-arm64-unpacked/resources/app.asar')
     writeFile(rootDir, 'desktop/build-artifacts/windows-arm64/win-arm64-unpacked/resources/app-update.yml')
     writeFile(rootDir, 'desktop/build-artifacts/windows-arm64/win-arm64-unpacked/resources/app.asar.unpacked/src-tauri/binaries/claude-sidecar-aarch64-pc-windows-msvc.exe')
     writeFile(rootDir, 'desktop/build-artifacts/windows-arm64/win-arm64-unpacked/resources/app.asar.unpacked/node_modules/node-pty/package.json')
     writeFile(rootDir, 'desktop/build-artifacts/windows-arm64/win-arm64-unpacked/resources/app.asar.unpacked/node_modules/node-pty/prebuilds/win32-arm64/pty.node')
-    writeFile(rootDir, 'desktop/build-artifacts/windows-arm64/latest.yml', 'path: Claude-Code-Haha-0.3.1-arm64.exe\n')
+    writeFile(rootDir, 'desktop/build-artifacts/windows-arm64/latest.yml', 'path: EchoFlow-Code-0.3.1-arm64.exe\n')
 
     const report = await inspectPackagedArtifacts(rootDir, {
       platform: 'windows',
@@ -345,14 +388,14 @@ describe('packaged artifact inspection', () => {
     const rootDir = createRepoRoot()
     tempDirs.push(rootDir)
 
-    writeFile(rootDir, 'desktop/build-artifacts/windows-arm64/Claude-Code-Haha-0.3.1-arm64.exe')
-    writeFile(rootDir, 'desktop/build-artifacts/windows-arm64/Claude-Code-Haha-0.3.1-arm64.exe.blockmap')
+    writeFile(rootDir, 'desktop/build-artifacts/windows-arm64/EchoFlow-Code-0.3.1-arm64.exe')
+    writeFile(rootDir, 'desktop/build-artifacts/windows-arm64/EchoFlow-Code-0.3.1-arm64.exe.blockmap')
     writeFile(rootDir, 'desktop/build-artifacts/windows-arm64/win-arm64-unpacked/resources/app.asar')
     writeFile(rootDir, 'desktop/build-artifacts/windows-arm64/win-arm64-unpacked/resources/app-update.yml')
     writeFile(rootDir, 'desktop/build-artifacts/windows-arm64/win-arm64-unpacked/resources/app.asar.unpacked/src-tauri/binaries/claude-sidecar-x86_64-pc-windows-msvc.exe')
     writeFile(rootDir, 'desktop/build-artifacts/windows-arm64/win-arm64-unpacked/resources/app.asar.unpacked/node_modules/node-pty/package.json')
     writeFile(rootDir, 'desktop/build-artifacts/windows-arm64/win-arm64-unpacked/resources/app.asar.unpacked/node_modules/node-pty/prebuilds/win32-x64/pty.node')
-    writeFile(rootDir, 'desktop/build-artifacts/windows-arm64/latest.yml', 'path: Claude-Code-Haha-0.3.1-arm64.exe\n')
+    writeFile(rootDir, 'desktop/build-artifacts/windows-arm64/latest.yml', 'path: EchoFlow-Code-0.3.1-arm64.exe\n')
 
     const report = await inspectPackagedArtifacts(rootDir, {
       platform: 'windows',
@@ -478,6 +521,7 @@ describe('packaged artifact inspection', () => {
 
     writeFile(rootDir, 'desktop/build-artifacts/electron/EchoFlow-Code-0.3.1-linux-x86_64.AppImage')
     writeFile(rootDir, 'desktop/build-artifacts/electron/EchoFlow-Code-0.3.1-linux-amd64.deb')
+    writeFile(rootDir, 'desktop/build-artifacts/electron/EchoFlow-Code-0.3.1-linux-x86_64.rpm')
     writeFile(rootDir, 'desktop/build-artifacts/electron/linux-unpacked/resources/app.asar')
     writeFile(rootDir, 'desktop/build-artifacts/electron/linux-unpacked/resources/app-update.yml')
     writeFile(rootDir, 'desktop/build-artifacts/electron/linux-unpacked/resources/app.asar.unpacked/src-tauri/binaries/claude-sidecar-x86_64-unknown-linux-gnu')
@@ -493,6 +537,7 @@ describe('packaged artifact inspection', () => {
 
     expect(report.passed).toBe(true)
     expect(report.missingChecks.some((check) => check.label.includes('blockmap'))).toBe(false)
+    expect(report.packagedArtifacts.some((artifact) => artifact.label === 'Linux RPM package')).toBe(true)
   })
 
   test('accepts Electron Builder linux-arm64-unpacked output directory', async () => {
@@ -501,6 +546,7 @@ describe('packaged artifact inspection', () => {
 
     writeFile(rootDir, 'desktop/build-artifacts/electron/EchoFlow-Code-0.3.1-linux-arm64.AppImage')
     writeFile(rootDir, 'desktop/build-artifacts/electron/EchoFlow-Code-0.3.1-linux-arm64.deb')
+    writeFile(rootDir, 'desktop/build-artifacts/electron/EchoFlow-Code-0.3.1-linux-aarch64.rpm')
     writeFile(rootDir, 'desktop/build-artifacts/electron/linux-arm64-unpacked/resources/app.asar')
     writeFile(rootDir, 'desktop/build-artifacts/electron/linux-arm64-unpacked/resources/app-update.yml')
     writeFile(rootDir, 'desktop/build-artifacts/electron/linux-arm64-unpacked/resources/app.asar.unpacked/src-tauri/binaries/claude-sidecar-aarch64-unknown-linux-gnu')
@@ -516,6 +562,7 @@ describe('packaged artifact inspection', () => {
 
     expect(report.passed).toBe(true)
     expect(report.passedChecks.some((check) => check.path.replace(/\\/g, '/').includes('linux-arm64-unpacked/resources/app.asar'))).toBe(true)
+    expect(report.packagedArtifacts.some((artifact) => artifact.label === 'Linux RPM package')).toBe(true)
   })
 
   test('passes Linux directory-only checks for electron-builder --dir output', async () => {

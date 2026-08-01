@@ -32,14 +32,21 @@ import {
 import type { AgentTaskNotification, UIMessage } from '../../types/chat'
 import { formatTokenCount } from '../../lib/formatTokenCount'
 import { formatDurationMs, hasRunningBackgroundTasks as hasAnyRunningBackgroundTasks } from '../../lib/backgroundTasks'
+import { buildTurnCompletionByMessageId, type TurnCompletion } from '../../lib/turnCompletion'
 import { isTouchH5Document } from '../../lib/touchH5'
-import { ConfirmDialog } from '../shared/ConfirmDialog'
+import { Button } from '@/components/ui/Button'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { clearWindowSelection, getSelectionPopoverPosition, useSelectionPopoverDismiss } from '../../hooks/useSelectionPopoverDismiss'
 import {
   getHeightsForSession,
   getMetricsForSession,
   type VirtualRenderItemMetric,
 } from './virtualHeightCache'
+import {
+  notifyConversationFindContentChanged,
+  registerConversationFindController,
+  type ConversationFindController,
+} from '../search/conversationFindBridge'
 
 type ToolCall = Extract<UIMessage, { type: 'tool_use' }>
 type ToolResult = Extract<UIMessage, { type: 'tool_result' }>
@@ -160,7 +167,7 @@ function ChatSelectionMenu({
       type="button"
       onMouseDown={(event) => event.preventDefault()}
       onClick={onAdd}
-      className="fixed z-50 inline-flex h-11 items-center gap-2 rounded-full border border-[var(--color-border)]/70 bg-[var(--color-surface-container-lowest)] px-5 text-[15px] font-semibold text-[var(--color-text-primary)] shadow-[0_10px_28px_rgba(15,23,42,0.14),0_2px_8px_rgba(15,23,42,0.08)] transition-colors hover:bg-[var(--color-surface)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]/35"
+      className="fixed z-[var(--z-popover)] inline-flex h-11 items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] px-5 text-[15px] font-semibold text-[var(--color-text-primary)] shadow-[var(--shadow-overlay)] transition-colors hover:bg-[var(--color-surface)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]"
       style={{ left: selection.x, top: selection.y }}
     >
       <MessageCircle size={21} strokeWidth={2.15} className="shrink-0 text-[var(--color-text-primary)]" aria-hidden="true" />
@@ -208,7 +215,7 @@ function CompactStatusDivider({ message, state }: { message?: CompactSummaryEven
           aria-expanded={hasDetails ? expanded : undefined}
           onClick={() => hasDetails && setExpanded((value) => !value)}
           disabled={!hasDetails}
-          className="group inline-flex min-h-8 max-w-[min(78vw,520px)] items-center gap-2 rounded-md px-2.5 py-1 text-[13px] font-semibold text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-text-primary)] disabled:cursor-default disabled:hover:text-[var(--color-text-secondary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]/30"
+          className="group inline-flex min-h-8 max-w-[min(78vw,520px)] items-center gap-2 rounded-[var(--radius-md)] px-2.5 py-1 text-[13px] font-semibold text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-text-primary)] disabled:cursor-default disabled:hover:text-[var(--color-text-secondary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]"
         >
           {state === 'compacting' ? (
             <LoaderCircle size={16} strokeWidth={2.1} className="shrink-0 animate-spin text-[var(--color-text-tertiary)]" aria-hidden="true" />
@@ -222,7 +229,7 @@ function CompactStatusDivider({ message, state }: { message?: CompactSummaryEven
         <div className="h-px flex-1 bg-[var(--color-border)]" aria-hidden="true" />
       </div>
       {hasDetails && expanded && (
-        <div className="mx-auto mt-1.5 w-full max-w-[620px] rounded-md border border-[var(--color-border)]/65 bg-[var(--color-surface-container-lowest)] px-3 py-2">
+        <div className="mx-auto mt-1.5 w-full max-w-[620px] rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] px-3 py-2">
           {meta.length > 0 && (
             <div className="mb-1.5 flex flex-wrap gap-x-2 gap-y-1 text-[11px] font-medium text-[var(--color-text-tertiary)]">
               {meta.map((item) => <span key={item}>{item}</span>)}
@@ -254,12 +261,12 @@ function GoalEventCard({ message }: { message: GoalEvent }) {
     <div className="mb-2">
       <div
         data-testid="goal-event-card"
-        className="overflow-hidden rounded-lg border border-[var(--color-memory-border)] bg-[var(--color-memory-surface)]"
+        className="overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-memory-border)] bg-[var(--color-memory-surface)]"
       >
         <button
           type="button"
           onClick={() => setExpanded((value) => !value)}
-          className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-[var(--color-surface-hover)]/50"
+          className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-[var(--color-surface-hover)]"
         >
           {expanded ? (
             <ChevronDown size={15} className="shrink-0 text-[var(--color-text-tertiary)]" aria-hidden="true" />
@@ -279,14 +286,14 @@ function GoalEventCard({ message }: { message: GoalEvent }) {
         </button>
 
         {expanded ? (
-          <div className="border-t border-[var(--color-border)]/55 px-3 py-2.5">
+          <div className="border-t border-[var(--color-border)] px-3 py-2.5">
             <div className="space-y-1.5">
               {message.objective ? (
-                <div className="line-clamp-2 rounded-md px-2 py-1 text-[12px] leading-5 text-[var(--color-text-secondary)]">
+                <div className="line-clamp-2 rounded-[var(--radius-md)] px-2 py-1 text-[12px] leading-5 text-[var(--color-text-secondary)]">
                   {t('chat.goalEvent.objective', { value: message.objective })}
                 </div>
               ) : message.message ? (
-                <div className="whitespace-pre-wrap rounded-md px-2 py-1 text-[12px] leading-5 text-[var(--color-text-secondary)]">
+                <div className="whitespace-pre-wrap rounded-[var(--radius-md)] px-2 py-1 text-[12px] leading-5 text-[var(--color-text-secondary)]">
                   {message.message}
                 </div>
               ) : null}
@@ -318,7 +325,7 @@ function GoalContinuationDivider({ message }: { message: GoalEvent }) {
     <section data-testid="goal-continuation-divider" className="my-4 w-full px-1">
       <div className="flex w-full items-center gap-3">
         <div className="h-px flex-1 bg-[var(--color-border)]" aria-hidden="true" />
-        <div className="inline-flex min-h-8 max-w-[min(78vw,620px)] items-center gap-2 rounded-md px-2.5 py-1 text-[13px] font-medium text-[var(--color-text-secondary)]">
+        <div className="inline-flex min-h-8 max-w-[min(78vw,620px)] items-center gap-2 rounded-[var(--radius-md)] px-2.5 py-1 text-[13px] font-medium text-[var(--color-text-secondary)]">
           <Target size={16} strokeWidth={2.1} className="shrink-0 text-[var(--color-memory-accent)]" aria-hidden="true" />
           <span className="shrink-0 font-semibold text-[var(--color-text-primary)]">
             {t('chat.goalEvent.continuing')}
@@ -350,11 +357,11 @@ function BackgroundTaskEventCard({ message }: { message: BackgroundTaskEvent }) 
       <div
         data-testid="background-task-event-card"
         data-status={task.status}
-        className="flex min-w-0 items-start gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-3 py-2"
+        className="flex min-w-0 items-start gap-2 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-3 py-2"
       >
         <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center">
           {isRunning ? (
-            <LoaderCircle size={15} strokeWidth={2.25} className="animate-spin text-[var(--color-accent)]" aria-hidden="true" />
+            <LoaderCircle size={15} strokeWidth={2.25} className="animate-spin text-[var(--color-brand)]" aria-hidden="true" />
           ) : isFailed ? (
             <XCircle size={15} strokeWidth={2.25} className="text-[var(--color-error)]" aria-hidden="true" />
           ) : isStopped ? (
@@ -884,9 +891,9 @@ function MemoryEventCard({ message }: { message: MemoryEvent }) {
 
   return (
     <div className="mb-3 flex justify-center px-3">
-      <div className="w-full max-w-2xl rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-3.5 py-3 text-xs shadow-sm">
+      <div className="w-full max-w-2xl rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-3.5 py-3 text-xs shadow-[var(--shadow-card)]">
         <div className="flex items-start gap-3">
-          <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-brand)]">
+          <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-brand)]">
             <BookMarked size={15} aria-hidden="true" />
           </div>
           <div className="min-w-0 flex-1">
@@ -894,14 +901,14 @@ function MemoryEventCard({ message }: { message: MemoryEvent }) {
               <div className="font-medium text-[var(--color-text-primary)]">
                 {t('chat.memorySavedTitle', { count: message.files.length })}
               </div>
-              <button
-                type="button"
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={() => openMemorySettings(message.files[0]?.path)}
-                className="inline-flex h-7 items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-brand)]/50 hover:text-[var(--color-text-primary)]"
+                icon={<Settings size={13} aria-hidden="true" />}
               >
-                <Settings size={13} aria-hidden="true" />
                 {t('chat.memoryOpenSettings')}
-              </button>
+              </Button>
             </div>
             {message.message ? (
               <div className="mt-1 text-[var(--color-text-tertiary)]">{message.message}</div>
@@ -911,13 +918,13 @@ function MemoryEventCard({ message }: { message: MemoryEvent }) {
                 <span
                   key={file.path}
                   title={file.path}
-                  className="max-w-full truncate rounded-sm border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 font-mono text-[10px] text-[var(--color-text-secondary)]"
+                  className="max-w-full truncate rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 font-mono text-[10px] text-[var(--color-text-secondary)]"
                 >
                   {memoryFileLabel(file.path)}
                 </span>
               ))}
               {hiddenCount > 0 ? (
-                <span className="rounded-sm border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 font-mono text-[10px] text-[var(--color-text-tertiary)]">
+                <span className="rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 font-mono text-[10px] text-[var(--color-text-tertiary)]">
                   {t('chat.memoryMoreFiles', { count: hiddenCount })}
                 </span>
               ) : null}
@@ -932,6 +939,7 @@ function MemoryEventCard({ message }: { message: MemoryEvent }) {
 type MessageListProps = {
   sessionId?: string | null
   compact?: boolean
+  mobileLayout?: boolean
 }
 
 const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 48
@@ -948,9 +956,9 @@ const VIRTUAL_OVERSCAN_PX = 1200
 const VIRTUAL_DEFAULT_VIEWPORT_HEIGHT = 720
 const VIRTUAL_MIN_ITEM_HEIGHT = 48
 const VIRTUAL_MAX_ITEM_HEIGHT = 24_000
-// Windows WebView2 can report 1px oscillations for live chat content; don't
-// convert those into bottom-scroll corrections.
-const CONTENT_RESIZE_FOLLOW_MIN_DELTA_PX = 2
+// Windows WebView2 can report up to 2px oscillations for live chat content;
+// don't convert those into bottom-scroll corrections.
+const CONTENT_RESIZE_FOLLOW_JITTER_MAX_DELTA_PX = 2
 const USER_SCROLL_INTENT_WINDOW_MS = 500
 const CONVERSATION_NAVIGATION_MIN_ITEMS = 4
 const CONVERSATION_NAVIGATION_FULL_MIN_WIDTH_PX = 960
@@ -1012,7 +1020,21 @@ type VirtualTranscriptWindow = {
   totalHeight: number
 }
 
+type ConversationFindMatch = {
+  renderIndex: number
+  renderItemKey: string
+  occurrenceIndex: number
+  query: string
+}
+
+const MAX_CONVERSATION_FIND_MATCHES = 1_000
+const CONVERSATION_FIND_CONTENT_REFRESH_MS = 80
+
 const sessionScrollSnapshots = new Map<string, SessionScrollSnapshot>()
+
+export function resetSessionScrollSnapshotsForTests() {
+  sessionScrollSnapshots.clear()
+}
 
 function isNearScrollBottom(element: HTMLElement) {
   return (
@@ -1067,6 +1089,117 @@ function clampNumber(value: number, min: number, max: number) {
 
 function getRenderItemKey(item: RenderItem) {
   return item.kind === 'tool_group' ? item.id : item.message.id
+}
+
+function findConversationMatches(
+  renderItems: RenderItem[],
+  streamingText: string,
+  query: string,
+): ConversationFindMatch[] {
+  const needle = query.toLocaleLowerCase()
+  if (!needle) return []
+  const matches: ConversationFindMatch[] = []
+
+  renderItems.forEach((item, renderIndex) => {
+    if (matches.length >= MAX_CONVERSATION_FIND_MATCHES || item.kind !== 'message') return
+    const message = item.message
+    if (message.type !== 'user_text' && message.type !== 'assistant_text') return
+    let occurrenceIndex = 0
+    const text = message.content.toLocaleLowerCase()
+    let offset = text.indexOf(needle)
+    while (offset !== -1 && matches.length < MAX_CONVERSATION_FIND_MATCHES) {
+      matches.push({
+        renderIndex,
+        renderItemKey: getRenderItemKey(item),
+        occurrenceIndex,
+        query,
+      })
+      occurrenceIndex += 1
+      offset = text.indexOf(needle, offset + needle.length)
+    }
+  })
+
+  if (matches.length < MAX_CONVERSATION_FIND_MATCHES && streamingText.trim()) {
+    const text = streamingText.toLocaleLowerCase()
+    let occurrenceIndex = 0
+    let offset = text.indexOf(needle)
+    while (offset !== -1 && matches.length < MAX_CONVERSATION_FIND_MATCHES) {
+      matches.push({
+        renderIndex: renderItems.length,
+        renderItemKey: STREAMING_ASSISTANT_NAVIGATION_KEY,
+        occurrenceIndex,
+        query,
+      })
+      occurrenceIndex += 1
+      offset = text.indexOf(needle, offset + needle.length)
+    }
+  }
+
+  return matches
+}
+
+function collectConversationFindRanges(root: Node, query: string) {
+  const ranges: Range[] = []
+  const needle = query.toLocaleLowerCase()
+  if (!needle) return ranges
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT
+      if (node.parentElement?.closest('[data-find-bar], script, style, noscript, .material-symbols-outlined')) {
+        return NodeFilter.FILTER_REJECT
+      }
+      return NodeFilter.FILTER_ACCEPT
+    },
+  })
+
+  let textNode = walker.nextNode() as Text | null
+  while (textNode) {
+    const text = textNode.nodeValue?.toLocaleLowerCase() ?? ''
+    let offset = text.indexOf(needle)
+    while (offset !== -1 && ranges.length < MAX_CONVERSATION_FIND_MATCHES) {
+      const range = document.createRange()
+      range.setStart(textNode, offset)
+      range.setEnd(textNode, offset + needle.length)
+      ranges.push(range)
+      offset = text.indexOf(needle, offset + needle.length)
+    }
+    if (ranges.length >= MAX_CONVERSATION_FIND_MATCHES) break
+    textNode = walker.nextNode() as Text | null
+  }
+  return ranges
+}
+
+function clearConversationFindHighlights() {
+  const highlights = (globalThis.CSS as any)?.highlights as Map<string, unknown> | undefined
+  highlights?.delete('cc-find-results')
+  highlights?.delete('cc-find-active')
+}
+
+function paintConversationFindHighlights(root: HTMLElement, match: ConversationFindMatch) {
+  const highlights = (globalThis.CSS as any)?.highlights as Map<string, unknown> | undefined
+  const HighlightCtor = (globalThis as any).Highlight
+  if (!highlights || !HighlightCtor) return
+
+  const resultRanges = collectConversationFindRanges(root, match.query)
+  const target = Array.from(root.querySelectorAll<HTMLElement>('[data-chat-render-item-key]'))
+    .find((node) => node.dataset.chatRenderItemKey === match.renderItemKey)
+  const targetRanges = target
+    ? resultRanges.filter((range) => target.contains(range.startContainer))
+    : []
+  const activeRange = targetRanges[Math.min(match.occurrenceIndex, Math.max(0, targetRanges.length - 1))]
+
+  const results = new HighlightCtor()
+  for (const range of resultRanges) results.add(range)
+  highlights.set('cc-find-results', results)
+
+  if (activeRange) {
+    const active = new HighlightCtor()
+    active.add(activeRange)
+    active.priority = 1
+    highlights.set('cc-find-active', active)
+  } else {
+    highlights.delete('cc-find-active')
+  }
 }
 
 function isRecordValue(value: unknown): value is Record<string, unknown> {
@@ -1428,7 +1561,7 @@ const MeasuredRenderItem = memo(function MeasuredRenderItem({
   )
 })
 
-export function MessageList({ sessionId, compact = false }: MessageListProps = {}) {
+export function MessageList({ sessionId, compact = false, mobileLayout = false }: MessageListProps = {}) {
   const activeTabId = useTabStore((s) => s.activeTabId)
   const resolvedSessionId = sessionId ?? activeTabId
   const isWorkspacePanelOpen = useWorkspacePanelStore((state) =>
@@ -1482,6 +1615,8 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
   const measureFlushFrameRef = useRef<number | null>(null)
   const navigationHighlightTimerRef = useRef<number | null>(null)
   const workspaceOriginRestoreFrameRef = useRef<number | null>(null)
+  const conversationFindRefreshTimerRef = useRef<number | null>(null)
+  const conversationFindLastRefreshAtRef = useRef(0)
   const workspaceOriginSessionRef = useRef(resolvedSessionId)
   const lastAutoScrollAtRef = useRef(0)
   const lastContentResizeFollowHeightRef = useRef<number | null>(null)
@@ -1490,7 +1625,7 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
   const ignoreProgrammaticScrollUntilRef = useRef(0)
   const ignoreProgrammaticScrollTopRef = useRef<number | null>(null)
   const userScrollIntentUntilRef = useRef(0)
-  const lastSessionIdRef = useRef<string | null | undefined>(resolvedSessionId)
+  const lastSessionIdRef = useRef<string | null | undefined>(undefined)
   const lastTailMessageIdBySessionRef = useRef(new Map<string, string | null>())
   const t = useTranslation()
   const [turnChangeCards, setTurnChangeCards] = useState<TurnChangeCardModel[]>([])
@@ -1507,6 +1642,8 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
   })
   const [measuredItemsVersion, setMeasuredItemsVersion] = useState(0)
   const [highlightedNavigationItemKey, setHighlightedNavigationItemKey] = useState<string | null>(null)
+  const [activeConversationFindMatch, setActiveConversationFindMatch] = useState<ConversationFindMatch | null>(null)
+  const conversationFindMatchesRef = useRef<ConversationFindMatch[]>([])
   const [messageListWidth, setMessageListWidth] = useState<number | null>(null)
   const branchActionsDisabled =
     isMemberSession ||
@@ -1529,6 +1666,10 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
     if (workspaceOriginRestoreFrameRef.current !== null) {
       cancelAnimationFrame(workspaceOriginRestoreFrameRef.current)
     }
+    if (conversationFindRefreshTimerRef.current !== null) {
+      window.clearTimeout(conversationFindRefreshTimerRef.current)
+    }
+    clearConversationFindHighlights()
   }, [])
 
   useLayoutEffect(() => {
@@ -1809,7 +1950,7 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
         const previousFollowHeight = lastContentResizeFollowHeightRef.current
         if (
           previousFollowHeight !== null &&
-          Math.abs(nextHeight - previousFollowHeight) < CONTENT_RESIZE_FOLLOW_MIN_DELTA_PX
+          Math.abs(nextHeight - previousFollowHeight) <= CONTENT_RESIZE_FOLLOW_JITTER_MAX_DELTA_PX
         ) {
           return
         }
@@ -1860,6 +2001,10 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
   const completedTurnTargets = useMemo(
     () => getCompletedTurnTargets(deferredMessages),
     [deferredMessages],
+  )
+  const turnCompletionByMessageId = useMemo(
+    () => buildTurnCompletionByMessageId(deferredMessages, { turnActive: chatState !== 'idle' }),
+    [deferredMessages, chatState],
   )
   const latestCompletedTurnId =
     completedTurnTargets.length > 0
@@ -1953,6 +2098,7 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
         ? 'compact'
         : 'edge'
   const showConversationNavigator =
+    !mobileLayout &&
     !isTouchH5Document() &&
     conversationNavigationItems.length >= CONVERSATION_NAVIGATION_MIN_ITEMS
   const chatScrollPaddingClass = compact
@@ -2079,9 +2225,10 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
         stopGeneration(resolvedSessionId)
       }
 
+      const checkpointTarget = confirmTurnCard.checkpoint.target
       const result = await sessionsApi.rewind(resolvedSessionId, {
-        targetUserMessageId: target.messageId,
-        userMessageIndex: target.userMessageIndex,
+        targetUserMessageId: checkpointTarget.targetUserMessageId,
+        userMessageIndex: checkpointTarget.userMessageIndex,
         expectedContent: target.expectedContent,
       })
 
@@ -2250,6 +2397,103 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
     virtualViewport.viewportHeight,
   ])
 
+  const navigateToConversationFindMatch = useCallback((match: ConversationFindMatch) => {
+    const container = scrollContainerRef.current
+    if (!container) return
+
+    const viewportHeight = container.clientHeight || virtualViewport.viewportHeight || VIRTUAL_DEFAULT_VIEWPORT_HEIGHT
+    const targetOffset = virtualTranscriptWindow.offsets[match.renderIndex] ?? virtualTranscriptWindow.totalHeight
+    const targetScrollTop = clampNumber(
+      targetOffset - viewportHeight * CONVERSATION_NAVIGATION_READING_ANCHOR_RATIO,
+      0,
+      Math.max(0, virtualTranscriptWindow.totalHeight - viewportHeight),
+    )
+
+    setActiveConversationFindMatch(match)
+    shouldAutoScrollRef.current = false
+    setShowJumpToLatest(true)
+    ignoreProgrammaticScrollUntilRef.current = performance.now() + 250
+    ignoreProgrammaticScrollTopRef.current = targetScrollTop
+    setScrollTopWithoutLayoutRead(container, targetScrollTop)
+    setVirtualViewport({ scrollTop: targetScrollTop, viewportHeight })
+  }, [virtualTranscriptWindow.offsets, virtualTranscriptWindow.totalHeight, virtualViewport.viewportHeight])
+  const navigateToConversationFindMatchRef = useRef(navigateToConversationFindMatch)
+  navigateToConversationFindMatchRef.current = navigateToConversationFindMatch
+  const conversationFindRenderItemsRef = useRef(renderItems)
+  conversationFindRenderItemsRef.current = renderItems
+  const conversationFindStreamingTextRef = useRef(streamingText)
+  conversationFindStreamingTextRef.current = streamingText
+  const conversationFindControllerRef = useRef<ConversationFindController | null>(null)
+
+  useEffect(() => {
+    if (!resolvedSessionId || resolvedSessionId !== activeTabId) return
+
+    const controller: ConversationFindController = {
+      search(query, preferredIndex = 0) {
+        const matches = findConversationMatches(
+          conversationFindRenderItemsRef.current,
+          conversationFindStreamingTextRef.current,
+          query,
+        )
+        conversationFindMatchesRef.current = matches
+        const selectedMatch = matches[Math.min(preferredIndex, Math.max(0, matches.length - 1))]
+        if (selectedMatch) {
+          navigateToConversationFindMatchRef.current(selectedMatch)
+        } else {
+          setActiveConversationFindMatch(null)
+          clearConversationFindHighlights()
+        }
+        return matches.length
+      },
+      navigate(index) {
+        const match = conversationFindMatchesRef.current[index]
+        if (match) navigateToConversationFindMatchRef.current(match)
+      },
+      clear() {
+        conversationFindMatchesRef.current = []
+        setActiveConversationFindMatch(null)
+        clearConversationFindHighlights()
+      },
+    }
+    conversationFindControllerRef.current = controller
+    const unregister = registerConversationFindController(controller)
+    return () => {
+      if (conversationFindControllerRef.current === controller) {
+        conversationFindControllerRef.current = null
+      }
+      unregister()
+    }
+  }, [activeTabId, resolvedSessionId])
+
+  useEffect(() => {
+    const controller = conversationFindControllerRef.current
+    if (!controller) return
+    const notify = () => {
+      conversationFindRefreshTimerRef.current = null
+      conversationFindLastRefreshAtRef.current = performance.now()
+      notifyConversationFindContentChanged(controller)
+    }
+    if (conversationFindRefreshTimerRef.current !== null) return
+    const remainingDelay = CONVERSATION_FIND_CONTENT_REFRESH_MS -
+      (performance.now() - conversationFindLastRefreshAtRef.current)
+    if (remainingDelay <= 0) {
+      notify()
+      return
+    }
+    conversationFindRefreshTimerRef.current = window.setTimeout(notify, remainingDelay)
+  }, [renderItems, streamingText])
+
+  useLayoutEffect(() => {
+    if (!activeConversationFindMatch) {
+      clearConversationFindHighlights()
+      return
+    }
+
+    const root = scrollContentRef.current
+    if (!root) return
+    paintConversationFindHighlights(root, activeConversationFindMatch)
+  }, [activeConversationFindMatch, virtualTranscriptWindow.items])
+
   const restoreWorkspacePanelOrigin = useCallback((origin: WorkspacePanelOrigin, attempt = 0) => {
     const container = scrollContainerRef.current
     const content = scrollContentRef.current
@@ -2355,6 +2599,7 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
             }
             branchAction={branchActionByMessageId.get(item.message.id)}
             turnChangedFiles={changedFilesByRenderIndex.get(index)}
+            turnCompletion={turnCompletionByMessageId.get(item.message.id)}
           />
         )}
 
@@ -2389,7 +2634,7 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
       >
         <div
           ref={scrollContentRef}
-          className={compact ? 'mx-auto max-w-full' : 'mx-auto max-w-[860px]'}
+          className={compact ? 'mx-auto max-w-full' : 'mx-auto max-w-[900px]'}
         >
           {virtualTranscriptWindow.enabled ? (
             <VirtualSpacer height={virtualTranscriptWindow.beforeHeight} position="top" />
@@ -2445,7 +2690,7 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
           )}
 
           {!isLoadingTurnChangeCards && visibleTurnChangeCards.length === 0 && turnChangeLoadError && (
-            <div className="mx-auto mb-5 w-full max-w-[860px] rounded-[var(--radius-lg)] border border-[var(--color-error)]/25 bg-[var(--color-error-container)]/18 px-4 py-3 text-xs text-[var(--color-error)]">
+            <div className="mx-auto mb-5 w-full max-w-[900px] rounded-[var(--radius-lg)] border border-[var(--color-error)] bg-[var(--color-error-container)] px-4 py-3 text-xs text-[var(--color-on-error-container)]">
               {turnChangeLoadError}
             </div>
           )}
@@ -2464,16 +2709,19 @@ export function MessageList({ sessionId, compact = false }: MessageListProps = {
       ) : null}
 
       {showJumpToLatest && (
-        <button
-          type="button"
+        <Button
+          variant="secondary"
+          size="md"
           onClick={handleJumpToLatest}
           title={t('chat.jumpToLatest')}
           aria-label={t('chat.jumpToLatest')}
-          className="absolute bottom-4 right-5 z-20 flex h-9 items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] px-3 text-xs font-medium text-[var(--color-text-primary)] shadow-[var(--shadow-dropdown)] transition-colors hover:border-[var(--color-brand)]/50 hover:bg-[var(--color-surface-container-low)]"
+          // `glass-panel` is unlayered CSS, so it wins over the variant's
+          // layered background/border utilities without a tailwind-merge.
+          className="glass-panel absolute bottom-4 right-5 z-20 rounded-full text-[13.5px] font-medium hover:-translate-y-px motion-reduce:hover:translate-y-0"
+          icon={<ArrowDown size={15} aria-hidden="true" />}
         >
-          <ArrowDown size={15} aria-hidden="true" />
-          <span>{t('chat.jumpToLatest')}</span>
-        </button>
+          {t('chat.jumpToLatest')}
+        </Button>
       )}
 
       <ConfirmDialog
@@ -2509,6 +2757,7 @@ export const MessageBlock = memo(function MessageBlock({
   toolResult,
   branchAction,
   turnChangedFiles,
+  turnCompletion,
 }: {
   sessionId?: string | null
   message: UIMessage
@@ -2521,6 +2770,7 @@ export const MessageBlock = memo(function MessageBlock({
     onBranch: () => void
   }
   turnChangedFiles?: string[]
+  turnCompletion?: TurnCompletion
 }) {
   const t = useTranslation()
 
@@ -2538,6 +2788,7 @@ export const MessageBlock = memo(function MessageBlock({
             attachments={message.attachments}
             branchAction={branchAction}
             timestamp={message.timestamp}
+            sessionId={sessionId ?? undefined}
           />
         </SelectableChatMessage>
       )
@@ -2555,6 +2806,7 @@ export const MessageBlock = memo(function MessageBlock({
             sessionId={sessionId ?? undefined}
             timestamp={message.timestamp}
             turnChangedFiles={turnChangedFiles}
+            turnCompletion={turnCompletion}
           />
         </SelectableChatMessage>
       )
@@ -2571,6 +2823,11 @@ export const MessageBlock = memo(function MessageBlock({
           />
         )
       }
+      // No durationMs prop here on purpose: buildRenderModel only emits a
+      // standalone tool_use item for AskUserQuestion, and this branch is reached
+      // only while such a call is still pending — so there is never a result to
+      // measure against. The badge is wired in ToolCallGroup, the path every
+      // other tool call takes.
       return (
         <ToolCallBlock
           toolName={message.toolName}
@@ -2623,10 +2880,10 @@ export const MessageBlock = memo(function MessageBlock({
         message.message.trim() !== '' &&
         message.message !== displayMessage
       return (
-        <div className="mb-3 px-4 py-2.5 rounded-lg border border-[var(--color-error)]/20 bg-[var(--color-error-container)]/28 text-sm text-[var(--color-error)]">
+        <div className="mb-3 px-4 py-2.5 rounded-[var(--radius-lg)] border border-[var(--color-error)] bg-[var(--color-error-container)] text-sm text-[var(--color-on-error-container)]">
           <strong>{t('common.error')}:</strong> {displayMessage}
           {showRawDetail && (
-            <div className="mt-1 whitespace-pre-wrap text-xs text-[var(--color-on-error-container)]/85">
+            <div className="mt-1 whitespace-pre-wrap text-xs text-[var(--color-on-error-container)]">
               {message.message}
             </div>
           )}

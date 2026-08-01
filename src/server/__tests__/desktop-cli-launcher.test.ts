@@ -146,7 +146,7 @@ describe('ensureDesktopCliLauncherInstalled', () => {
     expect(getDesktopCliCommandName('win32')).toBe('echoflow-code.cmd')
 
     process.env.CLAUDE_CONFIG_DIR = 'C:\\Portable\\ClaudeConfig'
-    const wrapper = buildWindowsLauncherWrapper('C:\\Apps\\cc-haha\\claude-sidecar.exe')
+    const wrapper = buildWindowsLauncherWrapper('C:\\Apps\\echoflow-code\\claude-sidecar.exe')
 
     expect(wrapper).toContain('set "CLAUDE_CONFIG_DIR=C:\\Portable\\ClaudeConfig"')
     expect(wrapper).toContain(
@@ -156,7 +156,7 @@ describe('ensureDesktopCliLauncherInstalled', () => {
 
   it('removes stale legacy Windows binary launchers so the cmd shim can resolve', async () => {
     const binDir = join(tempHome, '.local', 'bin')
-    const legacyExePath = join(binDir, 'claude-haha.exe')
+    const legacyExePath = join(binDir, 'echoflow-code.exe')
     await mkdir(binDir, { recursive: true })
     await writeFile(legacyExePath, 'old-binary', 'utf8')
 

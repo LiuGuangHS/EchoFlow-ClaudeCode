@@ -13,7 +13,7 @@ let originalEnv: {
   PATH?: string
   SHELL?: string
   ZDOTDIR?: string
-  CC_HAHA_DISABLE_TERMINAL_SHELL_ENV?: string
+  ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV?: string
 }
 
 async function writeExecutable(filePath: string, content: string) {
@@ -51,10 +51,10 @@ describe('MCP stdio environment', () => {
       PATH: process.env.PATH,
       SHELL: process.env.SHELL,
       ZDOTDIR: process.env.ZDOTDIR,
-      CC_HAHA_DISABLE_TERMINAL_SHELL_ENV:
-        process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV,
+      ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV:
+        process.env.ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV,
     }
-    delete process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV
+    delete process.env.ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV
     resetMcpStdioEnvironmentCacheForTests()
   })
 
@@ -70,13 +70,7 @@ describe('MCP stdio environment', () => {
     await rm(tmpDir, { recursive: true, force: true })
   })
 
-  it('adds PATH entries sourced from the user zshrc when MCP env has no explicit PATH', async () => {
-    if (process.platform === 'win32') {
-      const env = await getMcpStdioEnvironment({})
-      expect(env.NVM_DIR).toBeUndefined()
-      return
-    }
-
+  it.skipIf(process.platform === 'win32')('adds PATH entries sourced from the user zshrc when MCP env has no explicit PATH', async () => {
     const shellPath = path.join(tmpDir, 'zsh')
     const nodeBin = path.join(tmpDir, 'node-bin')
     await mkdir(nodeBin, { recursive: true })

@@ -148,6 +148,12 @@ const DESKTOP_SCOPE: CoverageScope = {
   excludePrefixes: [
     'desktop/src/mocks/',
     'desktop/src/types/',
+    // Dev-only tooling, same category as mocks/. `dev/` holds the component
+    // gallery, which Vite never bundles (its build input is index.html alone)
+    // and which exists precisely to be looked at by a person — unit-testing a
+    // page whose whole job is rendering every primitive would assert that the
+    // primitives render, which their own tests already do.
+    'desktop/src/dev/',
   ],
   excludeSuffixes: ['.test.ts', '.test.tsx', '.d.ts', 'vite-env.d.ts', '.css'],
 }
@@ -436,7 +442,7 @@ export function hasUsableCoverageSummary(summary: CoverageSummary) {
 
 async function runCommand(command: string[], cwd: string, logPath: string) {
   const started = Date.now()
-  const sandboxHome = mkdtempSync(join(tmpdir(), 'cc-haha-coverage-test-'))
+  const sandboxHome = mkdtempSync(join(tmpdir(), 'echoflow-code-coverage-test-'))
   try {
     const proc = Bun.spawn(command, {
       cwd,

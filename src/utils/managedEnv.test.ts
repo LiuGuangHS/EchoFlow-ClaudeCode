@@ -37,6 +37,7 @@ describe('managed environment', () => {
     process.env.NODE_ENV = 'test'
     process.env.CLAUDE_CONFIG_DIR = tempDir
     delete process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST
+    delete process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
     delete process.env.ANTHROPIC_BASE_URL
     delete process.env.ANTHROPIC_AUTH_TOKEN
     delete process.env.ANTHROPIC_MODEL
@@ -48,6 +49,9 @@ describe('managed environment', () => {
   })
 
   afterEach(async () => {
+    await import('../server/proxy/standaloneProviderProxy.js')
+      .then((mod) => mod.stopStandaloneProviderProxyForTests?.())
+      .catch(() => {})
     resetSettingsCache()
     setAllowedSettingSources(originalSettingSources)
     restoreEnv()
@@ -110,5 +114,21 @@ describe('managed environment', () => {
     expect(process.env.ANTHROPIC_BASE_URL).toBeUndefined()
     expect(process.env.ANTHROPIC_MODEL).toBeUndefined()
     expect(process.env.ECHOFLOW_KEEP).toBe('1')
+  })
+
+  it('does not let settings replace host-owned provider routing credentials', async () => {
+    await writeJson(join(getEchoFlowInternalDir(tempDir), 'settings.json'), {
+      env: {
+        CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: '0',
+        ECHOFLOW_LOCAL_ACCESS_TOKEN: 'stale-settings-token',
+      },
+    })
+    process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST = '1'
+    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+
+    applySafeConfigEnvironmentVariables()
+
+    expect(process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST).toBe('1')
+    expect(process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN).toBe('desktop-local-secret')
   })
 })
