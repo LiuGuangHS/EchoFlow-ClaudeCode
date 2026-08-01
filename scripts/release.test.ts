@@ -33,6 +33,8 @@ function makeReleaseRepo() {
     join(root, 'desktop', 'package.json'),
     JSON.stringify({ version: '0.4.1' }, null, 2) + '\n',
   )
+  writeFileSync(join(root, 'mobile', 'package.json'), JSON.stringify({ version: '0.4.1' }, null, 2) + '\n')
+  writeFileSync(join(root, 'mobile', 'app.json'), JSON.stringify({ expo: { version: '0.4.1' } }, null, 2) + '\n')
   writeFileSync(join(root, 'release-notes', 'v0.4.1.md'), '# EchoFlow Code v0.4.1\n')
   git(root, ['init'])
   git(root, ['config', 'user.email', 'release-test@example.com'])
@@ -55,6 +57,24 @@ describe('release script', () => {
       expect(git(root, ['rev-parse', 'HEAD'])).toBe(before)
       expect(git(root, ['tag', '--list', 'v0.4.1'])).toBe('v0.4.1')
       expect(readFileSync(join(root, 'desktop', 'package.json'), 'utf8')).toContain('"version": "0.4.1"')
+      expect(readFileSync(join(root, 'mobile', 'package.json'), 'utf8')).toContain('"version": "0.4.1"')
+      expect(readFileSync(join(root, 'mobile', 'app.json'), 'utf8')).toContain('"version": "0.4.1"')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test('updates desktop and mobile version sources together', () => {
+    const root = makeReleaseRepo()
+    try {
+      writeFileSync(join(root, 'release-notes', 'v0.5.1.md'), '# EchoFlow Code v0.5.1\n')
+
+      const result = runRelease(root, ['0.5.1'])
+
+      expect(result.exitCode).toBe(0)
+      expect(readFileSync(join(root, 'desktop', 'package.json'), 'utf8')).toContain('"version": "0.5.1"')
+      expect(readFileSync(join(root, 'mobile', 'package.json'), 'utf8')).toContain('"version": "0.5.1"')
+      expect(readFileSync(join(root, 'mobile', 'app.json'), 'utf8')).toContain('"version": "0.5.1"')
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

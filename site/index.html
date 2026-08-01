@@ -22,7 +22,8 @@
       // 判定规则与 src/lib/locale.js 是同一套，check-docs.mjs 盯着两处不漂移。
       (function () {
         try {
-          if (window.location.pathname.replace(/\/+$/, '') !== '') return
+          var base = '%BASE_URL%'.replace(/\/+$/, '')
+          if (window.location.pathname.replace(/\/+$/, '') !== base) return
 
           var stored = localStorage.getItem('cch-locale')
           var locale = stored === 'en' || stored === 'zh'

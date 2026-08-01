@@ -132,7 +132,10 @@ export async function prepareRipgrep({
 
     const extractDir = path.join(temporaryDir, 'extracted')
     await mkdir(extractDir, { recursive: true })
-    const extract = Bun.spawn(['tar', '-xf', downloadedArchive, '-C', extractDir], {
+    const extractCommand = asset.archiveName.endsWith('.zip')
+      ? ['unzip', '-q', downloadedArchive, '-d', extractDir]
+      : ['tar', '-xf', downloadedArchive, '-C', extractDir]
+    const extract = Bun.spawn(extractCommand, {
       stdout: 'inherit',
       stderr: 'inherit',
     })

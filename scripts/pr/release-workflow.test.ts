@@ -674,19 +674,19 @@ describe('release mobile APK workflow', () => {
     return readFileSync('.github/workflows/release-mobile-apk.yml', 'utf8')
   }
 
-  test('mobile APK release uses a separate mobile version tag and release', () => {
+  test('mobile APK release uses the shared desktop release tag', () => {
     const workflow = readMobileReleaseWorkflow()
 
     expect(workflow).toContain('workflow_dispatch:')
-    expect(workflow).toContain('mobile-v0.4.3')
+    expect(workflow).toContain('v0.4.3')
+    expect(workflow).not.toContain('mobile-v0.4.3')
     expect(workflow).not.toContain('workflow_run:')
     expect(workflow).not.toContain('github.event.workflow_run')
     expect(workflow).toContain('ref: ${{ inputs.tag }}')
-    expect(workflow).toContain('EXPECTED_TAG="mobile-v${PACKAGE_VERSION}"')
-    expect(workflow).toContain('Tag $TAG does not match mobile version $EXPECTED_TAG')
-    expect(workflow).toContain('gh release create "$TAG" --title "EchoFlow Code Mobile v$VERSION"')
+    expect(workflow).toContain('EXPECTED_TAG="v${PACKAGE_VERSION}"')
+    expect(workflow).toContain('Tag $TAG does not match the shared release tag $EXPECTED_TAG')
     expect(workflow).toContain('gh release upload "$TAG" "$APK_NAME" --clobber')
-    expect(workflow).not.toContain('Run the desktop release workflow first')
+    expect(workflow).not.toContain('gh release create')
   })
 
   test('passes Android signing keystore to Gradle with an absolute path', () => {

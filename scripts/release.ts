@@ -22,6 +22,18 @@ const VERSION_FILES = [
       return content.replace(/"version":\s*"[^"]*"/, `"version": "${version}"`)
     },
   },
+  {
+    path: path.join(root, 'mobile/package.json'),
+    update(content: string, version: string) {
+      return content.replace(/"version":\s*"[^"]*"/, `"version": "${version}"`)
+    },
+  },
+  {
+    path: path.join(root, 'mobile/app.json'),
+    update(content: string, version: string) {
+      return content.replace(/("expo"\s*:\s*\{[\s\S]*?"version":\s*)"[^"]*"/, `$1"${version}"`)
+    },
+  },
 ]
 
 function getCurrentVersion(): string {
