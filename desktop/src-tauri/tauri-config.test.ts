@@ -7,6 +7,14 @@ import { join } from 'node:path'
 const currentDir = dirname(fileURLToPath(import.meta.url))
 
 describe('tauri security config', () => {
+  it('uses the desktop package identifier', () => {
+    const config = JSON.parse(
+      readFileSync(join(currentDir, 'tauri.conf.json'), 'utf8'),
+    ) as { identifier?: string }
+
+    expect(config.identifier).toBe('com.echoflow.code.desktop')
+  })
+
   it('allows desktop sidecar image URLs for opener icons', () => {
     const config = JSON.parse(
       readFileSync(join(currentDir, 'tauri.conf.json'), 'utf8'),

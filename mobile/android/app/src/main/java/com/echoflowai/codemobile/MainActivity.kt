@@ -1,4 +1,4 @@
-package com.echoflow.code
+package com.echoflow.code.mobile
 
 import android.os.Build
 import android.os.Bundle

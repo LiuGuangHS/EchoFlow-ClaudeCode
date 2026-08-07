@@ -6,6 +6,8 @@ use std::path::PathBuf;
 
 const ECHOFLOW_APP_NAME: &str = "EchoFlow Code";
 const ECHOFLOW_PORTABLE_ENV: &str = "ECHOFLOW_CODE_APP_PORTABLE_DIR";
+const DESKTOP_APP_IDENTIFIER: &str = "com.echoflow.code.desktop";
+const LEGACY_DESKTOP_APP_IDENTIFIER: &str = "com.echoflowai-claude-code.desktop";
 
 enum StartupConfigDir {
     Portable(PathBuf),
@@ -157,12 +159,12 @@ fn determine_startup_portable_dir() -> Option<PathBuf> {
         });
 
     if let Some(ref sys_cfg) = system_config {
-        // Use the EchoFlow bundle identifier.
-        let app_subdir = sys_cfg.join("com.echoflowai-claude-code.desktop");
-        if let Some((mode, portable_dir)) = get_mode_from_config(&app_subdir) {
-            if mode == "portable" {
-                return Some(portable_dir.unwrap_or(default_portable.clone()));
-            } else {
+        for app_identifier in [DESKTOP_APP_IDENTIFIER, LEGACY_DESKTOP_APP_IDENTIFIER] {
+            let app_subdir = sys_cfg.join(app_identifier);
+            if let Some((mode, portable_dir)) = get_mode_from_config(&app_subdir) {
+                if mode == "portable" {
+                    return Some(portable_dir.unwrap_or(default_portable.clone()));
+                }
                 return None; // 明确设置了 default
             }
         }

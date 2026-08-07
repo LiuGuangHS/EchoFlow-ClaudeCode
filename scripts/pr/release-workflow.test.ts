@@ -699,12 +699,25 @@ describe('release mobile APK workflow', () => {
     expect(workflow).not.toContain('android.injected.signing.store.file=app/release.keystore')
   })
 
-  test('native Android release manifest allows trusted LAN HTTP H5 access', () => {
+  test('native Android release manifest uses the mobile package identifier and allows trusted LAN HTTP H5 access', () => {
     const appConfig = JSON.parse(readFileSync('mobile/app.json', 'utf8')) as {
-      expo?: { android?: { usesCleartextTraffic?: boolean } }
+      expo?: {
+        android?: {
+          package?: string
+          usesCleartextTraffic?: boolean
+        }
+      }
     }
     const manifest = readFileSync('mobile/android/app/src/main/AndroidManifest.xml', 'utf8')
+    const buildGradle = readFileSync('mobile/android/app/build.gradle', 'utf8')
+    const mainActivity = readFileSync('mobile/android/app/src/main/java/com/echoflowai/codemobile/MainActivity.kt', 'utf8')
+    const mainApplication = readFileSync('mobile/android/app/src/main/java/com/echoflowai/codemobile/MainApplication.kt', 'utf8')
 
+    expect(appConfig.expo?.android?.package).toBe('com.echoflow.code.mobile')
+    expect(buildGradle).toContain('namespace "com.echoflow.code.mobile"')
+    expect(buildGradle).toContain('applicationId "com.echoflow.code.mobile"')
+    expect(mainActivity).toStartWith('package com.echoflow.code.mobile')
+    expect(mainApplication).toStartWith('package com.echoflow.code.mobile')
     expect(appConfig.expo?.android?.usesCleartextTraffic).toBe(true)
     expect(manifest).toContain('android:usesCleartextTraffic="true"')
   })

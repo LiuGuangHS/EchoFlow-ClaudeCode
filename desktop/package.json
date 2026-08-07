@@ -11,7 +11,7 @@
   "type": "module",
   "main": "electron-dist/main.cjs",
   "build": {
-    "appId": "com.echoflowai-claude-code.desktop",
+    "appId": "com.echoflow.code.desktop",
     "productName": "EchoFlow Code",
     "asar": true,
     "asarUnpack": [

@@ -98,9 +98,9 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace "com.echoflow.code"
+    namespace "com.echoflow.code.mobile"
     defaultConfig {
-        applicationId "com.echoflow.code"
+        applicationId "com.echoflow.code.mobile"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode expoVersionCode

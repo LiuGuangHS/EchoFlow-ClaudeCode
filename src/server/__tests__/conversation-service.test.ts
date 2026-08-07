@@ -1041,7 +1041,7 @@ describe('ConversationService', () => {
     )) as Record<string, string>
 
     expect(env.ECHOFLOW_COMPUTER_USE_HOST_BUNDLE_ID).toBe(
-      'com.echoflowai-claude-code.desktop',
+      'com.echoflow.code.desktop',
     )
     expect(env.ECHOFLOW_DESKTOP_SERVER_URL).toBe('http://127.0.0.1:3456')
     expect(env.ECHOFLOW_TRACE_API_CALLS).toBe('1')

@@ -1601,7 +1601,7 @@ export class ConversationService {
             // arrives. Flush the completed turn first so the replacement can
             // reliably choose --resume and load the context (#1033).
             CLAUDE_CODE_EAGER_FLUSH: cleanEnv.CLAUDE_CODE_EAGER_FLUSH || '1',
-            ECHOFLOW_COMPUTER_USE_HOST_BUNDLE_ID: 'com.echoflowai-claude-code.desktop',
+            ECHOFLOW_COMPUTER_USE_HOST_BUNDLE_ID: 'com.echoflow.code.desktop',
           }
         : {}),
       ...(sdkUrl && traceCaptureEnabled

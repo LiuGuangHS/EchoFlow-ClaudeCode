@@ -230,6 +230,8 @@ const WINDOW_STATE_FILE: &str = "window-state.json";
 const TERMINAL_CONFIG_FILE: &str = "terminal-config.json";
 const APP_MODE_FILE: &str = "app-mode.json";
 const ECHOFLOW_DEFAULT_CONFIG_ENV: &str = "ECHOFLOW_CODE_DEFAULT_CONFIG_DIR";
+const DESKTOP_APP_IDENTIFIER: &str = "com.echoflow.code.desktop";
+const LEGACY_DESKTOP_APP_IDENTIFIER: &str = "com.echoflowai-claude-code.desktop";
 const ECHOFLOW_PORTABLE_ENV: &str = "ECHOFLOW_CODE_APP_PORTABLE_DIR";
 const LEGACY_PORTABLE_ENV: &str = "ECHOFLOW_APP_PORTABLE_DIR";
 const SERVER_STATE_FILE: &str = "desktop-server-state.json";
@@ -331,7 +333,7 @@ struct TerminalConfig {
 
 impl TerminalConfig {
     fn load(app: &AppHandle) -> Self {
-        let path = match terminal_config_path(app) {
+        let path = match migrated_app_config_file_path(app, TERMINAL_CONFIG_FILE) {
             Some(p) => p,
             None => return Self::default(),
         };
@@ -364,7 +366,6 @@ impl TerminalConfig {
 }
 
 fn terminal_config_path(app: &AppHandle) -> Option<PathBuf> {
-    // honour CLAUDE_CONFIG_DIR for portable installs
     std::env::var("CLAUDE_CONFIG_DIR")
         .ok()
         .map(|dir| PathBuf::from(&dir).join(TERMINAL_CONFIG_FILE))
@@ -375,6 +376,81 @@ fn terminal_config_path(app: &AppHandle) -> Option<PathBuf> {
                 None
             }
         })
+}
+
+fn migrated_app_config_file_path(app: &AppHandle, filename: &str) -> Option<PathBuf> {
+    let current_path = std::env::var("CLAUDE_CONFIG_DIR")
+        .ok()
+        .map(|dir| PathBuf::from(dir).join(filename))
+        .or_else(|| app.path().app_config_dir().ok().map(|dir| dir.join(filename)))?;
+
+    if std::env::var_os("CLAUDE_CONFIG_DIR").is_some() {
+        return Some(current_path);
+    }
+
+    Some(migrate_legacy_app_config_file(current_path))
+}
+
+fn migrate_legacy_app_config_file(current_path: PathBuf) -> PathBuf {
+    if current_path.exists() {
+        return current_path;
+    }
+
+    let Some(current_dir) = current_path.parent() else {
+        return current_path;
+    };
+    if current_dir.file_name().and_then(|name| name.to_str()) != Some(DESKTOP_APP_IDENTIFIER) {
+        return current_path;
+    }
+
+    let Some(parent_dir) = current_dir.parent() else {
+        return current_path;
+    };
+    let Some(filename) = current_path.file_name() else {
+        return current_path;
+    };
+    let legacy_path = parent_dir.join(LEGACY_DESKTOP_APP_IDENTIFIER).join(filename);
+    if !legacy_path.is_file() {
+        return current_path;
+    }
+
+    if fs::create_dir_all(current_dir).is_err() {
+        return legacy_path;
+    }
+
+    let filename = filename.to_string_lossy();
+    let temporary_path = current_dir.join(format!(
+        ".{filename}.migration-{}",
+        std::process::id()
+    ));
+    let mut temporary_file = match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary_path)
+    {
+        Ok(file) => file,
+        Err(_) => return legacy_path,
+    };
+
+    let result = fs::read(&legacy_path)
+        .and_then(|data| temporary_file.write_all(&data))
+        .and_then(|()| temporary_file.sync_all())
+        .and_then(|()| fs::hard_link(&temporary_path, &current_path));
+
+    match result {
+        Ok(()) => {
+            let _ = fs::remove_file(&temporary_path);
+            current_path
+        }
+        Err(err) if err.kind() == ErrorKind::AlreadyExists => {
+            let _ = fs::remove_file(&temporary_path);
+            current_path
+        }
+        Err(_) => {
+            let _ = fs::remove_file(&temporary_path);
+            legacy_path
+        }
+    }
 }
 
 impl Default for TerminalConfig {
@@ -751,7 +827,7 @@ fn is_window_state_visible_on_any_monitor(
 fn window_state_path(app: &AppHandle) -> Option<PathBuf> {
     // honour CLAUDE_CONFIG_DIR so portable installs keep window-state.json
     // and terminal-config.json alongside the config dir instead of
-    // %APPDATA%\com.echoflowai-claude-code.desktop\.
+    // the Tauri app config directory.
     resolve_portable_state_path().or_else(|| match app.path().app_config_dir() {
         Ok(dir) => Some(dir.join(WINDOW_STATE_FILE)),
         Err(err) => {
@@ -831,7 +907,7 @@ fn write_stored_server_state(state: &StoredServerState) {
 }
 
 fn read_stored_window_state(app: &AppHandle) -> Option<StoredWindowState> {
-    let path = window_state_path(app)?;
+    let path = migrated_app_config_file_path(app, WINDOW_STATE_FILE)?;
     let data = match fs::read_to_string(&path) {
         Ok(data) => data,
         Err(err) if err.kind() == ErrorKind::NotFound => return None,
@@ -2141,14 +2217,85 @@ mod tests {
     use super::{
         decode_terminal_output, default_utf8_locale, dir_has_portable_data, ensure_utf8_locale,
         has_meaningful_intersection, is_browser_safe_port, is_persistable_window_state,
-        normalize_terminal_bash_path, parse_env_block, parse_h5_fixed_port,
-        reserve_browser_safe_port, reserve_local_port_with_preference,
+        migrate_legacy_app_config_file, normalize_terminal_bash_path, parse_env_block,
+        parse_h5_fixed_port, reserve_browser_safe_port, reserve_local_port_with_preference,
         resolve_agent_powershell_path_override, resolve_desktop_terminal_shell,
         resolve_terminal_cwd, run_notification_bridge, select_h5_dist_dir, DesktopTerminalConfig,
         StoredServerState, StoredWindowState, TerminalHostPlatform, SERVER_BIND_HOST,
         SERVER_CONTROL_HOST,
     };
     use std::{collections::HashMap, fs, net::TcpListener};
+
+    #[test]
+    fn migrates_legacy_desktop_state_file_without_overwriting_the_source() {
+        let root = std::env::temp_dir().join(format!(
+            "echoflow-package-id-migration-{}",
+            std::process::id()
+        ));
+        let legacy_path = root
+            .join("com.echoflowai-claude-code.desktop")
+            .join("window-state.json");
+        let current_path = root
+            .join("com.echoflow.code.desktop")
+            .join("window-state.json");
+        fs::create_dir_all(legacy_path.parent().expect("legacy parent"))
+            .expect("create legacy directory");
+        fs::write(&legacy_path, "{\"width\":1200}").expect("write legacy state");
+
+        let resolved = migrate_legacy_app_config_file(current_path.clone());
+
+        assert_eq!(resolved, current_path);
+        assert_eq!(fs::read_to_string(&current_path).expect("read migrated state"), "{\"width\":1200}");
+        assert_eq!(fs::read_to_string(&legacy_path).expect("read legacy state"), "{\"width\":1200}");
+        fs::remove_dir_all(root).expect("remove migration fixture");
+    }
+
+    #[test]
+    fn keeps_current_desktop_state_file_when_legacy_state_also_exists() {
+        let root = std::env::temp_dir().join(format!(
+            "echoflow-package-id-current-{}",
+            std::process::id()
+        ));
+        let legacy_path = root
+            .join("com.echoflowai-claude-code.desktop")
+            .join("window-state.json");
+        let current_path = root
+            .join("com.echoflow.code.desktop")
+            .join("window-state.json");
+        fs::create_dir_all(legacy_path.parent().expect("legacy parent"))
+            .expect("create legacy directory");
+        fs::create_dir_all(current_path.parent().expect("current parent"))
+            .expect("create current directory");
+        fs::write(&legacy_path, "legacy").expect("write legacy state");
+        fs::write(&current_path, "current").expect("write current state");
+
+        let resolved = migrate_legacy_app_config_file(current_path.clone());
+
+        assert_eq!(resolved, current_path);
+        assert_eq!(fs::read_to_string(&current_path).expect("read current state"), "current");
+        fs::remove_dir_all(root).expect("remove migration fixture");
+    }
+
+    #[test]
+    fn does_not_migrate_into_nonstandard_config_directories() {
+        let root = std::env::temp_dir().join(format!(
+            "echoflow-package-id-nonstandard-{}",
+            std::process::id()
+        ));
+        let legacy_path = root
+            .join("com.echoflowai-claude-code.desktop")
+            .join("window-state.json");
+        let current_path = root.join("custom-config").join("window-state.json");
+        fs::create_dir_all(legacy_path.parent().expect("legacy parent"))
+            .expect("create legacy directory");
+        fs::write(&legacy_path, "legacy").expect("write legacy state");
+
+        let resolved = migrate_legacy_app_config_file(current_path.clone());
+
+        assert_eq!(resolved, current_path);
+        assert!(!current_path.exists());
+        fs::remove_dir_all(root).expect("remove migration fixture");
+    }
 
     #[test]
     fn window_state_rejects_too_small_sizes() {

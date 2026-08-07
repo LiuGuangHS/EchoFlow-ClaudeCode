@@ -3,7 +3,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 
 export const ECHOFLOW_APP_NAME = 'EchoFlow Code'
-export const ECHOFLOW_APP_ID = 'com.echoflowai-claude-code.desktop'
+export const ECHOFLOW_APP_ID = 'com.echoflow.code.desktop'
 export const ECHOFLOW_INTERNAL_DIR = 'echoflow-code'
 export const ECHOFLOW_MARKER_FILE = 'app.json'
 export const ECHOFLOW_DATA_ENV = 'CLAUDE_CONFIG_DIR'

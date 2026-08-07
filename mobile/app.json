@@ -10,7 +10,7 @@
     "icon": "./assets/icon.png",
     "assetBundlePatterns": ["**/*"],
     "android": {
-      "package": "com.echoflow.code",
+      "package": "com.echoflow.code.mobile",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0f172a"
