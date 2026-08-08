@@ -172,5 +172,7 @@ export function InlineImageGallery({ text, sessionId, workDir, changedFiles, sup
 }
 
 function isManagedGeneratedImagePath(imagePath: string): boolean {
-  return imagePath.replaceAll('\\', '/').includes('/.claude/cc-haha/generated-images/')
+  const normalizedPath = imagePath.replaceAll('\\', '/')
+  return normalizedPath.includes('/.claude/echoflow-code/generated-images/') ||
+    normalizedPath.includes('/.claude/cc-haha/generated-images/')
 }

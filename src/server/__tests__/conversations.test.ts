@@ -32,6 +32,7 @@ import { ProviderService } from '../services/providerService.js'
 import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 import { resetTerminalShellEnvironmentCacheForTests } from '../../utils/terminalShellEnvironment.js'
 import * as openAIModelCatalog from '../../services/openaiAuth/modelCatalog.js'
+import { IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY } from '../../services/imageGeneration/config.js'
 
 async function rmWithRetry(targetPath: string): Promise<void> {
   const attempts = process.platform === 'win32' ? 5 : 1
@@ -3823,7 +3824,7 @@ describe('WebSocket Chat Integration', () => {
       startCalls.push({
         providerId: options?.providerId,
         model: options?.model,
-        imageProviderKind: env.CC_HAHA_IMAGE_PROVIDER_KIND,
+        imageProviderKind: env[IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY],
       })
       return originalStartSession(sid, workDir, sdkUrl, options)
     }) as typeof conversationService.startSession
@@ -5520,7 +5521,7 @@ describe('WebSocket Chat Integration', () => {
     }
   }, 20_000)
 
-  it('should pass an inherited xhigh effort to a K3 provider without remapping it', async () => {
+  it('should omit unsupported xhigh effort for a K3 provider', async () => {
     const providerService = new ProviderService()
     const provider = await providerService.addProvider({
       presetId: 'kimi',
@@ -5585,8 +5586,8 @@ describe('WebSocket Chat Integration', () => {
       expect(startCalls.find((call) => call.options?.providerId === provider.id)?.options).toMatchObject({
         providerId: provider.id,
         model: 'k3',
-        effort: 'xhigh',
       })
+      expect(startCalls.find((call) => call.options?.providerId === provider.id)?.options?.effort).toBeUndefined()
     } finally {
       conversationService.startSession = originalStartSession
       conversationService.stopSession(sessionId)
@@ -5597,11 +5598,11 @@ describe('WebSocket Chat Integration', () => {
   it('should preserve xhigh for an unlisted Claude model on a compatible provider', async () => {
     const providerService = new ProviderService()
     const provider = await providerService.addProvider({
-      presetId: 'xuanshuapi',
-      name: `XuanShu Claude ${crypto.randomUUID()}`,
-      apiKey: 'test-xuanshu-key',
+      presetId: 'custom',
+      name: `Custom Claude ${crypto.randomUUID()}`,
+      apiKey: 'test-custom-claude-key',
       authStrategy: 'auth_token',
-      baseUrl: 'https://www.xuanshuapi.com',
+      baseUrl: 'https://custom-claude.example.test',
       apiFormat: 'anthropic',
       models: {
         main: 'claude-opus-5',

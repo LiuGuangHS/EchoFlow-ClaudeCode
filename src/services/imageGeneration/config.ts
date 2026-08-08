@@ -1,13 +1,21 @@
 export const IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY =
-  'CC_HAHA_IMAGE_PROVIDER_KIND'
+  'ECHOFLOW_IMAGE_PROVIDER_KIND'
 export const IMAGE_GENERATION_PROVIDER_ID_ENV_KEY =
-  'CC_HAHA_IMAGE_PROVIDER_ID'
+  'ECHOFLOW_IMAGE_PROVIDER_ID'
 export const IMAGE_GENERATION_BASE_URL_ENV_KEY =
-  'CC_HAHA_IMAGE_BASE_URL'
+  'ECHOFLOW_IMAGE_BASE_URL'
 export const IMAGE_GENERATION_API_KEY_ENV_KEY =
-  'CC_HAHA_IMAGE_API_KEY'
+  'ECHOFLOW_IMAGE_API_KEY'
 export const IMAGE_GENERATION_MODEL_ENV_KEY =
-  'CC_HAHA_IMAGE_MODEL'
+  'ECHOFLOW_IMAGE_MODEL'
+
+export const LEGACY_IMAGE_GENERATION_ENV_KEYS = {
+  kind: 'CC_HAHA_IMAGE_PROVIDER_KIND',
+  providerId: 'CC_HAHA_IMAGE_PROVIDER_ID',
+  baseUrl: 'CC_HAHA_IMAGE_BASE_URL',
+  apiKey: 'CC_HAHA_IMAGE_API_KEY',
+  model: 'CC_HAHA_IMAGE_MODEL',
+} as const
 
 export const OPENAI_IMAGE_DEFAULT_MODEL = 'gpt-image-2'
 export const GROK_IMAGE_DEFAULT_MODEL = 'grok-imagine-image-quality'
@@ -28,9 +36,18 @@ export type ImageGenerationRuntimeConfig = {
 export function getImageGenerationRuntimeConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): ImageGenerationRuntimeConfig | null {
-  const kind = env[IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY]?.trim()
-  const providerId = env[IMAGE_GENERATION_PROVIDER_ID_ENV_KEY]?.trim()
-  const model = env[IMAGE_GENERATION_MODEL_ENV_KEY]?.trim()
+  const kind = (
+    env[IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY] ??
+    env[LEGACY_IMAGE_GENERATION_ENV_KEYS.kind]
+  )?.trim()
+  const providerId = (
+    env[IMAGE_GENERATION_PROVIDER_ID_ENV_KEY] ??
+    env[LEGACY_IMAGE_GENERATION_ENV_KEYS.providerId]
+  )?.trim()
+  const model = (
+    env[IMAGE_GENERATION_MODEL_ENV_KEY] ??
+    env[LEGACY_IMAGE_GENERATION_ENV_KEYS.model]
+  )?.trim()
 
   if (
     !providerId ||
@@ -42,8 +59,14 @@ export function getImageGenerationRuntimeConfig(
     return null
   }
 
-  const baseUrl = env[IMAGE_GENERATION_BASE_URL_ENV_KEY]?.trim()
-  const apiKey = env[IMAGE_GENERATION_API_KEY_ENV_KEY]?.trim()
+  const baseUrl = (
+    env[IMAGE_GENERATION_BASE_URL_ENV_KEY] ??
+    env[LEGACY_IMAGE_GENERATION_ENV_KEYS.baseUrl]
+  )?.trim()
+  const apiKey = (
+    env[IMAGE_GENERATION_API_KEY_ENV_KEY] ??
+    env[LEGACY_IMAGE_GENERATION_ENV_KEYS.apiKey]
+  )?.trim()
   if (kind === 'openai_images' && (!baseUrl || !apiKey)) {
     return null
   }

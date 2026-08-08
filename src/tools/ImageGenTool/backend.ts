@@ -20,7 +20,8 @@ import type {
   ImageGenerationRuntimeConfig,
 } from '../../services/imageGeneration/config.js'
 import { createCombinedAbortSignal } from '../../utils/combinedAbortSignal.js'
-import { getCcHahaDir, getClaudeConfigHomeDir } from '../../utils/envUtils.js'
+import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
+import { getEchoFlowConfigDir } from '../../utils/echoFlowConfigRoot.js'
 import { getProxyFetchOptions } from '../../utils/proxy.js'
 
 export type ImageGenerationInput = {
@@ -660,7 +661,7 @@ function defaultInputRootDirs(): string[] {
   const sessionId = safeSessionId()
   return [
     join(getClaudeConfigHomeDir(), 'uploads', sessionId),
-    join(getCcHahaDir(), 'generated-images', sessionId),
+    join(getEchoFlowConfigDir(), 'generated-images', sessionId),
   ]
 }
 
@@ -781,7 +782,7 @@ function detectImage(bytes: Buffer): {
 }
 
 function defaultOutputDir(): string {
-  return join(getCcHahaDir(), 'generated-images', safeSessionId())
+  return join(getEchoFlowConfigDir(), 'generated-images', safeSessionId())
 }
 
 function safeSessionId(): string {

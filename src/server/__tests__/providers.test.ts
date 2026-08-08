@@ -16,6 +16,13 @@ import {
 } from '../services/traceCaptureService.js'
 import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 import type { CreateProviderInput } from '../types/provider.js'
+import {
+  IMAGE_GENERATION_API_KEY_ENV_KEY,
+  IMAGE_GENERATION_BASE_URL_ENV_KEY,
+  IMAGE_GENERATION_MODEL_ENV_KEY,
+  IMAGE_GENERATION_PROVIDER_ID_ENV_KEY,
+  IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY,
+} from '../../services/imageGeneration/config.js'
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
 
@@ -376,13 +383,13 @@ describe('ProviderService', () => {
       const env = settings.env as Record<string, string>
       expect(env.ECHOFLOW_SEND_DISABLED_THINKING).toBeUndefined()
       expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe(
-        'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
+        'thinking,effort,adaptive_thinking,max_effort',
       )
       expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES).toBe(
-        'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
+        'thinking,effort,adaptive_thinking,max_effort',
       )
       expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES).toBe(
-        'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
+        'thinking,effort,adaptive_thinking,max_effort',
       )
     })
 
@@ -577,29 +584,6 @@ describe('ProviderService', () => {
           hasAuth: true,
           source: 'openai-oauth',
           activeProvider: 'ChatGPT Official',
-        })
-      })
-
-      test('auth status reports Claude Official from the desktop Claude token file', async () => {
-        await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
-        await fs.writeFile(
-          path.join(tmpDir, 'cc-haha', 'oauth.json'),
-          JSON.stringify({
-            accessToken: 'claude-access',
-            refreshToken: 'claude-refresh',
-            expiresAt: Date.now() + 60 * 60_000,
-            scopes: [],
-            subscriptionType: 'pro',
-          }),
-          'utf-8',
-        )
-
-        const svc = new ProviderService()
-
-        await expect(svc.checkAuthStatus()).resolves.toMatchObject({
-          hasAuth: true,
-          source: 'claude-oauth',
-          activeProvider: 'Claude Official',
         })
       })
 
@@ -903,19 +887,19 @@ describe('ProviderService', () => {
       let settings = await readSettings()
       let env = settings.env as Record<string, string>
       expect(env).toMatchObject({
-        CC_HAHA_IMAGE_PROVIDER_KIND: 'openai_images',
-        CC_HAHA_IMAGE_PROVIDER_ID: added.id,
-        CC_HAHA_IMAGE_BASE_URL: 'https://images.example.test/v1',
-        CC_HAHA_IMAGE_API_KEY: 'image-secret',
-        CC_HAHA_IMAGE_MODEL: 'image-model',
+        [IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY]: 'openai_images',
+        [IMAGE_GENERATION_PROVIDER_ID_ENV_KEY]: added.id,
+        [IMAGE_GENERATION_BASE_URL_ENV_KEY]: 'https://images.example.test/v1',
+        [IMAGE_GENERATION_API_KEY_ENV_KEY]: 'image-secret',
+        [IMAGE_GENERATION_MODEL_ENV_KEY]: 'image-model',
       })
 
       const updated = await svc.updateProvider(added.id, { imageGeneration: null })
       expect(updated.imageGeneration).toBeUndefined()
       settings = await readSettings()
       env = settings.env as Record<string, string>
-      expect(env.CC_HAHA_IMAGE_PROVIDER_KIND).toBeUndefined()
-      expect(env.CC_HAHA_IMAGE_API_KEY).toBeUndefined()
+      expect(env[IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY]).toBeUndefined()
+      expect(env[IMAGE_GENERATION_API_KEY_ENV_KEY]).toBeUndefined()
     })
   })
 

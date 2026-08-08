@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { translateCliMessage } from '../ws/handler.js'
+import {
+  __markActiveTurnForTests,
+  __resetWebSocketHandlerStateForTests,
+  translateCliMessage,
+} from '../ws/handler.js'
 import { goldenScenarios } from './translateCliMessage.golden.js'
 
 const GOLDEN_PATH = fileURLToPath(new URL('./fixtures/translate-cli-message.golden.json', import.meta.url))
@@ -17,9 +21,14 @@ type GoldenFile = Record<string, GoldenStep[]>
  * `sessionStopRequested`, `agentStopRequestedSessions`) are all keyed by session id,
  * so a unique id per run is full isolation with no production seam.
  */
-function replay(scenarioId: string, messages: Array<Record<string, unknown>>, salt: string): GoldenStep[] {
-  const sessionId = `golden-${scenarioId}-${salt}`
-  return messages.map((message) => ({
+function replay(
+  scenario: (typeof goldenScenarios)[number],
+  salt: string,
+): GoldenStep[] {
+  __resetWebSocketHandlerStateForTests()
+  const sessionId = `golden-${scenario.id}-${salt}`
+  if (scenario.hasActiveUserTurn) __markActiveTurnForTests(sessionId)
+  return scenario.messages.map((message) => ({
     in: describeFrame(message),
     out: JSON.parse(JSON.stringify(translateCliMessage(message, sessionId))) as unknown[],
   }))
@@ -47,7 +56,7 @@ function loadGolden(): GoldenFile {
 if (UPDATE) {
   const regenerated: GoldenFile = {}
   for (const scenario of goldenScenarios) {
-    regenerated[scenario.id] = replay(scenario.id, scenario.messages, 'record')
+    regenerated[scenario.id] = replay(scenario, 'record')
   }
   writeFileSync(GOLDEN_PATH, JSON.stringify(regenerated, null, 2) + '\n')
 }
@@ -96,7 +105,7 @@ describe('translateCliMessage golden output', () => {
 
   for (const scenario of goldenScenarios) {
     test(`${scenario.id}: ${scenario.description}`, () => {
-      expect(replay(scenario.id, scenario.messages, 'verify')).toEqual(stepsFor(scenario.id))
+      expect(replay(scenario, 'verify')).toEqual(stepsFor(scenario.id))
     })
   }
 
@@ -106,7 +115,7 @@ describe('translateCliMessage golden output', () => {
     // session, replaying in reverse under different ids would drift.
     for (const scenario of [...goldenScenarios].reverse()) {
       expect(
-        replay(scenario.id, scenario.messages, 'reordered'),
+        replay(scenario, 'reordered'),
         `${scenario.id} depends on global state or replay order`,
       ).toEqual(stepsFor(scenario.id))
     }

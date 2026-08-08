@@ -415,6 +415,12 @@ async function runPersistentStorageMigrations(configDir: string): Promise<Migrat
   await migrateLegacyEchoFlowAccount(echoFlowDir, report)
 
   await migrateJsonEntry(
+    path.join(configDir, 'cc-haha', 'providers.json'),
+    'legacy-cc-haha/providers.json',
+    report,
+    migrateProvidersIndex,
+  )
+  await migrateJsonEntry(
     path.join(echoFlowDir, 'providers.json'),
     'echoflow/providers.json',
     report,
