@@ -19,6 +19,8 @@ describe('feature quality contract', () => {
     expect(agents).toContain('`bun run check:impact`')
     expect(agents).toContain('`bun run verify`')
     expect(agents).toContain('`bun run check:persistence-upgrade`')
+    expect(agents).toContain('`bun run audit:harness`')
+    expect(agents).toContain('`.claude/` remains local-only')
     expect(agents).toContain('`~/.claude/settings.json` is user-owned shared state')
     expect(agents).toContain('Official vendor APIs and official OAuth integrations, including Grok Official')
     expect(agents).toContain('Do not automatically add third-party relay, sponsor/referral gateway, or promotional provider presets')
@@ -47,6 +49,9 @@ describe('feature quality contract', () => {
     const template = readFileSync('.github/pull_request_template.md', 'utf8')
 
     expect(template).toContain('## Feature Quality Contract')
+    expect(template).toContain('## ECC / Reproduction Evidence')
+    expect(template).toContain('`bun run audit:harness`')
+    expect(template).toContain('`.claude/` local state was not committed')
     expect(template).toContain('Changed surface:')
     expect(template).toContain('Tests added or updated:')
     expect(template).toContain('Coverage evidence:')
@@ -83,6 +88,7 @@ describe('feature quality contract', () => {
     const englishContributing = readFileSync('docs/en/internals/contributing.md', 'utf8')
     const rootContributing = readFileSync('CONTRIBUTING.md', 'utf8')
 
+    expect(packageJson.scripts?.['audit:harness']).toBe('node scripts/harness-audit.js repo --format json')
     expect(packageJson.scripts?.verify).toBe('bun run quality:pr')
     expect(packageJson.scripts?.['quality:verify']).toBe('bun run quality:pr')
     expect(packageJson.scripts?.['quality:push']).toBe('bun run quality:gate --mode pr --skip coverage')

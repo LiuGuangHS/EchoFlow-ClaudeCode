@@ -2111,6 +2111,9 @@ Row 9, all 8 cells: continuing from straight down, turning left through lower-le
   'model.selectModel': 'Select model',
   'model.configuration': 'Model Configuration',
   'model.effort': 'Effort',
+  'model.runtimeRestarting': 'Restarting runtime…',
+  'model.runtimeUnconfirmed': 'Runtime change requested; active runtime could not be confirmed.',
+  'model.runtimeRestartFailed': 'Runtime configuration was rejected. Check the provider, model, and reasoning setting.',
 
   // ─── Directory Picker ──────────────────────────────────────
   'dirPicker.selectProject': 'Select a project...',

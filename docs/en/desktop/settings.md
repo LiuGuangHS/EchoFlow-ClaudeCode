@@ -11,7 +11,7 @@ Click **Settings** at the bottom of the sidebar. Sixteen tabs on the left, in a 
 
 ## Providers
 
-Model access. Sign in to Claude, ChatGPT, or Grok with an account (no API key required), or add any Anthropic- or OpenAI-compatible service with an API key.
+Shared model-provider configuration. Sign in to Claude, ChatGPT, or Grok with an account (no API key required), or add any Anthropic- or OpenAI-compatible service with an API key. This is where provider credentials, endpoints, and model mappings live; it is not the execution runtime for a session. Choosing a provider, model, or effort inside a session creates a session-level override without replacing this shared configuration.
 
 You'll come here once during setup and rarely again. Full steps in [Connecting a model](../start/models.md).
 

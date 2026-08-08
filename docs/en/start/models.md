@@ -15,7 +15,7 @@ Click "Settings" at the bottom of the sidebar, then pick the first tab, "Provide
 - **You have a third-party API key** — DeepSeek, Kimi, Zhipu GLM and others come as presets. Paste the key and you're done.
 - **You want it free** — run LM Studio or Ollama on your own machine. The model runs on your GPU, costs nothing, and works offline.
 
-You can configure all three and switch between them in the provider list.
+You can configure all three and switch between them in the provider list. This switches the shared provider configuration, not the execution backend of a session. Each session can also override its provider, model, and effort independently; those choices do not create or replace a runtime-specific provider configuration.
 
 ## Sign in with an official account
 
@@ -113,7 +113,7 @@ Back in the provider list, on the entry you just created:
 2. Click "Set default" so new sessions use it.
 3. Multiple providers can be dragged to reorder. Order only affects how the list is displayed.
 
-Then start a new session and **pick the specific model from the model selector at the bottom right of the composer** — that list reflects what the active provider actually offers. The control next to it sets reasoning effort; leave it at the default if you're unsure.
+Then start a new session and **pick the provider and specific model from the session configuration controls in the composer** — the model list reflects what the selected provider actually offers. The adjacent control sets reasoning effort; leave it at the default if you're unsure. These controls change the current session's provider, model, and reasoning parameters; they are not a selector for execution backends such as the built-in CLI, system CLI, Windows CLI, or WSL.
 
 :::tip
 A passing test isn't a guarantee. It proves the endpoint is reachable and the credentials work — not that the model can sustain tool calls and long context. The real check is asking for a task that edits a file, and seeing whether it actually does.

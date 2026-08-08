@@ -140,6 +140,8 @@ const policyExactPaths = new Set([
   'docs/en/internals/contributing.md',
   'docs/internals/contributing.md',
   'package.json',
+  'scripts/harness-audit.js',
+  'scripts/harness-audit.test.ts',
 ])
 
 const docsExactPaths = new Set([

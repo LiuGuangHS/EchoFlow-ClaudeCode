@@ -123,11 +123,11 @@ Common client messages include:
 
 - `user_message` and `stop_generation`;
 - `permission_response` and `computer_use_permission_response`;
-- `set_permission_mode` and `set_runtime_config`;
+- `set_permission_mode` and `set_runtime_config` (session-level provider, model, and effort override);
 - `sync_state` and `prewarm_session`;
 - `ping`.
 
-The server sends connection and session state, text deltas, thinking, tool calls and results, permission requests, retry or fallback state, errors, task or team updates, and `pong`. Use `src/server/ws/events.ts` as the complete field contract.
+The server sends connection and session state, text deltas, thinking, tool calls and results, permission requests, retry or fallback state, errors, task or team updates, and `pong`. `set_runtime_config` currently updates a session-level `providerId`, `modelId`, and optional effort setting, then runs the session configuration-application flow; it does not select an independent execution backend such as the built-in CLI, system CLI, Windows CLI, WSL, or fallback. Use `src/server/ws/events.ts` as the complete field contract.
 
 The Desktop client sends a ping every 30 seconds and reconnects if no pong arrives within 10 seconds. Reconnect delay is capped at 30 seconds; it does not stop permanently after a fixed number of attempts. A custom client should reconnect, resynchronize state, and ignore unknown fields added to future messages.
 

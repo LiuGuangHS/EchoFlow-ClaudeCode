@@ -2112,6 +2112,9 @@ export const zh: Record<TranslationKey, string> = {
   'model.selectModel': '選擇模型',
   'model.configuration': '模型配置',
   'model.effort': '推理強度',
+  'model.runtimeRestarting': '正在重新啟動執行環境…',
+  'model.runtimeUnconfirmed': '已要求切換執行環境，但無法確認目前的執行環境。',
+  'model.runtimeRestartFailed': '執行環境設定遭拒。請檢查供應商、模型和推理設定。',
 
   // ─── Directory Picker ──────────────────────────────────────
   'dirPicker.selectProject': '選擇專案...',

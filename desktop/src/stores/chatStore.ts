@@ -1421,6 +1421,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       type: 'set_runtime_config',
       ...selection,
     })
+    useSessionRuntimeStore.getState().markRequestPending(sessionId)
   },
 
   setSessionPermissionMode: (sessionId, mode) => {
@@ -1994,6 +1995,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         if (msg.state !== 'idle') ensureElapsedTimer()
         if (msg.state === 'idle') {
           clearElapsedTimer()
+          useSessionRuntimeStore.getState().markRequestUnconfirmed(sessionId)
         }
         // Sync tab status
         useTabStore.getState().updateTabStatus(
@@ -2639,6 +2641,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       }
 
       case 'error':
+        if (msg.code === 'RUNTIME_CONFIG_INVALID') {
+          useSessionRuntimeStore.getState().markRequestFailed(sessionId)
+        }
         update((s) => {
           const pendingText = `${s.streamingText}${consumePendingDelta(sessionId)}`
           let newMessages = s.messages

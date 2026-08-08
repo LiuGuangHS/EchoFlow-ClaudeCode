@@ -21,6 +21,8 @@ Treat this contract as executable guidance: inspect the real code, make narrow c
 ## ECC-First Development
 ECC is the default toolset. Prefer `/ecc:plan`, `@code-reviewer`, `@architect`, `/ecc:code-review`, `/ecc:quality-gate`, and `/ecc:build-fix` over recreating their planning, review, validation, or repair workflows. ECC must enforce the fork policy below; upstream work follows the full safe-sync workflow.
 
+The repository contract is tool-independent: run `bun run check:impact` for scoped checks and `bun run verify` for PR-level validation. Run `bun run audit:harness` when changing agent guidance, quality policy, CI, or ECC integration. The audit reads only fixed repository contract paths; `.claude/` remains local-only and must never be a CI dependency or a committed source of truth.
+
 ## Fork Identity & Provider Policy
 - Public/release brand: `EchoFlow Code`; executable/docs: `echoflow-code`.
 - When touching fork-owned identifiers, convert `cc-haha` → `echoflow`, `Claude-Code-Haha` → `EchoFlow-Code`, and `CC_HAHA_*` → `ECHOFLOW_*`. Retain historical names only for explicit compatibility, attribution, migration fixtures, or supported variables.

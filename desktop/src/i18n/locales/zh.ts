@@ -2112,6 +2112,9 @@ export const zh: Record<TranslationKey, string> = {
   'model.selectModel': '选择模型',
   'model.configuration': '模型配置',
   'model.effort': '推理强度',
+  'model.runtimeRestarting': '正在重启运行时…',
+  'model.runtimeUnconfirmed': '已请求切换运行时，但无法确认当前运行时。',
+  'model.runtimeRestartFailed': '运行时配置被拒绝。请检查提供商、模型和推理设置。',
 
   // ─── Directory Picker ──────────────────────────────────────
   'dirPicker.selectProject': '选择项目...',

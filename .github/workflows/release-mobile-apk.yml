@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Mobile release tag, for example mobile-v0.4.3"
+        description: "Mobile release tag, for example v0.4.3"
         required: true
         type: string
       upload:

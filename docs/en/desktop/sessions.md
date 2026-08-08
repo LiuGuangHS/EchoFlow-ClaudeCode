@@ -11,11 +11,11 @@ A session is one complete collaboration: you describe what you want, Claude read
 
 ## Starting a session
 
-Click **New session** in the sidebar, or press `⌘N` (`Ctrl+N` on Windows and Linux). The empty session asks you for exactly one thing: a project directory. After that you can start typing — the model and permission mode come from your defaults in Settings.
+Click **New session** in the sidebar, or press `⌘N` (`Ctrl+N` on Windows and Linux). The empty session asks you for exactly one thing: a project directory. After that you can start typing — provider, model, effort, and permission mode start from your Settings defaults, and you can adjust the model and effort for this session before sending.
 
 Each session opens as a tab, and you can run many side by side. A dot on the tab means that session is still running; closing a running tab asks whether you want to **Keep running** or **Stop and close**.
 
-The small line under the session title is metadata: project path, branch, model. A session is bound to one directory — to work on a different project, start a new session.
+The small line under the session title is metadata: project path, branch, provider, and model. A session is bound to one directory — to work on a different project, start a new session. Provider configuration is managed in Settings and shared across sessions; choosing a provider, model, or effort in a session creates a session-level override rather than changing that shared configuration.
 
 ## Reading the conversation
 
@@ -90,7 +90,7 @@ Tool activity from background subagents bubbles up here too, so you don't have t
 - **`@` file references** — type `@` for file search; the file you pick is attached to the message as a path.
 - **Attachments** — click `+`, drag files in, or paste a screenshot. Images, PDFs, and directories all work.
 - **Context usage ring** — the small ring shows how much of the context window is used; hover it for used, free, and window size. When it fills up, run `/compact`.
-- **Model and effort** — switch models at any time. Effort has five levels — low, medium, high, xhigh, max — and models that don't support a level ignore it.
+- **Provider, model, and effort** — adjust the provider, model, or effort for the current session. Effort has five levels — low, medium, high, xhigh, max — and models that don't support a level ignore it. These are session-level configuration overrides, not switches between execution backends such as the built-in CLI, system CLI, Windows CLI, or WSL. Provider credentials and other shared configuration remain managed in Settings.
 - **Location** — shows the current project and branch. In a Git project you can switch branches here, or turn on **Isolated worktree** to keep an experiment off your main branch. See [Workspace](./workspace.md).
 
 Enter sends and Shift+Enter inserts a newline by default; **Settings → General** can swap that to `Ctrl/Cmd+Enter`. `⌘.` stops the current generation.

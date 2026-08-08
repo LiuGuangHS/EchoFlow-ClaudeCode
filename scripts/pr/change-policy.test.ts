@@ -126,11 +126,13 @@ describe('evaluateChangePolicy', () => {
     expect(result.checks.persistence).toBe(true)
   })
 
-  test('keeps quality ownership and contributor contracts on the policy lane', () => {
+  test('keeps quality ownership, harness audits, and contributor contracts on the policy lane', () => {
     const result = evaluateChangePolicy([
       '.github/CODEOWNERS',
       '.github/copilot-instructions.md',
       'docs/internals/contributing.md',
+      'scripts/harness-audit.js',
+      'scripts/harness-audit.test.ts',
     ])
 
     expect(result.checks.policy).toBe(true)

@@ -275,6 +275,160 @@ describe('chatStore tool settlement', () => {
 // the agent card instead of rendering them inline. Merging streamed blocks
 // against the raw array tail therefore chopped one continuous thinking block
 // (or reply) into several, with nothing visible in between.
+describe('chatStore runtime switching', () => {
+  beforeEach(() => {
+    sendMock.mockReset()
+    useSessionRuntimeStore.setState({
+      selections: {},
+      runtimeRequestStatusBySessionId: {},
+    })
+    useChatStore.setState({
+      ...initialState,
+      sessions: {
+        [TEST_SESSION_ID]: makeSession({ chatState: 'idle' }),
+      },
+    })
+  })
+
+  it('marks a runtime request pending when it sends set_runtime_config', () => {
+    const selection = {
+      providerId: 'provider-b',
+      modelId: 'model-b',
+      effortLevel: 'high' as const,
+    }
+
+    useChatStore.getState().setSessionRuntime(TEST_SESSION_ID, selection)
+
+    expect(sendMock).toHaveBeenCalledWith(TEST_SESSION_ID, {
+      type: 'set_runtime_config',
+      ...selection,
+    })
+    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
+      [TEST_SESSION_ID]: 'pending',
+    })
+  })
+
+  it('marks only a pending runtime request failed after a runtime configuration rejection', () => {
+    const store = useChatStore.getState()
+    store.setSessionRuntime(TEST_SESSION_ID, {
+      providerId: 'provider-b',
+      modelId: 'model-b',
+    })
+    store.handleServerMessage(TEST_SESSION_ID, {
+      type: 'error',
+      code: 'RUNTIME_CONFIG_INVALID',
+      message: 'runtime configuration is invalid',
+    })
+
+    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
+      [TEST_SESSION_ID]: 'failed',
+    })
+
+    useSessionRuntimeStore.setState({
+      runtimeRequestStatusBySessionId: {},
+    })
+    store.handleServerMessage(TEST_SESSION_ID, {
+      type: 'error',
+      code: 'RUNTIME_CONFIG_INVALID',
+      message: 'unrelated runtime configuration rejection',
+    })
+
+    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({})
+  })
+
+  it('does not attribute a generic CLI restart failure to a runtime request', () => {
+    const store = useChatStore.getState()
+    store.setSessionRuntime(TEST_SESSION_ID, {
+      providerId: 'provider-b',
+      modelId: 'model-b',
+    })
+
+    store.handleServerMessage(TEST_SESSION_ID, {
+      type: 'error',
+      code: 'CLI_RESTART_FAILED',
+      message: 'restart failed',
+    })
+
+    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
+      [TEST_SESSION_ID]: 'pending',
+    })
+  })
+
+  it('marks an idle runtime request unconfirmed instead of applied', () => {
+    const store = useChatStore.getState()
+    store.setSessionRuntime(TEST_SESSION_ID, {
+      providerId: 'provider-b',
+      modelId: 'model-b',
+    })
+
+    store.handleServerMessage(TEST_SESSION_ID, { type: 'status', state: 'idle' })
+
+    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
+      [TEST_SESSION_ID]: 'unconfirmed',
+    })
+  })
+
+  it('marks an unconfirmed runtime request failed after a delayed runtime configuration rejection', () => {
+    const store = useChatStore.getState()
+    store.setSessionRuntime(TEST_SESSION_ID, {
+      providerId: 'provider-b',
+      modelId: 'model-b',
+    })
+    store.handleServerMessage(TEST_SESSION_ID, { type: 'status', state: 'idle' })
+
+    store.handleServerMessage(TEST_SESSION_ID, {
+      type: 'error',
+      code: 'RUNTIME_CONFIG_INVALID',
+      message: 'runtime configuration is invalid',
+    })
+
+    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
+      [TEST_SESSION_ID]: 'failed',
+    })
+  })
+
+  it('keeps a rejected runtime request failed after trailing idle status', () => {
+    const store = useChatStore.getState()
+    store.setSessionRuntime(TEST_SESSION_ID, {
+      providerId: 'provider-b',
+      modelId: 'model-b',
+    })
+    store.handleServerMessage(TEST_SESSION_ID, {
+      type: 'error',
+      code: 'RUNTIME_CONFIG_INVALID',
+      message: 'runtime configuration is invalid',
+    })
+
+    store.handleServerMessage(TEST_SESSION_ID, { type: 'status', state: 'idle' })
+
+    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
+      [TEST_SESSION_ID]: 'failed',
+    })
+  })
+
+  it('allows a programmatic runtime request to become pending after a rejection or unconfirmed result', () => {
+    const store = useChatStore.getState()
+    const selection = { providerId: 'provider-b', modelId: 'model-b' }
+
+    store.setSessionRuntime(TEST_SESSION_ID, selection)
+    store.handleServerMessage(TEST_SESSION_ID, {
+      type: 'error',
+      code: 'RUNTIME_CONFIG_INVALID',
+      message: 'runtime configuration is invalid',
+    })
+    store.setSessionRuntime(TEST_SESSION_ID, selection)
+    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
+      [TEST_SESSION_ID]: 'pending',
+    })
+
+    store.handleServerMessage(TEST_SESSION_ID, { type: 'status', state: 'idle' })
+    store.setSessionRuntime(TEST_SESSION_ID, selection)
+    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
+      [TEST_SESSION_ID]: 'pending',
+    })
+  })
+})
+
 describe('chatStore background agent activity interleaving', () => {
   beforeEach(() => {
     useChatStore.setState({
@@ -2498,6 +2652,7 @@ describe('chatStore history mapping', () => {
   })
 
   it('replays saved runtime selection when reconnecting a session', () => {
+    useSessionRuntimeStore.setState({ runtimeRequestStatusBySessionId: {} })
     sessionStoreSnapshot.sessions = [{
       id: TEST_SESSION_ID,
       title: 'New Session',
@@ -2534,6 +2689,7 @@ describe('chatStore history mapping', () => {
       ],
       [TEST_SESSION_ID, { type: 'prewarm_session' }],
     ])
+    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({})
   })
 
   it('does not prewarm unknown desktop sessions when connecting', () => {

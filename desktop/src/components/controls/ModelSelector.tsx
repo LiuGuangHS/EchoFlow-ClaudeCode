@@ -211,6 +211,9 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
   const runtimeSelection = useSessionRuntimeStore((state) =>
     runtimeKey ? state.selections[runtimeKey] : undefined,
   )
+  const runtimeRequestStatus = useSessionRuntimeStore((state) =>
+    runtimeKey ? state.runtimeRequestStatusBySessionId[runtimeKey] : undefined,
+  )
   const [open, setOpen] = useState(false)
   const [effortOpen, setEffortOpen] = useState(false)
   const [dropdownPosition, setDropdownPosition] = useState<DropdownPosition | null>(null)
@@ -326,6 +329,10 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
     }
   }, [open, updateDropdownPosition])
 
+  useEffect(() => {
+    if (runtimeRequestStatus === 'pending') setEffortOpen(false)
+  }, [runtimeRequestStatus])
+
   const roleLabels = useMemo(
     () => ({
       main: t('settings.providers.mainModel'),
@@ -385,6 +392,13 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
   const buttonProviderLabel = isRuntimeScoped
     ? selectedProviderChoice?.providerName ?? activeProviderName ?? t('settings.providers.officialName')
     : null
+  const runtimeRequestStatusMessage = runtimeRequestStatus === 'pending'
+    ? t('model.runtimeRestarting')
+    : runtimeRequestStatus === 'unconfirmed'
+      ? t('model.runtimeUnconfirmed')
+      : runtimeRequestStatus === 'failed'
+        ? t('model.runtimeRestartFailed')
+        : null
   const supportedRuntimeEfforts = selectedRuntimeModel?.supportedReasoningEfforts
   const selectedRuntimeEffort = supportedRuntimeEfforts?.length === 0
     ? undefined
@@ -396,9 +410,28 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
     : EFFORT_OPTIONS.filter((option) => supportedRuntimeEfforts.includes(option.value))
 
   const handleRuntimeSelect = (selection: RuntimeSelection) => {
+    const runtimeStore = useSessionRuntimeStore.getState()
+    const currentSelection = controlledRuntimeSelection ?? (
+      runtimeKey ? runtimeStore.selections[runtimeKey] : undefined
+    )
+
+    if (runtimeKey && runtimeStore.runtimeRequestStatusBySessionId[runtimeKey] === 'pending') {
+      return
+    }
+
+    if (
+      currentSelection &&
+      currentSelection.providerId === selection.providerId &&
+      currentSelection.modelId === selection.modelId &&
+      currentSelection.effortLevel === selection.effortLevel
+    ) {
+      setOpen(false)
+      return
+    }
+
     onRuntimeSelectionChange?.(selection)
     if (runtimeKey) {
-      useSessionRuntimeStore.getState().setSelection(runtimeKey, selection)
+      runtimeStore.setSelection(runtimeKey, selection)
       if (runtimeKey !== DRAFT_RUNTIME_SELECTION_KEY) {
         useChatStore.getState().setSessionRuntime(runtimeKey, selection)
       }
@@ -446,6 +479,7 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
                     return (
                       <button
                         key={`${choice.providerId ?? 'official'}:${model.id}`}
+                        disabled={runtimeRequestStatus === 'pending'}
                         onClick={() => {
                           const supportedEfforts = model.supportedReasoningEfforts
                           const explicitEffort = activeRuntimeSelection?.effortLevel
@@ -621,11 +655,11 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
           <button
             ref={effortButtonRef}
             type="button"
-            disabled={disabled}
+            disabled={disabled || runtimeRequestStatus === 'pending'}
             aria-label={`${t('model.effort')}: ${effortLabels[selectedRuntimeEffort]}`}
             aria-expanded={effortOpen}
             onClick={() => {
-              if (disabled) return
+              if (disabled || runtimeRequestStatus === 'pending') return
               setOpen(false)
               setEffortOpen(!effortOpen)
             }}
@@ -635,6 +669,15 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
           </button>
         )}
       </div>
+      {runtimeRequestStatusMessage && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="mt-1 max-w-[220px] text-[10px] text-[var(--color-text-tertiary)]"
+        >
+          {runtimeRequestStatusMessage}
+        </div>
+      )}
       {dropdown}
       {canEditRuntimeEffort && selectedRuntimeEffort && (
         <ReasoningEffortPopover

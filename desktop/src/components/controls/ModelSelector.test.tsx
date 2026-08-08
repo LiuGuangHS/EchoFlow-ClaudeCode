@@ -50,6 +50,7 @@ afterEach(() => {
 })
 
 beforeEach(() => {
+  useProviderStore.setState({ isLoading: true })
   useEchoFlowOAuthStore.setState({ fetchStatus: async () => {} })
   useEchoFlowOpenAIOAuthStore.setState({ fetchStatus: async () => {} })
   useEchoFlowGrokOAuthStore.setState({ fetchStatus: async () => {} })
@@ -214,6 +215,27 @@ describe('ModelSelector', () => {
     expect(setModel).toHaveBeenCalledWith('beta')
   })
 
+  it.each([
+    ['pending', 'Restarting runtime…'],
+    ['unconfirmed', 'Runtime change requested; active runtime could not be confirmed.'],
+    ['failed', 'Runtime configuration was rejected. Check the provider, model, and reasoning setting.'],
+  ] as const)('shows truthful runtime request status for %s', (status, message) => {
+    useSettingsStore.setState({
+      locale: 'en',
+      availableModels: MODELS,
+      currentModel: MODELS[0],
+      activeProviderName: 'Provider A',
+    })
+    useSessionRuntimeStore.setState({
+      runtimeRequestStatusBySessionId: { 'session-status': status },
+    })
+
+    render(<ModelSelector runtimeKey="session-status" />)
+
+    expect(screen.getByRole('status')).toHaveTextContent(message)
+    expect(screen.queryByText(/applied/i)).not.toBeInTheDocument()
+  })
+
   it('selects provider-scoped runtime models and mirrors session selections', async () => {
     const setSessionRuntime = vi.fn()
     useSettingsStore.setState({
@@ -262,6 +284,131 @@ describe('ModelSelector', () => {
       providerId: 'provider-a',
       modelId: 'provider-fast',
       effortLevel: 'max',
+    })
+  })
+
+  it.each(['failed', 'unconfirmed'] as const)(
+    'does not resend a matching %s runtime selection',
+    async (status) => {
+      const setSessionRuntime = vi.fn()
+      const onRuntimeSelectionChange = vi.fn()
+      const selection = {
+        providerId: 'provider-a',
+        modelId: 'provider-main',
+        effortLevel: 'max' as const,
+      }
+      useSettingsStore.setState({
+        locale: 'en',
+        availableModels: MODELS,
+        currentModel: MODELS[0],
+        activeProviderName: 'Provider A',
+      })
+      useProviderStore.setState({
+        providers: [{
+          id: 'provider-a',
+          presetId: 'custom',
+          name: 'Provider A',
+          apiKey: '***',
+          baseUrl: 'https://api.example.com',
+          apiFormat: 'anthropic',
+          models: {
+            main: 'provider-main',
+            haiku: 'provider-fast',
+            sonnet: 'provider-main',
+            opus: '',
+          },
+        }],
+        activeId: 'provider-a',
+        hasLoadedProviders: true,
+        isLoading: true,
+      })
+      useSessionRuntimeStore.setState({
+        selections: { 'session-noop': selection },
+        runtimeRequestStatusBySessionId: { 'session-noop': status },
+      })
+      useChatStore.setState({
+        setSessionRuntime,
+      } as Partial<ReturnType<typeof useChatStore.getState>>)
+
+      render(
+        <ModelSelector
+          runtimeKey="session-noop"
+          onRuntimeSelectionChange={onRuntimeSelectionChange}
+        />,
+      )
+
+      await clickByRole(/provider-main, provider a/i)
+      await clickByRole(/^provider-main main model/i)
+
+      expect(setSessionRuntime).not.toHaveBeenCalled()
+      expect(onRuntimeSelectionChange).not.toHaveBeenCalled()
+      expect(useSessionRuntimeStore.getState().selections['session-noop']).toEqual(selection)
+      expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
+        'session-noop': status,
+      })
+    },
+  )
+
+  it('does not allow a pending runtime request to be replaced by another selection', async () => {
+    const setSessionRuntime = vi.fn((sessionId: string) => {
+      useSessionRuntimeStore.getState().markRequestPending(sessionId)
+    })
+    useSettingsStore.setState({
+      locale: 'en',
+      availableModels: MODELS,
+      currentModel: MODELS[0],
+      activeProviderName: 'Provider A',
+    })
+    useProviderStore.setState({
+      providers: [{
+        id: 'provider-a',
+        presetId: 'custom',
+        name: 'Provider A',
+        apiKey: '***',
+        baseUrl: 'https://api.example.com',
+        apiFormat: 'anthropic',
+        models: {
+          main: 'provider-main',
+          haiku: 'provider-fast',
+          sonnet: 'provider-main',
+          opus: '',
+        },
+      }],
+      activeId: 'provider-a',
+      hasLoadedProviders: true,
+      isLoading: true,
+    })
+    useSessionRuntimeStore.getState().setSelection('session-pending', {
+      providerId: 'provider-a',
+      modelId: 'provider-main',
+      effortLevel: 'max',
+    })
+    useChatStore.setState({
+      setSessionRuntime,
+    } as Partial<ReturnType<typeof useChatStore.getState>>)
+
+    render(<ModelSelector runtimeKey="session-pending" />)
+
+    await clickByRole(/provider-main, provider a/i)
+    await clickByRole(/^provider-fast haiku model/i)
+    await clickByRole(/provider-fast, provider a/i)
+
+    const providerMainOption = screen.getByRole('button', { name: /^provider-main main model/i })
+    expect(providerMainOption).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Effort: Max' })).toBeDisabled()
+    await act(async () => {
+      fireEvent.click(providerMainOption)
+      await Promise.resolve()
+    })
+
+    expect(setSessionRuntime).toHaveBeenCalledTimes(1)
+    expect(useSessionRuntimeStore.getState().selections['session-pending']).toEqual({
+      providerId: 'provider-a',
+      modelId: 'provider-fast',
+      effortLevel: 'max',
+    })
+    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
+      'session-pending': 'pending',
     })
   })
 
@@ -546,12 +693,18 @@ describe('ModelSelector', () => {
       modelId: 'gpt-5.5',
       effortLevel: 'medium',
     })
+    await act(async () => {
+      useSessionRuntimeStore.getState().markRequestPending('session-openai-effort')
+      useSessionRuntimeStore.getState().markRequestUnconfirmed('session-openai-effort')
+      await Promise.resolve()
+    })
 
     expect(screen.getByRole('button', { name: 'Effort: Medium' })).toBeInTheDocument()
     await clickByRole('Effort: Medium')
     expect(screen.getByRole('slider', { name: 'Effort' })).toHaveAttribute('aria-valuemax', '3')
     fireEvent.keyDown(screen.getByRole('slider', { name: 'Effort' }), { key: 'End' })
-    expect(screen.getByRole('slider', { name: 'Effort' })).toHaveAttribute('aria-valuetext', 'X-High')
+    expect(screen.queryByRole('slider', { name: 'Effort' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Effort: X-High' })).toBeInTheDocument()
 
     expect(useSessionRuntimeStore.getState().selections['session-openai-effort']).toEqual({
       providerId: OPENAI_OFFICIAL_PROVIDER_ID,
