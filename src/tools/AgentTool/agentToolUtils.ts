@@ -567,6 +567,7 @@ export async function runAsyncAgentLifecycle({
   metadata,
   description,
   toolUseContext,
+  parentToolUseId,
   rootSetAppState,
   agentIdForCleanup,
   enableSummarization,
@@ -580,6 +581,10 @@ export async function runAsyncAgentLifecycle({
   metadata: Parameters<typeof finalizeAgentTool>[2]
   description: string
   toolUseContext: ToolUseContext
+  /** Agent card this run belongs to. Always the Agent call that spawned the
+   * agent — never the tool driving a resume, which has its own id and would
+   * otherwise adopt the agent's activity and completion notification. */
+  parentToolUseId: string | undefined
   rootSetAppState: SetAppState
   agentIdForCleanup: string
   enableSummarization: boolean
@@ -588,6 +593,7 @@ export async function runAsyncAgentLifecycle({
     worktreeBranch?: string
   }>
 }): Promise<void> {
+  const agentToolUseId = parentToolUseId
   let stopSummarization: (() => void) | undefined
   const agentMessages: MessageType[] = []
   try {
@@ -644,14 +650,14 @@ export async function runAsyncAgentLifecycle({
       emitAgentToolActivitiesForMessage(
         message,
         taskId,
-        toolUseContext.toolUseId,
+        agentToolUseId,
       )
       const lastToolName = getLastToolUseName(message)
       if (lastToolName) {
         emitTaskProgress(
           tracker,
           taskId,
-          toolUseContext.toolUseId,
+          agentToolUseId,
           description,
           metadata.startTime,
           lastToolName,
@@ -679,7 +685,7 @@ export async function runAsyncAgentLifecycle({
         toolUses: agentResult.totalToolUseCount,
         durationMs: agentResult.totalDurationMs,
       },
-      toolUseId: toolUseContext.toolUseId,
+      toolUseId: agentToolUseId,
     })
 
     void (async () => {
@@ -727,7 +733,7 @@ export async function runAsyncAgentLifecycle({
         description,
         status: 'killed',
         setAppState: rootSetAppState,
-        toolUseId: toolUseContext.toolUseId,
+        toolUseId: agentToolUseId,
         finalMessage: partialResult,
       })
       void getWorktreeResult().catch(cleanupError =>
@@ -745,7 +751,7 @@ export async function runAsyncAgentLifecycle({
       status: 'failed',
       error: msg,
       setAppState: rootSetAppState,
-      toolUseId: toolUseContext.toolUseId,
+      toolUseId: agentToolUseId,
     })
     void getWorktreeResult().catch(cleanupError =>
       logForDebugging(

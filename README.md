@@ -1,7 +1,10 @@
 # EchoFlow Code
 
 <p align="center">
-  <img src="docs/images/app-icon.png" alt="EchoFlow Code" width="240">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-horizontal-dark.svg">
+    <img src="docs/images/logo-horizontal.svg" alt="EchoFlow Code" width="480">
+  </picture>
 </p>
 
 <div align="center">
@@ -10,76 +13,47 @@
 [![GitHub Forks](https://img.shields.io/github/forks/LiuGuangHS/EchoFlow-ClaudeCode?style=social)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/network/members)
 [![GitHub Issues](https://img.shields.io/github/issues/LiuGuangHS/EchoFlow-ClaudeCode)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/issues)
 [![GitHub Pull Requests](https://img.shields.io/github/issues-pr/LiuGuangHS/EchoFlow-ClaudeCode)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/pulls)
-[![License](https://img.shields.io/github/license/LiuGuangHS/EchoFlow-ClaudeCode)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/LICENSE)
-[![中文](https://img.shields.io/badge/🇨🇳_中文-当前-blue)](README.md)
-[![English](https://img.shields.io/badge/🇺🇸_English-Available-green)](README.en.md)
-[![Docs](https://img.shields.io/badge/📖_文档站点-Visit-FF7A00)](https://code.echoflow.cn)
+[![License](https://img.shields.io/badge/License-MIT-blue)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/LICENSE)
+[![Chinese](https://img.shields.io/badge/Chinese-Available-green)](README.zh-CN.md)
+[![Docs](https://img.shields.io/badge/Docs-Visit-FF7A00)](https://code.echoflow.cn)
+
+**English** · [简体中文](README.zh-CN.md)
 
 </div>
 
-EchoFlow Code 是面向真实项目的本地 Coding Agent：在终端、桌面端和 IM 里协同编码，内置推荐清云 API（EchoFlowAPI），支持官方 Claude、Anthropic 兼容模型、多 Agent、记忆系统、Skills 与 Computer Use，把会话、多项目、分支 / Worktree、右侧代码改动、代码 Diff、权限审批、H5 远程访问和定时任务集中到一个桌面 APP 里。
+EchoFlow Code is a local coding agent workspace for real projects. It combines terminal, desktop, and IM workflows with official Claude, Anthropic-compatible models, Qingyun API, multiple agents, persistent memory, Skills, image generation, visual MCP and SubAgent management, model tracing, Computer Use, H5 remote access, and scheduled tasks.
 
 <p align="center">
-  <a href="#桌面端预览">桌面端预览</a> · <a href="#快速入口">快速入口</a> · <a href="#安装桌面端">安装桌面端</a> · <a href="#桌面端亮点">桌面端亮点</a> · <a href="#社区交流">社区交流</a> · <a href="#更多文档">更多文档</a>
+  <a href="#desktop-preview">Desktop preview</a> · <a href="#install-the-desktop-app">Install</a> · <a href="#desktop-highlights">Highlights</a> · <a href="#documentation">Documentation</a> · <a href="#community">Community</a>
 </p>
 
-<p align="center">
-  <a href="https://code.echoflow.cn"><img src="https://img.shields.io/badge/官网文档-code.echoflow.cn-D97757?style=for-the-badge" alt="EchoFlow Code 官网文档"></a>
-  &nbsp;
-  <a href="https://api.echoflow.cn/"><img src="https://img.shields.io/badge/清云_API-api.echoflow.cn-D97757?style=for-the-badge" alt="清云 API"></a>
-  &nbsp;
-  <a href="https://ai.echoflow.cn/"><img src="https://img.shields.io/badge/在线应用-ai.echoflow.cn-gray?style=for-the-badge" alt="清云 AI 在线应用"></a>
-</p>
-
----
-
-## 快速入口
-
-| 入口 | 地址 | 适合场景 |
-|------|------|----------|
-| EchoFlow Code 官网文档 | [code.echoflow.cn](https://code.echoflow.cn) | 下载桌面端、阅读安装指南、配置模型和学习多 Agent 工作流。 |
-| 清云 API 主站 | [api.echoflow.cn](https://api.echoflow.cn/) | 注册账号、获取系统访问令牌，为 EchoFlow Code 配置推荐 Provider。 |
-| 清云 AI 在线应用站 | [ai.echoflow.cn](https://ai.echoflow.cn/) | 轻量 AI 任务可直接在线体验；本地真实项目开发推荐使用 EchoFlow Code。 |
-| 社区与联系 | [社区交流](#社区交流) | 加入交流群、添加微信联系作者、反馈需求或留下企业/团队使用线索。 |
-
-如果你要把 AI 落到本地代码仓库，优先下载 EchoFlow Code，并用 [清云 API](https://api.echoflow.cn/) 完成模型接入；如果只是想快速体验在线 AI 应用，可以先访问 [清云 AI 在线应用站](https://ai.echoflow.cn/)。
-
----
-
-## 桌面端预览
-
-EchoFlow Code 的桌面端把会话、多项目、分支 / Worktree、右侧代码改动、代码 Diff、权限确认、提供商配置和远程入口集中到一个图形化工作台里。默认推荐 EchoFlowAPI，兼容性更佳、原生支持 Claude Code 生态能力，同时保留官方厂商、本地模型和自定义 API 配置。
+## Desktop Preview
 
 <p align="center">
-  <a href="https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases"><img src="https://img.shields.io/badge/⬇_下载桌面端-macOS_%7C_Windows_%7C_Linux-FF7A00?style=for-the-badge" alt="下载桌面端"></a>
-  &nbsp;
-  <a href="docs/en/start/install.md"><img src="https://img.shields.io/badge/📖_Install_Guide-Guide-gray?style=for-the-badge" alt="Install Guide"></a>
+  <a href="https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases"><img src="https://img.shields.io/badge/Download_Desktop-macOS_%7C_Windows_%7C_Linux-FF7A00?style=for-the-badge" alt="Download desktop"></a>
+  <a href="docs/en/start/install.md"><img src="https://img.shields.io/badge/Install_Guide-Guide-gray?style=for-the-badge" alt="Install guide"></a>
 </p>
 
 <table>
   <tr>
-    <td align="center" width="33%"><img src="docs/images/app/zh-CN/session-main.webp" alt="桌面端会话主界面"><br><b>说一句话，看它做完</b><br><sub>工具调用和每处改动都留在对话里</sub></td>
-    <td align="center" width="33%"><img src="docs/images/app/zh-CN/workspace-diff.webp" alt="工作区 Diff 评审"><br><b>改了什么，逐个文件看</b><br><sub>带语法高亮的 Diff，你点头才落地</sub></td>
-    <td align="center" width="33%"><img src="docs/images/app/zh-CN/workspace-preview.webp" alt="内置浏览器预览刚改完的页面"><br><b>改完当场验证</b><br><sub>内置浏览器打开本地服务看效果</sub></td>
+    <td align="center" width="33.33%"><img src="docs/images/app/en/session-new.webp" alt="Empty session"><br><b>Start with a clear session</b><br><sub>Project and permissions stay visible</sub></td>
+    <td align="center" width="33.33%"><img src="docs/images/app/en/session-main.webp" alt="Running task"><br><b>Follow work as it runs</b><br><sub>Tool calls and progress stay in view</sub></td>
+    <td align="center" width="33.33%"><img src="docs/images/app/en/workspace-diff.webp" alt="Workspace diff"><br><b>Review every change</b><br><sub>Focused syntax-highlighted diffs</sub></td>
   </tr>
   <tr>
-    <td align="center" width="33%"><img src="docs/images/app/zh-CN/session-dark.webp" alt="墨夜主题下的会话界面"><br><b>六套配色可跟随系统</b><br><sub>纯白 · 纸墨 · 经典暖色 · 青瓷 · 墨夜 · 墨夜蓝</sub></td>
-    <td align="center" width="33%"><img src="docs/images/app/zh-CN/skill-market.webp" alt="技能市场"><br><b>缺什么手艺装什么</b><br><sub>来源和安全状态摆在明处</sub></td>
-    <td align="center" width="33%"><img src="docs/images/app/zh-CN/pet-desktop.webp" alt="桌面宠物设置与悬浮宠物"><br><b>桌面上有个伴</b><br><sub>搭搭、弧弧、补补、回回随任务换动作</sub></td>
+    <td align="center" width="33.33%"><img src="docs/images/app/en/workspace-preview.webp" alt="Built-in browser preview"><br><b>Verify on the spot</b><br><sub>Open the real edited page in the app</sub></td>
+    <td align="center" width="33.33%"><img src="docs/images/app/en/model-picker.webp" alt="Model picker"><br><b>Choose the exact model</b><br><sub>Providers, presets, and local endpoints together</sub></td>
+    <td align="center" width="33.33%"><img src="docs/images/app/en/skill-market.webp" alt="Skill marketplace"><br><b>Add the right skill</b><br><sub>Source and safety status are visible first</sub></td>
   </tr>
 </table>
 
----
+## Install the Desktop App
 
-## 安装桌面端
+1. Download the macOS, Windows, or Linux installer from [Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases).
+2. Configure a model provider, API key, and default model in Desktop Settings.
+3. Public macOS releases require signing and notarization. Draft or unsigned builds may require one-time manual approval. Unsigned Windows installers can show SmartScreen; choose “More info” then “Run anyway.” See the [installation guide](docs/en/start/install.md).
 
-1. 前往 [Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases) 下载 macOS / Windows / Linux 桌面端安装包。
-2. 首次启动后，在桌面端设置里配置模型提供商、API Key 和默认模型。
-3. macOS Release 优先使用签名和公证；未配置证书时会发布 unsigned fallback，首次打开需运行随 Release 提供的辅助脚本或手动放行。Windows 未签名安装包可能出现 SmartScreen 提示，点「更多信息」→「仍要运行」即可。详见 [桌面端安装指南](docs/desktop/04-installation.md)。
-
-## 从源码启动 CLI
-
-适合想调试底层 CLI、服务端或自行开发的用户：
+## Run the CLI from Source
 
 ```bash
 bun install
@@ -87,102 +61,53 @@ cp .env.example .env
 ./bin/echoflow-code
 ```
 
-`echoflow-code` 旧命令仅作为兼容旧脚本和旧安装路径的转发入口保留，新文档和新脚本请使用 `echoflow-code`。
+See [environment variables](docs/en/cli/env.md) and [CLI setup](docs/en/cli/index.md) for configuration details.
 
-更多配置见 [环境变量](docs/guide/env-vars.md) 和 [全局使用](docs/guide/global-usage.md)。
+## Desktop Highlights
 
----
+- **Multi-session workspace and global search**: keep tabs, projects, terminal entry points, history, and cross-session search in one place.
+- **Branch and Worktree launch**: choose a repository branch and use either the current working tree or an isolated Worktree.
+- **Diff review and built-in preview**: review each edited file and verify the real page in the integrated browser.
+- **Five permission modes**: approve risky commands, tool calls, and agent questions from the desktop UI.
+- **Model and reasoning configuration**: sign in to Claude, ChatGPT, or Grok; use Qingyun, official vendor APIs, local models, or Custom; normalize reasoning controls to model capabilities.
+- **Image generation**: create and edit images in chat, or configure any OpenAI-compatible Images API.
+- **Visual MCP and SubAgent management**: manage MCP servers, SubAgents, models, tools, and permission modes from the UI.
+- **Model tracing**: record request status and timing locally, then search and filter failed or stalled calls.
+- **Skills, Computer Use, and desktop pets**: install third-party skills, authorize desktop control, and optionally enable pets.
+- **H5 and IM relay**: continue a session and approve actions through a mobile browser, Telegram, Feishu, WeChat, DingTalk, or WhatsApp.
+- **Scheduled tasks and usage**: run planned work in separate sessions and inspect local token trends.
 
-## 桌面端亮点
+## Documentation
 
-- **多会话工作台**：标签页、项目切换、终端入口和会话历史集中管理，侧边栏宽度可拖拽。
-- **分支 / Worktree 启动**：新会话可以选择仓库分支，并决定用当前工作树还是隔离 Worktree。
-- **改动逐个文件审阅**：右侧工作区列出本轮改动，点开就是带语法高亮的 Diff，整轮可撤销。
-- **五档权限模式**：从「询问权限」到「跳过权限」，危险命令、工具调用和 AI 反问都在桌面端审批。
-- **模型自选**：Claude / ChatGPT / Grok 官方账号可直接登录；DeepSeek、Kimi、智谱 GLM 等第三方 API 有现成预设；LM Studio、Ollama 的本地模型也接得上。
-- **六套配色主题**：纯白、纸墨、经典暖色、青瓷、墨夜、墨夜蓝，可跟随系统深浅色自动切换。
-- **技能市场**：发现、预览、安装 ClawHub / SkillHub 的第三方技能，来源和安全状态摆在明处。
-- **会话活动面板**：集中查看任务进度、后台任务、SubAgent 与来源。
-- **Computer Use**：让 Agent 在授权后截图、点击、输入并控制桌面应用。
-- **桌面宠物**：搭搭、弧弧、补补、回回随任务状态换动作，也能自己做一只（默认关闭）。
-- **H5 远程访问**：扫码用手机浏览器接入当前会话，锁屏切后台都不打断正在跑的任务。
-- **IM 接入**：通过 Telegram / 飞书 / 微信 / 钉钉 / WhatsApp 远程对话、切换项目和审批权限。
-- **定时任务与用量统计**：创建计划任务在独立会话执行，并查看本机 Token 使用趋势。
+Full documentation: <https://code.echoflow.cn>
 
----
+| Area | Documents |
+|------|-----------|
+| Getting started | [Install](docs/en/start/install.md) · [Connect a model](docs/en/start/models.md) · [First session](docs/en/start/first-session.md) · [Troubleshooting](docs/en/start/troubleshooting.md) |
+| Desktop | [Overview](docs/en/desktop/index.md) · [Computer Use](docs/en/desktop/computer-use.md) · [Pets](docs/en/desktop/pets.md) · [H5 and IM relay](docs/en/desktop/remote.md) |
+| CLI | [Setup](docs/en/cli/index.md) · [Reference](docs/en/cli/reference.md) · [Environment](docs/en/cli/env.md) |
+| Internals | [Desktop architecture](docs/en/internals/desktop.md) · [Agents](docs/en/internals/agent.md) · [Skills](docs/en/internals/skills.md) · [Server API](docs/en/internals/server.md) · [Contributing](docs/en/internals/contributing.md) |
 
-## 更多文档
+## Community
 
-完整文档站：<https://code.echoflow.cn>
+Report bugs, share feedback, or discuss usage through [Issues](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/issues).
 
-| 分区 | 文档 |
-|------|------|
-| [环境变量](docs/guide/env-vars.md) | 完整环境变量参考和配置方式 |
-| [第三方模型](docs/guide/third-party-models.md) | 接入 OpenAI / DeepSeek / Ollama 等非 Anthropic 模型 |
-| [贡献与质量门禁](docs/guide/contributing.md) | 本地测试、真实模型 baseline、PR 和 release 门禁 |
-| [记忆系统](docs/memory/01-usage-guide.md) | 跨会话持久化记忆的使用与实现 |
-| [多 Agent 系统](docs/agent/01-usage-guide.md) | 多代理编排、并行任务执行与 Teams 协作 |
-| [Skills 系统](docs/skills/01-usage-guide.md) | 可扩展能力插件、自定义工作流与条件激活 |
-| [IM 接入](docs/im/) | 通过 Telegram / 飞书 / 微信 / 钉钉远程对话、切换项目和审批权限 |
-| [Computer Use](docs/features/computer-use.md) | 桌面控制功能（截屏、鼠标、键盘）— [架构解析](docs/features/computer-use-architecture.md) |
-| [桌面端](docs/desktop/) | Electron + React 图形化客户端 — [快速上手](docs/desktop/01-quick-start.md) \| [架构设计](docs/desktop/02-architecture.md) \| [安装指南](docs/desktop/04-installation.md) |
-| [全局使用](docs/guide/global-usage.md) | 在任意目录启动 echoflow-code |
-| [常见问题](docs/guide/faq.md) | 常见错误排查 |
-| [项目结构](docs/reference/project-structure.md) | 代码目录结构说明 |
+## Stack
 
----
-
-## 社区交流
-
-扫码加入交流群，或添加微信联系作者。
-
-<table>
-<tr>
-<td align="center" width="33%">
-<img src="docs/images/community/echoflow-aigc-group.png" width="220" alt="EchoFlow AIGC 交流群二维码"><br>
-<b>EchoFlow AIGC 交流群</b>
-</td>
-<td align="center" width="33%">
-<img src="docs/images/community/echoflow-vibecoding-group.png" width="220" alt="EchoFlow Vibecoding 交流群二维码"><br>
-<b>EchoFlow Vibecoding 交流群</b>
-</td>
-<td align="center" width="33%">
-<img src="docs/images/community/wechat-contact.png" width="220" alt="微信联系二维码"><br>
-<b>微信联系</b>
-</td>
-</tr>
-</table>
-
----
-
-## 技术栈
-
-| 类别 | 技术 |
-|------|------|
-| 语言 | TypeScript |
-| 桌面 APP | Electron |
-| 桌面 UI | React + Vite |
-| 本地运行时 | [Bun](https://bun.sh) |
-| 终端 UI | React + [Ink](https://github.com/vadimdemedes/ink) |
-| CLI 解析 | Commander.js |
+| Category | Technology |
+|----------|------------|
+| Language | TypeScript |
+| Desktop | Electron |
+| Desktop UI | React + Vite |
+| Local runtime | [Bun](https://bun.sh) |
+| Terminal UI | React + [Ink](https://github.com/vadimdemedes/ink) |
+| CLI parsing | Commander.js |
 | API | Anthropic SDK |
-| 协议 | MCP, LSP |
+| Protocols | MCP, LSP |
 
-## 感谢
+## Acknowledgements
 
-感谢以下开源项目和社区实践为本项目提供参考与启发：
-
-- [NanmiCoder/cc-haha](https://github.com/NanmiCoder/cc-haha)：上游原始项目，为 EchoFlow Code 的持续二开迭代奠定基础。
-- [React](https://github.com/facebook/react)：前端工程与组件化 UI 生态。
-- [Electron](https://github.com/electron/electron)：跨端桌面应用能力与工程实践。
-- [cc-switch](https://github.com/farion1231/cc-switch)：模型供应商配置能力参考。
-
-如果这个项目对您有帮助，请给个 ⭐ Star 支持一下，让更多的人看到 EchoFlow Code！
-
-<a href="https://www.star-history.com/#LiuGuangHS/EchoFlow-ClaudeCode&Date">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=LiuGuangHS/EchoFlow-ClaudeCode&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=LiuGuangHS/EchoFlow-ClaudeCode&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=LiuGuangHS/EchoFlow-ClaudeCode&type=Date" />
-  </picture>
-</a>
+- [NanmiCoder/cc-haha](https://github.com/NanmiCoder/cc-haha): upstream project that continues to inform EchoFlow Code.
+- [React](https://github.com/facebook/react): UI ecosystem and component model.
+- [Electron](https://github.com/electron/electron): cross-platform desktop capabilities.
+- [cc-switch](https://github.com/farion1231/cc-switch): provider configuration references.

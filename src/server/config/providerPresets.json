@@ -69,6 +69,16 @@
     "id": "zhipuglm",
     "name": "Zhipu GLM",
     "baseUrl": "https://open.bigmodel.cn/api/anthropic",
+    "regionalEndpoints": [
+      {
+        "region": "cn_zh",
+        "baseUrl": "https://open.bigmodel.cn/api/anthropic"
+      },
+      {
+        "region": "global_en",
+        "baseUrl": "https://api.z.ai/api/anthropic"
+      }
+    ],
     "apiFormat": "anthropic",
     "defaultModels": {
       "main": "glm-5.2[1m]",
@@ -125,6 +135,16 @@
     "id": "minimax",
     "name": "MiniMax",
     "baseUrl": "https://api.minimaxi.com/anthropic",
+    "regionalEndpoints": [
+      {
+        "region": "cn_zh",
+        "baseUrl": "https://api.minimaxi.com/anthropic"
+      },
+      {
+        "region": "global_en",
+        "baseUrl": "https://api.minimax.io/anthropic"
+      }
+    ],
     "apiFormat": "anthropic",
     "defaultModels": {
       "main": "MiniMax-M3[1m]",

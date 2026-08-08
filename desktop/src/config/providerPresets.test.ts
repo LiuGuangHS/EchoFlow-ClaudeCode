@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { BUNDLED_PROVIDER_PRESETS, selectableProviderPresets } from './providerPresets'
+import { BUNDLED_PROVIDER_PRESETS, presetMatchesBaseUrl, selectableProviderPresets } from './providerPresets'
 import type { ProviderPreset } from '../types/providerPreset'
 
 function makePreset(overrides: Partial<ProviderPreset> & { id: string }): ProviderPreset {
@@ -57,16 +57,45 @@ describe('bundled provider presets', () => {
   })
 
   it('excludes promotional gateway presets and referral metadata', () => {
-    const forbiddenPresetIds = ['jiekouai', 'shengsuanyun', 'teamorouter']
+    const forbiddenPresetIds = ['jiekouai', 'shengsuanyun', 'teamorouter', 'xuanshuapi']
     const bundledIds = BUNDLED_PROVIDER_PRESETS.map((preset) => preset.id)
 
     for (const presetId of forbiddenPresetIds) {
       expect(bundledIds).not.toContain(presetId)
     }
     for (const preset of BUNDLED_PROVIDER_PRESETS) {
-      expect(`${preset.websiteUrl} ${preset.apiKeyUrl ?? ''}`).not.toMatch(
-        /teamorouter|jiekou|shengsuanyun|[?&](?:ref|referral|invite|source|utm_[^=]+)=/i,
+      expect(`${preset.websiteUrl} ${preset.apiKeyUrl ?? ''} ${preset.promoText ?? ''}`).not.toMatch(
+        /teamorouter|jiekou|shengsuanyun|xuanshuapi|fennoai|qiniuai|atlas|[?&](?:ref|referral|invite|source|utm_[^=]+)=/i,
       )
     }
+  })
+
+  it('defaults MiniMax to China while retaining the official global endpoint', () => {
+    const minimax = BUNDLED_PROVIDER_PRESETS.find((preset) => preset.id === 'minimax')
+
+    expect(minimax?.baseUrl).toBe('https://api.minimaxi.com/anthropic')
+    expect(minimax?.regionalEndpoints).toEqual([
+      { region: 'cn_zh', baseUrl: 'https://api.minimaxi.com/anthropic' },
+      { region: 'global_en', baseUrl: 'https://api.minimax.io/anthropic' },
+    ])
+    expect(minimax && presetMatchesBaseUrl(minimax, 'https://api.minimax.io/anthropic')).toBe(true)
+  })
+
+  it('defaults Zhipu GLM to China while retaining the official global endpoint', () => {
+    const zhipu = BUNDLED_PROVIDER_PRESETS.find((preset) => preset.id === 'zhipuglm')
+
+    expect(zhipu?.baseUrl).toBe('https://open.bigmodel.cn/api/anthropic')
+    expect(zhipu?.regionalEndpoints).toEqual([
+      { region: 'cn_zh', baseUrl: 'https://open.bigmodel.cn/api/anthropic' },
+      { region: 'global_en', baseUrl: 'https://api.z.ai/api/anthropic' },
+    ])
+    expect(zhipu && presetMatchesBaseUrl(zhipu, ' HTTPS://API.Z.AI/api/anthropic/ ')).toBe(true)
+  })
+
+  it('keeps Kimi Code on its only official Anthropic-compatible endpoint', () => {
+    const kimi = BUNDLED_PROVIDER_PRESETS.find((preset) => preset.id === 'kimi')
+
+    expect(kimi?.baseUrl).toBe('https://api.kimi.com/coding/')
+    expect(kimi?.regionalEndpoints).toBeUndefined()
   })
 })

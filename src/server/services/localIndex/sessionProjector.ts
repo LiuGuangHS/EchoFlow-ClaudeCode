@@ -24,7 +24,6 @@ import {
   reduceTranscriptWithLocators,
 } from './transcriptReducer.js'
 import type {
-  SessionListSummary,
   TranscriptChunk,
   TranscriptEntryLocator,
   TranscriptProjection,
@@ -34,7 +33,8 @@ import type {
 // source's stored version makes `detectSourceChange` return `rebuild`, which is the only thing
 // that refreshes already-indexed transcripts.
 // 3: usage is deduplicated per (message.id, requestId), and sessions carry active working time.
-export const SESSION_SUMMARY_PARSER_VERSION = 3
+// 4: usage copied into a fork is excluded from the fork's activity projection.
+export const SESSION_SUMMARY_PARSER_VERSION = 4
 
 export type SessionSourceCandidate = {
   path: string

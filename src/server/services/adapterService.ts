@@ -27,12 +27,14 @@ export type PairingState = {
 export type AdapterFileConfig = {
   serverUrl?: string
   defaultProjectDir?: string
+  allowedProjectRoots?: string[]
   pairing?: PairingState
   telegram?: {
     botToken?: string
     allowedUsers?: number[]
     pairedUsers?: PairedUser[]
     defaultWorkDir?: string
+    allowedProjectRoots?: string[]
   }
   feishu?: {
     appId?: string
@@ -42,6 +44,7 @@ export type AdapterFileConfig = {
     allowedUsers?: string[]
     pairedUsers?: PairedUser[]
     defaultWorkDir?: string
+    allowedProjectRoots?: string[]
     streamingCard?: boolean
   }
   wechat?: {
@@ -52,6 +55,7 @@ export type AdapterFileConfig = {
     allowedUsers?: string[]
     pairedUsers?: PairedUser[]
     defaultWorkDir?: string
+    allowedProjectRoots?: string[]
   }
   dingtalk?: {
     clientId?: string
@@ -59,6 +63,7 @@ export type AdapterFileConfig = {
     allowedUsers?: string[]
     pairedUsers?: PairedUser[]
     defaultWorkDir?: string
+    allowedProjectRoots?: string[]
     endpoint?: string
     permissionCardTemplateId?: string
   }
@@ -68,6 +73,7 @@ export type AdapterFileConfig = {
     allowedUsers?: string[]
     pairedUsers?: PairedUser[]
     defaultWorkDir?: string
+    allowedProjectRoots?: string[]
   }
 }
 

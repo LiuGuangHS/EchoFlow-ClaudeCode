@@ -69,6 +69,7 @@ import type {
 } from './localIndex/sessionIndex.js'
 import type { LocalIndexStatus } from './localIndex/types.js'
 import { diagnosticsService } from './diagnosticsService.js'
+import { isForkInheritedUsageRecord } from '../../utils/usageAccounting.js'
 
 // ============================================================================
 // Types
@@ -198,6 +199,17 @@ export type MessageEntry = {
   parentUuid?: string
   parentToolUseId?: string
   isSidechain?: boolean
+  cwd?: string
+}
+
+export type SessionMessagesWithEvidence = {
+  messages: MessageEntry[]
+  transcriptEvidenceComplete: boolean
+}
+
+type SubagentMessagesResult = {
+  messages: MessageEntry[]
+  subagentEvidenceComplete: boolean
 }
 
 export type SessionTaskNotification = {
@@ -287,6 +299,7 @@ type RawEntry = {
   parent_tool_use_id?: string | null
   isSidechain?: boolean
   isMeta?: boolean
+  forkedFrom?: unknown
   cwd?: string
   message?: {
     role?: string
@@ -320,6 +333,108 @@ type RawEntry = {
 }
 
 type RawMessageUsage = NonNullable<RawEntry['message']>['usage']
+
+type TranscriptContextAccumulator = {
+  latestModel: string | null
+  latestUsage: {
+    model: string
+    inputTokens: number
+    outputTokens: number
+    cacheReadInputTokens: number
+    cacheCreationInputTokens: number
+  } | null
+  estimatedTokensFromMessages: number
+  estimatedTokensAfterUsage: number
+  transcriptHasMediaInput: boolean
+}
+
+function createTranscriptContextAccumulator(): TranscriptContextAccumulator {
+  return {
+    latestModel: null,
+    latestUsage: null,
+    estimatedTokensFromMessages: 0,
+    estimatedTokensAfterUsage: 0,
+    transcriptHasMediaInput: false,
+  }
+}
+
+function accumulateTranscriptContext(
+  state: TranscriptContextAccumulator,
+  entry: RawEntry,
+): void {
+  if (entry.type === 'system' && entry.subtype === 'compact_boundary') {
+    state.latestUsage = null
+    state.estimatedTokensFromMessages = 0
+    state.estimatedTokensAfterUsage = 0
+    state.transcriptHasMediaInput = false
+  }
+
+  if (typeof entry.message?.model === 'string') {
+    state.latestModel = entry.message.model
+  }
+
+  if (
+    entry.type === 'user' ||
+    entry.type === 'assistant' ||
+    entry.type === 'attachment'
+  ) {
+    const tokens = roughTokenCountEstimationForMessage(entry)
+    state.estimatedTokensFromMessages += tokens
+    state.estimatedTokensAfterUsage += tokens
+    if (!state.transcriptHasMediaInput && hasMediaInput([entry])) {
+      state.transcriptHasMediaInput = true
+    }
+  }
+
+  const usage = entry.message?.usage
+  const model = entry.message?.model
+  if (!usage || typeof model !== 'string') return
+
+  const inputTokens =
+    typeof usage.input_tokens === 'number' ? usage.input_tokens : 0
+  const outputTokens =
+    typeof usage.output_tokens === 'number' ? usage.output_tokens : 0
+  const cacheReadInputTokens =
+    typeof usage.cache_read_input_tokens === 'number'
+      ? usage.cache_read_input_tokens
+      : 0
+  const cacheCreationInputTokens =
+    typeof usage.cache_creation_input_tokens === 'number'
+      ? usage.cache_creation_input_tokens
+      : 0
+
+  if (
+    inputTokens === 0 &&
+    outputTokens === 0 &&
+    cacheReadInputTokens === 0 &&
+    cacheCreationInputTokens === 0
+  ) {
+    return
+  }
+
+  state.latestUsage = {
+    model,
+    inputTokens,
+    outputTokens,
+    cacheReadInputTokens,
+    cacheCreationInputTokens,
+  }
+  state.estimatedTokensAfterUsage = 0
+}
+
+function resolveTranscriptContextUsage(
+  state: TranscriptContextAccumulator,
+): NonNullable<TranscriptContextAccumulator['latestUsage']> | null {
+  if (state.latestUsage) return state.latestUsage
+  if (!state.latestModel) return null
+  return {
+    model: state.latestModel,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadInputTokens: 0,
+    cacheCreationInputTokens: 0,
+  }
+}
 
 function normalizeMessageUsage(usage: RawMessageUsage): MessageUsage | undefined {
   if (!usage) return undefined
@@ -441,6 +556,17 @@ function getSharedSessionMutationState(
 
 export class SessionService {
   private providerService = new ProviderService()
+  private readonly pendingTaskNotificationWrites = new Map<
+    string,
+    Set<{
+      controller: AbortController
+      promise: Promise<void>
+      notification: SessionTaskNotification
+      persisted: boolean
+    }>
+  >()
+  private readonly taskNotificationMutationEpochs = new Map<string, number>()
+  private readonly clearingTaskNotificationSessions = new Set<string>()
 
   private readonly localIndexGateway: LocalIndexGateway
   private readonly now: () => number
@@ -788,28 +914,37 @@ export class SessionService {
   // JSONL parsing
   // --------------------------------------------------------------------------
 
-  private async readJsonlFile(filePath: string): Promise<RawEntry[]> {
+  private async readJsonlFileWithDiagnostics(filePath: string): Promise<{
+    entries: RawEntry[]
+    exists: boolean
+    parseComplete: boolean
+  }> {
     let content: string
     try {
       content = await fs.readFile(filePath, 'utf-8')
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        return []
+        return { entries: [], exists: false, parseComplete: false }
       }
       throw err
     }
 
     const entries: RawEntry[] = []
+    let parseComplete = true
     for (const line of content.split('\n')) {
       const trimmed = line.trim()
       if (!trimmed) continue
       try {
         entries.push(JSON.parse(trimmed) as RawEntry)
       } catch {
-        // skip malformed lines
+        parseComplete = false
       }
     }
-    return entries
+    return { entries, exists: true, parseComplete }
+  }
+
+  private async readJsonlFile(filePath: string): Promise<RawEntry[]> {
+    return (await this.readJsonlFileWithDiagnostics(filePath)).entries
   }
 
   private async readTargetedJsonlEntries(
@@ -1255,8 +1390,20 @@ export class SessionService {
     }
   }
 
-  private async appendJsonlEntry(filePath: string, entry: Record<string, unknown>): Promise<void> {
+  private async appendJsonlEntry(
+    filePath: string,
+    entry: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<void> {
     const line = JSON.stringify(entry) + '\n'
+    if (signal) {
+      await fs.writeFile(filePath, line, {
+        encoding: 'utf-8',
+        flag: 'a',
+        signal,
+      })
+      return
+    }
     await fs.appendFile(filePath, line, 'utf-8')
   }
 
@@ -1482,7 +1629,9 @@ export class SessionService {
       type = 'system'
     }
 
-    const usage = normalizeMessageUsage(msg.usage)
+    const usage = isForkInheritedUsageRecord(entry)
+      ? undefined
+      : normalizeMessageUsage(msg.usage)
 
     return {
       id: entry.uuid || crypto.randomUUID(),
@@ -1495,6 +1644,7 @@ export class SessionService {
       parentUuid: entry.parentUuid ?? undefined,
       parentToolUseId,
       isSidechain: entry.isSidechain,
+      ...(typeof entry.cwd === 'string' && entry.cwd.trim() ? { cwd: entry.cwd } : {}),
     }
   }
 
@@ -1714,7 +1864,7 @@ export class SessionService {
     for (const block of content as Array<Record<string, unknown>>) {
       if (
         block.type === 'tool_use' &&
-        block.name === 'Agent' &&
+        (block.name === 'Agent' || block.name === 'Task') &&
         typeof block.id === 'string'
       ) {
         return block.id
@@ -1730,7 +1880,9 @@ export class SessionService {
     }
 
     return (message.content as ContentBlock[])
-      .filter((block) => block.type === 'tool_use' && block.name === 'Agent')
+      .filter((block) =>
+        block.type === 'tool_use' && (block.name === 'Agent' || block.name === 'Task')
+      )
       .flatMap((block) => (typeof block.id === 'string' ? [block.id] : []))
   }
 
@@ -1785,10 +1937,18 @@ export class SessionService {
     return (content as ContentBlock[]).map((block) => {
       if (!block || typeof block !== 'object') return block
       if (block.type === 'tool_use' && typeof block.id === 'string') {
-        return { ...block, id: `${namespace}/${block.id}` }
+        return {
+          ...block,
+          id: `${namespace}/${block.id}`,
+          original_tool_use_id: block.id,
+        }
       }
       if (block.type === 'tool_result' && typeof block.tool_use_id === 'string') {
-        return { ...block, tool_use_id: `${namespace}/${block.tool_use_id}` }
+        return {
+          ...block,
+          tool_use_id: `${namespace}/${block.tool_use_id}`,
+          original_tool_use_id: block.tool_use_id,
+        }
       }
       return block
     })
@@ -1814,9 +1974,9 @@ export class SessionService {
     sessionId: string,
     parentToolUseId: string,
     agentId: string,
-  ): Promise<MessageEntry[]> {
+  ): Promise<SubagentMessagesResult> {
     const filePath = this.subagentTranscriptPath(projectDir, sessionId, agentId)
-    const entries = await this.readJsonlFile(filePath)
+    const { entries, exists, parseComplete } = await this.readJsonlFileWithDiagnostics(filePath)
     const namespace = `${parentToolUseId}/${agentId}`
     const messages: MessageEntry[] = []
 
@@ -1842,25 +2002,118 @@ export class SessionService {
       }
     }
 
-    return messages
+    return {
+      messages,
+      subagentEvidenceComplete: exists && parseComplete,
+    }
   }
 
   private async appendSubagentToolMessages(
     projectDir: string,
     sessionId: string,
     messages: MessageEntry[],
-  ): Promise<MessageEntry[]> {
-    const resultLinks = this.extractAgentResultLinks(messages)
-    if (resultLinks.size === 0) {
-      return messages
+  ): Promise<SubagentMessagesResult> {
+    const maxSubagentDepth = 16
+    const maxSubagentTranscripts = 128
+    const maxSubagentMessages = 20_000
+    type PendingLink = {
+      parentToolUseId: string
+      agentId: string
+      depth: number
+      ancestry: Set<string>
+    }
+    const transcriptIdentity = (agentId: string) => {
+      const transcriptPath = path.resolve(
+        this.subagentTranscriptPath(projectDir, sessionId, agentId),
+      )
+      return process.platform === 'win32' ? transcriptPath.toLowerCase() : transcriptPath
     }
 
-    const childMessages = await Promise.all(
-      [...resultLinks.entries()].map(([parentToolUseId, agentId]) =>
-        this.loadSubagentToolMessages(projectDir, sessionId, parentToolUseId, agentId),
-      ),
-    )
-    return [...messages, ...childMessages.flat()]
+    const allMessages = [...messages]
+    const loadedLinks = new Set<string>()
+    let loadedTranscriptCount = 0
+    let loadedMessageCount = 0
+    let subagentEvidenceComplete = true
+    const initialResultLinks = this.extractAgentResultLinks(messages)
+    if (messages.some((message) =>
+      this.extractAgentToolUseIdsFromMessage(message).some((id) => !initialResultLinks.has(id))
+    )) {
+      subagentEvidenceComplete = false
+    }
+    let pendingLinks: PendingLink[] = [...initialResultLinks.entries()]
+      .map(([parentToolUseId, agentId]) => ({
+        parentToolUseId,
+        agentId,
+        depth: 1,
+        ancestry: new Set<string>(),
+      }))
+
+    while (pendingLinks.length > 0) {
+      const newLinks = pendingLinks.filter(({ parentToolUseId, agentId, depth, ancestry }) => {
+        const identity = transcriptIdentity(agentId)
+        if (ancestry.has(identity)) {
+          return false
+        }
+        if (depth > maxSubagentDepth || loadedTranscriptCount >= maxSubagentTranscripts) {
+          subagentEvidenceComplete = false
+          return false
+        }
+        const key = `${parentToolUseId}\u0000${agentId}`
+        if (loadedLinks.has(key)) return false
+        loadedLinks.add(key)
+        loadedTranscriptCount += 1
+        return true
+      })
+      if (newLinks.length === 0) break
+
+      const loadedChildren = await Promise.all(
+        newLinks.map(async (link) => ({
+          link,
+          result: await this.loadSubagentToolMessages(
+            projectDir,
+            sessionId,
+            link.parentToolUseId,
+            link.agentId,
+          ),
+        })),
+      )
+      pendingLinks = []
+      for (const { link, result } of loadedChildren) {
+        const childMessages = result.messages
+        if (!result.subagentEvidenceComplete) subagentEvidenceComplete = false
+        const remainingMessageCapacity = maxSubagentMessages - loadedMessageCount
+        if (remainingMessageCapacity <= 0) {
+          subagentEvidenceComplete = false
+          break
+        }
+        const acceptedMessages = childMessages.slice(0, remainingMessageCapacity)
+        if (acceptedMessages.length < childMessages.length) {
+          subagentEvidenceComplete = false
+        }
+        loadedMessageCount += acceptedMessages.length
+        allMessages.push(...acceptedMessages)
+
+        const ancestry = new Set(link.ancestry)
+        ancestry.add(transcriptIdentity(link.agentId))
+        const childResultLinks = this.extractAgentResultLinks(acceptedMessages)
+        if (acceptedMessages.some((message) =>
+          this.extractAgentToolUseIdsFromMessage(message)
+            .some((id) => !childResultLinks.has(id))
+        )) {
+          subagentEvidenceComplete = false
+        }
+        for (const [parentToolUseId, agentId] of childResultLinks) {
+          pendingLinks.push({
+            parentToolUseId,
+            agentId,
+            depth: link.depth + 1,
+            ancestry,
+          })
+        }
+      }
+    }
+
+    return { messages: allMessages, subagentEvidenceComplete }
   }
 
   private resolveParentToolUseId(
@@ -2399,11 +2652,14 @@ export class SessionService {
       cacheCreationInputTokens: number
     },
     estimatedTokensFromMessages: number,
+    estimatedTokensAfterUsage: number,
     transcriptHasMediaInput: boolean,
     launchInfo?: ProviderContextWindowHint | null,
   ): Promise<TranscriptContextEstimate> {
     const rawMaxTokens = await this.getTranscriptContextWindow(sessionId, latest.model, launchInfo)
     const promptTokens = latest.inputTokens + latest.cacheReadInputTokens + latest.cacheCreationInputTokens
+    const providerTokens = promptTokens + latest.outputTokens
+    const hasProviderUsage = providerTokens > 0
     const estimatedTokens = estimatedTokensFromMessages || promptTokens
     const contextBudget = calculateContextBudget({
       estimatedTokens,
@@ -2419,7 +2675,16 @@ export class SessionService {
       }),
       hasMediaInput: transcriptHasMediaInput,
     })
-    const totalTokens = contextBudget.usedTokens
+    const totalTokens =
+      hasProviderUsage && !contextBudget.ignoredUsageReason
+        ? Math.min(
+            Math.max(
+              contextBudget.usedTokens,
+              providerTokens + estimatedTokensAfterUsage,
+            ),
+            rawMaxTokens,
+          )
+        : contextBudget.usedTokens
     const percentage = rawMaxTokens > 0 ? Math.round((totalTokens / rawMaxTokens) * 100) : 0
     const usageCategories: TranscriptContextEstimate['categories'] = [
       { name: 'Input tokens', tokens: latest.inputTokens, color: '#8f3217' },
@@ -2428,9 +2693,9 @@ export class SessionService {
       { name: 'Output tokens', tokens: latest.outputTokens, color: '#2f7d32' },
     ]
     const contextCategories: TranscriptContextEstimate['categories'] =
-      contextBudget.ignoredUsageReason === 'low_trust_media_usage'
-        ? [{ name: 'Estimated context', tokens: totalTokens, color: '#8f3217' }]
-        : usageCategories
+      totalTokens === providerTokens
+        ? usageCategories
+        : [{ name: 'Estimated context', tokens: totalTokens, color: '#8f3217' }]
     const categories: TranscriptContextEstimate['categories'] = [
       ...contextCategories,
       { name: 'Free space', tokens: Math.max(0, rawMaxTokens - totalTokens), color: '#a1a1aa', isDeferred: true },
@@ -2477,53 +2742,21 @@ export class SessionService {
     if (!found) return null
 
     const entries = await this.readJsonlFile(found.filePath)
-    let latest: {
-      model: string
-      inputTokens: number
-      outputTokens: number
-      cacheReadInputTokens: number
-      cacheCreationInputTokens: number
-    } | null = null
-    let estimatedTokensFromMessages = 0
-    let transcriptHasMediaInput = false
+    const contextState = createTranscriptContextAccumulator()
 
     for (const entry of entries) {
-      if (
-        entry.type === 'user' ||
-        entry.type === 'assistant' ||
-        entry.type === 'attachment'
-      ) {
-        estimatedTokensFromMessages += roughTokenCountEstimationForMessage(entry)
-        if (!transcriptHasMediaInput && hasMediaInput([entry])) {
-          transcriptHasMediaInput = true
-        }
-      }
-
-      const usage = entry.message?.usage
-      const model = entry.message?.model
-      if (!usage || typeof model !== 'string') continue
-
-      const inputTokens = typeof usage.input_tokens === 'number' ? usage.input_tokens : 0
-      const outputTokens = typeof usage.output_tokens === 'number' ? usage.output_tokens : 0
-      const cacheReadInputTokens = typeof usage.cache_read_input_tokens === 'number' ? usage.cache_read_input_tokens : 0
-      const cacheCreationInputTokens = typeof usage.cache_creation_input_tokens === 'number' ? usage.cache_creation_input_tokens : 0
-
-      latest = {
-        model,
-        inputTokens,
-        outputTokens,
-        cacheReadInputTokens,
-        cacheCreationInputTokens,
-      }
+      accumulateTranscriptContext(contextState, entry)
     }
 
+    const latest = resolveTranscriptContextUsage(contextState)
     if (!latest) return null
 
     return await this.buildTranscriptContextEstimate(
       sessionId,
       latest,
-      estimatedTokensFromMessages,
-      transcriptHasMediaInput,
+      contextState.estimatedTokensFromMessages,
+      contextState.estimatedTokensAfterUsage,
+      contextState.transcriptHasMediaInput,
       this.resolveRuntimeContextMetadataFromEntries(entries),
     )
   }
@@ -2547,6 +2780,7 @@ export class SessionService {
 
     for (const entry of entries) {
       currentRuntimeHint = this.applyRuntimeContextMetadata(currentRuntimeHint, entry)
+      if (isForkInheritedUsageRecord(entry)) continue
       const usage = entry.message?.usage
       const model = entry.message?.model
       if (!usage || typeof model !== 'string') continue
@@ -2676,15 +2910,7 @@ export class SessionService {
     let firstUsageAt: number | null = null
     let lastUsageAt: number | null = null
 
-    let latestContextUsage: {
-      model: string
-      inputTokens: number
-      outputTokens: number
-      cacheReadInputTokens: number
-      cacheCreationInputTokens: number
-    } | null = null
-    let estimatedTokensFromMessages = 0
-    let transcriptHasMediaInput = false
+    const contextState = createTranscriptContextAccumulator()
 
     await this.streamJsonlFile(found.filePath, (entry) => {
       if (typeof entry.message?.model === 'string') {
@@ -2753,16 +2979,7 @@ export class SessionService {
         transcriptMessageCount += 1
       }
 
-      if (
-        entry.type === 'user' ||
-        entry.type === 'assistant' ||
-        entry.type === 'attachment'
-      ) {
-        estimatedTokensFromMessages += roughTokenCountEstimationForMessage(entry)
-        if (!transcriptHasMediaInput && hasMediaInput([entry])) {
-          transcriptHasMediaInput = true
-        }
-      }
+      accumulateTranscriptContext(contextState, entry)
 
       const usage = entry.message?.usage
       const model = entry.message?.model
@@ -2776,13 +2993,9 @@ export class SessionService {
         ? usage.server_tool_use.web_search_requests
         : 0
 
-      latestContextUsage = {
-        model,
-        inputTokens,
-        outputTokens,
-        cacheReadInputTokens,
-        cacheCreationInputTokens,
-      }
+      // Inherited fork history still describes the current context, but its API usage belongs to
+      // the source session and must not be included in this fork's cumulative usage or cost.
+      if (isForkInheritedUsageRecord(entry)) return
 
       if (
         inputTokens === 0 &&
@@ -2895,12 +3108,14 @@ export class SessionService {
           totalWebSearchRequests,
           models: Array.from(models.values()),
         }
+    const latestContextUsage = resolveTranscriptContextUsage(contextState)
     const contextEstimate = latestContextUsage
       ? await this.buildTranscriptContextEstimate(
           sessionId,
           latestContextUsage,
-          estimatedTokensFromMessages,
-          transcriptHasMediaInput,
+          contextState.estimatedTokensFromMessages,
+          contextState.estimatedTokensAfterUsage,
+          contextState.transcriptHasMediaInput,
           launchInfo,
         )
       : null
@@ -3310,7 +3525,7 @@ export class SessionService {
     const stat = await fs.stat(filePath)
     const entries = await this.readJsonlFile(filePath)
 
-    const messages = await this.appendSubagentToolMessages(
+    const { messages } = await this.appendSubagentToolMessages(
       projectDir,
       sessionId,
       this.entriesToMessages(entries),
@@ -3356,17 +3571,29 @@ export class SessionService {
    * Get only the messages for a session (lighter than full detail).
    */
   async getSessionMessages(sessionId: string): Promise<MessageEntry[]> {
+    return (await this.getSessionMessagesWithEvidence(sessionId)).messages
+  }
+
+  async getSessionMessagesWithEvidence(
+    sessionId: string,
+  ): Promise<SessionMessagesWithEvidence> {
     const found = await this.findSessionFile(sessionId)
     if (!found) {
       throw ApiError.notFound(`Session not found: ${sessionId}`)
     }
 
-    const entries = await this.readJsonlFile(found.filePath)
-    return await this.appendSubagentToolMessages(
+    const rootTranscript = await this.readJsonlFileWithDiagnostics(found.filePath)
+    const subagentResult = await this.appendSubagentToolMessages(
       found.projectDir,
       sessionId,
-      this.entriesToMessages(entries),
+      this.entriesToMessages(rootTranscript.entries),
     )
+    return {
+      messages: subagentResult.messages,
+      transcriptEvidenceComplete: rootTranscript.exists &&
+        rootTranscript.parseComplete &&
+        subagentResult.subagentEvidenceComplete,
+    }
   }
 
   async getSubagentTranscriptMessages(
@@ -3713,58 +3940,83 @@ export class SessionService {
     fallbackWorkDir?: string,
     preservedPermissionMode?: string,
   ): Promise<void> {
-    let found = await this.findSessionFile(sessionId)
-    if (!found && fallbackWorkDir) {
-      const resolvedPath = path.resolve(normalizeDriveRootPathForPlatform(fallbackWorkDir))
-      const absWorkDir = await fs.realpath(resolvedPath).catch(() => resolvedPath)
-      const dirPath = path.join(this.getProjectsDir(), this.sanitizePath(absWorkDir))
-      await fs.mkdir(dirPath, { recursive: true })
-      found = {
-        filePath: path.join(dirPath, `${sessionId}.jsonl`),
-        projectDir: this.sanitizePath(absWorkDir),
+    const nextEpoch = (this.taskNotificationMutationEpochs.get(sessionId) ?? 0) + 1
+    this.taskNotificationMutationEpochs.set(sessionId, nextEpoch)
+    this.clearingTaskNotificationSessions.add(sessionId)
+    const pendingWrites = [...(this.pendingTaskNotificationWrites.get(sessionId) ?? [])]
+    for (const pending of pendingWrites) pending.controller.abort()
+
+    try {
+      await Promise.allSettled(pendingWrites.map((pending) => pending.promise))
+
+      let found = await this.findSessionFile(sessionId)
+      if (!found && fallbackWorkDir) {
+        const resolvedPath = path.resolve(normalizeDriveRootPathForPlatform(fallbackWorkDir))
+        const absWorkDir = await fs.realpath(resolvedPath).catch(() => resolvedPath)
+        const dirPath = path.join(this.getProjectsDir(), this.sanitizePath(absWorkDir))
+        await fs.mkdir(dirPath, { recursive: true })
+        found = {
+          filePath: path.join(dirPath, `${sessionId}.jsonl`),
+          projectDir: this.sanitizePath(absWorkDir),
+        }
       }
-    }
-    if (!found) {
-      throw ApiError.notFound(`Session not found: ${sessionId}`)
-    }
+      if (!found) {
+        throw ApiError.notFound(`Session not found: ${sessionId}`)
+      }
 
-    const entries = await this.readJsonlFile(found.filePath)
-    const workDir = this.resolveWorkDirFromEntries(entries, found.projectDir) || fallbackWorkDir || process.cwd()
-    const repository = this.resolveRepositoryFromEntries(entries)
-    const permissionMode = (
-      preservedPermissionMode &&
-      VALID_SESSION_PERMISSION_MODES.has(preservedPermissionMode)
-    )
-      ? preservedPermissionMode
-      : this.resolvePermissionModeFromEntries(entries)
-    const now = new Date().toISOString()
+      const entries = await this.readJsonlFile(found.filePath)
+      const workDir = this.resolveWorkDirFromEntries(entries, found.projectDir) || fallbackWorkDir || process.cwd()
+      const repository = this.resolveRepositoryFromEntries(entries)
+      const permissionMode = (
+        preservedPermissionMode &&
+        VALID_SESSION_PERMISSION_MODES.has(preservedPermissionMode)
+      )
+        ? preservedPermissionMode
+        : this.resolvePermissionModeFromEntries(entries)
+      const now = new Date().toISOString()
 
-    const initialEntry = {
-      type: 'file-history-snapshot',
-      messageId: crypto.randomUUID(),
-      snapshot: {
+      const initialEntry = {
+        type: 'file-history-snapshot',
         messageId: crypto.randomUUID(),
-        trackedFileBackups: {},
+        snapshot: {
+          messageId: crypto.randomUUID(),
+          trackedFileBackups: {},
+          timestamp: now,
+        },
+        isSnapshotUpdate: false,
+      }
+
+      const metaEntry = {
+        type: 'session-meta',
+        isMeta: true,
+        workDir,
+        repository,
+        ...(permissionMode ? { permissionMode } : {}),
         timestamp: now,
-      },
-      isSnapshotUpdate: false,
-    }
+      }
 
-    const metaEntry = {
-      type: 'session-meta',
-      isMeta: true,
-      workDir,
-      repository,
-      ...(permissionMode ? { permissionMode } : {}),
-      timestamp: now,
+      await fs.writeFile(
+        found.filePath,
+        `${JSON.stringify(initialEntry)}\n${JSON.stringify(metaEntry)}\n`,
+        'utf-8',
+      )
+      this.invalidateSessionListCache()
+    } catch (error) {
+      // Clear aborts old-generation appends so none can land after a successful
+      // transcript replacement. If replacement itself fails, restore any
+      // terminal notification that the barrier interrupted; otherwise a
+      // previously persisted running Agent can reappear after restart.
+      this.clearingTaskNotificationSessions.delete(sessionId)
+      await Promise.allSettled(
+        pendingWrites
+          .filter((pending) => !pending.persisted)
+          .map((pending) =>
+            this.appendSessionTaskNotification(sessionId, pending.notification)),
+      )
+      throw error
+    } finally {
+      this.clearingTaskNotificationSessions.delete(sessionId)
     }
-
-    await fs.writeFile(
-      found.filePath,
-      `${JSON.stringify(initialEntry)}\n${JSON.stringify(metaEntry)}\n`,
-      'utf-8',
-    )
-    this.invalidateSessionListCache()
   }
 
   async appendSessionMetadata(
@@ -3920,7 +4172,17 @@ export class SessionService {
       filteredEntries.length > 0
         ? filteredEntries.map((entry) => JSON.stringify(entry)).join('\n') + '\n'
         : ''
-    await fs.writeFile(found.filePath, content, 'utf-8')
+    const transcriptStats = await fs.stat(found.filePath)
+    const tempFilePath = `${found.filePath}.rewind-${crypto.randomUUID()}.tmp`
+    try {
+      await fs.writeFile(tempFilePath, content, {
+        encoding: 'utf-8',
+        mode: transcriptStats.mode,
+      })
+      await fs.rename(tempFilePath, found.filePath)
+    } finally {
+      await fs.rm(tempFilePath, { force: true })
+    }
     this.invalidateSessionListCache()
 
     return {
@@ -3980,17 +4242,50 @@ export class SessionService {
       notification.timestamp ?? new Date(this.now()).toISOString(),
     )
     if (!normalized) return
+    if (this.clearingTaskNotificationSessions.has(sessionId)) return
 
-    const found = await this.findSessionFile(sessionId)
-    if (!found) return
+    const epoch = this.taskNotificationMutationEpochs.get(sessionId) ?? 0
+    const controller = new AbortController()
+    const pending = {
+      controller,
+      promise: Promise.resolve(),
+      notification: normalized,
+      persisted: false,
+    }
+    const write = (async () => {
+      const found = await this.findSessionFile(sessionId)
+      if (
+        !found ||
+        controller.signal.aborted ||
+        this.clearingTaskNotificationSessions.has(sessionId) ||
+        (this.taskNotificationMutationEpochs.get(sessionId) ?? 0) !== epoch
+      ) {
+        return
+      }
 
-    await this.appendJsonlEntry(found.filePath, {
-      type: PERSISTED_TASK_NOTIFICATION_ENTRY_TYPE,
-      isMeta: true,
-      taskNotification: normalized,
-      timestamp: normalized.timestamp,
-    })
-    this.invalidateSessionListCache()
+      await this.appendJsonlEntry(found.filePath, {
+        type: PERSISTED_TASK_NOTIFICATION_ENTRY_TYPE,
+        isMeta: true,
+        taskNotification: normalized,
+        timestamp: normalized.timestamp,
+      }, controller.signal)
+      pending.persisted = true
+      this.invalidateSessionListCache()
+    })()
+    pending.promise = write
+
+    let writes = this.pendingTaskNotificationWrites.get(sessionId)
+    if (!writes) {
+      writes = new Set()
+      this.pendingTaskNotificationWrites.set(sessionId, writes)
+    }
+    writes.add(pending)
+    try {
+      await write
+    } finally {
+      writes.delete(pending)
+      if (writes.size === 0) this.pendingTaskNotificationWrites.delete(sessionId)
+    }
   }
 
   async getSessionTaskNotifications(

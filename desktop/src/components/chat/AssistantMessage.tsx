@@ -95,17 +95,16 @@ export const AssistantMessage = memo(function AssistantMessage({ content, isStre
       <div
         data-message-shell="assistant"
         data-layout={documentLayout ? 'document' : 'bubble'}
-        className={`group flex min-w-0 flex-col items-start ${
-          documentLayout
-            ? 'w-full max-w-full'
-            : 'max-w-[88%] sm:max-w-[80%] lg:max-w-[720px]'
-        }`}
+        // Always the full column. A reply that hugs its text turns every short
+        // answer into a differently-shaped block, so a scrolled transcript reads
+        // as a ragged pile; one width makes the replies a single column the eye
+        // can run down. The user bubble stays hugged — that asymmetry is what
+        // says which side is speaking, so it does not need width to say it too.
+        className="group flex w-full min-w-0 max-w-full flex-col items-start"
       >
         <div
           onContextMenu={sessionId ? handleContextMenu : undefined}
-          className={`rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 text-[14.5px] text-[var(--color-text-primary)] shadow-[var(--shadow-card)] ${
-            documentLayout ? 'w-full' : 'max-w-full'
-          }`}
+          className="w-full rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 text-[14.5px] text-[var(--color-text-primary)] shadow-[var(--shadow-card)]"
         >
           <MarkdownRenderer
             content={content}
@@ -113,8 +112,23 @@ export const AssistantMessage = memo(function AssistantMessage({ content, isStre
             streaming={isStreaming}
             onLinkClick={sessionId ? handleLinkClick : undefined}
           />
-          {!isStreaming && <InlineImageGallery text={content} sessionId={sessionId} workDir={workDir} />}
-          {!isStreaming && <InlineVideoGallery text={content} sessionId={sessionId} workDir={workDir} />}
+          {!isStreaming && (
+            <InlineImageGallery
+              text={content}
+              sessionId={sessionId}
+              workDir={workDir}
+              changedFiles={turnChangedFiles}
+              suppressManagedGeneratedImages
+            />
+          )}
+          {!isStreaming && (
+            <InlineVideoGallery
+              text={content}
+              sessionId={sessionId}
+              workDir={workDir}
+              changedFiles={turnChangedFiles}
+            />
+          )}
           {isStreaming && (
             <span className="ml-0.5 inline-block h-4 w-0.5 animate-shimmer bg-[var(--color-brand)] align-text-bottom" />
           )}

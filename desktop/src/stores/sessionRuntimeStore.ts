@@ -6,6 +6,7 @@ import {
   GROK_OFFICIAL_MODELS,
   GROK_OFFICIAL_PROVIDER_ID,
 } from '../constants/grokOfficialProvider'
+import { normalizeRuntimeSelection } from '../lib/runtimeSelection'
 
 const STORAGE_KEY = 'echoflow-code-session-runtime'
 const RETIRED_GROK_MODEL_IDS = new Set([
@@ -27,11 +28,12 @@ type SessionRuntimeStore = {
 }
 
 function normalizeSelection(selection: RuntimeSelection): RuntimeSelection {
+  const normalizedSelection = normalizeRuntimeSelection(selection)
   if (
-    selection.providerId !== GROK_OFFICIAL_PROVIDER_ID ||
-    !RETIRED_GROK_MODEL_IDS.has(selection.modelId)
+    normalizedSelection.providerId !== GROK_OFFICIAL_PROVIDER_ID ||
+    !RETIRED_GROK_MODEL_IDS.has(normalizedSelection.modelId)
   ) {
-    return selection
+    return normalizedSelection
   }
 
   const fallback = GROK_OFFICIAL_MODELS.find(

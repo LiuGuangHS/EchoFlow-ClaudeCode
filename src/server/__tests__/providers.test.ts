@@ -268,7 +268,7 @@ describe('ProviderService', () => {
       await expect(fs.readFile(path.join(echoFlowDir(), 'settings.json'), 'utf-8')).rejects.toThrow()
     })
 
-    test('custom providers declare thinking and effort capability passthrough for user-defined models', async () => {
+    test('custom providers keep thinking compatibility without narrowing CLI effort', async () => {
       const svc = new ProviderService()
       const provider = await svc.addProvider(sampleInput({
         models: {
@@ -295,7 +295,7 @@ describe('ProviderService', () => {
       )
     })
 
-    test('Xiaomi MiMo custom providers declare thinking without effort passthrough', async () => {
+    test('Xiaomi MiMo custom Anthropic providers keep the compatibility effort fallback', async () => {
       const svc = new ProviderService()
       const provider = await svc.addProvider(sampleInput({
         name: 'Xiaomi MiMo Custom',
@@ -312,9 +312,15 @@ describe('ProviderService', () => {
 
       const settings = await readSettings()
       const env = settings.env as Record<string, string>
-      expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking')
-      expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking')
-      expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking')
+      expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe(
+        'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
+      )
+      expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES).toBe(
+        'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
+      )
+      expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES).toBe(
+        'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
+      )
     })
 
     test('custom providers can mark main and role models as 1M-capable', async () => {
@@ -370,13 +376,13 @@ describe('ProviderService', () => {
       const env = settings.env as Record<string, string>
       expect(env.ECHOFLOW_SEND_DISABLED_THINKING).toBeUndefined()
       expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe(
-        'thinking,effort,adaptive_thinking,max_effort',
+        'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
       )
       expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES).toBe(
-        'thinking,effort,adaptive_thinking,max_effort',
+        'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
       )
       expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES).toBe(
-        'thinking,effort,adaptive_thinking,max_effort',
+        'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
       )
     })
 
@@ -417,6 +423,26 @@ describe('ProviderService', () => {
         'model-main': 300000,
         'model-haiku': 128000,
       })
+    })
+
+    test('should persist an optional image provider without placing it in the skill', async () => {
+      const svc = new ProviderService()
+      const provider = await svc.addProvider(sampleInput({
+        imageGeneration: {
+          model: 'image-model',
+          baseUrl: 'https://images.example.test/v1',
+          apiKey: 'image-secret',
+        },
+      }))
+
+      expect(provider.imageGeneration).toEqual({
+        model: 'image-model',
+        baseUrl: 'https://images.example.test/v1',
+        apiKey: 'image-secret',
+      })
+      const config = await readProvidersConfig()
+      expect((config.providers as Array<{ imageGeneration?: unknown }>)[0]?.imageGeneration)
+        .toEqual(provider.imageGeneration)
     })
   })
 
@@ -551,6 +577,29 @@ describe('ProviderService', () => {
           hasAuth: true,
           source: 'openai-oauth',
           activeProvider: 'ChatGPT Official',
+        })
+      })
+
+      test('auth status reports Claude Official from the desktop Claude token file', async () => {
+        await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+        await fs.writeFile(
+          path.join(tmpDir, 'cc-haha', 'oauth.json'),
+          JSON.stringify({
+            accessToken: 'claude-access',
+            refreshToken: 'claude-refresh',
+            expiresAt: Date.now() + 60 * 60_000,
+            scopes: [],
+            subscriptionType: 'pro',
+          }),
+          'utf-8',
+        )
+
+        const svc = new ProviderService()
+
+        await expect(svc.checkAuthStatus()).resolves.toMatchObject({
+          hasAuth: true,
+          source: 'claude-oauth',
+          activeProvider: 'Claude Official',
         })
       })
 
@@ -837,6 +886,36 @@ describe('ProviderService', () => {
       settings = await readSettings()
       env = settings.env as Record<string, string>
       expect(env.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS).toBeUndefined()
+    })
+
+    test('updating an active provider drives image routing in both directions', async () => {
+      const svc = new ProviderService()
+      const added = await svc.addProvider(sampleInput())
+      await svc.activateProvider(added.id)
+
+      await svc.updateProvider(added.id, {
+        imageGeneration: {
+          model: 'image-model',
+          baseUrl: 'https://images.example.test/v1',
+          apiKey: 'image-secret',
+        },
+      })
+      let settings = await readSettings()
+      let env = settings.env as Record<string, string>
+      expect(env).toMatchObject({
+        CC_HAHA_IMAGE_PROVIDER_KIND: 'openai_images',
+        CC_HAHA_IMAGE_PROVIDER_ID: added.id,
+        CC_HAHA_IMAGE_BASE_URL: 'https://images.example.test/v1',
+        CC_HAHA_IMAGE_API_KEY: 'image-secret',
+        CC_HAHA_IMAGE_MODEL: 'image-model',
+      })
+
+      const updated = await svc.updateProvider(added.id, { imageGeneration: null })
+      expect(updated.imageGeneration).toBeUndefined()
+      settings = await readSettings()
+      env = settings.env as Record<string, string>
+      expect(env.CC_HAHA_IMAGE_PROVIDER_KIND).toBeUndefined()
+      expect(env.CC_HAHA_IMAGE_API_KEY).toBeUndefined()
     })
   })
 
@@ -1614,7 +1693,7 @@ describe('ProviderService', () => {
             model: 'gpt-4',
             max_tokens: 64,
             system: [
-              { type: 'text', text: 'x-anthropic-billing-header: cc_version=2.1.92.693; cc_entrypoint=cli; cch=00000;' },
+              { type: 'text', text: 'x-anthropic-billing-header: cc_version=2.1.220.693; cc_entrypoint=cli; cch=00000;' },
               { type: 'text', text: 'You are a helpful assistant.' },
             ],
             messages: [{ role: 'user', content: 'hello from proxy' }],

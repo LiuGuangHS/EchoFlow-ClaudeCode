@@ -146,7 +146,9 @@ export type StatusDotProps = {
    */
   label?: string
   className?: string
-}
+  // Passed through for the same reason as `Badge`: a dot a test cannot select
+  // pushes the caller back to a hand-rolled span.
+} & Omit<HTMLAttributes<HTMLSpanElement>, 'className' | 'role' | 'aria-label'>
 
 const DOT_SIZE = { sm: 'h-1.5 w-1.5', md: 'h-2 w-2', lg: 'h-2.5 w-2.5' } as const
 
@@ -160,9 +162,10 @@ const DOT_TONE: Record<Tone, string> = {
 }
 
 /** A colored dot for live status. */
-export function StatusDot({ tone, size = 'sm', pulse = false, label, className }: StatusDotProps) {
+export function StatusDot({ tone, size = 'sm', pulse = false, label, className, ...rest }: StatusDotProps) {
   return (
     <span
+      {...rest}
       role={label ? 'status' : undefined}
       aria-label={label}
       aria-hidden={label ? undefined : true}

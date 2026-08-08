@@ -35,7 +35,7 @@ The tab you'll open most often — everything about how the app feels.
 - **UI Zoom** — scale the whole interface, also bound to `⌘+` / `⌘-`, with `⌘0` back to 100%.
 - **Data Storage Location** — an advanced, rarely-touched setting. Defaults to the system directory `~/.claude`, or point it at an absolute path of your own. After switching, sessions, skills, MCP, plugins, and provider config are all read from the new directory; it needs a restart, and the two directories are never merged or migrated automatically.
 
-![The same session in the Ink Night dark theme](../../images/app/en/session-dark.webp)
+Product screenshots in this guide consistently use the **Pure White** theme so the interface can be compared without palette changes.
 
 ## H5 Access
 

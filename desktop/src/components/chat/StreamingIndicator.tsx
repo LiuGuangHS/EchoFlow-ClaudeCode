@@ -16,6 +16,23 @@ function translateServerVerb(
   return translated === key ? verb : translated
 }
 
+/**
+ * What the turn is currently doing, in the user's language. Shared with the
+ * composer's run strip so the transcript and the composer can never disagree
+ * about the same turn.
+ */
+export function resolveTurnStatusVerb(
+  t: (key: TranslationKey) => string,
+  chatState: string,
+  statusVerb: string,
+): string {
+  if (statusVerb) return translateServerVerb(t, statusVerb)
+  if (chatState === 'thinking') return t('serverVerb.Thinking')
+  if (chatState === 'compacting') return t('serverVerb.Compacting conversation')
+  if (chatState === 'tool_executing') return t('serverVerb.Running')
+  return t('serverVerb.Working')
+}
+
 function formatRetrySeconds(ms: number): number {
   return Math.max(0, Math.ceil(ms / 1000))
 }
@@ -33,7 +50,9 @@ export function StreamingIndicator() {
   const [now, setNow] = useState(() => Date.now())
   const activeTabId = useTabStore((s) => s.activeTabId)
   const sessionState = useChatStore((s) => activeTabId ? s.sessions[activeTabId] : undefined)
-  const chatState = sessionState?.chatState ?? 'idle'
+  const chatState = sessionState?.isPreparingTurn
+    ? 'thinking'
+    : sessionState?.chatState ?? 'idle'
   const statusVerb = sessionState?.statusVerb ?? ''
   const apiRetry = sessionState?.apiRetry ?? null
   const streamingFallback = sessionState?.streamingFallback ?? null
@@ -116,21 +135,15 @@ export function StreamingIndicator() {
     )
   }
 
-  let verb: string
-  if (statusVerb) {
-    verb = translateServerVerb(t, statusVerb)
-  } else {
-    verb = chatState === 'thinking'
-      ? t('serverVerb.Thinking')
-      : chatState === 'compacting'
-        ? t('serverVerb.Compacting conversation')
-      : chatState === 'tool_executing'
-        ? t('serverVerb.Running')
-        : t('serverVerb.Working')
-  }
+  const verb = resolveTurnStatusVerb(t, chatState, statusVerb)
 
   return (
-    <div className="mb-2 flex w-fit items-center gap-[9px] rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] px-4 py-2 text-[13.5px] text-[var(--color-text-secondary)]">
+    <div
+      data-testid="turn-status-indicator"
+      role="status"
+      aria-live="polite"
+      className="mb-2 flex w-fit items-center gap-[9px] rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] px-4 py-2 text-[13.5px] text-[var(--color-text-secondary)]"
+    >
       <span className="animate-pulse-dot text-[var(--color-brand)]" aria-hidden="true">✦</span>
       <span className="font-medium text-[var(--color-text-primary)]">{verb}...</span>
       {elapsedSeconds > 0 && (

@@ -44,12 +44,24 @@ import {
 } from '../lib/backgroundTasks'
 import { useActivityPanelStore } from '../stores/activityPanelStore'
 import { getSessionBrowsablePath, getSessionWorkspaceState } from '../lib/sessionWorkspace'
+import type { AgentTaskNotification, UIMessage } from '../types/chat'
+
+/**
+ * Stable fallbacks for optional session state. A `?? []` / `?? {}` literal allocates a
+ * fresh value on every render, and both of these feed the `activityModel` dependency
+ * array below — so an idle session with no messages or no agent notifications rebuilt
+ * the whole activity model on every render. 29586ce38 fixed exactly this in
+ * MessageList.tsx; the same pattern was still here.
+ */
+const EMPTY_MESSAGES: UIMessage[] = []
+const EMPTY_AGENT_TASK_NOTIFICATIONS: Record<string, AgentTaskNotification> = {}
 
 const TASK_POLL_INTERVAL_MS = 1000
+const ACTIVITY_AUTOCLOSE_GRACE_MS = 2000
 const WORKSPACE_RESIZE_STEP = 32
 const TERMINAL_RESIZE_STEP = 24
 const CHAT_COLUMN_WITH_WORKSPACE_CLASS =
-  'min-w-[320px] flex-1 border-r border-[var(--color-border)] bg-[var(--color-surface)]'
+  'min-w-[320px] flex-1 bg-[var(--color-surface)]'
 const EMPTY_DISMISSED_BACKGROUND_TASK_KEYS: readonly string[] = []
 
 function isSessionTabState(activeTabId: string | null, activeTabType: TabType | null | undefined) {
@@ -200,9 +212,9 @@ function WorkspaceResizeHandle({ panelRef }: { panelRef: RefObject<HTMLElement> 
           setWidth(renderedWidth - WORKSPACE_RESIZE_STEP)
         }
       }}
-      className="group relative z-10 flex w-2 shrink-0 cursor-col-resize items-stretch justify-center bg-[var(--color-surface)] outline-none focus-visible:bg-[var(--color-surface-container)]"
+      className="relative z-10 w-px shrink-0 cursor-col-resize bg-[var(--color-border)] outline-none transition-colors hover:bg-[var(--color-border-focus)] focus-visible:bg-[var(--color-border-focus)]"
     >
-      <div className="my-3 w-px rounded-full bg-[var(--color-border)] transition-colors group-hover:bg-[var(--color-border-focus)] group-focus-visible:bg-[var(--color-border-focus)]" />
+      <div aria-hidden="true" className="absolute -inset-x-1 inset-y-0" />
     </div>
   )
 }
@@ -302,7 +314,6 @@ export function ActiveSession() {
   const cliTasks = useCLITaskStore((s) => s.tasks)
   const cliTasksCompletedAndDismissed = useCLITaskStore((s) => s.completedAndDismissed)
   const hasIncompleteTasks = cliTasks.some((task) => task.status !== 'completed')
-  const hasRunningTasks = cliTasks.some((task) => task.status === 'in_progress')
   const isActivityPanelOpen = useActivityPanelStore((state) => activeTabId ? state.isOpen(activeTabId) : false)
   const openActivityPanel = useActivityPanelStore((state) => state.open)
   const closeActivityPanel = useActivityPanelStore((state) => state.close)
@@ -374,8 +385,9 @@ export function ActiveSession() {
   ])
 
   const t = useTranslation()
-  const messages = sessionState?.messages ?? []
+  const messages = sessionState?.messages ?? EMPTY_MESSAGES
   const streamingText = sessionState?.streamingText ?? ''
+  const isPreparingTurn = Boolean(sessionState?.isPreparingTurn)
   const backgroundTasks = useMemo(
     () => Object.values(sessionState?.backgroundAgentTasks ?? {}),
     [sessionState?.backgroundAgentTasks],
@@ -384,9 +396,13 @@ export function ActiveSession() {
     () => new Set(dismissedBackgroundTaskKeyList),
     [dismissedBackgroundTaskKeyList],
   )
-  const agentTaskNotifications = sessionState?.agentTaskNotifications ?? {}
+  const agentTaskNotifications = sessionState?.agentTaskNotifications ?? EMPTY_AGENT_TASK_NOTIFICATIONS
   const activeGoal = sessionState?.activeGoal ?? null
-  const isEmpty = messages.length === 0 && !streamingText && (session?.messageCount ?? 0) === 0
+  const isEmpty =
+    messages.length === 0 &&
+    !streamingText &&
+    !isPreparingTurn &&
+    (session?.messageCount ?? 0) === 0
   const compactEmptyHero = isEmpty && showTerminalPanel
   const isHistoryLoading =
     !isMemberSession &&
@@ -403,10 +419,10 @@ export function ActiveSession() {
   const visibleMessageCount = messages.length > 0 ? messages.length : session?.messageCount ?? 0
   const headerTitle = session?.title || t('session.untitled')
 
-  const isActive = chatState !== 'idle' ||
-    (trackedTaskSessionId === activeTabId && hasRunningTasks) ||
-    hasRunningBackgroundTasks
+  const isActive = isPreparingTurn || chatState !== 'idle' || hasRunningBackgroundTasks
   const totalTokens = getTokenUsageTotal(tokenUsage)
+  const cachedTokens = (tokenUsage.cache_read_tokens ?? 0) +
+    (tokenUsage.cache_creation_tokens ?? 0)
   const activityTeamMembers = useMemo(() => {
     if (!activeTeam || activeTeam.leadSessionId !== activeTabId) return []
     return activeTeam.members.filter((member) =>
@@ -431,6 +447,7 @@ export function ActiveSession() {
       messages,
       tasks: includeCliTasks ? cliTasks : [],
       completedAndDismissed: includeCliTasks ? cliTasksCompletedAndDismissed : false,
+      isForegroundTurnActive: chatState !== 'idle',
       backgroundTasks,
       dismissedBackgroundTaskKeys,
       agentNotifications: Object.values(agentTaskNotifications),
@@ -443,6 +460,7 @@ export function ActiveSession() {
     backgroundTasks,
     cliTasks,
     cliTasksCompletedAndDismissed,
+    chatState,
     dismissedBackgroundTaskKeys,
     messages,
     trackedTaskSessionId,
@@ -476,8 +494,19 @@ export function ActiveSession() {
 
   useEffect(() => {
     if (!activeTabId || !isActivityPanelOpen || hasVisibleActivity) return
-    closeActivityPanel(activeTabId)
-  }, [activeTabId, closeActivityPanel, hasVisibleActivity, isActivityPanelOpen])
+    // Activity rows derive from volatile caches that are briefly empty during
+    // history loads, cli-task refetches and reconnect reloads. Closing the
+    // panel on the first empty beat made that flicker permanent (auto-open
+    // does not re-fire after a remount), so only close once the empty state
+    // survives a full history-ready grace period.
+    if (sessionState?.historyStatus === 'loading') return
+    const timer = setTimeout(() => {
+      const current = useChatStore.getState().sessions[activeTabId]
+      if (current?.historyStatus === 'loading') return
+      closeActivityPanel(activeTabId)
+    }, ACTIVITY_AUTOCLOSE_GRACE_MS)
+    return () => clearTimeout(timer)
+  }, [activeTabId, closeActivityPanel, hasVisibleActivity, isActivityPanelOpen, sessionState?.historyStatus])
 
   useEffect(() => {
     if (!activeTabId || !showWorkbench || !isActivityPanelOpen) return
@@ -649,8 +678,17 @@ export function ActiveSession() {
                           </span>
                         ),
                         totalTokens > 0 && (
-                          <span key="tokens" className="shrink-0" title={t('common.tokens', { count: totalTokens.toLocaleString() })}>
-                            {t('common.tokens', { count: formatTokenCount(totalTokens) })}
+                          <span
+                            key="tokens"
+                            className="shrink-0"
+                            title={t('session.apiTokenBreakdown', {
+                              total: totalTokens.toLocaleString(),
+                              input: tokenUsage.input_tokens.toLocaleString(),
+                              output: tokenUsage.output_tokens.toLocaleString(),
+                              cache: cachedTokens.toLocaleString(),
+                            })}
+                          >
+                            {t('session.apiTokens', { count: formatTokenCount(totalTokens) })}
                           </span>
                         ),
                         lastUpdated && (
@@ -774,7 +812,7 @@ export function ActiveSession() {
             <aside
               ref={workbenchPanelRef}
               data-testid="workbench-panel"
-              className="flex h-full shrink-0 flex-col border-l border-[var(--color-border)] bg-[var(--color-surface)]"
+              className="flex h-full shrink-0 flex-col bg-[var(--color-surface)]"
               style={{ width: rightPanelWidth, maxWidth: '62%', minWidth: 'min(420px, 54%)' }}
             >
               <WorkbenchPanel sessionId={activeTabId} />

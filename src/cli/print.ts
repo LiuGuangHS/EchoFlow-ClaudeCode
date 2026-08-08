@@ -241,6 +241,7 @@ import { executeNotificationHooks } from 'src/utils/hooks.js'
 import {
   parseTaskNotificationXml,
   shouldForwardTaskNotificationToModel,
+  TaskNotificationFollowUpBatch,
 } from 'src/utils/taskNotificationPolicy.js'
 import {
   ElicitRequestSchema,
@@ -1026,6 +1027,7 @@ function runHeadlessStreaming(
   let inputClosed = false
   let shutdownPromptInjected = false
   let heldBackResult: StdoutMessage | null = null
+  const deferredAgentNotifications = new TaskNotificationFollowUpBatch()
   let abortController: AbortController | undefined
   // Same queue sendRequest() enqueues to — one FIFO for everything.
   const output = structuredIO.outbound
@@ -2052,6 +2054,7 @@ function runHeadlessStreaming(
                 structuredOutput: options.outputFormat === 'stream-json',
               })
             ) {
+              deferredAgentNotifications.defer(notificationText)
               for (const uuid of batchUuids) {
                 notifyCommandLifecycle(uuid, 'completed')
               }
@@ -2359,9 +2362,13 @@ function runHeadlessStreaming(
             t => isBackgroundTask(t) && t.type !== 'in_process_teammate',
           )
           const hasMainThreadQueued = peek(isMainThread) !== undefined
-          if (hasRunningBg || hasMainThreadQueued) {
+          const agentFollowUp = deferredAgentNotifications.takeIfSettled(hasRunningBg || hasMainThreadQueued)
+          if (agentFollowUp) {
+            enqueue({ mode: 'prompt', value: agentFollowUp, priority: 'later', isMeta: true })
+          }
+          if (hasRunningBg || hasMainThreadQueued || agentFollowUp) {
             waitingForAgents = true
-            if (!hasMainThreadQueued) {
+            if (!hasMainThreadQueued && !agentFollowUp) {
               runPhase = 'waiting_for_agents'
               // No commands ready yet, wait for tasks to complete
               await sleep(100)

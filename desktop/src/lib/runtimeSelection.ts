@@ -7,8 +7,15 @@ import type { SavedProvider } from '../types/provider'
 import type { RuntimeSelection } from '../types/runtime'
 import {
   GROK_OFFICIAL_DEFAULT_MODEL_ID,
+  GROK_OFFICIAL_MODELS,
   GROK_OFFICIAL_PROVIDER_ID,
 } from '../constants/grokOfficialProvider'
+import {
+  isModelReasoningEffort,
+  normalizeModelReasoningEffort,
+  resolveModelReasoningProfile,
+  type ModelReasoningApiFormat,
+} from '../../../src/shared/modelReasoning'
 
 export function resolveActiveProviderRuntimeSelection(
   activeId: string | null,
@@ -53,4 +60,41 @@ export function resolveDefaultRuntimeSelection(
     providerId: null,
     modelId: currentModelId || OFFICIAL_DEFAULT_MODEL_ID,
   }
+}
+
+export function normalizeRuntimeSelection(
+  selection: RuntimeSelection,
+  apiFormat?: ModelReasoningApiFormat,
+): RuntimeSelection {
+  if (
+    selection.effortLevel === undefined ||
+    selection.providerId === null ||
+    selection.providerId === OPENAI_OFFICIAL_PROVIDER_ID
+  ) {
+    return selection
+  }
+
+  if (selection.providerId === GROK_OFFICIAL_PROVIDER_ID) {
+    const model = GROK_OFFICIAL_MODELS.find((entry) => entry.id === selection.modelId)
+    const effortLevel = model?.supportedReasoningEfforts?.includes(selection.effortLevel)
+      ? selection.effortLevel
+      : model?.defaultReasoningEffort ?? model?.supportedReasoningEfforts?.[0]
+    const { effortLevel: _unsupportedEffort, ...runtime } = selection
+    return effortLevel ? { ...runtime, effortLevel } : runtime
+  }
+
+  const requestedEffort = isModelReasoningEffort(selection.effortLevel)
+    ? selection.effortLevel
+    : undefined
+  const reasoningProfile = resolveModelReasoningProfile(selection.modelId, apiFormat)
+  if (!reasoningProfile && apiFormat === undefined) return selection
+  const effortLevel = normalizeModelReasoningEffort(
+    selection.modelId,
+    requestedEffort,
+    apiFormat,
+  )
+  if (effortLevel === selection.effortLevel) return selection
+
+  const { effortLevel: _unsupportedEffort, ...runtime } = selection
+  return effortLevel ? { ...runtime, effortLevel } : runtime
 }

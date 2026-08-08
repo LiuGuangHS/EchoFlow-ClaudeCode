@@ -8,6 +8,7 @@ import {
   nextAppZoomLevel,
 } from '../lib/appZoom'
 import { useSettingsStore } from '../stores/settingsStore'
+import { hasRunningSubagentTasks } from '../lib/backgroundTasks'
 
 export function useKeyboardShortcuts() {
   const setActiveSession = useSessionStore((s) => s.setActiveSession)
@@ -17,14 +18,20 @@ export function useKeyboardShortcuts() {
   const activeModal = useUIStore((s) => s.activeModal)
   const stopGeneration = useChatStore((s) => s.stopGeneration)
   const activeTabId = useTabStore((s) => s.activeTabId)
-  const chatState = useChatStore((s) => activeTabId ? s.sessions[activeTabId]?.chatState ?? 'idle' : 'idle')
+  const canStopActiveSession = useChatStore((s) => {
+    const session = activeTabId ? s.sessions[activeTabId] : undefined
+    return Boolean(
+      session &&
+      (session.chatState !== 'idle' || hasRunningSubagentTasks(session.backgroundAgentTasks)),
+    )
+  })
   const uiZoom = useSettingsStore((s) => s.uiZoom)
   const setUiZoom = useSettingsStore((s) => s.setUiZoom)
 
   const activeModalRef = useRef(activeModal)
   activeModalRef.current = activeModal
-  const chatStateRef = useRef(chatState)
-  chatStateRef.current = chatState
+  const canStopActiveSessionRef = useRef(canStopActiveSession)
+  canStopActiveSessionRef.current = canStopActiveSession
   const activeTabIdRef = useRef(activeTabId)
   activeTabIdRef.current = activeTabId
   const appZoomLevelRef = useRef(uiZoom)
@@ -71,7 +78,7 @@ export function useKeyboardShortcuts() {
 
       // Cmd+. — Stop generation
       if (meta && e.key === '.') {
-        if (chatStateRef.current !== 'idle' && activeTabIdRef.current) {
+        if (canStopActiveSessionRef.current && activeTabIdRef.current) {
           e.preventDefault()
           stopGeneration(activeTabIdRef.current)
         }

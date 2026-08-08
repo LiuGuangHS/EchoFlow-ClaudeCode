@@ -152,6 +152,10 @@ describe('desktop theme tokens', () => {
     }
   })
 
+  it('keeps the startup sidebar width aligned with the compact store default', () => {
+    expect(getThemeBlock(':root')).toContain('--sidebar-width: 280px;')
+  })
+
   it('gives each theme its own color-scheme so native controls match the ground', () => {
     // Regression guard for the ink-blue palette: it is a dark ground but is not
     // the theme literally named `dark`, so anything testing `theme === 'dark'`
@@ -279,6 +283,20 @@ describe('desktop theme tokens', () => {
     )
     expect(toggleCss).toContain('top: -31px;')
     expect(toggleCss).toContain('bottom: auto;')
+  })
+
+  it('moves the mascot to the outside of the fixed pet window at side edges', () => {
+    const leftCss = getCssBetween(
+      ".pet-window-stack[data-panel-horizontal='left'] .pet-mascot-wrap {",
+      '}',
+    )
+    const rightCss = getCssBetween(
+      ".pet-window-stack[data-panel-horizontal='right'] .pet-mascot-wrap {",
+      '}',
+    )
+
+    expect(leftCss).toContain('align-self: flex-end;')
+    expect(rightCss).toContain('align-self: flex-start;')
   })
 
   it('binds the dark variant to the app theme attribute, not the operating system', () => {
