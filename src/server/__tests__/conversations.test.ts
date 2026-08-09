@@ -31,6 +31,8 @@ import { SessionService, sessionService } from '../services/sessionService.js'
 import { ProviderService } from '../services/providerService.js'
 import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 import { resetTerminalShellEnvironmentCacheForTests } from '../../utils/terminalShellEnvironment.js'
+import * as openAIModelCatalog from '../../services/openaiAuth/modelCatalog.js'
+import { IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY } from '../../services/imageGeneration/config.js'
 
 async function rmWithRetry(targetPath: string): Promise<void> {
   const attempts = process.platform === 'win32' ? 5 : 1
@@ -225,6 +227,47 @@ describe('ConversationService', () => {
 
     expect(session.outputCallbacks).toHaveLength(0)
     expect(removeAbortListener).toHaveBeenCalledWith('abort', expect.any(Function))
+  })
+
+  it('should reject an in-flight control request when its CLI session is stopped', async () => {
+    const svc = new ConversationService()
+    const sid = crypto.randomUUID()
+    const sent: unknown[] = []
+    const session: any = {
+      proc: { kill() {}, exited: Promise.resolve(0) },
+      outputCallbacks: [],
+      workDir: process.cwd(),
+      permissionMode: 'default',
+      sdkToken: 'token',
+      sdkSocket: {
+        send(data: string) {
+          sent.push(JSON.parse(data))
+        },
+      },
+      pendingOutbound: [],
+      startupPending: false,
+      startupExitCode: null,
+      stdoutLines: [],
+      stderrLines: [],
+      outputDrain: Promise.resolve(),
+      sdkMessages: [],
+      initMessage: null,
+      pendingPermissionRequests: new Map(),
+    }
+    ;(svc as any).sessions.set(sid, session)
+
+    const request = svc.requestControl(
+      sid,
+      { subtype: 'get_context_usage' },
+      50,
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(sent).toHaveLength(1)
+
+    svc.stopSession(sid)
+
+    await expect(request).rejects.toThrow('CLI session stopped')
+    expect(session.outputCallbacks).toHaveLength(0)
   })
 
   it('should ignore a stale SDK disconnect after a replacement socket attaches', () => {
@@ -1191,6 +1234,127 @@ describe('ConversationService', () => {
         expect(contextEstimate?.totalTokens).toBeGreaterThan(0)
         expect(inspectionSnapshot?.contextEstimate).toEqual(contextEstimate)
       }
+    } finally {
+      if (previousConfigDir === undefined) {
+        delete process.env.CLAUDE_CONFIG_DIR
+      } else {
+        process.env.CLAUDE_CONFIG_DIR = previousConfigDir
+      }
+      if (previousNodeEnv === undefined) {
+        delete process.env.NODE_ENV
+      } else {
+        process.env.NODE_ENV = previousNodeEnv
+      }
+      await fs.rm(tmpConfigDir, { recursive: true, force: true })
+      await fs.rm(workDir, { recursive: true, force: true })
+    }
+  })
+
+  it('should reset context estimates at compact boundaries and ignore encrypted reasoning bytes', async () => {
+    const previousConfigDir = process.env.CLAUDE_CONFIG_DIR
+    const previousNodeEnv = process.env.NODE_ENV
+    const tmpConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), 'claude-transcript-compact-context-'))
+    const workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'claude-workdir-compact-context-'))
+    process.env.CLAUDE_CONFIG_DIR = tmpConfigDir
+    process.env.NODE_ENV = 'development'
+
+    try {
+      const svc = new SessionService()
+      const { sessionId } = await svc.createSession(workDir)
+      const found = await svc.findSessionFile(sessionId)
+      expect(found).not.toBeNull()
+
+      const encryptedReasoning =
+        `cc-haha:openai-reasoning:v1:${JSON.stringify({
+          summary: [],
+          encrypted_content: 'x'.repeat(400_000),
+        })}`
+      const entries = [
+        {
+          type: 'assistant',
+          uuid: crypto.randomUUID(),
+          timestamp: '2026-08-07T00:00:00.000Z',
+          cwd: workDir,
+          message: {
+            role: 'assistant',
+            model: 'gpt-5.6-terra',
+            content: [{ type: 'redacted_thinking', data: encryptedReasoning }],
+            usage: {
+              input_tokens: 8_000,
+              output_tokens: 1_000,
+              cache_read_input_tokens: 331_000,
+              cache_creation_input_tokens: 0,
+            },
+          },
+        },
+        {
+          type: 'system',
+          subtype: 'compact_boundary',
+          uuid: crypto.randomUUID(),
+          timestamp: '2026-08-07T00:00:01.000Z',
+          content: 'Conversation compacted',
+        },
+        {
+          type: 'user',
+          uuid: crypto.randomUUID(),
+          timestamp: '2026-08-07T00:00:02.000Z',
+          cwd: workDir,
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'summary'.repeat(100) }],
+          },
+        },
+        {
+          type: 'assistant',
+          uuid: crypto.randomUUID(),
+          timestamp: '2026-08-07T00:00:03.000Z',
+          cwd: workDir,
+          message: {
+            role: 'assistant',
+            model: 'gpt-5.6-terra',
+            content: [{ type: 'text', text: 'continued' }],
+            usage: {
+              input_tokens: 8_000,
+              output_tokens: 100,
+              cache_read_input_tokens: 2_000,
+              cache_creation_input_tokens: 0,
+            },
+          },
+        },
+        {
+          type: 'assistant',
+          uuid: crypto.randomUUID(),
+          timestamp: '2026-08-07T00:00:04.000Z',
+          cwd: workDir,
+          message: {
+            role: 'assistant',
+            model: 'gpt-5.6-terra',
+            content: [{ type: 'redacted_thinking', data: encryptedReasoning }],
+            usage: {
+              input_tokens: 0,
+              output_tokens: 0,
+              cache_read_input_tokens: 0,
+              cache_creation_input_tokens: 0,
+            },
+          },
+        },
+      ]
+      await fs.appendFile(
+        found!.filePath,
+        entries.map(entry => JSON.stringify(entry)).join('\n') + '\n',
+      )
+
+      const contextEstimate = await svc.getTranscriptContextEstimate(sessionId)
+      const inspectionSnapshot = await svc.getInspectionTranscriptSnapshot(sessionId)
+
+      expect(contextEstimate?.model).toBe('gpt-5.6-terra')
+      expect(contextEstimate?.totalTokens).toBe(10_100)
+      expect(contextEstimate?.percentage).toBe(3)
+      expect(contextEstimate?.categories.reduce(
+        (sum, category) => sum + category.tokens,
+        0,
+      )).toBe(contextEstimate?.rawMaxTokens)
+      expect(inspectionSnapshot?.contextEstimate).toEqual(contextEstimate)
     } finally {
       if (previousConfigDir === undefined) {
         delete process.env.CLAUDE_CONFIG_DIR
@@ -3604,6 +3768,196 @@ describe('WebSocket Chat Integration', () => {
     }
   }, 20_000)
 
+  it('should not send a turn to the custom runtime while OpenAI runtime validation is pending', async () => {
+    const providerService = new ProviderService()
+    const customProvider = await providerService.addProvider({
+      presetId: 'custom',
+      name: 'Custom Images Before OpenAI',
+      apiKey: 'custom-chat-key',
+      baseUrl: 'https://custom-chat.example.test',
+      apiFormat: 'anthropic',
+      models: {
+        main: 'custom-main',
+        haiku: 'custom-main',
+        sonnet: 'custom-main',
+        opus: 'custom-main',
+      },
+      imageGeneration: {
+        model: 'custom-image-model',
+        baseUrl: 'https://custom-images.example.test/v1',
+        apiKey: 'custom-image-key',
+      },
+    })
+    await providerService.activateProvider(customProvider.id)
+
+    const createRes = await fetch(`${baseUrl}/api/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workDir: process.cwd() }),
+    })
+    expect(createRes.status).toBe(201)
+    const { sessionId } = await createRes.json() as { sessionId: string }
+
+    const originalStartSession = conversationService.startSession.bind(conversationService)
+    const originalSendMessage = conversationService.sendMessage.bind(conversationService)
+    const startCalls: Array<{
+      providerId: string | null | undefined
+      model: string | undefined
+      imageProviderKind: string | undefined
+    }> = []
+    const sendCalls: Array<{
+      content: string
+      activeProviderId: string | null | undefined
+    }> = []
+
+    conversationService.startSession = (async function patchedStartSession(
+      sid: string,
+      workDir: string,
+      sdkUrl: string,
+      options?: { permissionMode?: string; model?: string; effort?: string; thinking?: 'enabled' | 'adaptive' | 'disabled'; providerId?: string | null },
+    ) {
+      const env = await (conversationService as any).buildChildEnv(
+        workDir,
+        sdkUrl,
+        options,
+      ) as Record<string, string>
+      startCalls.push({
+        providerId: options?.providerId,
+        model: options?.model,
+        imageProviderKind: env[IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY],
+      })
+      return originalStartSession(sid, workDir, sdkUrl, options)
+    }) as typeof conversationService.startSession
+
+    conversationService.sendMessage = (function patchedSendMessage(
+      sid: string,
+      content: string,
+      attachments?: any,
+    ) {
+      sendCalls.push({
+        content,
+        activeProviderId: startCalls.at(-1)?.providerId,
+      })
+      return originalSendMessage(sid, content, attachments)
+    }) as typeof conversationService.sendMessage
+
+    let markValidationStarted!: () => void
+    const validationStarted = new Promise<void>((resolve) => {
+      markValidationStarted = resolve
+    })
+    let releaseValidation!: () => void
+    const validationGate = new Promise<Awaited<ReturnType<typeof openAIModelCatalog.getOpenAICodexModelCatalog>>>((resolve) => {
+      releaseValidation = () => resolve([{
+        value: 'gpt-5.6-sol',
+        label: 'GPT-5.6 Sol',
+        description: 'Test model',
+        defaultReasoningEffort: 'medium',
+        supportedReasoningEfforts: ['low', 'medium', 'high'],
+      }])
+    })
+    const modelCatalogSpy = spyOn(
+      openAIModelCatalog,
+      'getOpenAICodexModelCatalog',
+    ).mockImplementation(() => {
+      markValidationStarted()
+      return validationGate
+    })
+
+    const ws = new WebSocket(`${wsUrl}/ws/${sessionId}`)
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error(`Timed out connecting runtime validation session ${sessionId}`))
+        }, 5_000)
+        ws.onmessage = (event) => {
+          const msg = JSON.parse(event.data as string)
+          if (msg.type === 'connected') {
+            clearTimeout(timeout)
+            ws.send(JSON.stringify({ type: 'prewarm_session' }))
+            resolve()
+          }
+        }
+        ws.onerror = () => {
+          clearTimeout(timeout)
+          reject(new Error(`WebSocket error for runtime validation session ${sessionId}`))
+        }
+      })
+
+      await waitUntil(
+        () => startCalls.length === 1 && conversationService.hasSession(sessionId),
+        `prewarmed custom runtime for ${sessionId}`,
+      )
+      expect(startCalls[0]).toEqual({
+        providerId: customProvider.id,
+        model: undefined,
+        imageProviderKind: 'openai_images',
+      })
+
+      const completion = new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error(`Timed out waiting for OpenAI runtime turn ${sessionId}`))
+        }, 15_000)
+        ws.onmessage = (event) => {
+          const msg = JSON.parse(event.data as string)
+          if (msg.type === 'error') {
+            clearTimeout(timeout)
+            reject(new Error(msg.message))
+            return
+          }
+          if (msg.type === 'message_complete') {
+            clearTimeout(timeout)
+            resolve()
+          }
+        }
+      })
+
+      ws.send(JSON.stringify({
+        type: 'set_runtime_config',
+        providerId: 'openai-official',
+        modelId: 'gpt-5.6-sol',
+        effortLevel: 'low',
+      }))
+      ws.send(JSON.stringify({
+        type: 'set_runtime_config',
+        providerId: 'openai-official',
+        modelId: 'gpt-5.6-sol',
+        effortLevel: 'low',
+      }))
+      ws.send(JSON.stringify({
+        type: 'user_message',
+        content: 'generate only after OpenAI runtime validation',
+      }))
+
+      await validationStarted
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(startCalls).toHaveLength(1)
+      expect(sendCalls).toHaveLength(0)
+
+      releaseValidation()
+      await completion
+
+      expect(startCalls).toHaveLength(2)
+      expect(startCalls[1]).toEqual({
+        providerId: 'openai-official',
+        model: 'gpt-5.6-sol',
+        imageProviderKind: 'openai_oauth',
+      })
+      expect(sendCalls).toEqual([{
+        content: 'generate only after OpenAI runtime validation',
+        activeProviderId: 'openai-official',
+      }])
+    } finally {
+      releaseValidation()
+      modelCatalogSpy.mockRestore()
+      ws.close()
+      conversationService.startSession = originalStartSession
+      conversationService.sendMessage = originalSendMessage
+      conversationService.stopSession(sessionId)
+      await providerService.activateOfficial()
+      await providerService.deleteProvider(customProvider.id)
+    }
+  }, 20_000)
+
   it('should keep the session idle in the UI while applying a runtime-only model switch', async () => {
     const providerService = new ProviderService()
     const provider = await providerService.addProvider({
@@ -3689,7 +4043,11 @@ describe('WebSocket Chat Integration', () => {
       }))
 
       await waitUntil(
-        async () => messages.slice(switchStartIndex).some((msg) => msg.type === 'status' && msg.state === 'idle'),
+        async () => {
+          const switchMessages = messages.slice(switchStartIndex)
+          return switchMessages.some((msg) => msg.type === 'runtime_config_applied') &&
+            switchMessages.some((msg) => msg.type === 'status' && msg.state === 'idle')
+        },
         `idle runtime switch completion for ${sessionId}`,
       )
 
@@ -3707,6 +4065,15 @@ describe('WebSocket Chat Integration', () => {
           .filter((msg) => msg.type === 'status')
           .map((msg) => msg.state),
       ).toEqual(['idle'])
+      expect(
+        messages
+          .slice(switchStartIndex)
+          .find((msg) => msg.type === 'runtime_config_applied'),
+      ).toMatchObject({
+        type: 'runtime_config_applied',
+        providerId: provider.id,
+        modelId: 'idle-sonnet',
+      })
       expect(messages.slice(switchStartIndex).some((msg) => msg.type === 'error')).toBe(false)
     } finally {
       ws.close()
@@ -5154,6 +5521,154 @@ describe('WebSocket Chat Integration', () => {
     }
   }, 20_000)
 
+  it('should omit unsupported xhigh effort for a K3 provider', async () => {
+    const providerService = new ProviderService()
+    const provider = await providerService.addProvider({
+      presetId: 'kimi',
+      name: `Kimi K3 ${crypto.randomUUID()}`,
+      apiKey: 'test-kimi-key',
+      authStrategy: 'api_key',
+      baseUrl: 'https://api.kimi.com/coding/',
+      apiFormat: 'anthropic',
+      models: {
+        main: 'k3',
+        haiku: 'k3',
+        sonnet: 'k3',
+        opus: 'k3',
+      },
+    })
+    const sessionId = `chat-k3-effort-${crypto.randomUUID()}`
+    const originalStartSession = conversationService.startSession.bind(conversationService)
+    const startCalls: Array<{
+      options?: { model?: string; effort?: string; providerId?: string | null }
+    }> = []
+    conversationService.startSession = (async function patchedStartSession(
+      sid: string,
+      workDir: string,
+      sdkUrl: string,
+      options?: { permissionMode?: string; model?: string; effort?: string; thinking?: 'enabled' | 'adaptive' | 'disabled'; providerId?: string | null },
+    ) {
+      startCalls.push({ options })
+      return originalStartSession(sid, workDir, sdkUrl, options)
+    }) as typeof conversationService.startSession
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const ws = new WebSocket(`${wsUrl}/ws/${sessionId}`)
+        const timeout = setTimeout(() => {
+          ws.close()
+          reject(new Error('Timed out waiting for K3 runtime turn'))
+        }, 10_000)
+
+        ws.onmessage = (event) => {
+          const message = JSON.parse(event.data as string)
+          if (message.type === 'connected') {
+            ws.send(JSON.stringify({
+              type: 'set_runtime_config',
+              providerId: provider.id,
+              modelId: 'k3',
+              effortLevel: 'xhigh',
+            }))
+            ws.send(JSON.stringify({ type: 'user_message', content: 'use K3 xhigh effort' }))
+          } else if (message.type === 'error') {
+            clearTimeout(timeout)
+            ws.close()
+            reject(new Error(message.message))
+          } else if (message.type === 'message_complete') {
+            clearTimeout(timeout)
+            ws.close()
+            resolve()
+          }
+        }
+        ws.onerror = () => reject(new Error('WebSocket failed for K3 runtime'))
+      })
+
+      expect(startCalls.find((call) => call.options?.providerId === provider.id)?.options).toMatchObject({
+        providerId: provider.id,
+        model: 'k3',
+      })
+      expect(startCalls.find((call) => call.options?.providerId === provider.id)?.options?.effort).toBeUndefined()
+    } finally {
+      conversationService.startSession = originalStartSession
+      conversationService.stopSession(sessionId)
+      await providerService.deleteProvider(provider.id)
+    }
+  }, 20_000)
+
+  it('should preserve xhigh for an unlisted Claude model on a compatible provider', async () => {
+    const providerService = new ProviderService()
+    const provider = await providerService.addProvider({
+      presetId: 'custom',
+      name: `Custom Claude ${crypto.randomUUID()}`,
+      apiKey: 'test-custom-claude-key',
+      authStrategy: 'auth_token',
+      baseUrl: 'https://custom-claude.example.test',
+      apiFormat: 'anthropic',
+      models: {
+        main: 'claude-opus-5',
+        haiku: 'claude-haiku-4-5',
+        sonnet: 'claude-sonnet-5',
+        opus: 'claude-opus-5',
+      },
+    })
+    const sessionId = `chat-claude-effort-${crypto.randomUUID()}`
+    const originalStartSession = conversationService.startSession.bind(conversationService)
+    const startCalls: Array<{
+      options?: { model?: string; effort?: string; providerId?: string | null }
+    }> = []
+    conversationService.startSession = (async function patchedStartSession(
+      sid: string,
+      workDir: string,
+      sdkUrl: string,
+      options?: { permissionMode?: string; model?: string; effort?: string; thinking?: 'enabled' | 'adaptive' | 'disabled'; providerId?: string | null },
+    ) {
+      startCalls.push({ options })
+      return originalStartSession(sid, workDir, sdkUrl, options)
+    }) as typeof conversationService.startSession
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const ws = new WebSocket(`${wsUrl}/ws/${sessionId}`)
+        const timeout = setTimeout(() => {
+          ws.close()
+          reject(new Error('Timed out waiting for Claude effort runtime turn'))
+        }, 10_000)
+
+        ws.onmessage = (event) => {
+          const message = JSON.parse(event.data as string)
+          if (message.type === 'connected') {
+            ws.send(JSON.stringify({
+              type: 'set_runtime_config',
+              providerId: provider.id,
+              modelId: 'claude-opus-5',
+              effortLevel: 'xhigh',
+            }))
+            ws.send(JSON.stringify({ type: 'user_message', content: 'use Claude xhigh effort' }))
+          } else if (message.type === 'error') {
+            clearTimeout(timeout)
+            ws.close()
+            reject(new Error(message.message))
+          } else if (message.type === 'message_complete') {
+            clearTimeout(timeout)
+            ws.close()
+            resolve()
+          }
+        }
+        ws.onerror = () => reject(new Error('WebSocket failed for Claude effort runtime'))
+      })
+
+      expect(startCalls.at(-1)?.options).toMatchObject({
+        providerId: provider.id,
+        model: 'claude-opus-5',
+        effort: 'xhigh',
+      })
+    } finally {
+      conversationService.startSession = originalStartSession
+      conversationService.stopSession(sessionId)
+      await providerService.deleteProvider(provider.id)
+    }
+  }, 20_000)
+
   it('should reject a reasoning effort that the selected ChatGPT model does not support', async () => {
     const sessionId = `chat-openai-invalid-effort-${crypto.randomUUID()}`
     await new Promise<void>((resolve, reject) => {
@@ -5428,10 +5943,10 @@ describe('WebSocket Chat Integration', () => {
       baseUrl: 'http://127.0.0.1:1/anthropic',
       apiFormat: 'anthropic',
       models: {
-        main: 'model-a-main',
-        haiku: 'model-a-haiku',
-        sonnet: 'model-a-sonnet',
-        opus: 'model-a-opus',
+        main: 'deepseek-v4-pro',
+        haiku: 'deepseek-v4-flash',
+        sonnet: 'deepseek-v4-pro',
+        opus: 'deepseek-v4-pro',
       },
     })
     const providerB = await providerService.addProvider({
@@ -5441,10 +5956,10 @@ describe('WebSocket Chat Integration', () => {
       baseUrl: 'http://127.0.0.1:1/anthropic',
       apiFormat: 'anthropic',
       models: {
-        main: 'model-b-main',
-        haiku: 'model-b-haiku',
-        sonnet: 'model-b-sonnet',
-        opus: 'model-b-opus',
+        main: 'k3',
+        haiku: 'k3',
+        sonnet: 'k3',
+        opus: 'k3',
       },
     })
 
@@ -5490,7 +6005,7 @@ describe('WebSocket Chat Integration', () => {
             ws.send(JSON.stringify({
               type: 'set_runtime_config',
               providerId: providerA.id,
-              modelId: 'model-a-sonnet',
+              modelId: 'deepseek-v4-pro',
               effortLevel: 'medium',
             }))
             ws.send(JSON.stringify({ type: 'user_message', content: 'first turn' }))
@@ -5511,7 +6026,7 @@ describe('WebSocket Chat Integration', () => {
             ws.send(JSON.stringify({
               type: 'set_runtime_config',
               providerId: providerB.id,
-              modelId: 'model-b-opus',
+              modelId: 'k3',
               effortLevel: 'max',
             }))
             return
@@ -5551,7 +6066,7 @@ describe('WebSocket Chat Integration', () => {
         sessionId,
         options: {
           providerId: providerA.id,
-          model: 'model-a-sonnet',
+          model: 'deepseek-v4-pro',
           effort: 'medium',
         },
       })
@@ -5559,7 +6074,7 @@ describe('WebSocket Chat Integration', () => {
         sessionId,
         options: {
           providerId: providerB.id,
-          model: 'model-b-opus',
+          model: 'k3',
           effort: 'max',
         },
       })

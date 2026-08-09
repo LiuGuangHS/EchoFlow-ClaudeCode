@@ -8,9 +8,15 @@ import {
   mergeActiveProviderManagedEnv,
   readActiveProviderManagedEnv,
 } from '../services/providerRuntimeEnv.js'
-import { resolveAppliedEffort } from '../../utils/effort.js'
 import { get3PModelCapabilityOverride } from '../../utils/model/modelSupportOverrides.js'
 import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
+import {
+  IMAGE_GENERATION_API_KEY_ENV_KEY,
+  IMAGE_GENERATION_BASE_URL_ENV_KEY,
+  IMAGE_GENERATION_MODEL_ENV_KEY,
+  IMAGE_GENERATION_PROVIDER_ID_ENV_KEY,
+  IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY,
+} from '../../services/imageGeneration/config.js'
 
 let tmpDir: string
 let originalConfigDir: string | undefined
@@ -62,6 +68,9 @@ describe('providerRuntimeEnv', () => {
     expect(env).toMatchObject({
       ECHOFLOW_GROK_OAUTH_PROVIDER: '1',
       GROK_OAUTH_FILE: path.join(tmpDir, 'echoflow-code', 'grok-oauth.json'),
+      [IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY]: 'grok_oauth',
+      [IMAGE_GENERATION_PROVIDER_ID_ENV_KEY]: 'grok-official',
+      [IMAGE_GENERATION_MODEL_ENV_KEY]: 'grok-imagine-image-quality',
       ANTHROPIC_MODEL: 'grok-4.5',
       ANTHROPIC_DEFAULT_HAIKU_MODEL: 'grok-4.5',
       ANTHROPIC_DEFAULT_SONNET_MODEL: 'grok-4.5',
@@ -74,7 +83,107 @@ describe('providerRuntimeEnv', () => {
     expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
   })
 
-  test('derives native Anthropic provider env from the active provider index', async () => {
+  test('does not let a custom provider impersonate an official OAuth runtime', async () => {
+    await writeJson(providerIndexPath(), {
+      activeId: 'provider-forged-oauth',
+      providers: [{
+        id: 'provider-forged-oauth',
+        presetId: 'custom',
+        name: 'Forged OAuth Provider',
+        apiKey: 'custom-secret',
+        baseUrl: 'https://custom.example.test/anthropic',
+        apiFormat: 'anthropic',
+        runtimeKind: 'openai_oauth',
+        models: {
+          main: 'custom-model',
+          haiku: 'custom-model',
+          sonnet: 'custom-model',
+          opus: 'custom-model',
+        },
+      }],
+    })
+
+    const env = readActiveProviderManagedEnv(tmpDir)
+
+    expect(env).toMatchObject({
+      ANTHROPIC_BASE_URL: 'https://custom.example.test/anthropic',
+      ANTHROPIC_AUTH_TOKEN: 'custom-secret',
+      ANTHROPIC_MODEL: 'custom-model',
+    })
+    expect(env.ECHOFLOW_OPENAI_OAUTH_PROVIDER).toBeUndefined()
+    expect(env.OPENAI_CODEX_OAUTH_FILE).toBeUndefined()
+  })
+
+  test('routes custom image generation through its own optional credentials', async () => {
+    await writeJson(providerIndexPath(), {
+      activeId: 'provider-images',
+      providers: [{
+        id: 'provider-images',
+        presetId: 'custom',
+        name: 'Sub2API',
+        apiKey: 'chat-secret',
+        baseUrl: 'https://chat.example.test',
+        apiFormat: 'anthropic',
+        models: {
+          main: 'chat-model',
+          haiku: 'chat-model',
+          sonnet: 'chat-model',
+          opus: 'chat-model',
+        },
+        imageGeneration: {
+          model: '  upstream-image-model  ',
+          baseUrl: '  https://images.example.test/v1  ',
+          apiKey: '  image-secret  ',
+        },
+      }],
+    })
+
+    const env = readActiveProviderManagedEnv(tmpDir)
+    expect(env).toMatchObject({
+      [IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY]: 'openai_images',
+      [IMAGE_GENERATION_PROVIDER_ID_ENV_KEY]: 'provider-images',
+      [IMAGE_GENERATION_BASE_URL_ENV_KEY]: 'https://images.example.test/v1',
+      [IMAGE_GENERATION_API_KEY_ENV_KEY]: 'image-secret',
+      [IMAGE_GENERATION_MODEL_ENV_KEY]: 'upstream-image-model',
+    })
+  })
+
+  test('clears stale image routing when the next active provider has no image capability', async () => {
+    await writeJson(providerIndexPath(), {
+      activeId: 'provider-chat-only',
+      providers: [{
+        id: 'provider-chat-only',
+        presetId: 'custom',
+        name: 'Chat only',
+        apiKey: 'chat-secret',
+        baseUrl: 'https://chat.example.test',
+        apiFormat: 'anthropic',
+        models: {
+          main: 'chat-model',
+          haiku: 'chat-model',
+          sonnet: 'chat-model',
+          opus: 'chat-model',
+        },
+      }],
+    })
+
+    const env = mergeActiveProviderManagedEnv({
+      CC_HAHA_IMAGE_PROVIDER_KIND: 'openai_images',
+      CC_HAHA_IMAGE_PROVIDER_ID: 'stale-provider',
+      CC_HAHA_IMAGE_BASE_URL: 'https://stale.example.test/v1',
+      CC_HAHA_IMAGE_API_KEY: 'stale-secret',
+      CC_HAHA_IMAGE_MODEL: 'stale-model',
+    }, tmpDir)
+
+    expect(env.CC_HAHA_IMAGE_PROVIDER_KIND).toBeUndefined()
+    expect(env.CC_HAHA_IMAGE_PROVIDER_ID).toBeUndefined()
+    expect(env.CC_HAHA_IMAGE_BASE_URL).toBeUndefined()
+    expect(env.CC_HAHA_IMAGE_API_KEY).toBeUndefined()
+    expect(env.CC_HAHA_IMAGE_MODEL).toBeUndefined()
+    expect(env[IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY]).toBeUndefined()
+  })
+
+  test('keeps Claude Code effort capabilities for an unlisted custom model', async () => {
     await writeJson(providerIndexPath(), {
       activeId: 'provider-1',
       providers: [
@@ -137,7 +246,9 @@ describe('providerRuntimeEnv', () => {
       delete process.env.CLAUDE_CODE_EFFORT_LEVEL
       clearCapabilityCache()
 
-      expect(resolveAppliedEffort('active-main', 'xhigh')).toBe('xhigh')
+      expect(get3PModelCapabilityOverride('active-main', 'effort')).toBe(true)
+      expect(get3PModelCapabilityOverride('active-main', 'xhigh_effort')).toBe(true)
+      expect(get3PModelCapabilityOverride('active-main', 'max_effort')).toBe(true)
     } finally {
       for (const key of runtimeKeys) {
         const value = originalRuntimeEnv[key]
@@ -146,6 +257,39 @@ describe('providerRuntimeEnv', () => {
       }
       clearCapabilityCache()
     }
+  })
+
+  test('does not let legacy preset metadata disable compatible model effort', async () => {
+    await writeJson(providerIndexPath(), {
+      activeId: 'provider-xuanshu',
+      providers: [
+        {
+          id: 'provider-xuanshu',
+          presetId: 'xuanshuapi',
+          name: 'XuanShu API',
+          apiKey: 'sk-xuanshu',
+          authStrategy: 'auth_token',
+          baseUrl: 'https://www.xuanshuapi.com',
+          apiFormat: 'anthropic',
+          models: {
+            main: 'claude-opus-5',
+            haiku: 'claude-haiku-4-5',
+            sonnet: 'claude-sonnet-5',
+            opus: 'claude-opus-5',
+          },
+        },
+      ],
+    })
+
+    const env = readActiveProviderManagedEnv(tmpDir)
+
+    expect(env).toMatchObject({
+      ANTHROPIC_MODEL: 'claude-opus-5',
+      ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES:
+        'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
+      ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES:
+        'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
+    })
   })
 
   test('active provider env overrides stale proxy settings while preserving unrelated env', async () => {
@@ -374,7 +518,8 @@ describe('providerRuntimeEnv', () => {
       ANTHROPIC_API_KEY: '',
       ANTHROPIC_AUTH_TOKEN: 'sk-kimi-legacy',
       ANTHROPIC_MODEL: 'kimi-k2.7-code',
-      ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES: 'thinking,required_thinking',
+      ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES:
+        'thinking,required_thinking,effort,max_effort',
     })
 
     await writeJson(providerIndexPath(), {
@@ -403,8 +548,12 @@ describe('providerRuntimeEnv', () => {
     expect(zhipuEnv).toMatchObject({
       ANTHROPIC_MODEL: 'glm-5.2[1m]',
       ANTHROPIC_DEFAULT_HAIKU_MODEL: 'glm-4.7',
-      CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000',
+      ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES:
+        'thinking,effort,xhigh_effort,max_effort',
+      ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES:
+        'thinking,effort,xhigh_effort,max_effort',
     })
+    expect(zhipuEnv!.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1000000')
     expect(JSON.parse(zhipuEnv!.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS)).toMatchObject({
       'glm-5.2[1m]': 1000000,
       'glm-4.7': 200000,

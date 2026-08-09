@@ -1,15 +1,17 @@
+import sessionNewZh from '../../../../docs/images/app/zh-CN/session-new.webp'
 import sessionMainZh from '../../../../docs/images/app/zh-CN/session-main.webp'
 import workspaceDiffZh from '../../../../docs/images/app/zh-CN/workspace-diff.webp'
 import workspacePreviewZh from '../../../../docs/images/app/zh-CN/workspace-preview.webp'
-import providerAddZh from '../../../../docs/images/app/zh-CN/settings-provider-add.webp'
+import modelPickerZh from '../../../../docs/images/app/zh-CN/model-picker.webp'
 import skillMarketZh from '../../../../docs/images/app/zh-CN/skill-market.webp'
 import scheduleCreateZh from '../../../../docs/images/app/zh-CN/schedule-create.webp'
 import h5SessionZh from '../../../../docs/images/app/zh-CN/h5-session.webp'
 import petDesktopZh from '../../../../docs/images/app/zh-CN/pet-desktop.webp'
+import sessionNewEn from '../../../../docs/images/app/en/session-new.webp'
 import sessionMainEn from '../../../../docs/images/app/en/session-main.webp'
 import workspaceDiffEn from '../../../../docs/images/app/en/workspace-diff.webp'
 import workspacePreviewEn from '../../../../docs/images/app/en/workspace-preview.webp'
-import providerAddEn from '../../../../docs/images/app/en/settings-provider-add.webp'
+import modelPickerEn from '../../../../docs/images/app/en/model-picker.webp'
 import skillMarketEn from '../../../../docs/images/app/en/skill-market.webp'
 import scheduleCreateEn from '../../../../docs/images/app/en/schedule-create.webp'
 import h5SessionEn from '../../../../docs/images/app/en/h5-session.webp'
@@ -25,20 +27,22 @@ import huihui from '../../../../docs/images/mascots/huihui.png'
 const localizedImages = {
   zh: {
     h5Session: h5SessionZh,
+    modelPicker: modelPickerZh,
     petDesktop: petDesktopZh,
-    providerAdd: providerAddZh,
     scheduleCreate: scheduleCreateZh,
     sessionMain: sessionMainZh,
+    sessionNew: sessionNewZh,
     skillMarket: skillMarketZh,
     workspaceDiff: workspaceDiffZh,
     workspacePreview: workspacePreviewZh
   },
   en: {
     h5Session: h5SessionEn,
+    modelPicker: modelPickerEn,
     petDesktop: petDesktopEn,
-    providerAdd: providerAddEn,
     scheduleCreate: scheduleCreateEn,
     sessionMain: sessionMainEn,
+    sessionNew: sessionNewEn,
     skillMarket: skillMarketEn,
     workspaceDiff: workspaceDiffEn,
     workspacePreview: workspacePreviewEn
@@ -54,8 +58,8 @@ export const content = {
       lede: '本地优先的桌面客户端：会话、改动、Agent、定时任务都摆在明处。接哪个模型你说了算，改哪一行你点头才算。',
       primary: '下载桌面端',
       secondary: '三步跑通第一条会话',
-      badges: ['macOS · Windows · Linux', '开源免费', '数据留在本机'],
-      caption: '真实截图：一条会话读完项目、改了三个文件，改动就在对话里逐行摊开。'
+      badges: ['macOS · Windows · Linux', '开源免费', '本地优先'],
+      caption: '真实 App 的空会话首屏：100% 界面缩放、纯白主题，项目、权限与模型一眼可见。'
     },
     capabilities: {
       title: '它替你做的事',
@@ -72,12 +76,19 @@ export const content = {
       ]
     },
     tour: {
-      title: '所有截图都拍自 v0.5.0，没有概念图',
-      lede: '装好之后你看到的就是这个样子。',
+      title: '真实 App、真实任务，没有概念图',
+      lede: '截图统一使用纯白主题与 100% 界面缩放；任务由 ChatGPT 官方服务商的 GPT-5.6-Luna 在真实测试项目中执行。',
       tabs: [
         {
+          id: 'start',
+          label: '开始',
+          title: '第一眼，就是空会话',
+          body: '刚打开项目时不塞演示内容。输入框、权限模式、运行位置和 GPT-5.6-Luna 都在首屏直接可见。',
+          image: localizedImages.zh.sessionNew
+        },
+        {
           id: 'session',
-          label: '会话',
+          label: '执行',
           title: '说一句话，看它一步步做完',
           body: '选好项目、权限模式和模型就能开工。它读了哪些文件、执行了什么命令、改了哪一行，全都留在对话里。',
           image: localizedImages.zh.sessionMain
@@ -100,8 +111,8 @@ export const content = {
           id: 'models',
           label: '模型',
           title: '接哪个模型，你自己定',
-          body: 'Claude / ChatGPT / Grok 官方账号直接登录，也可以接 DeepSeek、Kimi、智谱、MiniMax，或者本地跑的 LM Studio 与 Ollama。',
-          image: localizedImages.zh.providerAdd
+          body: 'Claude / ChatGPT / Grok 官方账号直接登录，每条会话再选具体模型；这次真实任务使用 ChatGPT 官方与 GPT-5.6-Luna。',
+          image: localizedImages.zh.modelPicker
         },
         {
           id: 'skills',
@@ -178,7 +189,7 @@ export const content = {
       tagline: '本地优先的 Claude Code 桌面客户端',
       columns: [
         ['文档', [['/start', '开始使用'], ['/desktop', '桌面端功能'], ['/im', 'IM 接入'], ['/cli', '命令行']]],
-        ['开发者', [['/internals', '架构总览'], ['/internals/structure', '项目结构'], ['/internals/contributing', '参与贡献']]]
+        ['开发者', [['/internals', '架构总览'], ['/internals/structure', '项目结构'], ['/internals/contributing', '参与贡献'], ['/start/code-signing', 'Code signing policy'], ['/start/privacy', '隐私与联网']]]
       ]
     }
   },
@@ -189,8 +200,8 @@ export const content = {
       lede: 'A local-first desktop client. Sessions, diffs, agents and scheduled runs all sit in the open. You pick the model; nothing lands until you say so.',
       primary: 'Download the app',
       secondary: 'Run your first session',
-      badges: ['macOS · Windows · Linux', 'Open source', 'Your data stays local'],
-      caption: 'A real screenshot: one session read the project, changed three files, and laid every edit out inline.'
+      badges: ['macOS · Windows · Linux', 'Open source', 'Local-first'],
+      caption: 'The real empty-session screen at 100% UI zoom in Pure White, with project, permissions and model visible up front.'
     },
     capabilities: {
       title: 'What it does for you',
@@ -207,13 +218,14 @@ export const content = {
       ]
     },
     tour: {
-      title: 'Every screenshot is v0.5.0. No concept art.',
-      lede: 'What you see is what opens after install.',
+      title: 'Real app, real tasks, no concept art',
+      lede: 'Every shot uses Pure White at 100% UI zoom. The task flow ran in a real test project through ChatGPT Official and GPT-5.6-Luna.',
       tabs: [
-        { id: 'session', label: 'Session', title: 'Say it once. Watch it get done.', body: 'Pick a project, a permission mode and a model. Every file it read, every command it ran and every line it changed stays in the thread.', image: localizedImages.en.sessionMain },
+        { id: 'start', label: 'Start', title: 'The first screen is an empty session', body: 'No staged demo content. The composer, permission mode, working location and GPT-5.6-Luna are visible before the first task starts.', image: localizedImages.en.sessionNew },
+        { id: 'session', label: 'Run', title: 'Say it once. Watch it get done.', body: 'Pick a project, a permission mode and a model. Every file it read, every command it ran and every line it changed stays in the thread.', image: localizedImages.en.sessionMain },
         { id: 'review', label: 'Review', title: 'Know exactly what changed', body: 'The workspace lists this turn’s edits; open any file for a syntax-highlighted diff. Don’t like it? Undo the whole turn.', image: localizedImages.en.workspaceDiff },
         { id: 'preview', label: 'Preview', title: 'Check the page without leaving', body: 'Open your dev server in the built-in browser, see the result immediately, and bring screenshots or picked elements back into the thread.', image: localizedImages.en.workspacePreview },
-        { id: 'models', label: 'Models', title: 'Bring your own model', body: 'Sign in to Claude, ChatGPT or Grok, or point it at DeepSeek, Kimi, Zhipu, MiniMax — or LM Studio and Ollama running on your own machine.', image: localizedImages.en.providerAdd },
+        { id: 'models', label: 'Models', title: 'Bring your own model', body: 'Sign in to Claude, ChatGPT or Grok, then choose the exact model for each session. This real run uses ChatGPT Official with GPT-5.6-Luna.', image: localizedImages.en.modelPicker },
         { id: 'skills', label: 'Skills', title: 'Missing a trick? Install it.', body: 'The marketplace aggregates ClawHub and SkillHub, and labels every skill with its source and safety status before you install.', image: localizedImages.en.skillMarket },
         { id: 'schedule', label: 'Schedule', title: 'Set the time. It comes back with results.', body: 'Choose a cadence, model, directory and notification. Jobs run in their own sessions and every run leaves a record.', image: localizedImages.en.scheduleCreate },
         { id: 'remote', label: 'Mobile', title: 'Step away, keep the session', body: 'Scan the QR code and continue in your phone browser. Locking the screen won’t kill a running task.', image: localizedImages.en.h5Session }
@@ -271,7 +283,7 @@ export const content = {
       tagline: 'A local-first desktop client for Claude Code',
       columns: [
         ['Docs', [['/en/start', 'Get started'], ['/en/desktop', 'Desktop app'], ['/en/im', 'Messaging'], ['/en/cli', 'Command line']]],
-        ['Developers', [['/en/internals', 'Architecture'], ['/en/internals/structure', 'Project structure'], ['/en/internals/contributing', 'Contributing']]]
+        ['Developers', [['/en/internals', 'Architecture'], ['/en/internals/structure', 'Project structure'], ['/en/internals/contributing', 'Contributing'], ['/en/start/code-signing', 'Code signing policy'], ['/en/start/privacy', 'Privacy']]]
       ]
     }
   }

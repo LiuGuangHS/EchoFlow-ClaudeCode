@@ -84,7 +84,7 @@ function getSectionTitle(sectionId: ActivitySectionId, t: TranslationFn): string
 }
 
 function getSectionRowsClassName(sectionId: ActivitySectionId, rowCount: number): string {
-  const base = 'space-y-1.5'
+  const base = 'space-y-0.5'
   if (rowCount === 0) return base
 
   switch (sectionId) {
@@ -227,15 +227,48 @@ function getTaskProgress(rows: ActivityRow[]): { completed: number; total: numbe
   return { completed, total: rows.length, percent: Math.round((completed / rows.length) * 100) }
 }
 
-function ActivityRowIcon({ row, sessionId }: { row: ActivityRow; sessionId: string }) {
+/**
+ * The tile's fill states what happened without spending a word on it, which is
+ * what lets the row itself stay one line. Tone pairs come from the token scale
+ * (see components/AGENTS.md §3.2) — never a raw accent as foreground on its own
+ * container.
+ */
+function getRowIconToneClass(status: ActivityRow['status']): string {
+  if (status === 'running' || status === 'in_progress') {
+    return 'bg-[var(--color-brand-soft)] text-[var(--color-on-brand-soft)]'
+  }
+  if (status === 'completed' || status === 'idle') {
+    return 'bg-[var(--color-success-container)] text-[var(--color-on-success-container)]'
+  }
+  if (status === 'failed' || status === 'error') {
+    return 'bg-[var(--color-error-container)] text-[var(--color-on-error-container)]'
+  }
+  return 'bg-[var(--color-surface-container)] text-[var(--color-text-secondary)]'
+}
+
+function ActivityRowIcon({
+  row,
+  sessionId,
+  status = row.status,
+}: {
+  row: ActivityRow
+  sessionId: string
+  status?: ActivityRow['status']
+}) {
   if (row.section === 'subagents') {
-    return <AgentMascot seed={`${sessionId}:${row.toolUseId ?? row.taskId ?? row.id}`} status={row.status} />
+    return <AgentMascot seed={`${sessionId}:${row.toolUseId ?? row.taskId ?? row.id}`} status={status} />
   }
 
   const Icon = getRowIcon(row)
 
+  // 30px to match `AgentMascot`, so a SubAgent row and a background-task row
+  // start their text on the same column.
   return (
-    <span className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-tertiary)]">
+    <span
+      data-testid="activity-row-icon"
+      data-tone-status={status}
+      className={`inline-flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[var(--radius-md)] ${getRowIconToneClass(status)}`}
+    >
       <Icon size={15} strokeWidth={2} aria-hidden="true" />
     </span>
   )
@@ -316,6 +349,11 @@ function ActivityRowView({
 }) {
   const t = useTranslation()
   const isTask = row.section === 'tasks'
+  const isStoppingSubagent = row.section === 'subagents' && row.status === 'running' && stoppingBackgroundTask
+  const displayStatus: ActivityRow['status'] = isStoppingSubagent ? 'pending' : row.status
+  const statusLabel = isStoppingSubagent
+    ? t('session.activity.status.stopping')
+    : getActivityStatusLabel(row.status, t)
   const label = row.taskHistory
     ? t('session.activity.tasks.earlier')
     : row.label
@@ -325,6 +363,10 @@ function ActivityRowView({
       total: row.taskHistory.total,
       turns: row.taskHistory.turnCount,
     })
+    // Tasks only. SubAgent / team / background rows deliberately stay one line:
+    // their `description` is free-form agent prose, not the compact identity
+    // string the prototype's second line shows, and three tests pin that a row
+    // never previews it. Details live in the expandable panel instead.
     : isTask && row.description && row.description !== row.label
       ? row.description
       : isTask && row.summary && row.summary !== row.label
@@ -335,18 +377,18 @@ function ActivityRowView({
       {isTask ? (
         <TaskStatusMarker status={row.status} t={t} />
       ) : (
-        <ActivityRowIcon row={row} sessionId={sessionId} />
+        <ActivityRowIcon row={row} sessionId={sessionId} status={displayStatus} />
       )}
       <span className="min-w-0 flex-1 truncate text-left">
         <span
-          className={`block truncate font-semibold leading-5 ${isTask ? 'text-[14px]' : 'text-[13px]'} ${isTask && row.status === 'completed' ? 'text-[var(--color-text-secondary)] line-through decoration-[var(--color-text-tertiary)]' : 'text-[var(--color-text-primary)]'}`}
+          className={`block truncate text-[13px] font-medium leading-5 ${isTask && row.status === 'completed' ? 'text-[var(--color-text-tertiary)] line-through decoration-[var(--color-text-tertiary)]' : 'text-[var(--color-text-primary)]'}`}
           title={label}
         >
           {label}
         </span>
         {detail ? (
           <span
-            className={`mt-0.5 block truncate leading-4 text-[var(--color-text-tertiary)] ${isTask ? 'text-[12.5px]' : 'text-[12px]'}`}
+            className="mt-px block truncate text-[11.5px] leading-4 text-[var(--color-text-tertiary)]"
             title={detail}
           >
             {detail}
@@ -355,8 +397,8 @@ function ActivityRowView({
       </span>
       {isTask ? null : (
         <ActivityStatusIndicator
-          status={row.status}
-          label={getActivityStatusLabel(row.status, t)}
+          status={displayStatus}
+          label={statusLabel}
           animated={row.section !== 'subagents'}
         />
       )}
@@ -366,7 +408,7 @@ function ActivityRowView({
     </>
   )
   const interactiveRowClassName =
-    'flex min-w-0 items-center gap-3 rounded-[var(--radius-md)] px-2.5 py-2.5 text-left transition-[background-color,transform] duration-150 ease-out hover:bg-[var(--color-surface-hover)] active:translate-y-px motion-reduce:active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]'
+    'flex min-w-0 items-center gap-2.5 rounded-[var(--radius-md)] px-2 py-1.5 text-left transition-[background-color,transform] duration-150 ease-out hover:bg-[var(--color-surface-hover)] active:translate-y-px motion-reduce:active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]'
   const stopButton = row.section === 'backgroundTasks' && onStopBackgroundTask ? (
     <BackgroundTaskStopButton
       row={row}
@@ -389,7 +431,6 @@ function ActivityRowView({
   }
 
   if (row.section === 'subagents' && row.openable && row.toolUseId) {
-    const statusLabel = getActivityStatusLabel(row.status, t)
     const openButton = (
       <button
         type="button"
@@ -438,7 +479,7 @@ function ActivityRowView({
   if (stopButton) {
     return (
       <div className="flex w-full items-center gap-1">
-        <div className="flex min-w-0 flex-1 items-center gap-3 rounded-[var(--radius-md)] px-2.5 py-2.5">
+        <div className="flex min-w-0 flex-1 items-center gap-2.5 rounded-[var(--radius-md)] px-2 py-1.5">
           {content}
         </div>
         {stopButton}
@@ -447,7 +488,7 @@ function ActivityRowView({
   }
 
   return (
-    <div className="flex items-center gap-3 rounded-[var(--radius-md)] px-2.5 py-2.5">
+    <div className="flex items-center gap-2.5 rounded-[var(--radius-md)] px-2 py-1.5">
       {content}
     </div>
   )
@@ -483,7 +524,7 @@ function BackgroundTaskDetail({ row }: { row: ActivityRow }) {
   if (details.length === 0) return null
 
   return (
-    <div className="mx-2.5 mb-1.5 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-container-low)] p-3">
+    <div className="mx-2 mb-1.5 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-container-low)] p-3">
       <div className="mb-2 text-[11px] font-semibold text-[var(--color-text-tertiary)]">
         {t('session.activity.details.title')}
       </div>
@@ -622,9 +663,9 @@ export function SessionActivityPanel({
               aria-label={sectionTitle}
               className={index > 0 ? 'border-t border-[var(--color-border)] pt-3' : undefined}
             >
-              <div className="mb-2 flex items-center justify-between gap-2 px-2.5">
+              <div className="mb-1.5 flex items-center justify-between gap-2 px-2">
                 <div className="flex min-w-0 items-center gap-2">
-                  <h3 className="text-[13.5px] font-semibold text-[var(--color-text-secondary)]">
+                  <h3 className="text-[12px] font-semibold text-[var(--color-text-secondary)]">
                     {sectionTitle}
                   </h3>
                   {section.rows.length > 0 ? (

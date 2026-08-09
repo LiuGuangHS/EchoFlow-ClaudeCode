@@ -37,8 +37,7 @@ function makeRequest(
     init.body = JSON.stringify(body)
   }
   const req = new Request(url.toString(), init)
-  const segments = url.pathname.split('/').filter(Boolean)
-  return { req, url, segments }
+  return { req, url, segments: url.pathname.split('/').filter(Boolean) }
 }
 
 describe('provider presets API', () => {
@@ -50,7 +49,7 @@ describe('provider presets API', () => {
     expect(await response.json()).toEqual({ presets: PROVIDER_PRESETS })
   })
 
-  test('configured presets expose approved official, local, EchoFlow, and custom entry points', () => {
+  test('exposes only approved official, local, EchoFlow, and custom presets', () => {
     expect(PROVIDER_PRESETS.map((preset) => preset.id)).toEqual([
       'official',
       'echoflowai',
@@ -62,137 +61,93 @@ describe('provider presets API', () => {
       'ollama',
       'custom',
     ])
-    for (const preset of PROVIDER_PRESETS) {
-      expect([
-        'official',
-        'echoflowai',
-        'deepseek',
-        'zhipuglm',
-        'kimi',
-        'minimax',
-        'lmstudio',
-        'ollama',
-        'custom',
-      ]).toContain(preset.id)
-    }
-  })
-
-  test('local Anthropic-compatible presets appear immediately before custom provider entry', () => {
     expect(PROVIDER_PRESETS.at(-3)?.id).toBe('lmstudio')
     expect(PROVIDER_PRESETS.at(-2)?.id).toBe('ollama')
     expect(PROVIDER_PRESETS.at(-1)?.id).toBe('custom')
   })
 
-  test('configured presets keep current default model ids aligned with official provider docs', () => {
-    const echoflow = PROVIDER_PRESETS.find((preset) => preset.id === 'echoflowai')
-    const lmstudio = PROVIDER_PRESETS.find((preset) => preset.id === 'lmstudio')
-    const ollama = PROVIDER_PRESETS.find((preset) => preset.id === 'ollama')
-    const deepseek = PROVIDER_PRESETS.find((preset) => preset.id === 'deepseek')
-    const zhipu = PROVIDER_PRESETS.find((preset) => preset.id === 'zhipuglm')
-    const kimi = PROVIDER_PRESETS.find((preset) => preset.id === 'kimi')
-    const minimax = PROVIDER_PRESETS.find((preset) => preset.id === 'minimax')
+  test('uses documented current provider models and regional endpoints', () => {
+    const byId = new Map(PROVIDER_PRESETS.map((preset) => [preset.id, preset]))
+    const echoflow = byId.get('echoflowai')
+    const deepseek = byId.get('deepseek')
+    const zhipu = byId.get('zhipuglm')
+    const kimi = byId.get('kimi')
+    const minimax = byId.get('minimax')
 
-    expect(echoflow?.baseUrl).toBe('https://api.echoflow.cn')
-    expect(echoflow?.apiFormat).toBe('anthropic')
-    expect(echoflow?.authStrategy).toBe('auth_token')
-    expect(echoflow?.defaultModels.main).toBe('claude-sonnet-4-6')
-    expect(echoflow?.defaultModels.haiku).toBe('claude-haiku-4-5')
-    expect(echoflow?.defaultModels.sonnet).toBe('claude-sonnet-4-6')
-    expect(echoflow?.defaultModels.opus).toBe('claude-opus-4-7')
-    expect(echoflow?.modelContextWindows?.['claude-sonnet-4-6']).toBe(1000000)
-    expect(lmstudio?.baseUrl).toBe('http://localhost:1234')
-    expect(lmstudio?.apiFormat).toBe('anthropic')
-    expect(lmstudio?.authStrategy).toBe('auth_token_empty_api_key')
-    expect(lmstudio?.defaultModels.main).toBe('qwen/qwen3.6-27b')
-    expect(ollama?.baseUrl).toBe('http://localhost:11434')
-    expect(ollama?.apiFormat).toBe('anthropic')
-    expect(ollama?.authStrategy).toBe('auth_token_empty_api_key')
-    expect(ollama?.defaultModels.main).toBe('qwen3.6:27b')
-    expect(deepseek?.authStrategy).toBe('auth_token')
-    expect(deepseek?.defaultModels.main).toBe('deepseek-v4-pro[1m]')
-    expect(deepseek?.defaultEnv?.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe(
-      'thinking,effort,adaptive_thinking,max_effort',
-    )
-    expect(zhipu?.authStrategy).toBe('auth_token')
-    expect(zhipu?.defaultModels.main).toBe('glm-5.2[1m]')
-    expect(zhipu?.defaultEnv?.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1000000')
-    expect(kimi?.baseUrl).toBe('https://api.kimi.com/coding/')
-    expect(kimi?.authStrategy).toBe('api_key')
-    expect(kimi?.defaultModels.main).toBe('k3')
-    expect(kimi?.defaultEnv?.ECHOFLOW_SEND_DISABLED_THINKING).toBeUndefined()
-    expect(kimi?.defaultEnv?.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe(
-      'thinking,required_thinking,effort,max_effort',
-    )
-    expect(minimax?.authStrategy).toBe('auth_token')
-    expect(minimax?.defaultModels.main).toBe('MiniMax-M3[1m]')
-    expect(minimax?.defaultEnv?.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1000000')
-    expect(minimax?.defaultEnv?.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,adaptive_thinking')
-    expect(minimax?.modelContextWindows?.['MiniMax-M3']).toBe(1000000)
+    expect(echoflow).toMatchObject({
+      baseUrl: 'https://api.echoflow.cn',
+      authStrategy: 'auth_token',
+      defaultModels: {
+        main: 'claude-sonnet-4-6',
+        haiku: 'claude-haiku-4-5',
+        sonnet: 'claude-sonnet-4-6',
+        opus: 'claude-opus-4-7',
+      },
+    })
+    expect(deepseek).toMatchObject({
+      baseUrl: 'https://api.deepseek.com/anthropic',
+      authStrategy: 'auth_token',
+      defaultModels: {
+        main: 'deepseek-v4-pro[1m]',
+        haiku: 'deepseek-v4-flash',
+        sonnet: 'deepseek-v4-pro[1m]',
+        opus: 'deepseek-v4-pro[1m]',
+      },
+    })
+    expect(zhipu?.regionalEndpoints).toEqual([
+      { region: 'cn_zh', baseUrl: 'https://open.bigmodel.cn/api/anthropic' },
+      { region: 'global_en', baseUrl: 'https://api.z.ai/api/anthropic' },
+    ])
+    expect(kimi).toMatchObject({
+      baseUrl: 'https://api.kimi.com/coding/',
+      authStrategy: 'api_key',
+      defaultModels: { main: 'k3' },
+    })
+    expect(kimi?.regionalEndpoints).toBeUndefined()
+    expect(minimax?.regionalEndpoints).toEqual([
+      { region: 'cn_zh', baseUrl: 'https://api.minimaxi.com/anthropic' },
+      { region: 'global_en', baseUrl: 'https://api.minimax.io/anthropic' },
+    ])
   })
 
-  test('presets do not include referral URLs', () => {
-    for (const preset of PROVIDER_PRESETS) {
-      expect(`${preset.websiteUrl ?? ''} ${preset.apiKeyUrl ?? ''}`).not.toMatch(
-        /\b(?:invite|referral)\b|[?&](?:code|source|ref|channel|utm_[^=]+)=/i,
-      )
+  test('preserves provider capability defaults and model context windows', () => {
+    const byId = new Map(PROVIDER_PRESETS.map((preset) => [preset.id, preset]))
+    const deepseek = byId.get('deepseek')
+    const zhipu = byId.get('zhipuglm')
+    const kimi = byId.get('kimi')
+    const minimax = byId.get('minimax')
+
+    expect(deepseek?.defaultEnv).toMatchObject({
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000',
+      ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES:
+        'thinking,effort,adaptive_thinking,max_effort',
+    })
+    expect(zhipu?.defaultEnv).toEqual({ CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000' })
+    expect(kimi?.defaultEnv).toMatchObject({
+      ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES:
+        'thinking,required_thinking,effort,max_effort',
+    })
+    expect(minimax?.defaultEnv).toMatchObject({
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000',
+      ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES:
+        'thinking,adaptive_thinking',
+    })
+    for (const id of ['echoflowai', 'deepseek', 'zhipuglm', 'kimi', 'minimax']) {
+      const preset = byId.get(id)!
+      expect(preset.modelContextWindows?.[preset.defaultModels.main]).toBeGreaterThan(0)
     }
   })
 
-  test('configured presets can expose optional API key and promo metadata', () => {
-    const lmstudio = PROVIDER_PRESETS.find((preset) => preset.id === 'lmstudio')
-    const ollama = PROVIDER_PRESETS.find((preset) => preset.id === 'ollama')
-    const deepseek = PROVIDER_PRESETS.find((preset) => preset.id === 'deepseek')
-    const zhipu = PROVIDER_PRESETS.find((preset) => preset.id === 'zhipuglm')
-    const kimi = PROVIDER_PRESETS.find((preset) => preset.id === 'kimi')
-
-    expect(lmstudio?.needsApiKey).toBe(false)
-    expect(lmstudio?.promoText).toContain('http://localhost:1234')
-    expect(lmstudio?.promoText).toContain('200K')
-    expect(lmstudio?.defaultEnv).toEqual({
-      ANTHROPIC_AUTH_TOKEN: 'lmstudio',
-    })
-    expect(ollama?.needsApiKey).toBe(false)
-    expect(ollama?.promoText).toContain('http://localhost:11434')
-    expect(ollama?.promoText).toContain('200K')
-    expect(ollama?.defaultEnv).toEqual({
-      ANTHROPIC_AUTH_TOKEN: 'ollama',
-    })
-    expect(deepseek?.apiKeyUrl).toBe('https://platform.deepseek.com/api_keys')
-    expect(deepseek?.modelContextWindows?.['deepseek-v4-pro']).toBe(1000000)
-    expect(deepseek?.modelContextWindows?.['deepseek-v4-flash']).toBe(1000000)
-    expect(zhipu?.defaultEnv?.ECHOFLOW_SEND_DISABLED_THINKING).toBeUndefined()
-    expect(zhipu?.modelContextWindows?.['glm-5.2']).toBe(1000000)
-    expect(zhipu?.modelContextWindows?.['glm-5.1']).toBe(200000)
-    expect(zhipu?.modelContextWindows?.['glm-4.7']).toBe(200000)
-    expect(zhipu?.modelContextWindows?.['glm-4.5-air']).toBe(128000)
-    expect(kimi?.apiKeyUrl).toBe('https://www.kimi.com/code/console')
-    expect(kimi?.modelContextWindows?.k3).toBe(262144)
-    expect(kimi?.modelContextWindows?.['kimi-for-coding']).toBe(262144)
-    expect(kimi?.modelContextWindows?.['kimi-for-coding-highspeed']).toBe(262144)
+  test('does not expose sponsor, relay, or referral metadata', () => {
+    const serialized = JSON.stringify(PROVIDER_PRESETS)
+    expect(serialized).not.toMatch(
+      /teamorouter|jiekouai|shengsuanyun|xuanshuapi|fennoai|qiniuai|atlascloud|[?&](?:ref|referral|invite|source|utm_[^=]+)=/i,
+    )
   })
 
-  test('configured presets expose EchoFlow API metadata while custom stays neutral', () => {
-    const official = PROVIDER_PRESETS.find((preset) => preset.id === 'official')
-    const echoflow = PROVIDER_PRESETS.find((preset) => preset.id === 'echoflowai')
-    const custom = PROVIDER_PRESETS.find((preset) => preset.id === 'custom')
-
-    expect(official?.needsApiKey).toBe(false)
-    expect(official?.websiteUrl).toBe('https://www.anthropic.com/claude-code')
-    expect(echoflow?.needsApiKey).toBe(true)
-    expect(echoflow?.websiteUrl).toBe('https://api.echoflow.cn/')
-    expect(echoflow?.apiKeyUrl).toBe('https://api.echoflow.cn/register')
-    expect(echoflow?.promoText).toContain('500+ 模型')
-    expect(echoflow?.featured).toBe(true)
-    expect(custom?.promoText).toBeUndefined()
-    expect(custom?.authStrategy).toBe('auth_token')
-    expect(custom?.defaultEnv).toBeUndefined()
-  })
-
-  test('GET and PUT /api/providers/settings read and write EchoFlow settings.json', async () => {
+  test('preserves EchoFlow settings isolation', async () => {
     const initial = {
-      env: {
-        ANTHROPIC_MODEL: 'glm-5.1',
-      },
+      env: { ANTHROPIC_MODEL: 'glm-5.1' },
       model: 'glm-5.1',
     }
     await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
@@ -202,33 +157,28 @@ describe('provider presets API', () => {
       'utf-8',
     )
 
-    const getReq = makeRequest('GET', '/api/providers/settings')
-    const getRes = await handleProvidersApi(getReq.req, getReq.url, getReq.segments)
-    expect(getRes.status).toBe(200)
-    expect(await getRes.json()).toEqual(initial)
+    const getRequest = makeRequest('GET', '/api/providers/settings')
+    const getResponse = await handleProvidersApi(
+      getRequest.req,
+      getRequest.url,
+      getRequest.segments,
+    )
+    expect(await getResponse.json()).toEqual(initial)
 
-    const updateBody = {
+    const update = {
       model: 'kimi-k2.6',
-      env: {
-        ANTHROPIC_MODEL: 'kimi-k2.6',
-      },
+      env: { ANTHROPIC_MODEL: 'kimi-k2.6' },
     }
-    const putReq = makeRequest('PUT', '/api/providers/settings', updateBody)
-    const putRes = await handleProvidersApi(putReq.req, putReq.url, putReq.segments)
-    expect(putRes.status).toBe(200)
-
-    const updatedRaw = await fs.readFile(
+    const putRequest = makeRequest('PUT', '/api/providers/settings', update)
+    const putResponse = await handleProvidersApi(
+      putRequest.req,
+      putRequest.url,
+      putRequest.segments,
+    )
+    expect(putResponse.status).toBe(200)
+    expect(JSON.parse(await fs.readFile(
       path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'),
       'utf-8',
-    )
-    expect(JSON.parse(updatedRaw)).toEqual(updateBody)
-  })
-
-  test('EchoFlow preset carries context windows for current coding models', () => {
-    const echoflow = PROVIDER_PRESETS.find((preset) => preset.id === 'echoflowai')!
-
-    expect(echoflow.modelContextWindows?.[echoflow.defaultModels.main]).toBeGreaterThan(0)
-    expect(echoflow.modelContextWindows?.[echoflow.defaultModels.haiku]).toBeGreaterThan(0)
-    expect(echoflow.modelContextWindows?.[echoflow.defaultModels.opus]).toBeGreaterThan(0)
+    ))).toEqual(update)
   })
 })

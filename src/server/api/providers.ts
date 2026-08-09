@@ -125,8 +125,8 @@ export async function handleProvidersApi(
     // /api/providers (no ID)
     if (!id) {
       if (req.method === 'GET') {
-        const { providers, activeId } = await providerService.listProviders()
-        return Response.json({ providers, activeId })
+        const { providers, activeId, providerOrder } = await providerService.listProviders()
+        return Response.json({ providers, activeId, providerOrder })
       }
       if (req.method === 'POST') {
         return await handleCreate(req)

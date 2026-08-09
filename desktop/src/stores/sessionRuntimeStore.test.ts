@@ -8,7 +8,7 @@ const EXPECTED_GROK_SELECTION = {
   effortLevel: 'high',
 }
 
-describe('sessionRuntimeStore Grok runtime cleanup', () => {
+describe('sessionRuntimeStore runtime cleanup', () => {
   beforeEach(() => {
     localStorage.clear()
     useSessionRuntimeStore.setState({
@@ -117,6 +117,27 @@ describe('sessionRuntimeStore Grok runtime cleanup', () => {
     expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
       'session-pending': 'pending',
       'session-failed': 'failed',
+    })
+  })
+
+  it('preserves a custom-provider xhigh selection loaded from localStorage', async () => {
+    const expectedSelection = {
+      providerId: 'kimi-provider',
+      modelId: 'k3',
+      effortLevel: 'xhigh',
+    }
+    localStorage.setItem('echoflow-code-session-runtime', JSON.stringify({
+      'session-loaded-kimi': expectedSelection,
+    }))
+    vi.resetModules()
+
+    const { useSessionRuntimeStore: loadedStore } = await import('./sessionRuntimeStore')
+
+    expect(loadedStore.getState().selections['session-loaded-kimi']).toEqual(
+      expectedSelection,
+    )
+    expect(JSON.parse(localStorage.getItem('echoflow-code-session-runtime')!)).toEqual({
+      'session-loaded-kimi': expectedSelection,
     })
   })
 })

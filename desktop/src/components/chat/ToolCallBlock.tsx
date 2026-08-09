@@ -1,5 +1,5 @@
 import { memo, useMemo, useState } from 'react'
-import { CircleStop, LoaderCircle } from 'lucide-react'
+import { CircleStop, CircleX, LoaderCircle } from 'lucide-react'
 import { CodeViewer } from './CodeViewer'
 import { DiffViewer } from './DiffViewer'
 import { TerminalChrome } from './TerminalChrome'
@@ -7,6 +7,8 @@ import { CopyButton } from '@/components/ui/CopyButton'
 import { useTranslation } from '../../i18n'
 import type { TranslationKey } from '../../i18n'
 import { InlineImageGallery } from './InlineImageGallery'
+import { ImageGenerationBlock } from './ImageGenerationBlock'
+import { isImageGenerationToolName } from './imageGenerationTools'
 import type { AgentTaskNotification } from '../../types/chat'
 import {
   PlanPreviewCard,
@@ -15,12 +17,21 @@ import {
   isExitPlanModeTool,
 } from './PlanModePreview'
 
+/**
+ * `card` is the standalone bordered block. `row` strips the border, the ink icon
+ * square and the bold name so the call reads as one line inside an expanded
+ * activity group — the fix for "one card per tool call" (#1177). Its own output
+ * still gets a card, but only once the row is expanded.
+ */
+export type ToolCallChrome = 'card' | 'row'
+
 type Props = {
   toolName: string
   input: unknown
   result?: { content: unknown; isError: boolean } | null
   agentTaskNotification?: AgentTaskNotification
   compact?: boolean
+  chrome?: ToolCallChrome
   isPending?: boolean
   status?: 'stopped'
   partialInput?: string
@@ -117,7 +128,8 @@ type ContentStats = {
   windowed?: boolean
 }
 
-export const ToolCallBlock = memo(function ToolCallBlock({ toolName, input, result, compact = false, isPending = false, status, partialInput, defaultExpanded = false, durationMs }: Props) {
+export const ToolCallBlock = memo(function ToolCallBlock({ toolName, input, result, compact = false, chrome = 'card', isPending = false, status, partialInput, defaultExpanded = false, durationMs }: Props) {
+  const isRow = chrome === 'row'
   const isExitPlanTool = isExitPlanModeTool(toolName)
   const isEnterPlanTool = isEnterPlanModeTool(toolName)
   const [expanded, setExpanded] = useState(defaultExpanded || isExitPlanTool)
@@ -186,22 +198,44 @@ export const ToolCallBlock = memo(function ToolCallBlock({ toolName, input, resu
     )
   }
 
+  if (isImageGenerationToolName(toolName)) {
+    return (
+      <ImageGenerationBlock
+        input={input}
+        result={result}
+        compact={compact}
+        isPending={isPending}
+        durationMs={durationMs}
+      />
+    )
+  }
+
   return (
-    <div className={`overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] ${
-      compact ? 'mb-0' : 'mb-2'
-    }`}>
+    <div className={
+      isRow
+        ? ''
+        : `overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] ${
+          compact ? 'mb-0' : 'mb-2'
+        }`
+    }>
       <button
         type="button"
+        data-chat-disclosure="true"
+        aria-expanded={expandable ? expanded : undefined}
         onClick={() => {
           if (expandable) {
             setExpanded((value) => !value)
           }
         }}
-        className={`flex w-full items-center text-left transition-colors hover:bg-[var(--color-surface-hover)] ${
-          compact ? 'gap-[11px] px-3.5 py-2.5' : 'gap-3 px-4 py-3'
+        className={`flex items-center text-left transition-colors hover:bg-[var(--color-surface-hover)] focus:outline-none focus-visible:shadow-[var(--shadow-focus-ring)] ${
+          isRow
+            // The negative margin lets the hover highlight breathe past the
+            // timeline rule without the row itself being inset from it.
+            ? '-mx-2 w-[calc(100%+1rem)] gap-2 rounded-[var(--radius-md)] px-2 py-1'
+            : compact ? 'w-full gap-[11px] px-3.5 py-2.5' : 'w-full gap-3 px-4 py-3'
         }`}
       >
-        {compact ? (
+        {isRow ? null : compact ? (
           <span className="material-symbols-outlined shrink-0 text-[16px] text-[var(--color-text-secondary)]">{icon}</span>
         ) : (
           /* The ink square is the design's tool badge: solid `--t1` with the page
@@ -210,15 +244,19 @@ export const ToolCallBlock = memo(function ToolCallBlock({ toolName, input, resu
             <span className="material-symbols-outlined text-[16px]">{icon}</span>
           </span>
         )}
-        <span className={`shrink-0 font-bold text-[var(--color-text-primary)] ${compact ? 'text-[13px]' : 'text-[14px]'}`}>
+        <span className={
+          isRow
+            ? 'shrink-0 text-[13px] font-medium text-[var(--color-text-secondary)]'
+            : `shrink-0 font-bold text-[var(--color-text-primary)] ${compact ? 'text-[13px]' : 'text-[14px]'}`
+        }>
           {toolName}
         </span>
         {filePath ? (
-          <span className={`min-w-0 flex-1 truncate font-mono text-[var(--color-text-secondary)] ${compact ? 'text-[12.5px]' : 'text-[13px]'}`}>
+          <span className={`min-w-0 flex-1 truncate font-mono ${isRow ? 'text-[12px] text-[var(--color-text-tertiary)]' : compact ? 'text-[12.5px] text-[var(--color-text-secondary)]' : 'text-[13px] text-[var(--color-text-secondary)]'}`}>
             {filePath.split('/').pop()}
           </span>
         ) : summary ? (
-          <span className={`min-w-0 flex-1 truncate font-mono text-[var(--color-text-secondary)] ${compact ? 'text-[12.5px]' : 'text-[13px]'}`}>
+          <span className={`min-w-0 flex-1 truncate font-mono ${isRow ? 'text-[12px] text-[var(--color-text-tertiary)]' : compact ? 'text-[12.5px] text-[var(--color-text-secondary)]' : 'text-[13px] text-[var(--color-text-secondary)]'}`}>
             {summary}
           </span>
         ) : (
@@ -247,13 +285,14 @@ export const ToolCallBlock = memo(function ToolCallBlock({ toolName, input, resu
           </span>
         ) : result && outputSummary ? (
           <span
-            className={`min-w-0 shrink truncate text-[12.5px] ${
+            className={`inline-flex min-w-0 shrink items-center gap-1.5 text-[12.5px] ${
               result.isError
-                ? 'text-[var(--color-error)]'
+                ? 'font-medium text-[var(--color-error)]'
                 : 'text-[var(--color-text-tertiary)]'
             }`}
           >
-            {outputSummary}
+            {result.isError && <CircleX size={13} strokeWidth={2} className="shrink-0" aria-hidden="true" />}
+            <span className="min-w-0 truncate">{outputSummary}</span>
           </span>
         ) : liveStatsSummary ? (
           <span className="shrink-0 font-mono text-[12.5px] tabular-nums text-[var(--color-text-tertiary)]">
@@ -261,22 +300,36 @@ export const ToolCallBlock = memo(function ToolCallBlock({ toolName, input, resu
           </span>
         ) : null}
         {durationSummary && (
-          <span className="shrink-0 font-mono text-[12px] tabular-nums text-[var(--color-text-tertiary)]">
+          <span className={`shrink-0 font-mono text-[12px] tabular-nums ${
+            result?.isError ? 'font-medium text-[var(--color-error)]' : 'text-[var(--color-text-tertiary)]'
+          }`}>
             {durationSummary}
           </span>
         )}
-        {result?.isError && (
-          <span className="material-symbols-outlined shrink-0 text-[15px] text-[var(--color-error)]">error</span>
-        )}
         {expandable && (
-          <span className="shrink-0 text-[11px] leading-none text-[var(--color-text-tertiary)]" aria-hidden="true">
-            {expanded ? '▴' : '▾'}
+          <span className={`shrink-0 leading-none text-[var(--color-text-tertiary)] ${isRow ? 'text-[8px]' : 'text-[11px]'}`} aria-hidden="true">
+            {isRow ? (expanded ? '▾' : '▸') : (expanded ? '▴' : '▾')}
           </span>
         )}
       </button>
 
       {expandable && expanded && (
-        <div className="space-y-2.5 border-t border-[var(--color-border)] px-4 py-3.5">
+        <div
+          data-tool-output-error={result?.isError ? 'true' : undefined}
+          className={
+            isRow
+              ? `mb-2 mt-1 space-y-2.5 rounded-[var(--radius-lg)] border px-3 py-2.5 ${
+                result?.isError
+                  ? 'border-[var(--color-error-soft-hover)] bg-[var(--color-error-soft)]'
+                  : 'border-[var(--color-border)] bg-[var(--color-surface-container-lowest)]'
+              }`
+              : `space-y-2.5 border-t px-4 py-3.5 ${
+                result?.isError
+                  ? 'border-[var(--color-error-soft-hover)] bg-[var(--color-error-soft)]'
+                  : 'border-[var(--color-border)]'
+              }`
+          }
+        >
           {preview}
           {details}
         </div>

@@ -10,6 +10,11 @@ import {
   applySafeConfigEnvironmentVariables,
 } from './managedEnv.js'
 import { resetSettingsCache } from './settings/settingsCache.js'
+import {
+  IMAGE_GENERATION_MODEL_ENV_KEY,
+  IMAGE_GENERATION_PROVIDER_ID_ENV_KEY,
+  IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY,
+} from '../services/imageGeneration/config.js'
 
 let tempDir = ''
 let originalEnv: NodeJS.ProcessEnv
@@ -44,6 +49,12 @@ describe('managed environment', () => {
     delete process.env.ECHOFLOW_ONLY
     delete process.env.ECHOFLOW_KEEP
     delete process.env.ROOT_ONLY
+    delete process.env[IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY]
+    delete process.env[IMAGE_GENERATION_PROVIDER_ID_ENV_KEY]
+    delete process.env[IMAGE_GENERATION_MODEL_ENV_KEY]
+    delete process.env.CC_HAHA_IMAGE_PROVIDER_KIND
+    delete process.env.CC_HAHA_IMAGE_PROVIDER_ID
+    delete process.env.CC_HAHA_IMAGE_MODEL
     setAllowedSettingSources(['userSettings'])
     resetSettingsCache()
   })
@@ -121,14 +132,23 @@ describe('managed environment', () => {
       env: {
         CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: '0',
         ECHOFLOW_LOCAL_ACCESS_TOKEN: 'stale-settings-token',
+        [IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY]: 'openai_oauth',
+        [IMAGE_GENERATION_PROVIDER_ID_ENV_KEY]: 'openai-official',
+        [IMAGE_GENERATION_MODEL_ENV_KEY]: 'gpt-image-2',
       },
     })
     process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST = '1'
     process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+    process.env[IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY] = 'grok_oauth'
+    process.env[IMAGE_GENERATION_PROVIDER_ID_ENV_KEY] = 'grok-official'
+    process.env[IMAGE_GENERATION_MODEL_ENV_KEY] = 'grok-imagine-image-quality'
 
     applySafeConfigEnvironmentVariables()
 
     expect(process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST).toBe('1')
     expect(process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN).toBe('desktop-local-secret')
+    expect(process.env[IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY]).toBe('grok_oauth')
+    expect(process.env[IMAGE_GENERATION_PROVIDER_ID_ENV_KEY]).toBe('grok-official')
+    expect(process.env[IMAGE_GENERATION_MODEL_ENV_KEY]).toBe('grok-imagine-image-quality')
   })
 })

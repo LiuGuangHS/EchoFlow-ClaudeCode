@@ -46,13 +46,53 @@ These are repository policies, not guarantees enforced by Git. Use them for ever
 ## Engineering Behavior Guardrails
 These rules are adapted from Karpathy-style coding-agent guidelines. They bias toward caution and simplicity, but do not override the autonomy rule for clear, reversible work.
 
-- Think before coding. State assumptions when they matter, surface tradeoffs once, and do not hide confusion. If the request has multiple materially different interpretations, clarify the branch before editing.
-- Prefer the simplest working change. Do not add features beyond the request, speculative flexibility, single-use abstractions, or configurability that has no current caller.
-- Keep changes surgical. Match existing style even when you would design it differently, and do not "improve" adjacent code, comments, formatting, or dead code unless it directly serves the task.
-- Clean up only your own mess. Remove imports, variables, functions, files, and tests that your change made obsolete; mention unrelated dead code rather than deleting it.
-- Every changed line should trace back to the user request, a failing test, a verified bug, or a required compatibility constraint.
-- Define success criteria before implementation. For bugs, first identify or add the test/repro that fails; for refactors, know which checks prove behavior did not change; for features, map each step to a verification command or smoke path.
-- If an implementation grows much larger than the problem, stop and simplify before continuing. A senior maintainer should be able to explain why the size and shape of the diff are necessary.
+- Define the smallest behavior change and proof before editing. Keep changes surgical, use existing utilities, avoid dependencies and speculative abstractions, and remove only obsolescence created by the change.
+- Every changed line must trace to the request, a failing test, a verified bug, or a compatibility constraint. Stop and simplify if the diff grows beyond that proof.
+- Production code changes under `desktop/src`, `src/server`, `src/tools`, `src/utils`, or `adapters` require a same-area regression test unless explicitly approved otherwise.
+- Keep TypeScript ESM style: 2-space indentation, no semicolons, `PascalCase` components, and `camelCase` functions/hooks/stores.
+- Do not commit generated output such as `artifacts/`, coverage reports, `node_modules/`, build directories, or Rust `target/` trees. Use Conventional Commit subjects and normal product branch prefixes when publishing.
+
+## Writing a Test That Holds
+
+
+- **Drive the transition; never hand-write the state it produces.** Component tests in
+  `desktop/src` call `setState` 744 times and a real store action 3 times. State you
+  assigned is self-consistent by construction and cannot expose "transition A did not
+  update B" — which is where these bugs live. Use `handleServerMessage`, store actions,
+  and real user events.
+- **Assert the invariant, not today's output.** `2262973a4` shipped
+  `expect(getByText('deepseek-reasoner'))` at a moment when the screen showed another
+  model's number: it wrote the bug in as a passing assertion, and the next fix had to
+  invert that exact line. Ask what must be true after this step, not what it prints now.
+- **Cover both directions of any rule that drops or merges something.** The replay guard
+  was tested for "a replay must be discarded" and never for "a genuine repeat must be
+  kept", so it shipped dropping real replies.
+- **Test the join, not each end.** Server, store, and component each had a test for
+  `runtime_config_applied`; nothing crossed them, and deleting the term that joins them
+  (`ChatInput.tsx` `refreshNonce`) left 314 tests green.
+- **Never retune an existing test's inputs to keep it green.** `128f75ab5` changed five
+  tests' props (`messageCount={0}` → `{1}`) instead of accepting that they described
+  states a real session cannot reach. If a test only passes after you edit its inputs,
+  the test was describing the implementation.
+- **Do not mock the module under test.** A hand-written factory freezes an interface
+  snapshot: the store can be renamed or gutted and the test still passes.
+- **If you are comparing content to decide identity, the identity exists upstream.**
+  Deduping by text cannot separate a replay from a legitimate repeat; forward the id
+  (`uuid`, `toolUseId`) instead of guessing.
+
+Blind spots to check rather than trust:
+
+- `desktop/electron/` is not instrumented at all (`vitest.config.ts` collects only
+  `desktop/src`), so main-process diffs score zero covered lines.
+- Bun's LCOV emits no branch records, so `src/` and `adapters/` report **100% branch
+  coverage** for data that was never collected (`pct(0, 0) === 100`). Only `desktop/`
+  has real branch numbers.
+
+## Verification
+
+1. Run the narrowest relevant test while iterating.
+2. Run `bun run check:impact`; every command it selects is part of the minimum handoff for the current diff. Selection is import-aware: a change is routed to every surface that imports it, not only to its own directory. The report's `## Cross-surface impact` section names the importer that pulled in each extra check.
+3. Run `bun run verify` only when full validation is requested or before claiming a code change is PR-ready or push-ready.
 
 ## Project Structure & Module Organization
 This is a Bun-based Coding Agent product with a CLI, local server, desktop app, IM adapters, docs, and release automation.
@@ -65,6 +105,15 @@ This is a Bun-based Coding Agent product with a CLI, local server, desktop app, 
 - `site/` is the React documentation site and its build tooling. `docs/` and `docs/en/` are its Chinese and English Markdown content sources; keep counterparts aligned when both exist. Root screenshots and `docs/images/` are reference assets unless a task explicitly updates docs media.
 - `.github/workflows/`, `scripts/pr/`, and `scripts/quality-gate/` define CI routing and quality policy.
 - `release-notes/`, `scripts/release.ts`, and `.github/workflows/release-desktop.yml` define release behavior. Treat workflow changes as product changes because they alter what future agents and contributors can safely ship.
+- Required PR checks must be deterministic and work on an untrusted fork: no real models, public network, repository secrets, saved providers, or real user home/config. Use fake credentials, fixtures, mocked/loopback transports, temporary directories, and explicit cleanup.
+- `bun run check:agent-flow` is the deterministic end-to-end agent lane: it drives the real server and WebSocket through session creation, runtime selection, streaming, tool permission allow/deny, tool failure, API error, interrupt, reconnect replay, and session recovery using the repository's mock SDK CLI. It needs no provider, credentials, or network, so every contributor can run it.
+- `bun run check:desktop-ui-smoke` drives the real desktop UI against that same mock runtime and answers the permission dialog by clicking the real button. It skips with a printed reason when `agent-browser` or desktop dependencies are missing.
+- Quality-gate lanes that boot the real server must run in a sandbox config dir (`scripts/quality-gate/sandbox.ts`) and fail if they wrote to the developer's real `~/.claude`.
+- Provider/auth/proxy/runtime changes may select `bun run check:provider-contract`; desktop chat/WebSocket/session changes may select `bun run check:chat-contract`. These contracts are offline and do not replace their selected surface checks.
+- Any persisted JSON, `localStorage`, or app-config shape change requires a forward migration, an old-fixture regression test, and `bun run check:persistence-upgrade`.
+- User-visible desktop or cross-process behavior needs an actual browser/desktop smoke path when unit tests cannot prove the workflow.
+- Live model checks are separate maintainer evidence. Run them only after deterministic checks pass and a maintainer explicitly authorizes quota use; finding credentials on the machine is not authorization.
+- `bun run check:docs` runs `npm ci`; run it sequentially with checks that rely on root `node_modules`.
 
 ## Build, Test, and Development Commands
 Install root dependencies with `bun install`. Install desktop dependencies in `desktop/` when touching desktop UI/native code, and adapter dependencies in `adapters/` when touching IM adapters.
@@ -83,28 +132,19 @@ Install root dependencies with `bun install`. Install desktop dependencies in `d
 - `bun run check:impact`: print the changed-area impact report and recommended local checks.
 
 ## Verification Routing
-Use the narrowest meaningful verification while iterating, then run the correct gate for the actual handoff level. Do not run long gates after every small edit. In normal local-development handoff, prefer focused regression tests plus the single affected surface gate. Reserve `bun run verify`, `bun run check:coverage`, and other full quality gates for PR-ready, push/merge, release, explicitly requested full validation, or genuinely high-risk changes.
+Use the narrowest meaningful check while iterating; do not silently escalate a small fix to a full gate. Use focused tests first, then the affected gate:
 
-If a user asks for a small fix, local explanation, or quick iteration, do not silently escalate to full PR verification. State the targeted checks you ran and, if relevant, say that full `verify`/coverage was intentionally not run because the change is not being called PR-ready. If a full gate was started and the user asks to stop or says it is too expensive, stop it and continue with scoped verification.
+| Surface | Gate |
+| --- | --- |
+| Desktop UI/store/API | `bun run check:desktop` |
+| Server/API/provider/runtime/MCP/OAuth/WebSocket | `bun run check:server` |
+| IM adapters | `bun run check:adapters` |
+| Electron/native/packaging/version | `bun run check:native` |
+| Docs/README/release notes/workflows | `bun run check:docs` |
+| JSON/localStorage/app-config migration | `bun run check:persistence-upgrade` |
+| PR/push/merge/release readiness | `bun run verify` |
 
-| Situation | Command | Notes |
-| --- | --- | --- |
-| Fast inner loop for pure logic | Focused `bun test <file>` or nearest package test | Add/update the regression test first when behavior changes. |
-| Small scoped bugfix or local dev-flow fix | Focused regression test(s), then the narrowest affected surface gate if needed | Example: a CORS helper plus desktop bootstrap test should run those focused tests; add `check:server`/`check:desktop` only when the touched surface or handoff needs broader confidence. Do not run `verify`/coverage by default. |
-| Desktop UI/store/API work | `bun run check:desktop` | Runs desktop lint, Vitest, and production build. For visible UI flows, also use browser/agent-browser smoke when unit tests cannot prove the workflow. |
-| Server/API/provider/runtime/MCP/OAuth/WebSocket work | `bun run check:server` | Covers `src/server`, `src/tools`, provider/runtime, MCP, OAuth, WebSocket, and API behavior. |
-| IM adapter work | `bun run check:adapters` | On a fresh checkout, run `cd adapters && bun install` first if dependencies are missing. |
-| Electron/native/sidecar/packaging/version changes | `bun run check:native` | Runs sidecar build, Electron host checks, Electron `--dir` packaging, and current-platform package-smoke. For Windows full installer packaging, use PowerShell with `cd desktop && bun run build:windows-x64`; it imports the MSVC environment via Visual Studio Build Tools. |
-| Docs, README, release notes, or docs workflow changes | `bun run check:docs` | This runs `npm ci`; run it sequentially, not in parallel with commands that depend on root `node_modules`. |
-| Persistence shape changes | `bun run check:persistence-upgrade` | Required for local JSON, `localStorage`, app config migrations, and old-fixture upgrade behavior. |
-| PR-ready coverage | `bun run check:coverage` or `bun run verify` | Required before calling a change PR-ready, push-ready, mergeable, or release-ready. Not required for ordinary local handoff unless the user asks for PR-level proof or the changed surface is high-risk. |
-| Optional fast local check | `bun run quality:push` | Path-aware PR mode with coverage skipped by default; run manually when useful, not as a push-time blocker or substitute for PR-ready verification. |
-| PR-ready / push-ready / full validation handoff for code changes | `bun run verify` | Unified local entrypoint: `bun run verify` is equivalent to `bun run quality:pr`. Run it only when claiming PR-ready, push-ready, mergeable, or when the user explicitly asks for full validation. |
-| Live agent/provider confidence | `bun run quality:providers`, then `bun run quality:smoke --provider-model <provider:model[:label]>` | Quick live provider/proxy and desktop agent-browser smoke when provider access exists. |
-| High-risk pre-merge confidence | `bun run quality:gate --mode baseline --allow-live --provider-model <provider:model[:label]>` | Use for agent-loop, provider routing, model selection, tool execution, session resume, desktop chat, or other core Coding Agent paths. |
-| Release readiness | `bun run quality:gate --mode release --allow-live --provider-model <provider:model[:label]>` | Required before calling a release ready when provider credentials/quota are available. If blocked, report the exact live-provider blocker. |
-
-If `bun run verify` is intentionally run and fails, do not stop at reporting the failure. Read the latest quality report, identify the failed lane in the Result Matrix, open the lane log under `artifacts/quality-runs/<timestamp>/logs/<lane>.log`, fix the concrete issue, rerun the narrow check, then rerun `bun run verify` only when the user still wants PR-level validation.
+`bun run check:impact` selects all affected surfaces and is part of the normal handoff. Use `bun run check:coverage` or `bun run verify` for PR-level proof; use `quality:providers` and live `quality:gate` only with explicit maintainer authorization. If `verify` fails, inspect its latest Result Matrix and lane log, fix the concrete lane, rerun the narrow check, then rerun `verify`.
 
 ## Feature Quality Contract
 Every feature, bugfix, and behavior change must ship with proof that matches the changed surface. Treat this as the implementation contract for both human authors and AI coding agents.
@@ -138,29 +178,10 @@ Every feature, bugfix, and behavior change must ship with proof that matches the
 - For visible UI changes, validate with an actual browser/desktop smoke path when feasible and include screenshots or a short visual-evidence note in the handoff.
 
 ## Release Workflow
-- Desktop release versioning currently follows plain semver tags that exactly match `desktop/package.json`: `vX.Y.Z`. `desktop/package.json` is the Electron release version source of truth; `desktop/src-tauri/tauri.conf.json` may lag because Tauri packaging is legacy.
-- Do not use fork RC tags such as `vX.Y.Z-rc.N` unless the release tooling is updated first.
-- `scripts/release.ts`, release-note naming, and `.github/workflows/release-desktop.yml` expect plain `X.Y.Z` versions and publish non-prerelease GitHub Releases.
-- Desktop releases are built remotely by GitHub Actions from tags matching `v*.*.*`; do not upload local build artifacts as the release source of truth.
-- The release workflow `.github/workflows/release-desktop.yml` validates that the tag matches `desktop/package.json`, loads `release-notes/vX.Y.Z.md`, builds sidecars, packages the Electron desktop app across the matrix, uploads updater metadata, and only publishes the GitHub Release after all assets are uploaded.
-- GitHub Release body is sourced from `release-notes/vX.Y.Z.md` in the tagged commit. Keep the filename, app version in `desktop/package.json`, and tag aligned exactly.
-- Before cutting a release, commit the product/workflow changes that should ship in the release onto `main`. The release script creates a separate `release: vX.Y.Z` commit; it is not a substitute for committing the bugfix or feature work first.
-- Release notes must exist before the release script is run, for example `release-notes/v0.4.6.md`. Keep them user-facing and include install/update caveats when the release changes packaging, signing, updater behavior, or platform support.
-- Required local release runbook for `vX.Y.Z`:
-  1. Confirm the worktree is on `main` and only intended release changes are staged or committed: `git status --short`.
-  2. Create or update `release-notes/vX.Y.Z.md`.
-  3. Run `bun run scripts/release.ts X.Y.Z --dry` and verify the printed tag, version, and notes path.
-  4. Run the relevant local gates before tagging. At minimum for desktop/native/release changes: `bun run check:policy`, `bun run check:desktop`, and `bun run check:native`. Before calling the release ready, run `bun run verify`.
-  5. When live provider access exists, run `bun run quality:gate --mode release --allow-live --provider-model <provider:model[:label]>`. If no provider key/quota is available, run the non-live gates anyway and report the live-release blocker explicitly.
-  6. Run `bun run scripts/release.ts X.Y.Z` to update `desktop/package.json`, stage the release notes, create the `release: vX.Y.Z` commit, and create the annotated `vX.Y.Z` tag.
-  7. Push with `git push origin main --tags`.
-  8. Watch the `Release Desktop` workflow for the pushed tag. Do not announce the release until the workflow succeeds and `gh release view vX.Y.Z --json isDraft,url,assets` shows a public release with the expected macOS, Windows, Linux, and updater metadata assets.
-- Do not manually create or move a release tag unless recovering from a failed release with maintainer intent. The normal path is `bun run scripts/release.ts X.Y.Z`; if a tag must be repaired, document the old tag target, the new target, and why the repair is safe.
-- Non-draft desktop releases should have macOS signing and notarization secrets: `MACOS_CERTIFICATE`, `MACOS_CERTIFICATE_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID`. Missing macOS secrets produce unsigned fallback artifacts and must be called out before publishing.
-- Windows signing secrets, `WINDOWS_CERTIFICATE` and `WINDOWS_CERTIFICATE_PASSWORD`, are recommended but not currently release-blocking. Without them, Windows auto-update can still work, but users may see SmartScreen warnings.
-- Manual `workflow_dispatch` runs are for draft/testing builds by default. A draft run may be unsigned while signing setup is being tested; it must not be treated as the public update source.
-- For local macOS test packaging, `desktop/scripts/build-macos-arm64.sh` is the canonical Apple Silicon build entrypoint, with outputs under `desktop/build-artifacts/macos-arm64/`.
-- For Windows installer packaging, use `desktop/scripts/build-windows-x64.ps1` through `cd desktop && bun run build:windows-x64`; use `SKIP_INSTALL=1` only when dependencies are already installed, and `REBUILD_NATIVE=1` when Electron native dependencies such as `node-pty` need rebuilding.
+- Desktop releases use plain `vX.Y.Z` tags matching `desktop/package.json`; `release-notes/vX.Y.Z.md`, `scripts/release.ts`, and `.github/workflows/release-desktop.yml` must agree. Tauri config is legacy.
+- Before release: on `main`, create notes, run `bun run scripts/release.ts X.Y.Z --dry`, then `bun run check:policy`, affected desktop/native gates, and `bun run verify`.
+- The normal release command is `bun run scripts/release.ts X.Y.Z`; it creates the release commit and annotated tag. Do not move tags manually or upload local artifacts.
+- Push `git push origin main --tags`, wait for the release workflow, and verify the public release assets before announcing it. Report missing macOS signing/notarization secrets and unsigned Windows artifacts.
 
 ## Docs Workflow Notes
 - The docs workflow `.github/workflows/deploy-docs.yml` installs from `site/package-lock.json` with `npm --prefix site ci`, builds the React site with `npm --prefix site run build`, and uploads `site/dist`. Keep `site/package.json` and `site/package-lock.json` aligned.

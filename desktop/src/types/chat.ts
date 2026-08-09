@@ -42,6 +42,7 @@ export type AttachmentRef = {
   hunkId?: string
   note?: string
   quote?: string
+  selectionNumber?: number
 }
 
 export type PermissionUpdate =
@@ -75,6 +76,7 @@ export type UIAttachment = {
   hunkId?: string
   note?: string
   quote?: string
+  selectionNumber?: number
 }
 
 // ─── Server → Client ──────────────────────────────────────────────
@@ -82,10 +84,10 @@ export type UIAttachment = {
 export type ServerMessage =
   | { type: 'connected'; sessionId: string }
   | { type: 'session_state'; turnState: 'running' | 'idle' }
-  | { type: 'content_start'; blockType: 'text' | 'tool_use'; toolName?: string; toolUseId?: string; parentToolUseId?: string }
+  | { type: 'content_start'; blockType: 'text' | 'tool_use'; toolName?: string; toolUseId?: string; originalToolUseId?: string; parentToolUseId?: string }
   | { type: 'content_delta'; text?: string; toolInput?: string }
-  | { type: 'tool_use_complete'; toolName: string; toolUseId: string; input: unknown; parentToolUseId?: string }
-  | { type: 'tool_result'; toolUseId: string; content: unknown; isError: boolean; parentToolUseId?: string }
+  | { type: 'tool_use_complete'; toolName: string; toolUseId: string; originalToolUseId?: string; input: unknown; parentToolUseId?: string }
+  | { type: 'tool_result'; toolUseId: string; originalToolUseId?: string; content: unknown; isError: boolean; parentToolUseId?: string }
   | {
       type: 'permission_request'
       requestId: string
@@ -113,8 +115,15 @@ export type ServerMessage =
     }
   | { type: 'user_message_replay'; content: string }
   | { type: 'message_complete'; usage: TokenUsage }
-  | { type: 'thinking'; text: string }
+  /** `complete` marks a whole thinking block; without it `text` is a stream fragment. */
+  | { type: 'thinking'; text: string; complete?: boolean }
   | { type: 'status'; state: ChatState; verb?: string; attemptStart?: boolean }
+  | {
+      type: 'runtime_config_applied'
+      providerId: string | null
+      modelId: string
+      effortLevel?: string
+    }
   // CLI 回传的权限模式变化（如 ExitPlanMode 退出 plan 后恢复、Shift+Tab）。
   // 桌面端据此把选择器校正回 CLI 的真实权限，避免本地影子值漂移。
   | { type: 'permission_mode_changed'; mode: PermissionMode }
@@ -294,6 +303,7 @@ export type UIMessage =
       type: 'tool_use'
       toolName: string
       toolUseId: string
+      originalToolUseId?: string
       input: unknown
       timestamp: number
       parentToolUseId?: string
@@ -301,7 +311,7 @@ export type UIMessage =
       status?: 'stopped'
       partialInput?: string
     }
-  | { id: string; type: 'tool_result'; toolUseId: string; content: unknown; isError: boolean; timestamp: number; parentToolUseId?: string }
+  | { id: string; type: 'tool_result'; toolUseId: string; originalToolUseId?: string; content: unknown; isError: boolean; timestamp: number; parentToolUseId?: string }
   | { id: string; type: 'background_task'; task: BackgroundAgentTask; timestamp: number }
   | { id: string; type: 'system'; content: string; timestamp: number }
   | {

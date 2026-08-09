@@ -163,7 +163,46 @@ describe('persistent storage upgrade migrations', () => {
     expect(rewritten.providers?.[0]?.extraFutureField).toBe('keep-me')
   })
 
-  test('imports legacy root providers config into EchoFlow managed storage', async () => {
+  test('upgrades a version 2 provider fixture without inventing image credentials', async () => {
+    const ccHahaDir = path.join(tempDir, 'cc-haha')
+    await fs.mkdir(ccHahaDir, { recursive: true })
+    await fs.writeFile(
+      path.join(ccHahaDir, 'providers.json'),
+      JSON.stringify({
+        schemaVersion: 2,
+        activeId: 'provider-v2',
+        providers: [{
+          id: 'provider-v2',
+          presetId: 'custom',
+          name: 'Version 2 Provider',
+          apiKey: 'chat-token',
+          baseUrl: 'https://v2.example.test',
+          apiFormat: 'anthropic',
+          models: {
+            main: 'chat-model',
+            haiku: 'chat-model',
+            sonnet: 'chat-model',
+            opus: 'chat-model',
+          },
+          futureField: { preserved: true },
+        }],
+        providerOrder: ['provider-v2', 'claude-official', 'openai-official', 'grok-official'],
+      }, null, 2),
+      'utf-8',
+    )
+
+    const report = await ensurePersistentStorageUpgraded()
+
+    expect(report.failures).toEqual([])
+    const migrated = JSON.parse(
+      await fs.readFile(path.join(ccHahaDir, 'providers.json'), 'utf-8'),
+    ) as { schemaVersion: number; providers: Array<Record<string, unknown>> }
+    expect(migrated.schemaVersion).toBe(CURRENT_PROVIDER_INDEX_SCHEMA_VERSION)
+    expect(migrated.providers[0]?.imageGeneration).toBeUndefined()
+    expect(migrated.providers[0]?.futureField).toEqual({ preserved: true })
+  })
+
+  test('imports legacy root providers config into cc-haha storage without deleting the source', async () => {
     await fs.writeFile(
       path.join(tempDir, 'providers.json'),
       JSON.stringify({
@@ -403,13 +442,13 @@ describe('persistent storage upgrade migrations', () => {
     }
     expect(migrated.env?.ECHOFLOW_SEND_DISABLED_THINKING).toBeUndefined()
     expect(migrated.env?.ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES).toBe(
-      'thinking,effort,adaptive_thinking,max_effort',
+      'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
     )
     expect(migrated.env?.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe(
-      'thinking,effort,adaptive_thinking,max_effort',
+      'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
     )
     expect(migrated.env?.ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES).toBe(
-      'thinking,effort,adaptive_thinking,max_effort',
+      'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
     )
     expect(migrated.env?.USER_CUSTOM_ENV).toBe('keep-me')
 

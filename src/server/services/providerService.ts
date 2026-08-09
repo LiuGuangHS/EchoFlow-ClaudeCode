@@ -15,7 +15,7 @@ import { anthropicToOpenaiChat } from '../proxy/transform/anthropicToOpenaiChat.
 import { anthropicToOpenaiResponses } from '../proxy/transform/anthropicToOpenaiResponses.js'
 import { openaiChatToAnthropic } from '../proxy/transform/openaiChatToAnthropic.js'
 import { openaiResponsesToAnthropic } from '../proxy/transform/openaiResponsesToAnthropic.js'
-import type { AnthropicRequest, AnthropicResponse } from '../proxy/transform/types.js'
+import type { AnthropicRequest } from '../proxy/transform/types.js'
 import {
   OPENAI_OFFICIAL_PROVIDER,
   isOpenAIOfficialProviderId,
@@ -37,6 +37,7 @@ import {
   getManagedEnvKeys,
   getPresetAuthStrategy,
   getPresetDefaultEnv,
+  normalizeImageGeneration,
   normalizeModelMapping,
   normalizeProvidersIndex,
 } from './providerRuntimeEnv.js'
@@ -107,6 +108,7 @@ function mergeSavedOrderIntoDisplayOrder(providerOrder: string[], savedOrder: st
 }
 
 function buildSavedProvider(input: CreateProviderInput): SavedProvider {
+  const imageGeneration = normalizeImageGeneration(input.imageGeneration)
   return {
     id: crypto.randomUUID(),
     presetId: input.presetId,
@@ -122,6 +124,7 @@ function buildSavedProvider(input: CreateProviderInput): SavedProvider {
     ...(input.modelContextWindows !== undefined && { modelContextWindows: input.modelContextWindows }),
     toolSearchEnabled: input.toolSearchEnabled ?? true,
     ...(input.disableExperimentalBetas === true && { disableExperimentalBetas: true }),
+    ...(imageGeneration !== undefined && { imageGeneration }),
     ...(input.notes !== undefined && { notes: input.notes }),
   }
 }
@@ -278,6 +281,9 @@ export class ProviderService {
     if (idx === -1) throw ApiError.notFound(`Provider not found: ${id}`)
 
     const existing = index.providers[idx]
+    const imageGeneration = input.imageGeneration
+      ? normalizeImageGeneration(input.imageGeneration)
+      : input.imageGeneration
     const updated: SavedProvider = {
       ...existing,
       ...(input.name !== undefined && { name: input.name }),
@@ -292,6 +298,7 @@ export class ProviderService {
       ...(input.modelContextWindows !== undefined && input.modelContextWindows !== null && { modelContextWindows: input.modelContextWindows }),
       ...(input.toolSearchEnabled !== undefined && { toolSearchEnabled: input.toolSearchEnabled }),
       ...(input.disableExperimentalBetas === true && { disableExperimentalBetas: true }),
+      ...(imageGeneration !== undefined && imageGeneration !== null && { imageGeneration }),
       ...(input.notes !== undefined && { notes: input.notes }),
     }
     if (input.model1mSupport === null) {
@@ -305,6 +312,9 @@ export class ProviderService {
     }
     if (input.disableExperimentalBetas === false) {
       delete updated.disableExperimentalBetas
+    }
+    if (imageGeneration === null) {
+      delete updated.imageGeneration
     }
 
     index.providers[idx] = updated

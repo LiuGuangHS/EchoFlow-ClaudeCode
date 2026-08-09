@@ -1,14 +1,21 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { MenuItemConstructorOptions } from 'electron'
 import { ELECTRON_EVENT_CHANNELS } from '../ipc/channels'
-import { buildApplicationMenuTemplate, installApplicationMenu } from './menu'
+import {
+  buildApplicationMenuTemplate,
+  buildRendererContextMenuTemplate,
+  installApplicationMenu,
+  installRendererContextMenu,
+} from './menu'
 
 const menuMocksKey = '__electronMenuMocks'
 const trayMocksKey = '__electronTrayMocks'
 
 function createElectronMenuMocks() {
+  const popup = vi.fn()
   return {
-    buildFromTemplate: vi.fn((template: unknown) => ({ template })),
+    buildFromTemplate: vi.fn((template: unknown) => ({ template, popup })),
+    popup,
     setApplicationMenu: vi.fn(),
   }
 }
@@ -49,6 +56,37 @@ function getElectronTrayMocks() {
   return created
 }
 
+function rendererContextMenuParams({
+  isEditable = false,
+  selectionText = '',
+  editFlags = {},
+}: {
+  isEditable?: boolean
+  selectionText?: string
+  editFlags?: Partial<{
+    canUndo: boolean
+    canRedo: boolean
+    canCut: boolean
+    canCopy: boolean
+    canPaste: boolean
+    canSelectAll: boolean
+  }>
+} = {}) {
+  return {
+    isEditable,
+    selectionText,
+    editFlags: {
+      canUndo: false,
+      canRedo: false,
+      canCut: false,
+      canCopy: false,
+      canPaste: false,
+      canSelectAll: false,
+      ...editFlags,
+    },
+  }
+}
+
 vi.mock('electron', () => {
   return {
     Menu: {
@@ -73,7 +111,71 @@ describe('Electron application menu service', () => {
   afterEach(() => {
     const mocks = getElectronMenuMocks()
     mocks.buildFromTemplate.mockClear()
+    mocks.popup.mockClear()
     mocks.setApplicationMenu.mockClear()
+  })
+
+  it('offers native Copy for selected renderer text', () => {
+    expect(buildRendererContextMenuTemplate(rendererContextMenuParams({
+      selectionText: 'selected reply',
+      editFlags: { canCopy: true },
+    }))).toEqual([
+      { role: 'copy', enabled: true },
+    ])
+  })
+
+  it('offers native editing actions for editable renderer fields', () => {
+    const template = buildRendererContextMenuTemplate(rendererContextMenuParams({
+      isEditable: true,
+      selectionText: 'draft',
+      editFlags: {
+        canUndo: true,
+        canCut: true,
+        canCopy: true,
+        canPaste: true,
+        canSelectAll: true,
+      },
+    }))
+
+    expect(template.map(item => item.role ?? item.type)).toEqual([
+      'undo',
+      'redo',
+      'separator',
+      'cut',
+      'copy',
+      'paste',
+      'separator',
+      'selectAll',
+    ])
+    expect(template.find(item => item.role === 'redo')?.enabled).toBe(false)
+  })
+
+  it('opens the renderer context menu only when native actions are available', async () => {
+    const menuMocks = getElectronMenuMocks()
+    let contextMenuHandler: ((event: unknown, params: ReturnType<typeof rendererContextMenuParams>) => void) | undefined
+    const window = {
+      isDestroyed: () => false,
+      webContents: {
+        on: vi.fn((event: string, handler: typeof contextMenuHandler) => {
+          if (event === 'context-menu') contextMenuHandler = handler
+        }),
+      },
+    }
+
+    await installRendererContextMenu(window as never)
+
+    expect(window.webContents.on).toHaveBeenCalledWith('context-menu', expect.any(Function))
+    contextMenuHandler?.({}, rendererContextMenuParams())
+    expect(menuMocks.buildFromTemplate).not.toHaveBeenCalled()
+
+    contextMenuHandler?.({}, rendererContextMenuParams({
+      selectionText: 'selected reply',
+      editFlags: { canCopy: true },
+    }))
+    expect(menuMocks.buildFromTemplate).toHaveBeenCalledWith([
+      { role: 'copy', enabled: true },
+    ])
+    expect(menuMocks.popup).toHaveBeenCalledWith({ window })
   })
 
   it('emits native navigation destinations from macOS app menu items', () => {
@@ -167,9 +269,9 @@ describe('Electron application menu service', () => {
     )
 
     expect(menuMocks.buildFromTemplate).toHaveBeenCalledTimes(1)
-    expect(menuMocks.setApplicationMenu).toHaveBeenCalledWith({
+    expect(menuMocks.setApplicationMenu).toHaveBeenCalledWith(expect.objectContaining({
       template: menuMocks.buildFromTemplate.mock.calls[0]?.[0],
-    })
+    }))
 
     const template = menuMocks.buildFromTemplate.mock.calls[0]?.[0] as MenuItemConstructorOptions[]
     const settingsItem = template
@@ -209,9 +311,9 @@ describe('Electron application menu service', () => {
     )
 
     expect(menuMocks.buildFromTemplate).toHaveBeenCalledTimes(1)
-    expect(menuMocks.setApplicationMenu).toHaveBeenCalledWith({
+    expect(menuMocks.setApplicationMenu).toHaveBeenCalledWith(expect.objectContaining({
       template: menuMocks.buildFromTemplate.mock.calls[0]?.[0],
-    })
+    }))
   })
 
   it('installs hide as a safe fullscreen-aware window hide before app hide', async () => {

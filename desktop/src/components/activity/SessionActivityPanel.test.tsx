@@ -52,6 +52,7 @@ vi.mock('../../i18n', () => ({
       'session.activity.status.inProgress': 'In progress',
       'session.activity.status.completed': 'Completed',
       'session.activity.status.running': 'Running',
+      'session.activity.status.stopping': 'Stopping',
       'session.activity.status.failed': 'Failed',
       'session.activity.status.stopped': 'Stopped',
       'session.activity.status.idle': 'Idle',
@@ -103,6 +104,42 @@ function model(overrides: Partial<SessionActivityModel> = {}): SessionActivityMo
 
 describe('SessionActivityPanel', () => {
   afterEach(cleanup)
+
+  it('tints the row icon tile by status so a one-line row still states what happened', () => {
+    render(
+      <SessionActivityPanel
+        model={model({
+          sections: {
+            ...model().sections,
+            backgroundTasks: {
+              id: 'backgroundTasks',
+              title: 'Background Tasks',
+              emptyLabel: 'No background tasks',
+              rows: [
+                { id: 'bg-run', section: 'backgroundTasks', label: 'Vite dev server', status: 'running', taskId: 'bg-run', openable: false },
+                { id: 'bg-fail', section: 'backgroundTasks', label: 'pytest -q', status: 'failed', taskId: 'bg-fail', openable: false },
+              ],
+            },
+          },
+        })}
+        open
+        onClose={vi.fn()}
+        onOpenSubagent={vi.fn()}
+      />,
+    )
+
+    const tiles = screen.getAllByTestId('activity-row-icon')
+    const running = tiles.find((tile) => tile.getAttribute('data-tone-status') === 'running')
+    const failed = tiles.find((tile) => tile.getAttribute('data-tone-status') === 'failed')
+
+    // 30px matches AgentMascot, so SubAgent and background rows share a text column.
+    expect(running?.className).toContain('h-[30px]')
+    expect(running?.className).toContain('bg-[var(--color-brand-soft)]')
+    // Paired tokens, never a raw accent on its own container (AGENTS.md 3.2).
+    expect(running?.className).toContain('text-[var(--color-on-brand-soft)]')
+    expect(failed?.className).toContain('bg-[var(--color-error-container)]')
+    expect(failed?.className).toContain('text-[var(--color-on-error-container)]')
+  })
 
   it('renders populated tasks section without empty visible section labels', () => {
     render(
@@ -171,7 +208,9 @@ describe('SessionActivityPanel', () => {
     expect(screen.getByLabelText('Task in progress')).toHaveClass('motion-reduce:animate-none')
     expect(screen.getByLabelText('Task in progress')).toHaveClass('rounded-full')
     expect(screen.getByLabelText('Task in progress').querySelector('svg')).toBeNull()
-    expect(screen.getByText('Active task').closest('button,div')).toHaveClass('py-2.5')
+    // Dense row rhythm: the panel is an index of what is happening, so a row is
+    // a line, not a card. Pinned because it is easy to lose to a stray `py-2.5`.
+    expect(screen.getByText('Active task').closest('button,div')).toHaveClass('py-1.5')
     expect(screen.getByText('Finished task')).toHaveClass('line-through')
     expect(screen.queryByText('Completed')).not.toBeInTheDocument()
     expect(screen.queryByText('Pending')).not.toBeInTheDocument()
@@ -404,6 +443,41 @@ describe('SessionActivityPanel', () => {
     )
 
     expect(screen.queryByRole('button', { name: 'Stop background task Background reviewer' })).not.toBeInTheDocument()
+  })
+
+  it('stops SubAgent motion while a global stop request is settling', () => {
+    render(
+      <SessionActivityPanel
+        model={model({
+          sections: {
+            ...model().sections,
+            tasks: { id: 'tasks', title: 'Tasks', emptyLabel: 'No tasks', rows: [] },
+            subagents: {
+              id: 'subagents',
+              title: 'SubAgents',
+              emptyLabel: 'No SubAgents',
+              rows: [{
+                id: 'agent-task-1',
+                section: 'subagents',
+                label: 'Background reviewer',
+                status: 'running',
+                taskId: 'agent-task-1',
+                toolUseId: 'agent-tool-1',
+                openable: true,
+              }],
+            },
+          },
+        })}
+        open
+        onClose={vi.fn()}
+        onOpenSubagent={vi.fn()}
+        stoppingBackgroundTaskIds={{ 'agent-task-1': true }}
+      />,
+    )
+
+    expect(screen.getByText('Stopping')).toBeInTheDocument()
+    expect(screen.getByTestId('agent-mascot')).toHaveAttribute('data-agent-mascot-motion', 'still')
+    expect(screen.queryByTestId('agent-mascot-motion-ring')).not.toBeInTheDocument()
   })
 
   it('keeps SubAgent rows to name and status instead of result previews', () => {

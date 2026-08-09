@@ -1,6 +1,6 @@
 import { feature } from 'bun:bundle'
 import { open } from 'fs/promises'
-import { basename, dirname, join, sep } from 'path'
+import { basename, join, sep } from 'path'
 import type { ModelUsage } from 'src/entrypoints/agentSdkTypes.js'
 import type { Entry, TranscriptMessage } from '../types/logs.js'
 import { logForDebugging } from './debug.js'
@@ -454,6 +454,7 @@ async function processSessionFiles(
           sessionId: record.sessionId,
           requestId: record.requestId,
           messageId: (message.message as { id?: unknown } | undefined)?.id,
+          forkedFrom: record.forkedFrom,
         }
         if (!isBillableUsageRecord(identity)) return false
         const key = usageRecordKey(identity, suffix)

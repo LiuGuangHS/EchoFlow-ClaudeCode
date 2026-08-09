@@ -16,6 +16,8 @@ async function fixture(name: string): Promise<string> {
 type FetchStub = (url: string) => { status?: number; body: string; contentType?: string } | undefined
 
 let requestedUrls: string[] = []
+let originalEchoFlowDisableProvidersEnv: string | undefined
+let originalDisableProvidersEnv: string | undefined
 const originalFetch = globalThis.fetch
 
 function stubFetch(handler: FetchStub) {
@@ -35,6 +37,8 @@ beforeEach(() => {
   requestedUrls = []
   resetMarketCacheForTests()
   resetClawhubOwnerCacheForTests()
+  originalEchoFlowDisableProvidersEnv = process.env.ECHOFLOW_MARKET_DISABLE_PROVIDERS
+  originalDisableProvidersEnv = process.env.HAHA_MARKET_DISABLE_PROVIDERS
   delete process.env.ECHOFLOW_MARKET_DISABLE_PROVIDERS
   delete process.env.HAHA_MARKET_DISABLE_PROVIDERS
   delete process.env.ECHOFLOW_MARKET_BASE_CLAWHUB
@@ -43,8 +47,16 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = originalFetch
-  delete process.env.ECHOFLOW_MARKET_DISABLE_PROVIDERS
-  delete process.env.HAHA_MARKET_DISABLE_PROVIDERS
+  if (originalEchoFlowDisableProvidersEnv === undefined) {
+    delete process.env.ECHOFLOW_MARKET_DISABLE_PROVIDERS
+  } else {
+    process.env.ECHOFLOW_MARKET_DISABLE_PROVIDERS = originalEchoFlowDisableProvidersEnv
+  }
+  if (originalDisableProvidersEnv === undefined) {
+    delete process.env.HAHA_MARKET_DISABLE_PROVIDERS
+  } else {
+    process.env.HAHA_MARKET_DISABLE_PROVIDERS = originalDisableProvidersEnv
+  }
   delete process.env.ECHOFLOW_MARKET_BASE_CLAWHUB
   delete process.env.HAHA_MARKET_BASE_CLAWHUB
 })
