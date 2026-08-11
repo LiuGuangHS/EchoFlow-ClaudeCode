@@ -25,7 +25,7 @@ describe('Electron update smoke updater', () => {
       const service = new ElectronUpdaterService(updater!)
       const events: unknown[] = []
 
-      await expect(service.checkForUpdates()).resolves.toEqual({
+      await expect(service.checkForUpdates()).resolves.toMatchObject({
         version: '9.9.9-smoke',
         body: 'Smoke notes',
       })

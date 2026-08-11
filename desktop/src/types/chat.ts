@@ -144,6 +144,7 @@ export type ServerMessage =
   | { type: 'pong' }
   | { type: 'team_update'; teamName: string; members: TeamMemberStatus[] }
   | { type: 'team_created'; teamName: string }
+  | { type: 'team_workbench_updated'; teamName: string }
   | { type: 'team_deleted'; teamName: string }
   | { type: 'task_update'; taskId: string; status: string; progress?: string }
   | { type: 'session_title_updated'; sessionId: string; title: string }
@@ -295,7 +296,13 @@ export type TaskSummaryItem = {
 }
 
 export type UIMessage =
-  | { id: string; type: 'user_text'; content: string; modelContent?: string; transcriptMessageId?: string; timestamp: number; attachments?: UIAttachment[]; pending?: boolean; optimisticQueued?: boolean }
+  /**
+   * `teammateFrom` marks a turn that arrived from another agent rather than
+   * from the person at the keyboard. Without it a teammate's instruction and
+   * the user's own prompt render identically, which is what flattened the
+   * member transcript.
+   */
+  | { id: string; type: 'user_text'; content: string; modelContent?: string; transcriptMessageId?: string; timestamp: number; attachments?: UIAttachment[]; pending?: boolean; optimisticQueued?: boolean; teammateFrom?: string }
   | { id: string; type: 'assistant_text'; content: string; transcriptMessageId?: string; timestamp: number; model?: string }
   | { id: string; type: 'thinking'; content: string; timestamp: number }
   | {

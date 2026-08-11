@@ -26,6 +26,7 @@ function runRelease(cwd: string, args: string[]) {
 function makeReleaseRepo() {
   const root = mkdtempSync(join(tmpdir(), 'echoflow-release-test-'))
   mkdirSync(join(root, 'desktop'), { recursive: true })
+  mkdirSync(join(root, 'mobile'), { recursive: true })
   mkdirSync(join(root, 'release-notes'), { recursive: true })
   mkdirSync(join(root, 'scripts'), { recursive: true })
   copyFileSync(join(process.cwd(), 'scripts', 'release.ts'), join(root, 'scripts', 'release.ts'))

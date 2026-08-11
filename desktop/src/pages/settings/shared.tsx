@@ -28,10 +28,21 @@ export function SettingsCheckboxMark({ checked, disabled = false }: { checked: b
   )
 }
 
-export function isValidHttpProxyUrl(value: string) {
+const MAX_PROXY_URL_LENGTH = 2_048
+
+export function isValidHttpProxyUrl(value: string): boolean {
+  const trimmed = value.trim()
+  if (!trimmed || trimmed.length > MAX_PROXY_URL_LENGTH || /[\u0000-\u001f\u007f-\u009f]/.test(trimmed)) {
+    return false
+  }
+
   try {
-    const url = new URL(value)
-    return url.protocol === 'http:' || url.protocol === 'https:'
+    const url = new URL(trimmed)
+    return (url.protocol === 'http:' || url.protocol === 'https:')
+      && !!url.hostname
+      && !url.username
+      && !url.password
+      && (url.port === '' || (Number(url.port) >= 1 && Number(url.port) <= 65_535))
   } catch {
     return false
   }

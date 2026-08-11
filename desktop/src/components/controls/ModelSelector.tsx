@@ -10,6 +10,7 @@ import { useChatStore } from '../../stores/chatStore'
 import { useProviderStore } from '../../stores/providerStore'
 import { DRAFT_RUNTIME_SELECTION_KEY, useSessionRuntimeStore } from '../../stores/sessionRuntimeStore'
 import { useSettingsStore } from '../../stores/settingsStore'
+import type { SavedProvider } from '../../types/provider'
 import type { RuntimeSelection } from '../../types/runtime'
 import type { ModelInfo, ReasoningEffortLevel } from '../../types/settings'
 import { useDismissable } from '@/hooks/useDismissable'
@@ -31,10 +32,7 @@ import { SearchField } from '@/components/ui/SearchField'
 import { ReasoningEffortPopover } from './ReasoningEffortPopover'
 import { useUIStore } from '../../stores/uiStore'
 import { SETTINGS_TAB_ID, useTabStore } from '../../stores/tabStore'
-import {
-  isModelReasoningEffort,
-  resolveModelReasoningProfile,
-} from '../../../../src/shared/modelReasoning'
+import { resolveModelReasoningProfile } from '../../../../src/shared/modelReasoning'
 
 type ProviderChoice = {
   providerId: string | null

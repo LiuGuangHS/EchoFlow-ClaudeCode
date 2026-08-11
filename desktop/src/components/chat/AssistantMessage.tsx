@@ -21,7 +21,6 @@ type Props = {
   isStreaming?: boolean
   branchAction?: MessageBranchAction
   sessionId?: string
-  timestamp?: number
   /** This turn's real changed files (absolute), used to anchor output chips onto
    *  files that were actually written instead of guessing from the prose. */
   turnChangedFiles?: string[]
@@ -31,7 +30,7 @@ type Props = {
 
 const MAX_CARDS = 3
 
-export const AssistantMessage = memo(function AssistantMessage({ content, isStreaming, branchAction, sessionId, timestamp, turnChangedFiles, turnCompletion }: Props) {
+export const AssistantMessage = memo(function AssistantMessage({ content, isStreaming, branchAction, sessionId, turnChangedFiles, turnCompletion }: Props) {
   const t = useTranslation()
   const workDir = useWorkspacePanelStore((s) => (sessionId ? s.statusBySession[sessionId]?.workDir : undefined))
 
@@ -91,7 +90,7 @@ export const AssistantMessage = memo(function AssistantMessage({ content, isStre
   const showTurnCompletion = !isStreaming && Boolean(turnCompletion)
 
   return (
-    <div className="mb-5 flex justify-start">
+    <div className="flex justify-start">
       <div
         data-message-shell="assistant"
         data-layout={documentLayout ? 'document' : 'bubble'}
@@ -104,7 +103,12 @@ export const AssistantMessage = memo(function AssistantMessage({ content, isStre
       >
         <div
           onContextMenu={sessionId ? handleContextMenu : undefined}
-          className="w-full rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 text-[14.5px] text-[var(--color-text-primary)] shadow-[var(--shadow-card)]"
+          // No card. Left-aligned, full-column prose against the page is already
+          // unmistakably the reply — the hugged, tinted bubble on the right is
+          // what says who is speaking (see the note above), so a border here
+          // repeats that at the cost of ~50px per reply and makes prose look
+          // like the tool rows it sits between. The turn rail groups it now.
+          className="w-full text-[14.5px] text-[var(--color-text-primary)]"
         >
           <MarkdownRenderer
             content={content}
@@ -157,15 +161,26 @@ export const AssistantMessage = memo(function AssistantMessage({ content, isStre
 
         {showTurnCompletion ? <TurnCompletionStamp completion={turnCompletion!} /> : null}
 
-        <MessageActionBar
-          copyText={isStreaming ? undefined : content}
-          copyLabel={t('chat.copyReply')}
-          branchAction={branchAction}
-          align="start"
-          // The stamp above already carries this turn's end time; a hover chip
-          // repeating it a line below reads as two different times.
-          timestamp={showTurnCompletion ? undefined : timestamp}
-        />
+        {/*
+          Only the reply that closes a turn gets actions. A turn emits many
+          intermediate replies ("checking the lint spread now") and nobody copies
+          or forks from those — yet the bar reserved 36px on each one whether or
+          not it was hovered, which on a one-line reply outweighed the text.
+          Answers get copied when they are the answer, so it lands there and,
+          being rare now, stays visible instead of waiting for a hover.
+          Mid-turn text is still copyable by selecting it (SelectableChatMessage).
+        */}
+        {showTurnCompletion && (
+          <MessageActionBar
+            copyText={content}
+            copyLabel={t('chat.copyReply')}
+            branchAction={branchAction}
+            align="start"
+            alwaysVisible
+            // The stamp above already carries this turn's end time; a chip
+            // repeating it a line below reads as two different times.
+          />
+        )}
       </div>
     </div>
   )

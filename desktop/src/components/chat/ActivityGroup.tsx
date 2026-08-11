@@ -1,5 +1,5 @@
-import { Fragment, memo, useCallback, useMemo, useState } from 'react'
-import { CircleCheck, CircleX, LoaderCircle } from 'lucide-react'
+import { memo, useMemo, useState } from 'react'
+import { CircleX } from 'lucide-react'
 import { ToolCallBlock, formatDuration } from './ToolCallBlock'
 import { ThinkingBlock } from './ThinkingBlock'
 import {
@@ -8,7 +8,6 @@ import {
   buildActivitySegments,
   countFailedToolCalls,
   hasUnresolvedToolCalls,
-  THINKING_SEGMENT_KEY,
   toolCallDurationMs,
   type ActivityStep,
 } from './activityGroupModel'
@@ -25,16 +24,30 @@ type Props = {
   activeThinkingId?: string | null
   /** When true, the last step is still executing. */
   isStreaming?: boolean
+  /**
+   * This run is the tail of a turn that is still going, so more steps may land
+   * in it. Distinct from `isStreaming`: that one dips false in the gap between
+   * one tool resolving and the next starting, many times inside a single run.
+   */
+  isLive?: boolean
 }
 
 /**
- * One contiguous run of thinking + tool calls, rendered as a single collapsed
- * line instead of one card per step (#1177). Expanding reveals a left-ruled
- * timeline of borderless rows; only a row the reader opens gets its own card.
+ * One contiguous run of thinking + tool calls.
  *
- * A run holding exactly one tool call skips the summary header entirely: "Read 1
- * file" over a hidden `Read MessageList.tsx` row is strictly less information
- * than the row itself, so the row becomes the header.
+ * It plays open while it runs, so the reader can watch the work, then folds
+ * itself into a single counted line the moment it finishes: `thought 5 times,
+ * read 2 files, ran 1 command`. Standing rows open forever flattened the
+ * transcript — machinery took as much room as the sentences it produced, and
+ * nothing looked more important than anything else. A counted digest is small
+ * enough to skip and specific enough to be worth reading, which a vaguer
+ * "ran some commands" never was.
+ *
+ * Clicking pins the reader's choice: from then on that run stays as they left
+ * it, instead of snapping shut under them when the next step resolves.
+ *
+ * A run holding exactly one tool call never summarises: "Read 1 file" over a
+ * hidden `Read MessageList.tsx` row is strictly less than the row itself.
  */
 export const ActivityGroup = memo(function ActivityGroup({
   steps,
@@ -42,15 +55,13 @@ export const ActivityGroup = memo(function ActivityGroup({
   childToolCallsByParent,
   activeThinkingId,
   isStreaming,
+  isLive = false,
 }: Props) {
   const t = useTranslation()
-  const [expanded, setExpanded] = useState(false)
-  const toggle = useCallback(() => {
-    setExpanded((value) => !value)
-  }, [])
+  /** null = follow the run's own state; set = the reader decided. */
+  const [pinnedCollapsed, setPinnedCollapsed] = useState<boolean | null>(null)
 
   const toolCalls = useMemo(() => activityStepToolCalls(steps), [steps])
-  const segments = useMemo(() => buildActivitySegments(steps, t), [steps, t])
   const failedCount = countFailedToolCalls(toolCalls, resultMap, childToolCallsByParent)
   const hasActiveThinking = Boolean(activeThinkingId) && steps.some(
     (step) => step.kind === 'thinking' && step.message.id === activeThinkingId,
@@ -59,15 +70,19 @@ export const ActivityGroup = memo(function ActivityGroup({
     Boolean(isStreaming) ||
     hasActiveThinking ||
     hasUnresolvedToolCalls(toolCalls, resultMap, childToolCallsByParent)
+  // Keyed off "still being written to", never off "a tool is executing right
+  // now". The latter flickers: a run of six tools resolves and restarts six
+  // times, and folding on each gap made the whole block open and shut under the
+  // reader while they were trying to watch it.
+  const collapsed = pinnedCollapsed ?? !isLive
 
   const soleToolCall = steps.length === 1 && steps[0]?.kind === 'tool' ? steps[0].toolCall : null
   if (soleToolCall) {
     return (
-      <div className="mb-3">
+      <div>
         <div
           data-testid="activity-group"
           data-single-step="true"
-          className="rounded-[var(--radius-lg)] border border-[var(--color-border)] px-3.5 py-1.5"
         >
           <ActivityToolRow
             toolCall={soleToolCall}
@@ -79,95 +94,67 @@ export const ActivityGroup = memo(function ActivityGroup({
     )
   }
 
+  const segments = buildActivitySegments(steps, t)
   const elapsed = activityDurationMs(steps, resultMap)
   const durationLabel = !isRunning && typeof elapsed === 'number' ? formatDuration(elapsed) : ''
-  const headerText = segments.map((segment) => segment.label).join(' · ')
+  const summaryText = segments.map((segment) => segment.label).join(', ')
 
   return (
-    <div className="mb-3">
+    <div>
       <div
         data-testid="activity-group"
-        data-expanded={expanded ? 'true' : 'false'}
+        data-expanded={collapsed ? 'false' : 'true'}
         data-running={isRunning ? 'true' : 'false'}
-        className={`rounded-[var(--radius-lg)] border border-[var(--color-border)] transition-colors ${
-          expanded ? 'bg-[var(--color-surface-container-lowest)]' : 'bg-transparent'
-        }`}
+        className="rounded-[var(--radius-md)]"
       >
+        {/*
+          Deliberately a whisper: 12px, tertiary, no icons, commas rather than
+          middots. Its whole job is to be skippable — the prose above and below
+          it is the conversation, and anything with weight here competes with
+          that. The counts are what make it worth having at all.
+        */}
         <button
           type="button"
           data-chat-disclosure="true"
-          onClick={toggle}
-          aria-expanded={expanded}
-          title={headerText}
-          className="flex w-full items-center gap-2 rounded-[var(--radius-lg)] px-3.5 py-2 text-left text-[12.5px] text-[var(--color-text-tertiary)] transition-colors hover:text-[var(--color-text-primary)] focus:outline-none focus-visible:shadow-[var(--shadow-focus-ring)]"
+          onClick={() => setPinnedCollapsed(!collapsed)}
+          aria-expanded={!collapsed}
+          title={summaryText}
+          className="-mx-2 flex w-[calc(100%+1rem)] items-center gap-2 rounded-[var(--radius-md)] px-2 py-1 text-left text-[12px] leading-[1.6] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-secondary)] focus:outline-none focus-visible:shadow-[var(--shadow-focus-ring)]"
         >
-          <span className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
-            {segments.map((segment, index) => (
-              <Fragment key={segment.key}>
-                {index > 0 && (
-                  <span aria-hidden="true" className="shrink-0 text-[var(--color-text-tertiary)]">·</span>
-                )}
-                <span className="flex shrink-0 items-center gap-[6px] whitespace-nowrap">
-                  <segment.icon
-                    size={13}
-                    strokeWidth={1.8}
-                    className={hasActiveThinking && segment.key === THINKING_SEGMENT_KEY ? 'animate-pulse' : undefined}
-                    aria-hidden="true"
-                  />
-                  {segment.label}
-                </span>
-              </Fragment>
-            ))}
-          </span>
-
+          <span className="min-w-0 flex-1 truncate">{summaryText}</span>
           <span className="flex shrink-0 items-center gap-2">
             {failedCount > 0 && (
-              <span className="flex items-center gap-[5px] whitespace-nowrap text-[11.5px] font-medium text-[var(--color-error)]">
-                <CircleX size={13} strokeWidth={2} aria-hidden="true" />
+              <span className="flex items-center gap-[5px] whitespace-nowrap font-medium text-[var(--color-error)]">
+                <CircleX size={12} strokeWidth={2} aria-hidden="true" />
                 {t('toolGroup.failedCount', { count: failedCount })}
               </span>
             )}
-            {isRunning ? (
-              <LoaderCircle
-                size={14}
-                strokeWidth={2.4}
-                className="animate-spin text-[var(--color-brand)]"
-                aria-hidden="true"
-              />
-            ) : (
-              <CircleCheck size={14} strokeWidth={2} className="text-[var(--color-success)]" aria-hidden="true" />
-            )}
             {durationLabel && (
-              <span className="whitespace-nowrap font-mono text-[11.5px] tabular-nums">{durationLabel}</span>
+              <span className="whitespace-nowrap font-mono tabular-nums">{durationLabel}</span>
             )}
-            <span
-              aria-hidden="true"
-              className={`w-3 text-center text-[9px] transition-transform ${expanded ? 'rotate-180' : ''}`}
-            >
-              ▾
-            </span>
+            <span aria-hidden="true" className={`w-3 text-center text-[8px] ${collapsed ? '' : 'rotate-90'}`}>▸</span>
           </span>
         </button>
 
-        {expanded && (
-          <div className="px-3.5 pb-2.5 pt-0.5">
-            <div className="ml-1.5 flex flex-col border-l border-[var(--color-border)] pl-4">
-              {steps.map((step) => step.kind === 'thinking' ? (
-                <ThinkingBlock
-                  key={step.message.id}
-                  content={step.message.content}
-                  isActive={step.message.id === activeThinkingId}
-                  variant="row"
-                />
-              ) : (
-                <ActivityToolRow
-                  key={step.toolCall.id}
-                  toolCall={step.toolCall}
-                  resultMap={resultMap}
-                  childToolCallsByParent={childToolCallsByParent}
-                />
-              ))}
-            </div>
+        {/* Rows hang off the summary that names them, so they take the guide
+            line and its indent. That is also why they can afford it here and not
+            when there is no summary — nothing to hang from, nothing to indent. */}
+        {!collapsed && (
+          <div className="ml-[3px] flex flex-col border-l border-[var(--color-border)] pl-3">
+            {steps.map((step) => step.kind === 'thinking' ? (
+              <ThinkingBlock
+                key={step.message.id}
+                content={step.message.content}
+                isActive={step.message.id === activeThinkingId}
+              />
+            ) : (
+              <ActivityToolRow
+                key={step.toolCall.id}
+                toolCall={step.toolCall}
+                resultMap={resultMap}
+                childToolCallsByParent={childToolCallsByParent}
+              />
+            ))}
           </div>
         )}
       </div>

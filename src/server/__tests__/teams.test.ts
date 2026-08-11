@@ -6,7 +6,12 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import * as os from 'node:os'
-import { TeamService } from '../services/teamService.js'
+import * as crypto from 'node:crypto'
+import {
+  TeamService,
+  projectTeamWorkbenchesFromTranscript,
+} from '../services/teamService.js'
+import type { MessageEntry } from '../services/sessionService.js'
 import {
   captureSourceFingerprint,
   serializeSourceFingerprint,
@@ -52,6 +57,25 @@ async function writeTeamConfig(
   const configPath = path.join(teamDir, 'config.json')
   await fs.writeFile(configPath, JSON.stringify(config), 'utf-8')
   return configPath
+}
+
+async function writeTeamTask(
+  teamName: string,
+  task: Record<string, unknown>,
+): Promise<void> {
+  const taskDir = path.join(tmpDir, 'tasks', teamName)
+  await fs.mkdir(taskDir, { recursive: true })
+  await fs.writeFile(path.join(taskDir, `${task.id}.json`), JSON.stringify(task), 'utf8')
+}
+
+async function writeTeamInbox(
+  teamName: string,
+  recipient: string,
+  messages: Record<string, unknown>[],
+): Promise<void> {
+  const inboxDir = path.join(tmpDir, 'teams', teamName, 'inboxes')
+  await fs.mkdir(inboxDir, { recursive: true })
+  await fs.writeFile(path.join(inboxDir, `${recipient}.json`), JSON.stringify(messages), 'utf8')
 }
 
 /** Write a mock JSONL transcript file under projects. */
@@ -116,6 +140,35 @@ function makeTeamConfig(overrides?: Record<string, unknown>) {
       },
     ],
     ...overrides,
+  }
+}
+
+function transcriptToolUse(
+  id: string,
+  name: string,
+  input: Record<string, unknown>,
+  timestamp: string,
+): MessageEntry {
+  return {
+    id: `message-${id}`,
+    type: 'tool_use',
+    content: [{ type: 'tool_use', id, name, input }],
+    timestamp,
+    cwd: '/tmp/project',
+  }
+}
+
+function transcriptToolResult(
+  id: string,
+  toolUseResult: Record<string, unknown>,
+  timestamp: string,
+): MessageEntry {
+  return {
+    id: `result-${id}`,
+    type: 'tool_result',
+    content: [{ type: 'tool_result', tool_use_id: id, content: 'ok' }],
+    toolUseResult,
+    timestamp,
   }
 }
 
@@ -265,6 +318,170 @@ describe('TeamService', () => {
     expect(detail.members.some((member) => member.name === 'security-reviewer')).toBe(true)
   })
 
+  it('aggregates every resumed transcript fragment into one member conversation', async () => {
+    await writeTeamConfig('resumed-team', makeTeamConfig({
+      name: 'resumed-team',
+      leadSessionId: 'lead-session-resumed',
+      members: [{
+        agentId: 'security-reviewer@resumed-team',
+        name: 'security-reviewer',
+        agentType: 'security-reviewer',
+        joinedAt: 1700000000000,
+        cwd: '/tmp/project',
+        isActive: false,
+      }],
+    }))
+    const firstPath = await writeSubagentTranscriptFile(
+      '-tmp-project',
+      'lead-session-resumed',
+      'agent-a.jsonl',
+      [{
+        type: 'assistant',
+        agentName: 'security-reviewer',
+        uuid: 'first-fragment',
+        message: { role: 'assistant', content: 'first review' },
+        timestamp: '2026-01-01T00:00:01.000Z',
+      }],
+    )
+    const secondPath = await writeSubagentTranscriptFile(
+      '-tmp-project',
+      'lead-session-resumed',
+      'agent-b.jsonl',
+      [{
+        type: 'assistant',
+        agentName: 'security-reviewer',
+        uuid: 'second-fragment',
+        message: { role: 'assistant', content: 'second review' },
+        timestamp: '2026-01-01T00:00:02.000Z',
+      }],
+    )
+    await fs.utimes(firstPath, new Date(1_000), new Date(1_000))
+    await fs.utimes(secondPath, new Date(2_000), new Date(2_000))
+
+    const initial = await service.getMemberTranscriptPage(
+      'resumed-team',
+      'security-reviewer@resumed-team',
+    )
+
+    expect(initial.messages.map(message => message.id)).toEqual([
+      'first-fragment',
+      'second-fragment',
+    ])
+
+    await fs.appendFile(secondPath, `${JSON.stringify({
+      type: 'assistant',
+      agentName: 'security-reviewer',
+      uuid: 'continued-fragment',
+      message: { role: 'assistant', content: 'continued review' },
+      timestamp: '2026-01-01T00:00:03.000Z',
+    })}\n`)
+    const continued = await service.getMemberTranscriptPage(
+      'resumed-team',
+      'security-reviewer@resumed-team',
+      {
+        signature: initial.signature,
+        cursor: initial.cursor,
+        afterOrdinal: initial.afterOrdinal,
+      },
+    )
+
+    expect(continued.reset).toBeUndefined()
+    expect(continued.messages.map(message => message.id)).toEqual(['continued-fragment'])
+  })
+
+  it('carries structured tool results through the member transcript', async () => {
+    await writeTeamConfig('tool-result-team', makeTeamConfig({
+      name: 'tool-result-team',
+      leadSessionId: 'lead-session-tool-result',
+      members: [{
+        agentId: 'security-reviewer@tool-result-team',
+        name: 'security-reviewer',
+        agentType: 'security-reviewer',
+        joinedAt: 1700000000000,
+        cwd: '/tmp/project',
+        isActive: false,
+      }],
+    }))
+    await writeSubagentTranscriptFile(
+      '-tmp-project',
+      'lead-session-tool-result',
+      'agent-tools.jsonl',
+      [{
+        type: 'tool_result',
+        agentName: 'security-reviewer',
+        uuid: 'tool-result-message',
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: 'call-1', content: 'ok' }],
+        },
+        // The desktop transcript renders structured results from this field;
+        // dropping it degraded every member tool call to plain text.
+        toolUseResult: { questions: [{ question: 'Ship?' }], answers: { Ship: 'yes' } },
+        timestamp: '2026-01-01T00:00:01.000Z',
+      }],
+    )
+
+    const page = await service.getMemberTranscriptPage(
+      'tool-result-team',
+      'security-reviewer@tool-result-team',
+    )
+
+    expect(page.messages).toHaveLength(1)
+    expect(page.messages[0]!.toolUseResult).toEqual({
+      questions: [{ question: 'Ship?' }],
+      answers: { Ship: 'yes' },
+    })
+  })
+
+  it('does not identify a teammate transcript from another member prompt mention', async () => {
+    await writeTeamConfig('identity-team', makeTeamConfig({
+      name: 'identity-team',
+      leadSessionId: 'lead-session-identity',
+      members: [{
+        agentId: 'security-reviewer@identity-team',
+        name: 'security-reviewer',
+        agentType: 'security-reviewer',
+        joinedAt: 1700000000000,
+        cwd: '/tmp/project',
+        isActive: false,
+      }],
+    }))
+    await writeSubagentTranscriptFile(
+      '-tmp-project',
+      'lead-session-identity',
+      'agent-security.jsonl',
+      [{
+        type: 'assistant',
+        agentName: 'security-reviewer',
+        uuid: 'security-message',
+        message: { role: 'assistant', content: 'security review complete' },
+        timestamp: '2026-01-01T00:00:01.000Z',
+      }],
+    )
+    await writeSubagentTranscriptFile(
+      '-tmp-project',
+      'lead-session-identity',
+      'agent-docs.jsonl',
+      [{
+        type: 'assistant',
+        agentName: 'docs-coordinator',
+        uuid: 'docs-message',
+        message: {
+          role: 'assistant',
+          content: 'Summarize findings from "security-reviewer" and **security-reviewer**.',
+        },
+        timestamp: '2026-01-01T00:00:02.000Z',
+      }],
+    )
+
+    const page = await service.getMemberTranscriptPage(
+      'identity-team',
+      'security-reviewer@identity-team',
+    )
+
+    expect(page.messages.map((message) => message.id)).toEqual(['security-message'])
+  })
+
   it('should derive running status for active member', async () => {
     await writeTeamConfig('status-team', makeTeamConfig({ name: 'status-team' }))
 
@@ -279,6 +496,317 @@ describe('TeamService', () => {
     const detail = await service.getTeam('status-team')
     const worker = detail.members.find((m) => m.agentId === 'agent-worker')!
     expect(worker.status).toBe('idle')
+  })
+
+  it('joins team, task DAG, and mailbox history without collapsing legitimate repeats', async () => {
+    await writeTeamConfig('workbench-team', makeTeamConfig({
+      name: 'workbench-team',
+      leadSessionId: 'lead-session-workbench',
+      members: [
+        ...(makeTeamConfig().members as Array<Record<string, unknown>>),
+        {
+          agentId: 'reviewer@workbench-team',
+          name: 'reviewer',
+          agentType: 'reviewer',
+          joinedAt: 1700000002000,
+          tmuxPaneId: '%2',
+          cwd: '/tmp/project',
+          isActive: true,
+        },
+      ],
+    }))
+    await writeTeamTask('workbench-team', {
+      id: '1',
+      subject: 'Build server contract',
+      description: 'Join the CLI data sources',
+      owner: 'Worker Agent',
+      status: 'completed',
+      blocks: ['2'],
+      blockedBy: [],
+    })
+    await writeTeamTask('workbench-team', {
+      id: '2',
+      subject: 'Verify the desktop',
+      description: 'Exercise the complete workbench',
+      owner: 'reviewer',
+      status: 'in_progress',
+      blocks: [],
+      blockedBy: ['1'],
+    })
+    const repeated = {
+      from: 'Lead Agent',
+      text: 'Please review the dependency join',
+      timestamp: '2026-08-08T00:00:00.000Z',
+    }
+    await writeTeamInbox('workbench-team', 'Worker Agent', [
+      { ...repeated, id: 'broadcast-1' },
+      { ...repeated, id: 'direct-repeat-a' },
+      {
+        from: 'Bash',
+        text: 'Tool activity must not become a teammate',
+        timestamp: '2026-08-08T00:00:02.000Z',
+      },
+      {
+        from: 'Lead Agent',
+        text: 'Legacy broadcast remains readable',
+        timestamp: '2026-08-08T00:00:03.000Z',
+      },
+    ])
+    await writeTeamInbox('workbench-team', 'reviewer', [
+      { ...repeated, id: 'broadcast-1', timestamp: '2026-08-08T00:00:00.042Z' },
+      { ...repeated, id: 'direct-repeat-b', timestamp: '2026-08-08T00:00:00.043Z' },
+      {
+        from: 'Lead Agent',
+        text: JSON.stringify({ type: 'task_assignment', taskId: '2', subject: 'Verify the desktop' }),
+        timestamp: '2026-08-08T00:00:01.000Z',
+      },
+      {
+        from: 'Lead Agent',
+        text: 'Legacy broadcast remains readable',
+        timestamp: '2026-08-08T00:00:03.021Z',
+      },
+    ])
+
+    const snapshot = await service.getWorkbench('workbench-team')
+
+    expect(snapshot.team.leadSessionId).toBe('lead-session-workbench')
+    expect(snapshot.team.members.map((member) => member.name)).toEqual([
+      'Lead Agent',
+      'Worker Agent',
+      'reviewer',
+    ])
+    expect(snapshot.tasks.map((task) => ({ id: task.id, blockedBy: task.blockedBy }))).toEqual([
+      { id: '1', blockedBy: [] },
+      { id: '2', blockedBy: ['1'] },
+    ])
+    expect(snapshot.messages).toHaveLength(6)
+    expect(snapshot.messages[0]).toMatchObject({
+      kind: 'broadcast',
+      recipients: ['Worker Agent', 'reviewer'],
+    })
+    expect(snapshot.messages[1]).toMatchObject({
+      kind: 'direct',
+      recipients: ['Worker Agent'],
+    })
+    expect(snapshot.messages[2]).toMatchObject({
+      kind: 'direct',
+      recipients: ['reviewer'],
+    })
+    expect(snapshot.messages[3]).toMatchObject({
+      kind: 'system',
+      protocolType: 'task_assignment',
+      taskId: '2',
+      text: 'Verify the desktop',
+    })
+    expect(snapshot.messages[4]).toMatchObject({
+      kind: 'direct',
+      from: 'Bash',
+      recipients: ['Worker Agent'],
+    })
+    expect(snapshot.messages[5]).toMatchObject({
+      kind: 'broadcast',
+      text: 'Legacy broadcast remains readable',
+      recipients: ['Worker Agent', 'reviewer'],
+    })
+
+    const unchanged = await service.getWorkbench('workbench-team')
+    expect(unchanged.version).toBe(snapshot.version)
+  })
+
+  it('reopens an archived workbench by lead session after CLI team cleanup', async () => {
+    await writeTeamConfig('archived-team', makeTeamConfig({
+      name: 'archived-team',
+      leadSessionId: 'archived-lead-session',
+    }))
+    await writeTeamTask('archived-team', {
+      id: '1',
+      subject: 'Persist the final DAG',
+      description: 'Survive deletion of the transient CLI directories',
+      owner: 'Worker Agent',
+      status: 'completed',
+      blocks: [],
+      blockedBy: [],
+    })
+
+    const live = await service.getWorkbench('archived-team')
+    const archiveHash = crypto.createHash('sha256').update('archived-lead-session').digest('hex')
+    await fs.access(path.join(tmpDir, 'echoflow-code', 'agent-teams', `${archiveHash}.json`))
+    await expect(
+      fs.access(path.join(tmpDir, 'cc-haha', 'agent-teams', `${archiveHash}.json`)),
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    await fs.rm(path.join(tmpDir, 'teams', 'archived-team'), { recursive: true, force: true })
+    await fs.rm(path.join(tmpDir, 'tasks', 'archived-team'), { recursive: true, force: true })
+
+    const reopened = await service.getWorkbenchForSession('archived-lead-session')
+
+    expect(reopened).toMatchObject({
+      sessionId: 'archived-lead-session',
+      teamName: 'archived-team',
+      source: 'archive',
+    })
+    expect(reopened?.snapshots.at(-1)).toEqual(live)
+  })
+
+  it('opens an archived out-of-process teammate execution transcript with tool calls', async () => {
+    await writeTeamConfig('archived-execution-team', makeTeamConfig({
+      name: 'archived-execution-team',
+      leadSessionId: 'archived-execution-lead',
+      members: [{
+        agentId: 'reviewer@archived-execution-team',
+        name: 'reviewer',
+        agentType: 'security-reviewer',
+        joinedAt: 1700000001000,
+        cwd: '/tmp/project',
+        sessionId: 'reviewer-root-session',
+        isActive: false,
+      }],
+    }))
+    await writeTranscriptFile('-tmp-project', 'reviewer-root-session', [
+      {
+        type: 'assistant',
+        uuid: 'reviewer-tool-call',
+        teamName: 'archived-execution-team',
+        agentName: 'reviewer',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'tool_use', id: 'tool-1', name: 'Bash', input: { command: 'bun test' } }],
+        },
+        timestamp: '2026-08-08T00:00:01.000Z',
+      },
+      {
+        type: 'user',
+        uuid: 'reviewer-tool-result',
+        teamName: 'archived-execution-team',
+        agentName: 'reviewer',
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: '16 tests passed' }],
+        },
+        timestamp: '2026-08-08T00:00:02.000Z',
+      },
+    ])
+
+    await service.getWorkbench('archived-execution-team')
+    await fs.rm(path.join(tmpDir, 'teams', 'archived-execution-team'), { recursive: true, force: true })
+
+    const page = await service.getMemberTranscriptPage(
+      'archived-execution-team',
+      'reviewer@archived-execution-team',
+      { leadSessionId: 'archived-execution-lead' },
+    )
+
+    expect(page.messages.map((message) => message.id)).toEqual([
+      'reviewer-tool-call',
+      'reviewer-tool-result',
+    ])
+    expect(page.messages[0]?.content).toEqual([
+      { type: 'tool_use', id: 'tool-1', name: 'Bash', input: { command: 'bun test' } },
+    ])
+  })
+
+  it('does not match a reused team member name to another archived session', async () => {
+    await writeTeamConfig('reused-team', makeTeamConfig({
+      name: 'reused-team',
+      leadSessionId: 'reused-lead-session',
+      members: [{
+        agentId: 'reviewer@reused-team',
+        name: 'reviewer',
+        joinedAt: 1700000001000,
+        cwd: '/tmp/project',
+        isActive: false,
+      }],
+    }))
+    await writeTranscriptFile('-tmp-project', 'other-session', [{
+      type: 'assistant',
+      uuid: 'other-session-message',
+      teamName: 'reused-team',
+      agentName: 'reviewer',
+      message: { role: 'assistant', content: 'Unrelated run' },
+      timestamp: '2026-08-08T00:00:00.000Z',
+    }])
+    await service.getWorkbench('reused-team')
+    await fs.rm(path.join(tmpDir, 'teams', 'reused-team'), { recursive: true, force: true })
+
+    const page = await service.getMemberTranscriptPage(
+      'reused-team',
+      'reviewer@reused-team',
+      { leadSessionId: 'reused-lead-session' },
+    )
+
+    expect(page.messages).toEqual([])
+  })
+
+  it('reconstructs a completed multi-member DAG from an old session transcript', () => {
+    const messages: MessageEntry[] = [
+      transcriptToolUse('team-create', 'TeamCreate', {
+        team_name: 'legacy-team',
+        description: 'A durable legacy workbench',
+        agent_type: 'team-lead',
+      }, '2026-08-08T00:00:00.000Z'),
+      transcriptToolResult('team-create', {
+        team_name: 'legacy-team',
+        lead_agent_id: 'team-lead@legacy-team',
+      }, '2026-08-08T00:00:00.100Z'),
+      transcriptToolUse('spawn-reviewer', 'Agent', {
+        team_name: 'legacy-team',
+        name: 'reviewer',
+        subagent_type: 'security-reviewer',
+      }, '2026-08-08T00:00:01.000Z'),
+      transcriptToolResult('spawn-reviewer', {
+        agent_id: 'reviewer@legacy-team',
+        agent_type: 'security-reviewer',
+        model: 'deepseek-v4-flash',
+        color: 'blue',
+      }, '2026-08-08T00:00:01.100Z'),
+      transcriptToolUse('task-one', 'TaskCreate', {
+        subject: 'Audit the server',
+        description: 'Trace the contract',
+      }, '2026-08-08T00:00:02.000Z'),
+      transcriptToolResult('task-one', {
+        task: { id: '1', subject: 'Audit the server' },
+      }, '2026-08-08T00:00:02.100Z'),
+      transcriptToolUse('task-two', 'TaskCreate', {
+        subject: 'Verify the desktop',
+        description: 'Exercise archive reopen',
+      }, '2026-08-08T00:00:03.000Z'),
+      transcriptToolResult('task-two', {
+        task: { id: '2', subject: 'Verify the desktop' },
+      }, '2026-08-08T00:00:03.100Z'),
+      transcriptToolUse('task-link', 'TaskUpdate', {
+        taskId: '1',
+        owner: 'reviewer',
+        addBlocks: ['2'],
+      }, '2026-08-08T00:00:04.000Z'),
+      transcriptToolUse('task-list', 'TaskList', {}, '2026-08-08T00:00:05.000Z'),
+      transcriptToolResult('task-list', {
+        tasks: [
+          { id: '1', subject: 'Audit the server', owner: 'reviewer', status: 'completed' },
+          { id: '2', subject: 'Verify the desktop', owner: 'team-lead', status: 'completed' },
+        ],
+      }, '2026-08-08T00:00:05.100Z'),
+      transcriptToolUse('broadcast', 'SendMessage', {
+        to: '*',
+        type: 'broadcast',
+        content: 'Ship the archive',
+      }, '2026-08-08T00:00:06.000Z'),
+    ]
+
+    const snapshots = projectTeamWorkbenchesFromTranscript('legacy-session', messages)
+
+    expect(snapshots).toHaveLength(1)
+    expect(snapshots[0]).toMatchObject({
+      deletedAt: '2026-08-08T00:00:06.000Z',
+      team: {
+        name: 'legacy-team',
+        leadSessionId: 'legacy-session',
+        memberCount: 2,
+      },
+      tasks: [
+        { id: '1', status: 'completed', blocks: ['2'] },
+        { id: '2', status: 'completed', blockedBy: ['1'] },
+      ],
+      messages: [{ id: 'broadcast', kind: 'broadcast', text: 'Ship the archive' }],
+    })
   })
 
   it('should derive running status when isActive is undefined', async () => {
@@ -502,10 +1030,7 @@ describe('TeamService', () => {
       'middle',
       'last',
     ])
-    expect(raced.messages[1]?.content).toEqual({
-      role: 'user',
-      content: 'NEW-MIDDLE',
-    })
+    expect(raced.messages[1]?.content).toBe('NEW-MIDDLE')
   })
 
   it('keeps a stable indexed append incremental after post-read snapshot verification', async () => {
@@ -924,7 +1449,9 @@ describe('TeamService', () => {
     expect(messages).toHaveLength(2)
     expect(messages[0]!.type).toBe('user')
     expect(messages[0]!.id).toBe('msg-user-1')
+    expect(messages[0]!.content).toBe('Hello team')
     expect(messages[1]!.type).toBe('assistant')
+    expect(messages[1]!.content).toEqual([{ type: 'text', text: 'Hi! Ready to help.' }])
   })
 
   it('should return empty array when member has no sessionId', async () => {
@@ -1147,6 +1674,112 @@ describe('Teams API', () => {
     expect(body.leadAgentId).toBe('agent-lead')
     expect(body.leadSessionId).toBe('leader-session-id')
     expect(body.members).toHaveLength(2)
+  })
+
+  it('GET /api/teams/:name/workbench should return the joined DAG snapshot', async () => {
+    await writeTeamConfig(
+      'api-workbench',
+      makeTeamConfig({ name: 'api-workbench', leadSessionId: 'api-lead-session' }),
+    )
+    await writeTeamTask('api-workbench', {
+      id: '7',
+      subject: 'Verify workbench API',
+      description: 'Exercise the joined contract',
+      status: 'in_progress',
+      blocks: [],
+      blockedBy: [],
+    })
+
+    const res = await fetch(`${baseUrl}/api/teams/api-workbench/workbench`)
+    expect(res.status).toBe(200)
+
+    const body = (await res.json()) as {
+      version: string
+      team: { leadSessionId?: string }
+      tasks: Array<{ id: string; subject: string }>
+      messages: unknown[]
+    }
+    expect(body.version).toHaveLength(64)
+    expect(body.team.leadSessionId).toBe('api-lead-session')
+    expect(body.tasks).toEqual([expect.objectContaining({
+      id: '7',
+      subject: 'Verify workbench API',
+    })])
+    expect(body.messages).toEqual([])
+  })
+
+  it('GET /api/teams/session/:id/workbench should reopen a completed archive', async () => {
+    await writeTeamConfig('api-archive', makeTeamConfig({
+      name: 'api-archive',
+      leadSessionId: 'api-archive-session',
+    }))
+    const live = await fetch(`${baseUrl}/api/teams/api-archive/workbench`)
+    expect(live.status).toBe(200)
+    await fs.rm(path.join(tmpDir, 'teams', 'api-archive'), { recursive: true, force: true })
+
+    const response = await fetch(
+      `${baseUrl}/api/teams/session/api-archive-session/workbench`,
+    )
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as {
+      sessionId: string
+      teamName: string
+      source: string
+      snapshots: Array<{ team: { name: string } }>
+    }
+    expect(body).toMatchObject({
+      sessionId: 'api-archive-session',
+      teamName: 'api-archive',
+      source: 'archive',
+    })
+    expect(body.snapshots.at(-1)?.team.name).toBe('api-archive')
+  })
+
+  it('GET archived member transcript should use the lead session archive identity', async () => {
+    await writeTeamConfig('api-archive-member', makeTeamConfig({
+      name: 'api-archive-member',
+      leadSessionId: 'api-archive-member-lead',
+      members: [{
+        agentId: 'worker@api-archive-member',
+        name: 'worker',
+        agentType: 'worker',
+        joinedAt: 1700000001000,
+        cwd: '/tmp/project',
+        sessionId: 'worker-root-session',
+        isActive: false,
+      }],
+    }))
+    await writeTranscriptFile('-tmp-project', 'worker-root-session', [{
+      type: 'assistant',
+      uuid: 'worker-execution',
+      teamName: 'api-archive-member',
+      agentName: 'worker',
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: 'tool-1', name: 'Read', input: { file_path: 'src/index.ts' } }] },
+      timestamp: '2026-08-08T00:00:00.000Z',
+    }])
+    expect((await fetch(`${baseUrl}/api/teams/api-archive-member/workbench`)).status).toBe(200)
+    await fs.rm(path.join(tmpDir, 'teams', 'api-archive-member'), { recursive: true, force: true })
+
+    const response = await fetch(
+      `${baseUrl}/api/teams/api-archive-member/members/worker%40api-archive-member/transcript?incremental=true&leadSessionId=api-archive-member-lead`,
+    )
+    const body = (await response.json()) as { messages: Array<{ id: string }> }
+
+    expect(response.status).toBe(200)
+    expect(body.messages.map((message) => message.id)).toEqual(['worker-execution'])
+  })
+
+  it('rejects a transcript lead session path with a directory separator', async () => {
+    await writeTeamConfig('path-safe-team', makeTeamConfig({
+      name: 'path-safe-team',
+      leadSessionId: undefined,
+    }))
+
+    const response = await fetch(
+      `${baseUrl}/api/teams/path-safe-team/members/agent-lead/transcript?incremental=true&leadSessionId=..%2Foutside`,
+    )
+
+    expect(response.status).toBe(400)
   })
 
   it('GET /api/teams/:name should 404 for unknown team', async () => {

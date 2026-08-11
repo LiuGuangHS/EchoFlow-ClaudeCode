@@ -18,6 +18,7 @@ import {
   type RepositoryContextResult,
 } from '../../api/sessions'
 import { useTranslation } from '../../i18n'
+import { useUIStore } from '../../stores/uiStore'
 import { RecentProjectsPanel } from '@/components/composite/DirectoryPicker'
 import { useDismissable } from '@/hooks/useDismissable'
 import { useMobileViewport } from '../../hooks/useMobileViewport'
@@ -50,7 +51,8 @@ const VIEWPORT_GUTTER = 12
  * `root` lists directory, branch and the worktree modes; `directory` and
  * `branch` are its two drill-downs. The menu opens on `root` only when there
  * is a repo to describe — see `viewOnOpen`. `newBranch` is reached from the
- * branch list and returns to it.
+ * branch list; cancelling returns there, while success closes the menu so the
+ * newly selected branch is immediately visible in the pill.
  */
 type MenuView = 'directory' | 'root' | 'branch' | 'newBranch'
 
@@ -139,6 +141,7 @@ export function RepositoryLaunchControls({
   placement = 'outside',
 }: Props) {
   const t = useTranslation()
+  const addToast = useUIStore((state) => state.addToast)
   const isMobileBrowser = useMobileViewport() && !isDesktopRuntime()
   const isToolbar = placement === 'toolbar' && !isMobileBrowser
   const [context, setContext] = useState<RepositoryContextResult | null>(null)
@@ -363,9 +366,18 @@ export function RepositoryLaunchControls({
       setContext(result.context)
       setError(null)
       onBranchChange(result.branch)
-      setNewBranchName('')
-      setBranchFilter('')
-      setView('root')
+      addToast({
+        type: 'success',
+        message: t(
+          useWorktree
+            ? 'repoLaunch.newBranchSuccessIsolated'
+            : 'repoLaunch.newBranchSuccessCurrent',
+          { branch: result.branch },
+        ),
+      })
+      // Closing exposes the pill, which now names the branch selected for launch.
+      // Keeping the menu open made a successful create look like a no-op.
+      closeMenu()
     } catch (err) {
       if (latestWorkDirRef.current !== requestWorkDir) return
       const code = err instanceof Error && 'body' in err

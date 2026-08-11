@@ -10,6 +10,7 @@ import { TraceList } from '../../pages/TraceList'
 import { TraceSession } from '../../pages/TraceSession'
 import { SubagentRunPage } from '../../pages/SubagentRunPage'
 import { WorkbenchTab } from '../workbench/WorkbenchTab'
+import { AgentTeamsWorkbenchTab } from '../agentTeams/AgentTeamsWorkbenchTab'
 import { previewBridge } from '../../lib/previewBridge'
 import { returnToTraceList } from '../../lib/traceNavigation'
 
@@ -57,6 +58,11 @@ export function ContentRouter() {
     const workbenchTab = tabs.find((t) => t.sessionId === activeTabId)
     page = workbenchTab?.workbenchSessionId
       ? <WorkbenchTab tabId={activeTabId} sessionId={workbenchTab.workbenchSessionId} />
+      : <EmptySession />
+  } else if (activeTabType === 'team') {
+    const teamTab = tabs.find((t) => t.sessionId === activeTabId)
+    page = teamTab?.teamLeadSessionId
+      ? <AgentTeamsWorkbenchTab tabId={activeTabId} leadSessionId={teamTab.teamLeadSessionId} />
       : <EmptySession />
   } else if (activeTabType !== 'terminal') {
     page = <ActiveSession />

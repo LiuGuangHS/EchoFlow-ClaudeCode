@@ -2708,6 +2708,55 @@ async function ensureCliSessionStarted(
   }
 }
 
+export async function ensureCliSessionStartedForControl(
+  sessionId: string,
+  requestUrl: URL,
+): Promise<void> {
+  const pendingStartup = sessionStartupPromises.get(sessionId)
+  if (pendingStartup) {
+    await pendingStartup
+    return
+  }
+
+  if (conversationService.hasSession(sessionId)) return
+
+  const startupRuntimeVersion = runtimeOverrideVersions.get(sessionId) ?? 0
+  sessionStartupRuntimeVersions.set(sessionId, startupRuntimeVersion)
+
+  const startup = (async () => {
+    const workDir = await resolveSessionWorkDir(sessionId)
+    lastResolvedStartupWorkDirs.set(sessionId, workDir)
+    const runtimeSettings = await getRuntimeSettings(sessionId)
+    const protocol = requestUrl.protocol === 'https:' ? 'wss:' : 'ws:'
+    const authority = requestUrl.hostname === '0.0.0.0'
+      ? `127.0.0.1${requestUrl.port ? `:${requestUrl.port}` : ''}`
+      : requestUrl.host
+    const sdkUrl = new URL(
+      `${protocol}//${authority}/sdk/${encodeURIComponent(sessionId)}`,
+    )
+    sdkUrl.searchParams.set('token', crypto.randomUUID())
+
+    console.log(`[WS] Starting CLI for ${sessionId} due to agent_message`)
+    await conversationService.startSession(
+      sessionId,
+      workDir,
+      sdkUrl.toString(),
+      { ...runtimeSettings, resumeInterruptedTurn: false },
+    )
+    runtimeExitStoppedSessions.delete(sessionId)
+  })()
+
+  sessionStartupPromises.set(sessionId, startup)
+  try {
+    await startup
+  } finally {
+    if (sessionStartupPromises.get(sessionId) === startup) {
+      sessionStartupPromises.delete(sessionId)
+      sessionStartupRuntimeVersions.delete(sessionId)
+    }
+  }
+}
+
 export function translateCliMessage(cliMsg: any, sessionId: string): ServerMessage[] {
   const streamState = getStreamState(sessionId)
   switch (cliMsg.type) {

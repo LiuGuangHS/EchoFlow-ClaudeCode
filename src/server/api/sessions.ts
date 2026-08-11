@@ -8,6 +8,7 @@
  *   GET    /api/sessions/:id        — 获取会话详情
  *   GET    /api/sessions/:id/messages — 获取会话消息
  *   GET    /api/sessions/:id/subagents/by-tool/:toolUseId — 获取 SubAgent 运行详情
+ *   POST   /api/sessions/:id/subagents/by-tool/:toolUseId/messages — 继续与 SubAgent 对话
  *   GET    /api/sessions/:id/trace — 获取会话级模型调用 trace（body preview 裁剪后的列表视图）
  *   GET    /api/sessions/:id/trace/calls/:callId — 获取单次调用的完整 trace 记录
  *   GET    /api/sessions/:id/turn-checkpoints — 获取按轮次保留的 checkpoint 预览
@@ -22,7 +23,11 @@ import * as path from 'node:path'
 import { sessionService } from '../services/sessionService.js'
 import { conversationService } from '../services/conversationService.js'
 import { ApiError, errorResponse } from '../middleware/errorHandler.js'
-import { closeSessionConnection, getSlashCommands } from '../ws/handler.js'
+import {
+  closeSessionConnection,
+  ensureCliSessionStartedForControl,
+  getSlashCommands,
+} from '../ws/handler.js'
 import { listSkillSlashCommands, type SkillSlashCommand } from './skills.js'
 import { WorkspaceService } from '../services/workspaceService.js'
 import {
@@ -222,13 +227,21 @@ export async function handleSessionsApi(
     }
 
     if (subResource === 'subagents') {
-      if (req.method !== 'GET') {
-        return Response.json(
-          { error: 'METHOD_NOT_ALLOWED', message: `Method ${req.method} not allowed` },
-          { status: 405 }
+      const isRunRoute = segments[4] === 'by-tool' && Boolean(segments[5])
+      const isRunRead = isRunRoute && segments.length === 6 && req.method === 'GET'
+      const isRunMessage = isRunRoute && segments.length === 7 &&
+        segments[6] === 'messages' && req.method === 'POST'
+      if (!isRunRead && !isRunMessage) {
+        const isKnownRunResource = isRunRoute && (
+          segments.length === 6 ||
+          (segments.length === 7 && segments[6] === 'messages')
         )
-      }
-      if (segments[4] !== 'by-tool' || !segments[5] || segments.length !== 6) {
+        if (isKnownRunResource) {
+          return Response.json(
+            { error: 'METHOD_NOT_ALLOWED', message: `Method ${req.method} not allowed` },
+            { status: 405 },
+          )
+        }
         return Response.json(
           { error: 'NOT_FOUND', message: 'SubAgent route not found' },
           { status: 404 }
@@ -251,6 +264,26 @@ export async function handleSessionsApi(
       )
       if (!result) {
         throw ApiError.notFound(`SubAgent run not found: ${toolUseId}`)
+      }
+      if (isRunMessage) {
+        let body: { content?: unknown }
+        try {
+          body = await req.json() as { content?: unknown }
+        } catch {
+          throw ApiError.badRequest('Invalid JSON body')
+        }
+        const content = typeof body.content === 'string' ? body.content.trim() : ''
+        if (!content) throw ApiError.badRequest('content (string) is required in request body')
+        if (!result.agentId) {
+          throw ApiError.conflict(`SubAgent run has no resumable agent id: ${toolUseId}`)
+        }
+        await ensureCliSessionStartedForControl(sessionId, url)
+        const response = await conversationService.requestControl(sessionId, {
+          subtype: 'send_agent_message',
+          agent_id: result.agentId,
+          content,
+        })
+        return Response.json({ ok: true, ...response })
       }
       return Response.json(result)
     }

@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { wsManager } from '../api/websocket'
 import { sessionsApi } from '../api/sessions'
+import { subagentsApi } from '../api/subagents'
 import { useTeamStore } from './teamStore'
 import { useSessionStore } from './sessionStore'
 import { useCLITaskStore } from './cliTaskStore'
@@ -219,7 +220,7 @@ const DEFAULT_SESSION_STATE: PerSessionState = {
   queuedUserMessages: [],
 }
 
-function createDefaultSessionState(): PerSessionState {
+export function createDefaultSessionState(): PerSessionState {
   return {
     ...DEFAULT_SESSION_STATE,
     messages: [],
@@ -1485,7 +1486,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   sendMessage: (sessionId, content, attachments, options) => {
     const isMemberSession = !!useTeamStore.getState().getMemberBySessionId(sessionId)
-    const hideDisplayContent = !isMemberSession && options?.hideDisplayContent === true
+    const subagentTab = useTabStore.getState().tabs.find(
+      (tab) => tab.sessionId === sessionId && tab.type === 'subagent',
+    )
+    const isSubagentSession = Boolean(
+      subagentTab?.sourceSessionId && subagentTab.subagentToolUseId,
+    )
+    const isDirectAgentSession = isMemberSession || isSubagentSession
+    const hideDisplayContent = !isDirectAgentSession && options?.hideDisplayContent === true
     const userFacingContent =
       hideDisplayContent
         ? ''
@@ -1517,11 +1525,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       ? sessionTasks.map((t) => ({ id: t.id, subject: t.subject, status: t.status, activeForm: t.activeForm }))
       : []
 
-    if (!isMemberSession && allTasksDone) {
+    if (!isDirectAgentSession && allTasksDone) {
       void taskStore.resetCompletedTasks(sessionId)
     }
 
-    if (!isMemberSession) {
+    if (!isDirectAgentSession) {
       updateOptimisticSessionTitle(sessionId, userFacingContent || content.trim())
     }
 
@@ -1534,7 +1542,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       const newMessages = pendingAssistantText.trim()
         ? appendAssistantTextMessage(session.messages, pendingAssistantText, now)
         : [...session.messages]
-      if (!isMemberSession && allTasksDone) {
+      if (!isDirectAgentSession && allTasksDone) {
         newMessages.push({
           id: nextId(),
           type: 'task_summary',
@@ -1547,14 +1555,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         type: 'user_text',
         content: userFacingContent,
         ...(userFacingContent !== modelFacingContent ? { modelContent: modelFacingContent } : {}),
-        attachments: isMemberSession ? undefined : uiAttachments,
+        attachments: isDirectAgentSession ? undefined : uiAttachments,
         timestamp: now,
-        ...(isMemberSession ? { pending: true } : {}),
+        ...(isDirectAgentSession ? { pending: true } : {}),
       })
 
-      if (!isMemberSession && session.elapsedTimer) clearInterval(session.elapsedTimer)
+      if (!isDirectAgentSession && session.elapsedTimer) clearInterval(session.elapsedTimer)
 
-      const timer = !isMemberSession
+      const timer = !isDirectAgentSession
         ? setInterval(() => {
             set((st) => ({ sessions: updateSessionIn(st.sessions, sessionId, (sess) => ({ elapsedSeconds: sess.elapsedSeconds + 1 })) }))
           }, 1000)
@@ -1574,11 +1582,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             replaceHistoryOnCompletion: false,
             streamingText: '',
             streamingResponseChars: 0,
-            statusVerb: isMemberSession ? '' : randomSpinnerVerb(),
+            statusVerb: isDirectAgentSession ? '' : randomSpinnerVerb(),
             apiRetry: null,
             streamingFallback: null,
             elapsedTimer: timer,
-            connectionState: isMemberSession ? 'connected' : session.connectionState,
+            connectionState: isDirectAgentSession ? 'connected' : session.connectionState,
           },
         },
       }
@@ -1603,6 +1611,45 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             })),
           }))
         })
+      return
+    }
+
+    if (
+      isSubagentSession &&
+      subagentTab?.sourceSessionId &&
+      subagentTab.subagentToolUseId
+    ) {
+      void subagentsApi.sendMessage(
+        subagentTab.sourceSessionId,
+        subagentTab.subagentToolUseId,
+        userFacingContent,
+        subagentTab.subagentTaskId,
+      ).catch((err) => {
+        set((s) => ({
+          sessions: updateSessionIn(s.sessions, sessionId, (session) => {
+            const messages = [...session.messages]
+            for (let index = messages.length - 1; index >= 0; index -= 1) {
+              const message = messages[index]
+              if (
+                message?.type === 'user_text' &&
+                message.pending === true &&
+                message.content === userFacingContent
+              ) {
+                messages[index] = { ...message, pending: false }
+                break
+              }
+            }
+            messages.push({
+              id: nextId(),
+              type: 'error',
+              message: err instanceof Error ? err.message : String(err),
+              code: 'SUBAGENT_MESSAGE_FAILED',
+              timestamp: Date.now(),
+            })
+            return { chatState: 'idle', messages }
+          }),
+        }))
+      })
       return
     }
 
@@ -3165,6 +3212,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       case 'team_update':
         useTeamStore.getState().handleTeamUpdate(msg.teamName, msg.members)
         break
+      case 'team_workbench_updated':
+        useTeamStore.getState().handleTeamWorkbenchUpdated(msg.teamName)
+        break
       case 'team_deleted':
         useTeamStore.getState().handleTeamDeleted(msg.teamName)
         break
@@ -4163,8 +4213,14 @@ function buildAbortedHistoryLoadUpdate(
 
 const TEAMMATE_CONTENT_REGEX = /<teammate-message\s+teammate_id="([^"]+)"[^>]*>\n?([\s\S]*?)\n?<\/teammate-message>/g
 
-function extractVisibleTeammateMessageContents(text: string): string[] {
-  const contents: string[] = []
+export type VisibleTeammateMessage = { from: string; content: string }
+
+/**
+ * Teammate turns carry the sender in the tag; keeping it lets the transcript
+ * attribute the message instead of rendering it as an anonymous user turn.
+ */
+function extractVisibleTeammateMessages(text: string): VisibleTeammateMessage[] {
+  const messages: VisibleTeammateMessage[] = []
 
   for (const match of text.matchAll(TEAMMATE_CONTENT_REGEX)) {
     const content = match[2]?.trim()
@@ -4181,11 +4237,12 @@ function extractVisibleTeammateMessageContents(text: string): string[] {
       }
     }
 
-    contents.push(content)
+    messages.push({ from: match[1] ?? '', content })
   }
 
-  return contents
+  return messages
 }
+
 
 function pushAssistantHistoryText(
   messages: UIMessage[],
@@ -4848,13 +4905,15 @@ export function mapHistoryMessagesToUiMessages(
 
       if (isTeammateMessage(msg.content)) {
         if (!includeTeammateMessages) continue
-        const teammateContents = extractVisibleTeammateMessageContents(msg.content)
-        if (teammateContents.length === 0) continue
+        const teammateMessages = extractVisibleTeammateMessages(msg.content)
+        if (teammateMessages.length === 0) continue
+        const sender = teammateMessages[0]!.from
         uiMessages.push({
           id: msg.id || nextId(),
           type: 'user_text',
-          content: teammateContents.join('\n\n'),
+          content: teammateMessages.map((message) => message.content).join('\n\n'),
           ...(msg.id ? { transcriptMessageId: msg.id } : {}),
+          ...(sender ? { teammateFrom: sender } : {}),
           timestamp,
         })
         continue
@@ -4898,12 +4957,15 @@ export function mapHistoryMessagesToUiMessages(
       const modelTextParts: string[] = []
       const attachments: UIAttachment[] = []
       const imageSourcePaths: string[] = []
+      let teammateSender: string | undefined
       const hasImageBlock = (msg.content as UserHistoryBlock[]).some((block) => block.type === 'image')
       for (const [blockIndex, block] of (msg.content as UserHistoryBlock[]).entries()) {
         if (block.type === 'text' && block.text && isTeammateMessage(block.text)) {
           modelTextParts.push(block.text)
           if (!includeTeammateMessages) continue
-          visibleTextParts.push(...extractVisibleTeammateMessageContents(block.text))
+          const teammateMessages = extractVisibleTeammateMessages(block.text)
+          teammateSender ??= teammateMessages.find((message) => message.from)?.from
+          visibleTextParts.push(...teammateMessages.map((message) => message.content))
         } else if (block.type === 'text' && block.text) {
           modelTextParts.push(block.text)
           const imageSourcePath = hasImageBlock ? extractImageMetadataSourcePath(block.text) : undefined
@@ -4952,6 +5014,7 @@ export function mapHistoryMessagesToUiMessages(
           content: userContent,
           ...(msg.id ? { transcriptMessageId: msg.id } : {}),
           ...(modelContent ? { modelContent } : {}),
+          ...(teammateSender ? { teammateFrom: teammateSender } : {}),
           attachments: allAttachments.length > 0 ? allAttachments : undefined,
           timestamp,
         })

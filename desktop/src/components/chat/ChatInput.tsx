@@ -188,6 +188,9 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
     setPreparingTurn,
   } = useChatStore()
   const activeTabId = useTabStore((s) => s.activeTabId)
+  const activeTabType = useTabStore((s) =>
+    s.tabs.find((tab) => tab.sessionId === s.activeTabId)?.type,
+  )
   const sessionState = useChatStore((s) => activeTabId ? s.sessions[activeTabId] : undefined)
   const repositoryLaunchDraft = sessionState?.repositoryLaunchDraft
   const launchWorkDir = repositoryLaunchDraft?.workDir ?? ''
@@ -256,7 +259,7 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
     pasteGenerationRef.current += 1
   }, [])
 
-  const isMemberSession = !!memberInfo
+  const isMemberSession = !!memberInfo || activeTabType === 'subagent'
   const isActive = chatState !== 'idle'
   const hasRunningSubagents = hasRunningSubagentTasks(sessionState?.backgroundAgentTasks)
   const workspaceState = getSessionWorkspaceState(activeSession)

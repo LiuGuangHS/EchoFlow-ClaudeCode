@@ -59,60 +59,117 @@ describe('ActivityGroup', () => {
     timestamp: 2_000,
   })
 
-  it('collapses a thinking + tool run into one header instead of a card per step', () => {
+  it('plays open while live, then folds itself into a counted summary', () => {
     const steps: ActivityStep[] = [
-      thinkingStep('think-1', 'Locate the five call sites first, then patch each file.', 500),
+      thinkingStep('think-1', '- Locate the five call sites first.\nThen patch each file.', 500),
+      thinkingStep('think-2', 'Then check the retry path.', 800),
       { kind: 'tool', toolCall: readCall },
       { kind: 'tool', toolCall: bashCall },
     ]
+    const settled = resultsOf([
+      toolResult({ id: 'res-read', toolUseId: 'read-1', timestamp: 2_400 }),
+      toolResult({ id: 'res-bash', toolUseId: 'bash-1', timestamp: 5_700 }),
+    ])
 
+    const { rerender } = render(
+      <ActivityGroup steps={steps} resultMap={settled} childToolCallsByParent={new Map()} isLive />,
+    )
+    let group = screen.getByTestId('activity-group')
+    expect(group.getAttribute('data-expanded')).toBe('true')
+    expect(within(group).getByText('MessageList.tsx')).toBeTruthy()
+
+    // The turn moves on: rows fold away and the counted digest stands in for
+    // them, so finished machinery stops competing with the prose around it.
+    rerender(
+      <ActivityGroup steps={steps} resultMap={settled} childToolCallsByParent={new Map()} isLive={false} />,
+    )
+    group = screen.getByTestId('activity-group')
+    expect(group.getAttribute('data-expanded')).toBe('false')
+    expect(within(group).queryByText('MessageList.tsx')).toBeNull()
+
+    // Counted per family, thinking included — scale is the point of the line.
+    const summary = group.querySelector('[data-chat-disclosure="true"]')!
+    expect(summary.textContent).toContain('Thought 2 times')
+    expect(summary.textContent).toContain('Read 1 file')
+    expect(summary.textContent).toContain('ran a command')
+  })
+
+  it('stays open across the gaps between one tool resolving and the next starting', () => {
+    // The bug this pins: a live run folds and reopens on every step boundary,
+    // because "a tool is executing right now" goes false in each gap. Six tools
+    // meant six open/shut cycles under a reader trying to watch the work.
+    const steps: ActivityStep[] = [
+      { kind: 'tool', toolCall: readCall },
+      { kind: 'tool', toolCall: bashCall },
+    ]
+    const renderWith = (resultMap: ReturnType<typeof resultsOf>) => (
+      <ActivityGroup steps={steps} resultMap={resultMap} childToolCallsByParent={new Map()} isLive />
+    )
+
+    const { rerender } = render(renderWith(resultsOf([])))
+    expect(screen.getByTestId('activity-group').getAttribute('data-expanded')).toBe('true')
+
+    for (const resultMap of [
+      // Everything resolved — the lull the group used to collapse into.
+      resultsOf([
+        toolResult({ id: 'res-read', toolUseId: 'read-1', timestamp: 2_400 }),
+        toolResult({ id: 'res-bash', toolUseId: 'bash-1', timestamp: 5_700 }),
+      ]),
+      // The next step starts, and the cycle would have repeated.
+      resultsOf([toolResult({ id: 'res-read', toolUseId: 'read-1', timestamp: 2_400 })]),
+    ]) {
+      rerender(renderWith(resultMap))
+      expect(screen.getByTestId('activity-group').getAttribute('data-expanded')).toBe('true')
+    }
+  })
+
+  it('keeps the reader\'s choice once they open a settled run', () => {
+    const settled = {
+      steps: [
+        thinkingStep('think-1', 'Check the call sites.', 500),
+        { kind: 'tool' as const, toolCall: readCall },
+      ],
+      resultMap: resultsOf([toolResult({ id: 'res-read', toolUseId: 'read-1', timestamp: 2_400 })]),
+      childToolCallsByParent: new Map(),
+    }
+
+    const { rerender } = render(<ActivityGroup {...settled} />)
+    const group = screen.getByTestId('activity-group')
+    expect(group.getAttribute('data-expanded')).toBe('false')
+
+    fireEvent.click(group.querySelector('[data-chat-disclosure="true"]')!)
+    expect(screen.getByTestId('activity-group').getAttribute('data-expanded')).toBe('true')
+
+    // A later refresh must not snap it shut again under the reader.
+    rerender(<ActivityGroup {...settled} />)
+    expect(screen.getByTestId('activity-group').getAttribute('data-expanded')).toBe('true')
+
+    fireEvent.click(screen.getByTestId('activity-group').querySelector('[data-chat-disclosure="true"]')!)
+    expect(screen.getByTestId('activity-group').getAttribute('data-expanded')).toBe('false')
+  })
+
+  it('keeps each row openable for its own detail', () => {
     render(
       <ActivityGroup
-        steps={steps}
+        steps={[{ kind: 'tool', toolCall: bashCall }, { kind: 'tool', toolCall: readCall }]}
         resultMap={resultsOf([
-          toolResult({ id: 'res-read', toolUseId: 'read-1', timestamp: 2_400 }),
-          toolResult({ id: 'res-bash', toolUseId: 'bash-1', timestamp: 5_700 }),
+          toolResult({ id: 'res-bash', toolUseId: 'bash-1', content: 'ok', timestamp: 3_000 }),
+          toolResult({ id: 'res-read', toolUseId: 'read-1', timestamp: 1_400 }),
         ])}
         childToolCallsByParent={new Map()}
       />,
     )
 
-    const header = screen.getByRole('button', { expanded: false })
-    expect(header.textContent).toContain('Thinking')
-    expect(header.textContent).toContain('Read 1 file')
-    expect(header.textContent).toContain('ran a command')
-    // Whole-run wall clock: first step start (500) to last result (5700).
-    expect(header.textContent).toContain('5.2s')
-
-    // Nothing from the individual steps is on screen until the run is opened.
-    expect(screen.queryByText('MessageList.tsx')).toBeNull()
-    expect(screen.queryByText('bun run lint')).toBeNull()
-    expect(screen.queryByText(/Locate the five call sites/)).toBeNull()
-  })
-
-  it('reveals the thinking preview and one row per tool once expanded', () => {
-    const steps: ActivityStep[] = [
-      thinkingStep('think-1', '- Locate the five call sites first.\nThen patch each file.', 500),
-      { kind: 'tool', toolCall: readCall },
-      { kind: 'tool', toolCall: bashCall },
-    ]
-
-    render(
-      <ActivityGroup
-        steps={steps}
-        resultMap={resultsOf([toolResult({ id: 'res-read', toolUseId: 'read-1', timestamp: 2_400 })])}
-        childToolCallsByParent={new Map()}
-      />,
-    )
-
-    fireEvent.click(screen.getByRole('button', { expanded: false }))
-
     const group = screen.getByTestId('activity-group')
-    expect(group.getAttribute('data-expanded')).toBe('true')
-    // The bullet marker is stripped: a row is one line, not rendered markdown.
-    expect(within(group).getByText('Locate the five call sites first.')).toBeTruthy()
+    // Settled, so it starts folded; open the run before reaching for a row.
+    fireEvent.click(group.querySelector('[data-chat-disclosure="true"]')!)
+    expect(group.querySelectorAll('[data-tool-call-details]')).toHaveLength(0)
+
+    fireEvent.click(within(group).getByText('bun run lint'))
+
+    // Opening one row reveals that row's detail and leaves the others closed.
+    expect(group.querySelectorAll('[data-tool-call-details]')).toHaveLength(1)
     expect(within(group).getByText('MessageList.tsx')).toBeTruthy()
-    expect(within(group).getByText('bun run lint')).toBeTruthy()
   })
 
   it('makes a lone tool call its own header row rather than hiding it behind a summary', () => {
@@ -155,7 +212,7 @@ describe('ActivityGroup', () => {
     expect(screen.getByText(t('toolGroup.failedCount', { count: 1 }))).toBeTruthy()
   })
 
-  it('does not claim a duration while a step is still unresolved', () => {
+  it('reports the run as running while any step is still unresolved', () => {
     render(
       <ActivityGroup
         steps={[
@@ -167,8 +224,9 @@ describe('ActivityGroup', () => {
       />,
     )
 
-    const header = screen.getByRole('button', { expanded: false })
-    expect(header.textContent).not.toMatch(/\d+(\.\d+)?(ms|s)\b/)
+    // There is no whole-run duration to get wrong any more: each row times
+    // itself, so an unfinished step simply has no time yet rather than
+    // suppressing a total that covered finished steps too.
     expect(screen.getByTestId('activity-group').getAttribute('data-running')).toBe('true')
   })
 
@@ -209,7 +267,7 @@ describe('buildActivitySegments', () => {
     expect(segments.map((segment) => segment.label)).toEqual(['ran a command', 'Read 2 files'])
   })
 
-  it('places thinking where it happened and never counts it', () => {
+  it('places thinking where it happened and counts it like any other family', () => {
     const segments = buildActivitySegments(
       [
         { kind: 'tool', toolCall: toolCall({ id: 'a', toolUseId: 'a', toolName: 'Bash' }) },
@@ -219,15 +277,28 @@ describe('buildActivitySegments', () => {
       t,
     )
 
-    expect(segments.map((segment) => segment.label)).toEqual(['ran a command', 'Thinking'])
+    // Counted now that this line is all a settled run shows: going back and
+    // forth twice is a different run from going straight through, and that is
+    // exactly the kind of shape the summary exists to convey.
+    expect(segments.map((segment) => segment.label)).toEqual(['ran a command', 'Thought 2 times'])
   })
 
-  it('falls back to a named count for tools with no verb', () => {
+  it('leaves a single thought uncounted', () => {
+    const segments = buildActivitySegments([thinkingStep('t1', 'only once')], t)
+    expect(segments.map((segment) => segment.label)).toEqual(['Thinking'])
+  })
+
+  it('names a verbless tool rather than hiding it behind a generic count', () => {
     const segments = buildActivitySegments(
-      [{ kind: 'tool', toolCall: toolCall({ id: 'a', toolUseId: 'a', toolName: 'TaskUpdate' }) }],
+      [
+        { kind: 'tool', toolCall: toolCall({ id: 'a', toolUseId: 'a', toolName: 'TaskUpdate' }) },
+        { kind: 'tool', toolCall: toolCall({ id: 'b', toolUseId: 'b', toolName: 'SendMessage' }) },
+        { kind: 'tool', toolCall: toolCall({ id: 'c', toolUseId: 'c', toolName: 'SendMessage' }) },
+      ],
       t,
     )
 
-    expect(segments.map((segment) => segment.label)).toEqual(['TaskUpdate (1)'])
+    // Which tool ran is the point; a single call drops the redundant "(1)".
+    expect(segments.map((segment) => segment.label)).toEqual(['TaskUpdate', 'SendMessage (2)'])
   })
 })

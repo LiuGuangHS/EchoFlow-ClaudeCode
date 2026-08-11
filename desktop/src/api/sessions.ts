@@ -342,6 +342,22 @@ export type TurnCheckpointDiffResult = WorkspaceDiffResult & {
   workDir?: string
 }
 
+const gitInfoRequests = new Map<string, Promise<SessionGitInfo>>()
+
+function getSessionGitInfo(sessionId: string) {
+  const pending = gitInfoRequests.get(sessionId)
+  if (pending) return pending
+
+  const request = api.get<SessionGitInfo>(`/api/sessions/${sessionId}/git-info`)
+  const trackedRequest = request.finally(() => {
+    if (gitInfoRequests.get(sessionId) === trackedRequest) {
+      gitInfoRequests.delete(sessionId)
+    }
+  })
+  gitInfoRequests.set(sessionId, trackedRequest)
+  return trackedRequest
+}
+
 function buildWorkspacePath(
   sessionId: string,
   resource: 'status' | 'tree' | 'file' | 'diff',
@@ -419,9 +435,7 @@ export const sessionsApi = {
     return api.post<CreateRepositoryBranchResult>('/api/sessions/repository-branch', body)
   },
 
-  getGitInfo(sessionId: string) {
-    return api.get<SessionGitInfo>(`/api/sessions/${sessionId}/git-info`)
-  },
+  getGitInfo: getSessionGitInfo,
 
   getSlashCommands(sessionId: string) {
     return api.get<{ commands: SlashCommandOption[] }>(`/api/sessions/${sessionId}/slash-commands`)

@@ -13,6 +13,10 @@ const apiMocks = vi.hoisted(() => ({
   createRepositoryBranch: vi.fn(),
 }))
 
+const uiMocks = vi.hoisted(() => ({
+  addToast: vi.fn(),
+}))
+
 vi.mock('../../hooks/useMobileViewport', () => ({
   useMobileViewport: () => viewportMocks.isMobile,
 }))
@@ -27,6 +31,12 @@ vi.mock('../../api/sessions', () => ({
     getRepositoryContext: apiMocks.getRepositoryContext,
     createRepositoryBranch: apiMocks.createRepositoryBranch,
   },
+}))
+
+vi.mock('../../stores/uiStore', () => ({
+  useUIStore: (selector: (state: { addToast: typeof uiMocks.addToast }) => unknown) => (
+    selector({ addToast: uiMocks.addToast })
+  ),
 }))
 
 // Must match the component's own import specifier, or the mock silently does
@@ -68,6 +78,8 @@ vi.mock('../../i18n', () => ({
     'repoLaunch.newBranchNameLabel': 'Branch name',
     'repoLaunch.newBranchPlaceholder': 'feature/my-change',
     'repoLaunch.newBranchSubmit': 'Create',
+    'repoLaunch.newBranchSuccessCurrent': 'Created and selected “{branch}”. It will be checked out when the session starts.',
+    'repoLaunch.newBranchSuccessIsolated': 'Created and selected “{branch}”. An isolated worktree will be created from it when the session starts.',
     'repoLaunch.newBranchTitle': 'New branch',
     'repoLaunch.noBranch': 'No branch',
     'repoLaunch.noBranchMatch': 'No matching branches',
@@ -182,9 +194,16 @@ function renderControls(props: Partial<ComponentProps<typeof RepositoryLaunchCon
  * happens *after* a directory is picked needs the prop to actually come back
  * down changed.
  */
-function ControlledHarness({ initialWorkDir = '' }: { initialWorkDir?: string }) {
+function ControlledHarness({
+  initialWorkDir = '',
+  initialUseWorktree = false,
+}: {
+  initialWorkDir?: string
+  initialUseWorktree?: boolean
+}) {
   const [workDir, setWorkDir] = useState(initialWorkDir)
   const [branch, setBranch] = useState<string | null>(null)
+  const [useWorktree, setUseWorktree] = useState(initialUseWorktree)
 
   return (
     <RepositoryLaunchControls
@@ -192,8 +211,8 @@ function ControlledHarness({ initialWorkDir = '' }: { initialWorkDir?: string })
       onWorkDirChange={setWorkDir}
       branch={branch}
       onBranchChange={setBranch}
-      useWorktree={false}
-      onUseWorktreeChange={vi.fn()}
+      useWorktree={useWorktree}
+      onUseWorktreeChange={setUseWorktree}
     />
   )
 }
@@ -226,6 +245,7 @@ describe('RepositoryLaunchControls', () => {
     apiMocks.getRepositoryContext.mockReset()
     apiMocks.getRepositoryContext.mockResolvedValue(okRepositoryContext)
     apiMocks.createRepositoryBranch.mockReset()
+    uiMocks.addToast.mockReset()
     apiMocks.createRepositoryBranch.mockResolvedValue({
       branch: 'feature/new',
       baseRef: 'main',
@@ -536,15 +556,39 @@ describe('RepositoryLaunchControls', () => {
         })
       })
 
-      // The pill switches to the new branch, and the list it came back with is
-      // used as-is — re-reading the repository would be a second round trip.
-      expect(await screen.findByRole('button', { name: 'Location: cc-haha / feature/new' }))
-        .toBeInTheDocument()
+      // Success closes the menu so the selected branch is immediately visible
+      // on the pill instead of leaving the user inside an apparently unchanged
+      // menu. The returned list is adopted without a second request.
+      const pill = await screen.findByRole('button', { name: 'Location: cc-haha / feature/new' })
+      expect(screen.queryByRole('menu', { name: 'Location' })).not.toBeInTheDocument()
       expect(apiMocks.getRepositoryContext).toHaveBeenCalledTimes(1)
+      expect(uiMocks.addToast).toHaveBeenCalledWith({
+        type: 'success',
+        message: 'Created and selected “feature/new”. It will be checked out when the session starts.',
+      })
 
+      fireEvent.click(pill)
       fireEvent.click(await screen.findByRole('menuitem', { name: /Branch/ }))
       const listbox = await screen.findByRole('listbox', { name: 'Select branch' })
       expect(within(listbox).getByRole('option', { name: /feature\/new/ })).toBeInTheDocument()
+    })
+
+    it('explains that an isolated worktree starts from the new branch', async () => {
+      render(<ControlledHarness initialWorkDir="/repo" initialUseWorktree />)
+      const input = await openNewBranchForm()
+
+      fireEvent.change(input, { target: { value: 'feature/new' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Create' }))
+
+      await waitFor(() => {
+        expect(uiMocks.addToast).toHaveBeenCalledWith({
+          type: 'success',
+          message: 'Created and selected “feature/new”. An isolated worktree will be created from it when the session starts.',
+        })
+      })
+      expect(await screen.findByRole('button', { name: 'Location: cc-haha / feature/new' }))
+        .toBeInTheDocument()
+      expect(screen.getByText('Isolated')).toBeInTheDocument()
     })
 
     // Creating off `main` is also what `from: context.currentBranch` would do,

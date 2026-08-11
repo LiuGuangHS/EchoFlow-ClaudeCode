@@ -1,5 +1,10 @@
 import { api } from './client'
-import type { TeamSummary, TeamDetail } from '../types/team'
+import type {
+  TeamSummary,
+  TeamDetail,
+  TeamWorkbenchSnapshot,
+  TeamWorkbenchSessionTimeline,
+} from '../types/team'
 
 type TeamsResponse = { teams: TeamSummary[] }
 
@@ -10,6 +15,7 @@ type TranscriptMessage = {
   timestamp: string
   model?: string
   parentToolUseId?: string
+  toolUseResult?: unknown
 }
 
 type TranscriptResponse = {
@@ -24,6 +30,7 @@ type TranscriptOptions = {
   signature?: string
   cursor?: string
   afterOrdinal?: number
+  leadSessionId?: string
 }
 
 export type { TranscriptMessage }
@@ -37,6 +44,18 @@ export const teamsApi = {
     return api.get<TeamDetail>(`/api/teams/${encodeURIComponent(name)}`)
   },
 
+  getWorkbench(name: string) {
+    return api.get<TeamWorkbenchSnapshot>(
+      `/api/teams/${encodeURIComponent(name)}/workbench`,
+    )
+  },
+
+  getWorkbenchForSession(sessionId: string) {
+    return api.get<TeamWorkbenchSessionTimeline>(
+      `/api/teams/session/${encodeURIComponent(sessionId)}/workbench`,
+    )
+  },
+
   getMemberTranscript(
     teamName: string,
     agentId: string,
@@ -45,6 +64,7 @@ export const teamsApi = {
     const params = new URLSearchParams()
     if (options) {
       params.set('incremental', 'true')
+      if (options.leadSessionId) params.set('leadSessionId', options.leadSessionId)
       if (options.signature) params.set('signature', options.signature)
       if (options.cursor) params.set('cursor', options.cursor)
       if (options.afterOrdinal !== undefined) {

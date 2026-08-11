@@ -3,10 +3,12 @@ import '@testing-library/jest-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SubagentRunResponse } from '../api/subagents'
 import { useSettingsStore } from '../stores/settingsStore'
+import { setComposerText } from '../components/chat/composerTestUtils'
 
 vi.mock('../api/subagents', () => ({
   subagentsApi: {
     getRunByTool: vi.fn(),
+    sendMessage: vi.fn(),
   },
 }))
 
@@ -68,6 +70,7 @@ describe('SubagentRunPage', () => {
     cleanup()
     vi.useRealTimers()
     vi.mocked(subagentsApi.getRunByTool).mockReset()
+    vi.mocked(subagentsApi.sendMessage).mockReset()
   })
 
   it('returns to the parent session and closes its own tab via the back button', async () => {
@@ -104,6 +107,91 @@ describe('SubagentRunPage', () => {
     expect(transcript).toHaveTextContent('Read files')
     expect(transcript).toHaveTextContent('Finding')
     expect(transcript).not.toHaveTextContent('assistant_text')
+  })
+
+  it('hides the composer for a one-shot SubAgent and explains why', async () => {
+    vi.mocked(subagentsApi.getRunByTool).mockResolvedValue(subagentRun({ canSendMessage: false }))
+
+    render(<SubagentRunPage sourceSessionId="session-1" toolUseId="tool-1" title="Kuhn" />)
+
+    await screen.findByTestId('subagent-conversation')
+    expect(screen.getByTestId('subagent-readonly-note')).toHaveTextContent(
+      'This is the record of a one-shot subagent. It cannot be continued.',
+    )
+    expect(document.querySelector('[data-composer-editor]')).toBeNull()
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+  })
+
+  it('hides the composer when the server does not report an inbox at all', async () => {
+    const { canSendMessage: _omitted, ...withoutFlag } = subagentRun()
+    vi.mocked(subagentsApi.getRunByTool).mockResolvedValue(withoutFlag as SubagentRunResponse)
+
+    render(<SubagentRunPage sourceSessionId="session-1" toolUseId="tool-1" title="Kuhn" />)
+
+    await screen.findByTestId('subagent-conversation')
+    expect(screen.getByTestId('subagent-readonly-note')).toBeInTheDocument()
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+  })
+
+  it('continues a resumable agent from the shared conversation composer', async () => {
+    vi.mocked(subagentsApi.getRunByTool).mockResolvedValue(subagentRun({ canSendMessage: true }))
+    vi.mocked(subagentsApi.sendMessage).mockResolvedValue({
+      ok: true,
+      agent_id: 'abc123',
+      delivery: 'resumed',
+    })
+    useTabStore.getState().openTab('session-1', 'Parent session')
+    useTabStore.getState().openSubagentTab('session-1', 'tool-1', 'Kuhn', 'agent-1')
+
+    render(
+      <SubagentRunPage
+        sourceSessionId="session-1"
+        toolUseId="tool-1"
+        taskId="agent-1"
+        title="Kuhn"
+      />,
+    )
+
+    await screen.findByTestId('subagent-conversation')
+    expect(screen.queryByTestId('subagent-readonly-note')).not.toBeInTheDocument()
+    setComposerText('Review the new regression test.', 31)
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' })
+
+    await waitFor(() => {
+      expect(subagentsApi.sendMessage).toHaveBeenCalledWith(
+        'session-1',
+        'tool-1',
+        'Review the new regression test.',
+        'agent-1',
+      )
+    })
+  })
+
+  it('keeps a failed continuation visible after the transcript refreshes', async () => {
+    vi.mocked(subagentsApi.getRunByTool).mockResolvedValue(subagentRun({ canSendMessage: true }))
+    vi.mocked(subagentsApi.sendMessage).mockRejectedValue(new Error('Agent transcript is unavailable'))
+    useTabStore.getState().openTab('session-1', 'Parent session')
+    useTabStore.getState().openSubagentTab('session-1', 'tool-1', 'Kuhn', 'agent-1')
+
+    render(
+      <SubagentRunPage
+        sourceSessionId="session-1"
+        toolUseId="tool-1"
+        taskId="agent-1"
+        title="Kuhn"
+      />,
+    )
+
+    await screen.findByTestId('subagent-conversation')
+    setComposerText('Continue the review.', 20)
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' })
+    expect(await screen.findByText('Agent transcript is unavailable')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh SubAgent run' }))
+    await waitFor(() => expect(subagentsApi.getRunByTool).toHaveBeenCalledTimes(2))
+    expect(screen.getByText('Continue the review.')).toBeInTheDocument()
+    expect(screen.getByText('Agent transcript is unavailable')).toBeInTheDocument()
+    expect(screen.queryByText('Thinking...')).not.toBeInTheDocument()
   })
 
   it('renders a loading state while the run is loading', () => {
@@ -260,7 +348,9 @@ describe('SubagentRunPage', () => {
 
     render(<SubagentRunPage sourceSessionId="session-1" toolUseId="tool-1" title="SubAgent" />)
 
-    fireEvent.click(await screen.findByRole('button', { name: /ran a command.*found files/i }))
+    // A running run plays open, so its rows are already there — no need to
+    // unfold the summary first, and clicking it here would fold them away.
+    expect(await screen.findByTestId('activity-group')).toHaveAttribute('data-expanded', 'true')
     fireEvent.click(screen.getByRole('button', { name: /Bash.*pwd/i }))
     expect(document.querySelector('[data-shell-output]')).toHaveTextContent('/workspace')
 

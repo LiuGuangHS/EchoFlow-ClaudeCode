@@ -19,7 +19,7 @@ import { isPlaceholderSessionTitle } from '../../lib/sessionTitle'
 import { useWorkspacePanelStore } from '../../stores/workspacePanelStore'
 import { useTerminalPanelStore } from '../../stores/terminalPanelStore'
 import { useCLITaskStore } from '../../stores/cliTaskStore'
-import { useTeamStore } from '../../stores/teamStore'
+import { isAgentTeamsWorkbenchOpen as isAgentTeamsWorkbenchOpenFor, useTeamStore } from '../../stores/teamStore'
 import { StatusDot } from '@/components/ui/Badge'
 import { IconButton } from '@/components/ui/IconButton'
 import { useDismissable } from '@/hooks/useDismissable'
@@ -131,7 +131,10 @@ export function TabBar() {
   const workbenchMode = useWorkspacePanelStore((state) =>
     activeTabId && isActiveSessionTab ? state.getMode(activeTabId) : 'workspace',
   )
-  const isWorkspacePanelOpen = isWorkbenchOpen && workbenchMode === 'workspace'
+  const isAgentTeamsWorkbenchOpen = useTeamStore((state) =>
+    isAgentTeamsWorkbenchOpenFor(state, activeTabId),
+  )
+  const isWorkspacePanelOpen = !isAgentTeamsWorkbenchOpen && isWorkbenchOpen && workbenchMode === 'workspace'
   const isTerminalPanelOpen = useTerminalPanelStore((state) =>
     activeTabId && isActiveSessionTab ? state.isPanelOpen(activeTabId) : false,
   )
@@ -147,15 +150,6 @@ export function TabBar() {
     () => new Set(dismissedBackgroundTaskKeyList),
     [dismissedBackgroundTaskKeyList],
   )
-  const activityTeamMembers = useTeamStore(useShallow((state) => {
-    const activeTeam = state.activeTeam
-    if (!activeTabId || !activeTeam || activeTeam.leadSessionId !== activeTabId) {
-      return []
-    }
-    return activeTeam.members.filter((member) =>
-      !activeTeam.leadAgentId || member.agentId !== activeTeam.leadAgentId
-    )
-  }))
   const activityState = useChatStore(useShallow((state) => {
     if (!activeTabId || !isActiveSessionTab) {
       return { hasVisibleActivity: false }
@@ -172,13 +166,15 @@ export function TabBar() {
       backgroundTasks: Object.values(sessionState?.backgroundAgentTasks ?? {}),
       dismissedBackgroundTaskKeys,
       agentNotifications: Object.values(sessionState?.agentTaskNotifications ?? {}),
-      teamMembers: activityTeamMembers,
     })
     return {
       hasVisibleActivity: hasVisibleSessionActivity(model),
     }
   }))
-  const showActivityButton = activeTabId && activityState.hasVisibleActivity && !isWorkbenchOpen
+  const showActivityButton = activeTabId &&
+    activityState.hasVisibleActivity &&
+    !isWorkbenchOpen &&
+    !isAgentTeamsWorkbenchOpen
 
   const moveTab = useTabStore((s) => s.moveTab)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -597,6 +593,10 @@ export function TabBar() {
         {isDesktopRuntime && isActiveSessionTab && (
           <OpenProjectMenu path={openProjectPath} />
         )}
+        {/* No team toggle here: AgentTeamsStrip in the session header is the
+            entry point, and it carries the team name, roster and progress that
+            a bare icon cannot. Both render under exactly the same condition,
+            so a second toggle was only ever a duplicate. */}
         <IconButton
           icon={<SquareTerminal size={17} strokeWidth={1.9} />}
           label={t('tabs.openTerminal')}
@@ -621,6 +621,7 @@ export function TabBar() {
               if (workbench.isPanelOpen(activeTabId) && workbench.getMode(activeTabId) === 'workspace') {
                 workbench.closePanel(activeTabId)
               } else {
+                useTeamStore.getState().setWorkbenchOpen(activeTabId, false)
                 workbench.setMode(activeTabId, 'workspace')
                 workbench.openPanel(activeTabId)
               }

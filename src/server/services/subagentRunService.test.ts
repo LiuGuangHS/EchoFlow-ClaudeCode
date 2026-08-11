@@ -4,6 +4,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import {
   getSubagentRunByTool,
+  mergeTeammateTranscriptFragments,
   resolveSubagentRunFromMessages,
   truncateSubagentMessages,
 } from './subagentRunService.js'
@@ -46,6 +47,48 @@ async function writeSubagentTranscriptFile(
   await fs.writeFile(
     path.join(dir, `${normalizedAgentId}.jsonl`),
     `${entries.map((entry) => JSON.stringify(entry)).join('\n')}\n`,
+    'utf-8',
+  )
+}
+
+async function writeSubagentMetadata(
+  projectDir: string,
+  sessionId: string,
+  agentId: string,
+  agentType: string,
+  modifiedAt: number,
+): Promise<void> {
+  if (!tmpDir) throw new Error('tmpDir not initialized')
+  const dir = path.join(tmpDir, 'projects', projectDir, sessionId, 'subagents')
+  const normalizedAgentId = agentId.startsWith('agent-') ? agentId : `agent-${agentId}`
+  const transcriptPath = path.join(dir, `${normalizedAgentId}.jsonl`)
+  await fs.writeFile(
+    path.join(dir, `${normalizedAgentId}.meta.json`),
+    JSON.stringify({ agentType }),
+    'utf-8',
+  )
+  const modifiedDate = new Date(modifiedAt)
+  await fs.utimes(transcriptPath, modifiedDate, modifiedDate)
+}
+
+/**
+ * The sidecar the CLI writes before an agent's query loop starts. Unlike
+ * {@link writeSubagentMetadata} it carries the spawning tool_use id, which is
+ * what lets a live run be resolved before any result exists.
+ */
+async function writeSubagentLaunchMetadata(
+  projectDir: string,
+  sessionId: string,
+  agentId: string,
+  metadata: { agentType: string; toolUseId?: string; description?: string },
+): Promise<void> {
+  if (!tmpDir) throw new Error('tmpDir not initialized')
+  const dir = path.join(tmpDir, 'projects', projectDir, sessionId, 'subagents')
+  await fs.mkdir(dir, { recursive: true })
+  const normalizedAgentId = agentId.startsWith('agent-') ? agentId : `agent-${agentId}`
+  await fs.writeFile(
+    path.join(dir, `${normalizedAgentId}.meta.json`),
+    JSON.stringify(metadata),
     'utf-8',
   )
 }
@@ -121,6 +164,25 @@ function makeTaskNotificationEntry(
 }
 
 describe('subagentRunService helpers', () => {
+  it('deduplicates copied transcript history by upstream id while retaining legitimate repeated messages', () => {
+    const repeated = (id: string): MessageEntry => ({
+      id,
+      type: 'assistant',
+      content: 'same reply',
+      timestamp: '2026-01-01T00:00:02.000Z',
+    })
+    const copied = repeated('shared-message-id')
+
+    expect(mergeTeammateTranscriptFragments([
+      { messages: [copied, repeated('legitimate-repeat-1')] },
+      { messages: [{ ...copied }, repeated('legitimate-repeat-2')] },
+    ])).toEqual([
+      copied,
+      repeated('legitimate-repeat-1'),
+      repeated('legitimate-repeat-2'),
+    ])
+  })
+
   it('resolves agentId, description, and prompt from parent Agent messages by toolUseId', () => {
     const messages = [
       {
@@ -309,6 +371,7 @@ describe('getSubagentRunByTool', () => {
       taskId: agentId,
       status: 'running',
       source: 'subagent-jsonl',
+      canSendMessage: false,
     })
     expect(result?.messages).toHaveLength(3)
     expect(result?.messages[1]).toMatchObject({
@@ -319,6 +382,116 @@ describe('getSubagentRunByTool', () => {
       type: 'tool_result',
       content: [{ type: 'tool_result', tool_use_id: 'subagent-tool-1' }],
     })
+  })
+
+  it('streams a running one-shot SubAgent transcript resolved from launch metadata alone', async () => {
+    await setupTmpConfigDir()
+    const sessionId = 'dddddddd-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const projectDir = '-tmp-subagent-run'
+    const toolUseId = 'call_00_live'
+    const agentId = 'a46d5bd4ae656c8d5'
+
+    // A synchronously dispatched agent that is still running: the parent has
+    // only the tool_use, so there is no result text to mine an agent id from
+    // and no background task id for the client to pass in.
+    await writeSessionFile(projectDir, sessionId, [
+      makeAgentToolUseEntry(toolUseId),
+    ])
+    await writeSubagentLaunchMetadata(projectDir, sessionId, agentId, {
+      agentType: 'general-purpose',
+      description: 'Explore repo',
+      toolUseId,
+    })
+    await writeSubagentTranscriptFile(projectDir, sessionId, agentId, [
+      {
+        type: 'user',
+        message: { role: 'user', content: 'Read the source' },
+        uuid: 'subagent-user',
+        timestamp: '2026-01-01T00:00:02.000Z',
+      },
+      {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [{
+            type: 'tool_use',
+            id: 'subagent-tool-1',
+            name: 'Bash',
+            input: { command: 'git log --oneline -5' },
+          }],
+        },
+        uuid: 'subagent-assistant-tool',
+        timestamp: '2026-01-01T00:00:03.000Z',
+      },
+    ])
+
+    const result = await getSubagentRunByTool(sessionId, toolUseId)
+
+    expect(result).toMatchObject({
+      sessionId,
+      toolUseId,
+      agentId,
+      status: 'running',
+      source: 'subagent-jsonl',
+      // Still running, but synchronously dispatched: the parent turn is
+      // waiting on its result, so there is no inbox to send into.
+      canSendMessage: false,
+    })
+    expect(result?.messages).toHaveLength(2)
+    expect(result?.messages[1]).toMatchObject({
+      type: 'tool_use',
+      content: [{ type: 'tool_use', id: 'subagent-tool-1', name: 'Bash' }],
+    })
+  })
+
+  it('resolves the agent id from launch metadata even before the transcript has entries', async () => {
+    await setupTmpConfigDir()
+    const sessionId = 'cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const projectDir = '-tmp-subagent-run'
+    const toolUseId = 'call_00_cold'
+    const agentId = 'b91f2c3d4e5a6b7c8'
+
+    await writeSessionFile(projectDir, sessionId, [
+      makeAgentToolUseEntry(toolUseId),
+    ])
+    await writeSubagentLaunchMetadata(projectDir, sessionId, agentId, {
+      agentType: 'general-purpose',
+      toolUseId,
+    })
+
+    const result = await getSubagentRunByTool(sessionId, toolUseId)
+
+    expect(result).toMatchObject({ agentId, status: 'running' })
+    expect(result?.messages).toHaveLength(0)
+  })
+
+  it('ignores launch metadata written for a different tool call', async () => {
+    await setupTmpConfigDir()
+    const sessionId = 'bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const projectDir = '-tmp-subagent-run'
+    const toolUseId = 'call_00_mine'
+    const otherAgentId = 'f00dcafe12345678a'
+
+    await writeSessionFile(projectDir, sessionId, [
+      makeAgentToolUseEntry(toolUseId),
+    ])
+    await writeSubagentLaunchMetadata(projectDir, sessionId, otherAgentId, {
+      agentType: 'general-purpose',
+      toolUseId: 'call_99_someone_else',
+    })
+    await writeSubagentTranscriptFile(projectDir, sessionId, otherAgentId, [
+      {
+        type: 'user',
+        message: { role: 'user', content: 'Not for this card' },
+        uuid: 'other-subagent-user',
+        timestamp: '2026-01-01T00:00:02.000Z',
+      },
+    ])
+
+    const result = await getSubagentRunByTool(sessionId, toolUseId)
+
+    expect(result?.agentId).toBeNull()
+    expect(result?.messages).toHaveLength(0)
   })
 
   it('uses the terminal notification task id when a one-shot result omits agentId', async () => {
@@ -365,6 +538,60 @@ describe('getSubagentRunByTool', () => {
     expect(result?.messages).toHaveLength(2)
   })
 
+  it('aggregates resumed named teammate fragments and returns the latest resumable transcript id', async () => {
+    await setupTmpConfigDir()
+    const sessionId = '11111111-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const projectDir = '-tmp-subagent-run'
+    const toolUseId = 'tool-team-1'
+    await writeSessionFile(projectDir, sessionId, [
+      makeAgentToolUseEntry(toolUseId),
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [{
+            type: 'tool_result',
+            tool_use_id: toolUseId,
+            content: [{
+              type: 'text',
+              text: 'Spawned successfully.\nagent_id: id-worker-a@workbench-id-0808\nname: id-worker-a\nteam_name: workbench-id-0808',
+            }],
+          }],
+        },
+        uuid: 'team-agent-result',
+        timestamp: '2026-01-01T00:00:02.000Z',
+      },
+    ])
+    await writeSubagentTranscriptFile(projectDir, sessionId, 'older123', [{
+      type: 'assistant',
+      message: { role: 'assistant', content: 'First teammate turn' },
+      uuid: 'older-message',
+      timestamp: '2026-01-01T00:00:03.000Z',
+    }])
+    await writeSubagentMetadata(projectDir, sessionId, 'older123', 'id-worker-a', 1_000)
+    await writeSubagentTranscriptFile(projectDir, sessionId, 'latest456', [{
+      type: 'assistant',
+      message: { role: 'assistant', content: 'Resumed teammate turn' },
+      uuid: 'latest-message',
+      timestamp: '2026-01-01T00:00:04.000Z',
+    }])
+    await writeSubagentMetadata(projectDir, sessionId, 'latest456', 'id-worker-a', 2_000)
+
+    const result = await getSubagentRunByTool(sessionId, toolUseId)
+
+    expect(result).toMatchObject({
+      agentId: 'latest456',
+      status: 'completed',
+      source: 'subagent-jsonl',
+      // A named teammate keeps its mailbox after a turn ends.
+      canSendMessage: true,
+    })
+    expect(result?.messages.map((message) => message.content)).toEqual([
+      'First teammate turn',
+      'Resumed teammate turn',
+    ])
+  })
+
   it('keeps an async launch acknowledgement running until a terminal notification arrives', async () => {
     await setupTmpConfigDir()
     const sessionId = 'abababab-bbbb-cccc-dddd-eeeeeeeeeeee'
@@ -396,6 +623,8 @@ describe('getSubagentRunByTool', () => {
       taskId: agentId,
       status: 'running',
       source: 'live-task',
+      // An in-flight background agent has a live inbox: a follow-up queues.
+      canSendMessage: true,
     })
   })
 

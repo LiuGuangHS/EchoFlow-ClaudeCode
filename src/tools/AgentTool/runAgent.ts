@@ -95,6 +95,36 @@ export function resolveSubagentEffortValue(
   return agentEffort ?? parentEffort
 }
 
+export function resolvePersistedAgentType(
+  persistedAgentType: string | undefined,
+  runtimeAgentType: string,
+): string {
+  return persistedAgentType?.trim() || runtimeAgentType
+}
+
+export function selectInitialTranscriptMessages(
+  messages: Message[],
+  alreadyPersistedMessageCount: number | undefined,
+): {
+  messages: Message[]
+  startingParentUuid: UUID | null | undefined
+} {
+  if (alreadyPersistedMessageCount === undefined) {
+    return { messages, startingParentUuid: undefined }
+  }
+
+  const boundary = Math.min(
+    messages.length,
+    Math.max(0, Math.trunc(alreadyPersistedMessageCount)),
+  )
+  return {
+    messages: messages.slice(boundary),
+    startingParentUuid: boundary > 0
+      ? messages[boundary - 1]?.uuid ?? null
+      : undefined,
+  }
+}
+
 /**
  * Initialize agent-specific MCP servers
  * Agents can define their own MCP servers in their frontmatter that are additive
@@ -279,6 +309,8 @@ export async function* runAgent({
   worktreePath,
   description,
   spawningToolUseId,
+  persistedAgentType,
+  alreadyPersistedMessageCount,
   transcriptSubdir,
   onQueryProgress,
 }: {
@@ -336,6 +368,15 @@ export async function* runAgent({
    * metadata so resume can re-attach to the original Agent card instead of
    * the resuming tool's own call. */
   spawningToolUseId?: string
+  /** Stable upstream identity for a resumed agent. A named teammate may use
+   * the general-purpose runtime definition after its original definition is
+   * no longer active, but its transcript metadata must keep the teammate name
+   * so the desktop can continue joining the same conversation. */
+  persistedAgentType?: string
+  /** Number of leading prompt messages already present in this agent's
+   * transcript. Resume sends them to the model for context but must only
+   * append the new continuation messages to disk. */
+  alreadyPersistedMessageCount?: number
   /** Optional subdirectory under subagents/ to group this agent's transcript
    * with related ones (e.g. workflows/<runId> for workflow subagents). */
   transcriptSubdir?: string
@@ -765,11 +806,22 @@ export async function* runAgent({
   // Record initial messages before the query loop starts, plus the agentType
   // so resume can route correctly when subagent_type is omitted. Both writes
   // are fire-and-forget — persistence failure shouldn't block the agent.
-  void recordSidechainTranscript(initialMessages, agentId).catch(_err =>
+  const initialTranscriptWrite = selectInitialTranscriptMessages(
+    initialMessages,
+    alreadyPersistedMessageCount,
+  )
+  void recordSidechainTranscript(
+    initialTranscriptWrite.messages,
+    agentId,
+    initialTranscriptWrite.startingParentUuid,
+  ).catch(_err =>
     logForDebugging(`Failed to record sidechain transcript: ${_err}`),
   )
   void writeAgentMetadata(agentId, {
-    agentType: agentDefinition.agentType,
+    agentType: resolvePersistedAgentType(
+      persistedAgentType,
+      agentDefinition.agentType,
+    ),
     ...(model && { model }),
     ...(worktreePath && { worktreePath }),
     ...(description && { description }),

@@ -26,6 +26,13 @@ export type SubagentRunResponse = {
   truncated: boolean
   updatedAt?: string
   source: SubagentRunSource
+  /**
+   * Whether a follow-up can still reach this agent. Only named teammates and
+   * in-flight background agents have an inbox — a one-shot subagent answers
+   * once and is done, so the page shows its record without a composer.
+   * Optional so a response from an older server still parses.
+   */
+  canSendMessage?: boolean
 }
 
 export const subagentsApi = {
@@ -33,6 +40,14 @@ export const subagentsApi = {
     const query = taskId ? `?taskId=${encodeURIComponent(taskId)}` : ''
     return api.get<SubagentRunResponse>(
       `/api/sessions/${encodeURIComponent(sessionId)}/subagents/by-tool/${encodeURIComponent(toolUseId)}${query}`,
+    )
+  },
+
+  sendMessage(sessionId: string, toolUseId: string, content: string, taskId?: string) {
+    const query = taskId ? `?taskId=${encodeURIComponent(taskId)}` : ''
+    return api.post<{ ok: true; delivery?: 'queued' | 'resumed'; agent_id?: string }>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/subagents/by-tool/${encodeURIComponent(toolUseId)}/messages${query}`,
+      { content },
     )
   },
 }

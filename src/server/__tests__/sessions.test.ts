@@ -2,7 +2,7 @@
  * Unit tests for SessionService and Sessions API
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
+import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test'
 import * as fs from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
 import * as path from 'node:path'
@@ -3837,6 +3837,104 @@ describe('Sessions API', () => {
       source: 'subagent-jsonl',
     })
     expect(body.messages).toHaveLength(2)
+  })
+
+  it('POST /api/sessions/:id/subagents/by-tool/:toolUseId/messages should resume the resolved agent', async () => {
+    const sessionId = 'fefefefe-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const agentId = 'resumable-agent-1'
+    await writeSessionFile('-tmp-api-subagent-message', sessionId, [
+      makeSnapshotEntry(),
+      makeAssistantToolUseEntry([{
+        id: 'tool-1',
+        name: 'Agent',
+        input: { description: 'Review the route', prompt: 'Inspect the server API' },
+      }]),
+      makeToolResultUserEntry('tool-1', `review complete\nagentId: ${agentId}`),
+    ])
+    const requestControl = spyOn(conversationService, 'requestControl').mockResolvedValue({
+      agent_id: agentId,
+      delivery: 'resumed',
+    })
+    const hasSession = spyOn(conversationService, 'hasSession').mockReturnValue(false)
+    const startSession = spyOn(conversationService, 'startSession').mockResolvedValue()
+
+    try {
+      const res = await fetch(
+        `${baseUrl}/api/sessions/${sessionId}/subagents/by-tool/tool-1/messages`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ content: 'Please review the new patch.' }),
+        },
+      )
+
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({
+        ok: true,
+        agent_id: agentId,
+        delivery: 'resumed',
+      })
+      expect(requestControl).toHaveBeenCalledWith(sessionId, {
+        subtype: 'send_agent_message',
+        agent_id: agentId,
+        content: 'Please review the new patch.',
+      })
+      expect(startSession).toHaveBeenCalledWith(
+        sessionId,
+        expect.any(String),
+        expect.stringMatching(new RegExp(
+          `^ws://127\\.0\\.0\\.1:${new URL(baseUrl).port}/sdk/${sessionId}\\?token=`,
+        )),
+        expect.objectContaining({ resumeInterruptedTurn: false }),
+      )
+    } finally {
+      startSession.mockRestore()
+      hasSession.mockRestore()
+      requestControl.mockRestore()
+    }
+  })
+
+  it('POST /api/sessions/:id/subagents/by-tool/:toolUseId/messages should reuse a running parent CLI', async () => {
+    const sessionId = 'abababab-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const agentId = 'running-parent-agent'
+    await writeSessionFile('-tmp-api-running-parent-subagent-message', sessionId, [
+      makeSnapshotEntry(),
+      makeAssistantToolUseEntry([{
+        id: 'tool-running',
+        name: 'Agent',
+        input: { description: 'Continue the agent', prompt: 'Stay available' },
+      }]),
+      makeToolResultUserEntry('tool-running', `ready\nagentId: ${agentId}`),
+    ])
+    const hasSession = spyOn(conversationService, 'hasSession').mockReturnValue(true)
+    const startSession = spyOn(conversationService, 'startSession').mockResolvedValue()
+    const requestControl = spyOn(conversationService, 'requestControl').mockResolvedValue({
+      agent_id: agentId,
+      delivery: 'queued',
+    })
+
+    try {
+      const res = await fetch(
+        `${baseUrl}/api/sessions/${sessionId}/subagents/by-tool/tool-running/messages`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ content: 'Continue from the same context.' }),
+        },
+      )
+
+      expect(res.status).toBe(200)
+      expect(startSession).not.toHaveBeenCalled()
+      expect(requestControl).toHaveBeenCalledWith(sessionId, {
+        subtype: 'send_agent_message',
+        agent_id: agentId,
+        content: 'Continue from the same context.',
+      })
+    } finally {
+      requestControl.mockRestore()
+      startSession.mockRestore()
+      hasSession.mockRestore()
+    }
   })
 
   it('POST /api/sessions/:id/subagents/by-tool/:toolUseId should return 405', async () => {

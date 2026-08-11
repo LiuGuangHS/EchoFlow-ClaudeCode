@@ -20,7 +20,11 @@ describe('chat blocks', () => {
     const { container } = render(<ThinkingBlock content="this is a long internal reasoning trace" isActive />)
 
     expect(screen.getByText(/Thinking/)).toBeTruthy()
-    expect(container.textContent).not.toContain('this is a long internal reasoning trace')
+    // The row previews the reasoning; what stays shut is the full block. A
+    // label with nothing beside it was the old standalone form, and it made the
+    // opening thought of a turn — usually the substantial one — the least
+    // informative thing on screen.
+    expect(container.querySelector('[data-thinking-content="expanded"]')).toBeNull()
     expect(container.querySelector('.thinking-cursor')).toBeNull()
   })
 
@@ -307,9 +311,11 @@ describe('chat blocks', () => {
   it('renders thinking content as markdown only after expanding', () => {
     const { container } = render(<ThinkingBlock content={'**important**\n\n- item one'} />)
 
-    expect(container.textContent).not.toContain('important')
+    // The preview is plain text with the markdown stripped — never rendered
+    // markup, which on one line would show as literal `**` / `-` noise.
     expect(container.querySelector('strong')).toBeNull()
     expect(container.querySelector('li')).toBeNull()
+    expect(container.textContent).not.toContain('item one')
 
     fireEvent.click(screen.getByRole('button', { name: /Thought/ }))
 
@@ -321,8 +327,10 @@ describe('chat blocks', () => {
     const content = Array.from({ length: 12 }, (_, index) => `line-${index + 1}`).join('\n')
     const { container } = render(<ThinkingBlock content={content} />)
 
-    expect(container.textContent).not.toContain('line-1')
+    // Collapsed shows the opening line only; the body stays shut.
+    expect(container.textContent).toContain('line-1')
     expect(container.textContent).not.toContain('line-11')
+    expect(container.querySelector('[data-thinking-content="expanded"]')).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: /Thought/ }))
 
@@ -347,6 +355,35 @@ describe('chat blocks', () => {
 
     expect(container.textContent).toContain('Tool Input')
     expect(container.textContent).not.toContain('const answer = 42')
+  })
+
+  it('keeps expanded row input and output inline instead of nesting detail cards', () => {
+    const { container } = render(
+      <ToolCallBlock
+        chrome="row"
+        toolName="TaskCreate"
+        input={{ subject: 'Inspect activity UI', description: 'Find the nested card treatment' }}
+        result={{ content: 'Task #1 created successfully', isError: false }}
+      />,
+    )
+
+    const row = container.querySelector('[data-tool-call-chrome="row"]')
+    const disclosure = row?.querySelector<HTMLButtonElement>('[data-chat-disclosure="true"]')
+    expect(disclosure).toBeTruthy()
+    fireEvent.click(disclosure!)
+
+    const details = container.querySelector('[data-tool-call-details="inline"]')
+    expect(details).toBeTruthy()
+    expect(details?.className).not.toContain('rounded-')
+
+    const viewers = [...container.querySelectorAll('[data-code-viewer-chrome]')]
+    expect(viewers).toHaveLength(2)
+    expect(viewers.every((viewer) => viewer.getAttribute('data-code-viewer-chrome') === 'embedded')).toBe(true)
+    // Each section owns one compact header and one copy action. The previous
+    // nested Tool Output -> PLAINTEXT and Tool Input -> JSON cards doubled both.
+    expect(screen.getAllByRole('button', { name: 'Copy' })).toHaveLength(2)
+    expect((details?.textContent?.match(/Tool Output/g) ?? [])).toHaveLength(1)
+    expect((details?.textContent?.match(/Tool Input/g) ?? [])).toHaveLength(1)
   })
 
   // #1149: bash stdout used to be dropped entirely — the card showed the command
@@ -536,12 +573,15 @@ describe('chat blocks', () => {
       />,
     )
 
-    // Collapsed header must name the command, same as Bash — a real-machine
-    // walkthrough caught PowerShell falling through to a bare tool name.
-    expect(container.textContent).toContain('Get-ChildItem')
+    // Collapsed header must say what the command is for, same as Bash — a
+    // real-machine walkthrough caught PowerShell falling through to a bare tool
+    // name, and the row still has to carry more than that.
+    expect(container.textContent).toContain('List files')
 
     fireEvent.click(screen.getByRole('button'))
 
+    // The command itself is not lost, it moves to the terminal where it ran.
+    expect(container.textContent).toContain('Get-ChildItem')
     expect(container.textContent).toContain('Mode  Name')
     expect(container.textContent).not.toContain('Tool Input')
   })

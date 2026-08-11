@@ -104,14 +104,28 @@ export function buildActivitySegments(steps: ActivityStep[], t: Translate): Acti
 
   return order.map((key) => {
     if (key === THINKING_SEGMENT_KEY) {
-      // No count: "Thinking ×3" tells the reader nothing they can act on.
-      return { key, label: t('toolGroup.thought'), icon: Brain }
+      // Counted like every other family. A bare "Thinking" was right when this
+      // line sat above rows the reader could see anyway; as the only thing shown
+      // for a finished run it has to carry scale, and "thought 9 times" says the
+      // model went back and forth where "thought once" says it went straight
+      // through — that difference is most of what the summary is for.
+      const count = counts.get(key) ?? 0
+      return {
+        key,
+        label: count === 1 ? t('toolGroup.thought') : t('toolGroup.thoughtMany', { count }),
+        icon: Brain,
+      }
     }
     const count = counts.get(key) ?? 0
     const verb = TOOL_VERBS[key]
+    // Tools with no verb keep their own name — "used 2 tools" hides which ones,
+    // and knowing it called SendMessage is the useful part. A lone call drops
+    // the count the way the verb forms do: "ran a command" carries no "(1)"
+    // either, and on a line meant to be skimmed that bracket is pure noise.
+    const fallback = count === 1 ? key : `${key} (${count})`
     return {
       key,
-      label: verb ? verb(count, t) : `${key} (${count})`,
+      label: verb ? verb(count, t) : fallback,
       icon: activitySegmentIcon(key),
     }
   })

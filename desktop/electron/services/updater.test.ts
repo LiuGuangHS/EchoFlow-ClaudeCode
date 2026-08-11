@@ -60,7 +60,7 @@ describe('Electron updater service', () => {
     const service = new ElectronUpdaterService(updater)
     const events: unknown[] = []
 
-    await expect(service.checkForUpdates()).resolves.toEqual({ version: '1.2.3', body: 'Fixes' })
+    await expect(service.checkForUpdates()).resolves.toMatchObject({ version: '1.2.3', body: 'Fixes' })
     await service.downloadUpdate(event => events.push(event))
 
     expect(updater.autoDownload).toBe(false)

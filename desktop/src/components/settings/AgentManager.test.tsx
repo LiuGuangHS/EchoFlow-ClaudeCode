@@ -7,6 +7,8 @@ const apiCreateMock = vi.hoisted(() => vi.fn())
 const apiUpdateMock = vi.hoisted(() => vi.fn())
 const apiDeleteMock = vi.hoisted(() => vi.fn())
 const apiReloadMock = vi.hoisted(() => vi.fn())
+const apiSetOverrideMock = vi.hoisted(() => vi.fn())
+const apiClearOverrideMock = vi.hoisted(() => vi.fn())
 const recentProjectsMock = vi.hoisted(() => vi.fn())
 
 vi.mock('../../api/agents', async (importOriginal) => {
@@ -19,6 +21,8 @@ vi.mock('../../api/agents', async (importOriginal) => {
       update: apiUpdateMock,
       delete: apiDeleteMock,
       reload: apiReloadMock,
+      setOverride: apiSetOverrideMock,
+      clearOverride: apiClearOverrideMock,
     },
   }
 })
@@ -61,6 +65,23 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
     target: 'nested/custom-agent-file.md',
     isActive: true,
     editable: true,
+    ...overrides,
+  }
+}
+
+function makeBuiltInAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
+  return {
+    agentType: 'Explore',
+    description: 'Explore the codebase',
+    source: 'built-in',
+    baseDir: 'built-in',
+    isActive: true,
+    // Built-ins are never file-editable; only model and effort can change.
+    editable: false,
+    overridable: true,
+    defaults: { model: 'haiku' },
+    model: 'haiku',
+    modelDisplay: 'haiku',
     ...overrides,
   }
 }
@@ -610,6 +631,204 @@ describe('AgentManager', () => {
     expect(screen.getByRole('alert')).not.toHaveTextContent('Agent already exists')
     expect(apiCreateMock.mock.calls[0]?.[0]).not.toHaveProperty('tools')
     expect(screen.getByRole('dialog', { name: 'Create Agent' })).toBeInTheDocument()
+  })
+
+  it('offers edit and delete on the row itself without nesting buttons', async () => {
+    const agent = makeAgent()
+    await renderManager({ activeAgents: [agent], allAgents: [agent] })
+
+    const editButton = screen.getByRole('button', { name: 'Edit code_reviewer' })
+    expect(editButton).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Delete code_reviewer' })).toBeInTheDocument()
+
+    // The structural assertion is the one that matters: nested buttons still
+    // render and still fire in jsdom, so behaviour alone cannot catch them.
+    const row = editButton.closest('div.group')
+    expect(row).not.toBeNull()
+    expect(row!.querySelector('button button')).toBeNull()
+  })
+
+  it('keeps the row body clickable now that it is no longer the outer element', async () => {
+    const agent = makeAgent()
+    await renderManager({ activeAgents: [agent], allAgents: [agent] })
+
+    fireEvent.click(screen.getByText('code_reviewer'))
+
+    expect(await screen.findByRole('button', { name: 'Back to list' })).toBeInTheDocument()
+    expect(useAgentStore.getState().selectedAgent?.agentType).toBe('code_reviewer')
+  })
+
+  it('deletes straight from the row with that row exact target', async () => {
+    const agent = makeAgent({ source: 'projectSettings' })
+    apiListMock
+      .mockResolvedValueOnce({ activeAgents: [agent], allAgents: [agent] })
+      .mockResolvedValueOnce(EMPTY_RESPONSE)
+    apiDeleteMock.mockResolvedValue(undefined)
+
+    render(<AgentManager />)
+    await waitFor(() => expect(apiListMock).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete code_reviewer' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Agent' }))
+
+    await waitFor(() => expect(apiDeleteMock).toHaveBeenCalledWith(
+      'code_reviewer',
+      'project',
+      '/workspace/project',
+      'nested/custom-agent-file.md',
+    ))
+  })
+
+  it('offers no row actions on sources that can be neither edited nor overridden', async () => {
+    const plugin = makeAgent({
+      agentType: 'plugin_agent',
+      source: 'plugin',
+      editable: false,
+      target: undefined,
+    })
+    await renderManager({ activeAgents: [plugin], allAgents: [plugin] })
+
+    expect(screen.queryByRole('button', { name: 'Edit plugin_agent' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Delete plugin_agent' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Adjust the model/ })).toBeNull()
+  })
+
+  it('offers a built-in row model adjustment but never a delete', async () => {
+    const builtIn = makeBuiltInAgent()
+    await renderManager({ activeAgents: [builtIn], allAgents: [builtIn] })
+
+    expect(
+      screen.getByRole('button', { name: 'Adjust the model and effort for Explore' }),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Delete Explore' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Edit Explore' })).toBeNull()
+  })
+
+  it('separates the built-in default from inherit and sends null for the default', async () => {
+    const builtIn = makeBuiltInAgent()
+    await renderManager({ activeAgents: [builtIn], allAgents: [builtIn] })
+    apiSetOverrideMock.mockResolvedValue({ agent: builtIn })
+    apiListMock.mockResolvedValue({ activeAgents: [builtIn], allAgents: [builtIn] })
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Adjust the model and effort for Explore' }),
+    )
+
+    // Both entries must exist. For Explore the shipped default is haiku while
+    // inherit means "follow the main session" — collapsing them would make
+    // inherit unreachable, and the default label is read from the server.
+    fireEvent.click(screen.getByRole('button', { name: 'Model' }))
+    expect(screen.getByRole('option', { name: 'Built-in default (haiku)' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Inherit from parent' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('option', { name: 'Built-in default (haiku)' }))
+
+    chooseAgentSelect('Reasoning effort', 'high')
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    // `null`, never the literal 'haiku': writing today's default into
+    // settings.json would freeze it there forever.
+    await waitFor(() => expect(apiSetOverrideMock).toHaveBeenCalledWith('Explore', {
+      cwd: '/workspace/project',
+      model: null,
+      effort: 'high',
+    }))
+  })
+
+  it('sends inherit as a real value when the user picks it', async () => {
+    const builtIn = makeBuiltInAgent()
+    await renderManager({ activeAgents: [builtIn], allAgents: [builtIn] })
+    apiSetOverrideMock.mockResolvedValue({ agent: builtIn })
+    apiListMock.mockResolvedValue({ activeAgents: [builtIn], allAgents: [builtIn] })
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Adjust the model and effort for Explore' }),
+    )
+    chooseAgentSelect('Model', 'Inherit from parent')
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(apiSetOverrideMock).toHaveBeenCalledWith('Explore', {
+      cwd: '/workspace/project',
+      model: 'inherit',
+      effort: null,
+    }))
+  })
+
+  it('resets a built-in through the server instead of writing the default back', async () => {
+    const overridden = makeBuiltInAgent({
+      model: 'sonnet',
+      modelDisplay: 'sonnet',
+      override: { model: 'sonnet', source: 'userSettings' },
+    })
+    await renderManager({ activeAgents: [overridden], allAgents: [overridden] })
+    apiClearOverrideMock.mockResolvedValue({ agent: makeBuiltInAgent() })
+    apiListMock.mockResolvedValue({ activeAgents: [overridden], allAgents: [overridden] })
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Adjust the model and effort for Explore' }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Reset to built-in default' }))
+
+    await waitFor(() => expect(apiClearOverrideMock).toHaveBeenCalledWith(
+      'Explore',
+      '/workspace/project',
+    ))
+    // Reset must clear the setting, not write the current default back as a
+    // value — that would pin today's default into settings.json permanently.
+    expect(apiSetOverrideMock).not.toHaveBeenCalled()
+    // A running session caches agent definitions, so the write alone is not
+    // enough for the change to take effect.
+    expect(apiReloadMock).toHaveBeenCalledWith('session-1')
+  })
+
+  it('locks the controls when the override comes from managed settings', async () => {
+    const managed = makeBuiltInAgent({
+      model: 'opus',
+      override: { model: 'opus', source: 'policySettings' },
+    })
+    await renderManager({ activeAgents: [managed], allAgents: [managed] })
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Adjust the model and effort for Explore' }),
+    )
+
+    expect(screen.getByRole('button', { name: 'Model' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Reasoning effort' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+    // Resetting would write to the user file, which cannot win over a policy.
+    expect(screen.queryByRole('button', { name: 'Reset to built-in default' })).toBeNull()
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Set by Managed settings and not editable here.',
+    )
+  })
+
+  it('warns that a shadowed built-in will not take effect yet', async () => {
+    // Editing a built-in that a same-named user agent shadows would look like
+    // it worked and change nothing at spawn time.
+    const shadowed = makeBuiltInAgent({ overriddenBy: 'userSettings', isActive: false })
+    await renderManager({ activeAgents: [], allAgents: [shadowed] })
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Adjust the model and effort for Explore' }),
+    )
+
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'An agent of the same name from User is active',
+    )
+  })
+
+  it('keeps the override modal open when saving fails', async () => {
+    const builtIn = makeBuiltInAgent()
+    await renderManager({ activeAgents: [builtIn], allAgents: [builtIn] })
+    apiSetOverrideMock.mockRejectedValue(new Error('AGENT_CUSTOMIZATION_LOCKED'))
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Adjust the model and effort for Explore' }),
+    )
+    chooseAgentSelect('Model', 'sonnet')
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Failed to save the override')
+    expect(screen.getByRole('alert')).not.toHaveTextContent('AGENT_CUSTOMIZATION_LOCKED')
+    expect(screen.getByRole('dialog', { name: 'Adjust built-in agent' })).toBeInTheDocument()
   })
 
   it('localizes load failures without exposing raw server errors', async () => {

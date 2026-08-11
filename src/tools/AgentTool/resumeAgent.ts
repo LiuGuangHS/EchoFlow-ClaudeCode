@@ -36,7 +36,7 @@ import { GENERAL_PURPOSE_AGENT } from './built-in/generalPurposeAgent.js'
 import { FORK_AGENT, isForkSubagentEnabled } from './forkSubagent.js'
 import type { AgentDefinition } from './loadAgentsDir.js'
 import { isBuiltInAgent } from './loadAgentsDir.js'
-import { runAgent } from './runAgent.js'
+import { resolvePersistedAgentType, runAgent } from './runAgent.js'
 
 export type ResumeAgentResult = {
   agentId: string
@@ -183,6 +183,10 @@ export async function resumeAgentBackground({
   const workerTools = isResumedFork
     ? toolUseContext.options.tools
     : assembleToolPool(workerPermissionContext, appState.mcp.tools)
+  const resumedAgentType = resolvePersistedAgentType(
+    meta?.agentType,
+    selectedAgent.agentType,
+  )
 
   const runAgentParams: Parameters<typeof runAgent>[0] = {
     agentDefinition: selectedAgent,
@@ -215,6 +219,8 @@ export async function resumeAgentBackground({
     worktreePath: resumedWorktreePath,
     description: meta?.description,
     spawningToolUseId,
+    persistedAgentType: resumedAgentType,
+    alreadyPersistedMessageCount: resumedMessages.length,
     contentReplacementState: resumedReplacementState,
   }
 
@@ -233,7 +239,7 @@ export async function resumeAgentBackground({
     resolvedAgentModel,
     isBuiltInAgent: isBuiltInAgent(selectedAgent),
     startTime,
-    agentType: selectedAgent.agentType,
+    agentType: resumedAgentType,
     isAsync: true,
   }
 
@@ -241,7 +247,7 @@ export async function resumeAgentBackground({
     agentId,
     parentSessionId: getParentSessionId(),
     agentType: 'subagent' as const,
-    subagentName: selectedAgent.agentType,
+    subagentName: resumedAgentType,
     isBuiltIn: isBuiltInAgent(selectedAgent),
     invokingRequestId,
     invocationKind: 'resume' as const,

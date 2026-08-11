@@ -118,4 +118,32 @@ describe('UserMessage bare-URL linkify', () => {
     const { container } = render(<UserMessage sessionId="s1" content={'把样式改一下'} />)
     expect(container.querySelectorAll('a')).toHaveLength(0)
   })
+
+  it('attributes a teammate turn and left-aligns it away from the user bubble', () => {
+    const { container } = render(
+      <UserMessage content="Review the auth diff." teammateFrom="team-lead" />,
+    )
+
+    const shell = container.querySelector('[data-message-shell="teammate"]')
+    expect(shell).toBeTruthy()
+    expect(shell?.getAttribute('data-teammate-from')).toBe('team-lead')
+    // Attribution is the point: an unlabelled bubble reads as the operator.
+    expect(shell?.textContent).toContain('team-lead')
+    expect(shell?.textContent).toContain('teammate message')
+
+    // A teammate turn must not reuse the user's right-aligned bubble, and must
+    // not offer branching — the operator did not author it.
+    expect(container.querySelector('[data-message-shell="user"]')).toBeNull()
+    expect(container.querySelector('[data-message-body="user"]')).toBeNull()
+    expect(container.querySelector('[data-message-body="teammate"]')).toBeTruthy()
+    expect(container.firstElementChild?.className).toContain('justify-start')
+  })
+
+  it('keeps an ordinary prompt in the right-aligned user bubble', () => {
+    const { container } = render(<UserMessage content="Review the auth diff." />)
+
+    expect(container.querySelector('[data-message-shell="teammate"]')).toBeNull()
+    expect(bubbleOf(container).textContent).toBe('Review the auth diff.')
+    expect(container.firstElementChild?.className).toContain('justify-end')
+  })
 })

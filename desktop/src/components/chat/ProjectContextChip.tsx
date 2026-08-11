@@ -1,5 +1,8 @@
 import { GitFork } from 'lucide-react'
+import { Tooltip } from '@/components/ui/Tooltip'
 import { useTranslation } from '../../i18n'
+import { getFileNameFromPath } from '../../lib/composerAttachments'
+import { getWorktreeDisplayName, WorktreeDetails } from './WorktreeDetails'
 
 type Props = {
   workDir?: string | null
@@ -22,7 +25,7 @@ type Props = {
 }
 
 function basename(path: string | null | undefined): string {
-  return path?.split('/').filter(Boolean).pop() || ''
+  return path ? getFileNameFromPath(path) : ''
 }
 
 export function ProjectContextChip({
@@ -39,7 +42,7 @@ export function ProjectContextChip({
   const t = useTranslation()
   const labelRoot = isWorktree ? (sourceWorkDir || workDir) : workDir
   const label = branch ? (repoName || basename(labelRoot)) : (basename(labelRoot) || repoName || '')
-  const worktreeName = worktreeSlug || basename(worktreePath) || 'isolated'
+  const worktreeName = getWorktreeDisplayName(worktreeSlug, worktreePath) || 'isolated'
   const isToolbar = variant === 'toolbar'
   // The chip variant hides the branch for worktrees — the worktree name already
   // encodes it. The toolbar variant keeps it, because it has to stay
@@ -48,10 +51,9 @@ export function ProjectContextChip({
   const title = [
     label,
     branch ? `branch: ${branch}` : null,
-    isWorktree ? `worktree: ${worktreeName}` : null,
-    worktreePath ? `worktree cwd: ${worktreePath}` : null,
     workDir ? `cwd: ${workDir}` : null,
   ].filter(Boolean).join('\n')
+  const worktreeDetails = <WorktreeDetails name={worktreeName} path={worktreePath} />
 
   if (!label) return null
 
@@ -71,7 +73,7 @@ export function ProjectContextChip({
   if (isToolbar) {
     return (
       <div
-        title={title}
+        title={isWorktree ? undefined : title}
         data-testid="run-location-readonly"
         className="inline-flex h-9 min-w-0 max-w-full shrink items-center gap-1.5 text-[13px] font-medium leading-none"
       >
@@ -93,10 +95,16 @@ export function ProjectContextChip({
           </>
         )}
         {isWorktree && (
-          <span className="inline-flex shrink-0 items-center gap-1 rounded-[5px] bg-[var(--color-brand-soft)] px-1.5 py-1 text-[10px] font-bold leading-none text-[var(--color-brand)]">
-            <GitFork size={11} aria-hidden="true" />
-            {t('repoLaunch.worktreeBadge')}
-          </span>
+          <Tooltip content={worktreeDetails} placement="top-start">
+            <span
+              data-testid="worktree-details-trigger"
+              tabIndex={0}
+              className="inline-flex shrink-0 cursor-help items-center gap-1 rounded-[5px] bg-[var(--color-brand-soft)] px-1.5 py-1 text-[10px] font-bold leading-none text-[var(--color-brand)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
+            >
+              <GitFork size={11} aria-hidden="true" />
+              {t('repoLaunch.worktreeBadge')}
+            </span>
+          </Tooltip>
         )}
       </div>
     )
@@ -104,7 +112,7 @@ export function ProjectContextChip({
 
   return (
     <div
-      title={title}
+      title={isWorktree ? undefined : title}
       data-testid="run-location-outside"
       className={`inline-flex max-w-full items-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] text-[var(--color-text-secondary)] ${
         compact ? 'gap-1.5 px-3 py-1.5 text-xs' : 'gap-2 px-4 py-2 text-sm'
@@ -123,9 +131,15 @@ export function ProjectContextChip({
       {isWorktree ? (
         <>
           <span className="text-[var(--color-text-tertiary)]">|</span>
-          <span className="shrink-0 rounded-full border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] font-medium uppercase leading-none text-[var(--color-text-tertiary)]">
-            worktree
-          </span>
+          <Tooltip content={worktreeDetails} placement="top-start">
+            <span
+              data-testid="worktree-details-trigger"
+              tabIndex={0}
+              className="shrink-0 cursor-help rounded-full border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] font-medium uppercase leading-none text-[var(--color-text-tertiary)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
+            >
+              worktree
+            </span>
+          </Tooltip>
         </>
       ) : null}
     </div>

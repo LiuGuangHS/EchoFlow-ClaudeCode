@@ -516,7 +516,8 @@ describe('updateStore', () => {
       expect(cancelInstall).toHaveBeenCalledTimes(1)
       expect(getServerUrl).toHaveBeenCalledTimes(1)
       expect(useUpdateStore.getState().status).toBe('downloaded')
-      expect(useUpdateStore.getState().error).toContain('Restart did not start automatically')
+      expect(useUpdateStore.getState().error).toBeNull()
+      expect(useUpdateStore.getState().errorCode).toBe('restart')
       expect(useUpdateStore.getState().shouldPrompt).toBe(true)
     } finally {
       vi.useRealTimers()
@@ -623,7 +624,8 @@ describe('updateStore', () => {
 
     expect(download).toHaveBeenCalledTimes(1)
     expect(useUpdateStore.getState().status).toBe('available')
-    expect(useUpdateStore.getState().error).toContain('network dropped')
+    expect(useUpdateStore.getState().error).toBeNull()
+    expect(useUpdateStore.getState().errorCode).toBe('download')
     expect(useUpdateStore.getState().shouldPrompt).toBe(false)
 
     await useUpdateStore.getState().downloadUpdate()
@@ -658,7 +660,8 @@ describe('updateStore', () => {
     expect(invoke).toHaveBeenNthCalledWith(1, 'prepare_for_update_install')
     expect(invoke).toHaveBeenNthCalledWith(2, 'cancel_update_install')
     expect(useUpdateStore.getState().status).toBe('downloaded')
-    expect(useUpdateStore.getState().error).toContain('installer failed')
+    expect(useUpdateStore.getState().error).toBeNull()
+    expect(useUpdateStore.getState().errorCode).toBe('install')
     expect(useUpdateStore.getState().shouldPrompt).toBe(true)
   })
 })

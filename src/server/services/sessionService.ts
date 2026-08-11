@@ -92,6 +92,12 @@ export type SessionListItem = {
   effortLevel?: string
 }
 
+export type SubagentTranscriptFragment = {
+  agentId: string
+  messages: MessageEntry[]
+  modifiedAt: number
+}
+
 export type SessionWorkspaceState = 'available' | 'worktree_removed' | 'missing'
 
 export type SessionListShadowComparison = {
@@ -3609,6 +3615,92 @@ export class SessionService {
       this.subagentTranscriptPath(found.projectDir, sessionId, agentId),
     )
     return this.entriesToMessages(entries)
+  }
+
+  /**
+   * Resolve which subagent transcript belongs to an Agent tool call.
+   *
+   * The sidecar metadata is written before the agent's query loop starts, so
+   * this resolves while the run is still in flight. The parent transcript's
+   * `tool_result` — the other way to recover an agent id — only lands once the
+   * agent has finished, which left live runs pointing at no transcript at all.
+   */
+  async findSubagentAgentIdByToolUseId(
+    sessionId: string,
+    toolUseId: string,
+  ): Promise<string | null> {
+    const found = await this.findSessionFile(sessionId)
+    if (!found) {
+      throw ApiError.notFound(`Session not found: ${sessionId}`)
+    }
+
+    const subagentsDir = path.join(
+      this.getProjectsDir(),
+      found.projectDir,
+      sessionId,
+      'subagents',
+    )
+    const files = await fs.readdir(subagentsDir).catch(() => [])
+
+    for (const metadataFile of files.filter((file) => file.endsWith('.meta.json'))) {
+      try {
+        const metadata = JSON.parse(
+          await fs.readFile(path.join(subagentsDir, metadataFile), 'utf8'),
+        ) as Record<string, unknown>
+        if (metadata.toolUseId !== toolUseId) continue
+        return metadataFile.replace(/^agent-/, '').replace(/\.meta\.json$/, '')
+      } catch {
+        // A half-written sidecar must not hide the other candidates.
+      }
+    }
+
+    return null
+  }
+
+  async getSubagentTranscriptFragmentsByAgentType(
+    sessionId: string,
+    agentType: string,
+  ): Promise<SubagentTranscriptFragment[]> {
+    const found = await this.findSessionFile(sessionId)
+    if (!found) {
+      throw ApiError.notFound(`Session not found: ${sessionId}`)
+    }
+
+    const subagentsDir = path.join(
+      this.getProjectsDir(),
+      found.projectDir,
+      sessionId,
+      'subagents',
+    )
+    const files = await fs.readdir(subagentsDir).catch(() => [])
+    const fragments: SubagentTranscriptFragment[] = []
+
+    for (const metadataFile of files.filter((file) => file.endsWith('.meta.json'))) {
+      try {
+        const metadata = JSON.parse(
+          await fs.readFile(path.join(subagentsDir, metadataFile), 'utf8'),
+        ) as Record<string, unknown>
+        if (metadata.agentType !== agentType) continue
+
+        const transcriptFile = metadataFile.replace(/\.meta\.json$/, '.jsonl')
+        const transcriptPath = path.join(subagentsDir, transcriptFile)
+        const [entries, stat] = await Promise.all([
+          this.readJsonlFile(transcriptPath),
+          fs.stat(transcriptPath),
+        ])
+        fragments.push({
+          agentId: transcriptFile.replace(/^agent-/, '').replace(/\.jsonl$/, ''),
+          messages: this.entriesToMessages(entries),
+          modifiedAt: stat.mtimeMs,
+        })
+      } catch {
+        // A partially persisted fragment must not hide the other resumable runs.
+      }
+    }
+
+    return fragments.sort((left, right) => (
+      left.modifiedAt - right.modifiedAt || left.agentId.localeCompare(right.agentId)
+    ))
   }
 
   async getSessionMessagesSignature(sessionId: string): Promise<string | null> {

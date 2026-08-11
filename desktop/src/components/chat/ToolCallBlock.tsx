@@ -1,5 +1,6 @@
 import { memo, useMemo, useState } from 'react'
 import { CircleStop, CircleX, LoaderCircle } from 'lucide-react'
+import { activitySegmentIcon } from './activityGroupModel'
 import { CodeViewer } from './CodeViewer'
 import { DiffViewer } from './DiffViewer'
 import { TerminalChrome } from './TerminalChrome'
@@ -20,8 +21,8 @@ import {
 /**
  * `card` is the standalone bordered block. `row` strips the border, the ink icon
  * square and the bold name so the call reads as one line inside an expanded
- * activity group — the fix for "one card per tool call" (#1177). Its own output
- * still gets a card, but only once the row is expanded.
+ * activity group. Expanded row details stay inline on a nested guide instead of
+ * rebuilding the card stack that the activity-group treatment removed (#1177).
  */
 export type ToolCallChrome = 'card' | 'row'
 
@@ -138,6 +139,9 @@ export const ToolCallBlock = memo(function ToolCallBlock({ toolName, input, resu
   const icon = TOOL_ICONS[toolName] || 'build'
   const filePath = typeof obj.file_path === 'string' ? obj.file_path : ''
   const summary = getToolSummary(toolName, obj, t)
+  // Prose reads as prose. Monospace is for the things that are literally code —
+  // a command, a glob, a path — not for a sentence describing one.
+  const summaryIsProse = isProseToolSummary(toolName, obj)
   const outputSummary = getToolResultSummary(
     toolName,
     result?.content,
@@ -156,8 +160,14 @@ export const ToolCallBlock = memo(function ToolCallBlock({ toolName, input, resu
   )
   const liveStatsSummary = liveStats ? formatContentStats(liveStats, t) : ''
 
-  const preview = useMemo(() => renderPreview(toolName, obj, result, t), [obj, result, toolName, t])
-  const details = useMemo(() => renderDetails(toolName, obj, t, isPending ? partialInput : undefined), [isPending, obj, partialInput, toolName, t])
+  const preview = useMemo(
+    () => renderPreview(toolName, obj, result, t, isRow),
+    [isRow, obj, result, toolName, t],
+  )
+  const details = useMemo(
+    () => renderDetails(toolName, obj, t, isPending ? partialInput : undefined, isRow),
+    [isPending, isRow, obj, partialInput, toolName, t],
+  )
   const hasResultDetails = Boolean(result && extractTextContent(result.content))
   const hasEditPreview = toolName === 'Edit' && typeof obj.old_string === 'string' && typeof obj.new_string === 'string'
   const hasWritePreview = toolName === 'Write' && typeof obj.content === 'string'
@@ -211,13 +221,16 @@ export const ToolCallBlock = memo(function ToolCallBlock({ toolName, input, resu
   }
 
   return (
-    <div className={
-      isRow
-        ? ''
-        : `overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] ${
-          compact ? 'mb-0' : 'mb-2'
-        }`
-    }>
+    <div
+      data-tool-call-chrome={chrome}
+      className={
+        isRow
+          ? ''
+          : `overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] ${
+            compact ? 'mb-0' : 'mb-2'
+          }`
+      }
+    >
       <button
         type="button"
         data-chat-disclosure="true"
@@ -235,7 +248,13 @@ export const ToolCallBlock = memo(function ToolCallBlock({ toolName, input, resu
             : compact ? 'w-full gap-[11px] px-3.5 py-2.5' : 'w-full gap-3 px-4 py-3'
         }`}
       >
-        {isRow ? null : compact ? (
+        {isRow ? (
+          /* Rows had no icon at all, so every step began with a bare word and
+             the eye had nothing to run down. A leading glyph gives the run a
+             left edge, separates one tool family from the next at a glance, and
+             marks the whole line as machinery rather than speech. */
+          <RowToolIcon toolName={toolName} active={Boolean(pendingSummary)} />
+        ) : compact ? (
           <span className="material-symbols-outlined shrink-0 text-[16px] text-[var(--color-text-secondary)]">{icon}</span>
         ) : (
           /* The ink square is the design's tool badge: solid `--t1` with the page
@@ -246,7 +265,16 @@ export const ToolCallBlock = memo(function ToolCallBlock({ toolName, input, resu
         )}
         <span className={
           isRow
-            ? 'shrink-0 text-[13px] font-medium text-[var(--color-text-secondary)]'
+            // The running step is the one the reader is waiting on, so it is the
+            // one that gets colour. Finished steps stay grey and the eye lands on
+            // where the run actually is without a separate progress strip.
+            //
+            // Grey even when finished, and a step below the prose it sits among:
+            // the layers have to be separable at a glance, or a run of machinery
+            // reads as loudly as the sentence that concludes it.
+            ? `shrink-0 text-[12.5px] font-medium ${
+                pendingSummary ? 'text-[var(--color-brand)]' : 'text-[var(--color-text-tertiary)]'
+              }`
             : `shrink-0 font-bold text-[var(--color-text-primary)] ${compact ? 'text-[13px]' : 'text-[14px]'}`
         }>
           {toolName}
@@ -256,7 +284,7 @@ export const ToolCallBlock = memo(function ToolCallBlock({ toolName, input, resu
             {filePath.split('/').pop()}
           </span>
         ) : summary ? (
-          <span className={`min-w-0 flex-1 truncate font-mono ${isRow ? 'text-[12px] text-[var(--color-text-tertiary)]' : compact ? 'text-[12.5px] text-[var(--color-text-secondary)]' : 'text-[13px] text-[var(--color-text-secondary)]'}`}>
+          <span className={`min-w-0 flex-1 truncate ${summaryIsProse ? '' : 'font-mono'} ${isRow ? 'text-[12px] text-[var(--color-text-tertiary)]' : compact ? 'text-[12.5px] text-[var(--color-text-secondary)]' : 'text-[13px] text-[var(--color-text-secondary)]'}`}>
             {summary}
           </span>
         ) : (
@@ -315,13 +343,14 @@ export const ToolCallBlock = memo(function ToolCallBlock({ toolName, input, resu
 
       {expandable && expanded && (
         <div
+          data-tool-call-details={isRow ? 'inline' : 'panel'}
           data-tool-output-error={result?.isError ? 'true' : undefined}
           className={
             isRow
-              ? `mb-2 mt-1 space-y-2.5 rounded-[var(--radius-lg)] border px-3 py-2.5 ${
+              ? `mb-2 ml-2 mt-1 space-y-2.5 border-l py-1 pl-3 ${
                 result?.isError
-                  ? 'border-[var(--color-error-soft-hover)] bg-[var(--color-error-soft)]'
-                  : 'border-[var(--color-border)] bg-[var(--color-surface-container-lowest)]'
+                  ? 'border-[var(--color-error-soft-hover)]'
+                  : 'border-[var(--color-border)]'
               }`
               : `space-y-2.5 border-t px-4 py-3.5 ${
                 result?.isError
@@ -464,6 +493,7 @@ function renderPreview(
   obj: Record<string, unknown>,
   result?: { content: unknown; isError: boolean } | null,
   t?: (key: TranslationKey, params?: Record<string, string | number>) => string,
+  embedded = false,
 ) {
   const filePath = typeof obj.file_path === 'string' ? obj.file_path : 'file'
   // Must match the terminal-card condition below exactly. When they diverged, a
@@ -473,7 +503,7 @@ function renderPreview(
   const shellCommand = isShellTool(toolName) && typeof obj.command === 'string' ? obj.command : null
   const echoesInTerminal = shellCommand !== null
   const resultText = getVisibleResultText(toolName, result, echoesInTerminal)
-  const resultOutput = result && resultText ? renderResultOutput(result, resultText, t) : null
+  const resultOutput = result && resultText ? renderResultOutput(result, resultText, t, embedded) : null
 
   if (toolName === 'Edit' && typeof obj.old_string === 'string' && typeof obj.new_string === 'string') {
     return (
@@ -745,17 +775,49 @@ function renderResultOutput(
   result: { content: unknown; isError: boolean },
   text: string,
   t?: (key: TranslationKey, params?: Record<string, string | number>) => string,
+  embedded = false,
 ) {
+  const label = result.isError
+    ? t?.('tool.errorOutput') ?? 'Error Output'
+    : t?.('tool.toolOutput') ?? 'Tool Output'
+
+  if (embedded) {
+    return (
+      <>
+        <InlineImageGallery text={text} />
+        {result.isError ? (
+          <div data-tool-detail-surface="embedded" className="overflow-hidden bg-[var(--color-error-soft)]">
+            <div className="flex items-center justify-between border-b border-[var(--color-error-soft-hover)] px-3 py-2 text-[10px] uppercase tracking-[0.18em] text-[var(--color-error)]">
+              <span>{label}</span>
+              <CopyButton
+                text={text}
+                className="rounded-[var(--radius-sm)] px-2 py-1 text-[11px] normal-case tracking-normal text-[var(--color-error)] transition-colors hover:bg-[var(--color-error-soft-hover)]"
+              />
+            </div>
+            <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap break-words px-3 py-2 font-mono text-[12px] leading-[1.45] text-[var(--color-error)]">
+              {text}
+            </pre>
+          </div>
+        ) : (
+          <CodeViewer code={text} language="plaintext" maxLines={18} chrome="embedded" label={label} />
+        )}
+      </>
+    )
+  }
+
   return (
     <>
       <InlineImageGallery text={text} />
-      <div className={`overflow-hidden rounded-[var(--radius-lg)] border ${
-        result.isError
-          ? 'border-[var(--color-error)] bg-[var(--color-error-container)]'
-          : 'border-[var(--color-border)] bg-[var(--color-surface)]'
-      }`}>
+      <div
+        data-tool-detail-surface="card"
+        className={`overflow-hidden rounded-[var(--radius-lg)] border ${
+          result.isError
+            ? 'border-[var(--color-error)] bg-[var(--color-error-container)]'
+            : 'border-[var(--color-border)] bg-[var(--color-surface)]'
+        }`}
+      >
         <div className="flex items-center justify-between border-b border-[var(--color-border)] px-3 py-2 text-[10px] uppercase tracking-[0.18em] text-[var(--color-outline)]">
-          <span>{result.isError ? t?.('tool.errorOutput') ?? 'Error Output' : t?.('tool.toolOutput') ?? 'Tool Output'}</span>
+          <span>{label}</span>
           <CopyButton
             text={text}
             className="rounded-[var(--radius-sm)] border border-[var(--color-border)] px-2 py-1 text-[11px] normal-case tracking-normal text-[var(--color-text-tertiary)] transition-colors hover:text-[var(--color-text-primary)]"
@@ -778,15 +840,16 @@ function renderDetails(
   obj: Record<string, unknown>,
   t?: (key: TranslationKey, params?: Record<string, string | number>) => string,
   partialInput?: string,
+  embedded = false,
 ) {
   if (partialInput) {
     if (toolName === 'Write') {
       const writerContent = extractPartialJsonStringField(partialInput, 'content')
       if (writerContent !== null) {
-        return renderWriterPreview(writerContent, t)
+        return renderWriterPreview(writerContent, t, embedded)
       }
     }
-    return renderPartialInput(partialInput, t)
+    return renderPartialInput(partialInput, t, embedded)
   }
 
   if (toolName === 'Edit' || toolName === 'Write') {
@@ -804,10 +867,15 @@ function renderDetails(
   }
 
   const text = JSON.stringify(displayed, null, 2)
+  const label = t?.('tool.toolInput') ?? 'Tool Input'
+  if (embedded) {
+    return <CodeViewer code={text} language="json" maxLines={18} chrome="embedded" label={label} />
+  }
+
   return (
-    <div className="overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)]">
+    <div data-tool-detail-surface="card" className="overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)]">
       <div className="flex items-center justify-between border-b border-[var(--color-border)] px-3 py-2 text-[10px] uppercase tracking-[0.18em] text-[var(--color-outline)]">
-        <span>{t?.('tool.toolInput') ?? 'Tool Input'}</span>
+        <span>{label}</span>
         <CopyButton
           text={text}
           className="rounded-[var(--radius-sm)] border border-[var(--color-border)] px-2 py-1 text-[11px] normal-case tracking-normal text-[var(--color-text-tertiary)] transition-colors hover:text-[var(--color-text-primary)]"
@@ -977,6 +1045,7 @@ function formatCount(count: number): string {
 function renderWriterPreview(
   content: string,
   t?: (key: TranslationKey, params?: Record<string, string | number>) => string,
+  embedded = false,
 ) {
   const contentStats = countContentStats(content)
   const lines = content.length === 0 ? [] : content.split('\n')
@@ -1000,7 +1069,14 @@ function renderWriterPreview(
   }, t)
 
   return (
-    <div className="overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)]">
+    <div
+      data-tool-detail-surface={embedded ? 'embedded' : 'card'}
+      className={
+        embedded
+          ? 'overflow-hidden bg-[var(--color-surface)]'
+          : 'overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)]'
+      }
+    >
       <div className="flex items-center justify-between border-b border-[var(--color-border)] px-3 py-2 text-[10px] uppercase tracking-[0.18em] text-[var(--color-outline)]">
         <span>{t?.('tool.writerPreview') ?? 'Writer'}</span>
         <span className="font-mono normal-case tracking-normal tabular-nums">
@@ -1017,13 +1093,28 @@ function renderWriterPreview(
 function renderPartialInput(
   partialInput: string,
   t?: (key: TranslationKey, params?: Record<string, string | number>) => string,
+  embedded = false,
 ) {
   const formattedInput = formatPartialJsonInput(partialInput)
+  const label = t?.('tool.partialInput') ?? 'Partial input'
+
+  if (embedded) {
+    return (
+      <CodeViewer
+        code={formattedInput}
+        language="json"
+        maxLines={8}
+        wrapLongLines
+        chrome="embedded"
+        label={label}
+      />
+    )
+  }
 
   return (
-    <div className="overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)]">
+    <div data-tool-detail-surface="card" className="overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)]">
       <div className="border-b border-[var(--color-border)] px-3 py-2 text-[10px] uppercase tracking-[0.18em] text-[var(--color-outline)]">
-        {t?.('tool.partialInput') ?? 'Partial input'}
+        {label}
       </div>
       <CodeViewer code={formattedInput} language="json" maxLines={8} wrapLongLines />
     </div>
@@ -1171,10 +1262,46 @@ function stripAnsi(value: string): string {
     .replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '')
 }
 
+function RowToolIcon({ toolName, active }: { toolName: string; active: boolean }) {
+  const Icon = activitySegmentIcon(toolName)
+  return (
+    <Icon
+      size={13}
+      strokeWidth={1.8}
+      aria-hidden="true"
+      className={`mt-[3px] shrink-0 self-start ${
+        active ? 'text-[var(--color-brand)]' : 'text-[var(--color-text-tertiary)]'
+      }`}
+    />
+  )
+}
+
+/** Whether the row's summary is a sentence rather than something code-shaped. */
+function isProseToolSummary(toolName: string, obj: Record<string, unknown>): boolean {
+  switch (toolName) {
+    case 'Bash':
+    case 'PowerShell':
+    case 'Agent':
+      return typeof obj.description === 'string' && obj.description.trim().length > 0
+    case 'Read':
+    case 'Write':
+    case 'Edit':
+      return true
+    default:
+      return false
+  }
+}
+
 function getToolSummary(toolName: string, obj: Record<string, unknown>, t?: (key: TranslationKey, params?: Record<string, string | number>) => string): string {
   switch (toolName) {
     case 'Bash':
     case 'PowerShell':
+      // The model sends a short description of what the command is for, in the
+      // conversation's language ("查看最近 commit 的改动文件"). Prefer it: a row
+      // saying that is readable at a glance, where the raw command it stands for
+      // is a pipeline that truncates into noise. The command itself is still one
+      // click away in the expanded row.
+      if (typeof obj.description === 'string' && obj.description.trim()) return obj.description
       return typeof obj.command === 'string' ? obj.command : ''
     case 'Read':
       return t?.('tool.readFileContents') ?? 'Read file contents'

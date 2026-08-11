@@ -8,6 +8,7 @@ const {
   sendMessageToMemberMock,
   handleTeamCreatedMock,
   handleTeamUpdateMock,
+  handleTeamWorkbenchUpdatedMock,
   handleTeamDeletedMock,
   fetchSessionTasksMock,
   clearTasksMock,
@@ -24,12 +25,15 @@ const {
   sessionStoreSnapshot,
   cliTaskStoreSnapshot,
   connectionStateHandlers,
+  sendSubagentMessageMock,
+  tabStoreSnapshot,
 } = vi.hoisted(() => ({
   sendMock: vi.fn(),
   getMemberBySessionIdMock: vi.fn<(sessionId: string) => any>(() => null),
   sendMessageToMemberMock: vi.fn(async () => {}),
   handleTeamCreatedMock: vi.fn(),
   handleTeamUpdateMock: vi.fn(),
+  handleTeamWorkbenchUpdatedMock: vi.fn(),
   handleTeamDeletedMock: vi.fn(),
   fetchSessionTasksMock: vi.fn(),
   clearTasksMock: vi.fn(),
@@ -60,6 +64,8 @@ const {
     sessionId: null as string | null,
   },
   connectionStateHandlers: new Map<string, (state: 'connecting' | 'connected' | 'reconnecting' | 'disconnected') => void>(),
+  sendSubagentMessageMock: vi.fn(async () => ({ ok: true })),
+  tabStoreSnapshot: { tabs: [] as Array<Record<string, unknown>> },
 }))
 
 vi.mock('../lib/desktopNotifications', () => ({
@@ -88,6 +94,12 @@ vi.mock('../api/sessions', () => ({
   },
 }))
 
+vi.mock('../api/subagents', () => ({
+  subagentsApi: {
+    sendMessage: sendSubagentMessageMock,
+  },
+}))
+
 vi.mock('./teamStore', () => ({
   useTeamStore: {
     getState: () => ({
@@ -95,6 +107,7 @@ vi.mock('./teamStore', () => ({
       sendMessageToMember: sendMessageToMemberMock,
       handleTeamCreated: handleTeamCreatedMock,
       handleTeamUpdate: handleTeamUpdateMock,
+      handleTeamWorkbenchUpdated: handleTeamWorkbenchUpdatedMock,
       handleTeamDeleted: handleTeamDeletedMock,
     }),
   },
@@ -103,6 +116,7 @@ vi.mock('./teamStore', () => ({
 vi.mock('./tabStore', () => ({
   useTabStore: {
     getState: () => ({
+      tabs: tabStoreSnapshot.tabs,
       updateTabStatus: updateTabStatusMock,
       updateTabTitle: updateTabTitleMock,
     }),
@@ -194,6 +208,20 @@ describe('stripGeneratedImageMetadataLines', () => {
 
   it('returns empty string when the text is only metadata', () => {
     expect(stripGeneratedImageMetadataLines('[Image source: /tmp/x.png]')).toBe('')
+  })
+})
+
+describe('Agent Teams workbench invalidation', () => {
+  it('routes the server invalidation through the team store', () => {
+    handleTeamWorkbenchUpdatedMock.mockReset()
+
+    useChatStore.getState().handleServerMessage('lead-session', {
+      type: 'team_workbench_updated',
+      teamName: 'visual-team',
+    })
+
+    expect(handleTeamWorkbenchUpdatedMock).toHaveBeenCalledOnce()
+    expect(handleTeamWorkbenchUpdatedMock).toHaveBeenCalledWith('visual-team')
   })
 })
 
@@ -2218,7 +2246,7 @@ describe('chatStore history mapping', () => {
     })
   })
 
-  it('surfaces teammate prompt content when mapping member transcript history', () => {
+  it('attributes teammate prompts to their sender when mapping member transcript history', () => {
     const messages: MessageEntry[] = [
       {
         id: 'user-1',
@@ -2226,18 +2254,45 @@ describe('chatStore history mapping', () => {
         timestamp: '2026-04-06T00:00:00.000Z',
         content: '<teammate-message teammate_id="security-reviewer">Review the auth diff and call out risks.</teammate-message>',
       },
+      {
+        id: 'user-2',
+        type: 'user',
+        timestamp: '2026-04-06T00:01:00.000Z',
+        content: [
+          { type: 'text', text: '<teammate-message teammate_id="team-lead">Ship it once tests pass.</teammate-message>' },
+        ],
+      },
+      {
+        id: 'user-3',
+        type: 'user',
+        timestamp: '2026-04-06T00:02:00.000Z',
+        content: 'What did you find?',
+      },
     ]
 
     const mapped = mapHistoryMessagesToUiMessages(messages, {
       includeTeammateMessages: true,
     })
 
+    // Without the sender, a teammate's instruction and the operator's own
+    // prompt render as the same anonymous bubble.
     expect(mapped).toMatchObject([
       {
         type: 'user_text',
         content: 'Review the auth diff and call out risks.',
+        teammateFrom: 'security-reviewer',
+      },
+      {
+        type: 'user_text',
+        content: 'Ship it once tests pass.',
+        teammateFrom: 'team-lead',
+      },
+      {
+        type: 'user_text',
+        content: 'What did you find?',
       },
     ])
+    expect(mapped[2]).not.toHaveProperty('teammateFrom')
   })
 
   it('preserves source user ids when restoring array-content user prompts', () => {
@@ -4234,6 +4289,8 @@ describe('chatStore history mapping', () => {
   it('mirrors CLI permission-mode broadcasts locally without echoing back to the server', () => {
     sendMock.mockReset()
     updateSessionPermissionModeMock.mockReset()
+    sendSubagentMessageMock.mockReset()
+    sendSubagentMessageMock.mockResolvedValue({ ok: true })
 
     // CLI 退出 plan 后恢复到 bypassPermissions，回传 permission_mode_changed。
     useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
@@ -8355,6 +8412,43 @@ describe('chatStore history mapping', () => {
     })
   })
 
+  it('routes subagent-session messages through resume control instead of the parent websocket', async () => {
+    const subagentSessionId = '__subagent__parent-session__tool-agent-1'
+    tabStoreSnapshot.tabs = [{
+      sessionId: subagentSessionId,
+      type: 'subagent',
+      sourceSessionId: 'parent-session',
+      subagentToolUseId: 'tool-agent-1',
+      subagentTaskId: 'agent-1',
+    }]
+    useChatStore.setState({
+      sessions: {
+        [subagentSessionId]: makeSession({ chatState: 'idle', messages: [] }),
+      },
+    })
+
+    useChatStore.getState().sendMessage(subagentSessionId, 'Continue the review')
+    await Promise.resolve()
+
+    expect(sendSubagentMessageMock).toHaveBeenCalledWith(
+      'parent-session',
+      'tool-agent-1',
+      'Continue the review',
+      'agent-1',
+    )
+    expect(sendMock).not.toHaveBeenCalledWith(
+      subagentSessionId,
+      expect.objectContaining({ type: 'user_message' }),
+    )
+    expect(
+      useChatStore.getState().sessions[subagentSessionId]?.messages.at(-1),
+    ).toMatchObject({
+      type: 'user_text',
+      content: 'Continue the review',
+      pending: true,
+    })
+  })
+
   it('refreshes CLI tasks when switching to an already-connected session', () => {
     useChatStore.setState({
       sessions: {
@@ -8711,6 +8805,7 @@ describe('chatStore activity state survival across reload paths', () => {
     sessionStoreSnapshot.sessions = []
     cliTaskStoreSnapshot.tasks = []
     cliTaskStoreSnapshot.sessionId = null
+    tabStoreSnapshot.tabs = []
     localStorage.clear()
     useSettingsStore.setState({ locale: 'en' })
     useChatStore.setState({

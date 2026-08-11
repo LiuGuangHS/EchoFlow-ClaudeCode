@@ -197,10 +197,30 @@ const appliedAppearance: Validator = value =>
   && typeof value.lightBackground === 'string'
   && HEX_COLOR.test(value.lightBackground)
 
+const MAX_UPDATE_PROXY_URL_LENGTH = 2_048
+
+function isValidUpdateProxyUrl(value: unknown): value is string {
+  if (typeof value !== 'string') return false
+  const trimmed = value.trim()
+  if (!trimmed || trimmed.length > MAX_UPDATE_PROXY_URL_LENGTH) return false
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(trimmed)) return false
+
+  try {
+    const url = new URL(trimmed)
+    return (url.protocol === 'http:' || url.protocol === 'https:')
+      && !!url.hostname
+      && !url.username
+      && !url.password
+      && (url.port === '' || Number(url.port) >= 1 && Number(url.port) <= 65_535)
+  } catch {
+    return false
+  }
+}
+
 const updateCheckOptions: Validator = value => {
   if (value === undefined) return true
   if (!isRecord(value) || !hasOnlyKeys(value, ['proxy'])) return false
-  return value.proxy === undefined || (typeof value.proxy === 'string' && value.proxy.trim().length > 0)
+  return value.proxy === undefined || isValidUpdateProxyUrl(value.proxy)
 }
 
 const localePreference: Validator = value =>

@@ -51,6 +51,27 @@ order: 3
 
 点任意一条进详情页，能看到它的模型、思考强度、工具范围和完整系统提示词。内置和插件来源是只读的，详情页右上角会有一个「只读」标记。
 
+鼠标移到列表里的某一行上，右侧会出现操作按钮：用户和项目 Agent 是「编辑」和「删除」，内置 Agent 是「调整模型」。详情页右上角也有同样的入口。
+
+## 调整内置 Agent 的模型
+
+内置 Agent 各自钉了默认模型——`Explore` 和 `claude-code-guide` 走 Haiku，`statusline-setup` 走 Sonnet——图的是快和省。如果你更在意它们的结果质量，可以单独换掉。
+
+在列表里点内置 Agent 那一行的「调整模型」，或者进详情页点右上角的同名按钮。能改的只有两项：
+
+- **模型** — 「内置默认」「继承主会话」「Haiku / Sonnet / Opus / Fable」，也可以填自定义模型 ID。
+- **思考强度** — 「内置默认」或低 / 中 / 高 / 极高 / 最大。
+
+系统提示词、工具范围和颜色不能改，仍由 Claude Code 固定。
+
+:::tip
+「内置默认」和「继承主会话」是两回事。以 `Explore` 为例，前者是它出厂就钉着的 Haiku，后者是跟着你主对话当前用的模型走。想恢复出厂设置就选「内置默认」，或者直接点「恢复内置默认」。
+:::
+
+覆盖写进 EchoFlow 用户设置的 `builtInAgentOverrides`。默认位置是 `<平台数据目录>/echoflow-code/settings.json`；设置 `CLAUDE_CONFIG_DIR` 时则使用 `$CLAUDE_CONFIG_DIR/echoflow-code/settings.json`。它对所有项目生效。恢复默认时这条记录会被整个删掉，不会在配置文件里留下空壳。
+
+如果你自己建了一个同名的用户 Agent（比如手写一个 `name: Explore` 的 md 文件），它会完全盖住内置的那个，此时改内置的模型不会有任何效果——弹窗里会提示这一点。
+
 ## 捏一个自己的
 
 ![「创建 Agent」弹窗：作用域、模型、思考强度、工具、系统提示词](../images/app/zh-CN/agent-create.webp)

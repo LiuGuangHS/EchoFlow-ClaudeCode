@@ -791,7 +791,7 @@ describe('Models API', () => {
       name: 'k3',
       description: 'Main model',
       context: '',
-      supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      supportedReasoningEfforts: ['low', 'medium', 'high', 'max'],
     }])
   })
 

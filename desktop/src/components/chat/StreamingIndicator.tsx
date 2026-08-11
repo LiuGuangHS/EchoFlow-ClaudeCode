@@ -17,9 +17,14 @@ function translateServerVerb(
 }
 
 /**
- * What the turn is currently doing, in the user's language. Shared with the
- * composer's run strip so the transcript and the composer can never disagree
- * about the same turn.
+ * What the turn is currently doing, in the user's language.
+ *
+ * This is the only place in the UI that reports the verb, the elapsed time and
+ * the tokens so far — the composer keeps just a Stop button. Do not delete this
+ * component on the assumption the composer covers it, and do not fold it into
+ * the turn rail either: during `isPreparingTurn` the session is still being
+ * created, so the transcript holds no render items and there is no rail to hang
+ * it on. That gap is exactly what regressed once before.
  */
 export function resolveTurnStatusVerb(
   t: (key: TranslationKey) => string,
@@ -117,7 +122,7 @@ export function StreamingIndicator() {
         data-testid="streaming-fallback-indicator"
         role="status"
         aria-live="polite"
-        className="mb-2 flex w-fit items-center gap-[9px] rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] px-4 py-2 text-[13.5px] text-[var(--color-text-secondary)]"
+        className="flex w-fit items-center gap-[9px] py-1 text-[13.5px] text-[var(--color-text-secondary)]"
       >
         <RefreshCw size={13} strokeWidth={2.2} className="shrink-0 animate-spin text-[var(--color-text-secondary)]" aria-hidden="true" />
         <span className="font-medium text-[var(--color-text-primary)]">
@@ -142,7 +147,10 @@ export function StreamingIndicator() {
       data-testid="turn-status-indicator"
       role="status"
       aria-live="polite"
-      className="mb-2 flex w-fit items-center gap-[9px] rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] px-4 py-2 text-[13.5px] text-[var(--color-text-secondary)]"
+      // Bare line, not a pill: it now sits at the end of the live turn rail, and
+      // the rail already says "still going". A bordered chip here would read as
+      // a second, competing status object next to the one that is lit.
+      className="flex w-fit items-center gap-[9px] py-1 text-[13.5px] text-[var(--color-text-secondary)]"
     >
       <span className="animate-pulse-dot text-[var(--color-brand)]" aria-hidden="true">✦</span>
       <span className="font-medium text-[var(--color-text-primary)]">{verb}...</span>

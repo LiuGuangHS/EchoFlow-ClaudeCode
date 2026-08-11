@@ -28,6 +28,12 @@ type Props = {
   branchAction?: MessageBranchAction
   align?: 'start' | 'end'
   timestamp?: number
+  /**
+   * Skip the hover gate. For bars that are already rare and deliberate — the
+   * reply that closes a turn — where hiding them until hover only makes a
+   * present affordance hard to find.
+   */
+  alwaysVisible?: boolean
 }
 
 export function MessageActionBar({
@@ -36,6 +42,7 @@ export function MessageActionBar({
   branchAction,
   align = 'start',
   timestamp,
+  alwaysVisible = false,
 }: Props) {
   const locale = useSettingsStore((state) => state.locale)
   const hasCopy = Boolean(copyText?.trim())
@@ -52,9 +59,11 @@ export function MessageActionBar({
     <div
       data-message-actions
       data-align={align}
-      className={`pointer-events-none mt-2 flex h-7 w-full opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 ${
-        align === 'end' ? 'justify-end' : 'justify-start'
-      }`}
+      className={`mt-2 flex h-7 w-full transition-opacity duration-150 ${
+        alwaysVisible
+          ? ''
+          : 'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100'
+      } ${align === 'end' ? 'justify-end' : 'justify-start'}`}
     >
       <div className="flex min-h-7 items-center gap-1.5">
         {hasCopy ? (

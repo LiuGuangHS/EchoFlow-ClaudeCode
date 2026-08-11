@@ -43,6 +43,7 @@ import { ErrorState } from '@/components/ui/ErrorState'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { DirectoryPicker } from '@/components/composite/DirectoryPicker'
 import { Dropdown } from '@/components/ui/Dropdown'
+import { IconButton } from '@/components/ui/IconButton'
 import { Input } from '@/components/ui/Input'
 import { Modal } from '@/components/ui/Modal'
 import { SearchField } from '@/components/ui/SearchField'
@@ -71,6 +72,11 @@ const AGENT_SOURCE_ORDER: AgentSource[] = [
 
 const BUILT_IN_MODELS = ['haiku', 'sonnet', 'opus', 'fable'] as const
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+/**
+ * "Use whatever this build ships" in the built-in override modal, submitted as
+ * `null`. Distinct from `inherit`, which is itself a persistable choice.
+ */
+const DEFAULT_CHOICE = '__default__'
 const NAME_PATTERN = /^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$/
 type ToolAccessMode = 'inherit' | 'none' | 'custom'
 type ToolCategory = 'readSearch' | 'modify' | 'execute' | 'workflow' | 'other'
@@ -123,6 +129,7 @@ export function AgentManager() {
   const t = useTranslation()
   const [formState, setFormState] = useState<{ mode: 'create' | 'edit'; agent?: AgentDefinition } | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<AgentDefinition | null>(null)
+  const [overrideTarget, setOverrideTarget] = useState<AgentDefinition | null>(null)
 
   const activeSession = sessions.find((session) => session.id === activeSessionId)
   const currentWorkDir = getSessionBrowsablePath(activeSession)
@@ -185,6 +192,7 @@ export function AgentManager() {
           onBack={handleAgentBack}
           onEdit={() => setFormState({ mode: 'edit', agent: selectedAgent })}
           onDelete={() => setDeleteTarget(selectedAgent)}
+          onOverride={() => setOverrideTarget(selectedAgent)}
         />
       ) : (
         <>
@@ -260,11 +268,18 @@ export function AgentManager() {
                       </div>
                       <div className="flex flex-col p-2">
                         {group.map((agent, index) => (
-                          <button
+                          // A row is a div, not a button: the actions on the
+                          // right have to be siblings of the primary control,
+                          // never nested inside it.
+                          <div
                             key={`${agent.source}-${agent.agentType}-${agent.target ?? agent.baseDir ?? index}`}
-                            onClick={() => selectAgent(agent, 'agents')}
-                            className="group rounded-[var(--radius-xl)] border border-transparent px-3 py-3 text-left transition-all hover:border-[var(--color-border-focus)] hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]"
+                            className="group flex items-start gap-1 rounded-[var(--radius-xl)] border border-transparent px-3 py-3 transition-all hover:border-[var(--color-border-focus)] hover:bg-[var(--color-surface-hover)]"
                           >
+                            <button
+                              type="button"
+                              onClick={() => selectAgent(agent, 'agents')}
+                              className="min-w-0 flex-1 rounded-[var(--radius-lg)] text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]"
+                            >
                             <div className="flex items-start gap-3">
                               <Bot size={18} className="mt-0.5 shrink-0" style={{ color: getAgentDotColor(agent.color) }} />
                               <div className="min-w-0 flex-1">
@@ -298,7 +313,14 @@ export function AgentManager() {
                                 </div>
                               </div>
                             </div>
-                          </button>
+                            </button>
+                            <AgentRowActions
+                              agent={agent}
+                              onEdit={() => setFormState({ mode: 'edit', agent })}
+                              onDelete={() => setDeleteTarget(agent)}
+                              onOverride={() => setOverrideTarget(agent)}
+                            />
+                          </div>
                         ))}
                       </div>
                     </section>
@@ -326,6 +348,14 @@ export function AgentManager() {
         sessionId={contextSessionId}
         onClose={() => setDeleteTarget(null)}
       />
+      {overrideTarget && (
+        <BuiltInAgentOverrideModal
+          agent={overrideTarget}
+          cwd={agentContextPath}
+          sessionId={contextSessionId}
+          onClose={() => setOverrideTarget(null)}
+        />
+      )}
     </div>
   )
 }
@@ -335,11 +365,13 @@ function AgentDetailView({
   onBack,
   onEdit,
   onDelete,
+  onOverride,
 }: {
   agent: AgentDefinition
   onBack: () => void
   onEdit: () => void
   onDelete: () => void
+  onOverride: () => void
 }) {
   const t = useTranslation()
   const sourceLabel = t(`settings.agents.source.${agent.source}`)
@@ -362,7 +394,16 @@ function AgentDetailView({
             </Button>
           </div>
         ) : (
-          <MetaPill><LockKeyhole size={11} /> {t('settings.agents.readOnly')}</MetaPill>
+          <div className="flex items-center gap-2">
+            {agent.overridable && (
+              <Button variant="secondary" size="sm" icon={<Bolt size={14} />} onClick={onOverride}>
+                {t('settings.agents.override')}
+              </Button>
+            )}
+            {/* Kept alongside the button: the prompt and tools really are fixed,
+                and only the model and effort are not. */}
+            <MetaPill><LockKeyhole size={11} /> {t('settings.agents.readOnly')}</MetaPill>
+          </div>
         )}
       </div>
 
@@ -938,6 +979,272 @@ function AgentDeleteDialog({
   )
 }
 
+/**
+ * Model/effort editor for a built-in agent.
+ *
+ * Deliberately not `AgentFormModal` with a flag. That component exists to build
+ * an `AgentMutationInput` whose name, description and system prompt are all
+ * required, and none of those apply here; threading a variant through its
+ * render branches and its payload-construction chain would put the riskiest
+ * code in this file on a second, unrelated path.
+ */
+function BuiltInAgentOverrideModal({
+  agent,
+  cwd,
+  sessionId,
+  onClose,
+}: {
+  agent: AgentDefinition
+  cwd?: string
+  sessionId?: string
+  onClose: () => void
+}) {
+  const t = useTranslation()
+  const setAgentOverride = useAgentStore((state) => state.setAgentOverride)
+  const clearAgentOverride = useAgentStore((state) => state.clearAgentOverride)
+  const isMutating = useAgentStore((state) => state.isMutating)
+
+  const defaultModel = agent.defaults?.model
+  const defaultEffort = agent.defaults?.effort
+  const overrideSource = agent.override?.source
+  // A managed or project-level override cannot be edited from the user file
+  // this modal writes to, so saying so beats a write that silently loses.
+  const isManaged = overrideSource !== undefined && overrideSource !== 'userSettings'
+
+  const initialModel = agent.override?.model
+  const initialEffort = agent.override?.effort
+  const [modelChoice, setModelChoice] = useState(
+    initialModel === undefined
+      ? DEFAULT_CHOICE
+      : initialModel === 'inherit' || BUILT_IN_MODELS.includes(initialModel as typeof BUILT_IN_MODELS[number])
+        ? initialModel
+        : 'custom',
+  )
+  const [customModel, setCustomModel] = useState(
+    modelChoice === 'custom' ? (initialModel ?? '') : '',
+  )
+  const [effort, setEffort] = useState(
+    initialEffort === undefined ? DEFAULT_CHOICE : String(initialEffort),
+  )
+  const [customModelError, setCustomModelError] = useState<string | null>(null)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+
+  const describeDefault = (value: string | number | undefined) =>
+    value === undefined
+      ? t('settings.agents.overrideDefaultNone')
+      : t('settings.agents.overrideDefault', { value: String(value) })
+
+  const handleSave = async () => {
+    if (modelChoice === 'custom' && !customModel.trim()) {
+      setCustomModelError(t('settings.agents.form.customModelRequired'))
+      return
+    }
+    setCustomModelError(null)
+    setSubmitError(null)
+    try {
+      await setAgentOverride(
+        agent.agentType,
+        {
+          ...(cwd ? { cwd } : {}),
+          // `null` clears the override so the shipped default applies again.
+          // Never send the default's literal value: that would freeze today's
+          // default into the user's settings file forever.
+          model:
+            modelChoice === DEFAULT_CHOICE
+              ? null
+              : modelChoice === 'custom'
+                ? customModel.trim()
+                : modelChoice,
+          effort: effort === DEFAULT_CHOICE ? null : effort,
+        },
+        sessionId,
+      )
+      onClose()
+    } catch {
+      setSubmitError(t('settings.agents.overrideSaveError'))
+    }
+  }
+
+  const handleReset = async () => {
+    setSubmitError(null)
+    try {
+      await clearAgentOverride(agent.agentType, cwd, sessionId)
+      onClose()
+    } catch {
+      setSubmitError(t('settings.agents.overrideResetError'))
+    }
+  }
+
+  return (
+    <Modal
+      open
+      onClose={isMutating ? () => {} : onClose}
+      title={t('settings.agents.overrideTitle')}
+      width={520}
+      footer={(
+        <>
+          {agent.override && !isManaged && (
+            <Button variant="ghost" onClick={() => void handleReset()} disabled={isMutating}>
+              {t('settings.agents.overrideReset')}
+            </Button>
+          )}
+          <Button variant="secondary" onClick={onClose} disabled={isMutating}>{t('common.cancel')}</Button>
+          <Button onClick={() => void handleSave()} disabled={isMutating || isManaged}>
+            {t('common.save')}
+          </Button>
+        </>
+      )}
+    >
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="break-all font-mono text-sm font-semibold text-[var(--color-text-primary)]">
+            {agent.agentType}
+          </span>
+          <MetaPill>{t('settings.agents.source.built-in')}</MetaPill>
+          {agent.override && <MetaPill>{t('settings.agents.overrideBadge')}</MetaPill>}
+        </div>
+
+        {agent.overriddenBy && (
+          // Editing a built-in that a same-named user agent shadows would look
+          // like it worked and change nothing at spawn time.
+          <p role="status" className="rounded-[var(--radius-lg)] bg-[var(--color-warning-container)] px-3 py-2 text-xs leading-5 text-[var(--color-text-primary)]">
+            {t('settings.agents.overrideShadowed', {
+              source: t(`settings.agents.source.${agent.overriddenBy}`),
+            })}
+          </p>
+        )}
+        {isManaged && (
+          <p role="status" className="rounded-[var(--radius-lg)] bg-[var(--color-surface-container-low)] px-3 py-2 text-xs leading-5 text-[var(--color-text-secondary)]">
+            {t('settings.agents.overrideManaged', {
+              source: t(`settings.agents.source.${overrideSource}`),
+            })}
+          </p>
+        )}
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label={t('settings.agents.form.model')}>
+            <AgentSelect
+              label={t('settings.agents.form.model')}
+              value={modelChoice}
+              onChange={setModelChoice}
+              disabled={isManaged}
+              items={[
+                // Two separate entries on purpose. For Explore the built-in
+                // default is haiku while "inherit" means follow the main
+                // session — collapsing them makes inherit unreachable.
+                { value: DEFAULT_CHOICE, label: describeDefault(defaultModel) },
+                { value: 'inherit', label: t('settings.agents.form.inherit') },
+                ...BUILT_IN_MODELS.map((model) => ({ value: model, label: model })),
+                { value: 'custom', label: t('settings.agents.form.customModel') },
+              ]}
+            />
+          </Field>
+          <Field label={t('settings.agents.form.effort')}>
+            <AgentSelect
+              label={t('settings.agents.form.effort')}
+              value={effort}
+              onChange={setEffort}
+              disabled={isManaged}
+              items={[
+                // No "inherit" entry: effort has no such value, omitting it is
+                // what inherits.
+                { value: DEFAULT_CHOICE, label: describeDefault(defaultEffort) },
+                ...EFFORTS.map((value) => ({ value, label: value })),
+              ]}
+            />
+          </Field>
+        </div>
+
+        {modelChoice === 'custom' && (
+          <Input
+            label={t('settings.agents.form.customModelId')}
+            required
+            value={customModel}
+            error={customModelError ?? undefined}
+            disabled={isManaged}
+            onChange={(event) => setCustomModel(event.target.value)}
+          />
+        )}
+
+        <p className="text-xs leading-5 text-[var(--color-text-tertiary)]">
+          {t('settings.agents.overrideHint')}
+        </p>
+        <p className="text-xs leading-5 text-[var(--color-text-tertiary)]">
+          {t('settings.agents.overrideScopeHint')}
+        </p>
+        {submitError && <p role="alert" className="text-sm text-[var(--color-error)]">{submitError}</p>}
+      </div>
+    </Modal>
+  )
+}
+
+/**
+ * The per-row actions, rendered as a sibling of the row's primary button.
+ *
+ * Hidden until the row is hovered, but `focus-within` is not optional: without
+ * it a keyboard user tabs onto a control they cannot see. The fade lives on
+ * this wrapper rather than on the buttons because IconButton already sets
+ * `transition-colors`, and a second transition utility on the same element
+ * resolves by stylesheet order instead of by intent.
+ */
+function AgentRowActions({
+  agent,
+  onEdit,
+  onDelete,
+  onOverride,
+}: {
+  agent: AgentDefinition
+  onEdit: () => void
+  onDelete: () => void
+  onOverride: () => void
+}) {
+  const t = useTranslation()
+  const editable = isEditableAgent(agent)
+  const overridable = agent.overridable === true
+
+  if (!editable && !overridable) return null
+
+  return (
+    <span
+      // Marked for the touch stylesheet: hover-only affordances are
+      // permanently invisible on a touchscreen.
+      data-agent-row-actions
+      className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100"
+    >
+      {editable ? (
+        <>
+          <IconButton
+            size="sm"
+            tone="muted"
+            icon={<Pencil size={14} />}
+            label={t('settings.agents.rowEdit', { name: agent.agentType })}
+            onClick={onEdit}
+          />
+          <IconButton
+            size="sm"
+            tone="muted"
+            // A delete icon that sits red at rest reads as an error state.
+            hoverTone="danger"
+            icon={<Trash2 size={14} />}
+            label={t('settings.agents.rowDelete', { name: agent.agentType })}
+            onClick={onDelete}
+          />
+        </>
+      ) : (
+        // Built-ins get model/effort only — their file is never rewritten, so
+        // there is deliberately no delete here.
+        <IconButton
+          size="sm"
+          tone="muted"
+          icon={<Bolt size={14} />}
+          label={t('settings.agents.rowOverride', { name: agent.agentType })}
+          onClick={onOverride}
+        />
+      )}
+    </span>
+  )
+}
+
 function isEditableAgent(agent: AgentDefinition) {
   return agent.editable === true && getEditableScope(agent) !== null
 }
@@ -1011,11 +1318,13 @@ function AgentSelect<T extends string>({
   items,
   value,
   onChange,
+  disabled,
 }: {
   label: string
   items: Array<{ value: T; label: string; icon?: ReactNode }>
   value: T
   onChange: (value: T) => void
+  disabled?: boolean
 }) {
   const selected = items.find((item) => item.value === value) ?? items[0]
   return (
@@ -1031,7 +1340,8 @@ function AgentSelect<T extends string>({
         <button
           type="button"
           aria-label={label}
-          className="flex h-10 w-full items-center gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-left text-sm text-[var(--color-text-primary)] outline-none transition-colors hover:border-[var(--color-border-focus)] hover:bg-[var(--color-surface-container-low)] focus-visible:border-[var(--color-border-focus)] focus-visible:shadow-[var(--shadow-focus-ring)]"
+          disabled={disabled}
+          className="flex h-10 w-full items-center gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-left text-sm text-[var(--color-text-primary)] outline-none transition-colors hover:border-[var(--color-border-focus)] hover:bg-[var(--color-surface-container-low)] focus-visible:border-[var(--color-border-focus)] focus-visible:shadow-[var(--shadow-focus-ring)] disabled:cursor-not-allowed disabled:opacity-60"
         >
           {selected?.icon && <span className="shrink-0">{selected.icon}</span>}
           <span className="min-w-0 flex-1 truncate">{selected?.label ?? value}</span>

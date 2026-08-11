@@ -110,14 +110,15 @@ describe('UpdateChecker', () => {
   it('keeps the ready prompt retryable when install fails after download', () => {
     useUpdateStore.setState({
       status: 'downloaded',
-      error: 'installer failed',
+      error: null,
+      errorCode: 'install',
       shouldPrompt: true,
     })
 
     render(<UpdateChecker />)
 
     expect(screen.getByText('Update ready')).toBeInTheDocument()
-    expect(screen.getByText('Update failed: installer failed')).toBeInTheDocument()
+    expect(screen.getByText('The update is downloaded, but installation failed. Try again.')).toBeInTheDocument()
     expect(screen.getByText('Install and restart')).toBeInTheDocument()
   })
 

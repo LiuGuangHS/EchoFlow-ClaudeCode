@@ -774,6 +774,42 @@ export const SettingsSchema = lazySchema(() =>
           'Name of an agent (built-in or custom) to use for the main thread. ' +
             "Applies the agent's system prompt, tool restrictions, and model.",
         ),
+      builtInAgentOverrides: z
+        .record(
+          z.string(),
+          z
+            .object({
+              // Any non-empty string, matching the Markdown `model` frontmatter
+              // parser — third-party model IDs are not aliases.
+              model: z.string().trim().min(1).optional().catch(undefined),
+              // Agent-level effort takes the full level set, unlike the
+              // session-level `effortLevel` above. Levels are inlined rather
+              // than imported from utils/effort.js: that module reads settings,
+              // so importing it here would close a types -> effort -> settings
+              // -> types cycle. BUILT_IN_AGENT_OVERRIDE_EFFORT_LEVELS in
+              // tools/AgentTool/builtInAgentOverrides.ts asserts they match.
+              effort: z
+                .union([
+                  z.enum(['low', 'medium', 'high', 'xhigh', 'max']),
+                  z.number().int(),
+                ])
+                .optional()
+                .catch(undefined),
+            })
+            // Per-field .catch keeps one bad value from discarding its sibling;
+            // passthrough leaves room for future per-agent fields.
+            .passthrough()
+            .catch({}),
+        )
+        .optional()
+        // A malformed value here must not invalidate the whole settings file:
+        // parseSettingsFileUncached drops every setting when the schema throws.
+        .catch(undefined)
+        .describe(
+          'Per-agent model/effort overrides for built-in agents. Keys are the ' +
+            'agentType as spawned (e.g. "Explore"), case-sensitive. Other ' +
+            'built-in fields stay read-only.',
+        ),
       companyAnnouncements: z
         .array(z.string())
         .optional()

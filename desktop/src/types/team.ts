@@ -24,6 +24,56 @@ export type TeamDetail = {
   createdAt?: string
 }
 
+export type TeamWorkbenchTask = {
+  id: string
+  subject: string
+  description: string
+  activeForm?: string
+  owner?: string
+  status: 'pending' | 'in_progress' | 'completed'
+  blocks: string[]
+  blockedBy: string[]
+  metadata?: Record<string, unknown>
+  taskListId: string
+}
+
+export type TeamWorkbenchMessage = {
+  id: string
+  from: string
+  to: string | '*'
+  recipients: string[]
+  kind: 'direct' | 'broadcast' | 'system'
+  text: string
+  summary?: string
+  timestamp: string
+  color?: string
+  taskId?: string
+  protocolType?: string
+}
+
+export type TeamWorkbenchSnapshot = {
+  version: string
+  generatedAt: string
+  team: TeamDetail
+  tasks: TeamWorkbenchTask[]
+  messages: TeamWorkbenchMessage[]
+  deletedAt?: string
+}
+
+export type TeamWorkbenchTimeline = {
+  teamName: string
+  snapshots: TeamWorkbenchSnapshot[]
+  loading: boolean
+  error: string | null
+}
+
+export type TeamWorkbenchSessionTimeline = {
+  sessionId: string
+  teamName: string
+  snapshots: TeamWorkbenchSnapshot[]
+  source: 'live' | 'archive' | 'transcript'
+}
+
 export type AgentColor = 'red' | 'blue' | 'green' | 'yellow' | 'purple' | 'orange' | 'pink' | 'cyan'
 
 export const AGENT_COLORS: AgentColor[] = ['red', 'blue', 'green', 'yellow', 'purple', 'orange', 'pink', 'cyan']

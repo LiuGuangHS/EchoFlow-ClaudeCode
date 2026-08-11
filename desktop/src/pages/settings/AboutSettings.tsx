@@ -12,6 +12,17 @@ import { getDesktopHost } from '../../lib/desktopHost'
 import { publicAssetPath } from '../../lib/publicAsset'
 import { BrandSeal } from '../../components/composite/BrandSeal'
 import { isValidHttpProxyUrl } from '../settings/shared'
+import type { UpdateErrorCode } from '../../stores/updateStore'
+
+const UPDATE_ERROR_KEYS = {
+  network: 'update.error.network',
+  metadata: 'update.error.metadata',
+  proxy: 'update.error.proxy',
+  download: 'update.error.download',
+  install: 'update.error.install',
+  restart: 'update.error.restart',
+  unknown: 'update.error.unknown',
+} as const satisfies Record<UpdateErrorCode, 'update.error.network' | 'update.error.metadata' | 'update.error.proxy' | 'update.error.download' | 'update.error.install' | 'update.error.restart' | 'update.error.unknown'>
 
 /**
  * The About panel: version, update channel and the project's links.
@@ -42,6 +53,7 @@ export function AboutSettings() {
   const downloadedBytes = useUpdateStore((s) => s.downloadedBytes)
   const totalBytes = useUpdateStore((s) => s.totalBytes)
   const error = useUpdateStore((s) => s.error)
+  const errorCode = useUpdateStore((s) => s.errorCode)
   const checkedAt = useUpdateStore((s) => s.checkedAt)
   const checkForUpdates = useUpdateStore((s) => s.checkForUpdates)
   const installUpdate = useUpdateStore((s) => s.installUpdate)
@@ -137,6 +149,7 @@ export function AboutSettings() {
   const updateDescription = (() => {
     if (updateStatus === 'checking') return t('update.checking')
     if (error) return t('update.failed', { error })
+    if (errorCode) return t(UPDATE_ERROR_KEYS[errorCode])
     if (updateStatus === 'downloading') {
       return hasKnownProgress
         ? t('update.progress', { progress: String(progressPercent) })

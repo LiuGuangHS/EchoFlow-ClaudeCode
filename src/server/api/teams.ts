@@ -2,7 +2,9 @@
  * Teams REST API
  *
  * GET    /api/teams                                — 列出所有团队
+ * GET    /api/teams/session/:id/workbench           — 获取主会话的实时或归档工作台
  * GET    /api/teams/:name                          — 获取团队详情
+ * GET    /api/teams/:name/workbench                — 获取协作工作台只读快照
  * GET    /api/teams/:name/members/:id/transcript   — 获取成员 transcript
  * POST   /api/teams/:name/members/:id/messages     — 给成员发送消息
  * DELETE /api/teams/:name                          — 删除团队
@@ -26,6 +28,21 @@ export async function handleTeamsApi(
       return Response.json({ teams })
     }
 
+    // ── GET /api/teams/session/:id/workbench ──────────────────────────────
+    if (
+      method === 'GET' &&
+      teamName === 'session' &&
+      segments[3] &&
+      segments[4] === 'workbench'
+    ) {
+      const sessionId = decodeURIComponent(segments[3])
+      const timeline = await teamService.getWorkbenchForSession(sessionId)
+      if (!timeline) {
+        throw ApiError.notFound(`No Agent Teams workbench for session: ${sessionId}`)
+      }
+      return Response.json(timeline)
+    }
+
     // ── GET /api/teams/:name/members/:id/transcript ───────────────────────
     if (
       method === 'GET' &&
@@ -36,12 +53,17 @@ export async function handleTeamsApi(
     ) {
       const agentId = decodeURIComponent(segments[4])
       const url = new URL(req.url)
+      const leadSessionId = url.searchParams.get('leadSessionId') || undefined
+      if (leadSessionId?.includes('/') || leadSessionId?.includes('\\')) {
+        throw ApiError.badRequest('Invalid leadSessionId')
+      }
       if (url.searchParams.get('incremental') === 'true') {
         const rawAfterOrdinal = url.searchParams.get('afterOrdinal')
         const parsedAfterOrdinal = rawAfterOrdinal === null
           ? undefined
           : Number.parseInt(rawAfterOrdinal, 10)
         const page = await teamService.getMemberTranscriptPage(teamName, agentId, {
+          leadSessionId,
           signature: url.searchParams.get('signature') || undefined,
           cursor: url.searchParams.get('cursor') || undefined,
           afterOrdinal: parsedAfterOrdinal !== undefined && Number.isSafeInteger(parsedAfterOrdinal)
@@ -52,6 +74,12 @@ export async function handleTeamsApi(
       }
       const messages = await teamService.getMemberTranscript(teamName, agentId)
       return Response.json({ messages })
+    }
+
+    // ── GET /api/teams/:name/workbench ────────────────────────────────────
+    if (method === 'GET' && teamName && segments[3] === 'workbench') {
+      const snapshot = await teamService.getWorkbench(teamName)
+      return Response.json(snapshot)
     }
 
     // ── POST /api/teams/:name/members/:id/messages ─────────────────────────

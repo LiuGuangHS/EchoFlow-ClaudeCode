@@ -141,7 +141,10 @@ export function CurrentTurnChangeCard({
 
   return (
     <section
-      className="mx-auto mb-5 w-full max-w-[900px] overflow-hidden rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-card)]"
+      // Follows the message it belongs to inside the same rail box, so it takes a
+      // top margin and no width of its own — `max-w-[900px]` here would have
+      // overflowed the column once the rail indented it.
+      className="mt-2 w-full overflow-hidden rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-card)]"
       aria-label={cardLabel}
     >
       <div className="flex items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-4 py-3">

@@ -1,6 +1,7 @@
 /**
  * TeamWatcher -- monitors ~/.claude/teams/ for changes and pushes
- * real-time updates to all connected WebSocket clients.
+ * real-time updates to the team's lead desktop session. Legacy team files
+ * without a leadSessionId fall back to all connected clients.
  *
  * Uses polling (setInterval) rather than fs.watch for cross-platform reliability.
  * Detects three kinds of events:
@@ -11,9 +12,11 @@
 
 import * as fs from 'fs'
 import * as path from 'path'
+import * as crypto from 'node:crypto'
 import { sendToSession, getActiveSessionIds } from '../ws/handler.js'
 import type { ServerMessage, TeamMemberStatus } from '../ws/events.js'
 import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
+import { teamService, type TeamService } from './teamService.js'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -26,14 +29,31 @@ function getTeamsDir(): string {
 
 export class TeamWatcher {
   private intervalId: ReturnType<typeof setInterval> | null = null
-  private lastSnapshots = new Map<string, string>() // teamName -> raw JSON content
+  private checkPromise: Promise<void> | null = null
+  private lastSnapshots = new Map<string, string>() // teamName -> raw config JSON
+  private lastWorkbenchFingerprints = new Map<string, string>()
+  private lastLeadSessionIds = new Map<string, string>()
+
+  constructor(
+    private readonly emit: (message: ServerMessage, leadSessionId?: string) => void = (message, leadSessionId) => {
+      if (leadSessionId) {
+        sendToSession(leadSessionId, message)
+        return
+      }
+      for (const id of getActiveSessionIds()) sendToSession(id, message)
+    },
+    private readonly archive: Pick<
+      TeamService,
+      'getWorkbench' | 'markWorkbenchArchiveDeleted'
+    > = teamService,
+  ) {}
 
   /** Start polling for team changes. */
   start(intervalMs = 3000): void {
     if (this.intervalId) return // already running
     // Run an initial check immediately, then start the interval
-    this.check()
-    this.intervalId = setInterval(() => this.check(), intervalMs)
+    void this.scheduleCheck()
+    this.intervalId = setInterval(() => void this.scheduleCheck(), intervalMs)
   }
 
   /** Stop polling. */
@@ -45,18 +65,29 @@ export class TeamWatcher {
   }
 
   /** Visible for testing -- force a single poll cycle. */
-  checkNow(): void {
-    this.check()
+  checkNow(): Promise<void> {
+    return this.scheduleCheck()
   }
 
   /** Clear internal snapshot state (useful in tests). */
   reset(): void {
     this.lastSnapshots.clear()
+    this.lastWorkbenchFingerprints.clear()
+    this.lastLeadSessionIds.clear()
   }
 
   // ── Core polling logic ─────────────────────────────────────────────────
 
-  private check(): void {
+  private scheduleCheck(): Promise<void> {
+    if (this.checkPromise) return this.checkPromise
+    const current = this.check().finally(() => {
+      if (this.checkPromise === current) this.checkPromise = null
+    })
+    this.checkPromise = current
+    return current
+  }
+
+  private async check(): Promise<void> {
     const teamsDir = getTeamsDir()
 
     let entries: fs.Dirent[]
@@ -66,9 +97,18 @@ export class TeamWatcher {
       // teams directory doesn't exist yet -- nothing to watch
       // If we previously knew about teams, they are now all "deleted"
       for (const [name] of this.lastSnapshots) {
-        this.broadcast({ type: 'team_deleted', teamName: name })
+        await this.archive.markWorkbenchArchiveDeleted(
+          name,
+          this.lastLeadSessionIds.get(name),
+        ).catch(() => {})
+        this.broadcast(
+          { type: 'team_deleted', teamName: name },
+          this.lastLeadSessionIds.get(name),
+        )
       }
       this.lastSnapshots.clear()
+      this.lastWorkbenchFingerprints.clear()
+      this.lastLeadSessionIds.clear()
       return
     }
 
@@ -89,40 +129,120 @@ export class TeamWatcher {
       }
 
       const lastContent = this.lastSnapshots.get(teamName)
+      const leadSessionId = this.readLeadSessionId(content) ?? this.lastLeadSessionIds.get(teamName)
+      const workbenchFingerprint = this.buildWorkbenchFingerprint(
+        teamsDir,
+        teamName,
+        content,
+      )
 
       if (lastContent === undefined) {
         // New team detected
         this.lastSnapshots.set(teamName, content)
-        this.broadcast({ type: 'team_created', teamName })
+        this.lastWorkbenchFingerprints.set(teamName, workbenchFingerprint)
+        if (leadSessionId) this.lastLeadSessionIds.set(teamName, leadSessionId)
+        this.broadcast({ type: 'team_created', teamName }, leadSessionId)
+        await this.archive.getWorkbench(teamName).catch(() => {})
       } else if (content !== lastContent) {
         // Team config changed -- extract member statuses and broadcast
         this.lastSnapshots.set(teamName, content)
         try {
           const config = JSON.parse(content)
+          if (leadSessionId) this.lastLeadSessionIds.set(teamName, leadSessionId)
           const members = this.extractMemberStatuses(config)
           // Merge inbox-discovered members that are missing from config
           const inboxMembers = this.discoverInboxMembers(teamsDir, teamName, config)
           const subagentMembers = this.discoverSubagentMembers(teamsDir, config)
           const allMembers = [...members, ...inboxMembers, ...subagentMembers]
-          this.broadcast({ type: 'team_update', teamName, members: allMembers })
+          this.broadcast({ type: 'team_update', teamName, members: allMembers }, leadSessionId)
         } catch {
           // JSON parse failed (likely truncated write) — try to recover partial members
           const recovered = this.recoverPartialMembers(content)
           if (recovered.length > 0) {
-            this.broadcast({ type: 'team_update', teamName, members: recovered })
+            this.broadcast({ type: 'team_update', teamName, members: recovered }, leadSessionId)
           }
           // If nothing recoverable, skip broadcast entirely — don't send empty members
         }
       }
-      // else: content unchanged, nothing to do
+
+      if (
+        lastContent !== undefined &&
+        this.lastWorkbenchFingerprints.get(teamName) !== workbenchFingerprint
+      ) {
+        this.lastWorkbenchFingerprints.set(teamName, workbenchFingerprint)
+        await this.archive.getWorkbench(teamName).catch(() => {})
+        this.broadcast({ type: 'team_workbench_updated', teamName }, leadSessionId)
+      }
     }
 
     // Check for deleted teams (were in lastSnapshots but no longer on disk)
     for (const [name] of this.lastSnapshots) {
       if (!currentTeamNames.has(name)) {
+        const leadSessionId = this.lastLeadSessionIds.get(name)
+        await this.archive.markWorkbenchArchiveDeleted(name, leadSessionId).catch(() => {})
         this.lastSnapshots.delete(name)
-        this.broadcast({ type: 'team_deleted', teamName: name })
+        this.lastWorkbenchFingerprints.delete(name)
+        this.lastLeadSessionIds.delete(name)
+        this.broadcast({ type: 'team_deleted', teamName: name }, leadSessionId)
       }
+    }
+  }
+
+  /**
+   * Config writes are only one part of Agent Teams activity. Task ownership and
+   * dependencies live under tasks/, while direct messages live under inboxes/.
+   * Hash all three read-only surfaces so the desktop can invalidate its joined
+   * workbench snapshot without receiving file paths or partial file contents.
+   */
+  private buildWorkbenchFingerprint(
+    teamsDir: string,
+    teamName: string,
+    configContent: string,
+  ): string {
+    const hash = crypto.createHash('sha256')
+    hash.update(configContent)
+    const configDir = path.dirname(teamsDir)
+    this.updateHashFromJsonDirectory(
+      hash,
+      path.join(configDir, 'tasks', teamName),
+    )
+    this.updateHashFromJsonDirectory(
+      hash,
+      path.join(teamsDir, teamName, 'inboxes'),
+    )
+    return hash.digest('hex')
+  }
+
+  private updateHashFromJsonDirectory(
+    hash: crypto.Hash,
+    directory: string,
+  ): void {
+    let files: string[]
+    try {
+      files = fs.readdirSync(directory).filter((file) => file.endsWith('.json')).sort()
+    } catch {
+      hash.update('\u0000missing')
+      return
+    }
+
+    for (const file of files) {
+      hash.update('\u0000' + file + '\u0000')
+      try {
+        hash.update(fs.readFileSync(path.join(directory, file)))
+      } catch {
+        hash.update('unreadable')
+      }
+    }
+  }
+
+  private readLeadSessionId(content: string): string | undefined {
+    try {
+      const config = JSON.parse(content) as Record<string, unknown>
+      return typeof config.leadSessionId === 'string' && config.leadSessionId
+        ? config.leadSessionId
+        : undefined
+    } catch {
+      return undefined
     }
   }
 
@@ -324,11 +444,8 @@ export class TeamWatcher {
 
   // ── Broadcasting ───────────────────────────────────────────────────────
 
-  private broadcast(message: ServerMessage): void {
-    const sessionIds = getActiveSessionIds()
-    for (const id of sessionIds) {
-      sendToSession(id, message)
-    }
+  private broadcast(message: ServerMessage, leadSessionId?: string): void {
+    this.emit(message, leadSessionId)
   }
 }
 

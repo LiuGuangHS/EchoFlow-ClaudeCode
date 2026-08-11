@@ -20,7 +20,7 @@ import { installApplicationMenu, installRendererContextMenu } from './services/m
 import { acquireSingleInstanceLock } from './services/singleInstance'
 import { installTray, shouldInstallTray, type TrayController } from './services/tray'
 import { ElectronUpdaterService, updaterSessionProxyConfig } from './services/updater'
-import { resolveUpdateFeedUrls } from './services/updateFeed'
+import { resolveUpdateFeedConfig } from './services/updateFeed'
 import { createUpdateSmokeUpdaterFromEnv } from './services/updateSmoke'
 import { ElectronTerminalService, type TerminalSpawnInput } from './services/terminal'
 import { ElectronPreviewService, type PreviewBounds } from './services/preview'
@@ -262,19 +262,19 @@ function getUpdaterService() {
   const smokeUpdater = createUpdateSmokeUpdaterFromEnv(process.env)
   updaterService ??= new ElectronUpdaterService(smokeUpdater ?? autoUpdater, {
     async apply(proxy) {
-      const config = proxy
-        ? { proxyRules: proxy, proxyBypassRules: '<local>' }
-        : {}
-      await Promise.all([
-        app.setProxy(config),
-        session.defaultSession.setProxy(config),
-      ])
-      await session.defaultSession.forceReloadProxyConfig()
-      await autoUpdater.netSession?.setProxy(updaterSessionProxyConfig(proxy))
+      await autoUpdater.netSession.setProxy(updaterSessionProxyConfig(proxy))
     },
   }, {
     updateConfigPath: !smokeUpdater && app.isPackaged ? path.join(process.resourcesPath, 'app-update.yml') : undefined,
-    feedUrls: smokeUpdater ? [] : resolveUpdateFeedUrls(process.env),
+    ...(smokeUpdater
+      ? { feedUrls: [] }
+      : (() => {
+          const feedConfig = resolveUpdateFeedConfig(process.env)
+          return {
+            metadataFeedUrl: feedConfig.metadataUrl,
+            downloadFeedUrls: feedConfig.downloadFeedUrls,
+          }
+        })()),
   })
   return updaterService
 }
@@ -365,6 +365,12 @@ function currentWindow(event: Electron.IpcMainInvokeEvent) {
   const window = BrowserWindow.fromWebContents(event.sender)
   if (!window) throw new Error('No BrowserWindow for Electron IPC event')
   return window
+}
+
+function requireMainWindow(event: Electron.IpcMainInvokeEvent) {
+  if (currentWindow(event) !== mainWindow) {
+    throw new Error('Update IPC is only available to the main window')
+  }
 }
 
 function registerHandler<T>(
@@ -611,22 +617,35 @@ function registerIpcHandlers() {
     openDialog(currentWindow(event), payload as Parameters<typeof openDialog>[1]))
   registerHandler(ELECTRON_IPC_CHANNELS.dialogSave, (event, payload) =>
     saveDialog(currentWindow(event), payload as Parameters<typeof saveDialog>[1]))
-  registerHandler(ELECTRON_IPC_CHANNELS.updateCheck, (_event, payload) =>
-    getUpdaterService().checkForUpdates(payload as Parameters<ElectronUpdaterService['checkForUpdates']>[0]))
-  registerHandler(ELECTRON_IPC_CHANNELS.updateDownload, () => getUpdaterService().downloadUpdate(event => {
-    mainWindow?.webContents.send(ELECTRON_EVENT_CHANNELS.updateDownloadEvent, event)
-  }))
-  registerHandler(ELECTRON_IPC_CHANNELS.updateInstall, () => getUpdaterService().stageDownloadedUpdate())
-  registerHandler(ELECTRON_IPC_CHANNELS.updatePrepareInstall, () => getServerRuntime().stopAll())
-  registerHandler(ELECTRON_IPC_CHANNELS.updateCancelInstall, () => getUpdaterService().cancelInstall())
-  registerHandler(ELECTRON_IPC_CHANNELS.updateRelaunch, () => {
-    if (getUpdaterService().hasDownloadedUpdate()) {
-      isQuitting = true
-      getUpdaterService().quitAndInstallDownloadedUpdate()
-      return
+  registerHandler(ELECTRON_IPC_CHANNELS.updateCheck, (event, payload) => {
+    requireMainWindow(event)
+    return getUpdaterService().checkForUpdates(payload as Parameters<ElectronUpdaterService['checkForUpdates']>[0])
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.updateDownload, (event) => {
+    requireMainWindow(event)
+    return getUpdaterService().downloadUpdate(progress => {
+      mainWindow?.webContents.send(ELECTRON_EVENT_CHANNELS.updateDownloadEvent, progress)
+    })
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.updateInstall, (event) => {
+    requireMainWindow(event)
+    return getUpdaterService().stageDownloadedUpdate()
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.updatePrepareInstall, (event) => {
+    requireMainWindow(event)
+    return getServerRuntime().stopAll()
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.updateCancelInstall, (event) => {
+    requireMainWindow(event)
+    return getUpdaterService().cancelInstall()
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.updateRelaunch, (event) => {
+    requireMainWindow(event)
+    if (!getUpdaterService().hasDownloadedUpdate()) {
+      throw new Error('No downloaded update is ready to relaunch')
     }
-    app.relaunch()
-    app.quit()
+    isQuitting = true
+    getUpdaterService().quitAndInstallDownloadedUpdate()
   })
   registerHandler(ELECTRON_IPC_CHANNELS.notificationPermissionState, () => notificationPermissionState(Notification))
   registerHandler(ELECTRON_IPC_CHANNELS.notificationRequestPermission, () => requestNotificationPermission(Notification))

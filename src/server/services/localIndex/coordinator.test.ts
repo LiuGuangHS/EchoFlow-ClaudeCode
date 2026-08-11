@@ -613,7 +613,7 @@ describe('local index coordinator', () => {
   it('withholds persisted activity totals while a parser upgrade is waiting to rebuild', async () => {
     const root = await createTempDir('coordinator-activity-parser-upgrade')
     const configDir = join(root, 'config')
-    const databasePath = join(configDir, 'cc-haha', 'db', 'index-v1.sqlite')
+    const databasePath = join(configDir, 'echoflow-code', 'db', 'index-v1.sqlite')
     const source = await createRealTranscript(
       configDir,
       '-repo',
