@@ -518,9 +518,10 @@ async function getSessionReloadWarning(
         ? 'The active CLI session is not running; the saved agent will load when the session starts again.'
         : 'Failed to reload agent definitions in the active CLI session')
     }
-    if (session.errors > 0) {
-      return `The active CLI session reloaded with ${session.errors} agent loading error${session.errors === 1 ? '' : 's'}.`
-    }
+    // `errors` belongs to the shared reload_plugins response and counts plugin
+    // and hook loading errors. A completed control request has already swapped
+    // the session's agent definitions, so those unrelated errors must not turn
+    // a successful Agent mutation into an apply failure.
     return null
   } catch (error) {
     return getErrorMessage(

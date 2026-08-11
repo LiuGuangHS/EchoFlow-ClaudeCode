@@ -460,6 +460,37 @@ export const SettingsSchema = lazySchema(() =>
         .boolean()
         .optional()
         .describe('Disable all hooks and statusLine execution'),
+      // Dynamic workflows: the Workflow tool, /workflows, and saved workflow
+      // commands. Honored in managed settings as an org-wide kill switch.
+      disableWorkflows: z
+        .boolean()
+        .optional()
+        .describe(
+          'Disable dynamic workflows: the Workflow tool, bundled workflow commands, ' +
+            'and saved workflows in .claude/workflows.',
+        ),
+      enableWorkflows: z
+        .boolean()
+        .optional()
+        .describe(
+          'Explicitly enable dynamic workflows. Only consulted when they are not ' +
+            'disabled; `disableWorkflows` and CLAUDE_CODE_DISABLE_WORKFLOWS win.',
+        ),
+      workflowKeywordTriggerEnabled: z
+        .boolean()
+        .optional()
+        .describe(
+          'Enable the "ultracode" keyword trigger: including the keyword in a prompt ' +
+            'opts that turn into the Workflow tool. Set to false to disable the trigger. Default: true.',
+        ),
+      workflowSizeGuideline: z
+        .enum(['unrestricted', 'small', 'medium', 'large'])
+        .optional()
+        .describe(
+          'How many subagents Claude should aim for when writing a dynamic workflow. ' +
+            'small < 5, medium < 15, large < 50, unrestricted lets Claude size it to the task. ' +
+            'Advice to the model, not a runtime cap.',
+        ),
       // Opt out of the cross-client `.agents/skills` convention (agentskills.io),
       // which is scanned alongside `.claude/skills` by default.
       disableAgentSkillsDirectory: z

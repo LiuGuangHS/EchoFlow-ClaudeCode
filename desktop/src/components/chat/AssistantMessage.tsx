@@ -159,15 +159,14 @@ export const AssistantMessage = memo(function AssistantMessage({ content, isStre
           />
         )}
 
-        {showTurnCompletion ? <TurnCompletionStamp completion={turnCompletion!} /> : null}
-
         {/*
-          Only the reply that closes a turn gets actions. A turn emits many
+          Only the reply that closes a turn gets this footer. A turn emits many
           intermediate replies ("checking the lint spread now") and nobody copies
           or forks from those — yet the bar reserved 36px on each one whether or
           not it was hovered, which on a one-line reply outweighed the text.
-          Answers get copied when they are the answer, so it lands there and,
-          being rare now, stays visible instead of waiting for a hover.
+          The action buttons and completion metadata share one compact row so a
+          finished answer has one visual close instead of two stacked footers.
+          Being rare now, it stays visible instead of waiting for a hover.
           Mid-turn text is still copyable by selecting it (SelectableChatMessage).
         */}
         {showTurnCompletion && (
@@ -177,8 +176,7 @@ export const AssistantMessage = memo(function AssistantMessage({ content, isStre
             branchAction={branchAction}
             align="start"
             alwaysVisible
-            // The stamp above already carries this turn's end time; a chip
-            // repeating it a line below reads as two different times.
+            metadata={<TurnCompletionStamp completion={turnCompletion!} />}
           />
         )}
       </div>

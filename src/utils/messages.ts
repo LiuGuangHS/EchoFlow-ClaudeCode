@@ -1,3 +1,10 @@
+import { describeWorkflowSizeGuideline } from './workflows/enabled.js'
+import {
+  ULTRACODE_ENTER_REMINDER,
+  ULTRACODE_EXIT_REMINDER,
+  ULTRACODE_STILL_ON_REMINDER,
+  WORKFLOW_KEYWORD_REMINDER,
+} from './workflows/ultracode.js'
 import { feature } from 'bun:bundle'
 import type { BetaUsage as Usage } from '@anthropic-ai/sdk/resources/beta/messages/messages.mjs'
 import type {
@@ -4315,6 +4322,43 @@ You have exited auto mode. The user may now want to interact more directly. You 
       return wrapMessagesInSystemReminder([
         createUserMessage({
           content: `The user has requested reasoning effort level: ${attachment.level}. Apply this to the current turn.`,
+          isMeta: true,
+        }),
+      ])
+    }
+    case 'workflow_keyword_request': {
+      return wrapMessagesInSystemReminder([
+        createUserMessage({
+          content: WORKFLOW_KEYWORD_REMINDER,
+          isMeta: true,
+        }),
+      ])
+    }
+    case 'ultra_effort_enter': {
+      return wrapMessagesInSystemReminder([
+        createUserMessage({
+          content:
+            attachment.reminderType === 'full'
+              ? ULTRACODE_ENTER_REMINDER
+              : ULTRACODE_STILL_ON_REMINDER,
+          isMeta: true,
+        }),
+      ])
+    }
+    case 'ultra_effort_exit': {
+      return wrapMessagesInSystemReminder([
+        createUserMessage({
+          content: ULTRACODE_EXIT_REMINDER,
+          isMeta: true,
+        }),
+      ])
+    }
+    case 'workflow_size_guideline_change': {
+      return wrapMessagesInSystemReminder([
+        createUserMessage({
+          content: describeWorkflowSizeGuideline(
+            attachment.size as Parameters<typeof describeWorkflowSizeGuideline>[0],
+          ),
           isMeta: true,
         }),
       ])

@@ -1,4 +1,9 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test'
+import {
+  resetStateForTests,
+  setIsInteractive,
+  switchSession,
+} from '../../bootstrap/state.js'
 import * as sdkEventQueue from '../../utils/sdkEventQueue.js'
 import type { AppState } from '../../state/AppState.js'
 import { IDLE_SPECULATION_STATE } from '../../state/AppStateStore.js'
@@ -6,12 +11,14 @@ import { createTaskStateBase } from '../../Task.js'
 import type { ToolUseContext } from '../../Tool.js'
 import type { LocalAgentTaskState } from '../../tasks/LocalAgentTask/LocalAgentTask.js'
 import type { Message } from '../../types/message.js'
+import type { SessionId } from '../../types/ids.js'
 import { getEmptyToolPermissionContext } from '../../Tool.js'
 import {
   getCommandQueue,
   resetCommandQueue,
 } from '../../utils/messageQueueManager.js'
 import { createAssistantMessage, createUserMessage } from '../../utils/messages.js'
+import { registerTask } from '../../utils/task/framework.js'
 import {
   emitAgentToolActivitiesForMessage,
   extractAgentToolActivities,
@@ -269,6 +276,110 @@ describe('runAsyncAgentLifecycle', () => {
       emitSpy.mockRestore()
     }
   })
+
+  test('keeps start, progress, and terminal owned when root resumes a nested run', async () => {
+    resetStateForTests()
+    setIsInteractive(false)
+    switchSession('nested-resume-owner-test' as SessionId)
+    sdkEventQueue.drainSdkEvents()
+    const taskId = 'agent-owned-resume'
+    const abortController = new AbortController()
+    const task: LocalAgentTaskState = {
+      ...createTaskStateBase(taskId, 'local_agent', 'Resume nested work', 'toolu_agent'),
+      type: 'local_agent',
+      status: 'running',
+      ownerAgentId: 'parent-agent',
+      agentId: taskId,
+      prompt: 'Resume nested work',
+      agentType: 'general-purpose',
+      abortController,
+      retrieved: false,
+      lastReportedToolCount: 0,
+      lastReportedTokenCount: 0,
+      isBackgrounded: true,
+      pendingMessages: [],
+      retain: false,
+      diskLoaded: false,
+    }
+    let appState = {
+      tasks: {},
+      toolPermissionContext: getEmptyToolPermissionContext(),
+      speculation: IDLE_SPECULATION_STATE,
+    } as unknown as AppState
+    const setAppState = (updater: (prev: AppState) => AppState): void => {
+      appState = updater(appState)
+    }
+
+    try {
+      registerTask(task, setAppState)
+      async function* makeStream(): AsyncGenerator<Message, void> {
+        yield createAssistantMessage({
+          content: [{
+            type: 'tool_use',
+            id: 'toolu_child',
+            name: 'Bash',
+            input: { command: 'pwd' },
+          }],
+        }) as Message
+      }
+
+      await runAsyncAgentLifecycle({
+        taskId,
+        abortController,
+        makeStream,
+        metadata: {
+          prompt: 'Resume nested work',
+          resolvedAgentModel: 'test-model',
+          isBuiltInAgent: true,
+          startTime: Date.now(),
+          agentType: 'general-purpose',
+          isAsync: true,
+        },
+        description: 'Resume nested work',
+        parentToolUseId: 'toolu_agent',
+        // Deliberately a root continuation. Ownership must come from the
+        // resumed run, not from the current caller.
+        toolUseContext: {
+          options: { tools: [] },
+          toolUseId: 'toolu_sendmessage',
+          getAppState: () => appState,
+        } as unknown as ToolUseContext,
+        rootSetAppState: setAppState,
+        agentIdForCleanup: taskId,
+        enableSummarization: false,
+        getWorktreeResult: async () => ({}),
+        ownerAgentId: 'parent-agent',
+      })
+
+      const events = sdkEventQueue.drainSdkEvents()
+      const lifecycle = events.filter(event => (
+        'task_id' in event
+        && event.task_id === taskId
+        && (
+          event.subtype === 'task_started'
+          || event.subtype === 'task_progress'
+          || event.subtype === 'task_notification'
+        )
+      ))
+      expect(lifecycle.map(event => event.subtype)).toEqual([
+        'task_started',
+        'task_progress',
+        'task_notification',
+      ])
+      expect(lifecycle.every(event => (
+        'owner_agent_id' in event && event.owner_agent_id === 'parent-agent'
+      ))).toBe(true)
+      expect(events).toContainEqual(expect.objectContaining({
+        subtype: 'agent_tool_activity',
+        task_id: taskId,
+        owner_agent_id: 'parent-agent',
+      }))
+      expect(getCommandQueue()[0]?.agentId).toBe('parent-agent')
+    } finally {
+      sdkEventQueue.drainSdkEvents()
+      resetStateForTests()
+    }
+  })
 })
 
 describe('extractAgentToolActivities', () => {
@@ -343,13 +454,19 @@ describe('emitAgentToolActivitiesForMessage', () => {
         ],
       }) as Message
 
-      emitAgentToolActivitiesForMessage(message, 'agent-foregrounded', 'toolu_parent')
+      emitAgentToolActivitiesForMessage(
+        message,
+        'agent-foregrounded',
+        'toolu_parent',
+        'parent-agent',
+      )
 
       expect(emitSpy.mock.calls).toEqual([
         [
           'agent-foregrounded',
           'toolu_parent',
           { kind: 'tool_use', tool_name: 'Bash', tool_use_id: 'toolu_child', input: { command: 'pwd' } },
+          'parent-agent',
         ],
       ])
     } finally {

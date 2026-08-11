@@ -12,7 +12,9 @@ type TaskStartedEvent = {
   task_type?: string
   remote_session_id?: string
   workflow_name?: string
+  workflow_run_id?: string
   prompt?: string
+  owner_agent_id?: string
 }
 
 type TaskProgressEvent = {
@@ -28,10 +30,12 @@ type TaskProgressEvent = {
   }
   last_tool_name?: string
   summary?: string
+  workflow_run_id?: string
   // Delta batch of workflow state changes. Clients upsert by
   // `${type}:${index}` then group by phaseIndex to rebuild the phase tree,
   // same fold as collectFromEvents + groupByPhase in PhaseProgress.tsx.
   workflow_progress?: SdkWorkflowProgress[]
+  owner_agent_id?: string
 }
 
 // Emitted when a foreground agent completes without being backgrounded.
@@ -48,11 +52,13 @@ type TaskNotificationSdkEvent = {
   output_file: string
   summary: string
   result?: string
+  workflow_run_id?: string
   usage?: {
     total_tokens: number
     tool_uses: number
     duration_ms: number
   }
+  owner_agent_id?: string
 }
 
 // Mirrors notifySessionStateChanged. The CCR bridge already receives this
@@ -98,6 +104,7 @@ type AgentToolActivityEvent = {
   // Parent Agent tool_use id — the card this activity belongs under.
   tool_use_id: string
   activity: AgentToolActivity
+  owner_agent_id?: string
 }
 
 export type SdkEvent =
@@ -156,7 +163,9 @@ export function emitTaskTerminatedSdk(
     toolUseId?: string
     summary?: string
     outputFile?: string
+    workflowRunId?: string
     usage?: { total_tokens: number; tool_uses: number; duration_ms: number }
+    ownerAgentId?: string
   },
 ): void {
   enqueueSdkEvent({
@@ -167,7 +176,9 @@ export function emitTaskTerminatedSdk(
     status,
     output_file: opts?.outputFile ?? '',
     summary: opts?.summary ?? '',
+    workflow_run_id: opts?.workflowRunId,
     usage: opts?.usage,
+    ...(opts?.ownerAgentId ? { owner_agent_id: opts.ownerAgentId } : {}),
   })
 }
 
@@ -183,6 +194,7 @@ export function emitAgentToolActivity(
   taskId: string,
   parentToolUseId: string,
   activity: AgentToolActivity,
+  ownerAgentId?: string,
 ): void {
   enqueueSdkEvent({
     type: 'system',
@@ -190,5 +202,6 @@ export function emitAgentToolActivity(
     task_id: taskId,
     tool_use_id: parentToolUseId,
     activity,
+    ...(ownerAgentId ? { owner_agent_id: ownerAgentId } : {}),
   })
 }

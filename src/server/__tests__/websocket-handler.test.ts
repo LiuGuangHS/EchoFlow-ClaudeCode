@@ -867,6 +867,64 @@ describe('WebSocket handler session isolation', () => {
     })
   })
 
+  it('keeps owned member lifecycle out of the live root turn', async () => {
+    const sessionId = `owned-member-lifecycle-${crypto.randomUUID()}`
+    const ws = makeClientSocket(sessionId)
+    const outputCallbacks: Array<(cliMsg: any) => void> = []
+    spyOn(conversationService, 'hasSession').mockReturnValue(true)
+    spyOn(conversationService, 'onOutput').mockImplementation((_sid, callback) => {
+      outputCallbacks.push(callback)
+    })
+    spyOn(conversationService, 'removeOutputCallback').mockImplementation(() => {})
+    spyOn(sessionService, 'appendSessionTaskNotification').mockResolvedValue()
+
+    handleWebSocket.open(ws)
+    __markActiveTurnForTests(sessionId)
+    ws.sent.length = 0
+
+    const ownedLifecycle = [
+      {
+        subtype: 'task_started',
+        description: 'Member analysis',
+      },
+      {
+        subtype: 'task_progress',
+        summary: 'Inspecting providers',
+      },
+      {
+        subtype: 'task_notification',
+        status: 'completed',
+        summary: 'Provider analysis complete',
+      },
+    ]
+    for (const event of ownedLifecycle) {
+      outputCallbacks[0]?.({
+        type: 'system',
+        task_id: 'member-agent-task',
+        tool_use_id: 'member-agent-tool',
+        task_type: 'local_agent',
+        owner_agent_id: 'provider-analyzer',
+        ...event,
+      })
+    }
+    await flushMicrotasks()
+
+    const messages = ws.sent.map((payload) => JSON.parse(payload))
+    expect(messages.map(({ type, subtype }) => ({ type, subtype }))).toEqual([
+      { type: 'system_notification', subtype: 'task_started' },
+      { type: 'system_notification', subtype: 'task_progress' },
+      { type: 'system_notification', subtype: 'task_notification' },
+    ])
+    expect(messages).toEqual(messages.map((message) => expect.objectContaining({
+      data: expect.objectContaining({ owner_agent_id: 'provider-analyzer' }),
+    })))
+    expect(messages).not.toContainEqual(expect.objectContaining({ type: 'user_message' }))
+    expect(messages).not.toContainEqual(expect.objectContaining({
+      type: 'status',
+      state: 'tool_executing',
+    }))
+  })
+
   it('stops every active Agent task when generation is stopped', async () => {
     const sessionId = `stop-agent-fanout-${crypto.randomUUID()}`
     const ws = makeClientSocket(sessionId)
@@ -918,6 +976,24 @@ describe('WebSocket handler session isolation', () => {
       description: 'Shell work sharing the Agent runtime',
       task_type: 'local_bash',
     })
+    outputCallbacks[0]?.({
+      type: 'system',
+      subtype: 'task_started',
+      task_id: 'provider-analyzer-teammate',
+      tool_use_id: 'provider-analyzer-teammate-tool',
+      description: 'Provider analyzer teammate',
+      task_type: 'in_process_teammate',
+      owner_agent_id: 'provider-analyzer',
+    })
+    outputCallbacks[0]?.({
+      type: 'system',
+      subtype: 'task_notification',
+      task_id: 'provider-analyzer-teammate',
+      tool_use_id: 'provider-analyzer-teammate-tool',
+      description: 'Provider analyzer teammate still running',
+      task_type: 'in_process_teammate',
+      status: 'running',
+    })
 
     handleWebSocket.message(ws, JSON.stringify({ type: 'stop_generation' }))
     await flushMicrotasks()
@@ -949,6 +1025,12 @@ describe('WebSocket handler session isolation', () => {
       toolUseId: 'bash-collateral-tool',
       status: 'stopped',
     }))
+    expect(append).toHaveBeenCalledWith(sessionId, expect.objectContaining({
+      taskId: 'provider-analyzer-teammate',
+      toolUseId: 'provider-analyzer-teammate-tool',
+      ownerAgentId: 'provider-analyzer',
+      status: 'stopped',
+    }))
     expect(ws.sent.map((payload) => JSON.parse(payload))).toContainEqual({
       type: 'system_notification',
       subtype: 'task_notification',
@@ -962,6 +1044,15 @@ describe('WebSocket handler session isolation', () => {
       subtype: 'task_notification',
       data: expect.objectContaining({
         task_id: 'bash-collateral-task',
+        status: 'stopped',
+      }),
+    })
+    expect(ws.sent.map((payload) => JSON.parse(payload))).toContainEqual({
+      type: 'system_notification',
+      subtype: 'task_notification',
+      data: expect.objectContaining({
+        task_id: 'provider-analyzer-teammate',
+        owner_agent_id: 'provider-analyzer',
         status: 'stopped',
       }),
     })

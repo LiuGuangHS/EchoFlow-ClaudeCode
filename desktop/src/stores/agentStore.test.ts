@@ -744,7 +744,7 @@ describe('agentStore', () => {
     expect(useAgentStore.getState().mutationWarning).toBeNull()
   })
 
-  it('reports reload error counts without turning a saved update into a failure', async () => {
+  it('does not treat unrelated component reload errors as an agent apply failure', async () => {
     const updatedAgent = makeAgent({ description: 'Updated' })
     apiUpdateMock.mockResolvedValue({ agent: updatedAgent })
     apiListMock.mockResolvedValue({
@@ -770,8 +770,8 @@ describe('agentStore', () => {
         'session-1',
       ),
     ).resolves.toBe(updatedAgent)
-    expect(useAgentStore.getState().mutationWarning).toBe(
-      'The active CLI session reloaded with 2 agent loading errors.',
+    await vi.waitFor(() =>
+      expect(useAgentStore.getState().mutationWarning).toBeNull(),
     )
   })
 
@@ -841,11 +841,11 @@ describe('agentStore', () => {
     expect(useAgentStore.getState().selectedAgent?.override).toBeUndefined()
   })
 
-  it('reloads the CLI session after an override so a running session picks it up', async () => {
+  it('reports a real override reload failure and clears it after retry succeeds', async () => {
     const after = makeBuiltInAgent({ model: 'sonnet' })
     apiSetOverrideMock.mockResolvedValue({ agent: after })
     apiListMock.mockResolvedValue({ activeAgents: [after], allAgents: [after] })
-    apiReloadMock.mockResolvedValue({
+    apiReloadMock.mockResolvedValueOnce({
       ok: true,
       session: {
         applied: false,
@@ -855,6 +855,19 @@ describe('agentStore', () => {
         plugins: 0,
         mcpServers: 0,
         errors: 0,
+        error: 'CLI control channel closed',
+      },
+    }).mockResolvedValueOnce({
+      ok: true,
+      session: {
+        applied: true,
+        commands: 0,
+        agents: 1,
+        plugins: 0,
+        mcpServers: 0,
+        // Shared reloads report plugin/hook errors here. They do not mean the
+        // built-in override failed to reach the running session.
+        errors: 2,
       },
     })
 
@@ -865,8 +878,81 @@ describe('agentStore', () => {
     expect(apiReloadMock).toHaveBeenCalledWith('session-1')
     await vi.waitFor(() =>
       expect(useAgentStore.getState().mutationWarning).toBe(
-        'Failed to reload agent definitions in the active CLI session',
+        'CLI control channel closed',
       ),
+    )
+
+    await useAgentStore.getState().retryMutationRefresh(
+      '/workspace/current',
+      'session-1',
+    )
+
+    expect(apiReloadMock).toHaveBeenCalledTimes(2)
+    expect(useAgentStore.getState().mutationWarning).toBeNull()
+  })
+
+  it('clears a stale reload failure when resetting the override succeeds', async () => {
+    const overridden = makeBuiltInAgent({
+      model: 'sonnet',
+      override: { model: 'sonnet', source: 'userSettings' },
+    })
+    const shipped = makeBuiltInAgent()
+    let listedAgent = overridden
+    apiSetOverrideMock.mockResolvedValue({ agent: overridden })
+    apiClearOverrideMock.mockImplementation(async () => {
+      listedAgent = shipped
+      return { agent: shipped }
+    })
+    apiListMock.mockImplementation(async () => ({
+      activeAgents: [listedAgent],
+      allAgents: [listedAgent],
+    }))
+    apiReloadMock.mockResolvedValueOnce({
+      ok: true,
+      session: {
+        applied: false,
+        reason: 'failed',
+        commands: 0,
+        agents: 0,
+        plugins: 0,
+        mcpServers: 0,
+        errors: 0,
+        error: 'CLI control channel closed',
+      },
+    }).mockResolvedValueOnce({
+      ok: true,
+      session: {
+        applied: true,
+        commands: 0,
+        agents: 1,
+        plugins: 0,
+        mcpServers: 0,
+        errors: 2,
+      },
+    })
+
+    await useAgentStore.getState().setAgentOverride(
+      'Explore',
+      { cwd: '/workspace/current', model: 'sonnet' },
+      'session-1',
+    )
+    await vi.waitFor(() =>
+      expect(useAgentStore.getState().mutationWarning).toBe(
+        'CLI control channel closed',
+      ),
+    )
+
+    await useAgentStore.getState().clearAgentOverride(
+      'Explore',
+      '/workspace/current',
+      'session-1',
+    )
+
+    await vi.waitFor(() =>
+      expect(useAgentStore.getState()).toMatchObject({
+        selectedAgent: shipped,
+        mutationWarning: null,
+      }),
     )
   })
 

@@ -142,10 +142,10 @@ export type ServerMessage =
   | { type: 'background_task_stop_failed'; taskId: string; message: string }
   | { type: 'system_notification'; subtype: string; message?: string; data?: unknown }
   | { type: 'pong' }
-  | { type: 'team_update'; teamName: string; members: TeamMemberStatus[] }
-  | { type: 'team_created'; teamName: string }
-  | { type: 'team_workbench_updated'; teamName: string }
-  | { type: 'team_deleted'; teamName: string }
+  | { type: 'team_update'; teamName: string; members: TeamMemberStatus[]; incarnationId?: string; leadSessionId?: string; createdAt?: number }
+  | { type: 'team_created'; teamName: string; incarnationId?: string; leadSessionId?: string; createdAt?: number }
+  | { type: 'team_workbench_updated'; teamName: string; incarnationId?: string; leadSessionId?: string; createdAt?: number }
+  | { type: 'team_deleted'; teamName: string; incarnationId?: string; leadSessionId?: string; createdAt?: number }
   | { type: 'task_update'; taskId: string; status: string; progress?: string }
   | { type: 'session_title_updated'; sessionId: string; title: string }
 
@@ -236,7 +236,10 @@ export type ComputerUsePermissionResponse = {
 export type AgentTaskNotification = {
   taskId: string
   toolUseId: string
+  /** Runtime agent whose transcript owns this lifecycle. Undefined is root or legacy. */
+  ownerAgentId?: string
   status: 'completed' | 'failed' | 'stopped'
+  workflowRunId?: string
   summary?: string
   result?: string
   outputFile?: string
@@ -257,6 +260,7 @@ export type BackgroundAgentTask = {
   description?: string
   taskType?: string
   workflowName?: string
+  workflowRunId?: string
   prompt?: string
   result?: string
   summary?: string

@@ -226,7 +226,7 @@ describe('AppShell boot flow', () => {
     mocks.tabState.activeTabId = 'team-member:synthetic'
     mocks.tabState.tabs = [
       ...mocks.tabState.tabs,
-      { sessionId: 'team-member:synthetic', title: 'Teammate', type: 'session', status: 'idle' },
+      { sessionId: 'team-member:synthetic', title: 'Teammate', type: 'team-member', status: 'idle' },
     ]
     rerender(<AppShell />)
     expect(useSessionStore.getState().activeSessionId).toBe('session-1')
@@ -259,7 +259,7 @@ describe('AppShell boot flow', () => {
     mocks.tabState.tabs = [
       { sessionId: 'session-older', title: 'Older project session', type: 'session', status: 'idle' },
       { sessionId: '__settings__', title: 'Settings', type: 'settings', status: 'idle' },
-      { sessionId: 'team-member:synthetic', title: 'Teammate', type: 'session', status: 'idle' },
+      { sessionId: 'team-member:synthetic', title: 'Teammate', type: 'team-member', status: 'idle' },
       { sessionId: 'session-recent', title: 'Recent project session', type: 'session', status: 'idle' },
     ]
 

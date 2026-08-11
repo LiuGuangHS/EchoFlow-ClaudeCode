@@ -134,7 +134,7 @@ export const TaskUpdateTool = buildTool({
     },
     context,
   ) {
-    const taskListId = getTaskListId()
+    const taskListId = getTaskListId(context?.agentId)
 
     // Auto-expand task list when updating tasks
     context.setAppState(prev => {

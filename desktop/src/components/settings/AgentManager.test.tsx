@@ -703,6 +703,108 @@ describe('AgentManager', () => {
     expect(screen.queryByRole('button', { name: 'Edit Explore' })).toBeNull()
   })
 
+  it('saves and resets an override through the active same-project session without a warning', async () => {
+    const shipped = makeBuiltInAgent()
+    const overridden = makeBuiltInAgent({
+      model: 'deepseek-v4-pro',
+      modelDisplay: 'deepseek-v4-pro',
+      override: { model: 'deepseek-v4-pro', source: 'userSettings' },
+    })
+    let listedAgent = shipped
+    apiListMock.mockImplementation(async () => ({
+      activeAgents: [listedAgent],
+      allAgents: [listedAgent],
+    }))
+    apiSetOverrideMock.mockImplementation(async () => {
+      listedAgent = overridden
+      return { agent: overridden }
+    })
+    apiClearOverrideMock.mockImplementation(async () => {
+      listedAgent = shipped
+      return { agent: shipped }
+    })
+    apiReloadMock.mockImplementation(async (sessionId: string) => ({
+      ok: true,
+      session: sessionId === 'running-session'
+        ? {
+            applied: true,
+            commands: 0,
+            agents: 1,
+            plugins: 0,
+            mcpServers: 0,
+            // These are shared plugin/hook errors, not an Agent apply result.
+            errors: 2,
+          }
+        : {
+            applied: false,
+            reason: 'not_running' as const,
+            commands: 0,
+            agents: 0,
+            plugins: 0,
+            mcpServers: 0,
+            errors: 0,
+          },
+    }))
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: 'stale-session',
+          title: 'Older project session',
+          createdAt: '',
+          modifiedAt: '',
+          messageCount: 1,
+          projectPath: '/workspace/project',
+          workDir: '/workspace/project',
+          workDirExists: true,
+        },
+        {
+          id: 'running-session',
+          title: 'Running project session',
+          createdAt: '',
+          modifiedAt: '',
+          messageCount: 1,
+          projectPath: '/workspace/project',
+          workDir: '/workspace/project',
+          workDirExists: true,
+        },
+      ],
+      activeSessionId: 'running-session',
+    })
+
+    render(<AgentManager />)
+    await waitFor(() => expect(apiListMock).toHaveBeenCalledTimes(1))
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Adjust the model and effort for Explore' }),
+    )
+    chooseAgentSelect('Model', 'Custom model ID')
+    fireEvent.change(screen.getByLabelText(/^Custom model ID/), {
+      target: { value: 'deepseek-v4-pro' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(apiReloadMock).toHaveBeenCalledWith('running-session'))
+    expect(apiReloadMock).not.toHaveBeenCalledWith('stale-session')
+    await waitFor(() => expect(useAgentStore.getState()).toMatchObject({
+      selectedAgent: overridden,
+      mutationWarning: null,
+    }))
+    expect(screen.queryByText(
+      'The change was saved, but the latest agent configuration could not be fully applied.',
+    )).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Adjust model' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Reset to built-in default' }))
+
+    await waitFor(() => expect(apiReloadMock).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(useAgentStore.getState()).toMatchObject({
+      selectedAgent: shipped,
+      mutationWarning: null,
+    }))
+    expect(screen.queryByText(
+      'The change was saved, but the latest agent configuration could not be fully applied.',
+    )).toBeNull()
+  })
+
   it('separates the built-in default from inherit and sends null for the default', async () => {
     const builtIn = makeBuiltInAgent()
     await renderManager({ activeAgents: [builtIn], allAgents: [builtIn] })

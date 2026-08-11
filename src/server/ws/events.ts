@@ -123,10 +123,10 @@ export type ServerMessage =
   | { type: 'background_task_stop_failed'; taskId: string; message: string }
   | { type: 'system_notification'; subtype: string; message?: string; data?: unknown }
   | { type: 'pong' }
-  | { type: 'team_update'; teamName: string; members: TeamMemberStatus[] }
-  | { type: 'team_created'; teamName: string }
-  | { type: 'team_workbench_updated'; teamName: string }
-  | { type: 'team_deleted'; teamName: string }
+  | { type: 'team_update'; teamName: string; members: TeamMemberStatus[]; incarnationId?: string; leadSessionId?: string; createdAt?: number }
+  | { type: 'team_created'; teamName: string; incarnationId?: string; leadSessionId?: string; createdAt?: number }
+  | { type: 'team_workbench_updated'; teamName: string; incarnationId?: string; leadSessionId?: string; createdAt?: number }
+  | { type: 'team_deleted'; teamName: string; incarnationId?: string; leadSessionId?: string; createdAt?: number }
   | { type: 'task_update'; taskId: string; status: string; progress?: string }
   | { type: 'session_title_updated'; sessionId: string; title: string }
 

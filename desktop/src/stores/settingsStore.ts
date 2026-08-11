@@ -54,6 +54,7 @@ type SettingsStore = {
   currentModel: ModelInfo | null
   effortLevel: EffortLevel
   thinkingEnabled: boolean
+  workflowKeywordTriggerEnabled: boolean
   autoDreamEnabled: boolean
   autoModeOptInAccepted: boolean
   availableModels: ModelInfo[]
@@ -94,6 +95,7 @@ type SettingsStore = {
   setModel: (modelId: string) => Promise<void>
   setEffort: (level: EffortLevel) => Promise<void>
   setThinkingEnabled: (enabled: boolean) => Promise<void>
+  setWorkflowKeywordTriggerEnabled: (enabled: boolean) => Promise<void>
   setAutoDreamEnabled: (enabled: boolean) => Promise<void>
   acceptAutoModeOptIn: () => Promise<void>
   setLocale: (locale: Locale) => void
@@ -181,6 +183,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   currentModel: null,
   effortLevel: 'max',
   thinkingEnabled: true,
+  workflowKeywordTriggerEnabled: true,
   autoDreamEnabled: false,
   autoModeOptInAccepted: false,
   availableModels: [],
@@ -255,6 +258,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         currentModel: model,
         effortLevel: level,
         thinkingEnabled: userSettings.alwaysThinkingEnabled !== false,
+        workflowKeywordTriggerEnabled: userSettings.workflowKeywordTriggerEnabled !== false,
         autoDreamEnabled: userSettings.autoDreamEnabled === true,
         autoModeOptInAccepted: userSettings.skipAutoPermissionPrompt === true,
         chatSendBehavior: normalizeChatSendBehavior(userSettings.chatSendBehavior),
@@ -323,6 +327,17 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       await settingsApi.updateUser({ alwaysThinkingEnabled: enabled })
     } catch {
       set({ thinkingEnabled: prev })
+    }
+  },
+
+  setWorkflowKeywordTriggerEnabled: async (enabled) => {
+    const prev = get().workflowKeywordTriggerEnabled
+    set({ workflowKeywordTriggerEnabled: enabled })
+    try {
+      await settingsApi.updateUser({ workflowKeywordTriggerEnabled: enabled })
+    } catch (error) {
+      set({ workflowKeywordTriggerEnabled: prev })
+      throw error
     }
   },
 

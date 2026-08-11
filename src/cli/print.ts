@@ -2053,6 +2053,7 @@ function runHeadlessStreaming(
                 output_file: notification.outputFile,
                 summary: notification.summary,
                 result: notification.result,
+                workflow_run_id: notification.workflowRunId,
                 usage: notification.usage,
                 session_id: getSessionId(),
                 uuid: randomUUID(),

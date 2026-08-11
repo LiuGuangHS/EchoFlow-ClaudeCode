@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MessageEntry } from '../types/session'
+import { buildSessionActivityModel } from '../components/activity/sessionActivityModel'
 import { useSessionRuntimeStore } from './sessionRuntimeStore'
 
 const {
@@ -10,6 +11,7 @@ const {
   handleTeamUpdateMock,
   handleTeamWorkbenchUpdatedMock,
   handleTeamDeletedMock,
+  fetchTeamForSessionMock,
   fetchSessionTasksMock,
   clearTasksMock,
   setTasksFromTodosMock,
@@ -35,6 +37,7 @@ const {
   handleTeamUpdateMock: vi.fn(),
   handleTeamWorkbenchUpdatedMock: vi.fn(),
   handleTeamDeletedMock: vi.fn(),
+  fetchTeamForSessionMock: vi.fn(async () => {}),
   fetchSessionTasksMock: vi.fn(),
   clearTasksMock: vi.fn(),
   setTasksFromTodosMock: vi.fn(),
@@ -109,6 +112,7 @@ vi.mock('./teamStore', () => ({
       handleTeamUpdate: handleTeamUpdateMock,
       handleTeamWorkbenchUpdated: handleTeamWorkbenchUpdatedMock,
       handleTeamDeleted: handleTeamDeletedMock,
+      fetchTeamForSession: fetchTeamForSessionMock,
     }),
   },
 }))
@@ -151,9 +155,12 @@ vi.mock('./cliTaskStore', () => ({
 
 import { sessionsApi } from '../api/sessions'
 import { useSettingsStore } from './settingsStore'
+import { runsForOwner, runsForSession, useWorkflowStore } from './workflowStore'
 import {
   mapHistoryMessagesToUiMessages,
+  registerAgentRunSession,
   reconstructAgentNotifications,
+  reconstructRunActivityFromTranscript,
   stripGeneratedImageMetadataLines,
   type PerSessionState,
   useChatStore,
@@ -212,6 +219,18 @@ describe('stripGeneratedImageMetadataLines', () => {
 })
 
 describe('Agent Teams workbench invalidation', () => {
+  it('binds team creation to the lead session before workbench hydration', () => {
+    handleTeamCreatedMock.mockReset()
+
+    useChatStore.getState().handleServerMessage('lead-session', {
+      type: 'team_created',
+      teamName: 'visual-team',
+    })
+
+    expect(handleTeamCreatedMock).toHaveBeenCalledOnce()
+    expect(handleTeamCreatedMock).toHaveBeenCalledWith('visual-team', 'lead-session', undefined)
+  })
+
   it('routes the server invalidation through the team store', () => {
     handleTeamWorkbenchUpdatedMock.mockReset()
 
@@ -221,7 +240,34 @@ describe('Agent Teams workbench invalidation', () => {
     })
 
     expect(handleTeamWorkbenchUpdatedMock).toHaveBeenCalledOnce()
-    expect(handleTeamWorkbenchUpdatedMock).toHaveBeenCalledWith('visual-team')
+    expect(handleTeamWorkbenchUpdatedMock).toHaveBeenCalledWith('visual-team', undefined)
+  })
+
+  it('forwards Team incarnation identity and force-reconciles on reconnect', () => {
+    handleTeamCreatedMock.mockReset()
+    fetchTeamForSessionMock.mockClear()
+
+    useChatStore.getState().handleServerMessage('socket-session', {
+      type: 'team_created',
+      teamName: 'visual-team',
+      leadSessionId: 'lead-session',
+      incarnationId: 'visual-team:2000:lead-session',
+      createdAt: 2000,
+    })
+    useChatStore.getState().handleServerMessage('lead-session', {
+      type: 'connected',
+      sessionId: 'lead-session',
+    })
+
+    expect(handleTeamCreatedMock).toHaveBeenCalledWith(
+      'visual-team',
+      'lead-session',
+      {
+        incarnationId: 'visual-team:2000:lead-session',
+        createdAt: 2000,
+      },
+    )
+    expect(fetchTeamForSessionMock).toHaveBeenCalledWith('lead-session', { force: true })
   })
 })
 
@@ -587,6 +633,7 @@ describe('chatStore history mapping', () => {
     cliTaskStoreSnapshot.tasks = []
     cliTaskStoreSnapshot.sessionId = null
     useSessionRuntimeStore.setState({ selections: {} })
+    useWorkflowStore.setState(useWorkflowStore.getInitialState(), true)
     localStorage.clear()
     useSettingsStore.setState({ locale: 'en' })
     useChatStore.setState({
@@ -1559,6 +1606,190 @@ describe('chatStore history mapping', () => {
     })
   })
 
+  it('restores only root-run background activity from joined session history', async () => {
+    vi.mocked(sessionsApi.getMessages).mockResolvedValueOnce({
+      messages: [
+        {
+          id: 'root-shell-use',
+          type: 'assistant',
+          timestamp: '2026-04-06T00:00:00.000Z',
+          content: [{
+            type: 'tool_use',
+            id: 'root-shell-tool',
+            name: 'Bash',
+            input: { command: 'bun test', run_in_background: true },
+          }],
+        },
+        {
+          id: 'root-shell-result',
+          type: 'tool_result',
+          timestamp: '2026-04-06T00:00:01.000Z',
+          content: [{
+            type: 'tool_result',
+            tool_use_id: 'root-shell-tool',
+            content: 'Command running in background with ID: root-shell-task',
+          }],
+        },
+        {
+          id: 'child-shell-use',
+          type: 'assistant',
+          timestamp: '2026-04-06T00:00:02.000Z',
+          parentToolUseId: 'agent-parent',
+          content: [{
+            type: 'tool_use',
+            id: 'agent-parent/agent-child/child-shell-tool',
+            original_tool_use_id: 'child-shell-tool',
+            name: 'Bash',
+            input: { command: 'bun run child-check', run_in_background: true },
+          }],
+        },
+        {
+          id: 'child-shell-result',
+          type: 'tool_result',
+          timestamp: '2026-04-06T00:00:03.000Z',
+          parentToolUseId: 'agent-parent',
+          content: [{
+            type: 'tool_result',
+            tool_use_id: 'agent-parent/agent-child/child-shell-tool',
+            content: 'Command running in background with ID: child-shell-task',
+          }],
+        },
+        {
+          id: 'child-shell-notification',
+          type: 'user',
+          timestamp: '2026-04-06T00:00:04.000Z',
+          parentToolUseId: 'agent-parent',
+          content: '<task-notification>\n<task-id>child-shell-task</task-id>\n<tool-use-id>agent-parent/agent-child/child-shell-tool</tool-use-id>\n<status>completed</status>\n<summary>Child checks passed</summary>\n</task-notification>',
+        },
+      ],
+      taskNotifications: [
+        {
+          taskId: 'root-shell-task',
+          toolUseId: 'root-shell-tool',
+          status: 'completed',
+          summary: 'Root checks passed',
+        },
+        {
+          taskId: 'child-shell-task',
+          toolUseId: 'child-shell-tool',
+          status: 'completed',
+          summary: 'Persisted child checks passed',
+        },
+      ],
+    })
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession({ messages: [] }),
+      },
+    })
+
+    await useChatStore.getState().loadHistory(TEST_SESSION_ID)
+
+    const session = useChatStore.getState().sessions[TEST_SESSION_ID]
+    expect(session?.backgroundAgentTasks?.['root-shell-task']).toMatchObject({
+      taskId: 'root-shell-task',
+      toolUseId: 'root-shell-tool',
+      status: 'completed',
+    })
+    expect(session?.backgroundAgentTasks?.['child-shell-task']).toBeUndefined()
+    expect(session?.agentTaskNotifications?.['agent-parent/agent-child/child-shell-tool'])
+      .toBeUndefined()
+  })
+
+  it('does not assign an unjoined child notification to the root run', async () => {
+    vi.mocked(sessionsApi.getMessages).mockResolvedValueOnce({
+      messages: [{
+        id: 'root-agent-use',
+        type: 'assistant',
+        timestamp: '2026-04-06T00:00:00.000Z',
+        content: [{
+          type: 'tool_use',
+          id: 'root-agent-tool',
+          name: 'Agent',
+          input: { description: 'Run child checks' },
+        }],
+      }],
+      taskNotifications: [{
+        taskId: 'child-shell-task',
+        toolUseId: 'child-shell-tool',
+        status: 'completed',
+        summary: 'Child shell completed before its parent returned',
+      }],
+    })
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession({ messages: [] }),
+      },
+    })
+
+    await useChatStore.getState().loadHistory(TEST_SESSION_ID)
+
+    const session = useChatStore.getState().sessions[TEST_SESSION_ID]
+    expect(session?.agentTaskNotifications).toEqual({})
+    expect(session?.backgroundAgentTasks).toEqual({})
+  })
+
+  it('uses persisted owner identity when root and child reuse the same tool id', async () => {
+    vi.mocked(sessionsApi.getMessages).mockResolvedValueOnce({
+      messages: [
+        {
+          id: 'root-shell-use',
+          type: 'assistant',
+          timestamp: '2026-04-06T00:00:00.000Z',
+          content: [{
+            type: 'tool_use',
+            id: 'Bash:0',
+            name: 'Bash',
+            input: { command: 'bun test', run_in_background: true },
+          }],
+        },
+        {
+          id: 'root-shell-result',
+          type: 'tool_result',
+          timestamp: '2026-04-06T00:00:01.000Z',
+          content: [{
+            type: 'tool_result',
+            tool_use_id: 'Bash:0',
+            content: 'Command running in background with ID: root-shell-task',
+          }],
+        },
+      ],
+      taskNotifications: [
+        {
+          taskId: 'root-shell-task',
+          toolUseId: 'Bash:0',
+          status: 'completed',
+          summary: 'Root checks passed',
+        },
+        {
+          taskId: 'child-shell-task',
+          toolUseId: 'Bash:0',
+          ownerAgentId: 'child-agent',
+          status: 'failed',
+          summary: 'Child checks failed',
+        },
+      ],
+    })
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession({ messages: [] }),
+      },
+    })
+
+    await useChatStore.getState().loadHistory(TEST_SESSION_ID)
+
+    const session = useChatStore.getState().sessions[TEST_SESSION_ID]
+    expect(session?.backgroundAgentTasks?.['root-shell-task']).toMatchObject({
+      status: 'completed',
+      summary: 'Root checks passed',
+    })
+    expect(session?.backgroundAgentTasks?.['child-shell-task']).toBeUndefined()
+    expect(session?.agentTaskNotifications?.['Bash:0']).toMatchObject({
+      taskId: 'root-shell-task',
+      status: 'completed',
+    })
+  })
+
   function mockRestoredSubagentActivity() {
     vi.mocked(sessionsApi.getMessages).mockResolvedValueOnce({
       messages: [
@@ -2243,6 +2474,150 @@ describe('chatStore history mapping', () => {
         result: 'Detailed result & next step',
         outputFile: 'C:\\Temp\\bg.output',
       },
+    })
+  })
+
+  it('reconstructs a background shell lifecycle from its own raw transcript', () => {
+    const restored = reconstructRunActivityFromTranscript([
+      {
+        id: 'shell-use-message',
+        type: 'assistant',
+        timestamp: '2026-04-06T00:00:00.000Z',
+        content: [{
+          type: 'tool_use',
+          id: 'shell-tool-1',
+          name: 'Bash',
+          input: {
+            command: 'bun run check:desktop',
+            description: 'Run desktop checks',
+            run_in_background: true,
+          },
+        }],
+      },
+      {
+        id: 'shell-result-message',
+        type: 'tool_result',
+        timestamp: '2026-04-06T00:00:01.000Z',
+        content: [{
+          type: 'tool_result',
+          tool_use_id: 'shell-tool-1',
+          content: 'Command running in background with ID: shell-task-1. Output is being written to: /tmp/shell-task-1.output',
+        }],
+      },
+      {
+        id: 'shell-notification-message',
+        type: 'user',
+        timestamp: '2026-04-06T00:00:02.000Z',
+        content: '<task-notification>\n<task-id>shell-task-1</task-id>\n<tool-use-id>shell-tool-1</tool-use-id>\n<status>completed</status>\n<summary>Desktop checks passed</summary>\n<result>All suites passed</result>\n</task-notification>',
+      },
+    ])
+
+    expect(restored.agentTaskNotifications['shell-tool-1']).toMatchObject({
+      taskId: 'shell-task-1',
+      toolUseId: 'shell-tool-1',
+      status: 'completed',
+      timestamp: '2026-04-06T00:00:02.000Z',
+    })
+    expect(restored.backgroundAgentTasks['shell-task-1']).toEqual({
+      taskId: 'shell-task-1',
+      toolUseId: 'shell-tool-1',
+      status: 'completed',
+      description: 'Run desktop checks',
+      taskType: 'local_bash',
+      result: 'All suites passed',
+      summary: 'Desktop checks passed',
+      startedAt: Date.parse('2026-04-06T00:00:00.000Z'),
+      updatedAt: Date.parse('2026-04-06T00:00:02.000Z'),
+      outputFile: undefined,
+      workflowName: undefined,
+      prompt: undefined,
+      lastToolName: undefined,
+      usage: undefined,
+    })
+  })
+
+  it('recognizes manually backgrounded PowerShell from structured tool output', () => {
+    const restored = reconstructRunActivityFromTranscript([
+      {
+        id: 'powershell-use-message',
+        type: 'tool_use',
+        timestamp: '2026-04-06T00:00:00.000Z',
+        content: [{
+          type: 'tool_use',
+          id: 'powershell-tool-1',
+          name: 'PowerShell',
+          input: { command: 'npm test' },
+        }],
+      },
+      {
+        id: 'powershell-result-message',
+        type: 'tool_result',
+        timestamp: '2026-04-06T00:00:01.000Z',
+        content: [{
+          type: 'tool_result',
+          tool_use_id: 'powershell-tool-1',
+          content: 'Command was manually backgrounded by user with ID: ignored-text-id. Output is being written to: C:\\Temp\\task.output',
+        }],
+        toolUseResult: { backgroundTaskId: 'powershell-task-1' },
+      },
+    ])
+
+    expect(restored.backgroundAgentTasks['powershell-task-1']).toMatchObject({
+      taskId: 'powershell-task-1',
+      toolUseId: 'powershell-tool-1',
+      status: 'running',
+      description: 'npm test',
+      taskType: 'local_bash',
+      startedAt: Date.parse('2026-04-06T00:00:00.000Z'),
+      updatedAt: Date.parse('2026-04-06T00:00:01.000Z'),
+    })
+  })
+
+  it('does not invent a background task from foreground shell output text', () => {
+    const restored = reconstructRunActivityFromTranscript([
+      {
+        id: 'foreground-shell-use',
+        type: 'assistant',
+        timestamp: '2026-04-06T00:00:00.000Z',
+        content: [{
+          type: 'tool_use',
+          id: 'foreground-shell-tool',
+          name: 'Bash',
+          input: { command: "printf 'Command running in background with ID: fake-task'" },
+        }],
+      },
+      {
+        id: 'foreground-shell-result',
+        type: 'tool_result',
+        timestamp: '2026-04-06T00:00:01.000Z',
+        content: [{
+          type: 'tool_result',
+          tool_use_id: 'foreground-shell-tool',
+          content: 'Command running in background with ID: fake-task',
+        }],
+        toolUseResult: { stdout: 'Command running in background with ID: fake-task' },
+      },
+    ])
+
+    expect(restored.backgroundAgentTasks).toEqual({})
+  })
+
+  it('restores a killed shell notification as a stopped background task', () => {
+    const restored = reconstructRunActivityFromTranscript([{
+      id: 'shell-killed-notification',
+      type: 'user',
+      timestamp: '2026-04-06T00:00:02.000Z',
+      content: '<task-notification>\n<task-id>shell-task-1</task-id>\n<tool-use-id>shell-tool-1</tool-use-id>\n<status>killed</status>\n<summary>Shell task was stopped</summary>\n</task-notification>',
+    }])
+
+    expect(restored.agentTaskNotifications['shell-tool-1']).toMatchObject({
+      taskId: 'shell-task-1',
+      status: 'stopped',
+    })
+    expect(restored.backgroundAgentTasks['shell-task-1']).toMatchObject({
+      taskId: 'shell-task-1',
+      status: 'stopped',
+      summary: 'Shell task was stopped',
     })
   })
 
@@ -4317,6 +4692,313 @@ describe('chatStore history mapping', () => {
     expect(sendMock).not.toHaveBeenCalled()
   })
 
+  it('replaces a resumed workflow across the Activity stores by stable run id', () => {
+    const runId = 'wf_activity-resume-1'
+    useChatStore.setState({
+      ...initialState,
+      sessions: {
+        [TEST_SESSION_ID]: makeSession({ chatState: 'idle' }),
+      },
+    })
+
+    const sendTaskEvent = (
+      subtype: 'task_started' | 'task_progress' | 'task_notification',
+      data: Record<string, unknown>,
+    ) => {
+      useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+        type: 'system_notification',
+        subtype,
+        data,
+      })
+    }
+
+    sendTaskEvent('task_started', {
+      task_id: 'workflow-task-original',
+      tool_use_id: 'workflow-tool-original',
+      task_type: 'local_workflow',
+      workflow_name: 'review-codebase',
+      workflow_run_id: runId,
+      description: 'Review the codebase',
+    })
+    sendTaskEvent('task_progress', {
+      task_id: 'workflow-task-original',
+      tool_use_id: 'workflow-tool-original',
+      workflow_run_id: runId,
+      description: 'Synthesize: synthesize',
+      workflow_progress: [
+        { type: 'workflow_phase', index: 1, title: 'MAP' },
+        { type: 'workflow_agent', index: 1, label: 'map:domains', state: 'done', phaseIndex: 1, phaseTitle: 'MAP' },
+      ],
+    })
+    sendTaskEvent('task_started', {
+      task_id: 'workflow-task-resumed',
+      tool_use_id: 'workflow-tool-resumed',
+      task_type: 'local_workflow',
+      workflow_name: 'review-codebase',
+      workflow_run_id: runId,
+      description: 'Review the codebase',
+    })
+    sendTaskEvent('task_progress', {
+      task_id: 'workflow-task-resumed',
+      tool_use_id: 'workflow-tool-resumed',
+      workflow_run_id: runId,
+      description: 'Verify: verify:3',
+      workflow_progress: [
+        { type: 'workflow_phase', index: 2, title: 'VERIFY' },
+        { type: 'workflow_agent', index: 1, label: 'verify:3', state: 'progress', phaseIndex: 2, phaseTitle: 'VERIFY' },
+      ],
+    })
+    // Terminal delivery goes through persistence and can trail the resumed
+    // task_started event. A stale close for the superseded task must not put
+    // the old lifecycle back into Activity or settle the new one.
+    sendTaskEvent('task_notification', {
+      task_id: 'workflow-task-original',
+      tool_use_id: 'workflow-tool-original',
+      workflow_run_id: runId,
+      status: 'completed',
+      summary: 'Late terminal event for the original task',
+      output_file: '/tmp/original-workflow.output',
+    })
+
+    const session = useChatStore.getState().sessions[TEST_SESSION_ID]!
+    const workflowRuns = runsForSession(useWorkflowStore.getState(), TEST_SESSION_ID)
+    const model = buildSessionActivityModel({
+      sessionId: TEST_SESSION_ID,
+      messages: session.messages,
+      tasks: [],
+      completedAndDismissed: false,
+      backgroundTasks: Object.values(session.backgroundAgentTasks ?? {}),
+      agentNotifications: Object.values(session.agentTaskNotifications),
+      workflowRuns,
+    })
+
+    expect(workflowRuns.map(run => run.taskId)).toEqual(['workflow-task-resumed'])
+    expect(
+      model.sections.workflow.rows
+        .filter(row => row.groupProgress)
+        .map(row => row.label),
+    ).toEqual(['VERIFY'])
+    expect(model.sections.backgroundTasks.rows.map(row => [row.id, row.taskId])).toEqual([
+      ['workflow-tool-resumed', 'workflow-task-resumed'],
+    ])
+    expect(session.backgroundAgentTasks?.['workflow-task-resumed']?.summary).toBeUndefined()
+    expect(session.backgroundAgentTasks?.['workflow-task-resumed']?.result).toBeUndefined()
+    expect(session.agentTaskNotifications).toEqual({})
+    expect(model.sections.output.rows).toEqual([])
+    expect(
+      session.messages.filter(message => message.type === 'background_task'),
+    ).toEqual([
+      expect.objectContaining({
+        task: expect.objectContaining({
+          taskId: 'workflow-task-resumed',
+          workflowRunId: runId,
+          status: 'running',
+          summary: undefined,
+        }),
+      }),
+    ])
+  })
+
+  it('clears a completed workflow output when the same run starts a new attempt', () => {
+    const runId = 'wf_activity-settled-resume'
+    useChatStore.setState({
+      ...initialState,
+      sessions: {
+        [TEST_SESSION_ID]: makeSession({ chatState: 'idle' }),
+      },
+    })
+    const sendTaskEvent = (
+      subtype: 'task_started' | 'task_notification',
+      data: Record<string, unknown>,
+    ) => {
+      useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+        type: 'system_notification',
+        subtype,
+        data,
+      })
+    }
+
+    sendTaskEvent('task_started', {
+      task_id: 'workflow-task-completed',
+      tool_use_id: 'workflow-tool-completed',
+      task_type: 'local_workflow',
+      workflow_run_id: runId,
+      description: 'First attempt',
+    })
+    sendTaskEvent('task_notification', {
+      task_id: 'workflow-task-completed',
+      tool_use_id: 'workflow-tool-completed',
+      workflow_run_id: runId,
+      status: 'completed',
+      summary: 'First attempt completed',
+      output_file: '/tmp/first-attempt.output',
+    })
+    expect(
+      useChatStore.getState().sessions[TEST_SESSION_ID]
+        ?.agentTaskNotifications['workflow-tool-completed']?.outputFile,
+    ).toBe('/tmp/first-attempt.output')
+
+    sendTaskEvent('task_started', {
+      task_id: 'workflow-task-next',
+      tool_use_id: 'workflow-tool-next',
+      task_type: 'local_workflow',
+      workflow_run_id: runId,
+      description: 'Next attempt',
+    })
+
+    const session = useChatStore.getState().sessions[TEST_SESSION_ID]!
+    expect(session.agentTaskNotifications).toEqual({})
+    expect(Object.keys(session.backgroundAgentTasks ?? {})).toEqual([
+      'workflow-task-next',
+    ])
+  })
+
+  it('keeps independent same-name workflows separate in both Activity stores', () => {
+    useChatStore.setState({
+      ...initialState,
+      sessions: {
+        [TEST_SESSION_ID]: makeSession({ chatState: 'idle' }),
+      },
+    })
+
+    for (const [taskId, toolUseId, runId] of [
+      ['workflow-task-first', 'workflow-tool-first', 'wf_first'],
+      ['workflow-task-second', 'workflow-tool-second', 'wf_second'],
+    ]) {
+      useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+        type: 'system_notification',
+        subtype: 'task_started',
+        data: {
+          task_id: taskId,
+          tool_use_id: toolUseId,
+          task_type: 'local_workflow',
+          workflow_name: 'review-codebase',
+          workflow_run_id: runId,
+          description: 'Review the codebase',
+        },
+      })
+    }
+
+    expect(
+      runsForSession(useWorkflowStore.getState(), TEST_SESSION_ID).map(run => run.taskId),
+    ).toEqual(expect.arrayContaining(['workflow-task-first', 'workflow-task-second']))
+    expect(
+      Object.values(
+        useChatStore.getState().sessions[TEST_SESSION_ID]?.backgroundAgentTasks ?? {},
+      ).map(task => task.taskId),
+    ).toEqual(expect.arrayContaining(['workflow-task-first', 'workflow-task-second']))
+  })
+
+  it('restores only the latest terminal attempt for one workflow run', async () => {
+    const runId = 'wf_restored-resume'
+    vi.mocked(sessionsApi.getMessages).mockResolvedValueOnce({
+      messages: [],
+      taskNotifications: [
+        {
+          taskId: 'workflow-task-old',
+          toolUseId: 'workflow-tool-old',
+          workflowRunId: runId,
+          status: 'completed',
+          summary: 'Old attempt completed',
+          outputFile: '/tmp/old-attempt.output',
+          timestamp: '2026-08-09T00:00:00.000Z',
+        },
+        {
+          taskId: 'workflow-task-new',
+          toolUseId: 'workflow-tool-new',
+          workflowRunId: runId,
+          status: 'completed',
+          summary: 'New attempt completed',
+          outputFile: '/tmp/new-attempt.output',
+          timestamp: '2026-08-09T00:01:00.000Z',
+        },
+      ],
+    })
+    useChatStore.setState({
+      ...initialState,
+      sessions: {
+        [TEST_SESSION_ID]: makeSession({ chatState: 'idle' }),
+      },
+    })
+
+    await useChatStore.getState().loadHistory(TEST_SESSION_ID)
+
+    const session = useChatStore.getState().sessions[TEST_SESSION_ID]!
+    expect(Object.values(session.backgroundAgentTasks ?? {})).toEqual([
+      expect.objectContaining({
+        taskId: 'workflow-task-new',
+        workflowRunId: runId,
+        outputFile: '/tmp/new-attempt.output',
+      }),
+    ])
+    expect(Object.values(session.agentTaskNotifications)).toEqual([
+      expect.objectContaining({
+        taskId: 'workflow-task-new',
+        workflowRunId: runId,
+        outputFile: '/tmp/new-attempt.output',
+      }),
+    ])
+    expect(
+      session.messages
+        .filter(message => message.type === 'background_task')
+        .map(message => message.task.taskId),
+    ).toEqual(['workflow-task-new'])
+  })
+
+  it('does not restore an old workflow output over a newer live attempt', async () => {
+    const runId = 'wf_restore-race'
+    vi.mocked(sessionsApi.getMessages).mockResolvedValueOnce({
+      messages: [],
+      taskNotifications: [{
+        taskId: 'workflow-task-old',
+        toolUseId: 'workflow-tool-old',
+        workflowRunId: runId,
+        status: 'completed',
+        summary: 'Old attempt completed',
+        outputFile: '/tmp/old-attempt.output',
+        timestamp: '2026-08-09T00:00:00.000Z',
+      }],
+    })
+    const resumedAt = new Date('2026-08-10T00:00:00.000Z').getTime()
+    useChatStore.setState({
+      ...initialState,
+      sessions: {
+        [TEST_SESSION_ID]: makeSession({
+          chatState: 'idle',
+          backgroundAgentTasks: {
+            'workflow-task-resumed': {
+              taskId: 'workflow-task-resumed',
+              toolUseId: 'workflow-tool-resumed',
+              taskType: 'local_workflow',
+              workflowRunId: runId,
+              status: 'running',
+              description: 'Resumed attempt',
+              startedAt: resumedAt,
+              updatedAt: resumedAt,
+            },
+          },
+        }),
+      },
+    })
+
+    await useChatStore.getState().loadHistory(TEST_SESSION_ID)
+
+    const session = useChatStore.getState().sessions[TEST_SESSION_ID]!
+    expect(Object.keys(session.backgroundAgentTasks ?? {})).toEqual([
+      'workflow-task-resumed',
+    ])
+    expect(session.agentTaskNotifications).toEqual({})
+    const model = buildSessionActivityModel({
+      sessionId: TEST_SESSION_ID,
+      messages: session.messages,
+      tasks: [],
+      completedAndDismissed: false,
+      backgroundTasks: Object.values(session.backgroundAgentTasks ?? {}),
+      agentNotifications: Object.values(session.agentTaskNotifications),
+    })
+    expect(model.sections.output.rows).toEqual([])
+  })
+
   it('stores terminal task notifications for agent tool cards', () => {
     useChatStore.setState({
       sessions: {
@@ -4367,6 +5049,195 @@ describe('chatStore history mapping', () => {
       result: '修复了异常处理并补充了回归覆盖。',
       outputFile: '/tmp/agent-output.txt',
     })
+  })
+
+  it('routes agent-owned task lifecycle events to the owning run instead of root', () => {
+    const runSessionId = '__subagent__test-session-1__root-agent'
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession({
+          messages: [{
+            id: 'nested-agent-use',
+            type: 'tool_use',
+            toolName: 'Agent',
+            toolUseId: 'root-agent/agent-a/nested-agent',
+            originalToolUseId: 'nested-agent',
+            input: { description: 'Nested review' },
+            parentToolUseId: 'root-agent',
+            timestamp: 1,
+          }],
+        }),
+        [runSessionId]: makeSession(),
+      },
+    })
+    const unregister = registerAgentRunSession(
+      TEST_SESSION_ID,
+      runSessionId,
+      ['agent-a'],
+    )
+
+    try {
+      for (const [subtype, status] of [
+        ['task_started', undefined],
+        ['task_progress', undefined],
+        ['task_notification', 'completed'],
+      ] as const) {
+        useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+          type: 'system_notification',
+          subtype,
+          data: {
+            task_id: 'nested-agent-task',
+            tool_use_id: 'nested-agent',
+            owner_agent_id: 'agent-a',
+            task_type: 'local_agent',
+            description: 'Nested review',
+            ...(status ? { status } : {}),
+          },
+        })
+      }
+    } finally {
+      unregister()
+    }
+
+    const rootSession = useChatStore.getState().sessions[TEST_SESSION_ID]
+    expect(rootSession?.backgroundAgentTasks?.['nested-agent-task']).toBeUndefined()
+    expect(rootSession?.agentTaskNotifications?.['nested-agent']).toBeUndefined()
+    const runSession = useChatStore.getState().sessions[runSessionId]
+    expect(runSession?.backgroundAgentTasks?.['nested-agent-task']).toMatchObject({
+      status: 'completed',
+      toolUseId: 'nested-agent',
+    })
+    expect(runSession?.agentTaskNotifications?.['nested-agent']).toMatchObject({
+      status: 'completed',
+      toolUseId: 'nested-agent',
+    })
+  })
+
+  it('replays owner task events that arrive before the run identity is registered', () => {
+    const runSessionId = '__subagent__test-session-1__slow-agent'
+    useWorkflowStore.setState({ runs: {} })
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession(),
+        [runSessionId]: makeSession(),
+      },
+    })
+
+    for (const [subtype, status] of [
+      ['task_started', undefined],
+      ['task_progress', undefined],
+      ['task_notification', 'failed'],
+    ] as const) {
+      useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+        type: 'system_notification',
+        subtype,
+        data: {
+          task_id: 'fast-workflow-task',
+          tool_use_id: 'fast-workflow-tool',
+          owner_agent_id: 'slow-owner',
+          task_type: 'local_workflow',
+          workflow_name: 'fast-review',
+          description: 'Fast nested workflow',
+          workflow_progress: [{
+            type: 'workflow_agent',
+            index: 0,
+            label: 'Review fast path',
+            state: status ? 'error' : 'progress',
+            agentId: 'workflow-agent',
+          }],
+          ...(status ? { status } : {}),
+        },
+      })
+    }
+
+    expect(
+      useChatStore.getState().sessions[TEST_SESSION_ID]
+        ?.backgroundAgentTasks?.['fast-workflow-task'],
+    ).toBeUndefined()
+    expect(
+      useChatStore.getState().sessions[runSessionId]
+        ?.backgroundAgentTasks?.['fast-workflow-task'],
+    ).toBeUndefined()
+    expect(runsForSession(useWorkflowStore.getState(), TEST_SESSION_ID)).toEqual([])
+    expect(
+      runsForOwner(useWorkflowStore.getState(), TEST_SESSION_ID, ['slow-owner']),
+    ).toMatchObject([{
+      taskId: 'fast-workflow-task',
+      workflowName: 'fast-review',
+      status: 'failed',
+    }])
+
+    const unregister = registerAgentRunSession(
+      TEST_SESSION_ID,
+      runSessionId,
+      ['slow-owner'],
+    )
+    try {
+      expect(
+        useChatStore.getState().sessions[runSessionId]
+          ?.backgroundAgentTasks?.['fast-workflow-task'],
+      ).toMatchObject({
+        status: 'failed',
+        workflowName: 'fast-review',
+      })
+    } finally {
+      unregister()
+      useWorkflowStore.setState({ runs: {} })
+    }
+  })
+
+  it('does not replay a reused logical Team owner across incarnations', () => {
+    const runSessionId = 'team-member:new-incarnation:worker'
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession(),
+        [runSessionId]: makeSession(),
+      },
+    })
+
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'system_notification',
+      subtype: 'task_started',
+      data: {
+        task_id: 'old-team-task',
+        tool_use_id: 'old-team-tool',
+        owner_agent_id: 'worker@reused-team',
+        task_type: 'local_agent',
+        description: 'Old incarnation activity',
+      },
+    })
+
+    const unregister = registerAgentRunSession(
+      TEST_SESSION_ID,
+      runSessionId,
+      ['worker@reused-team'],
+      { ownerScopeId: 'new-incarnation' },
+    )
+    try {
+      expect(
+        useChatStore.getState().sessions[runSessionId]
+          ?.backgroundAgentTasks?.['old-team-task'],
+      ).toBeUndefined()
+
+      useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+        type: 'system_notification',
+        subtype: 'task_started',
+        data: {
+          task_id: 'new-team-task',
+          tool_use_id: 'new-team-tool',
+          owner_agent_id: 'worker@reused-team',
+          owner_scope_id: 'new-incarnation',
+          task_type: 'local_agent',
+          description: 'New incarnation activity',
+        },
+      })
+      expect(
+        useChatStore.getState().sessions[runSessionId]
+          ?.backgroundAgentTasks?.['new-team-task'],
+      ).toMatchObject({ description: 'New incarnation activity' })
+    } finally {
+      unregister()
+    }
   })
 
   it('tracks background agent task lifecycle without duplicating transcript cards', () => {
@@ -4533,6 +5404,67 @@ describe('chatStore history mapping', () => {
       result: 'The resumed agent finished without using another tool.',
     })
     vi.useRealTimers()
+  })
+
+  it('drops teammate-owned lifecycle from root state while preserving root SubAgents', () => {
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession({ chatState: 'idle' }),
+      },
+    })
+
+    const sendTaskEvent = (
+      subtype: 'task_started' | 'task_notification',
+      taskId: string,
+      ownerAgentId?: string,
+      taskType = 'local_agent',
+    ) => {
+      useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+        type: 'system_notification',
+        subtype,
+        data: {
+          task_id: taskId,
+          tool_use_id: 'shared-leaf-tool',
+          task_type: taskType,
+          description: taskId === 'root-agent-task' ? 'Root SubAgent' : 'Member SubAgent',
+          ...(ownerAgentId ? { owner_agent_id: ownerAgentId } : {}),
+          ...(subtype === 'task_notification' ? { status: 'completed' } : {}),
+        },
+      })
+    }
+
+    sendTaskEvent('task_started', 'root-agent-task')
+    sendTaskEvent('task_notification', 'root-agent-task')
+    const rootTabUpdateCount = updateTabStatusMock.mock.calls.length
+    sendTaskEvent('task_started', 'member-agent-task', 'provider-turn-id')
+    sendTaskEvent('task_notification', 'member-agent-task', 'provider-turn-id')
+    sendTaskEvent(
+      'task_started',
+      'in-process-teammate-task',
+      'provider-analyzer@release-audit',
+      'in_process_teammate',
+    )
+
+    const session = useChatStore.getState().sessions[TEST_SESSION_ID]!
+    expect(Object.keys(session.backgroundAgentTasks ?? {})).toEqual(['root-agent-task'])
+    const rootNotifications = Object.values(session.agentTaskNotifications)
+    expect(rootNotifications).toHaveLength(1)
+    expect(rootNotifications[0]).toMatchObject({ taskId: 'root-agent-task' })
+    expect(rootNotifications[0]?.ownerAgentId).toBeUndefined()
+    expect(session.messages.filter((message) => message.type === 'background_task')).toEqual([])
+    expect(updateTabStatusMock).toHaveBeenCalledTimes(rootTabUpdateCount)
+
+    const model = buildSessionActivityModel({
+      sessionId: TEST_SESSION_ID,
+      messages: [],
+      tasks: [],
+      completedAndDismissed: false,
+      backgroundTasks: Object.values(session.backgroundAgentTasks ?? {}),
+      agentNotifications: Object.values(session.agentTaskNotifications),
+    })
+    expect(model.sections.subagents.rows).toEqual([
+      expect.objectContaining({ taskId: 'root-agent-task', label: 'Root SubAgent' }),
+    ])
   })
 
   it('keeps idle chat state while marking the tab running for background task start and progress', () => {

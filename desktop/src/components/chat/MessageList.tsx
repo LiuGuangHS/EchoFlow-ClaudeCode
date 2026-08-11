@@ -16,7 +16,7 @@ import { UserMessage } from './UserMessage'
 import { AssistantMessage } from './AssistantMessage'
 import { ThinkingBlock } from './ThinkingBlock'
 import { ToolCallBlock } from './ToolCallBlock'
-import { ToolCallGroup } from './ToolCallGroup'
+import { ToolCallGroup, type OpenAgentRunPayload } from './ToolCallGroup'
 import type { ActivityStep } from './activityGroupModel'
 import { ToolResultBlock } from './ToolResultBlock'
 import { PermissionDialog } from './PermissionDialog'
@@ -25,6 +25,8 @@ import { StreamingIndicator } from './StreamingIndicator'
 import { InlineTaskSummary } from './InlineTaskSummary'
 import { CurrentTurnChangeCard } from './CurrentTurnChangeCard'
 import { AgentTeamsInlineCard } from '../agentTeams/AgentTeamsSummary'
+import { MEMBER_AVATARS, memberAccentColor } from '../agentTeams/agentTeamsAvatars'
+import { getMemberAvatarKey, resolveTeamMemberIdentity } from '../agentTeams/agentTeamsModel'
 import {
   buildConversationNavigationItems,
   ConversationNavigator,
@@ -32,6 +34,7 @@ import {
   type ConversationNavigationMode,
 } from './ConversationNavigator'
 import type { AgentTaskNotification, BackgroundAgentTask, UIMessage } from '../../types/chat'
+import type { TeamDetail } from '../../types/team'
 import { formatTokenCount } from '../../lib/formatTokenCount'
 import { formatDurationMs, hasRunningBackgroundTasks as hasAnyRunningBackgroundTasks } from '../../lib/backgroundTasks'
 import { buildTurnCompletionByMessageId, type TurnCompletion } from '../../lib/turnCompletion'
@@ -958,7 +961,12 @@ function buildTurnCardInsertionMap(
 
   const cardsByRenderIndex = new Map<number, TurnChangeCardModel[]>()
   turnChangeCards.forEach((card) => {
-    if (card.checkpoint.code.filesChanged.length === 0) return
+    // An unverified-only turn has no structured files to list, but still needs
+    // the card for conversation rewind and the warning about changes left on disk.
+    if (
+      card.checkpoint.code.filesChanged.length === 0 &&
+      (card.checkpoint.unverifiedChangeSources?.length ?? 0) === 0
+    ) return
     const renderIndex =
       lastResponseIndexByTurnId.get(card.target.messageId) ??
       userIndexByTurnId.get(card.target.messageId)
@@ -1175,6 +1183,7 @@ type MessageListProps = {
   sessionId?: string | null
   compact?: boolean
   mobileLayout?: boolean
+  onOpenAgentRun?: (payload: OpenAgentRunPayload) => void
 }
 
 const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 48
@@ -1858,7 +1867,12 @@ const MeasuredRenderItem = memo(function MeasuredRenderItem({
   )
 })
 
-export function MessageList({ sessionId, compact = false, mobileLayout = false }: MessageListProps = {}) {
+export function MessageList({
+  sessionId,
+  compact = false,
+  mobileLayout = false,
+  onOpenAgentRun,
+}: MessageListProps = {}) {
   const activeTabId = useTabStore((s) => s.activeTabId)
   const resolvedSessionId = sessionId ?? activeTabId
   const isWorkspacePanelOpen = useWorkspacePanelStore((state) =>
@@ -1874,9 +1888,10 @@ export function MessageList({ sessionId, compact = false, mobileLayout = false }
   const stopGeneration = useChatStore((s) => s.stopGeneration)
   const reloadHistory = useChatStore((s) => s.reloadHistory)
   const queueComposerPrefill = useChatStore((s) => s.queueComposerPrefill)
-  const isMemberSession = useTeamStore((s) =>
-    resolvedSessionId ? Boolean(s.getMemberBySessionId(resolvedSessionId)) : false,
-  )
+  const memberSessionTeam = useTeamStore((s) => (
+    resolvedSessionId ? s.getTeamByMemberSessionId(resolvedSessionId) : null
+  ))
+  const isMemberSession = Boolean(memberSessionTeam)
   const isSubagentSession = useTabStore((s) => s.tabs.some((tab) => (
     tab.sessionId === resolvedSessionId && tab.type === 'subagent'
   )))
@@ -1886,9 +1901,8 @@ export function MessageList({ sessionId, compact = false, mobileLayout = false }
   )
   const isTeamLeadSession = Boolean(teamWorkbench?.snapshots.length)
   const teamSnapshot = teamWorkbench?.snapshots.at(-1)
-  const openTeamWorkbench = useCallback((leadSessionId: string) => {
-    useWorkspacePanelStore.getState().closePanel(leadSessionId)
-    useTeamStore.getState().setWorkbenchOpen(leadSessionId, true)
+  const openTeamWorkbench = useCallback((leadSessionId: string, teamName: string) => {
+    useTabStore.getState().openTeamWorkbenchTab(leadSessionId, teamName)
   }, [])
   const teamMemberNames = useMemo(() => {
     const snapshots = teamWorkbench?.snapshots
@@ -3054,6 +3068,7 @@ export function MessageList({ sessionId, compact = false, mobileLayout = false }
         {item.kind === 'tool_group' ? (
           <ToolCallGroup
             sessionId={resolvedSessionId}
+            onOpenAgentRun={onOpenAgentRun}
             toolCalls={item.toolCalls}
             steps={item.steps}
             resultMap={toolResultMap}
@@ -3075,13 +3090,14 @@ export function MessageList({ sessionId, compact = false, mobileLayout = false }
           teamSnapshot && resolvedSessionId ? (
             <AgentTeamsInlineCard
               snapshot={teamSnapshot}
-              onOpen={() => openTeamWorkbench(resolvedSessionId)}
+              onOpen={() => openTeamWorkbench(resolvedSessionId, teamSnapshot.team.name)}
             />
           ) : null
         ) : (
           <MessageBlock
             sessionId={resolvedSessionId}
             message={item.message}
+            team={memberSessionTeam ?? undefined}
             activeThinkingId={activeThinkingId}
             agentTaskNotifications={agentTaskNotifications}
             toolResult={
@@ -3254,6 +3270,7 @@ export function MessageList({ sessionId, compact = false, mobileLayout = false }
 export const MessageBlock = memo(function MessageBlock({
   sessionId,
   message,
+  team,
   activeThinkingId,
   agentTaskNotifications,
   toolResult,
@@ -3263,6 +3280,7 @@ export const MessageBlock = memo(function MessageBlock({
 }: {
   sessionId?: string | null
   message: UIMessage
+  team?: TeamDetail
   activeThinkingId: string | null
   agentTaskNotifications: Record<string, AgentTaskNotification>
   toolResult?: { content: unknown; isError: boolean } | null
@@ -3275,6 +3293,18 @@ export const MessageBlock = memo(function MessageBlock({
   turnCompletion?: TurnCompletion
 }) {
   const t = useTranslation()
+  const teammateVisual = message.type === 'user_text' && message.teammateFrom && team
+    ? (() => {
+        const { member, isLead } = resolveTeamMemberIdentity(team, message.teammateFrom)
+        const avatarKey = getMemberAvatarKey(member, isLead)
+        const memberIndex = Math.max(0, team.members.findIndex((candidate) => candidate.agentId === member.agentId))
+        return {
+          avatarKey,
+          avatarSrc: MEMBER_AVATARS[avatarKey],
+          accent: memberAccentColor(member.color, memberIndex),
+        }
+      })()
+    : null
 
   switch (message.type) {
     case 'user_text':
@@ -3292,6 +3322,9 @@ export const MessageBlock = memo(function MessageBlock({
             timestamp={message.timestamp}
             sessionId={sessionId ?? undefined}
             teammateFrom={message.teammateFrom}
+            teammateAvatarSrc={teammateVisual?.avatarSrc}
+            teammateAvatarKey={teammateVisual?.avatarKey}
+            teammateAccent={teammateVisual?.accent}
           />
         </SelectableChatMessage>
       )

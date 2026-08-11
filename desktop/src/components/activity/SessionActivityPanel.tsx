@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronRight, Circle, FileText, LoaderCircle, Square, Terminal, Users, X } from 'lucide-react'
+import { Check, ChevronRight, Circle, FileText, LoaderCircle, Square, Terminal, Users, X, Zap } from 'lucide-react'
 import { Badge, StatusDot, type Tone } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { IconButton } from '@/components/ui/IconButton'
@@ -17,6 +17,9 @@ export type OpenSubagentPayload = {
   taskId?: string
   toolUseId: string
   title: string
+  teamName?: string
+  teamMemberName?: string
+  teamStartedAt?: number
 }
 
 type SessionActivityPanelPlacement = 'overlay' | 'rail'
@@ -72,6 +75,8 @@ function getSectionTitle(sectionId: ActivitySectionId, t: TranslationFn): string
       return t('session.activity.section.tasks')
     case 'team':
       return t('session.activity.section.team')
+    case 'workflow':
+      return t('session.activity.section.workflow')
     case 'backgroundTasks':
       return t('session.activity.section.backgroundTasks')
     case 'subagents':
@@ -91,6 +96,8 @@ function getSectionRowsClassName(sectionId: ActivitySectionId, rowCount: number)
     case 'tasks':
       return base
     case 'team':
+      return base
+    case 'workflow':
       return base
     case 'backgroundTasks':
       return base
@@ -201,6 +208,8 @@ function getRowIcon(row: ActivityRow) {
   switch (row.section) {
     case 'team':
       return Users
+    case 'workflow':
+      return Zap
     case 'backgroundTasks':
       return Terminal
     case 'subagents':
@@ -220,11 +229,18 @@ function getStatusTone(status: ActivityRow['status']): Tone {
   return 'neutral'
 }
 
-/** Visible rows only, so the ratio always matches what the section shows. */
+/** A canonical Team DAG owns the section ratio when present. Run-local rows
+ * remain visible beside it without changing the shared workbench progress. */
 function getTaskProgress(rows: ActivityRow[]): { completed: number; total: number; percent: number } | null {
   if (rows.length === 0) return null
-  const completed = rows.filter((row) => row.status === 'completed').length
-  return { completed, total: rows.length, percent: Math.round((completed / rows.length) * 100) }
+  const teamRows = rows.filter((row) => row.teamTaskListId !== undefined)
+  const progressRows = teamRows.length > 0 ? teamRows : rows
+  const completed = progressRows.filter((row) => row.status === 'completed').length
+  return {
+    completed,
+    total: progressRows.length,
+    percent: Math.round((completed / progressRows.length) * 100),
+  }
 }
 
 /**
@@ -255,7 +271,9 @@ function ActivityRowIcon({
   sessionId: string
   status?: ActivityRow['status']
 }) {
-  if (row.section === 'subagents') {
+  // Workflow agents get the same mascot as any other subagent — they are the
+  // same thing, and giving them a different glyph would imply otherwise.
+  if (row.section === 'subagents' || (row.section === 'workflow' && row.group)) {
     return <AgentMascot seed={`${sessionId}:${row.toolUseId ?? row.taskId ?? row.id}`} status={status} />
   }
 
@@ -328,6 +346,41 @@ function BackgroundTaskStopButton({
   )
 }
 
+/**
+ * A phase heading inside the workflow section.
+ *
+ * Deliberately not a card: the section is already a bordered list, and boxing
+ * each phase inside it turned three stages into three nested frames. A rule
+ * plus the settled count carries the grouping on its own.
+ */
+function WorkflowPhaseHeader({
+  label,
+  status,
+  done,
+  total,
+}: {
+  label: string
+  status: ActivityRow['status']
+  done: number
+  total: number
+}) {
+  return (
+    <div
+      data-testid="workflow-phase-header"
+      data-status={status}
+      className="flex items-center gap-2 px-2 pb-1 pt-2.5 first:pt-1"
+    >
+      <span className="truncate text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-secondary)]">
+        {label}
+      </span>
+      <span className="h-px flex-1 bg-[var(--color-border)]" aria-hidden="true" />
+      <span className="shrink-0 font-mono text-[11px] tabular-nums text-[var(--color-text-tertiary)]">
+        {done}/{total}
+      </span>
+    </div>
+  )
+}
+
 function ActivityRowView({
   row,
   sessionId,
@@ -348,12 +401,27 @@ function ActivityRowView({
   selected?: boolean
 }) {
   const t = useTranslation()
+  // A workflow phase is a heading over its agents, not a row you can open.
+  // Rendering it as one made a fan-out read as a flat list where the stage
+  // boundaries were invisible.
+  if (row.groupProgress) {
+    return (
+      <WorkflowPhaseHeader
+        label={row.label}
+        status={row.status}
+        done={row.groupProgress.done}
+        total={row.groupProgress.total}
+      />
+    )
+  }
   const isTask = row.section === 'tasks'
   const isStoppingSubagent = row.section === 'subagents' && row.status === 'running' && stoppingBackgroundTask
   const displayStatus: ActivityRow['status'] = isStoppingSubagent ? 'pending' : row.status
   const statusLabel = isStoppingSubagent
     ? t('session.activity.status.stopping')
-    : getActivityStatusLabel(row.status, t)
+    : row.cached
+      ? t('workflows.agent.cached')
+      : getActivityStatusLabel(row.status, t)
   const label = row.taskHistory
     ? t('session.activity.tasks.earlier')
     : row.label
@@ -430,7 +498,13 @@ function ActivityRowView({
     )
   }
 
-  if (row.section === 'subagents' && row.openable && row.toolUseId) {
+  // A workflow agent is an ordinary subagent, so it opens the same page by the
+  // same handler — there is nothing workflow-specific to render for one.
+  if (
+    (row.section === 'subagents' || row.section === 'workflow' || row.section === 'team') &&
+    row.openable &&
+    row.toolUseId
+  ) {
     const openButton = (
       <button
         type="button"
@@ -440,8 +514,11 @@ function ActivityRowView({
           ...(row.taskId ? { taskId: row.taskId } : {}),
           toolUseId: row.toolUseId!,
           title: row.label,
+          ...(row.teamName ? { teamName: row.teamName } : {}),
+          ...(row.teamMemberName ? { teamMemberName: row.teamMemberName } : {}),
+          ...(row.teamStartedAt !== undefined ? { teamStartedAt: row.teamStartedAt } : {}),
         })}
-        className={`${interactiveRowClassName} ${stopButton ? 'flex-1' : 'w-full'}`}
+        className={`${interactiveRowClassName} ${stopButton ? 'flex-1' : 'w-full'} ${row.group ? 'pl-3' : ''}`}
       >
         {content}
       </button>

@@ -66,18 +66,16 @@ function AvatarStack({
 }
 
 /**
- * The always-visible trace of a running team in the main session header. The
- * workbench itself stays closed until this is clicked — a team appearing is
- * not on its own a reason to take over the right-hand half of the window.
+ * The always-visible trace of a running team in the main session header. It
+ * opens the full workbench directly; a team never takes over the chat's
+ * right-hand panel.
  */
 export function AgentTeamsStrip({
   snapshot,
-  open,
   onOpen,
   compact,
 }: {
   snapshot: TeamWorkbenchSnapshot
-  open: boolean
   onOpen: () => void
   compact: boolean
 }) {
@@ -90,8 +88,6 @@ export function AgentTeamsStrip({
     <button
       type="button"
       data-testid="agent-teams-strip"
-      data-open={open ? 'true' : 'false'}
-      aria-expanded={open}
       onClick={onOpen}
       title={snapshot.team.name}
       className={[
@@ -116,7 +112,7 @@ export function AgentTeamsStrip({
         </span>
       ) : null}
       <span className="ml-auto flex shrink-0 items-center gap-0.5 font-medium text-[var(--color-brand)]">
-        {t(open ? 'agentTeams.hideReport' : 'agentTeams.inline.open')}
+        {t('agentTeams.inline.open')}
         <ChevronRight size={12} strokeWidth={2.4} aria-hidden="true" />
       </span>
     </button>

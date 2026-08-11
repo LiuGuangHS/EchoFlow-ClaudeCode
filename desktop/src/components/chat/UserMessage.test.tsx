@@ -139,6 +139,45 @@ describe('UserMessage bare-URL linkify', () => {
     expect(container.firstElementChild?.className).toContain('justify-start')
   })
 
+  it('renders teammate communication as markdown inside a quiet neutral card', () => {
+    const { container } = render(
+      <UserMessage
+        content={'**Critical** findings:\n\n- Review `src/auth.ts`\n- Keep replay protection\n\n[Open report](http://localhost:3000/report)'}
+        teammateFrom="security-reviewer"
+        sessionId="s1"
+      />,
+    )
+
+    const body = container.querySelector<HTMLElement>('[data-message-body="teammate"]')
+    expect(body?.querySelector('strong')?.textContent).toBe('Critical')
+    expect(body?.querySelector('code')?.textContent).toBe('src/auth.ts')
+    expect(body?.querySelectorAll('li')).toHaveLength(2)
+    fireEvent.click(screen.getByRole('link', { name: 'Open report' }))
+    expect(openPreviewLink).toHaveBeenCalledWith('http://localhost:3000/report', 's1')
+
+    // The old full-height brand border dominated long reports. A complete
+    // neutral outline keeps the card edge legible without repeating identity.
+    expect(body?.className).not.toContain('border-l-2')
+    expect(body?.className).toContain('border-[var(--color-border)]')
+  })
+
+  it('uses the teammate character supplied by the Agent Teams identity map', () => {
+    render(
+      <UserMessage
+        content="Review the auth diff."
+        teammateFrom="team-lead"
+        teammateAvatarSrc="/agent-teams/team-lead.png"
+        teammateAvatarKey="team-lead"
+        teammateAccent="var(--color-brand)"
+      />,
+    )
+
+    const avatar = screen.getByTestId('teammate-message-avatar')
+    expect(avatar.getAttribute('data-avatar-key')).toBe('team-lead')
+    expect(avatar.querySelector('img')?.getAttribute('src')).toBe('/agent-teams/team-lead.png')
+    expect(avatar.querySelector('span')?.style.background).toBe('var(--color-brand)')
+  })
+
   it('keeps an ordinary prompt in the right-aligned user bubble', () => {
     const { container } = render(<UserMessage content="Review the auth diff." />)
 

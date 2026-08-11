@@ -5,6 +5,7 @@ import type {
   TeamWorkbenchSnapshot,
   TeamWorkbenchSessionTimeline,
 } from '../types/team'
+import type { AgentTaskNotification } from '../types/chat'
 
 type TeamsResponse = { teams: TeamSummary[] }
 
@@ -20,6 +21,10 @@ type TranscriptMessage = {
 
 type TranscriptResponse = {
   messages: TranscriptMessage[]
+  /** Terminal notifications from this cursor page; merge by toolUseId. */
+  taskNotifications?: AgentTaskNotification[]
+  /** Physical transcript fragments that own this member's nested activity. */
+  ownerAgentIds?: string[]
   signature?: string
   cursor?: string
   afterOrdinal?: number
@@ -31,6 +36,7 @@ type TranscriptOptions = {
   cursor?: string
   afterOrdinal?: number
   leadSessionId?: string
+  incarnationId?: string
 }
 
 export type { TranscriptMessage }
@@ -50,9 +56,17 @@ export const teamsApi = {
     )
   },
 
-  getWorkbenchForSession(sessionId: string) {
+  getWorkbenchForSession(
+    sessionId: string,
+    options?: { teamName?: string; at?: number; incarnationId?: string },
+  ) {
+    const params = new URLSearchParams()
+    if (options?.teamName) params.set('teamName', options.teamName)
+    if (options?.at !== undefined) params.set('at', String(options.at))
+    if (options?.incarnationId) params.set('incarnationId', options.incarnationId)
+    const query = params.toString()
     return api.get<TeamWorkbenchSessionTimeline>(
-      `/api/teams/session/${encodeURIComponent(sessionId)}/workbench`,
+      `/api/teams/session/${encodeURIComponent(sessionId)}/workbench${query ? `?${query}` : ''}`,
     )
   },
 
@@ -65,6 +79,7 @@ export const teamsApi = {
     if (options) {
       params.set('incremental', 'true')
       if (options.leadSessionId) params.set('leadSessionId', options.leadSessionId)
+      if (options.incarnationId) params.set('incarnationId', options.incarnationId)
       if (options.signature) params.set('signature', options.signature)
       if (options.cursor) params.set('cursor', options.cursor)
       if (options.afterOrdinal !== undefined) {

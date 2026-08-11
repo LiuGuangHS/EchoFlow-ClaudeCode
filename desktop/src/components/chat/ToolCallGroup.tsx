@@ -69,6 +69,7 @@ function useExpandableCardState() {
 
 type Props = {
   sessionId?: string | null
+  onOpenAgentRun?: (payload: OpenAgentRunPayload) => void
   toolCalls: ToolCall[]
   /**
    * The run in transcript order, including any thinking blocks that happened
@@ -89,8 +90,15 @@ type Props = {
   isLive?: boolean
 }
 
+export type OpenAgentRunPayload = {
+  sessionId: string
+  toolUseId: string
+  title: string
+}
+
 export const ToolCallGroup = memo(function ToolCallGroup({
   sessionId,
+  onOpenAgentRun,
   toolCalls,
   steps,
   resultMap,
@@ -123,6 +131,7 @@ export const ToolCallGroup = memo(function ToolCallGroup({
         {regularSteps.length > 0 ? (
           <ToolCallGroupContent
             sessionId={sessionId}
+            onOpenAgentRun={onOpenAgentRun}
             steps={regularSteps}
             resultMap={resultMap}
             childToolCallsByParent={childToolCallsByParent}
@@ -140,6 +149,7 @@ export const ToolCallGroup = memo(function ToolCallGroup({
   return (
     <ToolCallGroupContent
       sessionId={sessionId}
+      onOpenAgentRun={onOpenAgentRun}
       steps={resolvedSteps}
       resultMap={resultMap}
       childToolCallsByParent={childToolCallsByParent}
@@ -157,6 +167,7 @@ type ContentProps = Omit<Props, 'toolCalls' | 'steps'> & { steps: ActivityStep[]
 
 function ToolCallGroupContent({
   sessionId,
+  onOpenAgentRun,
   steps,
   resultMap,
   childToolCallsByParent,
@@ -213,6 +224,7 @@ function ToolCallGroupContent({
           <ToolCallGroupContent
             key={`regular-${index}`}
             sessionId={sessionId}
+            onOpenAgentRun={onOpenAgentRun}
             steps={segment.steps}
             resultMap={resultMap}
             childToolCallsByParent={childToolCallsByParent}
@@ -247,6 +259,7 @@ function ToolCallGroupContent({
     return (
       <AgentToolGroup
         sessionId={sessionId}
+        onOpenAgentRun={onOpenAgentRun}
         toolCalls={toolCalls}
         resultMap={resultMap}
         childToolCallsByParent={childToolCallsByParent}
@@ -399,6 +412,7 @@ function MemoryToolActivityGroup({
 
 function AgentToolGroup({
   sessionId,
+  onOpenAgentRun,
   toolCalls,
   resultMap,
   childToolCallsByParent,
@@ -463,6 +477,7 @@ function AgentToolGroup({
               <AgentCallCard
                 key={toolCall.id}
                 sessionId={sessionId}
+                onOpenAgentRun={onOpenAgentRun}
                 toolCall={toolCall}
                 resultMap={resultMap}
                 childToolCallsByParent={childToolCallsByParent}
@@ -480,6 +495,7 @@ function AgentToolGroup({
 
 function AgentCallCard({
   sessionId,
+  onOpenAgentRun,
   toolCall,
   resultMap,
   childToolCallsByParent,
@@ -488,6 +504,7 @@ function AgentCallCard({
   showOpenRun = true,
 }: {
   sessionId?: string | null
+  onOpenAgentRun?: (payload: OpenAgentRunPayload) => void
   toolCall: ToolCall
   resultMap: Map<string, ToolResult>
   childToolCallsByParent: Map<string, ToolCall[]>
@@ -590,6 +607,14 @@ function AgentCallCard({
             aria-label={t('toolGroup.openRunNamed', { title: openRunTitle })}
             onClick={(event) => {
               event.stopPropagation()
+              if (onOpenAgentRun) {
+                onOpenAgentRun({
+                  sessionId,
+                  toolUseId: toolCall.toolUseId,
+                  title: openRunTitle,
+                })
+                return
+              }
               useTabStore.getState().openSubagentTab(sessionId, toolCall.toolUseId, openRunTitle)
             }}
             className="shrink-0 border border-[var(--color-border)]"

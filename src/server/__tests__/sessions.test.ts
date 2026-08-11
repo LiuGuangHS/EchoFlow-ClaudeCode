@@ -3732,6 +3732,37 @@ describe('Sessions API', () => {
     ])
   })
 
+  it('GET /api/sessions/:id/messages exposes persisted terminal ownership', async () => {
+    const sessionId = 'abababab-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+    await writeSessionFile('-tmp-api-owned-terminal', sessionId, [
+      makeSnapshotEntry(),
+      {
+        type: 'cc-haha-task-notification',
+        isMeta: true,
+        taskNotification: {
+          taskId: 'nested-workflow-task',
+          toolUseId: 'Workflow:0',
+          ownerAgentId: 'parent-agent',
+          status: 'completed',
+          summary: 'Nested workflow completed',
+        },
+        timestamp: '2026-08-10T00:00:01.000Z',
+      },
+    ])
+
+    const res = await fetch(`${baseUrl}/api/sessions/${sessionId}/messages`)
+    expect(res.status).toBe(200)
+    const body = await res.json() as { taskNotifications: unknown[] }
+    expect(body.taskNotifications).toEqual([{
+      taskId: 'nested-workflow-task',
+      toolUseId: 'Workflow:0',
+      ownerAgentId: 'parent-agent',
+      status: 'completed',
+      summary: 'Nested workflow completed',
+      timestamp: '2026-08-10T00:00:01.000Z',
+    }])
+  })
+
   it('GET /api/sessions/:id/subagents/by-tool/:toolUseId should return a resolved run', async () => {
     const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
     const projectDir = '-tmp-api-subagent-run'
@@ -3760,6 +3791,21 @@ describe('Sessions API', () => {
         uuid: crypto.randomUUID(),
         timestamp: '2026-01-01T00:00:05.000Z',
       },
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: '<task-notification>\n<task-id>child-shell-task</task-id>\n<tool-use-id>child-shell.call</tool-use-id>\n<status>killed</status>\n<summary>Child shell stopped</summary>\n</task-notification>',
+        },
+        uuid: crypto.randomUUID(),
+        timestamp: '2026-01-01T00:00:06.000Z',
+      },
+      {
+        type: 'assistant',
+        message: { role: 'assistant', content: 'Internal notification response' },
+        uuid: crypto.randomUUID(),
+        timestamp: '2026-01-01T00:00:07.000Z',
+      },
     ])
 
     const res = await fetch(`${baseUrl}/api/sessions/${sessionId}/subagents/by-tool/tool-1`)
@@ -3772,6 +3818,7 @@ describe('Sessions API', () => {
       description?: string
       prompt?: string
       messages: unknown[]
+      taskNotifications: unknown[]
       source: string
     }
     expect(body).toMatchObject({
@@ -3783,6 +3830,15 @@ describe('Sessions API', () => {
       source: 'subagent-jsonl',
     })
     expect(body.messages).toHaveLength(2)
+    expect(JSON.stringify(body.messages)).not.toContain('<task-notification>')
+    expect(JSON.stringify(body.messages)).not.toContain('Internal notification response')
+    expect(body.taskNotifications).toEqual([{
+      taskId: 'child-shell-task',
+      toolUseId: 'child-shell.call',
+      status: 'stopped',
+      summary: 'Child shell stopped',
+      timestamp: '2026-01-01T00:00:06.000Z',
+    }])
   })
 
   it('GET /api/sessions/:id/subagents/by-tool/:toolUseId should use a live task id while running', async () => {
@@ -4017,6 +4073,34 @@ describe('Sessions API', () => {
     } finally {
       sessionsMap.delete(sessionId)
     }
+  })
+
+  it('GET /api/sessions/:id/git-info should not report the source checkout as a planned worktree', async () => {
+    const workDir = await createCleanGitRepo(tmpDir)
+    const { sessionId } = await sessionService.createSession(
+      workDir,
+      { branch: 'feature/rail', worktree: true },
+    )
+    const launchInfo = await sessionService.getSessionLaunchInfo(sessionId)
+    const plannedPath = launchInfo?.repository?.worktreePath
+    expect(plannedPath).toBeTruthy()
+
+    const res = await fetch(`${baseUrl}/api/sessions/${sessionId}/git-info`)
+    expect(res.status).toBe(200)
+
+    const body = (await res.json()) as {
+      workDir: string
+      worktree: {
+        path: string | null
+        plannedPath: string | null
+      } | null
+    }
+    expect(body.workDir).toBe(launchInfo?.workDir)
+    expect(body.worktree).toMatchObject({
+      path: null,
+      plannedPath,
+    })
+    expect(body.worktree?.plannedPath).not.toBe(body.workDir)
   })
 
   it('GET /api/sessions/:id/git-info should keep the visible launch branch while including isolated worktree identity', async () => {
@@ -7627,6 +7711,64 @@ describe('Sessions API', () => {
     // which is exactly what the unverified source is warning about.
     expect(await fs.readFile(capturedFile, 'utf-8')).toBe('before\n')
     expect(await fs.readFile(shellFile, 'utf-8')).toBe('written by shell\n')
+  })
+
+  it('should keep a Bash-only first turn rewindable without touching the shell-written file', async () => {
+    const sessionId = '99999999-bbbb-cccc-dddd-000000000033'
+    const workDir = path.join(tmpDir, 'bash-only-empty-checkpoint')
+    const shellFile = path.join(workDir, 'shell-only.txt')
+    const userId = crypto.randomUUID()
+    await fs.mkdir(workDir, { recursive: true })
+    await fs.writeFile(shellFile, 'written by shell\n')
+    await writeSessionFile('-tmp-bash-only-empty-checkpoint', sessionId, [
+      makeSessionMetaEntry(workDir),
+      // Real prompt submission records a snapshot even when no structured file
+      // tool has anything to track. That empty checkpoint must still carry the
+      // Bash coverage warning through to the desktop.
+      makeFileHistorySnapshotEntry(userId, {}),
+      { ...makeUserEntry('write only with Bash', userId), cwd: workDir, sessionId },
+      makeAssistantToolUseEntry([{
+        id: 'Bash:write-only-file',
+        name: 'Bash',
+        input: { command: `printf 'written by shell\\n' > ${shellFile}` },
+      }], userId),
+      makeToolResultUserEntry('Bash:write-only-file', '', undefined, undefined, sessionId),
+      makeAssistantEntry('BASH_ONLY_DONE', userId),
+    ])
+
+    const listRes = await fetch(`${baseUrl}/api/sessions/${sessionId}/turn-checkpoints`)
+    expect(listRes.status).toBe(200)
+    const listBody = await listRes.json() as {
+      checkpoints: Array<{
+        target: { targetUserMessageId: string }
+        code: { available: boolean; filesChanged: string[] }
+        restoreAvailable?: boolean
+        unverifiedChangeSources?: string[]
+      }>
+    }
+    expect(listBody.checkpoints).toHaveLength(1)
+    expect(listBody.checkpoints[0]).toMatchObject({
+      target: { targetUserMessageId: userId },
+      code: { available: true, filesChanged: [] },
+      restoreAvailable: true,
+      unverifiedChangeSources: ['Bash'],
+    })
+
+    const rewindRes = await fetch(`${baseUrl}/api/sessions/${sessionId}/rewind`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetUserMessageId: userId, mode: 'conversation' }),
+    })
+    expect(rewindRes.status).toBe(200)
+    expect(await rewindRes.json()).toMatchObject({
+      mode: 'conversation',
+      unverifiedChangeSources: ['Bash'],
+    })
+    expect(await fs.readFile(shellFile, 'utf-8')).toBe('written by shell\n')
+
+    const messagesRes = await fetch(`${baseUrl}/api/sessions/${sessionId}/messages`)
+    const messagesBody = await messagesRes.json() as { messages: Array<{ id: string }> }
+    expect(messagesBody.messages.some((message) => message.id === userId)).toBe(false)
   })
 
   it('should keep restore available and unflagged when the turn only ran a read-only shell command', async () => {

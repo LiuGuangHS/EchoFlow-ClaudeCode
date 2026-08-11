@@ -155,6 +155,7 @@ import { useSettingsStore } from '../stores/settingsStore'
 import { useTabStore } from '../stores/tabStore'
 import { useUIStore } from '../stores/uiStore'
 import { usePluginStore } from '../stores/pluginStore'
+import { useWorkflowStore } from '../stores/workflowStore'
 import type { RepositoryContextResult } from '../api/sessions'
 import { browserHost } from '../lib/desktopHost/browserHost'
 import { getComposerElement, getComposerText, setComposerText } from '../components/chat/composerTestUtils'
@@ -230,6 +231,7 @@ describe('EmptySession', () => {
   const initialUiState = useUIStore.getInitialState()
   const initialPluginState = usePluginStore.getInitialState()
   const initialProviderState = useProviderStore.getInitialState()
+  const initialWorkflowState = useWorkflowStore.getInitialState()
 
   beforeEach(() => {
     vi.clearAllMocks()
@@ -244,6 +246,7 @@ describe('EmptySession', () => {
     useUIStore.setState(initialUiState, true)
     usePluginStore.setState(initialPluginState, true)
     useProviderStore.setState(initialProviderState, true)
+    useWorkflowStore.setState(initialWorkflowState, true)
 
     mocks.createSession.mockResolvedValue({ sessionId: 'draft-session' })
     mocks.getRepositoryContext.mockResolvedValue(okRepositoryContext())
@@ -288,6 +291,7 @@ describe('EmptySession', () => {
     useUIStore.setState(initialUiState, true)
     usePluginStore.setState(initialPluginState, true)
     useProviderStore.setState(initialProviderState, true)
+    useWorkflowStore.setState(initialWorkflowState, true)
   })
 
   it('uses compact composer controls on phone-sized H5 browsers', async () => {
@@ -469,6 +473,22 @@ describe('EmptySession', () => {
     expect(mocks.createSession).not.toHaveBeenCalled()
     expect(mocks.wsSend).not.toHaveBeenCalled()
     expect(await screen.findByTestId('model-selector-dropdown')).toHaveTextContent('Model selector opened')
+    expect(getComposerText()).toBe('')
+  })
+
+  it('shows /save-workflow help without creating or sending a session', async () => {
+    useSettingsStore.setState({ chatSendBehavior: 'enter' })
+
+    render(<EmptySession />)
+
+    setComposerText('/save-workflow', '/save-workflow'.length)
+    fireEvent.keyDown(getComposerElement(), { key: 'Enter' })
+
+    expect(mocks.createSession).not.toHaveBeenCalled()
+    expect(mocks.getProviderAuthStatus).not.toHaveBeenCalled()
+    expect(mocks.wsSend).not.toHaveBeenCalled()
+    expect(await screen.findByText('Save workflow')).toBeInTheDocument()
+    expect(screen.getByText(/Complete a workflow in this session/)).toBeInTheDocument()
     expect(getComposerText()).toBe('')
   })
 

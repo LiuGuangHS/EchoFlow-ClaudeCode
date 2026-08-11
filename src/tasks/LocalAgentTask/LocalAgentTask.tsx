@@ -19,6 +19,7 @@ import { getAgentTranscriptPath } from '../../utils/sessionStorage.js';
 import { evictTaskOutput, getTaskOutputPath, initTaskOutputAsSymlink } from '../../utils/task/diskOutput.js';
 import { PANEL_GRACE_MS, registerTask, updateTaskState } from '../../utils/task/framework.js';
 import { emitTaskProgress } from '../../utils/task/sdkProgress.js';
+import { emitTaskTerminatedSdk } from '../../utils/sdkEventQueue.js';
 import type { TaskState } from '../types.js';
 export type ToolActivity = {
   toolName: string;
@@ -115,6 +116,8 @@ export function createActivityDescriptionResolver(tools: Tools): ActivityDescrip
 }
 export type LocalAgentTaskState = TaskStateBase & {
   type: 'local_agent';
+  /** Parent agent that owns this task. Undefined means the root session. */
+  ownerAgentId?: string;
   agentId: string;
   prompt: string;
   selectedAgent?: AgentDefinition;
@@ -225,11 +228,13 @@ export function enqueueAgentNotification({
   // If the task was already marked as notified (e.g., by TaskStopTool), skip
   // enqueueing to avoid sending redundant messages to the model.
   let shouldEnqueue = false;
+  let ownerAgentId: string | undefined;
   updateTaskState<LocalAgentTaskState>(taskId, setAppState, task => {
     if (task.notified) {
       return task;
     }
     shouldEnqueue = true;
+    ownerAgentId = task.ownerAgentId;
     return {
       ...task,
       notified: true
@@ -258,8 +263,25 @@ export function enqueueAgentNotification({
 </${TASK_NOTIFICATION_TAG}>`;
   enqueuePendingNotification({
     value: message,
-    mode: 'task-notification'
+    mode: 'task-notification',
+    agentId: ownerAgentId ? asAgentId(ownerAgentId) : undefined
   });
+  // Root notifications are emitted by print.ts when it drains the command.
+  // Agent-owned notifications are consumed inside the parent agent loop, so
+  // emit their SDK bookend here with explicit ownership instead.
+  if (ownerAgentId) {
+    emitTaskTerminatedSdk(taskId, status === 'killed' ? 'stopped' : status, {
+      toolUseId,
+      summary,
+      outputFile: outputPath,
+      usage: usage ? {
+        total_tokens: usage.totalTokens,
+        tool_uses: usage.toolUses,
+        duration_ms: usage.durationMs
+      } : undefined,
+      ownerAgentId
+    });
+  }
 }
 
 /**
@@ -363,6 +385,7 @@ export function updateAgentSummary(taskId: string, summary: string, setAppState:
     toolUseCount: number;
     startTime: number;
     toolUseId: string | undefined;
+    ownerAgentId: string | undefined;
   } | null = null;
   updateTaskState<LocalAgentTaskState>(taskId, setAppState, task => {
     if (task.status !== 'running') {
@@ -372,7 +395,8 @@ export function updateAgentSummary(taskId: string, summary: string, setAppState:
       tokenCount: task.progress?.tokenCount ?? 0,
       toolUseCount: task.progress?.toolUseCount ?? 0,
       startTime: task.startTime,
-      toolUseId: task.toolUseId
+      toolUseId: task.toolUseId,
+      ownerAgentId: task.ownerAgentId
     };
     return {
       ...task,
@@ -393,7 +417,8 @@ export function updateAgentSummary(taskId: string, summary: string, setAppState:
       tokenCount,
       toolUseCount,
       startTime,
-      toolUseId
+      toolUseId,
+      ownerAgentId
     } = captured;
     emitTaskProgress({
       taskId,
@@ -402,7 +427,8 @@ export function updateAgentSummary(taskId: string, summary: string, setAppState:
       startTime,
       totalTokens: tokenCount,
       toolUses: toolUseCount,
-      summary
+      summary,
+      ownerAgentId
     });
   }
 }
@@ -471,7 +497,8 @@ export function registerAsyncAgent({
   selectedAgent,
   setAppState,
   parentAbortController,
-  toolUseId
+  toolUseId,
+  ownerAgentId
 }: {
   agentId: string;
   description: string;
@@ -480,6 +507,7 @@ export function registerAsyncAgent({
   setAppState: SetAppState;
   parentAbortController?: AbortController;
   toolUseId?: string;
+  ownerAgentId?: string;
 }): LocalAgentTaskState {
   void initTaskOutputAsSymlink(agentId, getAgentTranscriptPath(asAgentId(agentId)));
 
@@ -489,6 +517,7 @@ export function registerAsyncAgent({
     ...createTaskStateBase(agentId, 'local_agent', description, toolUseId),
     type: 'local_agent',
     status: 'running',
+    ownerAgentId,
     agentId,
     prompt,
     selectedAgent,
@@ -531,7 +560,8 @@ export function registerAgentForeground({
   selectedAgent,
   setAppState,
   autoBackgroundMs,
-  toolUseId
+  toolUseId,
+  ownerAgentId
 }: {
   agentId: string;
   description: string;
@@ -540,6 +570,7 @@ export function registerAgentForeground({
   setAppState: SetAppState;
   autoBackgroundMs?: number;
   toolUseId?: string;
+  ownerAgentId?: string;
 }): {
   taskId: string;
   backgroundSignal: Promise<void>;
@@ -554,6 +585,7 @@ export function registerAgentForeground({
     ...createTaskStateBase(agentId, 'local_agent', description, toolUseId),
     type: 'local_agent',
     status: 'running',
+    ownerAgentId,
     agentId,
     prompt,
     selectedAgent,

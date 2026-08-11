@@ -28,6 +28,7 @@ import {
   REJECT_MESSAGE_WITH_REASON_PREFIX,
 } from '../../constants/messages.js'
 import { SessionService, sessionService } from '../services/sessionService.js'
+import { createRepositoryBranch } from '../services/repositoryLaunchService.js'
 import { ProviderService } from '../services/providerService.js'
 import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 import { resetTerminalShellEnvironmentCacheForTests } from '../../utils/terminalShellEnvironment.js'
@@ -2320,6 +2321,26 @@ describe('WebSocket Chat Integration', () => {
       .map((msg) => msg.verb)
 
     expect(statusVerbs).toContain('Creating worktree')
+  })
+
+  it('starts the mock SDK on a newly created same-HEAD branch', async () => {
+    const repoDir = await createCleanGitRepo()
+    const created = await createRepositoryBranch(repoDir, {
+      name: 'qa/launch-picker',
+      from: 'main',
+    })
+    await fs.writeFile(path.join(repoDir, 'README.md'), 'main\nlocal change\n')
+    const { sessionId } = await sessionService.createSession(repoDir, {
+      branch: created.branch,
+      worktree: false,
+    })
+
+    expect(git(repoDir, 'branch', '--show-current')).toBe('main\n')
+    await runTurn(sessionId, 'Report the current branch')
+
+    expect(git(repoDir, 'branch', '--show-current')).toBe('qa/launch-picker\n')
+    expect(await fs.readFile(path.join(repoDir, 'README.md'), 'utf8'))
+      .toBe('main\nlocal change\n')
   })
 
   it('does not emit worktree startup status for an already materialized worktree session', async () => {

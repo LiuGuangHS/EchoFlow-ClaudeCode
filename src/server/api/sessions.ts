@@ -51,7 +51,7 @@ import {
 import { registerChangedFileAccessRoot, registerFilesystemAccessRoot } from '../services/filesystemAccessRoots.js'
 import { findGitRoot } from '../../utils/git.js'
 import { traceCaptureService, trimTraceCallPreviews } from '../services/traceCaptureService.js'
-import { getSubagentRunByTool } from '../services/subagentRunService.js'
+import { getSubagentRunByAgentId, getSubagentRunByTool } from '../services/subagentRunService.js'
 import { isValidPermissionMode } from '../services/settingsService.js'
 import { handleWorkspaceSearchRoute } from './workspaceSearch.js'
 import { localIndexCoordinator } from '../services/localIndex/coordinator.js'
@@ -227,6 +227,31 @@ export async function handleSessionsApi(
     }
 
     if (subResource === 'subagents') {
+      // Workflow agents have no parent `Agent` tool call to key off, so they
+      // are addressed by agent id instead. Same response shape, same page.
+      if (segments[4] === 'by-agent' && segments[5] && segments.length === 6) {
+        if (req.method !== 'GET') {
+          return Response.json(
+            { error: 'METHOD_NOT_ALLOWED', message: `Method ${req.method} not allowed` },
+            { status: 405 },
+          )
+        }
+        let agentId: string
+        try {
+          agentId = decodeURIComponent(segments[5])
+        } catch {
+          return Response.json(
+            { error: 'NOT_FOUND', message: 'SubAgent route not found' },
+            { status: 404 },
+          )
+        }
+        const byAgent = await getSubagentRunByAgentId(sessionId, agentId)
+        if (!byAgent) {
+          throw ApiError.notFound(`SubAgent run not found: ${agentId}`)
+        }
+        return Response.json(byAgent)
+      }
+
       const isRunRoute = segments[4] === 'by-tool' && Boolean(segments[5])
       const isRunRead = isRunRoute && segments.length === 6 && req.method === 'GET'
       const isRunMessage = isRunRoute && segments.length === 7 &&
@@ -966,11 +991,15 @@ async function getGitInfo(sessionId: string): Promise<Response> {
   // CLI originalBranch is the source checkout before creating the worktree, which
   // can differ from the selected base ref.
   const sessionBranch = repository?.branch || worktreeSession?.originalBranch || null
+  const plannedWorktreePath = worktreeSession?.worktreePath || repository?.worktreePath || null
+  const activeWorktreePath = worktreeSession?.worktreePath || (
+    sameResolvedPath(workDir, plannedWorktreePath) ? workDir : null
+  )
   const worktree = repository?.worktree || worktreeSession
     ? {
         enabled: true,
-        path: worktreeSession?.worktreePath || workDir,
-        plannedPath: worktreeSession?.worktreePath || repository?.worktreePath || null,
+        path: activeWorktreePath,
+        plannedPath: plannedWorktreePath,
         sourceWorkDir: worktreeSession?.originalCwd || repository?.requestedWorkDir || repository?.repoRoot || null,
         slug: worktreeSession?.worktreeName || repository?.worktreeSlug || null,
         branch: worktreeSession?.worktreeBranch || repository?.worktreeBranch || null,

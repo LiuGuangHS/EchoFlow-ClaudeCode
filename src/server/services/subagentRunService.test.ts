@@ -3,8 +3,10 @@ import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import {
+  getSubagentRunByAgentId,
   getSubagentRunByTool,
   mergeTeammateTranscriptFragments,
+  parseCanonicalNestedAgentToolRef,
   resolveSubagentRunFromMessages,
   truncateSubagentMessages,
 } from './subagentRunService.js'
@@ -80,7 +82,12 @@ async function writeSubagentLaunchMetadata(
   projectDir: string,
   sessionId: string,
   agentId: string,
-  metadata: { agentType: string; toolUseId?: string; description?: string },
+  metadata: {
+    agentType: string
+    toolUseId?: string
+    ownerAgentId?: string
+    description?: string
+  },
 ): Promise<void> {
   if (!tmpDir) throw new Error('tmpDir not initialized')
   const dir = path.join(tmpDir, 'projects', projectDir, sessionId, 'subagents')
@@ -149,6 +156,11 @@ function makeTaskNotificationEntry(
   toolUseId: string,
   taskId: string,
   status: 'completed' | 'failed' | 'stopped',
+  options: {
+    ownerAgentId?: string
+    summary?: string
+    timestamp?: string
+  } = {},
 ): Record<string, unknown> {
   return {
     type: 'echoflow-code-task-notification',
@@ -156,14 +168,32 @@ function makeTaskNotificationEntry(
     taskNotification: {
       taskId,
       toolUseId,
+      ...(options.ownerAgentId ? { ownerAgentId: options.ownerAgentId } : {}),
       status,
-      summary: 'Agent completed',
+      summary: options.summary ?? 'Agent completed',
     },
-    timestamp: '2026-01-01T00:00:06.000Z',
+    timestamp: options.timestamp ?? '2026-01-01T00:00:06.000Z',
   }
 }
 
 describe('subagentRunService helpers', () => {
+  it('parses the final parent agent and leaf tool from a recursive canonical ref', () => {
+    expect(parseCanonicalNestedAgentToolRef('A/a/B/b/Agent:0')).toEqual({
+      parentAgentId: 'b',
+      leafToolUseId: 'Agent:0',
+    })
+    expect(parseCanonicalNestedAgentToolRef('A/invalid.parent/call.0')).toEqual({
+      parentAgentId: 'invalid.parent',
+      leafToolUseId: 'call.0',
+    })
+    expect(parseCanonicalNestedAgentToolRef('A/reviewer@review-team/Agent:0')).toEqual({
+      parentAgentId: 'reviewer@review-team',
+      leafToolUseId: 'Agent:0',
+    })
+    expect(parseCanonicalNestedAgentToolRef('A/parent\0id/call.0')).toBeNull()
+    expect(parseCanonicalNestedAgentToolRef('top-level-tool')).toBeNull()
+  })
+
   it('deduplicates copied transcript history by upstream id while retaining legitimate repeated messages', () => {
     const repeated = (id: string): MessageEntry => ({
       id,
@@ -314,6 +344,124 @@ describe('getSubagentRunByTool', () => {
       content: [{ type: 'text', text: 'Found the service seam' }],
       usage: { input_tokens: 13, output_tokens: 17 },
     })
+    expect(result?.activityMessages).toEqual(result?.messages)
+  })
+
+  it('keeps Activity complete when the conversation projection crosses 1000 messages', async () => {
+    await setupTmpConfigDir()
+    const sessionId = '31313131-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const projectDir = '-tmp-subagent-run'
+    const toolUseId = 'tool-long-run'
+    const agentId = 'longrun123'
+    const transcript = Array.from({ length: 1_200 }, (_, index): Record<string, unknown> => ({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: index === 120
+          ? [{
+              type: 'tool_use',
+              id: 'todo-in-truncated-middle',
+              name: 'TodoWrite',
+              input: { todos: [{ content: 'Keep the middle activity', status: 'in_progress' }] },
+            }]
+          : `message ${index}`,
+      },
+      uuid: `long-message-${index}`,
+      timestamp: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
+    }))
+
+    await writeSessionFile(projectDir, sessionId, [
+      makeAgentToolUseEntry(toolUseId),
+      makeAgentToolResultEntry(toolUseId, agentId),
+    ])
+    await writeSubagentTranscriptFile(projectDir, sessionId, agentId, transcript)
+
+    const firstPoll = await getSubagentRunByTool(sessionId, toolUseId)
+    const secondPoll = await getSubagentRunByTool(sessionId, toolUseId)
+
+    expect(firstPoll).toMatchObject({ truncated: true })
+    expect(firstPoll?.messages).toHaveLength(1_000)
+    expect(firstPoll?.messages.some(message => message.id === 'long-message-120')).toBe(false)
+    expect(firstPoll?.activityMessages).toHaveLength(1_200)
+    expect(firstPoll?.activityMessages.some(message => message.id === 'long-message-120')).toBe(true)
+    expect(secondPoll?.activityMessages.map(message => message.id)).toEqual(
+      firstPoll?.activityMessages.map(message => message.id),
+    )
+  })
+
+  it('returns child shell notifications without exposing notification turns or their response', async () => {
+    await setupTmpConfigDir()
+    const sessionId = '12121212-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const projectDir = '-tmp-subagent-run'
+    const toolUseId = 'tool-1'
+    const agentId = 'abc123'
+
+    await writeSessionFile(projectDir, sessionId, [
+      makeAgentToolUseEntry(toolUseId),
+      makeAgentToolResultEntry(toolUseId, agentId),
+    ])
+    await writeSubagentTranscriptFile(projectDir, sessionId, agentId, [
+      {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [{
+            type: 'tool_use',
+            id: 'shell.call:0',
+            name: 'Bash',
+            input: { command: 'bun test', run_in_background: true },
+          }],
+        },
+        uuid: 'child-shell-use',
+        timestamp: '2026-01-01T00:00:05.000Z',
+      },
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [{
+            type: 'tool_result',
+            tool_use_id: 'shell.call:0',
+            content: 'Command running in background with ID: shell-task-1',
+          }],
+        },
+        uuid: 'child-shell-result',
+        timestamp: '2026-01-01T00:00:06.000Z',
+      },
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: '<task-notification>\n<task-id>shell-task-1</task-id>\n<tool-use-id>shell.call:0</tool-use-id>\n<status>killed</status>\n<summary>Child shell was stopped &amp; cleaned up</summary>\n<output-file>/tmp/shell-task-1.output</output-file>\n</task-notification>',
+        },
+        uuid: 'child-shell-notification',
+        timestamp: '2026-01-01T00:00:07.000Z',
+      },
+      {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Internal notification response' }],
+        },
+        uuid: 'child-notification-response',
+        timestamp: '2026-01-01T00:00:08.000Z',
+      },
+    ])
+
+    const result = await getSubagentRunByTool(sessionId, toolUseId)
+
+    expect(result?.messages).toHaveLength(2)
+    expect(JSON.stringify(result?.messages)).not.toContain('<task-notification>')
+    expect(JSON.stringify(result?.messages)).not.toContain('Internal notification response')
+    expect(result?.taskNotifications).toEqual([{
+      taskId: 'shell-task-1',
+      toolUseId: 'shell.call:0',
+      status: 'stopped',
+      summary: 'Child shell was stopped & cleaned up',
+      outputFile: '/tmp/shell-task-1.output',
+      timestamp: '2026-01-01T00:00:07.000Z',
+    }])
+    expect(result?.updatedAt).toBe('2026-01-01T00:00:07.000Z')
   })
 
   it('uses the live task id to resolve a running one-shot SubAgent transcript', async () => {
@@ -441,6 +589,336 @@ describe('getSubagentRunByTool', () => {
     expect(result?.messages[1]).toMatchObject({
       type: 'tool_use',
       content: [{ type: 'tool_use', id: 'subagent-tool-1', name: 'Bash' }],
+    })
+  })
+
+  it('resolves a canonical nested Agent ref from its running parent transcript', async () => {
+    await setupTmpConfigDir()
+    const sessionId = '34343434-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const projectDir = '-tmp-subagent-run'
+    const parentToolUseId = 'Agent:parent'
+    const parentAgentId = 'parent123'
+    const leafToolUseId = 'call.0'
+    const childAgentId = 'child456'
+    const canonicalRef = `${parentToolUseId}/${parentAgentId}/${leafToolUseId}`
+
+    // The parent Agent is still running, so the root transcript has no result
+    // linking it to parentAgentId and cannot join its nested tool calls yet.
+    await writeSessionFile(projectDir, sessionId, [
+      makeAgentToolUseEntry(parentToolUseId),
+    ])
+    await writeSubagentTranscriptFile(projectDir, sessionId, parentAgentId, [
+      {
+        ...makeAgentToolUseEntry(leafToolUseId),
+        uuid: 'nested-agent-use',
+        timestamp: '2026-01-01T00:00:02.000Z',
+      },
+    ])
+    await writeSubagentLaunchMetadata(projectDir, sessionId, childAgentId, {
+      agentType: 'general-purpose',
+      toolUseId: leafToolUseId,
+    })
+    await writeSubagentTranscriptFile(projectDir, sessionId, childAgentId, [
+      {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Nested child is still inspecting files' }],
+        },
+        uuid: 'nested-child-message',
+        timestamp: '2026-01-01T00:00:03.000Z',
+      },
+    ])
+
+    const result = await getSubagentRunByTool(sessionId, canonicalRef)
+
+    expect(result).toMatchObject({
+      toolUseId: canonicalRef,
+      agentId: childAgentId,
+      status: 'running',
+      description: 'Explore repo',
+      source: 'subagent-jsonl',
+    })
+    expect(result?.messages).toHaveLength(1)
+  })
+
+  it('keeps live nested sidecar lookup scoped to the physical parent owner', async () => {
+    await setupTmpConfigDir()
+    const sessionId = '37373737-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const projectDir = '-tmp-subagent-run'
+    const leafToolUseId = 'Agent:0'
+    const parents = [
+      { toolUseId: 'Agent:parent-a', agentId: 'parent-live-a', childAgentId: 'child-live-a' },
+      { toolUseId: 'Agent:parent-b', agentId: 'parent-live-b', childAgentId: 'child-live-b' },
+    ]
+
+    await writeSessionFile(projectDir, sessionId, parents.map((parent, index) => ({
+      ...makeAgentToolUseEntry(parent.toolUseId),
+      uuid: `root-parent-use-${index}`,
+    })))
+    for (const [index, parent] of parents.entries()) {
+      await writeSubagentTranscriptFile(projectDir, sessionId, parent.agentId, [{
+        ...makeAgentToolUseEntry(leafToolUseId),
+        uuid: `parent-leaf-use-${index}`,
+        timestamp: `2026-01-01T00:00:0${index + 2}.000Z`,
+      }])
+      await writeSubagentLaunchMetadata(projectDir, sessionId, parent.childAgentId, {
+        agentType: 'general-purpose',
+        toolUseId: leafToolUseId,
+        ownerAgentId: parent.agentId,
+      })
+      await writeSubagentTranscriptFile(projectDir, sessionId, parent.childAgentId, [{
+        type: 'assistant',
+        message: { role: 'assistant', content: `Live child for ${parent.agentId}` },
+        uuid: `live-child-message-${index}`,
+        timestamp: `2026-01-01T00:00:0${index + 4}.000Z`,
+      }])
+    }
+
+    const results = await Promise.all(parents.map(parent => getSubagentRunByTool(
+      sessionId,
+      `${parent.toolUseId}/${parent.agentId}/${leafToolUseId}`,
+    )))
+
+    expect(results.map(result => result?.agentId)).toEqual(
+      parents.map(parent => parent.childAgentId),
+    )
+    expect(results.map(result => result?.messages[0]?.content)).toEqual(
+      parents.map(parent => `Live child for ${parent.agentId}`),
+    )
+    expect(results.map(result => result?.status)).toEqual(['running', 'running'])
+  })
+
+  it('does not guess between ownerless legacy sidecars that reuse a nested leaf id', async () => {
+    await setupTmpConfigDir()
+    const sessionId = '39393939-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const projectDir = '-tmp-subagent-run'
+    const parentToolUseId = 'Agent:legacy-parent'
+    const parentAgentId = 'legacy-parent'
+    const leafToolUseId = 'Agent:0'
+
+    await writeSessionFile(projectDir, sessionId, [
+      makeAgentToolUseEntry(parentToolUseId),
+    ])
+    await writeSubagentTranscriptFile(projectDir, sessionId, parentAgentId, [{
+      ...makeAgentToolUseEntry(leafToolUseId),
+      uuid: 'legacy-parent-leaf-use',
+      timestamp: '2026-01-01T00:00:02.000Z',
+    }])
+    for (const [index, childAgentId] of ['legacy-child-a', 'legacy-child-b'].entries()) {
+      await writeSubagentLaunchMetadata(projectDir, sessionId, childAgentId, {
+        agentType: 'general-purpose',
+        toolUseId: leafToolUseId,
+      })
+      await writeSubagentTranscriptFile(projectDir, sessionId, childAgentId, [{
+        type: 'assistant',
+        message: { role: 'assistant', content: `Ambiguous legacy child ${index}` },
+        uuid: `ambiguous-legacy-child-${index}`,
+        timestamp: `2026-01-01T00:00:0${index + 3}.000Z`,
+      }])
+    }
+
+    const result = await getSubagentRunByTool(
+      sessionId,
+      `${parentToolUseId}/${parentAgentId}/${leafToolUseId}`,
+    )
+
+    expect(result).toMatchObject({
+      agentId: null,
+      status: 'running',
+      messages: [],
+      source: 'session-history',
+    })
+  })
+
+  it('keeps joined nested terminal notifications scoped to the physical parent owner', async () => {
+    await setupTmpConfigDir()
+    const sessionId = '38383838-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const projectDir = '-tmp-subagent-run'
+    const leafToolUseId = 'call.0'
+    const parents = [
+      {
+        toolUseId: 'Agent:terminal-parent-a',
+        agentId: 'parent-terminal-a',
+        childAgentId: 'child-terminal-a',
+        status: 'completed' as const,
+        summary: 'Parent A child completed',
+      },
+      {
+        toolUseId: 'Agent:terminal-parent-b',
+        agentId: 'parent-terminal-b',
+        childAgentId: 'child-terminal-b',
+        status: 'failed' as const,
+        summary: 'Parent B child failed',
+      },
+    ]
+
+    await writeSessionFile(projectDir, sessionId, [
+      ...parents.map((parent, index) => ({
+        ...makeAgentToolUseEntry(parent.toolUseId),
+        uuid: `root-terminal-parent-use-${index}`,
+      })),
+      ...parents.map((parent, index) => ({
+        ...makeAgentToolResultEntry(parent.toolUseId, parent.agentId),
+        uuid: `root-terminal-parent-result-${index}`,
+        timestamp: `2026-01-01T00:00:0${index + 2}.500Z`,
+      })),
+      ...parents.map((parent, index) => makeTaskNotificationEntry(
+        leafToolUseId,
+        parent.childAgentId,
+        parent.status,
+        {
+          ownerAgentId: parent.agentId,
+          summary: parent.summary,
+          timestamp: `2026-01-01T00:00:1${index}.000Z`,
+        },
+      )),
+    ])
+    for (const [index, parent] of parents.entries()) {
+      await writeSubagentTranscriptFile(projectDir, sessionId, parent.agentId, [{
+        ...makeAgentToolUseEntry(leafToolUseId),
+        uuid: `terminal-parent-leaf-use-${index}`,
+        timestamp: `2026-01-01T00:00:0${index + 2}.000Z`,
+      }])
+      await writeSubagentTranscriptFile(projectDir, sessionId, parent.childAgentId, [{
+        type: 'assistant',
+        message: { role: 'assistant', content: `Terminal child for ${parent.agentId}` },
+        uuid: `terminal-child-message-${index}`,
+        timestamp: `2026-01-01T00:00:0${index + 4}.000Z`,
+      }])
+    }
+
+    const results = await Promise.all(parents.map(parent => getSubagentRunByTool(
+      sessionId,
+      `${parent.toolUseId}/${parent.agentId}/${leafToolUseId}`,
+    )))
+
+    expect(results.map(result => result?.agentId)).toEqual(
+      parents.map(parent => parent.childAgentId),
+    )
+    expect(results.map(result => result?.status)).toEqual(
+      parents.map(parent => parent.status),
+    )
+    expect(results.map(result => result?.summary)).toEqual(
+      parents.map(parent => parent.summary),
+    )
+    expect(results.map(result => result?.messages[0]?.content)).toEqual(
+      parents.map(parent => `Terminal child for ${parent.agentId}`),
+    )
+  })
+
+  it('resolves a nested Team member ref through the newest UUID transcript fragment', async () => {
+    await setupTmpConfigDir()
+    const sessionId = '45454545-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const projectDir = '-tmp-subagent-run'
+    const parentToolUseId = 'Agent:team-parent'
+    const parentTeamRef = 'reviewer@review-team'
+    const leafToolUseId = 'Agent:0'
+    const olderFragmentId = '11111111-2222-3333-4444-555555555555'
+    const latestFragmentId = '66666666-7777-8888-9999-aaaaaaaaaaaa'
+    const staleChildAgentId = 'stale-child'
+    const childAgentId = 'current-child'
+    const canonicalRef = `${parentToolUseId}/${parentTeamRef}/${leafToolUseId}`
+
+    await writeSessionFile(projectDir, sessionId, [
+      makeAgentToolUseEntry(parentToolUseId),
+      makeAgentToolResultEntry(parentToolUseId, parentTeamRef),
+      makeTaskNotificationEntry(leafToolUseId, childAgentId, 'completed'),
+    ])
+    await writeSubagentTranscriptFile(projectDir, sessionId, olderFragmentId, [
+      {
+        ...makeAgentToolUseEntry(leafToolUseId),
+        uuid: 'older-nested-agent-use',
+        timestamp: '2026-01-01T00:00:02.000Z',
+      },
+      {
+        ...makeAgentToolResultEntry(leafToolUseId, staleChildAgentId),
+        uuid: 'older-nested-agent-result',
+        timestamp: '2026-01-01T00:00:03.000Z',
+      },
+    ])
+    await writeSubagentMetadata(projectDir, sessionId, olderFragmentId, 'reviewer', 1_000)
+    await writeSubagentTranscriptFile(projectDir, sessionId, latestFragmentId, [
+      {
+        ...makeAgentToolUseEntry(leafToolUseId),
+        uuid: 'latest-nested-agent-use',
+        timestamp: '2026-01-01T00:00:04.000Z',
+      },
+      {
+        ...makeAgentToolResultEntry(leafToolUseId, childAgentId),
+        uuid: 'latest-nested-agent-result',
+        timestamp: '2026-01-01T00:00:05.000Z',
+      },
+    ])
+    await writeSubagentMetadata(projectDir, sessionId, latestFragmentId, 'reviewer', 2_000)
+    await writeSubagentTranscriptFile(projectDir, sessionId, childAgentId, [
+      {
+        type: 'assistant',
+        message: { role: 'assistant', content: 'Current nested teammate child completed' },
+        uuid: 'team-nested-child-message',
+        timestamp: '2026-01-01T00:00:07.000Z',
+      },
+    ])
+
+    const result = await getSubagentRunByTool(sessionId, canonicalRef)
+
+    expect(result).toMatchObject({
+      toolUseId: canonicalRef,
+      agentId: childAgentId,
+      taskId: childAgentId,
+      status: 'completed',
+      description: 'Explore repo',
+      source: 'subagent-jsonl',
+    })
+    expect(result?.messages.map(message => message.id)).toEqual([
+      'team-nested-child-message',
+    ])
+  })
+
+  it('uses the raw leaf id for a joined nested Agent terminal notification', async () => {
+    await setupTmpConfigDir()
+    const sessionId = '56565656-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const projectDir = '-tmp-subagent-run'
+    const parentToolUseId = 'Agent:parent'
+    const parentAgentId = 'parent123'
+    const leafToolUseId = 'Agent:0'
+    const childAgentId = 'child456'
+    const canonicalRef = `${parentToolUseId}/${parentAgentId}/${leafToolUseId}`
+
+    await writeSessionFile(projectDir, sessionId, [
+      makeAgentToolUseEntry(parentToolUseId),
+      makeAgentToolResultEntry(parentToolUseId, parentAgentId),
+      makeTaskNotificationEntry(leafToolUseId, childAgentId, 'completed'),
+    ])
+    await writeSubagentTranscriptFile(projectDir, sessionId, parentAgentId, [
+      {
+        ...makeAgentToolUseEntry(leafToolUseId),
+        uuid: 'nested-agent-use',
+        timestamp: '2026-01-01T00:00:04.000Z',
+      },
+      {
+        ...makeAgentToolResultEntry(leafToolUseId, childAgentId),
+        uuid: 'nested-agent-result',
+        timestamp: '2026-01-01T00:00:05.000Z',
+      },
+    ])
+    await writeSubagentTranscriptFile(projectDir, sessionId, childAgentId, [
+      {
+        type: 'assistant',
+        message: { role: 'assistant', content: 'Nested work completed' },
+        uuid: 'nested-child-message',
+        timestamp: '2026-01-01T00:00:06.000Z',
+      },
+    ])
+
+    const result = await getSubagentRunByTool(sessionId, canonicalRef)
+
+    expect(result).toMatchObject({
+      toolUseId: canonicalRef,
+      agentId: childAgentId,
+      taskId: childAgentId,
+      status: 'completed',
+      source: 'subagent-jsonl',
     })
   })
 
@@ -592,6 +1070,224 @@ describe('getSubagentRunByTool', () => {
     ])
   })
 
+  it('keeps the owning resumed fragment in each nested Agent activity route', async () => {
+    await setupTmpConfigDir()
+    const sessionId = '91919191-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const projectDir = '-tmp-subagent-run'
+    const toolUseId = 'tool-team-route'
+    const nestedToolUseId = 'Agent:0'
+    const olderAgentId = 'older-route-123'
+    const latestAgentId = 'latest-route-456'
+    await writeSessionFile(projectDir, sessionId, [
+      makeAgentToolUseEntry(toolUseId),
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [{
+            type: 'tool_result',
+            tool_use_id: toolUseId,
+            content: 'agent_id: reviewer@review-team',
+          }],
+        },
+        uuid: 'team-route-result',
+        timestamp: '2026-01-01T00:00:02.000Z',
+      },
+    ])
+    await writeSubagentTranscriptFile(projectDir, sessionId, olderAgentId, [
+      {
+        ...makeAgentToolUseEntry(nestedToolUseId),
+        uuid: 'older-route-use',
+        timestamp: '2026-01-01T00:00:03.000Z',
+      },
+      {
+        ...makeAgentToolResultEntry(nestedToolUseId, 'older-child'),
+        uuid: 'older-route-result',
+        timestamp: '2026-01-01T00:00:03.500Z',
+      },
+      {
+        type: 'assistant',
+        message: { role: 'assistant', content: [
+          { type: 'tool_use', id: 'shared-shell', name: 'Bash', input: { command: 'old check', run_in_background: true } },
+          { type: 'tool_use', id: 'shared-todo', name: 'TodoWrite', input: { todos: [] } },
+        ] },
+        uuid: 'older-shared-tools',
+        timestamp: '2026-01-01T00:00:03.600Z',
+      },
+      {
+        type: 'user',
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'shared-shell', content: 'Command running in background with ID: older-shell-task' }] },
+        uuid: 'older-shell-result',
+        timestamp: '2026-01-01T00:00:03.700Z',
+      },
+      {
+        type: 'user',
+        message: { role: 'user', content: '<task-notification>\n<task-id>older-shell-task</task-id>\n<tool-use-id>shared-shell</tool-use-id>\n<status>completed</status>\n<summary>Older shell complete</summary>\n</task-notification>' },
+        uuid: 'older-shell-notification',
+        timestamp: '2026-01-01T00:00:03.800Z',
+      },
+    ])
+    await writeSubagentMetadata(projectDir, sessionId, olderAgentId, 'reviewer', 1_000)
+    await writeSubagentTranscriptFile(projectDir, sessionId, latestAgentId, [
+      {
+        ...makeAgentToolUseEntry(nestedToolUseId),
+        uuid: 'latest-route-use',
+        timestamp: '2026-01-01T00:00:04.000Z',
+      },
+      {
+        ...makeAgentToolResultEntry(nestedToolUseId, 'latest-child'),
+        uuid: 'latest-route-result',
+        timestamp: '2026-01-01T00:00:04.500Z',
+      },
+      {
+        type: 'assistant',
+        message: { role: 'assistant', content: [
+          { type: 'tool_use', id: 'shared-shell', name: 'Bash', input: { command: 'new check', run_in_background: true } },
+          { type: 'tool_use', id: 'shared-todo', name: 'TodoWrite', input: { todos: [] } },
+        ] },
+        uuid: 'latest-shared-tools',
+        timestamp: '2026-01-01T00:00:04.600Z',
+      },
+      {
+        type: 'user',
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'shared-shell', content: 'Command running in background with ID: latest-shell-task' }] },
+        uuid: 'latest-shell-result',
+        timestamp: '2026-01-01T00:00:04.700Z',
+      },
+      {
+        type: 'user',
+        message: { role: 'user', content: '<task-notification>\n<task-id>latest-shell-task</task-id>\n<tool-use-id>shared-shell</tool-use-id>\n<status>failed</status>\n<summary>Latest shell failed</summary>\n</task-notification>' },
+        uuid: 'latest-shell-notification',
+        timestamp: '2026-01-01T00:00:04.800Z',
+      },
+    ])
+    await writeSubagentMetadata(projectDir, sessionId, latestAgentId, 'reviewer', 2_000)
+
+    const result = await getSubagentRunByTool(sessionId, toolUseId)
+    const agentIds = (messages: MessageEntry[] | undefined) => messages?.flatMap((message) => (
+      Array.isArray(message.content)
+        ? message.content.flatMap((block) => (
+            block && typeof block === 'object' &&
+            (block as { type?: unknown }).type === 'tool_use' &&
+            (block as { name?: unknown }).name === 'Agent'
+              ? [String((block as { id?: unknown }).id)]
+              : []
+          ))
+        : []
+    ))
+
+    expect(result?.agentId).toBe(latestAgentId)
+    const scopedIds = [
+      `${olderAgentId}/${nestedToolUseId}`,
+      `${latestAgentId}/${nestedToolUseId}`,
+    ]
+    expect(agentIds(result?.messages)).toEqual(scopedIds)
+    expect(agentIds(result?.activityMessages)).toEqual(scopedIds)
+    const resultIds = result?.messages.flatMap((message) => (
+      Array.isArray(message.content)
+        ? message.content.flatMap((block) => (
+            block && typeof block === 'object' &&
+            (block as { type?: unknown }).type === 'tool_result'
+              ? [String((block as { tool_use_id?: unknown }).tool_use_id)]
+              : []
+          ))
+        : []
+    ))
+    expect(resultIds?.filter(id => id.endsWith(`/${nestedToolUseId}`))).toEqual(scopedIds)
+    const toolIds = (name: string) => result?.messages.flatMap((message) => (
+      Array.isArray(message.content)
+        ? message.content.flatMap((block) => (
+            block && typeof block === 'object' &&
+            (block as { type?: unknown }).type === 'tool_use' &&
+            (block as { name?: unknown }).name === name
+              ? [String((block as { id?: unknown }).id)]
+              : []
+          ))
+        : []
+    ))
+    expect(toolIds('Bash')).toEqual([
+      `${olderAgentId}/shared-shell`,
+      `${latestAgentId}/shared-shell`,
+    ])
+    expect(toolIds('TodoWrite')).toEqual([
+      `${olderAgentId}/shared-todo`,
+      `${latestAgentId}/shared-todo`,
+    ])
+    expect(result?.activityTaskNotifications.map(notification => notification.toolUseId)).toEqual([
+      `${olderAgentId}/shared-shell`,
+      `${latestAgentId}/shared-shell`,
+    ])
+  })
+
+  it('deduplicates child task notifications across resumed teammate fragments', async () => {
+    await setupTmpConfigDir()
+    const sessionId = '78787878-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const projectDir = '-tmp-subagent-run'
+    const toolUseId = 'tool-team-1'
+    await writeSessionFile(projectDir, sessionId, [
+      makeAgentToolUseEntry(toolUseId),
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [{
+            type: 'tool_result',
+            tool_use_id: toolUseId,
+            content: 'agent_id: reviewer@review-team',
+          }],
+        },
+        uuid: 'team-agent-result',
+        timestamp: '2026-01-01T00:00:02.000Z',
+      },
+    ])
+    await writeSubagentTranscriptFile(projectDir, sessionId, 'older123', [
+      {
+        type: 'assistant',
+        message: { role: 'assistant', content: 'First teammate turn' },
+        uuid: 'older-message',
+        timestamp: '2026-01-01T00:00:03.000Z',
+      },
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: '<task-notification>\n<task-id>shell-task</task-id>\n<tool-use-id>shell-tool</tool-use-id>\n<status>completed</status>\n<summary>Old completion</summary>\n</task-notification>',
+        },
+        uuid: 'older-notification',
+        timestamp: '2026-01-01T00:00:04.000Z',
+      },
+    ])
+    await writeSubagentMetadata(projectDir, sessionId, 'older123', 'reviewer', 1_000)
+    await writeSubagentTranscriptFile(projectDir, sessionId, 'latest456', [
+      {
+        type: 'assistant',
+        message: { role: 'assistant', content: 'Resumed teammate turn' },
+        uuid: 'latest-message',
+        timestamp: '2026-01-01T00:00:05.000Z',
+      },
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: '<task-notification>\n<task-id>shell-task</task-id>\n<tool-use-id>shell-tool</tool-use-id>\n<status>failed</status>\n<summary>Latest failure</summary>\n</task-notification>',
+        },
+        uuid: 'latest-notification',
+        timestamp: '2026-01-01T00:00:06.000Z',
+      },
+    ])
+    await writeSubagentMetadata(projectDir, sessionId, 'latest456', 'reviewer', 2_000)
+
+    const result = await getSubagentRunByTool(sessionId, toolUseId)
+
+    expect(result?.taskNotifications).toEqual([{
+      taskId: 'shell-task',
+      toolUseId: 'shell-tool',
+      status: 'failed',
+      summary: 'Latest failure',
+      timestamp: '2026-01-01T00:00:06.000Z',
+    }])
+  })
+
   it('keeps an async launch acknowledgement running until a terminal notification arrives', async () => {
     await setupTmpConfigDir()
     const sessionId = 'abababab-bbbb-cccc-dddd-eeeeeeeeeeee'
@@ -735,5 +1431,103 @@ describe('getSubagentRunByTool', () => {
     ])
 
     await expect(getSubagentRunByTool(sessionId, 'tool-1')).resolves.toBeNull()
+  })
+})
+
+describe('getSubagentRunByAgentId', () => {
+  afterEach(async () => {
+    if (tmpDir) {
+      await fs.rm(tmpDir, { recursive: true, force: true })
+      tmpDir = null
+    }
+    delete process.env.CLAUDE_CONFIG_DIR
+  })
+
+  it('reads a run that has no parent Agent tool call', async () => {
+    await setupTmpConfigDir()
+    const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-ffffffffffff'
+    const projectDir = '-tmp-workflow-agent'
+    const agentId = 'wfagent1'
+
+    // A workflow agent is spawned by the workflow runtime, so the parent
+    // session has no Agent tool_use to key off — only the transcript exists.
+    await writeSessionFile(projectDir, sessionId, [])
+    await writeSubagentTranscriptFile(projectDir, sessionId, agentId, [
+      {
+        type: 'user',
+        message: { role: 'user', content: 'Survey lib/response.js' },
+        uuid: 'wf-user',
+        timestamp: '2026-01-01T00:00:05.000Z',
+      },
+      {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'res.send(403) sends a JSON body' }],
+          usage: { input_tokens: 11, output_tokens: 7 },
+        },
+        uuid: 'wf-assistant',
+        timestamp: '2026-01-01T00:00:06.000Z',
+      },
+    ])
+
+    const result = await getSubagentRunByAgentId(sessionId, agentId)
+
+    expect(result).toMatchObject({ sessionId, agentId, source: 'subagent-jsonl' })
+    expect(result?.messages.length).toBeGreaterThan(0)
+    // A workflow agent answers once into its script; there is no inbox.
+    expect(result?.canSendMessage).toBe(false)
+  })
+
+  it('returns workflow-agent task notifications beside its filtered transcript', async () => {
+    await setupTmpConfigDir()
+    const sessionId = '90909090-bbbb-cccc-dddd-ffffffffffff'
+    const projectDir = '-tmp-workflow-agent'
+    const agentId = 'wfagent2'
+
+    await writeSessionFile(projectDir, sessionId, [])
+    await writeSubagentTranscriptFile(projectDir, sessionId, agentId, [
+      {
+        type: 'assistant',
+        message: { role: 'assistant', content: 'Waiting for the background check' },
+        uuid: 'wf-assistant',
+        timestamp: '2026-01-01T00:00:05.000Z',
+      },
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: '<task-notification>\n<task-id>wf-shell-task</task-id>\n<tool-use-id>wf-shell-tool</tool-use-id>\n<status>completed</status>\n<summary>Workflow check passed</summary>\n</task-notification>',
+        },
+        uuid: 'wf-notification',
+        timestamp: '2026-01-01T00:00:06.000Z',
+      },
+      {
+        type: 'assistant',
+        message: { role: 'assistant', content: 'Internal notification response' },
+        uuid: 'wf-notification-response',
+        timestamp: '2026-01-01T00:00:07.000Z',
+      },
+    ])
+
+    const result = await getSubagentRunByAgentId(sessionId, agentId)
+
+    expect(result?.messages.map(message => message.id)).toEqual(['wf-assistant'])
+    expect(result?.taskNotifications).toEqual([{
+      taskId: 'wf-shell-task',
+      toolUseId: 'wf-shell-tool',
+      status: 'completed',
+      summary: 'Workflow check passed',
+      timestamp: '2026-01-01T00:00:06.000Z',
+    }])
+    expect(result?.updatedAt).toBe('2026-01-01T00:00:06.000Z')
+  })
+
+  it('returns null when no transcript exists for that agent', async () => {
+    await setupTmpConfigDir()
+    const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-000000000000'
+    await writeSessionFile('-tmp-workflow-missing', sessionId, [])
+
+    expect(await getSubagentRunByAgentId(sessionId, 'nope')).toBeNull()
   })
 })

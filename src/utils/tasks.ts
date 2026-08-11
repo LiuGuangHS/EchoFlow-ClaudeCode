@@ -192,11 +192,20 @@ export async function resetTaskList(taskListId: string): Promise<void> {
  * Priority:
  * 1. CLAUDE_CODE_TASK_LIST_ID - explicit task list ID
  * 2. In-process teammate: leader's team name (so teammates share the leader's task list)
- * 3. CLAUDE_CODE_TEAM_NAME - set when running as a process-based teammate
+ * 3. Team name from the active team context
  * 4. Leader team name - set when the leader creates a team via TeamCreate
- * 5. Session ID - fallback for standalone sessions
+ * 5. Agent ID - a subagent keeps its own list instead of writing the session's
+ * 6. Session ID - fallback for standalone sessions
+ *
+ * A subagent runs in-process, so without step 5 every task it created landed
+ * in its parent's list and surfaced in the UI as if the assistant had planned
+ * it. Scoping by agent keeps the agent's own tracking — which is what lets it
+ * hold a goal across a long run — while keeping it out of the session's list.
+ * `TodoWriteTool` has always keyed on `context.agentId ?? getSessionId()`;
+ * this brings the task tools in line with it. Teammates are checked first and
+ * so keep sharing the leader's list, which is the point of a team.
  */
-export function getTaskListId(): string {
+export function getTaskListId(agentId?: string): string {
   if (process.env.CLAUDE_CODE_TASK_LIST_ID) {
     return process.env.CLAUDE_CODE_TASK_LIST_ID
   }
@@ -204,9 +213,15 @@ export function getTaskListId(): string {
   // task list that tmux/iTerm2 teammates also resolve to.
   const teammateCtx = getTeammateContext()
   if (teammateCtx) {
-    return teammateCtx.teamName
+    return getTeamTaskListId(teammateCtx.teamName)
   }
-  return getTeamName() || leaderTeamName || getSessionId()
+  const teamName = getTeamName() || leaderTeamName
+  return teamName ? getTeamTaskListId(teamName) : agentId || getSessionId()
+}
+
+/** Canonical task-list identity shared by the leader and every teammate backend. */
+export function getTeamTaskListId(teamName: string): string {
+  return process.env.CLAUDE_CODE_TASK_LIST_ID || sanitizeName(teamName)
 }
 
 /**

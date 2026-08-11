@@ -391,6 +391,327 @@ describe('buildSessionActivityModel', () => {
     expect(model.badgeCount).toBe(1)
   })
 
+  it('puts Team member spawns in Team while preserving direct Agent calls in SubAgents', () => {
+    const model = buildSessionActivityModel({
+      sessionId: 'session-1',
+      messages: [
+        {
+          id: 'team-agent-tool',
+          type: 'tool_use',
+          toolName: 'Agent',
+          toolUseId: 'team-agent-tool',
+          input: {
+            description: '分析桌面端 UI 变更',
+            name: 'desktop-analyzer',
+            team_name: 'v053-release-audit',
+          },
+          timestamp: 1000,
+        },
+        {
+          id: 'team-agent-result',
+          type: 'tool_result',
+          toolUseId: 'team-agent-tool',
+          content: 'Spawned successfully.',
+          isError: false,
+          timestamp: 1001,
+        },
+        {
+          id: 'direct-agent-tool',
+          type: 'tool_use',
+          toolName: 'Agent',
+          toolUseId: 'direct-agent-tool',
+          input: { description: '检查普通 SubAgent 路径' },
+          timestamp: 1002,
+        },
+        {
+          id: 'blank-team-agent-tool',
+          type: 'tool_use',
+          toolName: 'Agent',
+          toolUseId: 'blank-team-agent-tool',
+          input: { description: '检查空 Team 名路径', team_name: '   ' },
+          timestamp: 1003,
+        },
+        {
+          id: 'unnamed-team-agent-tool',
+          type: 'tool_use',
+          toolName: 'Agent',
+          toolUseId: 'unnamed-team-agent-tool',
+          input: { description: '检查未命名普通 SubAgent 路径', team_name: 'v053-release-audit' },
+          timestamp: 1004,
+        },
+      ],
+      tasks: [],
+      completedAndDismissed: false,
+      backgroundTasks: [],
+      agentNotifications: [],
+    })
+
+    expect(model.sections.subagents.rows).toEqual([
+      expect.objectContaining({ id: 'direct-agent-tool', label: '检查普通 SubAgent 路径' }),
+      expect.objectContaining({ id: 'blank-team-agent-tool', label: '检查空 Team 名路径' }),
+      expect.objectContaining({ id: 'unnamed-team-agent-tool', label: '检查未命名普通 SubAgent 路径' }),
+    ])
+    expect(model.sections.team.rows).toEqual([
+      expect.objectContaining({
+        id: 'team-agent-tool',
+        label: 'desktop-analyzer',
+        section: 'team',
+        status: 'running',
+        teamName: 'v053-release-audit',
+        teamMemberName: 'desktop-analyzer',
+      }),
+    ])
+    expect(model.badgeCount).toBe(4)
+  })
+
+  it('uses successful Team lifecycle results to hide implicit member spawns without hiding ordinary Agents', () => {
+    const model = buildSessionActivityModel({
+      sessionId: 'session-1',
+      messages: [
+        {
+          id: 'team-create-tool',
+          type: 'tool_use',
+          toolName: 'TeamCreate',
+          toolUseId: 'team-create-tool',
+          input: { team_name: 'v053-release-audit', description: '并行审计' },
+          timestamp: 1000,
+        },
+        {
+          id: 'team-create-result',
+          type: 'tool_result',
+          toolUseId: 'team-create-tool',
+          content: [{ type: 'text', text: '{"team_name":"v053-release-audit","lead_agent_id":"team-lead@v053-release-audit"}' }],
+          isError: false,
+          timestamp: 1001,
+        },
+        {
+          id: 'implicit-member-tool',
+          type: 'tool_use',
+          toolName: 'Agent',
+          toolUseId: 'implicit-member-tool',
+          input: { description: '隐式团队成员', name: 'desktop-analyzer' },
+          timestamp: 1002,
+        },
+        {
+          id: 'ordinary-in-team-tool',
+          type: 'tool_use',
+          toolName: 'Agent',
+          toolUseId: 'ordinary-in-team-tool',
+          input: { description: '团队中的普通 SubAgent' },
+          timestamp: 1003,
+        },
+        {
+          id: 'failed-team-delete-tool',
+          type: 'tool_use',
+          toolName: 'TeamDelete',
+          toolUseId: 'failed-team-delete-tool',
+          input: {},
+          timestamp: 1004,
+        },
+        {
+          id: 'failed-team-delete-result',
+          type: 'tool_result',
+          toolUseId: 'failed-team-delete-tool',
+          content: [{ type: 'text', text: '{"success":false,"message":"members still active","team_name":"v053-release-audit"}' }],
+          isError: false,
+          timestamp: 1005,
+        },
+        {
+          id: 'implicit-member-after-failed-delete-tool',
+          type: 'tool_use',
+          toolName: 'Agent',
+          toolUseId: 'implicit-member-after-failed-delete-tool',
+          input: { description: '删除失败后的团队成员', name: 'provider-analyzer' },
+          timestamp: 1006,
+        },
+        {
+          id: 'team-delete-tool',
+          type: 'tool_use',
+          toolName: 'TeamDelete',
+          toolUseId: 'team-delete-tool',
+          input: {},
+          timestamp: 1007,
+        },
+        {
+          id: 'team-delete-result',
+          type: 'tool_result',
+          toolUseId: 'team-delete-tool',
+          content: [{ type: 'text', text: '{"success":true,"message":"cleaned","team_name":"v053-release-audit"}' }],
+          isError: false,
+          timestamp: 1008,
+        },
+        {
+          id: 'ordinary-named-agent-tool',
+          type: 'tool_use',
+          toolName: 'Agent',
+          toolUseId: 'ordinary-named-agent-tool',
+          input: { description: '团队结束后的普通 Agent', name: 'standalone-reviewer' },
+          timestamp: 1009,
+        },
+      ],
+      tasks: [],
+      completedAndDismissed: false,
+      backgroundTasks: [],
+      agentNotifications: [],
+    })
+
+    expect(model.sections.subagents.rows).toEqual([
+      expect.objectContaining({ id: 'ordinary-in-team-tool', label: '团队中的普通 SubAgent' }),
+      expect.objectContaining({ id: 'ordinary-named-agent-tool', label: '团队结束后的普通 Agent' }),
+    ])
+    expect(model.sections.team.rows).toEqual([
+      expect.objectContaining({
+        id: 'implicit-member-tool',
+        label: 'desktop-analyzer',
+        teamName: 'v053-release-audit',
+      }),
+      expect.objectContaining({
+        id: 'implicit-member-after-failed-delete-tool',
+        label: 'provider-analyzer',
+        teamName: 'v053-release-audit',
+      }),
+    ])
+    expect(model.badgeCount).toBe(4)
+  })
+
+  it('recognizes an implicit member from its own structured spawn metadata after earlier Team history is compacted', () => {
+    const model = buildSessionActivityModel({
+      sessionId: 'session-1',
+      messages: [
+        {
+          id: 'implicit-member-tool',
+          type: 'tool_use',
+          toolName: 'Agent',
+          toolUseId: 'implicit-member-tool',
+          input: { description: '隐式团队成员', name: 'desktop-analyzer' },
+          timestamp: 1000,
+        },
+        {
+          id: 'implicit-member-result',
+          type: 'tool_result',
+          toolUseId: 'implicit-member-tool',
+          content: 'Spawned successfully.\nagent_id: desktop-analyzer@audit\nname: desktop-analyzer\nteam_name: audit',
+          isError: false,
+          timestamp: 1001,
+        },
+        {
+          id: 'ordinary-named-tool',
+          type: 'tool_use',
+          toolName: 'Agent',
+          toolUseId: 'ordinary-named-tool',
+          input: { description: '普通命名 Agent', name: 'standalone-reviewer' },
+          timestamp: 1002,
+        },
+        {
+          id: 'ordinary-named-result',
+          type: 'tool_result',
+          toolUseId: 'ordinary-named-tool',
+          content: 'Review complete.',
+          isError: false,
+          timestamp: 1003,
+        },
+      ],
+      tasks: [],
+      completedAndDismissed: false,
+      backgroundTasks: [],
+      agentNotifications: [],
+    })
+
+    expect(model.sections.subagents.rows).toEqual([
+      expect.objectContaining({ id: 'ordinary-named-tool', label: '普通命名 Agent' }),
+    ])
+    expect(model.sections.team.rows).toEqual([
+      expect.objectContaining({
+        id: 'implicit-member-tool',
+        label: 'desktop-analyzer',
+        teamName: 'audit',
+        teamMemberName: 'desktop-analyzer',
+      }),
+    ])
+    expect(model.badgeCount).toBe(1)
+  })
+
+  it('prefers the authoritative Team member over its transcript launch row', () => {
+    const model = buildSessionActivityModel({
+      sessionId: 'session-1',
+      messages: [{
+        id: 'team-agent-tool',
+        type: 'tool_use',
+        toolName: 'Agent',
+        toolUseId: 'team-agent-tool',
+        input: {
+          team_name: 'audit',
+          name: 'desktop-analyzer',
+          description: '分析桌面端变更',
+        },
+        timestamp: 1000,
+      }],
+      tasks: [],
+      completedAndDismissed: false,
+      backgroundTasks: [],
+      agentNotifications: [],
+      teamMembers: [{
+        agentId: 'desktop-analyzer@audit',
+        name: 'desktop-analyzer',
+        role: 'reviewer',
+        status: 'completed',
+      }],
+    })
+
+    expect(model.sections.team.rows).toEqual([
+      expect.objectContaining({
+        id: 'desktop-analyzer@audit',
+        label: 'reviewer',
+        status: 'completed',
+      }),
+    ])
+    expect(model.sections.subagents.rows).toEqual([])
+  })
+
+  it('hides teammate runtime containers without changing other activity classes', () => {
+    const model = buildSessionActivityModel({
+      sessionId: 'session-1',
+      tasks: [],
+      completedAndDismissed: false,
+      backgroundTasks: [
+        background({
+          taskId: 'in_process_teammate-1',
+          toolUseId: 'team-agent-tool',
+          taskType: 'in_process_teammate',
+          description: 'desktop-analyzer',
+        }),
+        background({
+          taskId: 'local-agent-1',
+          toolUseId: 'local-agent-tool',
+          taskType: 'local_agent',
+          description: 'Direct SubAgent',
+        }),
+        background({
+          taskId: 'local-bash-1',
+          toolUseId: 'local-bash-tool',
+          taskType: 'local_bash',
+          description: 'bun test',
+        }),
+        background({
+          taskId: 'local-workflow-1',
+          toolUseId: 'local-workflow-tool',
+          taskType: 'local_workflow',
+          description: 'Release audit workflow',
+        }),
+      ],
+      agentNotifications: [],
+    })
+
+    expect(model.sections.subagents.rows).toEqual([
+      expect.objectContaining({ id: 'local-agent-tool', taskType: 'local_agent' }),
+    ])
+    expect(model.sections.backgroundTasks.rows).toEqual([
+      expect.objectContaining({ id: 'local-bash-tool', taskType: 'local_bash' }),
+      expect.objectContaining({ id: 'local-workflow-tool', taskType: 'local_workflow' }),
+    ])
+    expect(model.badgeCount).toBe(3)
+  })
+
   it('restores task rows from the latest TodoWrite message', () => {
     const model = buildSessionActivityModel({
       sessionId: 'session-1',
@@ -664,7 +985,7 @@ describe('buildSessionActivityModel', () => {
     expect(model.badgeCount).toBe(1)
   })
 
-  it('keeps parent-linked SubAgent tasks out of the session task section', () => {
+  it('does not confuse a main task with a child task that has the same list-local id', () => {
     const model = buildSessionActivityModel({
       sessionId: 'session-1',
       messages: [
@@ -698,7 +1019,7 @@ describe('buildSessionActivityModel', () => {
           toolName: 'TaskCreate',
           toolUseId: 'agent-tool-call/child-task-create-call',
           originalToolUseId: 'child-task-create-call',
-          input: { subject: '审查最近七天全部提交' },
+          input: { subject: '子代理内部检查' },
           parentToolUseId: 'agent-tool-call',
           timestamp: 1003,
         },
@@ -707,7 +1028,7 @@ describe('buildSessionActivityModel', () => {
           type: 'tool_result',
           toolUseId: 'agent-tool-call/child-task-create-call',
           originalToolUseId: 'child-task-create-call',
-          content: 'Task #2 created successfully: 审查最近七天全部提交',
+          content: 'Task #1 created successfully: 子代理内部检查',
           isError: false,
           parentToolUseId: 'agent-tool-call',
           timestamp: 1004,
@@ -715,7 +1036,6 @@ describe('buildSessionActivityModel', () => {
       ],
       tasks: [
         task({ id: '1', subject: '审查最近七天全部 Git 提交' }),
-        task({ id: '2', subject: '审查最近七天全部提交' }),
       ],
       completedAndDismissed: false,
       backgroundTasks: [],
@@ -729,6 +1049,37 @@ describe('buildSessionActivityModel', () => {
       }),
     ])
     expect(model.badgeCount).toBe(2)
+  })
+
+  it('does not let a child deletion remove a main task with the same list-local id', () => {
+    const model = buildSessionActivityModel({
+      sessionId: 'session-1',
+      messages: [
+        {
+          id: 'child-task-delete',
+          type: 'tool_use',
+          toolName: 'TaskUpdate',
+          toolUseId: 'agent-tool-call/child-task-delete-call',
+          originalToolUseId: 'child-task-delete-call',
+          input: { taskId: '1', status: 'deleted' },
+          parentToolUseId: 'agent-tool-call',
+          timestamp: 1000,
+        },
+        {
+          ...successfulTaskUpdateResult('agent-tool-call/child-task-delete-call', '1', 1001, 'deleted'),
+          parentToolUseId: 'agent-tool-call',
+        },
+      ],
+      tasks: [task({ id: '1', subject: '主会话验收' })],
+      completedAndDismissed: false,
+      backgroundTasks: [],
+      agentNotifications: [],
+    })
+
+    expect(model.sections.tasks.rows).toEqual([
+      expect.objectContaining({ id: '1', label: '主会话验收' }),
+    ])
+    expect(model.badgeCount).toBe(1)
   })
 
   it('does not restore parent-linked SubAgent TodoWrite rows as session tasks', () => {
@@ -754,6 +1105,366 @@ describe('buildSessionActivityModel', () => {
 
     expect(model.sections.tasks.rows).toEqual([])
     expect(model.badgeCount).toBe(0)
+  })
+
+  it('keeps parent-linked TodoWrite rows in an agent run', () => {
+    const model = buildSessionActivityModel({
+      sessionId: 'agent-1',
+      runScope: 'agent',
+      messages: [{
+        id: 'child-todo',
+        type: 'tool_use',
+        toolName: 'TodoWrite',
+        toolUseId: 'agent-tool-call/child-todo-call',
+        originalToolUseId: 'child-todo-call',
+        input: {
+          todos: [{ content: '子代理内部检查项', status: 'in_progress' }],
+        },
+        parentToolUseId: 'agent-tool-call',
+        timestamp: 1000,
+      }],
+      tasks: [],
+      completedAndDismissed: false,
+      backgroundTasks: [],
+      agentNotifications: [],
+    })
+
+    expect(model.sections.tasks.rows).toEqual([
+      expect.objectContaining({ label: '子代理内部检查项', status: 'in_progress' }),
+    ])
+    expect(model.badgeCount).toBe(1)
+  })
+
+  it('uses explicit member tasks and TodoWrite without rebuilding shared team Task events', () => {
+    const model = buildSessionActivityModel({
+      sessionId: 'team-member:agent-1',
+      runScope: 'agent',
+      taskScope: 'team',
+      messages: [
+        {
+          id: 'shared-task-create',
+          type: 'tool_use',
+          toolName: 'TaskCreate',
+          toolUseId: 'team-agent/shared-task-create-call',
+          input: { subject: '其他成员的共享任务' },
+          parentToolUseId: 'team-agent',
+          timestamp: 1000,
+        },
+        {
+          id: 'shared-task-create-result',
+          type: 'tool_result',
+          toolUseId: 'team-agent/shared-task-create-call',
+          content: 'Task #9 created successfully: 其他成员的共享任务',
+          isError: false,
+          parentToolUseId: 'team-agent',
+          timestamp: 1001,
+        },
+        {
+          id: 'shared-task-delete',
+          type: 'tool_use',
+          toolName: 'TaskUpdate',
+          toolUseId: 'team-agent/shared-task-delete-call',
+          input: { taskId: '1', status: 'deleted' },
+          parentToolUseId: 'team-agent',
+          timestamp: 1002,
+        },
+        {
+          ...successfulTaskUpdateResult('team-agent/shared-task-delete-call', '1', 1003, 'deleted'),
+          parentToolUseId: 'team-agent',
+        },
+        {
+          id: 'member-todo',
+          type: 'tool_use',
+          toolName: 'TodoWrite',
+          toolUseId: 'team-agent/member-todo-call',
+          input: {
+            todos: [{ content: '成员自己的检查项', status: 'in_progress' }],
+          },
+          parentToolUseId: 'team-agent',
+          timestamp: 1004,
+        },
+      ],
+      tasks: [task({ id: '1', subject: '分配给当前成员的任务' })],
+      completedAndDismissed: false,
+      backgroundTasks: [],
+      agentNotifications: [],
+    })
+
+    expect(model.sections.tasks.rows).toEqual([
+      expect.objectContaining({ label: '成员自己的检查项', status: 'in_progress' }),
+      expect.objectContaining({ id: '1', label: '分配给当前成员的任务', status: 'pending' }),
+    ])
+    expect(model.sections.tasks.rows).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: '其他成员的共享任务' }),
+    ]))
+    expect(model.badgeCount).toBe(2)
+  })
+
+  it('maps authoritative team task failure and completion by structured task id', () => {
+    const messages: UIMessage[] = [
+      {
+        id: 'failed-update-a',
+        type: 'tool_use',
+        toolName: 'TaskUpdate',
+        toolUseId: 'failed-update-a-call',
+        input: { taskId: 'A', status: 'completed' },
+        timestamp: 1004,
+      },
+      {
+        id: 'failed-update-a-result',
+        type: 'tool_result',
+        toolUseId: 'failed-update-a-call',
+        content: 'same result text',
+        isError: true,
+        timestamp: 1005,
+      },
+      {
+        id: 'stale-update-b',
+        type: 'tool_use',
+        toolName: 'TaskUpdate',
+        toolUseId: 'stale-update-b-call',
+        input: { taskId: 'B', status: 'in_progress' },
+        timestamp: 1006,
+      },
+      {
+        id: 'stale-update-b-result',
+        type: 'tool_result',
+        toolUseId: 'stale-update-b-call',
+        content: 'same result text',
+        isError: false,
+        timestamp: 1007,
+      },
+    ]
+    const teamTasks = [
+      task({ id: 'A', subject: 'Review shared surface', taskListId: 'team-list' }),
+      task({ id: 'B', subject: 'Review shared surface', taskListId: 'team-list', status: 'completed' }),
+    ]
+
+    const failedState = buildSessionActivityModel({
+      sessionId: 'session-1',
+      messages,
+      tasks: [],
+      teamTasks,
+      taskScope: 'team-session',
+      teamTaskWindows: [{ startedAt: 1000 }],
+      isForegroundTurnActive: false,
+      completedAndDismissed: false,
+      backgroundTasks: [],
+      agentNotifications: [],
+    })
+
+    expect(failedState.sections.tasks.rows).toEqual([
+      expect.objectContaining({ id: 'team-task:team-list:A', taskId: 'A', status: 'pending' }),
+      expect.objectContaining({ id: 'team-task:team-list:B', taskId: 'B', status: 'completed' }),
+    ])
+
+    const completedState = buildSessionActivityModel({
+      sessionId: 'session-1',
+      messages,
+      tasks: [],
+      teamTasks: teamTasks.map(current => ({ ...current, status: 'completed' })),
+      taskScope: 'team-session',
+      teamTaskWindows: [{ startedAt: 1000 }],
+      isForegroundTurnActive: false,
+      completedAndDismissed: false,
+      backgroundTasks: [],
+      agentNotifications: [],
+    })
+
+    expect(completedState.sections.tasks.rows).toEqual([
+      expect.objectContaining({ id: 'team-task:team-list:A', taskId: 'A', status: 'completed' }),
+      expect.objectContaining({ id: 'team-task:team-list:B', taskId: 'B', status: 'completed' }),
+    ])
+  })
+
+  it('filters shared tasks only inside a successful TeamCreate to TeamDelete lifecycle', () => {
+    const taskCall = (id: string, subject: string, timestamp: number): UIMessage[] => [{
+      id: `${id}-use`,
+      type: 'tool_use',
+      toolName: 'TaskCreate',
+      toolUseId: id,
+      input: { subject },
+      timestamp,
+    }, {
+      id: `${id}-result`,
+      type: 'tool_result',
+      toolUseId: id,
+      content: `Task #${id} created successfully: ${subject}`,
+      isError: false,
+      timestamp: timestamp + 1,
+    }]
+    const model = buildSessionActivityModel({
+      sessionId: 'team-lifecycle-session',
+      taskScope: 'team-session',
+      // The workbench can close a little after TeamDelete succeeds. Once the
+      // transcript has an authoritative lifecycle marker, it must win over
+      // this still-open discovery window.
+      teamTaskWindows: [{ startedAt: 1500 }],
+      messages: [
+        ...taskCall('1', 'Keep the pre-team task', 1000),
+        {
+          id: 'team-create',
+          type: 'tool_use',
+          toolName: 'TeamCreate',
+          toolUseId: 'team-create-call',
+          input: { team_name: 'review-team' },
+          timestamp: 2000,
+        },
+        {
+          id: 'team-create-result',
+          type: 'tool_result',
+          toolUseId: 'team-create-call',
+          content: { team_name: 'review-team' },
+          isError: false,
+          timestamp: 2001,
+        },
+        ...taskCall('2', 'Hide the shared team task', 3000),
+        {
+          id: 'team-delete',
+          type: 'tool_use',
+          toolName: 'TeamDelete',
+          toolUseId: 'team-delete-call',
+          input: { team_name: 'review-team' },
+          timestamp: 4000,
+        },
+        {
+          id: 'team-delete-result',
+          type: 'tool_result',
+          toolUseId: 'team-delete-call',
+          content: { team_name: 'review-team' },
+          isError: false,
+          timestamp: 4001,
+        },
+        ...taskCall('3', 'Keep the post-team task', 5000),
+      ],
+      tasks: [],
+      completedAndDismissed: false,
+      backgroundTasks: [],
+      agentNotifications: [],
+    })
+
+    expect(model.sections.tasks.rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: 'Keep the pre-team task' }),
+      expect.objectContaining({ label: 'Keep the post-team task' }),
+    ]))
+    expect(model.sections.tasks.rows).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: 'Hide the shared team task' }),
+    ]))
+  })
+
+  it('does not enter team task scope after a failed TeamCreate', () => {
+    const model = buildSessionActivityModel({
+      sessionId: 'failed-team-create-session',
+      taskScope: 'team-session',
+      messages: [
+        {
+          id: 'failed-team-create',
+          type: 'tool_use',
+          toolName: 'TeamCreate',
+          toolUseId: 'failed-team-create-call',
+          input: { team_name: 'review-team' },
+          timestamp: 1000,
+        },
+        {
+          id: 'failed-team-create-result',
+          type: 'tool_result',
+          toolUseId: 'failed-team-create-call',
+          content: 'Team creation failed',
+          isError: true,
+          timestamp: 1001,
+        },
+        {
+          id: 'session-task',
+          type: 'tool_use',
+          toolName: 'TaskCreate',
+          toolUseId: 'session-task-call',
+          input: { subject: 'Keep the session task' },
+          timestamp: 2000,
+        },
+        {
+          id: 'session-task-result',
+          type: 'tool_result',
+          toolUseId: 'session-task-call',
+          content: 'Task #1 created successfully: Keep the session task',
+          isError: false,
+          timestamp: 2001,
+        },
+      ],
+      tasks: [],
+      completedAndDismissed: false,
+      backgroundTasks: [],
+      agentNotifications: [],
+    })
+
+    expect(model.sections.tasks.rows).toEqual([
+      expect.objectContaining({ label: 'Keep the session task' }),
+    ])
+  })
+
+  it('keeps team scope active when TeamDelete returns success false', () => {
+    const model = buildSessionActivityModel({
+      sessionId: 'failed-team-delete-session',
+      taskScope: 'team-session',
+      messages: [
+        {
+          id: 'team-create',
+          type: 'tool_use',
+          toolName: 'TeamCreate',
+          toolUseId: 'team-create-call',
+          input: { team_name: 'review-team' },
+          timestamp: 1000,
+        },
+        {
+          id: 'team-create-result',
+          type: 'tool_result',
+          toolUseId: 'team-create-call',
+          content: { success: true, team_name: 'review-team' },
+          isError: false,
+          timestamp: 1001,
+        },
+        {
+          id: 'failed-team-delete',
+          type: 'tool_use',
+          toolName: 'TeamDelete',
+          toolUseId: 'team-delete-call',
+          input: { team_name: 'review-team' },
+          timestamp: 2000,
+        },
+        {
+          id: 'failed-team-delete-result',
+          type: 'tool_result',
+          toolUseId: 'team-delete-call',
+          content: [{
+            type: 'text',
+            text: JSON.stringify({ success: false, message: 'Active members remain' }),
+          }],
+          isError: false,
+          timestamp: 2001,
+        },
+        {
+          id: 'shared-task',
+          type: 'tool_use',
+          toolName: 'TaskCreate',
+          toolUseId: 'shared-task-call',
+          input: { subject: 'Keep this in the team task list' },
+          timestamp: 3000,
+        },
+        {
+          id: 'shared-task-result',
+          type: 'tool_result',
+          toolUseId: 'shared-task-call',
+          content: 'Task #1 created successfully: Keep this in the team task list',
+          isError: false,
+          timestamp: 3001,
+        },
+      ],
+      tasks: [],
+      completedAndDismissed: false,
+      backgroundTasks: [],
+      agentNotifications: [],
+    })
+
+    expect(model.sections.tasks.rows).toEqual([])
   })
 
   it('keeps the last successful status when a later TaskUpdate fails', () => {
@@ -1718,5 +2429,112 @@ describe('buildSessionActivityModel', () => {
       expect.objectContaining({ label: 'Still running', dismissKey: createBackgroundTaskDismissKey(runningTask) }),
     ])
     expect(model.badgeCount).toBe(1)
+  })
+})
+
+describe('workflow section', () => {
+  const AGENTS = [
+    { type: 'workflow_agent', index: 1, label: 'survey response.js', state: 'done', phaseIndex: 1, phaseTitle: 'Survey', agentId: 'a11', tokens: 24_100 },
+    { type: 'workflow_agent', index: 2, label: 'survey request.js', state: 'done', phaseIndex: 1, phaseTitle: 'Survey', agentId: 'a12' },
+    { type: 'workflow_agent', index: 3, label: 'check response #1', state: 'progress', phaseIndex: 2, phaseTitle: 'Cross-check', agentId: 'a13' },
+    // Queued: accepted by the runtime but never given a slot, so no transcript.
+    { type: 'workflow_agent', index: 4, label: 'check response #2', state: 'start', phaseIndex: 2, phaseTitle: 'Cross-check' },
+  ]
+
+  function run(overrides: Record<string, unknown> = {}) {
+    return {
+      taskId: 'w1',
+      sessionId: 'session-1',
+      workflowName: 'route-survey',
+      status: 'running',
+      startedAt: 0,
+      updatedAt: 0,
+      agentCount: 4,
+      totalTokens: 0,
+      toolCalls: 0,
+      progress: [
+        { type: 'workflow_phase', index: 1, title: 'Survey' },
+        { type: 'workflow_phase', index: 2, title: 'Cross-check' },
+        ...AGENTS,
+      ],
+      ...overrides,
+    } as never
+  }
+
+  function build() {
+    return buildSessionActivityModel({
+      sessionId: 'session-1',
+      tasks: [],
+      completedAndDismissed: false,
+      backgroundTasks: [],
+      agentNotifications: [],
+      workflowRuns: [run()],
+    })
+  }
+
+  it('lays each phase out as a header followed by its agents', () => {
+    const rows = build().sections.workflow.rows
+    expect(rows.map((row) => [row.label, row.groupProgress ? 'phase' : row.group])).toEqual([
+      ['Survey', 'phase'],
+      ['survey response.js', 'Survey'],
+      ['survey request.js', 'Survey'],
+      ['Cross-check', 'phase'],
+      ['check response #1', 'Cross-check'],
+      ['check response #2', 'Cross-check'],
+    ])
+  })
+
+  it('counts settled agents on the phase header', () => {
+    const headers = build().sections.workflow.rows.filter((row) => row.groupProgress)
+    expect(headers[0]!.groupProgress).toEqual({ done: 2, total: 2 })
+    expect(headers[0]!.status).toBe('completed')
+    expect(headers[1]!.groupProgress).toEqual({ done: 0, total: 2 })
+    expect(headers[1]!.status).toBe('running')
+  })
+
+  it('opens each agent through the ordinary subagent route', () => {
+    // A workflow agent is a subagent run by the same runner, so the row carries
+    // the reference the existing page opens with rather than anything bespoke.
+    const rows = build().sections.workflow.rows
+    const running = rows.find((row) => row.label === 'check response #1')!
+    expect(running.openable).toBe(true)
+    expect(running.toolUseId).toBe('agent:a13')
+
+    // Queued agents have no transcript yet — offering to open one would 404.
+    const queued = rows.find((row) => row.label === 'check response #2')!
+    expect(queued.openable).toBe(false)
+    expect(queued.toolUseId).toBeUndefined()
+  })
+
+  it('labels an unphased group with the run name instead of "Phase 0"', () => {
+    // Runs recorded before phases were persisted come back ungrouped. The
+    // workflow name identifies them; a bare index does not.
+    const model = buildSessionActivityModel({
+      sessionId: 'session-1',
+      tasks: [],
+      completedAndDismissed: false,
+      backgroundTasks: [],
+      agentNotifications: [],
+      workflowRuns: [run({
+        workflowName: 'review-last-month',
+        progress: [
+          { type: 'workflow_agent', index: 1, label: 'review:security', state: 'done', phaseIndex: 0, agentId: 'a1' },
+        ],
+      })],
+    })
+    const header = model.sections.workflow.rows.find((row) => row.groupProgress)!
+    expect(header.label).toBe('review-last-month')
+  })
+
+  it('badges only the agents, never the phase headers', () => {
+    // One running plus one queued agent. The Cross-check header is also
+    // "running", but counting it would double-count the very agents beneath
+    // it — the badge is a count of work, not of headings.
+    expect(build().badgeCount).toBe(2)
+  })
+
+  it('shows the workflow above the individual subagents it spawned', () => {
+    const order = getVisibleActivitySections(build()).map((section) => section.id)
+    expect(order).toEqual(['workflow'])
   })
 })

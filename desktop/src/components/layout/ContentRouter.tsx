@@ -8,7 +8,7 @@ import { Settings } from '../../pages/Settings'
 import { TerminalSettings } from '../../pages/TerminalSettings'
 import { TraceList } from '../../pages/TraceList'
 import { TraceSession } from '../../pages/TraceSession'
-import { SubagentRunPage } from '../../pages/SubagentRunPage'
+import { SubagentRunPage, TeamMemberRunPage } from '../../pages/SubagentRunPage'
 import { WorkbenchTab } from '../workbench/WorkbenchTab'
 import { AgentTeamsWorkbenchTab } from '../agentTeams/AgentTeamsWorkbenchTab'
 import { previewBridge } from '../../lib/previewBridge'
@@ -51,6 +51,18 @@ export function ContentRouter() {
           toolUseId={subagentTab.subagentToolUseId}
           taskId={subagentTab.subagentTaskId}
           title={subagentTab.title}
+        />
+      )
+      : <EmptySession />
+  } else if (activeTabType === 'team-member') {
+    const memberTab = tabs.find((tab) => tab.sessionId === activeTabId)
+    page = memberTab?.teamLeadSessionId && memberTab.teamMemberAgentId
+      ? (
+        <TeamMemberRunPage
+          tabId={activeTabId}
+          leadSessionId={memberTab.teamLeadSessionId}
+          agentId={memberTab.teamMemberAgentId}
+          title={memberTab.title}
         />
       )
       : <EmptySession />

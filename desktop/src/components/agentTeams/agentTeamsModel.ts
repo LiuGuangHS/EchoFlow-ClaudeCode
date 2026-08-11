@@ -75,6 +75,45 @@ export function getMemberAvatarKey(member: TeamMember, isLead = false): MemberAv
   return WORKER_AVATARS[stableHash(member.agentId) % WORKER_AVATARS.length]!.key
 }
 
+function identityAliases(value: string): string[] {
+  const normalized = value.trim().toLowerCase()
+  const short = normalized.split('@')[0] ?? normalized
+  return normalized === short ? [normalized] : [normalized, short]
+}
+
+/**
+ * Resolves the same persisted teammate identity for the DAG, communication
+ * feed, and member transcript. A sender can be serialized as either its bare
+ * name or full `name@team` id, but it must keep one visual character.
+ */
+export function resolveTeamMemberIdentity(
+  team: TeamWorkbenchSnapshot['team'],
+  value: string,
+): { member: TeamMember; isLead: boolean } {
+  const aliases = identityAliases(value)
+  const member = team.members.find((candidate) => {
+    const candidateAliases = [
+      ...identityAliases(candidate.agentId),
+      ...(candidate.name ? identityAliases(candidate.name) : []),
+    ]
+    return aliases.some((alias) => candidateAliases.includes(alias))
+  }) ?? {
+    agentId: value,
+    name: value,
+    role: value,
+    status: 'idle' as const,
+  }
+  const leadAliases = team.leadAgentId ? identityAliases(team.leadAgentId) : []
+  const memberAliases = [
+    ...identityAliases(member.agentId),
+    ...(member.name ? identityAliases(member.name) : []),
+  ]
+  const isLead = aliases.includes('team-lead')
+    || leadAliases.some((alias) => aliases.includes(alias) || memberAliases.includes(alias))
+
+  return { member, isLead }
+}
+
 export function getWorkbenchTaskState(
   task: TeamWorkbenchTask,
   tasksById: Map<string, TeamWorkbenchTask>,
@@ -165,7 +204,6 @@ function memberNames(member: TeamMember): string[] {
     member.agentId,
     member.agentId.split('@')[0] ?? '',
     member.name ?? '',
-    member.role,
   ].filter(Boolean)
 }
 

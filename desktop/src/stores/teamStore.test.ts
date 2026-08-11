@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { isAgentTeamsWorkbenchOpen, mergeMemberTranscriptDelta, useTeamStore } from './teamStore'
-import { useChatStore } from './chatStore'
+import {
+  memberSessionId,
+  mergeMemberTranscriptDelta,
+  mergeMemberTranscriptMessages,
+  useTeamStore,
+} from './teamStore'
+import { registerAgentRunSession, useChatStore } from './chatStore'
 import { useTabStore } from './tabStore'
 import type { UIMessage } from '../types/chat'
 import type { TeamWorkbenchSnapshot } from '../types/team'
@@ -10,11 +15,13 @@ const {
   getWorkbenchForSessionMock,
   getWorkbenchMock,
   getTeamMock,
+  sendMemberMessageMock,
 } = vi.hoisted(() => ({
   getMemberTranscriptMock: vi.fn(),
   getWorkbenchForSessionMock: vi.fn(),
   getWorkbenchMock: vi.fn(),
   getTeamMock: vi.fn(),
+  sendMemberMessageMock: vi.fn(),
 }))
 
 vi.mock('../api/teams', () => ({
@@ -24,7 +31,7 @@ vi.mock('../api/teams', () => ({
     getWorkbench: getWorkbenchMock,
     list: vi.fn(),
     get: getTeamMock,
-    sendMemberMessage: vi.fn(),
+    sendMemberMessage: sendMemberMessageMock,
     delete: vi.fn(),
   },
 }))
@@ -37,6 +44,16 @@ function userMessage(id: string, content: string, timestamp: number, pending = f
     timestamp,
     ...(pending ? { pending: true } : {}),
   }
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve
+    reject = promiseReject
+  })
+  return { promise, reject, resolve }
 }
 
 function workbench(version: string, taskStatus: 'pending' | 'in_progress' | 'completed'): TeamWorkbenchSnapshot {
@@ -72,6 +89,8 @@ describe('teamStore incremental transcript polling', () => {
     getWorkbenchForSessionMock.mockReset()
     getWorkbenchMock.mockReset()
     getTeamMock.mockReset()
+    sendMemberMessageMock.mockReset()
+    sendMemberMessageMock.mockResolvedValue({ ok: true })
     useTeamStore.getState().clearTeam()
     useChatStore.setState({ sessions: {} })
   })
@@ -96,19 +115,179 @@ describe('teamStore incremental transcript polling', () => {
     expect(merged.map(message => message.id)).toEqual(['durable-1', 'server-1'])
   })
 
-  it('ignores a stale transcript response that resolves after a newer poll', async () => {
-    let resolveOld: (value: unknown) => void = () => {}
+  it('consumes one durable echo for only one repeated pending message', () => {
+    const existing = [
+      userMessage('pending-1', 'repeat this', 1_000, true),
+      userMessage('pending-2', 'repeat this', 1_001, true),
+    ]
+
+    const merged = mergeMemberTranscriptDelta(
+      existing,
+      [userMessage('server-1', 'repeat this', 1_100)],
+    )
+
+    expect(merged.map(message => message.id)).toEqual(['server-1', 'pending-2'])
+  })
+
+  it('deduplicates a full transcript by identity without dropping a genuine repeat', () => {
+    const transcript = [
+      userMessage('server-1', 'same content', 1_000),
+      userMessage('server-1', 'same content', 1_000),
+      userMessage('server-2', 'same content', 1_100),
+    ]
+
+    const merged = mergeMemberTranscriptMessages([], transcript)
+
+    expect(merged.map(message => message.id)).toEqual(['server-1', 'server-2'])
+  })
+
+  it('starts the first transcript read on member selection and shares it with the mounted page', async () => {
+    let resolveTranscript!: (value: { messages: [] }) => void
+    getMemberTranscriptMock.mockReturnValue(new Promise((resolve) => {
+      resolveTranscript = resolve
+    }))
+    const member = {
+      agentId: 'worker@prefetch-team',
+      name: 'worker',
+      role: 'reviewer',
+      status: 'running' as const,
+    }
+    const team = {
+      name: 'prefetch-team',
+      leadSessionId: 'prefetch-lead',
+      members: [member],
+    }
+
+    useTeamStore.getState().openMemberSession(member, team)
+    const pageLoad = useTeamStore.getState().ensureMemberSession('team-member:worker@prefetch-team')
+
+    expect(getMemberTranscriptMock).toHaveBeenCalledTimes(1)
+    resolveTranscript({ messages: [] })
+    await pageLoad
+  })
+
+  it('resolves a member transcript from its lead session when another team is active', async () => {
+    const member = {
+      agentId: 'worker@team-a',
+      name: 'worker-a',
+      role: 'reviewer',
+      status: 'running' as const,
+    }
+    const teamA = {
+      name: 'team-a',
+      leadSessionId: 'lead-a',
+      members: [member],
+    }
+    getMemberTranscriptMock.mockResolvedValue({
+      messages: [{
+        id: 'team-a-message',
+        type: 'assistant',
+        content: [{ type: 'text', text: 'Team A transcript' }],
+        timestamp: '2026-08-08T00:00:00.000Z',
+      }],
+    })
+    useTeamStore.setState({
+      activeTeam: {
+        name: 'team-b',
+        leadSessionId: 'lead-b',
+        members: [{ agentId: 'worker@team-b', role: 'reviewer', status: 'running' }],
+      },
+      workbenchesBySession: {
+        'lead-a': {
+          teamName: 'team-a',
+          loading: false,
+          error: null,
+          snapshots: [{
+            version: 'team-a-v1',
+            generatedAt: '2026-08-08T00:00:00.000Z',
+            team: teamA,
+            tasks: [],
+            messages: [],
+          }],
+        },
+      },
+    })
+    useTabStore.setState({
+      tabs: [{
+        sessionId: 'team-member:worker@team-a',
+        title: 'worker-a',
+        type: 'team-member',
+        status: 'idle',
+        sourceSessionId: 'lead-a',
+        teamLeadSessionId: 'lead-a',
+        teamMemberAgentId: member.agentId,
+      }],
+      activeTabId: 'team-member:worker@team-a',
+    })
+
+    await useTeamStore.getState().refreshMemberSession('team-member:worker@team-a')
+
+    expect(getMemberTranscriptMock).toHaveBeenCalledWith(
+      'team-a',
+      'worker@team-a',
+      { leadSessionId: 'lead-a' },
+    )
+    expect(useTeamStore.getState().getTeamByMemberSessionId('team-member:worker@team-a')?.name).toBe('team-a')
+    expect(
+      useChatStore.getState().sessions['team-member:worker@team-a']?.messages
+        .some((message) => message.type === 'assistant_text' && message.content === 'Team A transcript'),
+    ).toBe(true)
+  })
+
+  it('keeps polling the viewed member when a different team is deleted', async () => {
+    vi.useFakeTimers()
+    getMemberTranscriptMock.mockResolvedValue({ messages: [] })
+    const viewedMember = {
+      agentId: 'worker@team-b',
+      name: 'worker-b',
+      role: 'reviewer',
+      status: 'running' as const,
+    }
+    const teamB = {
+      name: 'team-b',
+      leadSessionId: 'lead-b',
+      members: [viewedMember],
+    }
+    useTeamStore.setState({
+      activeTeam: teamB,
+      memberTeamBySession: {
+        'team-member:worker@team-a': {
+          name: 'team-a',
+          leadSessionId: 'lead-a',
+          members: [{ agentId: 'worker@team-a', role: 'reviewer', status: 'running' }],
+        },
+      },
+    })
+
+    useTeamStore.getState().openMemberSession(viewedMember, teamB)
+    await useTeamStore.getState().ensureMemberSession('team-member:worker@team-b')
+    useTeamStore.getState().startMemberPolling('team-member:worker@team-b')
+    const callsBeforeDelete = getMemberTranscriptMock.mock.calls.length
+
+    useTeamStore.getState().handleTeamDeleted('team-a', 'lead-a')
+    await vi.advanceTimersByTimeAsync(1_500)
+
+    expect(getMemberTranscriptMock.mock.calls.length).toBe(callsBeforeDelete + 1)
+    expect(getMemberTranscriptMock).toHaveBeenLastCalledWith(
+      'team-b',
+      'worker@team-b',
+      expect.objectContaining({ leadSessionId: 'lead-b' }),
+    )
+  })
+
+  it('coalesces concurrent member refreshes and permits the next refresh after completion', async () => {
+    const slowTranscript = deferred<any>()
     getMemberTranscriptMock
-      .mockReturnValueOnce(new Promise(resolve => { resolveOld = resolve }))
+      .mockReturnValueOnce(slowTranscript.promise)
       .mockResolvedValueOnce({
         messages: [{
-          id: 'new-message',
+          id: 'next-message',
           type: 'user',
-          content: 'new',
+          content: 'next',
           timestamp: '2026-01-01T00:00:02.000Z',
         }],
-        signature: 'new-signature',
-        cursor: 'new-cursor',
+        signature: 'next-signature',
+        cursor: 'next-cursor',
         afterOrdinal: 1,
       })
     useTeamStore.setState({
@@ -123,23 +302,201 @@ describe('teamStore incremental transcript polling', () => {
     })
     const sessionId = 'team-member:agent-1'
 
-    const oldPoll = useTeamStore.getState().refreshMemberSession(sessionId)
-    await useTeamStore.getState().refreshMemberSession(sessionId)
-    resolveOld({
+    const firstPoll = useTeamStore.getState().refreshMemberSession(sessionId)
+    const joinedPoll = useTeamStore.getState().refreshMemberSession(sessionId)
+
+    expect(joinedPoll).toBe(firstPoll)
+    expect(getMemberTranscriptMock).toHaveBeenCalledTimes(1)
+
+    slowTranscript.resolve({
       messages: [{
-        id: 'old-message',
+        id: 'slow-message',
         type: 'user',
-        content: 'old',
+        content: 'slow response',
         timestamp: '2026-01-01T00:00:01.000Z',
+      }],
+      signature: 'slow-signature',
+      cursor: 'slow-cursor',
+      afterOrdinal: 0,
+    })
+    await Promise.all([firstPoll, joinedPoll])
+
+    expect(
+      useChatStore.getState().sessions[sessionId]?.messages.map(message => message.id),
+    ).toEqual(['slow-message'])
+
+    await useTeamStore.getState().refreshMemberSession(sessionId)
+
+    expect(getMemberTranscriptMock).toHaveBeenCalledTimes(2)
+    expect(getMemberTranscriptMock.mock.calls[1]?.[2]).toMatchObject({
+      signature: 'slow-signature',
+      cursor: 'slow-cursor',
+      afterOrdinal: 0,
+    })
+    expect(
+      useChatStore.getState().sessions[sessionId]?.messages.map(message => message.id),
+    ).toEqual(['slow-message', 'next-message'])
+  })
+
+  it('does not let a deleted team transcript overwrite a same-name recreation', async () => {
+    const oldTranscript = deferred<any>()
+    getMemberTranscriptMock
+      .mockReturnValueOnce(oldTranscript.promise)
+      .mockResolvedValueOnce({
+        messages: [{
+          id: 'new-incarnation-message',
+          type: 'user',
+          content: 'new incarnation',
+          timestamp: '2026-08-10T00:00:03.000Z',
+        }],
+        signature: 'new-signature',
+        cursor: 'new-cursor',
+        afterOrdinal: 0,
+      })
+    getTeamMock.mockReturnValue(new Promise(() => {}))
+    getWorkbenchMock.mockReturnValue(new Promise(() => {}))
+    const oldIncarnationId = 'old-incarnation'
+    const newIncarnationId = 'new-incarnation'
+    const oldTeam = {
+      name: 'reused-team',
+      leadSessionId: 'lead-reused',
+      incarnationId: oldIncarnationId,
+      createdAt: '2026-08-10T00:00:00.000Z',
+      members: [{
+        agentId: 'worker@reused-team',
+        role: 'worker',
+        status: 'running' as const,
+      }],
+    }
+    const oldSessionId = memberSessionId('worker@reused-team', oldIncarnationId)
+    useTeamStore.setState({ activeTeam: oldTeam })
+
+    const staleRequest = useTeamStore.getState().refreshMemberSession(oldSessionId)
+    useTeamStore.getState().handleTeamDeleted(
+      'reused-team',
+      'lead-reused',
+      { incarnationId: oldIncarnationId, createdAt: Date.parse(oldTeam.createdAt) },
+    )
+    useTeamStore.getState().handleTeamCreated(
+      'reused-team',
+      'lead-reused',
+      { incarnationId: newIncarnationId, createdAt: Date.parse('2026-08-10T00:00:02.000Z') },
+    )
+    const recreatedTeam = {
+      ...oldTeam,
+      incarnationId: newIncarnationId,
+      createdAt: '2026-08-10T00:00:02.000Z',
+    }
+    const newSessionId = memberSessionId('worker@reused-team', newIncarnationId)
+    useTeamStore.setState({
+      activeTeam: recreatedTeam,
+      memberTeamBySession: { [newSessionId]: recreatedTeam },
+    })
+    await useTeamStore.getState().refreshMemberSession(newSessionId)
+    expect(getMemberTranscriptMock.mock.calls[1]?.[2]).toMatchObject({
+      leadSessionId: 'lead-reused',
+      incarnationId: newIncarnationId,
+    })
+    oldTranscript.resolve({
+      messages: [{
+        id: 'old-incarnation-message',
+        type: 'user',
+        content: 'old incarnation',
+        timestamp: '2026-08-10T00:00:01.000Z',
       }],
       signature: 'old-signature',
       cursor: 'old-cursor',
       afterOrdinal: 0,
     })
-    await oldPoll
+    await staleRequest
 
-    const messages = useChatStore.getState().sessions[sessionId]?.messages ?? []
-    expect(messages.map(message => message.id)).toEqual(['new-message'])
+    expect(
+      useChatStore.getState().sessions[newSessionId]?.messages.map((message) => message.id),
+    ).toEqual(['new-incarnation-message'])
+    expect(useChatStore.getState().sessions[oldSessionId]).toBeUndefined()
+  })
+
+  it('starts a recreated member empty when its first transcript request rejects', async () => {
+    getMemberTranscriptMock
+      .mockResolvedValueOnce({
+        messages: [{
+          id: 'old-durable',
+          type: 'assistant',
+          content: 'old durable content',
+          timestamp: '2026-08-10T00:00:01.000Z',
+        }],
+      })
+      .mockRejectedValueOnce(new Error('new transcript not durable yet'))
+    getTeamMock.mockReturnValue(new Promise(() => {}))
+    getWorkbenchMock.mockReturnValue(new Promise(() => {}))
+    const member = {
+      agentId: 'worker@aba-team',
+      role: 'worker',
+      status: 'running' as const,
+    }
+    const oldTeam = {
+      name: 'aba-team',
+      leadSessionId: 'shared-lead',
+      incarnationId: 'incarnation-old',
+      createdAt: '2026-08-10T00:00:00.000Z',
+      members: [member],
+    }
+    const oldSessionId = memberSessionId(member.agentId, oldTeam.incarnationId)
+    useTeamStore.setState({
+      activeTeam: oldTeam,
+      memberTeamBySession: { [oldSessionId]: oldTeam },
+    })
+    await useTeamStore.getState().refreshMemberSession(oldSessionId)
+    useChatStore.setState((state) => ({
+      sessions: {
+        ...state.sessions,
+        [oldSessionId]: {
+          ...state.sessions[oldSessionId]!,
+          messages: [
+            ...state.sessions[oldSessionId]!.messages,
+            userMessage('old-pending', 'old pending content', Date.now(), true),
+          ],
+          backgroundAgentTasks: {
+            oldTask: {
+              taskId: 'oldTask',
+              status: 'running',
+              startedAt: 1,
+              updatedAt: 2,
+            },
+          },
+        },
+      },
+    }))
+
+    useTeamStore.getState().handleTeamDeleted(
+      oldTeam.name,
+      oldTeam.leadSessionId,
+      { incarnationId: oldTeam.incarnationId },
+    )
+    useTeamStore.getState().handleTeamCreated(
+      oldTeam.name,
+      oldTeam.leadSessionId,
+      { incarnationId: 'incarnation-new', createdAt: Date.now() },
+    )
+    const newTeam = {
+      ...oldTeam,
+      incarnationId: 'incarnation-new',
+      createdAt: '2026-08-10T00:00:03.000Z',
+    }
+    const newSessionId = memberSessionId(member.agentId, newTeam.incarnationId)
+    useTeamStore.setState({
+      activeTeam: newTeam,
+      memberTeamBySession: { [newSessionId]: newTeam },
+    })
+
+    await useTeamStore.getState().refreshMemberSession(newSessionId)
+
+    expect(useChatStore.getState().sessions[oldSessionId]).toBeUndefined()
+    expect(useChatStore.getState().sessions[newSessionId]).toMatchObject({
+      messages: [],
+      backgroundAgentTasks: {},
+      agentTaskNotifications: {},
+    })
   })
 
   it('replaces a cursor-backed transcript when a legacy sidecar omits cursor metadata', async () => {
@@ -241,7 +598,11 @@ describe('teamStore incremental transcript polling', () => {
 
     await useTeamStore.getState().fetchTeamDetail('team-idle')
     useTeamStore.getState().openMemberSession(member)
-    await vi.advanceTimersByTimeAsync(0)
+    await useTeamStore.getState().ensureMemberSession('team-member:idle-worker@team-idle')
+    const firstAssistantId = useChatStore.getState()
+      .sessions['team-member:idle-worker@team-idle']?.messages
+      .find((message) => message.type === 'assistant_text')?.id
+    useTeamStore.getState().startMemberPolling('team-member:idle-worker@team-idle')
     expect(getMemberTranscriptMock).toHaveBeenCalledTimes(1)
 
     await vi.advanceTimersByTimeAsync(1_500)
@@ -252,6 +613,13 @@ describe('teamStore incremental transcript polling', () => {
         .filter(message => message.type === 'assistant_text')
         .map(message => message.content),
     ).toEqual(['Initial review complete.', 'Follow-up review complete.'])
+    expect(
+      useChatStore.getState().sessions['team-member:idle-worker@team-idle']?.messages
+        .find((message) => (
+          message.type === 'assistant_text' &&
+          message.transcriptMessageId === 'before-resume'
+        ))?.id,
+    ).toBe(firstAssistantId)
   })
 
   it('opens an archived member once with lead identity and does not start live polling', async () => {
@@ -283,7 +651,7 @@ describe('teamStore incremental transcript polling', () => {
     })
 
     useTeamStore.getState().openMemberSession(member)
-    await vi.advanceTimersByTimeAsync(0)
+    await useTeamStore.getState().ensureMemberSession('team-member:reviewer@archived-team')
 
     expect(getMemberTranscriptMock).toHaveBeenCalledWith(
       'archived-team',
@@ -294,6 +662,450 @@ describe('teamStore incremental transcript polling', () => {
     expect(getMemberTranscriptMock).toHaveBeenCalledTimes(1)
     useTabStore.getState().closeTab('team-member:reviewer@archived-team')
   })
+
+  it('keeps concurrent direct turns active until every durable reply arrives', async () => {
+    const firstDelivery = deferred<{ ok: true }>()
+    const secondDelivery = deferred<{ ok: true }>()
+    const timestamp = new Date().toISOString()
+    sendMemberMessageMock
+      .mockReturnValueOnce(firstDelivery.promise)
+      .mockReturnValueOnce(secondDelivery.promise)
+    getWorkbenchMock.mockResolvedValue(workbench('v1', 'completed'))
+    getMemberTranscriptMock
+      .mockResolvedValueOnce({
+        messages: [],
+        signature: 'signature-0',
+        cursor: 'cursor-0',
+        afterOrdinal: 0,
+      })
+      .mockResolvedValueOnce({
+        messages: [
+          { id: 'first-echo', type: 'user', content: 'Repeat follow-up', timestamp },
+          {
+            id: 'first-reply',
+            type: 'assistant',
+            content: [{ type: 'text', text: 'First reply' }],
+            timestamp,
+          },
+        ],
+        signature: 'signature-1',
+        cursor: 'cursor-1',
+        afterOrdinal: 2,
+      })
+      .mockResolvedValueOnce({
+        messages: [{ id: 'second-echo', type: 'user', content: 'Repeat follow-up', timestamp }],
+        signature: 'signature-2',
+        cursor: 'cursor-2',
+        afterOrdinal: 3,
+      })
+      .mockResolvedValueOnce({
+        messages: [{
+          id: 'second-reply',
+          type: 'assistant',
+          content: [{ type: 'text', text: 'Second reply' }],
+          timestamp,
+        }],
+        signature: 'signature-3',
+        cursor: 'cursor-3',
+        afterOrdinal: 4,
+      })
+
+    await useTeamStore.getState().fetchWorkbench('team-workbench')
+    const sessionId = 'team-member:worker@team-workbench'
+    await useTeamStore.getState().refreshMemberSession(sessionId)
+
+    useChatStore.getState().sendMessage(sessionId, 'Repeat follow-up')
+    useChatStore.getState().sendMessage(sessionId, 'Repeat follow-up')
+    expect(useChatStore.getState().sessions[sessionId]?.chatState).toBe('thinking')
+
+    firstDelivery.resolve({ ok: true })
+    await vi.waitFor(() => {
+      expect(
+        useChatStore.getState().sessions[sessionId]?.messages
+          .some((message) => message.type === 'assistant_text' && message.content === 'First reply'),
+      ).toBe(true)
+    })
+    expect(useChatStore.getState().sessions[sessionId]?.chatState).toBe('thinking')
+    expect(
+      useChatStore.getState().sessions[sessionId]?.messages
+        .filter((message) => message.type === 'user_text' && message.content === 'Repeat follow-up'),
+    ).toHaveLength(2)
+    expect(
+      useChatStore.getState().sessions[sessionId]?.messages
+        .filter((message) => message.type === 'user_text' && message.pending === true),
+    ).toHaveLength(1)
+
+    secondDelivery.resolve({ ok: true })
+    await vi.waitFor(() => {
+      expect(
+        useChatStore.getState().sessions[sessionId]?.messages
+          .some((message) => message.id === 'second-echo'),
+      ).toBe(true)
+    })
+    useTeamStore.getState().stopMemberPolling()
+    expect(useChatStore.getState().sessions[sessionId]?.chatState).toBe('thinking')
+
+    await useTeamStore.getState().refreshMemberSession(sessionId)
+    expect(useChatStore.getState().sessions[sessionId]?.chatState).toBe('idle')
+    expect(
+      useChatStore.getState().sessions[sessionId]?.messages
+        .filter((message) => message.type === 'assistant_text')
+        .map((message) => message.content),
+    ).toEqual(['First reply', 'Second reply'])
+  })
+
+  it('does not restart a deleted member session after an in-flight delivery resolves', async () => {
+    vi.useFakeTimers()
+    const delivery = deferred<{ ok: true }>()
+    sendMemberMessageMock.mockReturnValue(delivery.promise)
+    getWorkbenchMock.mockResolvedValue(workbench('v1', 'in_progress'))
+    getMemberTranscriptMock.mockResolvedValue({ messages: [] })
+
+    await useTeamStore.getState().fetchWorkbench('team-workbench')
+    const sessionId = 'team-member:worker@team-workbench'
+    await useTeamStore.getState().refreshMemberSession(sessionId)
+    const send = useTeamStore.getState().sendMessageToMember(sessionId, 'Final check')
+
+    useTeamStore.getState().handleTeamDeleted('team-workbench')
+    delivery.resolve({ ok: true })
+    await send
+    await vi.advanceTimersByTimeAsync(1_500)
+
+    expect(getMemberTranscriptMock).toHaveBeenCalledTimes(1)
+    expect(useChatStore.getState().sessions[sessionId]).toBeUndefined()
+  })
+
+  it('projects an incremental member transcript into that member background activity', async () => {
+    getMemberTranscriptMock
+      .mockResolvedValueOnce({
+        messages: [
+          {
+            id: 'member-shell-use',
+            type: 'assistant',
+            content: [{
+              type: 'tool_use',
+              id: 'member-shell-tool',
+              name: 'Bash',
+              input: {
+                command: 'bun run test',
+                description: 'Run member tests',
+                run_in_background: true,
+              },
+            }],
+            timestamp: '2026-08-08T00:00:00.000Z',
+          },
+          {
+            id: 'member-shell-result',
+            type: 'tool_result',
+            content: [{
+              type: 'tool_result',
+              tool_use_id: 'member-shell-tool',
+              content: 'Command running in background with ID: member-shell-task. Output is being written to: /tmp/member-shell-task.output',
+            }],
+            timestamp: '2026-08-08T00:00:01.000Z',
+          },
+        ],
+        signature: 'member-signature-1',
+        cursor: 'member-cursor-1',
+        afterOrdinal: 1,
+      })
+      .mockResolvedValueOnce({
+        messages: [],
+        taskNotifications: [{
+          taskId: 'member-shell-task',
+          toolUseId: 'member-shell-tool',
+          status: 'completed',
+          summary: 'Member tests passed',
+          timestamp: '2026-08-08T00:00:02.000Z',
+        }],
+        signature: 'member-signature-2',
+        cursor: 'member-cursor-2',
+        afterOrdinal: 2,
+      })
+    useTeamStore.setState({
+      activeTeam: {
+        name: 'member-activity-team',
+        members: [{
+          agentId: 'worker@member-activity-team',
+          role: 'worker',
+          status: 'running',
+        }],
+      },
+    })
+    const sessionId = 'team-member:worker@member-activity-team'
+
+    await useTeamStore.getState().refreshMemberSession(sessionId)
+    expect(
+      useChatStore.getState().sessions[sessionId]?.backgroundAgentTasks?.['member-shell-task'],
+    ).toMatchObject({
+      status: 'running',
+      description: 'Run member tests',
+      taskType: 'local_bash',
+    })
+
+    await useTeamStore.getState().refreshMemberSession(sessionId)
+
+    const session = useChatStore.getState().sessions[sessionId]
+    expect(session?.agentTaskNotifications['member-shell-tool']).toMatchObject({
+      taskId: 'member-shell-task',
+      status: 'completed',
+    })
+    expect(session?.backgroundAgentTasks?.['member-shell-task']).toMatchObject({
+      taskId: 'member-shell-task',
+      toolUseId: 'member-shell-tool',
+      status: 'completed',
+      description: 'Run member tests',
+      taskType: 'local_bash',
+      summary: 'Member tests passed',
+      startedAt: Date.parse('2026-08-08T00:00:00.000Z'),
+      updatedAt: Date.parse('2026-08-08T00:00:02.000Z'),
+    })
+  })
+
+  it('does not let a stale transcript poll roll back live owner progress', async () => {
+    const stalePoll = deferred<any>()
+    getMemberTranscriptMock
+      .mockResolvedValueOnce({
+        messages: [],
+        signature: 'initial-signature',
+        cursor: 'initial-cursor',
+        afterOrdinal: -1,
+      })
+      .mockReturnValueOnce(stalePoll.promise)
+    const member = {
+      agentId: 'worker@freshness-team',
+      name: 'worker',
+      role: 'worker',
+      status: 'running' as const,
+    }
+    const team = {
+      name: 'freshness-team',
+      leadSessionId: 'freshness-lead',
+      incarnationId: 'freshness-incarnation',
+      createdAt: '2026-08-10T00:00:00.000Z',
+      members: [member],
+    }
+    const sessionId = memberSessionId(member.agentId, team.incarnationId)
+    useTeamStore.setState({
+      activeTeam: team,
+      memberTeamBySession: { [sessionId]: team },
+    })
+    await useTeamStore.getState().refreshMemberSession(sessionId)
+    const unregister = registerAgentRunSession(
+      team.leadSessionId,
+      sessionId,
+      [member.agentId],
+    )
+
+    try {
+      const pendingPoll = useTeamStore.getState().refreshMemberSession(sessionId)
+      useChatStore.getState().handleServerMessage(team.leadSessionId, {
+        type: 'system_notification',
+        subtype: 'task_started',
+        data: {
+          task_id: 'live-task',
+          tool_use_id: 'live-tool',
+          owner_agent_id: member.agentId,
+          task_type: 'local_agent',
+          description: 'Live nested task',
+        },
+      })
+      expect(
+        useChatStore.getState().sessions[sessionId]?.backgroundAgentTasks?.['live-task'],
+      ).toMatchObject({ status: 'running' })
+
+      stalePoll.resolve({
+        messages: [],
+        taskNotifications: [{
+          taskId: 'live-task',
+          toolUseId: 'live-tool',
+          status: 'completed',
+          summary: 'stale completion',
+          timestamp: '2026-08-09T00:00:00.000Z',
+        }],
+        signature: 'stale-signature',
+        cursor: 'stale-cursor',
+        afterOrdinal: 0,
+      })
+      await pendingPoll
+
+      expect(
+        useChatStore.getState().sessions[sessionId]?.backgroundAgentTasks?.['live-task'],
+      ).toMatchObject({
+        status: 'running',
+        description: 'Live nested task',
+      })
+      expect(
+        useChatStore.getState().sessions[sessionId]?.agentTaskNotifications['live-tool'],
+      ).toBeUndefined()
+    } finally {
+      unregister()
+    }
+  })
+
+  it('joins physical-owner live activity with its fragment-scoped transcript identity', async () => {
+    getMemberTranscriptMock
+      .mockResolvedValueOnce({
+        messages: [],
+        ownerAgentIds: ['physical-fragment'],
+        signature: 'initial-signature',
+        cursor: 'initial-cursor',
+        afterOrdinal: -1,
+      })
+      .mockResolvedValueOnce({
+        messages: [],
+        ownerAgentIds: ['physical-fragment'],
+        taskNotifications: [{
+          taskId: 'physical-fragment/reused-task',
+          toolUseId: 'physical-fragment/reused-tool',
+          status: 'completed',
+          summary: 'durable completion',
+          timestamp: '2026-08-10T00:00:02.000Z',
+        }],
+        signature: 'completed-signature',
+        cursor: 'completed-cursor',
+        afterOrdinal: 0,
+      })
+    const member = {
+      agentId: 'worker@scoped-team',
+      name: 'worker',
+      role: 'worker',
+      status: 'running' as const,
+    }
+    const team = {
+      name: 'scoped-team',
+      leadSessionId: 'scoped-lead',
+      incarnationId: 'scoped-incarnation',
+      createdAt: '2026-08-10T00:00:00.000Z',
+      members: [member],
+    }
+    const sessionId = memberSessionId(member.agentId, team.incarnationId)
+    useTeamStore.setState({
+      activeTeam: team,
+      memberTeamBySession: { [sessionId]: team },
+    })
+    await useTeamStore.getState().refreshMemberSession(sessionId)
+    const unregister = registerAgentRunSession(
+      team.leadSessionId,
+      sessionId,
+      ['physical-fragment'],
+      { eventIdPrefix: 'physical-fragment' },
+    )
+
+    try {
+      useChatStore.getState().handleServerMessage(team.leadSessionId, {
+        type: 'system_notification',
+        subtype: 'task_started',
+        data: {
+          task_id: 'reused-task',
+          tool_use_id: 'reused-tool',
+          owner_agent_id: 'physical-fragment',
+          task_type: 'local_agent',
+          description: 'Live physical task',
+        },
+      })
+      expect(Object.keys(
+        useChatStore.getState().sessions[sessionId]?.backgroundAgentTasks ?? {},
+      )).toEqual(['physical-fragment/reused-task'])
+
+      await useTeamStore.getState().refreshMemberSession(sessionId)
+
+      const session = useChatStore.getState().sessions[sessionId]
+      expect(Object.keys(session?.backgroundAgentTasks ?? {})).toEqual([
+        'physical-fragment/reused-task',
+      ])
+      expect(session?.backgroundAgentTasks?.['physical-fragment/reused-task']).toMatchObject({
+        taskId: 'physical-fragment/reused-task',
+        toolUseId: 'physical-fragment/reused-tool',
+        status: 'completed',
+        summary: 'durable completion',
+      })
+      expect(Object.keys(session?.agentTaskNotifications ?? {})).toEqual([
+        'physical-fragment/reused-tool',
+      ])
+    } finally {
+      unregister()
+    }
+  })
+
+  it('routes team updates to the matching member session instead of the active team', async () => {
+    getMemberTranscriptMock.mockResolvedValue({ messages: [] })
+    const memberSession = 'team-member:worker@team-a'
+    const teamA = {
+      name: 'team-a',
+      leadSessionId: 'lead-a',
+      members: [{
+        agentId: 'worker@team-a',
+        name: 'worker-a',
+        role: 'worker',
+        status: 'running' as const,
+      }],
+    }
+    const teamB = {
+      name: 'team-b',
+      leadSessionId: 'lead-b',
+      members: [{
+        agentId: 'worker@team-b',
+        name: 'worker-b',
+        role: 'worker',
+        status: 'running' as const,
+      }],
+    }
+    useTeamStore.setState({
+      activeTeam: teamB,
+      memberTeamBySession: { [memberSession]: teamA },
+      workbenchesBySession: {
+        'lead-a': {
+          teamName: 'team-a',
+          loading: false,
+          error: null,
+          snapshots: [{
+            version: 'team-a-v1',
+            generatedAt: '2026-08-10T00:00:00.000Z',
+            team: teamA,
+            tasks: [],
+            messages: [],
+          }],
+        },
+      },
+    })
+    useTabStore.setState({
+      tabs: [{
+        sessionId: memberSession,
+        title: 'worker-a',
+        type: 'team-member',
+        status: 'idle',
+        sourceSessionId: 'lead-a',
+        teamLeadSessionId: 'lead-a',
+        teamMemberAgentId: 'worker@team-a',
+      }],
+      activeTabId: memberSession,
+    })
+
+    useTeamStore.getState().handleTeamUpdate('team-a', [{
+      agentId: 'worker@team-a',
+      role: 'worker',
+      status: 'completed',
+    }])
+    await vi.waitFor(() => {
+      expect(useTeamStore.getState().getMemberBySessionId(memberSession)?.status)
+        .toBe('completed')
+    })
+    expect(useTeamStore.getState().activeTeam?.name).toBe('team-b')
+    const callsAfterTeamAUpdate = getMemberTranscriptMock.mock.calls.length
+
+    useTeamStore.getState().handleTeamUpdate('team-b', [{
+      agentId: 'worker@team-b',
+      role: 'worker',
+      status: 'completed',
+    }])
+    await Promise.resolve()
+
+    expect(getMemberTranscriptMock).toHaveBeenCalledTimes(callsAfterTeamAUpdate)
+    expect(useTeamStore.getState().getMemberBySessionId(memberSession)?.status)
+      .toBe('completed')
+    useTabStore.getState().closeTab(memberSession)
+  })
 })
 
 describe('teamStore workbench timeline', () => {
@@ -301,6 +1113,7 @@ describe('teamStore workbench timeline', () => {
     vi.useRealTimers()
     getWorkbenchForSessionMock.mockReset()
     getWorkbenchMock.mockReset()
+    getTeamMock.mockReset()
     useTeamStore.getState().clearTeam()
   })
 
@@ -331,6 +1144,38 @@ describe('teamStore workbench timeline', () => {
     ])
   })
 
+  it('ignores a stale workbench error after the same team name is recreated', async () => {
+    const staleWorkbench = deferred<TeamWorkbenchSnapshot>()
+    const recreated = {
+      ...workbench('recreated-v1', 'in_progress'),
+      team: {
+        ...workbench('recreated-v1', 'in_progress').team,
+        createdAt: '2026-08-10T00:00:02.000Z',
+      },
+    }
+    getWorkbenchMock
+      .mockReturnValueOnce(staleWorkbench.promise)
+      .mockResolvedValueOnce(recreated)
+    getTeamMock.mockResolvedValue(recreated.team)
+
+    const staleRequest = useTeamStore.getState().fetchWorkbench('team-workbench')
+    useTeamStore.getState().handleTeamDeleted('team-workbench', 'lead-session')
+    useTeamStore.getState().handleTeamCreated('team-workbench', 'lead-session')
+    await vi.waitFor(() => {
+      expect(
+        useTeamStore.getState().workbenchesBySession['lead-session']?.snapshots.at(-1)?.version,
+      ).toBe('recreated-v1')
+    })
+    staleWorkbench.reject(new Error('stale workbench failed'))
+    await staleRequest
+
+    expect(useTeamStore.getState().workbenchesBySession['lead-session']).toMatchObject({
+      error: null,
+      loading: false,
+      snapshots: [expect.objectContaining({ version: 'recreated-v1' })],
+    })
+  })
+
   it('deduplicates unchanged snapshots and appends a durable disbanded tombstone', async () => {
     getWorkbenchMock
       .mockResolvedValueOnce(workbench('v1', 'completed'))
@@ -355,7 +1200,47 @@ describe('teamStore workbench timeline', () => {
     expect(snapshots[1]?.deletedAt).toBeTruthy()
   })
 
-  it('restores an archived workbench by lead session without forcing it open', async () => {
+  it('discovers a newer same-name incarnation past a cached tombstone', async () => {
+    getWorkbenchMock.mockResolvedValueOnce(workbench('old-v1', 'completed'))
+    await useTeamStore.getState().fetchWorkbench('team-workbench')
+    useTeamStore.getState().handleTeamDeleted('team-workbench', 'lead-session')
+    expect(
+      useTeamStore.getState().workbenchesBySession['lead-session']?.snapshots.at(-1)?.deletedAt,
+    ).toBeTruthy()
+
+    const discovery = deferred<{
+      sessionId: string
+      teamName: string
+      source: 'live'
+      snapshots: TeamWorkbenchSnapshot[]
+    }>()
+    getWorkbenchForSessionMock.mockReturnValue(discovery.promise)
+    const pendingDiscovery = useTeamStore.getState().fetchTeamForSession('lead-session')
+
+    expect(getWorkbenchForSessionMock).toHaveBeenCalledWith('lead-session')
+
+    const recreated = {
+      ...workbench('new-v1', 'in_progress'),
+      team: {
+        ...workbench('new-v1', 'in_progress').team,
+        createdAt: new Date(Date.now() + 1_000).toISOString(),
+      },
+    }
+    discovery.resolve({
+      sessionId: 'lead-session',
+      teamName: 'team-workbench',
+      source: 'live',
+      snapshots: [recreated],
+    })
+    await pendingDiscovery
+
+    const state = useTeamStore.getState()
+    expect(state.workbenchesBySession['lead-session']?.snapshots).toEqual([recreated])
+    expect(state.teamNameBySession['lead-session']).toBe('team-workbench')
+    expect(state.activeTeam?.createdAt).toBe(recreated.team.createdAt)
+  })
+
+  it('restores an archived workbench by lead session without changing tabs', async () => {
     const archived = {
       ...workbench('v9', 'completed'),
       deletedAt: '2026-08-08T00:10:00.000Z',
@@ -376,38 +1261,296 @@ describe('teamStore workbench timeline', () => {
       snapshots: [expect.objectContaining({ version: 'v9', deletedAt: archived.deletedAt })],
     })
     expect(state.activeTeam?.name).toBe('team-workbench')
-    // Discovery must not open the panel — that is the header strip's job, and
-    // auto-opening evicted the workspace panel and compacted the transcript.
-    expect(isAgentTeamsWorkbenchOpen(state, 'lead-session')).toBe(false)
-
-    state.setWorkbenchOpen('lead-session', true)
-    expect(isAgentTeamsWorkbenchOpen(useTeamStore.getState(), 'lead-session')).toBe(true)
+    expect(useTabStore.getState().tabs.some((tab) => tab.type === 'team')).toBe(false)
   })
 
-  it('never reports the workbench open for a session that has no timeline', () => {
+  it('forces durable discovery after a reconnect even with a cached live workbench', async () => {
+    const oldSnapshot = {
+      ...workbench('old-live', 'in_progress'),
+      team: {
+        ...workbench('old-live', 'in_progress').team,
+        incarnationId: 'old-live-incarnation',
+        createdAt: '2026-08-10T00:00:00.000Z',
+      },
+    }
+    const newSnapshot = {
+      ...workbench('new-live', 'in_progress'),
+      team: {
+        ...workbench('new-live', 'in_progress').team,
+        incarnationId: 'new-live-incarnation',
+        createdAt: '2026-08-10T00:01:00.000Z',
+      },
+    }
+    getWorkbenchForSessionMock
+      .mockResolvedValueOnce({
+        sessionId: 'lead-session',
+        teamName: 'team-workbench',
+        incarnationId: 'old-live-incarnation',
+        source: 'live',
+        snapshots: [oldSnapshot],
+      })
+      .mockResolvedValueOnce({
+        sessionId: 'lead-session',
+        teamName: 'team-workbench',
+        incarnationId: 'new-live-incarnation',
+        source: 'live',
+        snapshots: [newSnapshot],
+      })
+
+    await useTeamStore.getState().fetchTeamForSession('lead-session')
+    const oldMemberSessionId = memberSessionId(
+      'worker@team-workbench',
+      'old-live-incarnation',
+    )
+    getMemberTranscriptMock.mockResolvedValueOnce({
+      messages: [{
+        id: 'old-live-member-message',
+        type: 'assistant',
+        content: 'old live member',
+        timestamp: '2026-08-10T00:00:10.000Z',
+      }],
+    })
+    const oldMember = oldSnapshot.team.members.find(
+      (member) => member.agentId === 'worker@team-workbench',
+    )!
+    useTeamStore.getState().openMemberSession(oldMember, oldSnapshot.team, oldSnapshot)
+    await useTeamStore.getState().ensureMemberSession(oldMemberSessionId)
+    expect(useChatStore.getState().sessions[oldMemberSessionId]).toBeDefined()
+    expect(useTabStore.getState().tabs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sessionId: oldMemberSessionId, type: 'team-member' }),
+    ]))
+    await useTeamStore.getState().fetchTeamForSession('lead-session')
+    expect(getWorkbenchForSessionMock).toHaveBeenCalledTimes(1)
+
+    await useTeamStore.getState().fetchTeamForSession('lead-session', { force: true })
+
+    expect(getWorkbenchForSessionMock).toHaveBeenCalledTimes(2)
+    expect(
+      useTeamStore.getState().workbenchesBySession['lead-session']?.snapshots.at(-1)?.team.incarnationId,
+    ).toBe('new-live-incarnation')
+    expect(useChatStore.getState().sessions[oldMemberSessionId]).toBeUndefined()
+    expect(useTeamStore.getState().memberTeamBySession[oldMemberSessionId]).toBeUndefined()
+    expect(useTeamStore.getState().memberSnapshotBySession[oldMemberSessionId]).toBeUndefined()
+    expect(useTabStore.getState().tabs.some((tab) => tab.sessionId === oldMemberSessionId)).toBe(false)
+  })
+
+  it('opens same-name Team activity rows in their exact archived incarnations', async () => {
+    const teamName = 'reused-activity-team'
+    const leadSessionId = 'reused-activity-lead'
+    const member = {
+      agentId: `reviewer@${teamName}`,
+      name: 'reviewer',
+      role: 'reviewer',
+      status: 'completed' as const,
+    }
+    const makeTimeline = (incarnationId: string, createdAt: string, taskSubject: string) => ({
+      sessionId: leadSessionId,
+      teamName,
+      incarnationId,
+      source: 'archive' as const,
+      snapshots: [{
+        version: incarnationId,
+        generatedAt: createdAt,
+        team: {
+          name: teamName,
+          leadSessionId,
+          leadAgentId: `team-lead@${teamName}`,
+          incarnationId,
+          createdAt,
+          members: [member],
+        },
+        tasks: [{
+          id: '1',
+          subject: taskSubject,
+          description: taskSubject,
+          owner: member.agentId,
+          status: 'completed' as const,
+          blocks: [],
+          blockedBy: [],
+          taskListId: teamName,
+        }],
+        messages: [],
+      }],
+    })
+    getWorkbenchForSessionMock
+      .mockResolvedValueOnce(makeTimeline(
+        'activity-incarnation-a',
+        '2026-08-10T00:00:00.000Z',
+        'Incarnation A task',
+      ))
+      .mockResolvedValueOnce(makeTimeline(
+        'activity-incarnation-b',
+        '2026-08-10T01:00:00.000Z',
+        'Incarnation B task',
+      ))
+    getMemberTranscriptMock.mockResolvedValue({
+      messages: [],
+      taskNotifications: [],
+      ownerAgentIds: [],
+    })
+
+    expect(await useTeamStore.getState().openMemberFromActivity(
+      leadSessionId,
+      teamName,
+      'reviewer',
+      Date.parse('2026-08-10T00:10:00.000Z'),
+    )).toBe(true)
+    expect(await useTeamStore.getState().openMemberFromActivity(
+      leadSessionId,
+      teamName,
+      'reviewer',
+      Date.parse('2026-08-10T01:10:00.000Z'),
+    )).toBe(true)
+
+    expect(getWorkbenchForSessionMock.mock.calls).toEqual([
+      [leadSessionId, {
+        teamName,
+        at: Date.parse('2026-08-10T00:10:00.000Z'),
+      }],
+      [leadSessionId, {
+        teamName,
+        at: Date.parse('2026-08-10T01:10:00.000Z'),
+      }],
+    ])
+    const oldSessionId = memberSessionId(member.agentId, 'activity-incarnation-a')
+    const newSessionId = memberSessionId(member.agentId, 'activity-incarnation-b')
+    expect(useTabStore.getState().tabs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sessionId: oldSessionId, teamIncarnationId: 'activity-incarnation-a' }),
+      expect.objectContaining({ sessionId: newSessionId, teamIncarnationId: 'activity-incarnation-b' }),
+    ]))
+    expect(
+      useTeamStore.getState().memberSnapshotBySession[oldSessionId]?.tasks[0]?.subject,
+    ).toBe('Incarnation A task')
+    expect(
+      useTeamStore.getState().memberSnapshotBySession[newSessionId]?.tasks[0]?.subject,
+    ).toBe('Incarnation B task')
+  })
+
+  it('keeps exact deletion isolated across lead sessions with the same team name', async () => {
+    const teamA = {
+      name: 'shared-name',
+      leadSessionId: 'lead-a',
+      incarnationId: 'incarnation-a',
+      createdAt: '2026-08-10T00:00:00.000Z',
+      members: [{ agentId: 'worker@shared-name', role: 'worker', status: 'running' as const }],
+    }
+    const teamB = {
+      ...teamA,
+      leadSessionId: 'lead-b',
+      incarnationId: 'incarnation-b',
+      createdAt: '2026-08-10T00:01:00.000Z',
+    }
+    const snapshotFor = (version: string, team: typeof teamA): TeamWorkbenchSnapshot => ({
+      version,
+      generatedAt: '2026-08-10T00:02:00.000Z',
+      team,
+      tasks: [],
+      messages: [],
+    })
+    useTeamStore.setState({
+      activeTeam: teamB,
+      teams: [
+        { name: 'shared-name', memberCount: 1, incarnationId: teamB.incarnationId },
+      ],
+      workbenchesBySession: {
+        'lead-a': {
+          teamName: 'shared-name',
+          snapshots: [snapshotFor('a', teamA)],
+          loading: false,
+          error: null,
+        },
+        'lead-b': {
+          teamName: 'shared-name',
+          snapshots: [snapshotFor('b', teamB)],
+          loading: false,
+          error: null,
+        },
+      },
+    })
+
+    useTeamStore.getState().handleTeamDeleted(
+      'shared-name',
+      'lead-a',
+      { incarnationId: 'incarnation-a' },
+    )
+
+    expect(
+      useTeamStore.getState().workbenchesBySession['lead-a']?.snapshots.at(-1)?.deletedAt,
+    ).toBeTruthy()
+    expect(
+      useTeamStore.getState().workbenchesBySession['lead-b']?.snapshots.at(-1)?.deletedAt,
+    ).toBeUndefined()
+    expect(useTeamStore.getState().activeTeam?.incarnationId).toBe('incarnation-b')
+  })
+
+  it('does not resurrect an active team when discovery resolves after deletion', async () => {
+    const discovery = deferred<{
+      sessionId: string
+      teamName: string
+      source: 'live'
+      snapshots: TeamWorkbenchSnapshot[]
+    }>()
+    getWorkbenchForSessionMock.mockReturnValue(discovery.promise)
+
+    const pendingDiscovery = useTeamStore.getState().fetchTeamForSession('lead-session')
+    useTeamStore.getState().handleTeamDeleted('team-workbench', 'lead-session')
+    discovery.resolve({
+      sessionId: 'lead-session',
+      teamName: 'team-workbench',
+      source: 'live',
+      snapshots: [workbench('late-v1', 'in_progress')],
+    })
+    await pendingDiscovery
+
     const state = useTeamStore.getState()
-    state.setWorkbenchOpen('session-without-team', true)
-
-    expect(isAgentTeamsWorkbenchOpen(useTeamStore.getState(), 'session-without-team')).toBe(false)
-    expect(isAgentTeamsWorkbenchOpen(useTeamStore.getState(), null)).toBe(false)
+    expect(state.teamNameBySession['lead-session']).toBeUndefined()
+    expect(state.activeTeamStartedAtBySession['lead-session']).toBeUndefined()
+    expect(state.workbenchesBySession['lead-session']).toBeUndefined()
+    expect(state.activeTeam).toBeNull()
   })
 
-  it('keeps a restored workbench available after closing and reopening it', async () => {
+  it('restores a deleted team archive discovered after its live lifecycle ended', async () => {
+    useTeamStore.getState().handleTeamDeleted('team-workbench', 'lead-session')
+    const archived = {
+      ...workbench('archive-v1', 'completed'),
+      deletedAt: '2026-08-10T00:10:00.000Z',
+    }
     getWorkbenchForSessionMock.mockResolvedValue({
       sessionId: 'lead-session',
       teamName: 'team-workbench',
-      source: 'transcript',
-      snapshots: [workbench('v8', 'completed')],
+      source: 'archive',
+      snapshots: [archived],
     })
+
     await useTeamStore.getState().fetchTeamForSession('lead-session')
 
-    useTeamStore.getState().setWorkbenchOpen('lead-session', false)
-    expect(useTeamStore.getState().workbenchOpenBySession['lead-session']).toBe(false)
-    expect(useTeamStore.getState().workbenchesBySession['lead-session']?.snapshots).toHaveLength(1)
+    const state = useTeamStore.getState()
+    expect(state.workbenchesBySession['lead-session']?.snapshots).toEqual([archived])
+    expect(state.teamNameBySession['lead-session']).toBeUndefined()
+    expect(state.activeTeamStartedAtBySession['lead-session']).toBeUndefined()
+  })
 
-    useTeamStore.getState().toggleWorkbench('lead-session')
-    expect(useTeamStore.getState().workbenchOpenBySession['lead-session']).toBe(true)
-    expect(useTeamStore.getState().workbenchesBySession['lead-session']?.snapshots[0]?.version).toBe('v8')
+  it('accepts a newer same-name incarnation when its create event was missed', async () => {
+    useTeamStore.getState().handleTeamDeleted('team-workbench', 'lead-session')
+    const recreated = {
+      ...workbench('new-v1', 'in_progress'),
+      team: {
+        ...workbench('new-v1', 'in_progress').team,
+        createdAt: new Date(Date.now() + 1_000).toISOString(),
+      },
+    }
+    getWorkbenchForSessionMock.mockResolvedValue({
+      sessionId: 'lead-session',
+      teamName: 'team-workbench',
+      source: 'live',
+      snapshots: [recreated],
+    })
+
+    await useTeamStore.getState().fetchTeamForSession('lead-session')
+
+    const state = useTeamStore.getState()
+    expect(state.workbenchesBySession['lead-session']?.snapshots).toEqual([recreated])
+    expect(state.teamNameBySession['lead-session']).toBe('team-workbench')
   })
 
   it('does not mistake the lead session for the synthetic team-lead conversation', () => {

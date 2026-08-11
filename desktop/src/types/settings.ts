@@ -152,6 +152,7 @@ export type UserSettings = {
   modelContext?: string
   effort?: EffortLevel
   alwaysThinkingEnabled?: boolean
+  workflowKeywordTriggerEnabled?: boolean
   autoDreamEnabled?: boolean
   skipAutoPermissionPrompt?: boolean
   permissionMode?: PermissionMode

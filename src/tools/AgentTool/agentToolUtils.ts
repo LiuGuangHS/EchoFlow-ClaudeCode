@@ -414,10 +414,11 @@ export function emitAgentToolActivitiesForMessage(
   message: MessageType,
   taskId: string,
   parentToolUseId: string | undefined,
+  ownerAgentId?: string,
 ): void {
   if (!parentToolUseId) return
   for (const activity of extractAgentToolActivities(message)) {
-    emitAgentToolActivity(taskId, parentToolUseId, activity)
+    emitAgentToolActivity(taskId, parentToolUseId, activity, ownerAgentId)
   }
 }
 
@@ -428,6 +429,7 @@ export function emitTaskProgress(
   description: string,
   startTime: number,
   lastToolName: string,
+  ownerAgentId?: string,
 ): void {
   const progress = getProgressUpdate(tracker)
   emitTaskProgressEvent({
@@ -438,6 +440,7 @@ export function emitTaskProgress(
     totalTokens: progress.tokenCount,
     toolUses: progress.toolUseCount,
     lastToolName,
+    ownerAgentId,
   })
 }
 
@@ -572,6 +575,7 @@ export async function runAsyncAgentLifecycle({
   agentIdForCleanup,
   enableSummarization,
   getWorktreeResult,
+  ownerAgentId,
 }: {
   taskId: string
   abortController: AbortController
@@ -592,6 +596,8 @@ export async function runAsyncAgentLifecycle({
     worktreePath?: string
     worktreeBranch?: string
   }>
+  /** Stable lifecycle owner resolved when the run was spawned or resumed. */
+  ownerAgentId?: string
 }): Promise<void> {
   const agentToolUseId = parentToolUseId
   let stopSummarization: (() => void) | undefined
@@ -651,6 +657,7 @@ export async function runAsyncAgentLifecycle({
         message,
         taskId,
         agentToolUseId,
+        ownerAgentId,
       )
       const lastToolName = getLastToolUseName(message)
       if (lastToolName) {
@@ -661,6 +668,7 @@ export async function runAsyncAgentLifecycle({
           description,
           metadata.startTime,
           lastToolName,
+          ownerAgentId,
         )
       }
     }

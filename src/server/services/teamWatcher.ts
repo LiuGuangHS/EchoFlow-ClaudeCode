@@ -16,13 +16,19 @@ import * as crypto from 'node:crypto'
 import { sendToSession, getActiveSessionIds } from '../ws/handler.js'
 import type { ServerMessage, TeamMemberStatus } from '../ws/events.js'
 import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
-import { teamService, type TeamService } from './teamService.js'
+import { teamIncarnationId, teamService, type TeamService } from './teamService.js'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
 function getTeamsDir(): string {
   const configDir = getClaudeConfigHomeDir()
   return path.join(configDir, 'teams')
+}
+
+type WatchedTeamIdentity = {
+  incarnationId: string
+  createdAt: number
+  leadSessionId?: string
 }
 
 // ─── TeamWatcher ──────────────────────────────────────────────────────────
@@ -33,6 +39,7 @@ export class TeamWatcher {
   private lastSnapshots = new Map<string, string>() // teamName -> raw config JSON
   private lastWorkbenchFingerprints = new Map<string, string>()
   private lastLeadSessionIds = new Map<string, string>()
+  private lastTeamIdentities = new Map<string, WatchedTeamIdentity>()
 
   constructor(
     private readonly emit: (message: ServerMessage, leadSessionId?: string) => void = (message, leadSessionId) => {
@@ -74,6 +81,7 @@ export class TeamWatcher {
     this.lastSnapshots.clear()
     this.lastWorkbenchFingerprints.clear()
     this.lastLeadSessionIds.clear()
+    this.lastTeamIdentities.clear()
   }
 
   // ── Core polling logic ─────────────────────────────────────────────────
@@ -97,18 +105,21 @@ export class TeamWatcher {
       // teams directory doesn't exist yet -- nothing to watch
       // If we previously knew about teams, they are now all "deleted"
       for (const [name] of this.lastSnapshots) {
+        const identity = this.lastTeamIdentities.get(name)
         await this.archive.markWorkbenchArchiveDeleted(
           name,
-          this.lastLeadSessionIds.get(name),
+          identity?.leadSessionId ?? this.lastLeadSessionIds.get(name),
+          identity?.incarnationId,
         ).catch(() => {})
         this.broadcast(
-          { type: 'team_deleted', teamName: name },
-          this.lastLeadSessionIds.get(name),
+          { type: 'team_deleted', teamName: name, ...identity },
+          identity?.leadSessionId ?? this.lastLeadSessionIds.get(name),
         )
       }
       this.lastSnapshots.clear()
       this.lastWorkbenchFingerprints.clear()
       this.lastLeadSessionIds.clear()
+      this.lastTeamIdentities.clear()
       return
     }
 
@@ -129,7 +140,11 @@ export class TeamWatcher {
       }
 
       const lastContent = this.lastSnapshots.get(teamName)
-      const leadSessionId = this.readLeadSessionId(content) ?? this.lastLeadSessionIds.get(teamName)
+      const currentIdentity = this.readTeamIdentity(teamName, content)
+      const previousIdentity = this.lastTeamIdentities.get(teamName)
+      const leadSessionId = currentIdentity?.leadSessionId ??
+        previousIdentity?.leadSessionId ??
+        this.lastLeadSessionIds.get(teamName)
       const workbenchFingerprint = this.buildWorkbenchFingerprint(
         teamsDir,
         teamName,
@@ -141,25 +156,66 @@ export class TeamWatcher {
         this.lastSnapshots.set(teamName, content)
         this.lastWorkbenchFingerprints.set(teamName, workbenchFingerprint)
         if (leadSessionId) this.lastLeadSessionIds.set(teamName, leadSessionId)
-        this.broadcast({ type: 'team_created', teamName }, leadSessionId)
+        if (currentIdentity) this.lastTeamIdentities.set(teamName, currentIdentity)
+        this.broadcast({ type: 'team_created', teamName, ...currentIdentity }, leadSessionId)
         await this.archive.getWorkbench(teamName).catch(() => {})
       } else if (content !== lastContent) {
+        if (
+          previousIdentity &&
+          currentIdentity &&
+          previousIdentity.incarnationId !== currentIdentity.incarnationId
+        ) {
+          await this.archive.markWorkbenchArchiveDeleted(
+            teamName,
+            previousIdentity.leadSessionId,
+            previousIdentity.incarnationId,
+          ).catch(() => {})
+          this.broadcast(
+            { type: 'team_deleted', teamName, ...previousIdentity },
+            previousIdentity.leadSessionId,
+          )
+          this.lastSnapshots.set(teamName, content)
+          this.lastWorkbenchFingerprints.set(teamName, workbenchFingerprint)
+          this.lastTeamIdentities.set(teamName, currentIdentity)
+          if (currentIdentity.leadSessionId) {
+            this.lastLeadSessionIds.set(teamName, currentIdentity.leadSessionId)
+          } else {
+            this.lastLeadSessionIds.delete(teamName)
+          }
+          this.broadcast(
+            { type: 'team_created', teamName, ...currentIdentity },
+            currentIdentity.leadSessionId,
+          )
+          await this.archive.getWorkbench(teamName).catch(() => {})
+          continue
+        }
         // Team config changed -- extract member statuses and broadcast
         this.lastSnapshots.set(teamName, content)
         try {
           const config = JSON.parse(content)
           if (leadSessionId) this.lastLeadSessionIds.set(teamName, leadSessionId)
+          if (currentIdentity) this.lastTeamIdentities.set(teamName, currentIdentity)
           const members = this.extractMemberStatuses(config)
           // Merge inbox-discovered members that are missing from config
           const inboxMembers = this.discoverInboxMembers(teamsDir, teamName, config)
           const subagentMembers = this.discoverSubagentMembers(teamsDir, config)
           const allMembers = [...members, ...inboxMembers, ...subagentMembers]
-          this.broadcast({ type: 'team_update', teamName, members: allMembers }, leadSessionId)
+          this.broadcast({
+            type: 'team_update',
+            teamName,
+            members: allMembers,
+            ...currentIdentity,
+          }, leadSessionId)
         } catch {
           // JSON parse failed (likely truncated write) — try to recover partial members
           const recovered = this.recoverPartialMembers(content)
           if (recovered.length > 0) {
-            this.broadcast({ type: 'team_update', teamName, members: recovered }, leadSessionId)
+            this.broadcast({
+              type: 'team_update',
+              teamName,
+              members: recovered,
+              ...previousIdentity,
+            }, leadSessionId)
           }
           // If nothing recoverable, skip broadcast entirely — don't send empty members
         }
@@ -171,19 +227,29 @@ export class TeamWatcher {
       ) {
         this.lastWorkbenchFingerprints.set(teamName, workbenchFingerprint)
         await this.archive.getWorkbench(teamName).catch(() => {})
-        this.broadcast({ type: 'team_workbench_updated', teamName }, leadSessionId)
+        this.broadcast({
+          type: 'team_workbench_updated',
+          teamName,
+          ...currentIdentity,
+        }, leadSessionId)
       }
     }
 
     // Check for deleted teams (were in lastSnapshots but no longer on disk)
     for (const [name] of this.lastSnapshots) {
       if (!currentTeamNames.has(name)) {
-        const leadSessionId = this.lastLeadSessionIds.get(name)
-        await this.archive.markWorkbenchArchiveDeleted(name, leadSessionId).catch(() => {})
+        const identity = this.lastTeamIdentities.get(name)
+        const leadSessionId = identity?.leadSessionId ?? this.lastLeadSessionIds.get(name)
+        await this.archive.markWorkbenchArchiveDeleted(
+          name,
+          leadSessionId,
+          identity?.incarnationId,
+        ).catch(() => {})
         this.lastSnapshots.delete(name)
         this.lastWorkbenchFingerprints.delete(name)
         this.lastLeadSessionIds.delete(name)
-        this.broadcast({ type: 'team_deleted', teamName: name }, leadSessionId)
+        this.lastTeamIdentities.delete(name)
+        this.broadcast({ type: 'team_deleted', teamName: name, ...identity }, leadSessionId)
       }
     }
   }
@@ -235,12 +301,31 @@ export class TeamWatcher {
     }
   }
 
-  private readLeadSessionId(content: string): string | undefined {
+  private readTeamIdentity(
+    teamName: string,
+    content: string,
+  ): WatchedTeamIdentity | undefined {
     try {
       const config = JSON.parse(content) as Record<string, unknown>
-      return typeof config.leadSessionId === 'string' && config.leadSessionId
+      const createdAt = typeof config.createdAt === 'number'
+        ? config.createdAt
+        : Number(config.createdAt)
+      if (!Number.isFinite(createdAt)) return undefined
+      const leadSessionId = typeof config.leadSessionId === 'string' && config.leadSessionId
         ? config.leadSessionId
         : undefined
+      const identity = {
+        createdAt,
+        ...(leadSessionId ? { leadSessionId } : {}),
+      }
+      return {
+        ...identity,
+        incarnationId: teamIncarnationId({
+          name: teamName,
+          createdAt,
+          leadSessionId,
+        }),
+      }
     } catch {
       return undefined
     }

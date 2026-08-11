@@ -1,11 +1,19 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 import { ChevronLeft, ChevronRight, Radio } from 'lucide-react'
 import { Badge, StatusDot, type Tone } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { IconButton } from '@/components/ui/IconButton'
 import { Progress } from '@/components/ui/Progress'
 import { useTranslation, type TranslationKey } from '../../i18n'
-import { useTeamStore, type WorkbenchView } from '../../stores/teamStore'
+import { useTeamStore } from '../../stores/teamStore'
 import type {
   TeamMember,
   TeamWorkbenchMessage,
@@ -13,7 +21,6 @@ import type {
 } from '../../types/team'
 import { MEMBER_AVATARS, memberAccentColor } from './agentTeamsAvatars'
 import { AgentTeamsCommunicationFeed } from './AgentTeamsCommunicationFeed'
-import { AgentTeamsMemberView } from './AgentTeamsMemberView'
 import {
   getWorkbenchPhase,
   getWorkbenchProgress,
@@ -28,13 +35,6 @@ import {
   type WorkbenchTaskState,
 } from './agentTeamsModel'
 
-/**
- * Stable default for the view selector. A `?? { kind: 'overview' }` literal
- * allocates a fresh object on every store read, which zustand compares by
- * identity — that renders forever.
- */
-const OVERVIEW_VIEW: WorkbenchView = { kind: 'overview' }
-
 type MemberWorkState = 'working' | 'idle' | 'stopped' | 'exited' | 'error'
 
 type BotPosition = {
@@ -45,6 +45,19 @@ type BotPosition = {
 }
 
 type TranslationFn = ReturnType<typeof useTranslation>
+
+const COMMUNICATION_DEFAULT_WIDTH = 440
+const COMMUNICATION_MIN_WIDTH = 320
+const COMMUNICATION_MAX_WIDTH = 960
+const COMMUNICATION_RESIZE_STEP = 32
+const DAG_MIN_WIDTH = 360
+
+function clampCommunicationWidth(width: number, availableWidth = 0): number {
+  const dynamicMaximum = availableWidth > 0
+    ? Math.min(COMMUNICATION_MAX_WIDTH, Math.max(COMMUNICATION_MIN_WIDTH, availableWidth - DAG_MIN_WIDTH))
+    : COMMUNICATION_MAX_WIDTH
+  return Math.min(dynamicMaximum, Math.max(COMMUNICATION_MIN_WIDTH, Math.round(width)))
+}
 
 function phaseTone(phase: WorkbenchPhase): Tone {
   if (phase === 'forming') return 'warning'
@@ -82,7 +95,11 @@ function memberState(
 ): MemberWorkState {
   if (snapshot.deletedAt || member.status === 'completed') return 'exited'
   if (member.status === 'error') return 'error'
-  if (runningTaskForMember(snapshot.tasks, member) || isLead) return 'working'
+  if (
+    member.status === 'running' ||
+    runningTaskForMember(snapshot.tasks, member) ||
+    isLead
+  ) return 'working'
   if (member.status === 'idle') return 'idle'
   return 'idle'
 }
@@ -114,22 +131,24 @@ function formatSnapshotTime(snapshot: TeamWorkbenchSnapshot): string {
 
 /**
  * The working view of a team run: the dependency map, the per-member
- * drill-down, the message log and history scrubbing. It only ever renders in
- * its own tab — the docked side of the split shows {@link AgentTeamsReport}
- * instead, because none of this survives being squeezed to panel width.
+ * message log and history scrubbing. It only ever renders in its own tab;
+ * selecting a member leaves this map intact and opens the shared agent run
+ * desktop.
  */
 export function AgentTeamsWorkbench({ sessionId }: { sessionId: string }) {
   const t = useTranslation()
   const timeline = useTeamStore((state) => state.workbenchesBySession[sessionId])
   const historyIndex = useTeamStore((state) => state.workbenchHistoryIndexBySession[sessionId] ?? null)
-  const view = useTeamStore((state) => state.workbenchViewBySession[sessionId] ?? OVERVIEW_VIEW)
   const setHistoryIndex = useTeamStore((state) => state.setWorkbenchHistoryIndex)
-  const setWorkbenchView = useTeamStore((state) => state.setWorkbenchView)
-  const openMemberInWorkbench = useTeamStore((state) => state.openMemberInWorkbench)
   const openMemberSession = useTeamStore((state) => state.openMemberSession)
+  const splitViewportRef = useRef<HTMLDivElement>(null)
   const officeViewportRef = useRef<HTMLDivElement>(null)
   const [officeWidth, setOfficeWidth] = useState(604)
+  const [communicationWidth, setCommunicationWidth] = useState(COMMUNICATION_DEFAULT_WIDTH)
   const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null)
+  const communicationWidthRef = useRef(communicationWidth)
+  const communicationDragRef = useRef<{ startX: number; startWidth: number } | null>(null)
+  communicationWidthRef.current = communicationWidth
 
   const snapshots = timeline?.snapshots ?? []
   const latestIndex = snapshots.length - 1
@@ -148,15 +167,73 @@ export function AgentTeamsWorkbench({ sessionId }: { sessionId: string }) {
     return () => observer.disconnect()
   }, [])
 
-  // A member view outlives its member when the roster changes mid-run; fall
-  // back to the map rather than rendering an empty body.
-  const selectedAgentId = view.kind === 'member' ? view.agentId : null
+  const resizeCommunication = useCallback((requestedWidth: number) => {
+    const availableWidth = splitViewportRef.current?.getBoundingClientRect().width ?? 0
+    setCommunicationWidth(clampCommunicationWidth(requestedWidth, availableWidth))
+  }, [])
+
+  const stopCommunicationResize = useCallback(() => {
+    if (!communicationDragRef.current) return
+    communicationDragRef.current = null
+    document.body.style.removeProperty('cursor')
+    document.body.style.removeProperty('user-select')
+  }, [])
+
+  const handleCommunicationPointerMove = useCallback((event: PointerEvent) => {
+    const drag = communicationDragRef.current
+    if (!drag) return
+    resizeCommunication(drag.startWidth - (event.clientX - drag.startX))
+  }, [resizeCommunication])
+
   useEffect(() => {
-    if (!selectedAgentId || !snapshot) return
-    if (!snapshot.team.members.some((member) => member.agentId === selectedAgentId)) {
-      setWorkbenchView(sessionId, { kind: 'overview' })
+    window.addEventListener('pointermove', handleCommunicationPointerMove)
+    window.addEventListener('pointerup', stopCommunicationResize)
+    window.addEventListener('pointercancel', stopCommunicationResize)
+    return () => {
+      window.removeEventListener('pointermove', handleCommunicationPointerMove)
+      window.removeEventListener('pointerup', stopCommunicationResize)
+      window.removeEventListener('pointercancel', stopCommunicationResize)
+      stopCommunicationResize()
     }
-  }, [selectedAgentId, sessionId, setWorkbenchView, snapshot])
+  }, [handleCommunicationPointerMove, stopCommunicationResize])
+
+  useEffect(() => {
+    const element = splitViewportRef.current
+    if (!element || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? 0
+      setCommunicationWidth((current) => clampCommunicationWidth(current, width))
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
+
+  const handleDividerPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    communicationDragRef.current = {
+      startX: event.clientX,
+      startWidth: communicationWidthRef.current,
+    }
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }, [])
+
+  const handleDividerKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault()
+      resizeCommunication(communicationWidthRef.current + COMMUNICATION_RESIZE_STEP)
+    } else if (event.key === 'ArrowRight') {
+      event.preventDefault()
+      resizeCommunication(communicationWidthRef.current - COMMUNICATION_RESIZE_STEP)
+    } else if (event.key === 'Home') {
+      event.preventDefault()
+      resizeCommunication(COMMUNICATION_MIN_WIDTH)
+    } else if (event.key === 'End') {
+      event.preventDefault()
+      resizeCommunication(COMMUNICATION_MAX_WIDTH)
+    }
+  }, [resizeCommunication])
 
   const layout = useMemo(
     () => layoutWorkbenchTasks(snapshot?.tasks ?? [], officeWidth),
@@ -223,16 +300,7 @@ export function AgentTeamsWorkbench({ sessionId }: { sessionId: string }) {
   const hasNewMessage = Boolean(
     previousSnapshot && latestMessage && previousSnapshot.messages.at(-1)?.id !== latestMessage.id,
   )
-  const selectedMember = selectedAgentId
-    ? members.find((member) => member.agentId === selectedAgentId) ?? null
-    : null
-  const selectMember = (member: TeamMember) => {
-    if (selectedAgentId === member.agentId) {
-      setWorkbenchView(sessionId, { kind: 'overview' })
-      return
-    }
-    openMemberInWorkbench(sessionId, member, snapshot.team)
-  }
+  const selectMember = (member: TeamMember) => openMemberSession(member, snapshot.team, snapshot)
 
   return (
     <section
@@ -311,19 +379,20 @@ export function AgentTeamsWorkbench({ sessionId }: { sessionId: string }) {
         </div>
       </header>
 
-      {selectedMember ? (
-        <AgentTeamsMemberView
-          member={selectedMember}
-          snapshot={snapshot}
-          onBack={() => setWorkbenchView(sessionId, { kind: 'overview' })}
-          onOpenInTab={() => openMemberSession(selectedMember, snapshot.team)}
-        />
-      ) : (
-      <div className="flex min-h-0 flex-1">
+      <div
+        ref={splitViewportRef}
+        data-testid="agent-teams-split-container"
+        className="flex min-h-0 flex-1"
+      >
 
-      <div ref={officeViewportRef} className="min-h-0 min-w-0 flex-1 overflow-auto">
+      <div
+        ref={officeViewportRef}
+        data-testid="agent-teams-office-viewport"
+        className="min-h-0 min-w-0 flex-1 overflow-auto"
+      >
         <div
           data-testid="agent-teams-office"
+          data-layout-columns={layout.columns}
           className="agent-teams-org-canvas relative mx-auto"
           style={{ width: layout.width, height: layout.height }}
         >
@@ -417,12 +486,39 @@ export function AgentTeamsWorkbench({ sessionId }: { sessionId: string }) {
         </div>
       </div>
 
-      {/* The feed earns a full-height column of its own — who said what to
-          whom is the substance of a multi-agent run, and the old docked form
-          had it squeezed into a 210px strip under the map. */}
-      <AgentTeamsCommunicationFeed snapshot={snapshot} fill />
+      <div
+        role="separator"
+        aria-label={t('agentTeams.resizeCommunication')}
+        aria-orientation="vertical"
+        aria-valuemin={COMMUNICATION_MIN_WIDTH}
+        aria-valuemax={COMMUNICATION_MAX_WIDTH}
+        aria-valuenow={communicationWidth}
+        tabIndex={0}
+        data-testid="agent-teams-split-divider"
+        onPointerDown={handleDividerPointerDown}
+        onKeyDown={handleDividerKeyDown}
+        onDoubleClick={() => resizeCommunication(COMMUNICATION_DEFAULT_WIDTH)}
+        className="group relative w-px shrink-0 cursor-col-resize bg-[var(--color-border)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]"
+      >
+        <span
+          aria-hidden="true"
+          className="absolute inset-y-0 -left-1 w-[9px] transition-colors duration-150 group-hover:bg-[var(--color-primary-fixed-dim)] group-focus-visible:bg-[var(--color-primary-fixed-dim)]"
+        />
       </div>
-      )}
+
+      {/* The width owner sits outside the feed so the same feed component can
+          still render as a horizontal strip in compact contexts. */}
+      <div
+        data-testid="agent-teams-communication-pane"
+        className="h-full min-w-0 shrink-0 overflow-hidden"
+        style={{
+          width: communicationWidth,
+          maxWidth: `calc(100% - ${DAG_MIN_WIDTH}px)`,
+        }}
+      >
+        <AgentTeamsCommunicationFeed snapshot={snapshot} fill />
+      </div>
+      </div>
     </section>
   )
 }
@@ -465,7 +561,10 @@ function MemberFigure({
       data-member-state={state}
       aria-label={t('agentTeams.openMember', { name })}
       title={`${name} · ${memberStateLabel(state, t)}`}
-      onClick={onSelect}
+      onClick={(event) => {
+        event.stopPropagation()
+        onSelect()
+      }}
       className={`agent-teams-person relative z-[var(--z-raised)] cursor-pointer rounded-[var(--radius-lg)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)] ${className}`}
     >
       <span className={`agent-teams-character relative block h-full w-full ${motionClass} ${state === 'exited' ? 'agent-teams-character-archived' : ''} ${isMessageSender ? 'agent-teams-character-message' : ''}`}>
@@ -735,19 +834,33 @@ function TaskCard({
     && owner.agentId !== snapshot.team.leadAgentId
     && primaryTaskByMemberId.get(owner.agentId) === task.id,
   )
+  const openOwner = () => {
+    if (owner) onSelectMember(owner)
+  }
   return (
     <article
       data-testid={`agent-teams-task-${task.id}`}
       data-state={state}
       data-owner-agent-id={owner?.agentId}
       tabIndex={0}
+      role={owner ? 'button' : undefined}
+      aria-label={owner ? t('agentTeams.openMember', { name: memberName(owner) }) : undefined}
+      onClick={(event) => {
+        if (!owner || (event.target as HTMLElement).closest('button')) return
+        openOwner()
+      }}
+      onKeyDown={(event) => {
+        if (!owner || (event.key !== 'Enter' && event.key !== ' ')) return
+        event.preventDefault()
+        openOwner()
+      }}
       onMouseEnter={() => onFocusTask(task.id)}
       onMouseLeave={() => onFocusTask(null)}
       onFocus={() => onFocusTask(task.id)}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) onFocusTask(null)
       }}
-      className={`agent-teams-task absolute h-[94px] w-[216px] rounded-[var(--radius-xl)] border bg-[var(--color-surface-container-lowest)] py-[10px] pr-3 shadow-[var(--shadow-card)] outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)] ${owner ? 'pl-[58px]' : 'pl-3'}`}
+      className={`agent-teams-task absolute h-[94px] w-[216px] rounded-[var(--radius-xl)] border bg-[var(--color-surface-container-lowest)] py-[10px] pr-3 shadow-[var(--shadow-card)] outline-none transition-[transform,box-shadow,border-color] duration-200 focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)] ${owner ? 'cursor-pointer pl-[58px] hover:-translate-y-px hover:shadow-[var(--shadow-composer)] active:scale-[0.99]' : 'pl-3'}`}
       style={{
         left: x,
         top: y,

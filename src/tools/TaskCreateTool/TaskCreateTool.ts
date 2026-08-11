@@ -78,7 +78,7 @@ export const TaskCreateTool = buildTool({
     return null
   },
   async call({ subject, description, activeForm, metadata }, context) {
-    const taskId = await createTask(getTaskListId(), {
+    const taskId = await createTask(getTaskListId(context?.agentId), {
       subject,
       description,
       activeForm,
@@ -108,7 +108,7 @@ export const TaskCreateTool = buildTool({
     }
 
     if (blockingErrors.length > 0) {
-      await deleteTask(getTaskListId(), taskId)
+      await deleteTask(getTaskListId(context?.agentId), taskId)
       throw new Error(blockingErrors.join('\n'))
     }
 

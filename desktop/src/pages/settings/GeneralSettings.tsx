@@ -52,6 +52,8 @@ export function GeneralSettings() {
   const {
     thinkingEnabled,
     setThinkingEnabled,
+    workflowKeywordTriggerEnabled,
+    setWorkflowKeywordTriggerEnabled,
     permissionMode,
     setPermissionMode,
     autoDreamEnabled,
@@ -833,7 +835,22 @@ export function GeneralSettings() {
         </label>
       </div>
 
-      <div className="mt-8">
+      <SettingsSection
+        className="mt-8"
+        title={t('settings.general.workflowKeywordTitle')}
+        description={t('settings.general.workflowKeywordDescription')}
+      >
+        <div className="rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-4 py-3">
+          <Switch
+            checked={workflowKeywordTriggerEnabled}
+            onChange={(enabled) => void setWorkflowKeywordTriggerEnabled(enabled)}
+            label={t('settings.general.workflowKeywordEnabled')}
+            description={t('settings.general.workflowKeywordHint')}
+          />
+        </div>
+      </SettingsSection>
+
+      <div>
         <h2 className="text-[16.5px] font-semibold leading-tight text-[var(--color-text-primary)] mb-1" style={{ fontFamily: 'var(--font-headline)' }}>{t('settings.general.autoDreamTitle')}</h2>
         <p className="text-sm text-[var(--color-text-tertiary)] mb-3">{t('settings.general.autoDreamDescription')}</p>
         <label className="relative flex items-start gap-3 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-4 py-3 cursor-pointer hover:border-[var(--color-border-focus)] transition-colors">

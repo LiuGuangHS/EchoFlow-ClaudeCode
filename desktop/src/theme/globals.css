@@ -1629,6 +1629,18 @@ button, input, textarea, select, a, [role="button"] {
   overflow-wrap: break-word;
 }
 
+/* The same conservative matcher that injects the runtime Workflow reminder
+   marks actionable Ultracode tokens before submit. */
+.composer-workflow-keyword {
+  color: var(--color-on-brand-soft);
+  background: var(--color-brand-soft);
+  border-radius: var(--radius-sm);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  padding: 0 2px;
+  font-weight: 600;
+}
+
 /* Floated zero-height placeholder: the empty paragraph keeps its own caret,
    the hint text just borrows its line. */
 .composer-pm[data-empty="true"]::before {
@@ -2200,9 +2212,9 @@ body.sidebar-resizing * {
   display: flow-root;
   /* Owned here rather than on the message components, so a turn's internal
      rhythm is retunable in one place — and so every surface that shows a
-     transcript inherits it. SubagentRunPage and AgentTeamsMemberView both
-     render MessageList itself, so blocks carry no bottom margin of their own
-     and nothing downstream has to re-derive the spacing. */
+     transcript inherits it. The shared agent run desktop renders MessageList
+     itself, so blocks carry no bottom margin of their own and nothing
+     downstream has to re-derive the spacing. */
   padding-bottom: 8px;
 }
 

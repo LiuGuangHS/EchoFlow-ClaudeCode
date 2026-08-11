@@ -7,6 +7,7 @@ import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import * as os from 'node:os'
 import type { ServerMessage } from '../ws/events.js'
+import { teamIncarnationId } from '../services/teamService.js'
 
 // ============================================================================
 // Test helpers
@@ -272,7 +273,7 @@ describe('TeamWatcher polling', () => {
     }))
     await watcher.checkNow()
     expect(deliveries).toEqual([{
-      message: { type: 'team_created', teamName: 'workbench-team' },
+      message: expect.objectContaining({ type: 'team_created', teamName: 'workbench-team' }),
       sessionId: 'lead-session-workbench',
     }])
     deliveries.length = 0
@@ -286,7 +287,10 @@ describe('TeamWatcher polling', () => {
     })
     await watcher.checkNow()
     expect(deliveries).toEqual([{
-      message: { type: 'team_workbench_updated', teamName: 'workbench-team' },
+      message: expect.objectContaining({
+        type: 'team_workbench_updated',
+        teamName: 'workbench-team',
+      }),
       sessionId: 'lead-session-workbench',
     }])
 
@@ -298,13 +302,69 @@ describe('TeamWatcher polling', () => {
     }])
     await watcher.checkNow()
     expect(deliveries).toEqual([{
-      message: { type: 'team_workbench_updated', teamName: 'workbench-team' },
+      message: expect.objectContaining({
+        type: 'team_workbench_updated',
+        teamName: 'workbench-team',
+      }),
       sessionId: 'lead-session-workbench',
     }])
 
     deliveries.length = 0
     await watcher.checkNow()
     expect(deliveries).toEqual([])
+  })
+
+  it('emits an exact delete/create transition when a name is recreated between polls', async () => {
+    const deliveries: Array<{ message: ServerMessage; sessionId?: string }> = []
+    const deleted: Array<[string, string | undefined, string | undefined]> = []
+    watcher = new TeamWatcher(
+      (message, sessionId) => deliveries.push({ message, sessionId }),
+      {
+        getWorkbench: async () => ({}) as never,
+        markWorkbenchArchiveDeleted: async (name, sessionId, incarnationId) => {
+          deleted.push([name, sessionId, incarnationId])
+        },
+      },
+    )
+    const oldConfig = makeTeamConfig({
+      name: 'aba-team',
+      createdAt: 1700000000000,
+      leadSessionId: 'old-lead',
+    })
+    await writeTeamConfig('aba-team', oldConfig)
+    await watcher.checkNow()
+    deliveries.length = 0
+
+    const newConfig = makeTeamConfig({
+      name: 'aba-team',
+      createdAt: 1800000000000,
+      leadSessionId: 'new-lead',
+    })
+    await writeTeamConfig('aba-team', newConfig)
+    await watcher.checkNow()
+
+    const oldIncarnationId = teamIncarnationId(oldConfig)
+    const newIncarnationId = teamIncarnationId(newConfig)
+    expect(deleted).toEqual([['aba-team', 'old-lead', oldIncarnationId]])
+    expect(deliveries).toEqual([{
+      message: {
+        type: 'team_deleted',
+        teamName: 'aba-team',
+        incarnationId: oldIncarnationId,
+        leadSessionId: 'old-lead',
+        createdAt: 1700000000000,
+      },
+      sessionId: 'old-lead',
+    }, {
+      message: {
+        type: 'team_created',
+        teamName: 'aba-team',
+        incarnationId: newIncarnationId,
+        leadSessionId: 'new-lead',
+        createdAt: 1800000000000,
+      },
+      sessionId: 'new-lead',
+    }])
   })
 
   it('should detect team deletion', async () => {

@@ -16,6 +16,7 @@ import { writeToMailbox } from '../../utils/teammateMailbox.js'
 import {
   sessionService,
   type MessageEntry as SessionMessageEntry,
+  type SessionTaskNotification,
 } from './sessionService.js'
 import { localIndexCoordinator } from './localIndex/coordinator.js'
 import { readSessionEntriesByLocator } from './localIndex/sessionEntries.js'
@@ -44,6 +45,7 @@ export type TeamSummary = {
   name: string
   description?: string
   createdAt: number
+  incarnationId: string
   memberCount: number
   activeMemberCount: number
 }
@@ -80,8 +82,15 @@ export type TeamWorkbenchSnapshot = {
 export type TeamWorkbenchSessionTimeline = {
   sessionId: string
   teamName: string
+  incarnationId: string
   snapshots: TeamWorkbenchSnapshot[]
   source: 'live' | 'archive' | 'transcript'
+}
+
+export type TeamWorkbenchSessionLookup = {
+  teamName?: string
+  incarnationId?: string
+  at?: number
 }
 
 export type TranscriptMessage = {
@@ -101,6 +110,18 @@ export type TranscriptMessage = {
 
 export type TeamTranscriptPage = {
   messages: TranscriptMessage[]
+  /**
+   * Physical `agent-<id>.jsonl` fragments that contributed to this member.
+   * Empty means the member owns a root session transcript (or has no
+   * transcript), not that fragment discovery is still pending.
+   */
+  ownerAgentIds: string[]
+  /**
+   * Terminal background-task notifications from the same cursor page as
+   * `messages`. Consumers must merge deltas by `toolUseId`, and replace their
+   * cache when `reset` is true.
+   */
+  taskNotifications: SessionTaskNotification[]
   signature: string
   cursor: string
   afterOrdinal: number
@@ -112,6 +133,7 @@ export type TeamTranscriptPageOptions = {
   cursor?: string
   afterOrdinal?: number
   leadSessionId?: string
+  incarnationId?: string
 }
 
 type TranscriptCursor = {
@@ -124,6 +146,15 @@ type TranscriptCursor = {
   afterOrdinal: number
 }
 
+type TranscriptFragmentProjection = {
+  /** One owner for a single physical fragment. */
+  ownerAgentId?: string
+  /** Per-entry owners for a buffer assembled from several fragments. */
+  ownerAgentIdByOrdinal?: Array<string | undefined>
+  /** Always the complete incarnation-bounded owner set, including on deltas. */
+  ownerAgentIds?: string[]
+}
+
 const CURSOR_WINDOW_BYTES = 64 * 1024
 const MESSAGE_ENTRY_TYPES = new Set([
   'user',
@@ -132,12 +163,15 @@ const MESSAGE_ENTRY_TYPES = new Set([
   'tool_use',
   'tool_result',
 ])
+const PERSISTED_TASK_NOTIFICATION_ENTRY_TYPE = 'cc-haha-task-notification'
+const TASK_NOTIFICATION_BLOCK_RE = /<task-notification>\s*[\s\S]*?<\/task-notification>/i
 
 const TEAM_WORKBENCH_ARCHIVE_SCHEMA_VERSION = 1
 const TEAM_WORKBENCH_ARCHIVE_HISTORY_LIMIT = 200
 
 type TeamWorkbenchArchiveEntry = {
   teamName: string
+  incarnationId: string
   updatedAt: string
   snapshots: TeamWorkbenchSnapshot[]
   [key: string]: unknown
@@ -166,6 +200,25 @@ type ProjectedTeamState = {
 
 function hash(bytes: Buffer | string): string {
   return crypto.createHash('sha256').update(bytes).digest('hex')
+}
+
+function physicalAgentIdFromTranscriptPath(filePath: string): string | undefined {
+  return path.basename(filePath).match(/^agent-(.+)\.jsonl$/)?.[1]
+}
+
+/**
+ * A CLI Team directory is a mutable name, not an identity. The same name can
+ * be deleted and recreated (including under the same lead session), so every
+ * durable join uses the creation tuple instead of the directory name alone.
+ */
+export function teamIncarnationId(
+  team: Pick<TeamSummary, 'name' | 'createdAt'> & { leadSessionId?: string },
+): string {
+  return hash(JSON.stringify([
+    team.name,
+    team.leadSessionId ?? '',
+    Number.isFinite(team.createdAt) ? team.createdAt : 0,
+  ]))
 }
 
 function objectValue(value: unknown): Record<string, unknown> | null {
@@ -197,6 +250,147 @@ function transcriptText(content: unknown): string {
     .join('\n')
 }
 
+function decodeXmlText(text: string): string {
+  return text
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&')
+}
+
+function readXmlTag(xml: string, tag: string): string | undefined {
+  const match = xml.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i'))
+  return match?.[1] ? decodeXmlText(match[1].trim()) : undefined
+}
+
+function terminalTaskStatus(
+  value: unknown,
+): SessionTaskNotification['status'] | null {
+  if (value === 'completed' || value === 'failed' || value === 'stopped') return value
+  return value === 'killed' ? 'stopped' : null
+}
+
+function fragmentScopedId(ownerAgentId: string, value: string): string {
+  return value.startsWith(`${ownerAgentId}/`)
+    ? value
+    : `${ownerAgentId}/${value}`
+}
+
+function projectFragmentContent(content: unknown, ownerAgentId: string): unknown {
+  if (Array.isArray(content)) {
+    return content.map(value => projectFragmentContent(value, ownerAgentId))
+  }
+  const block = objectValue(content)
+  if (!block) return content
+  if (block.type === 'tool_use' && typeof block.id === 'string') {
+    return {
+      ...block,
+      id: fragmentScopedId(ownerAgentId, block.id),
+      original_tool_use_id: stringValue(block.original_tool_use_id) ?? block.id,
+    }
+  }
+  if (block.type === 'tool_result' && typeof block.tool_use_id === 'string') {
+    return {
+      ...block,
+      tool_use_id: fragmentScopedId(ownerAgentId, block.tool_use_id),
+      original_tool_use_id:
+        stringValue(block.original_tool_use_id) ?? block.tool_use_id,
+      ...('content' in block
+        ? { content: projectFragmentContent(block.content, ownerAgentId) }
+        : {}),
+    }
+  }
+  if ('content' in block) {
+    const projectedContent = projectFragmentContent(block.content, ownerAgentId)
+    if (projectedContent !== block.content) {
+      return { ...block, content: projectedContent }
+    }
+  }
+  return content
+}
+
+function projectFragmentToolUseResult(
+  value: unknown,
+  ownerAgentId: string,
+): unknown {
+  const result = objectValue(value)
+  if (!result) return value
+  const backgroundTaskId = stringValue(result.backgroundTaskId)
+  const snakeBackgroundTaskId = stringValue(result.background_task_id)
+  if (!backgroundTaskId && !snakeBackgroundTaskId) return value
+  return {
+    ...result,
+    ...(backgroundTaskId
+      ? { backgroundTaskId: fragmentScopedId(ownerAgentId, backgroundTaskId) }
+      : {}),
+    ...(snakeBackgroundTaskId
+      ? { background_task_id: fragmentScopedId(ownerAgentId, snakeBackgroundTaskId) }
+      : {}),
+  }
+}
+
+function projectFragmentTaskNotification(
+  notification: SessionTaskNotification,
+  ownerAgentId: string | undefined,
+): SessionTaskNotification {
+  if (!ownerAgentId) return notification
+  return {
+    ...notification,
+    taskId: fragmentScopedId(ownerAgentId, notification.taskId),
+    toolUseId: fragmentScopedId(ownerAgentId, notification.toolUseId),
+  }
+}
+
+function taskNotificationFromEntry(
+  entry: Record<string, unknown>,
+  ownerAgentId?: string,
+): SessionTaskNotification | null {
+  const timestamp = stringValue(entry.timestamp)
+  if (entry.type === PERSISTED_TASK_NOTIFICATION_ENTRY_TYPE) {
+    const notification = objectValue(entry.taskNotification)
+    if (!notification) return null
+    const toolUseId = stringValue(notification.toolUseId)
+    const status = terminalTaskStatus(notification.status)
+    if (!toolUseId || !status) return null
+    const taskId = stringValue(notification.taskId) ?? toolUseId
+    const summary = stringValue(notification.summary)
+    const result = stringValue(notification.result)
+    const outputFile = stringValue(notification.outputFile)
+    const notificationTimestamp = stringValue(notification.timestamp) ?? timestamp
+    return projectFragmentTaskNotification({
+      taskId,
+      toolUseId,
+      status,
+      ...(summary ? { summary } : {}),
+      ...(result ? { result } : {}),
+      ...(outputFile ? { outputFile } : {}),
+      ...(notificationTimestamp ? { timestamp: notificationTimestamp } : {}),
+    }, ownerAgentId)
+  }
+
+  const message = objectValue(entry.message)
+  if (entry.type !== 'user' || message?.role !== 'user') return null
+  const xml = transcriptText(message.content).match(TASK_NOTIFICATION_BLOCK_RE)?.[0]
+  if (!xml) return null
+  const toolUseId = readXmlTag(xml, 'tool-use-id')
+  const status = terminalTaskStatus(readXmlTag(xml, 'status'))
+  if (!toolUseId || !status) return null
+  const taskId = readXmlTag(xml, 'task-id') ?? toolUseId
+  const summary = readXmlTag(xml, 'summary')
+  const result = readXmlTag(xml, 'result')
+  const outputFile = readXmlTag(xml, 'output-file')
+  return projectFragmentTaskNotification({
+    taskId,
+    toolUseId,
+    status,
+    ...(summary ? { summary } : {}),
+    ...(result ? { result } : {}),
+    ...(outputFile ? { outputFile } : {}),
+    ...(timestamp ? { timestamp } : {}),
+  }, ownerAgentId)
+}
+
 function timestampOrNow(value: string | undefined): string {
   if (value && Number.isFinite(Date.parse(value))) return value
   return new Date().toISOString()
@@ -214,8 +408,8 @@ function taskStatus(value: unknown): TaskInfo['status'] | undefined {
 
 function resultRecordsByToolUseId(
   messages: SessionMessageEntry[],
-): Map<string, Record<string, unknown>> {
-  const results = new Map<string, Record<string, unknown>>()
+): Map<string, { value: Record<string, unknown>; isError: boolean }> {
+  const results = new Map<string, { value: Record<string, unknown>; isError: boolean }>()
   for (const message of messages) {
     if (message.type !== 'tool_result') continue
     const blocks = Array.isArray(message.content) ? message.content : []
@@ -224,7 +418,11 @@ function resultRecordsByToolUseId(
       const toolUseId = stringValue(record?.tool_use_id)
       if (!toolUseId) continue
       const structured = objectValue(message.toolUseResult)
-      results.set(toolUseId, structured ?? record!)
+      const previous = results.get(toolUseId)
+      results.set(toolUseId, {
+        value: structured ?? record!,
+        isError: previous?.isError === true || record?.is_error === true,
+      })
     }
   }
   return results
@@ -331,9 +529,11 @@ export function projectTeamWorkbenchesFromTranscript(
       const name = stringValue(tool.name)
       const input = objectValue(tool.input) ?? {}
       if (!toolUseId || !name) continue
-      const result = results.get(toolUseId) ?? {}
+      const toolResult = results.get(toolUseId)
+      const result = toolResult?.value ?? {}
 
       if (name === 'TeamCreate') {
+        if (toolResult?.isError) continue
         const teamName = stringValue(input.team_name) ?? stringValue(result.team_name)
         if (!teamName) continue
         currentTeamName = teamName
@@ -368,6 +568,7 @@ export function projectTeamWorkbenchesFromTranscript(
       const team = teams.get(teamName)
       if (!team) continue
       team.updatedAt = timestamp
+      if (toolResult?.isError) continue
 
       if (name === 'TeamDelete') {
         team.deletedAt = timestamp
@@ -468,6 +669,7 @@ export function projectTeamWorkbenchesFromTranscript(
       name: team.name,
       description: team.description,
       createdAt: team.createdAt,
+      incarnationId: teamIncarnationId(team),
       memberCount: members.length,
       activeMemberCount: 0,
       leadAgentId: team.leadAgentId,
@@ -743,26 +945,57 @@ export class TeamService {
     let memberName: string | null = null
     let memberSessionId: string | undefined
     let leadSessionId = options.leadSessionId
+    let transcriptStartedAt: number | undefined
+    let transcriptEndedAt: number | undefined
 
     try {
       config = await this.loadTeamConfig(teamName)
+      const configIncarnationId = teamIncarnationId(config)
+      if (
+        options.incarnationId &&
+        options.incarnationId !== configIncarnationId
+      ) {
+        throw ApiError.notFound(
+          `Team incarnation not found: ${options.incarnationId}`,
+        )
+      }
       memberName = await this.resolveMemberName(config, teamName, agentId)
       const configMember = config.members.find((candidate) => candidate.agentId === agentId)
       memberSessionId = configMember?.sessionId
       leadSessionId = config.leadSessionId
+      transcriptStartedAt = config.createdAt
     } catch (error) {
       configError = error
       if (leadSessionId) {
         const archive = await this.readArchiveDocument(leadSessionId)
-        const archivedSnapshot = archive?.teams
-          .find((entry) => entry.teamName === teamName)
-          ?.snapshots.at(-1)
+        const archivedEntry = this.archiveEntryForTeam(
+          archive,
+          teamName,
+          options.incarnationId,
+        )
+        const archivedSnapshot = archivedEntry?.snapshots.at(-1)
         const archivedMember = archivedSnapshot?.team.members.find((candidate) => (
           candidate.agentId === agentId || candidate.name === agentId
         ))
         memberName = archivedMember?.name ?? null
         memberSessionId = archivedMember?.sessionId
         leadSessionId = archivedSnapshot?.team.leadSessionId ?? leadSessionId
+        transcriptStartedAt = archivedSnapshot?.team.createdAt
+        const deletedAt = archivedSnapshot?.deletedAt
+          ? Date.parse(archivedSnapshot.deletedAt)
+          : undefined
+        const nextIncarnationStartedAt = archive?.teams
+          .filter((entry) => entry.teamName === teamName)
+          .map((entry) => entry.snapshots.at(-1)?.team.createdAt)
+          .filter((createdAt): createdAt is number => (
+            Number.isFinite(createdAt) &&
+            Number.isFinite(transcriptStartedAt) &&
+            createdAt! > transcriptStartedAt!
+          ))
+          .sort((left, right) => left - right)[0]
+        transcriptEndedAt = [deletedAt, nextIncarnationStartedAt]
+          .filter((value): value is number => Number.isFinite(value))
+          .sort((left, right) => left - right)[0]
       }
     }
 
@@ -774,12 +1007,23 @@ export class TeamService {
     }
 
     let transcriptPath: string | null = null
+    let transcriptOwnerAgentId: string | undefined
 
     // Try config.json member with sessionId first. SessionService uses the
     // scalar session index for this lookup when it is ready.
     if (memberSessionId) {
       transcriptPath = (await this.sessionLocator.findSessionFile(memberSessionId))?.filePath ??
         await this.findTranscriptFile(memberSessionId)
+      if (
+        transcriptPath &&
+        !await this.transcriptBelongsToIncarnation(
+          transcriptPath,
+          transcriptStartedAt,
+          transcriptEndedAt,
+        )
+      ) {
+        transcriptPath = null
+      }
     }
 
     // Fallback: aggregate every in-process transcript fragment for this member.
@@ -790,25 +1034,68 @@ export class TeamService {
       const subagentPaths = await this.findSubagentTranscripts(
         leadSessionId,
         memberName,
+        transcriptStartedAt,
+        transcriptEndedAt,
       )
       if (subagentPaths.length === 1) {
         transcriptPath = subagentPaths[0] ?? null
+        transcriptOwnerAgentId = transcriptPath
+          ? physicalAgentIdFromTranscriptPath(transcriptPath)
+          : undefined
       } else if (subagentPaths.length > 1) {
-        return this.parseTranscriptFragmentsPage(subagentPaths, options)
+        return this.parseTranscriptFragmentsPage(
+          subagentPaths.map(filePath => ({
+            filePath,
+            ownerAgentId: physicalAgentIdFromTranscriptPath(filePath),
+          })),
+          options,
+        )
+      }
+    }
+
+    // Out-of-process teammates own root session JSONL files rather than lead
+    // subagent fragments. The incarnation time bounds this legacy identity
+    // lookup so a reused team/member name cannot select another run.
+    if (!transcriptPath && Number.isFinite(transcriptStartedAt)) {
+      const teammatePaths = await this.findTeammateSessionTranscripts(
+        teamName,
+        memberName,
+        transcriptStartedAt,
+        transcriptEndedAt,
+      )
+      if (teammatePaths.length === 1) {
+        transcriptPath = teammatePaths[0] ?? null
+      } else if (teammatePaths.length > 1) {
+        return this.parseTranscriptFragmentsPage(
+          teammatePaths.map(filePath => ({ filePath })),
+          options,
+        )
       }
     }
     if (!transcriptPath) {
       return {
         messages: [],
+        ownerAgentIds: [],
+        taskNotifications: [],
         signature: 'missing',
         cursor: encodeTranscriptCursor(cursorForBuffer(Buffer.alloc(0), null, 0, -1)),
         afterOrdinal: -1,
       }
     }
 
-    const indexed = await this.readIndexedTranscriptPage(transcriptPath, options)
+    const projection: TranscriptFragmentProjection = transcriptOwnerAgentId
+      ? {
+          ownerAgentId: transcriptOwnerAgentId,
+          ownerAgentIds: [transcriptOwnerAgentId],
+        }
+      : { ownerAgentIds: [] }
+    const indexed = await this.readIndexedTranscriptPage(
+      transcriptPath,
+      options,
+      projection,
+    )
     if (indexed) return indexed
-    return this.parseTranscriptFilePage(transcriptPath, options)
+    return this.parseTranscriptFilePage(transcriptPath, options, projection)
   }
 
   async sendMemberMessage(
@@ -886,33 +1173,30 @@ export class TeamService {
    */
   async getWorkbenchForSession(
     sessionId: string,
+    lookup: TeamWorkbenchSessionLookup = {},
   ): Promise<TeamWorkbenchSessionTimeline | null> {
     const liveTeams = await this.listTeams()
+    const liveIncarnations = new Set<string>()
     for (const summary of liveTeams) {
       try {
         const team = await this.getTeam(summary.name)
         if (team.leadSessionId !== sessionId) continue
-        await this.getWorkbench(team.name)
-        const entry = this.latestArchiveEntry(await this.readArchiveDocument(sessionId))
-        if (!entry) return null
-        return {
-          sessionId,
-          teamName: entry.teamName,
-          snapshots: entry.snapshots,
-          source: 'live',
-        }
+        const snapshot = await this.getWorkbench(team.name)
+        liveIncarnations.add(snapshot.team.incarnationId)
       } catch {
         // Another CLI process can remove a team between list and detail reads.
       }
     }
 
-    const archived = this.latestArchiveEntry(await this.readArchiveDocument(sessionId))
+    let archive = await this.readArchiveDocument(sessionId)
+    let archived = this.archiveEntryForLookup(archive, lookup)
     if (archived) {
       return {
         sessionId,
         teamName: archived.teamName,
+        incarnationId: archived.incarnationId,
         snapshots: archived.snapshots,
-        source: 'archive',
+        source: liveIncarnations.has(archived.incarnationId) ? 'live' : 'archive',
       }
     }
 
@@ -926,37 +1210,49 @@ export class TeamService {
     for (const snapshot of projected) {
       await this.archiveWorkbenchSnapshot(snapshot)
     }
-    const migrated = this.latestArchiveEntry(await this.readArchiveDocument(sessionId))
+    archive = await this.readArchiveDocument(sessionId)
+    const migrated = this.archiveEntryForLookup(archive, lookup)
     if (!migrated) return null
     return {
       sessionId,
       teamName: migrated.teamName,
+      incarnationId: migrated.incarnationId,
       snapshots: migrated.snapshots,
       source: 'transcript',
     }
   }
 
   async archiveWorkbenchSnapshot(snapshot: TeamWorkbenchSnapshot): Promise<void> {
-    const sessionId = snapshot.team.leadSessionId
+    const normalizedSnapshot: TeamWorkbenchSnapshot = {
+      ...snapshot,
+      team: {
+        ...snapshot.team,
+        incarnationId: snapshot.team.incarnationId || teamIncarnationId(snapshot.team),
+      },
+    }
+    const sessionId = normalizedSnapshot.team.leadSessionId
     if (!sessionId) return
+    const incarnationId = normalizedSnapshot.team.incarnationId
     const filePath = this.getWorkbenchArchivePath(sessionId)
     await this.withArchiveWriteLock(filePath, async () => {
       const current = await this.readArchiveDocument(sessionId) ?? {
         schemaVersion: TEAM_WORKBENCH_ARCHIVE_SCHEMA_VERSION,
         sessionId,
-        updatedAt: snapshot.generatedAt,
+        updatedAt: normalizedSnapshot.generatedAt,
         teams: [],
       }
       const teams = [...current.teams]
-      const index = teams.findIndex((entry) => entry.teamName === snapshot.team.name)
+      const index = teams.findIndex((entry) => entry.incarnationId === incarnationId)
       const existing = index >= 0 ? teams[index] : undefined
-      const snapshots = existing?.snapshots.at(-1)?.version === snapshot.version
+      const snapshots = existing?.snapshots.at(-1)?.version === normalizedSnapshot.version
         ? existing.snapshots
-        : [...(existing?.snapshots ?? []), snapshot].slice(-TEAM_WORKBENCH_ARCHIVE_HISTORY_LIMIT)
+        : [...(existing?.snapshots ?? []), normalizedSnapshot]
+            .slice(-TEAM_WORKBENCH_ARCHIVE_HISTORY_LIMIT)
       const nextEntry: TeamWorkbenchArchiveEntry = {
         ...(existing ?? {}),
-        teamName: snapshot.team.name,
-        updatedAt: snapshot.generatedAt,
+        teamName: normalizedSnapshot.team.name,
+        incarnationId,
+        updatedAt: normalizedSnapshot.generatedAt,
         snapshots,
       }
       if (index >= 0) teams[index] = nextEntry
@@ -965,7 +1261,7 @@ export class TeamService {
         ...current,
         schemaVersion: TEAM_WORKBENCH_ARCHIVE_SCHEMA_VERSION,
         sessionId,
-        updatedAt: snapshot.generatedAt,
+        updatedAt: normalizedSnapshot.generatedAt,
         teams,
       })
     })
@@ -974,10 +1270,11 @@ export class TeamService {
   async markWorkbenchArchiveDeleted(
     teamName: string,
     sessionId: string | undefined,
+    incarnationId?: string,
   ): Promise<void> {
     if (!sessionId) return
     const document = await this.readArchiveDocument(sessionId)
-    const entry = document?.teams.find((candidate) => candidate.teamName === teamName)
+    const entry = this.archiveEntryForTeam(document, teamName, incarnationId)
     const latest = entry?.snapshots.at(-1)
     if (!latest || latest.deletedAt) return
     const deletedAt = new Date().toISOString()
@@ -1004,9 +1301,78 @@ export class TeamService {
     return [...document.teams]
       .filter((entry) => entry.snapshots.length > 0)
       .sort((left, right) => (
+        this.archiveEntryCreatedAt(right) - this.archiveEntryCreatedAt(left) ||
         Date.parse(right.updatedAt) - Date.parse(left.updatedAt) ||
         right.teamName.localeCompare(left.teamName)
       ))[0] ?? null
+  }
+
+  private archiveEntryForTeam(
+    document: TeamWorkbenchArchiveDocument | null,
+    teamName: string,
+    incarnationId?: string,
+  ): TeamWorkbenchArchiveEntry | null {
+    if (!document) return null
+    if (incarnationId) {
+      return document.teams.find((entry) => (
+        entry.teamName === teamName && entry.incarnationId === incarnationId
+      )) ?? null
+    }
+    return [...document.teams]
+      .filter((entry) => entry.teamName === teamName && entry.snapshots.length > 0)
+      .sort((left, right) => (
+        this.archiveEntryCreatedAt(right) - this.archiveEntryCreatedAt(left) ||
+        Date.parse(right.updatedAt) - Date.parse(left.updatedAt)
+      ))[0] ?? null
+  }
+
+  private archiveEntryForLookup(
+    document: TeamWorkbenchArchiveDocument | null,
+    lookup: TeamWorkbenchSessionLookup,
+  ): TeamWorkbenchArchiveEntry | null {
+    if (!document) return null
+    if (lookup.incarnationId) {
+      return document.teams.find((entry) => (
+        entry.incarnationId === lookup.incarnationId &&
+        (!lookup.teamName || entry.teamName === lookup.teamName) &&
+        entry.snapshots.length > 0
+      )) ?? null
+    }
+
+    let candidates = document.teams.filter((entry) => (
+      entry.snapshots.length > 0 &&
+      (!lookup.teamName || entry.teamName === lookup.teamName)
+    ))
+    if (lookup.at !== undefined && Number.isFinite(lookup.at)) {
+      candidates = candidates.filter((entry) => {
+        const startedAt = this.archiveEntryCreatedAt(entry)
+        const deletedAt = entry.snapshots.at(-1)?.deletedAt
+          ? Date.parse(entry.snapshots.at(-1)!.deletedAt!)
+          : Number.POSITIVE_INFINITY
+        const nextStartedAt = document.teams
+          .filter((candidate) => (
+            candidate.teamName === entry.teamName &&
+            candidate.incarnationId !== entry.incarnationId
+          ))
+          .map(candidate => this.archiveEntryCreatedAt(candidate))
+          .filter(candidateStartedAt => candidateStartedAt > startedAt)
+          .sort((left, right) => left - right)[0] ?? Number.POSITIVE_INFINITY
+        const endedAt = Math.min(
+          Number.isFinite(deletedAt) ? deletedAt : Number.POSITIVE_INFINITY,
+          nextStartedAt,
+        )
+        return startedAt <= lookup.at! && lookup.at! < endedAt
+      })
+    }
+    return [...candidates].sort((left, right) => (
+      this.archiveEntryCreatedAt(right) - this.archiveEntryCreatedAt(left) ||
+      Date.parse(right.updatedAt) - Date.parse(left.updatedAt)
+    ))[0] ?? null
+  }
+
+  private archiveEntryCreatedAt(entry: TeamWorkbenchArchiveEntry): number {
+    const createdAt = entry.snapshots.at(-1)?.team.createdAt
+    return Number.isFinite(createdAt) ? createdAt! : 0
   }
 
   private async readArchiveDocument(
@@ -1021,25 +1387,54 @@ export class TeamService {
         raw.sessionId !== sessionId ||
         !Array.isArray(raw.teams)
       ) return null
-      const teams = raw.teams.flatMap((value) => {
+      const groupedTeams = new Map<string, TeamWorkbenchArchiveEntry>()
+      for (const value of raw.teams) {
         const entry = objectValue(value)
         const teamName = stringValue(entry?.teamName)
         const updatedAt = stringValue(entry?.updatedAt)
-        const snapshots = Array.isArray(entry?.snapshots)
-          ? entry.snapshots.filter((snapshot): snapshot is TeamWorkbenchSnapshot => {
-            const record = objectValue(snapshot)
-            return Boolean(
-              stringValue(record?.version) &&
-              stringValue(record?.generatedAt) &&
-              objectValue(record?.team) &&
-              Array.isArray(record?.tasks) &&
-              Array.isArray(record?.messages),
-            )
+        if (!entry || !teamName || !updatedAt || !Array.isArray(entry.snapshots)) continue
+
+        for (const snapshotValue of entry.snapshots) {
+          const record = objectValue(snapshotValue)
+          const teamRecord = objectValue(record?.team)
+          if (
+            !record ||
+            !teamRecord ||
+            !stringValue(record.version) ||
+            !stringValue(record.generatedAt) ||
+            !Array.isArray(record.tasks) ||
+            !Array.isArray(record.messages)
+          ) continue
+          const createdAt = typeof teamRecord.createdAt === 'number'
+            ? teamRecord.createdAt
+            : Number(teamRecord.createdAt)
+          const incarnationId = stringValue(teamRecord.incarnationId) ?? teamIncarnationId({
+            name: stringValue(teamRecord.name) ?? teamName,
+            createdAt: Number.isFinite(createdAt) ? createdAt : 0,
+            leadSessionId: stringValue(teamRecord.leadSessionId),
           })
-          : []
-        if (!entry || !teamName || !updatedAt || snapshots.length === 0) return []
-        return [{ ...entry, teamName, updatedAt, snapshots } as TeamWorkbenchArchiveEntry]
-      })
+          const snapshot = {
+            ...record,
+            team: {
+              ...teamRecord,
+              incarnationId,
+            },
+          } as TeamWorkbenchSnapshot
+          const key = `${teamName}\u0000${incarnationId}`
+          const existing = groupedTeams.get(key)
+          const snapshots = existing?.snapshots.at(-1)?.version === snapshot.version
+            ? existing.snapshots
+            : [...(existing?.snapshots ?? []), snapshot]
+          groupedTeams.set(key, {
+            ...(existing ?? entry),
+            teamName,
+            incarnationId,
+            updatedAt: snapshot.generatedAt,
+            snapshots,
+          })
+        }
+      }
+      const teams = [...groupedTeams.values()]
       return {
         ...raw,
         schemaVersion: TEAM_WORKBENCH_ARCHIVE_SCHEMA_VERSION,
@@ -1098,7 +1493,11 @@ export class TeamService {
     }
 
     await this.getWorkbench(name)
-    await this.markWorkbenchArchiveDeleted(name, config.leadSessionId)
+    await this.markWorkbenchArchiveDeleted(
+      name,
+      config.leadSessionId,
+      teamIncarnationId(config),
+    )
     const teamDir = path.join(this.getTeamsDir(), name)
     await fs.rm(teamDir, { recursive: true, force: true })
   }
@@ -1273,6 +1672,7 @@ export class TeamService {
       name: config.name,
       description: config.description,
       createdAt: config.createdAt,
+      incarnationId: teamIncarnationId(config),
       memberCount: config.members.length,
       activeMemberCount,
     }
@@ -1400,6 +1800,8 @@ export class TeamService {
   private async findSubagentTranscripts(
     leadSessionId: string,
     memberName: string,
+    startedAt?: number,
+    endedAt?: number,
   ): Promise<string[]> {
     const projectsDir = this.getProjectsDir()
 
@@ -1444,6 +1846,9 @@ export class TeamService {
             metadataName === memberName ||
             structuredName === memberName
           ) {
+            if (!await this.transcriptBelongsToIncarnation(filePath, startedAt, endedAt)) {
+              continue
+            }
             const stat = await fs.stat(filePath)
             matches.push({ path: filePath, mtime: stat.mtimeMs })
           }
@@ -1460,6 +1865,114 @@ export class TeamService {
     }
 
     return []
+  }
+
+  private async findTeammateSessionTranscripts(
+    teamName: string,
+    memberName: string,
+    startedAt?: number,
+    endedAt?: number,
+  ): Promise<string[]> {
+    const projectsDir = this.getProjectsDir()
+    const readDirectoryEntries = async (directory: string) => {
+      try {
+        return await fs.readdir(directory, { withFileTypes: true })
+      } catch {
+        return []
+      }
+    }
+    const projectEntries = await readDirectoryEntries(projectsDir)
+    if (projectEntries.length === 0) return []
+
+    const matches: Array<{ path: string; mtime: number }> = []
+    for (const projectEntry of projectEntries) {
+      if (!projectEntry.isDirectory()) continue
+      const projectDir = path.join(projectsDir, projectEntry.name)
+      const transcriptEntries = await readDirectoryEntries(projectDir)
+
+      for (const transcriptEntry of transcriptEntries) {
+        if (!transcriptEntry.isFile() || !transcriptEntry.name.endsWith('.jsonl')) continue
+        const filePath = path.join(projectDir, transcriptEntry.name)
+        const identity = await this.extractTeammateSessionIdentity(filePath)
+        if (identity?.teamName !== teamName || identity.agentName !== memberName) continue
+        if (!await this.transcriptBelongsToIncarnation(filePath, startedAt, endedAt)) continue
+        try {
+          const stat = await fs.stat(filePath)
+          matches.push({ path: filePath, mtime: stat.mtimeMs })
+        } catch {
+          // The session may disappear while a completed team is being opened.
+        }
+      }
+    }
+
+    return matches
+      .sort((left, right) => left.mtime - right.mtime || left.path.localeCompare(right.path))
+      .map((match) => match.path)
+  }
+
+  /**
+   * Legacy teammate transcripts persist only the mutable team name. Their
+   * first durable timestamp is the strongest available incarnation boundary:
+   * a late write to an old file must not make that file part of a recreated
+   * team merely because its mtime is new.
+   */
+  private async transcriptBelongsToIncarnation(
+    filePath: string,
+    startedAt?: number,
+    endedAt?: number,
+  ): Promise<boolean> {
+    if (!Number.isFinite(startedAt)) return true
+    let firstTimestamp: number | undefined
+    try {
+      const head = await this.readTranscriptHead(filePath)
+      for (const line of head.split('\n')) {
+        if (!line.trim()) continue
+        try {
+          const entry = JSON.parse(line) as Record<string, unknown>
+          const parsed = typeof entry.timestamp === 'string'
+            ? Date.parse(entry.timestamp)
+            : Number.NaN
+          if (Number.isFinite(parsed)) {
+            firstTimestamp = parsed
+            break
+          }
+        } catch {
+          // Ignore a partial bounded-preview line.
+        }
+      }
+      if (firstTimestamp === undefined) {
+        const stat = await fs.stat(filePath)
+        firstTimestamp = stat.birthtimeMs || stat.ctimeMs
+      }
+    } catch {
+      return false
+    }
+
+    return firstTimestamp >= startedAt! && (
+      !Number.isFinite(endedAt) || firstTimestamp < endedAt!
+    )
+  }
+
+  private async extractTeammateSessionIdentity(
+    filePath: string,
+  ): Promise<{ teamName: string; agentName: string } | null> {
+    try {
+      const head = await this.readTranscriptHead(filePath)
+      for (const line of head.split('\n')) {
+        if (!line.trim()) continue
+        try {
+          const entry = JSON.parse(line) as Record<string, unknown>
+          const teamName = stringValue(entry.teamName)
+          const agentName = stringValue(entry.agentName)
+          if (teamName && agentName) return { teamName, agentName }
+        } catch {
+          // Ignore a partial final line in the bounded preview window.
+        }
+      }
+      return null
+    } catch {
+      return null
+    }
   }
 
   private async extractSubagentMetadataName(filePath: string): Promise<string | null> {
@@ -1517,6 +2030,7 @@ export class TeamService {
 
   private transcriptMessageFromEntry(
     entry: Record<string, unknown>,
+    ownerAgentId?: string,
   ): TranscriptMessage | null {
     const entryType = entry.type as string | undefined
     if (!entryType || !MESSAGE_ENTRY_TYPES.has(entryType) || entry.isMeta) return null
@@ -1531,7 +2045,7 @@ export class TeamService {
       : typeof message?.model === 'string'
         ? message.model
         : undefined
-    return {
+    const transcriptMessage: TranscriptMessage = {
       id: (entry.uuid as string) || crypto.randomUUID(),
       type: entryType as TranscriptMessage['type'],
       content,
@@ -1541,6 +2055,28 @@ export class TeamService {
         : {}),
       ...(model ? { model } : {}),
       ...(entry.toolUseResult !== undefined ? { toolUseResult: entry.toolUseResult } : {}),
+    }
+    if (!ownerAgentId) return transcriptMessage
+    return {
+      ...transcriptMessage,
+      id: fragmentScopedId(ownerAgentId, transcriptMessage.id),
+      content: projectFragmentContent(transcriptMessage.content, ownerAgentId),
+      ...(transcriptMessage.parentToolUseId
+        ? {
+            parentToolUseId: fragmentScopedId(
+              ownerAgentId,
+              transcriptMessage.parentToolUseId,
+            ),
+          }
+        : {}),
+      ...(transcriptMessage.toolUseResult !== undefined
+        ? {
+            toolUseResult: projectFragmentToolUseResult(
+              transcriptMessage.toolUseResult,
+              ownerAgentId,
+            ),
+          }
+        : {}),
     }
   }
 
@@ -1579,6 +2115,7 @@ export class TeamService {
   private async readIndexedTranscriptPage(
     filePath: string,
     options: TeamTranscriptPageOptions,
+    projection: TranscriptFragmentProjection = {},
   ): Promise<TeamTranscriptPage | null> {
     try {
       if (
@@ -1647,7 +2184,10 @@ export class TeamService {
       }
 
       const selected = page.entries.filter(locator =>
-        locator.ordinal > afterOrdinal && MESSAGE_ENTRY_TYPES.has(locator.entryType),
+        locator.ordinal > afterOrdinal && (
+          MESSAGE_ENTRY_TYPES.has(locator.entryType) ||
+          locator.entryType === PERSISTED_TASK_NOTIFICATION_ENTRY_TYPE
+        ),
       )
       const result = await this.targetedEntryReader({
         transcriptPath: filePath,
@@ -1660,8 +2200,13 @@ export class TeamService {
       if (!sameTranscriptFileSnapshot(currentStat, statAfterRead)) return null
 
       const messages = result.entries
-        .map(entry => this.transcriptMessageFromEntry(entry))
+        .map(entry => this.transcriptMessageFromEntry(entry, projection.ownerAgentId))
         .filter((message): message is TranscriptMessage => message !== null)
+      const taskNotifications = new Map<string, SessionTaskNotification>()
+      for (const entry of result.entries) {
+        const notification = taskNotificationFromEntry(entry, projection.ownerAgentId)
+        if (notification) taskNotifications.set(notification.toolUseId, notification)
+      }
       const cursor = encodeTranscriptCursor({
         version: 2,
         size: fingerprint.size,
@@ -1673,6 +2218,8 @@ export class TeamService {
       })
       return {
         messages,
+        ownerAgentIds: projection.ownerAgentIds ?? [],
+        taskNotifications: [...taskNotifications.values()],
         signature,
         cursor,
         afterOrdinal: currentAfterOrdinal,
@@ -1687,6 +2234,7 @@ export class TeamService {
   private async parseTranscriptFilePage(
     filePath: string,
     options: TeamTranscriptPageOptions,
+    projection: TranscriptFragmentProjection = {},
   ): Promise<TeamTranscriptPage> {
     const bytes = await fs.readFile(filePath)
     const stat = await fs.stat(filePath)
@@ -1695,20 +2243,33 @@ export class TeamService {
       options,
       stat.ctimeMs,
       this.fileIdentity(stat),
+      projection,
     )
   }
 
   private async parseTranscriptFragmentsPage(
-    filePaths: string[],
+    sources: Array<{ filePath: string; ownerAgentId?: string }>,
     options: TeamTranscriptPageOptions,
   ): Promise<TeamTranscriptPage> {
-    const fragments = await Promise.all(filePaths.map(async filePath => {
+    const fragments = await Promise.all(sources.map(async source => {
       const [bytes, stat] = await Promise.all([
-        fs.readFile(filePath),
-        fs.stat(filePath),
+        fs.readFile(source.filePath),
+        fs.stat(source.filePath),
       ])
-      return { bytes, ctimeMs: stat.ctimeMs }
+      return { ...source, bytes, ctimeMs: stat.ctimeMs }
     }))
+    const ownerAgentIdByOrdinal: Array<string | undefined> = []
+    for (const fragment of fragments) {
+      for (const line of fragment.bytes.toString('utf8').split('\n')) {
+        if (!line.trim()) continue
+        try {
+          JSON.parse(line)
+          ownerAgentIdByOrdinal.push(fragment.ownerAgentId)
+        } catch {
+          // Keep this aligned with parseTranscriptBufferPage's ordinal rules.
+        }
+      }
+    }
     const bytes = Buffer.concat(fragments.flatMap((fragment, index) => (
       index === fragments.length - 1
         ? [fragment.bytes]
@@ -1719,6 +2280,12 @@ export class TeamService {
       options,
       Math.max(0, ...fragments.map(fragment => fragment.ctimeMs)),
       null,
+      {
+        ownerAgentIdByOrdinal,
+        ownerAgentIds: [...new Set(fragments
+          .map(fragment => fragment.ownerAgentId)
+          .filter((ownerAgentId): ownerAgentId is string => Boolean(ownerAgentId)))],
+      },
     )
   }
 
@@ -1727,16 +2294,30 @@ export class TeamService {
     options: TeamTranscriptPageOptions,
     ctimeMs: number,
     identity: string | null,
+    projection: TranscriptFragmentProjection = {},
   ): TeamTranscriptPage {
-    const entries: Array<{ ordinal: number; message: TranscriptMessage }> = []
+    const entries: Array<{
+      ordinal: number
+      message?: TranscriptMessage
+      taskNotification?: SessionTaskNotification
+    }> = []
     let ordinal = -1
     for (const line of bytes.toString('utf8').split('\n')) {
       if (!line.trim()) continue
       try {
         const entry = JSON.parse(line) as Record<string, unknown>
         ordinal += 1
-        const message = this.transcriptMessageFromEntry(entry)
-        if (message) entries.push({ ordinal, message })
+        const ownerAgentId = projection.ownerAgentIdByOrdinal?.[ordinal] ??
+          projection.ownerAgentId
+        const message = this.transcriptMessageFromEntry(entry, ownerAgentId)
+        const taskNotification = taskNotificationFromEntry(entry, ownerAgentId)
+        if (message || taskNotification) {
+          entries.push({
+            ordinal,
+            ...(message ? { message } : {}),
+            ...(taskNotification ? { taskNotification } : {}),
+          })
+        }
       } catch {
         // Skip unparseable lines
       }
@@ -1792,8 +2373,20 @@ export class TeamService {
     ))
     return {
       messages: entries
-        .filter(entry => entry.ordinal > afterOrdinal)
+        .filter((entry): entry is typeof entry & { message: TranscriptMessage } => (
+          entry.ordinal > afterOrdinal && entry.message !== undefined
+        ))
         .map(entry => entry.message),
+      ownerAgentIds: projection.ownerAgentIds ?? [],
+      taskNotifications: [...entries
+        .filter((entry): entry is typeof entry & { taskNotification: SessionTaskNotification } => (
+          entry.ordinal > afterOrdinal && entry.taskNotification !== undefined
+        ))
+        .reduce((notifications, entry) => {
+          notifications.set(entry.taskNotification.toolUseId, entry.taskNotification)
+          return notifications
+        }, new Map<string, SessionTaskNotification>())
+        .values()],
       signature,
       cursor,
       afterOrdinal: currentAfterOrdinal,

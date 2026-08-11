@@ -1752,10 +1752,29 @@ describe('Agents API built-in overrides', () => {
     expect('builtInAgentOverrides' in (await readUserSettings())).toBe(false)
   })
 
-  it('reloads the running CLI session once per override write', async () => {
-    // The loader caches agent definitions per session, so writing the file is
-    // only half the job — without the reload the session keeps the old model.
+  it('applies override and reset to the same running session across a failed reload retry', async () => {
+    const shipped = (await getAgent('Explore')).defaults
+    await writeUserSettings({
+      futureSetting: { keep: true },
+      builtInAgentOverrides: {
+        Plan: { model: 'opus', futurePlanField: 'keep-plan' },
+        Explore: { effort: 'high', futureAgentField: 'keep-explore' },
+      },
+    })
+
+    let appState = {
+      plugins: {
+        enabled: [],
+        disabled: [],
+        commands: [],
+        errors: [],
+        needsRefresh: true,
+      },
+      mcp: { pluginReconnectKey: 0 },
+      agentDefinitions: { activeAgents: [], allAgents: [] },
+    } as unknown as AppState
     const controlRequests: Array<Record<string, unknown>> = []
+    let failNextReload = true
     conversationService.hasSession = ((sessionId: string) =>
       sessionId === 'session-override') as typeof conversationService.hasSession
     conversationService.requestControl = (async (
@@ -1763,21 +1782,99 @@ describe('Agents API built-in overrides', () => {
       request: Record<string, unknown>,
     ) => {
       controlRequests.push(request)
-      return { commands: [], agents: [], plugins: [], mcpServers: [] }
+      if (failNextReload) {
+        failNextReload = false
+        throw new Error('CLI control channel closed')
+      }
+
+      const result = await refreshActivePlugins(updater => {
+        appState = updater(appState)
+      })
+      return {
+        commands: [],
+        agents: result.agentDefinitions.allAgents.map(agent => ({
+          name: agent.agentType,
+          model: agent.model === 'inherit' ? undefined : agent.model,
+        })),
+        plugins: [],
+        mcpServers: [],
+        error_count: result.error_count,
+      }
     }) as typeof conversationService.requestControl
 
-    await api('PUT', '/api/agents/Explore/override', {
+    const saved = await api('PUT', '/api/agents/Explore/override', {
       cwd: projectCwd,
-      model: 'sonnet',
+      model: 'deepseek-v4-pro',
     })
-    const reload = await api(
+    expect(saved.status).toBe(200)
+    expect(saved.data.agent.model).toBe('deepseek-v4-pro')
+
+    const failedReload = await api(
+      'POST',
+      '/api/agents/reload?sessionId=session-override',
+    )
+    expect(failedReload.data.session).toMatchObject({
+      applied: false,
+      reason: 'failed',
+      error: 'CLI control channel closed',
+    })
+
+    const retriedReload = await api(
       'POST',
       '/api/agents/reload?sessionId=session-override',
     )
 
-    expect(reload.status).toBe(200)
-    expect(reload.data.session.applied).toBe(true)
-    expect(controlRequests).toEqual([{ subtype: 'reload_plugins' }])
+    expect(retriedReload.status).toBe(200)
+    expect(retriedReload.data.session.applied).toBe(true)
+    expect(
+      appState.agentDefinitions.activeAgents.find(
+        agent => agent.agentType === 'Explore',
+      ),
+    ).toMatchObject({ model: 'deepseek-v4-pro', effort: 'high' })
+    expect(await readUserSettings()).toMatchObject({
+      futureSetting: { keep: true },
+      builtInAgentOverrides: {
+        Plan: { model: 'opus', futurePlanField: 'keep-plan' },
+        Explore: {
+          model: 'deepseek-v4-pro',
+          effort: 'high',
+          futureAgentField: 'keep-explore',
+        },
+      },
+    })
+
+    const reset = await api(
+      'DELETE',
+      `/api/agents/Explore/override?cwd=${encodeURIComponent(projectCwd)}`,
+    )
+    expect(reset.status).toBe(200)
+    expect(reset.data.agent.model).toBe(shipped.model)
+    expect(reset.data.agent.effort).toBe(shipped.effort)
+
+    const resetReload = await api(
+      'POST',
+      '/api/agents/reload?sessionId=session-override',
+    )
+
+    expect(resetReload.data.session.applied).toBe(true)
+    const resetExplore = appState.agentDefinitions.activeAgents.find(
+      agent => agent.agentType === 'Explore',
+    )
+    expect(resetExplore?.model).toBe(shipped.model)
+    expect(resetExplore?.effort).toBe(shipped.effort)
+    expect(await readUserSettings()).toEqual({
+      futureSetting: { keep: true },
+      builtInAgentOverrides: {
+        Plan: { model: 'opus', futurePlanField: 'keep-plan' },
+        Explore: { futureAgentField: 'keep-explore' },
+      },
+    })
+
+    expect(controlRequests).toEqual([
+      { subtype: 'reload_plugins' },
+      { subtype: 'reload_plugins' },
+      { subtype: 'reload_plugins' },
+    ])
   })
 })
 

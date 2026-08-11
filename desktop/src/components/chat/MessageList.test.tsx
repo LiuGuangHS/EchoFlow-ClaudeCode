@@ -5240,7 +5240,7 @@ describe('MessageList nested tool calls', () => {
     expect(assistantActions?.className).not.toContain('pointer-events-none')
   })
 
-  describe('turn completion stamp (#1151)', () => {
+  describe('turn completion footer (#1151)', () => {
     const T0 = new Date('2026-07-30T07:08:22Z').getTime()
     const MINUTE = 60_000
 
@@ -5266,7 +5266,7 @@ describe('MessageList nested tool calls', () => {
       return shellFor(text)?.querySelector('[data-turn-completion]') as HTMLElement | null
     }
 
-    it('closes a finished turn with its end time and duration, without hovering', () => {
+    it('keeps actions, end time, and duration in one visible row', () => {
       useChatStore.setState({
         sessions: { [ACTIVE_TAB]: makeSessionState({ messages: turnMessages() }) },
       })
@@ -5274,12 +5274,15 @@ describe('MessageList nested tool calls', () => {
       render(<MessageList />)
 
       const stamp = stampFor('第二轮跑了很久才答完。')
-      expect(stamp?.textContent).toContain(`Done ${formatMessageHoverTime(T0 + 14 * MINUTE + 19_000, 'en')}`)
+      expect(stamp?.textContent).toContain(formatMessageHoverTime(T0 + 14 * MINUTE + 19_000, 'en'))
       expect(stamp?.textContent).toContain('took 12m 19s')
-      // The stamp is the one piece that must survive without a pointer: it sits
-      // outside the hover-gated action bar.
-      expect(stamp?.closest('[data-message-actions]')).toBeNull()
-      expect(stamp?.className).not.toContain('opacity-0')
+      const footer = stamp?.closest('[data-message-actions]')
+      expect(footer).toBe(
+        within(shellFor('第二轮跑了很久才答完。') as HTMLElement)
+          .getByRole('button', { name: 'Copy reply' })
+          .closest('[data-message-actions]'),
+      )
+      expect(footer?.className).not.toContain('opacity-0')
     })
 
     it('measures each turn from its own prompt', () => {
@@ -5292,7 +5295,7 @@ describe('MessageList nested tool calls', () => {
       expect(stampFor('先答第一轮。')?.textContent).toContain('took 30s')
     })
 
-    it('drops the hover timestamp on a stamped reply so the time is not printed twice', () => {
+    it('prints the completion time only once in the combined footer', () => {
       useChatStore.setState({
         sessions: { [ACTIVE_TAB]: makeSessionState({ messages: turnMessages() }) },
       })
@@ -5302,8 +5305,8 @@ describe('MessageList nested tool calls', () => {
       const closing = shellFor('第二轮跑了很久才答完。')
       expect(closing?.querySelector('[data-turn-completion]')).not.toBeNull()
       expect(
-        within(closing as HTMLElement).queryByText(formatMessageHoverTime(T0 + 14 * MINUTE + 19_000, 'en')),
-      ).toBeNull()
+        within(closing as HTMLElement).getAllByText(formatMessageHoverTime(T0 + 14 * MINUTE + 19_000, 'en')),
+      ).toHaveLength(1)
     })
 
     it('leaves prompts and mid-turn replies on the hover-only timestamp', () => {
@@ -5355,7 +5358,9 @@ describe('MessageList nested tool calls', () => {
       render(<MessageList />)
 
       expect(stampFor('第二轮跑了很久才答完。')).toBeNull()
-      expect(stampFor('先答第一轮。')?.textContent).toContain('Done')
+      expect(stampFor('先答第一轮。')?.textContent).toContain(
+        formatMessageHoverTime(T0 + 30_000, 'en'),
+      )
     })
   })
 
@@ -6494,6 +6499,122 @@ describe('MessageList nested tool calls', () => {
       })
     })
     expect(reloadHistory).toHaveBeenCalledWith(ACTIVE_TAB)
+  })
+
+  it('keeps Bash-only undo reachable when the completed turn has no checkpointed files', async () => {
+    vi.spyOn(sessionsApi, 'getTurnCheckpoints').mockResolvedValue({
+      checkpoints: [
+        {
+          target: {
+            targetUserMessageId: 'transcript-user-1',
+            userMessageIndex: 0,
+            userMessageCount: 1,
+          },
+          code: {
+            available: true,
+            filesChanged: [],
+            insertions: 0,
+            deletions: 0,
+          },
+          restoreAvailable: true,
+          unverifiedChangeSources: ['Bash'],
+        },
+      ],
+    })
+    const rewind = vi.spyOn(sessionsApi, 'rewind').mockResolvedValue({
+      target: {
+        targetUserMessageId: 'transcript-user-1',
+        userMessageIndex: 0,
+        userMessageCount: 1,
+      },
+      conversation: {
+        messagesRemoved: 4,
+        removedMessageIds: [
+          'transcript-user-1',
+          'transcript-tool-1',
+          'transcript-result-1',
+          'transcript-assistant-1',
+        ],
+      },
+      code: {
+        available: true,
+        filesChanged: [],
+        insertions: 0,
+        deletions: 0,
+      },
+      restoreAvailable: true,
+      unverifiedChangeSources: ['Bash'],
+      mode: 'both',
+    })
+    vi.spyOn(sessionsApi, 'getMessages').mockResolvedValue({ messages: [] })
+
+    render(<MessageList />)
+
+    // Drive the first turn through the same store actions and server events as
+    // a live Bash-only response. The bug sits at the transition from this
+    // completed turn to the checkpoint card, so assigning final messages would
+    // make the regression self-consistent by construction.
+    const store = useChatStore.getState()
+    act(() => {
+      store.sendMessage(ACTIVE_TAB, 'write only with Bash')
+      store.handleServerMessage(ACTIVE_TAB, {
+        type: 'content_start',
+        blockType: 'tool_use',
+        toolName: 'Bash',
+        toolUseId: 'bash-only-1',
+      })
+      store.handleServerMessage(ACTIVE_TAB, {
+        type: 'tool_use_complete',
+        toolName: 'Bash',
+        toolUseId: 'bash-only-1',
+        input: { command: "printf 'bash-only\\n' > qa/rewind-bash-only.txt" },
+      })
+      store.handleServerMessage(ACTIVE_TAB, {
+        type: 'tool_result',
+        toolUseId: 'bash-only-1',
+        content: '',
+        isError: false,
+      })
+      store.handleServerMessage(ACTIVE_TAB, {
+        type: 'content_start',
+        blockType: 'text',
+      })
+      store.handleServerMessage(ACTIVE_TAB, {
+        type: 'content_delta',
+        text: 'BASH_ONLY_DONE',
+      })
+      store.handleServerMessage(ACTIVE_TAB, { type: 'status', state: 'idle' })
+    })
+
+    const undoButton = await screen.findByRole('button', { name: 'Undo current turn changes' })
+    expect((undoButton as HTMLButtonElement).disabled).toBe(false)
+    expect(screen.getByText(
+      'Undo restores the files above; changes from Bash were not checkpointed and will remain',
+    )).toBeTruthy()
+
+    fireEvent.click(undoButton)
+    const dialog = await screen.findByRole('dialog', { name: 'Undo current turn?' })
+    expect(within(dialog).getByText(
+      'Note: file changes made by Bash were not checkpointed, so undo will not revert them.',
+    )).toBeTruthy()
+    expect((
+      within(dialog).getByRole('button', { name: 'Roll back conversation only' }) as HTMLButtonElement
+    ).disabled).toBe(false)
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Undo current turn' }))
+
+    await waitFor(() => {
+      expect(rewind).toHaveBeenCalledWith(ACTIVE_TAB, {
+        targetUserMessageId: 'transcript-user-1',
+        userMessageIndex: 0,
+        expectedContent: 'write only with Bash',
+        mode: 'both',
+      })
+    })
+    expect(useUIStore.getState().toasts.at(-1)).toMatchObject({
+      type: 'warning',
+      message: 'Rewound 4 messages and restored the checkpointed files; changes from Bash were not checkpointed and remain on disk.',
+    })
   })
 
   it('does not render cards for turns without file changes', async () => {

@@ -1,5 +1,8 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { useState, type ComponentProps } from 'react'
+import { flushSync } from 'react-dom'
+import { createRoot } from 'react-dom/client'
+import { create } from 'zustand'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import '@testing-library/jest-dom'
 
@@ -573,6 +576,137 @@ describe('RepositoryLaunchControls', () => {
       expect(within(listbox).getByRole('option', { name: /feature\/new/ })).toBeInTheDocument()
     })
 
+    it('keeps a created branch selected across the external launch-store boundary', async () => {
+      const launch = vi.fn()
+      const useLaunchTarget = create<{
+        branch: string | null
+        setBranch: (branch: string | null) => void
+      }>((set) => ({
+        branch: 'main',
+        setBranch: (branch) => set({ branch }),
+      }))
+      const setLaunchBranch = (branch: string | null) => {
+        if (branch === 'qa/launch-picker') {
+          // Production React publishes the external-store selection before
+          // this component's local context update. Vitest's development build
+          // batches them, so force that real ordering at the store boundary.
+          flushSync(() => useLaunchTarget.getState().setBranch(branch))
+          return
+        }
+        useLaunchTarget.getState().setBranch(branch)
+      }
+      const createdContext = {
+        ...contextWithCreatedBranch,
+        branches: contextWithCreatedBranch.branches.map((candidate) => (
+          candidate.name === 'feature/new'
+            ? { ...candidate, name: 'qa/launch-picker' }
+            : candidate
+        )),
+      }
+      apiMocks.createRepositoryBranch.mockImplementation(() => new Promise((resolve) => {
+        window.setTimeout(() => resolve({
+          branch: 'qa/launch-picker',
+          baseRef: 'main',
+          context: createdContext,
+        }), 0)
+      }))
+
+      function ExternalLaunchHarness() {
+        const branch = useLaunchTarget((state) => state.branch)
+        return (
+          <>
+            <RepositoryLaunchControls
+              workDir="/repo"
+              onWorkDirChange={vi.fn()}
+              branch={branch}
+              onBranchChange={setLaunchBranch}
+              useWorktree={false}
+              onUseWorktreeChange={vi.fn()}
+            />
+            <button
+              type="button"
+              onClick={() => launch({
+                workDir: '/repo',
+                repository: {
+                  branch: useLaunchTarget.getState().branch,
+                  worktree: false,
+                },
+              })}
+            >
+              Launch
+            </button>
+          </>
+        )
+      }
+
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+      const root = createRoot(container)
+      const testGlobals = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+      const actEnvironment = testGlobals.IS_REACT_ACT_ENVIRONMENT
+      testGlobals.IS_REACT_ACT_ENVIRONMENT = false
+      async function eventually<T>(read: () => T): Promise<T> {
+        let lastError: unknown
+        for (let attempt = 0; attempt < 200; attempt++) {
+          try {
+            return read()
+          } catch (error) {
+            lastError = error
+            await new Promise((resolve) => window.setTimeout(resolve, 10))
+          }
+        }
+        throw lastError
+      }
+
+      try {
+        root.render(<ExternalLaunchHarness />)
+        const pill = await eventually(() => (
+          screen.getByRole('button', { name: 'Location: cc-haha / main' })
+        ))
+        pill.click()
+        const branchEntry = await eventually(() => screen.getByRole('menuitem', { name: /Branch/ }))
+        branchEntry.click()
+        const createEntry = await eventually(() => screen.getByRole('button', { name: 'Create branch…' }))
+        createEntry.click()
+
+        const input = await eventually(() => screen.getByLabelText('Branch name'))
+        const setInputValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+        setInputValue?.call(input, 'qa/launch-picker')
+        input.dispatchEvent(new window.Event('input', { bubbles: true }))
+        const createButton = await eventually(() => {
+          const button = screen.getByRole('button', { name: 'Create' }) as HTMLButtonElement
+          if (button.disabled) throw new Error('Create branch button is still disabled')
+          return button
+        })
+        createButton.click()
+
+        await eventually(() => (
+          screen.getByRole('button', { name: 'Location: cc-haha / qa/launch-picker' })
+        ))
+        await eventually(() => {
+          if (screen.queryByRole('menu', { name: 'Location' })) {
+            throw new Error('Location menu is still open')
+          }
+          return true
+        })
+
+        screen.getByRole('button', { name: 'Launch' }).click()
+
+        expect(launch).toHaveBeenCalledWith({
+          workDir: '/repo',
+          repository: { branch: 'qa/launch-picker', worktree: false },
+        })
+        expect(useLaunchTarget.getState().branch).toBe('qa/launch-picker')
+        expect(screen.getByRole('button', { name: 'Location: cc-haha / qa/launch-picker' }))
+          .toBeInTheDocument()
+        expect(screen.queryByRole('menu', { name: 'Location' })).not.toBeInTheDocument()
+      } finally {
+        root.unmount()
+        container.remove()
+        testGlobals.IS_REACT_ACT_ENVIRONMENT = actEnvironment
+      }
+    })
+
     it('explains that an isolated worktree starts from the new branch', async () => {
       render(<ControlledHarness initialWorkDir="/repo" initialUseWorktree />)
       const input = await openNewBranchForm()
@@ -630,14 +764,16 @@ describe('RepositoryLaunchControls', () => {
       })
     })
 
-    it('cannot be submitted with a blank name', async () => {
+    it('translates a blank name without requesting branch creation', async () => {
       renderControls()
       const input = await openNewBranchForm()
 
-      expect(screen.getByRole('button', { name: 'Create' })).toBeDisabled()
+      fireEvent.click(screen.getByRole('button', { name: 'Create' }))
+      expect(await screen.findByText('Git will not accept this branch name.')).toBeInTheDocument()
 
       fireEvent.change(input, { target: { value: '   ' } })
-      expect(screen.getByRole('button', { name: 'Create' })).toBeDisabled()
+      fireEvent.click(screen.getByRole('button', { name: 'Create' }))
+      expect(await screen.findByText('Git will not accept this branch name.')).toBeInTheDocument()
       expect(apiMocks.createRepositoryBranch).not.toHaveBeenCalled()
     })
 
@@ -653,6 +789,18 @@ describe('RepositoryLaunchControls', () => {
       expect(await screen.findByText('A branch with this name already exists.')).toBeInTheDocument()
       expect(screen.getByLabelText('Branch name')).toHaveValue('feature/h5')
       expect(onBranchChange).not.toHaveBeenCalledWith('feature/h5')
+    })
+
+    it('translates an invalid git ref and keeps the form open', async () => {
+      apiMocks.createRepositoryBranch.mockRejectedValue(apiError('REPOSITORY_BRANCH_NAME_INVALID'))
+      renderControls()
+      const input = await openNewBranchForm()
+
+      fireEvent.change(input, { target: { value: 'qa invalid' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Create' }))
+
+      expect(await screen.findByText('Git will not accept this branch name.')).toBeInTheDocument()
+      expect(screen.getByLabelText('Branch name')).toHaveValue('qa invalid')
     })
 
     it('explains an empty repository in the user language', async () => {

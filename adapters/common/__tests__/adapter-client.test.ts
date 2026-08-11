@@ -52,16 +52,22 @@ async function listedProjects(
 describe('createAdapterClient', () => {
   // The regression that started #1191, now pinned behaviourally rather than by
   // grepping the entrypoints.
-  it('keeps every project under home reachable when a default project is set', async () => {
-    const base = fs.mkdtempSync(path.join(HOME, '.cc-haha-test-'))
-    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-haha-outside-'))
+  it('keeps every project under the allowed root reachable when a default project is set', async () => {
+    const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'adapter-client-roots-'))
+    const allowedRoot = path.join(sandbox, 'allowed')
+    const outside = path.join(sandbox, 'outside')
     try {
-      const myApp = path.join(base, 'work', 'my-app')
-      const sibling = path.join(base, 'side', 'blog')
-      for (const dir of [myApp, sibling]) fs.mkdirSync(dir, { recursive: true })
+      const myApp = path.join(allowedRoot, 'work', 'my-app')
+      const sibling = path.join(allowedRoot, 'side', 'blog')
+      for (const dir of [myApp, sibling, outside]) {
+        fs.mkdirSync(dir, { recursive: true })
+      }
 
       for (const platform of PLATFORMS) {
-        const config = bootConfig({ defaultProjectDir: myApp })
+        const config = bootConfig({
+          defaultProjectDir: myApp,
+          allowedProjectRoots: [allowedRoot],
+        })
         const { httpClient, defaultWorkDir } = createAdapterClient(config, config[platform])
 
         expect(defaultWorkDir).toBe(fs.realpathSync(myApp))
@@ -73,8 +79,7 @@ describe('createAdapterClient', () => {
         expect(names).toEqual(['my-app', 'blog'])
       }
     } finally {
-      fs.rmSync(base, { recursive: true, force: true })
-      fs.rmSync(outside, { recursive: true, force: true })
+      fs.rmSync(sandbox, { recursive: true, force: true })
     }
   })
 

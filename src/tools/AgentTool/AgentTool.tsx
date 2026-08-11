@@ -635,7 +635,8 @@ export const AgentTool = buildTool({
       }),
       worktreePath: worktreeInfo?.worktreePath,
       description,
-      spawningToolUseId: toolUseContext.toolUseId
+      spawningToolUseId: toolUseContext.toolUseId,
+      ownerAgentId: toolUseContext.agentId
     };
 
     // Helper to wrap execution with a cwd override: explicit cwd arg (KAIROS)
@@ -679,6 +680,9 @@ export const AgentTool = buildTool({
             description,
             ...(toolUseContext.toolUseId && {
               toolUseId: toolUseContext.toolUseId
+            }),
+            ...(toolUseContext.agentId && {
+              ownerAgentId: toolUseContext.agentId
             })
           }).catch(_err => logForDebugging(`Failed to clear worktree metadata: ${_err}`));
           return {};
@@ -701,7 +705,8 @@ export const AgentTool = buildTool({
         // Don't link to parent's abort controller -- background agents should
         // survive when the user presses ESC to cancel the main thread.
         // They are killed explicitly via chat:killAgents.
-        toolUseId: toolUseContext.toolUseId
+        toolUseId: toolUseContext.toolUseId,
+        ownerAgentId: toolUseContext.agentId
       });
 
       // Register name → agentId for SendMessage routing. Post-registerAsyncAgent
@@ -757,7 +762,8 @@ export const AgentTool = buildTool({
         rootSetAppState,
         agentIdForCleanup: asyncAgentId,
         enableSummarization: isCoordinator || isForkSubagentEnabled() || getSdkAgentProgressSummariesEnabled(),
-        getWorktreeResult: cleanupWorktreeIfNeeded
+        getWorktreeResult: cleanupWorktreeIfNeeded,
+        ownerAgentId: toolUseContext.agentId
       })));
       const canReadOutputFile = toolUseContext.options.tools.some(t => toolMatchesName(t, FILE_READ_TOOL_NAME) || toolMatchesName(t, BASH_TOOL_NAME));
       return {
@@ -832,7 +838,8 @@ export const AgentTool = buildTool({
             selectedAgent,
             setAppState: rootSetAppState,
             toolUseId: toolUseContext.toolUseId,
-            autoBackgroundMs: getAutoBackgroundMs() || undefined
+            autoBackgroundMs: getAutoBackgroundMs() || undefined,
+            ownerAgentId: toolUseContext.agentId
           });
           foregroundTaskId = registration.taskId;
           backgroundPromise = registration.backgroundSignal.then(() => ({
@@ -952,10 +959,15 @@ export const AgentTool = buildTool({
                       // Track progress for backgrounded agents
                       updateProgressFromMessage(tracker, msg, resolveActivity2, toolUseContext.options.tools);
                       updateAsyncAgentProgress(backgroundedTaskId, getProgressUpdate(tracker), rootSetAppState);
-                      emitAgentToolActivitiesForMessage(msg, backgroundedTaskId, toolUseContext.toolUseId);
+                      emitAgentToolActivitiesForMessage(
+                        msg,
+                        backgroundedTaskId,
+                        toolUseContext.toolUseId,
+                        toolUseContext.agentId,
+                      );
                       const lastToolName = getLastToolUseName(msg);
                       if (lastToolName) {
-                        emitTaskProgress(tracker, backgroundedTaskId, toolUseContext.toolUseId, description, startTime, lastToolName);
+                        emitTaskProgress(tracker, backgroundedTaskId, toolUseContext.toolUseId, description, startTime, lastToolName, toolUseContext.agentId);
                       }
                     }
                     const agentResult = finalizeAgentTool(agentMessages, backgroundedTaskId, metadata);
@@ -1075,7 +1087,7 @@ export const AgentTool = buildTool({
             if (foregroundTaskId) {
               const lastToolName = getLastToolUseName(message);
               if (lastToolName) {
-                emitTaskProgress(syncTracker, foregroundTaskId, toolUseContext.toolUseId, description, agentStartTime, lastToolName);
+                emitTaskProgress(syncTracker, foregroundTaskId, toolUseContext.toolUseId, description, agentStartTime, lastToolName, toolUseContext.agentId);
                 // Keep AppState task.progress in sync when SDK summaries are
                 // enabled, so updateAgentSummary reads correct token/tool counts
                 // instead of zeros.
@@ -1184,7 +1196,8 @@ export const AgentTool = buildTool({
                   total_tokens: progress.tokenCount,
                   tool_uses: progress.toolUseCount,
                   duration_ms: Date.now() - agentStartTime
-                }
+                },
+                ...(toolUseContext.agentId ? { owner_agent_id: toolUseContext.agentId } : {})
               });
             }
           }

@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { useChatStore } from '../../stores/chatStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useTeamStore } from '../../stores/teamStore'
 import { useTabStore } from '../../stores/tabStore'
@@ -42,6 +43,15 @@ function task(
   }
 }
 
+function firePointer(target: Node | Window, type: string, clientX: number, button = 0) {
+  const event = new Event(type, { bubbles: true, cancelable: true })
+  Object.defineProperties(event, {
+    clientX: { value: clientX },
+    button: { value: button },
+  })
+  fireEvent(target, event)
+}
+
 function workbench(
   version: string,
   statuses: [TeamWorkbenchTask['status'], TeamWorkbenchTask['status'], TeamWorkbenchTask['status']],
@@ -74,6 +84,20 @@ function workbench(
       timestamp: `2026-08-08T00:00:0${version.slice(-1)}.000Z`,
     }],
   }
+}
+
+function unownedWorkbench(
+  version: string,
+  builderStatus: 'running' | 'idle',
+): TeamWorkbenchSnapshot {
+  const snapshot = workbench(version, ['pending', 'pending', 'pending'])
+  snapshot.tasks = snapshot.tasks.map((entry) => ({ ...entry, owner: undefined }))
+  snapshot.team.members = snapshot.team.members.map((member) => (
+    member.name === 'builder'
+      ? { ...member, status: builderStatus }
+      : member
+  ))
+  return snapshot
 }
 
 describe('AgentTeamsWorkbench', () => {
@@ -132,7 +156,42 @@ describe('AgentTeamsWorkbench', () => {
     expect(screen.getByText('Snapshot v3 ready')).toBeTruthy()
   })
 
-  it('swaps the workbench body to a teammate run and back without leaving the panel', async () => {
+  it('follows server-driven idle to running to idle member lifecycle without an owned task', async () => {
+    getWorkbenchMock
+      .mockResolvedValueOnce(unownedWorkbench('lifecycle-1', 'idle'))
+      .mockResolvedValueOnce(unownedWorkbench('lifecycle-2', 'running'))
+      .mockResolvedValueOnce(unownedWorkbench('lifecycle-3', 'idle'))
+
+    await act(async () => {
+      await useTeamStore.getState().fetchWorkbench('visual-team')
+    })
+    render(<AgentTeamsWorkbench sessionId="lead-session" />)
+
+    const builder = () => screen.getByTestId('agent-teams-member-builder@visual-team')
+    expect(builder().getAttribute('data-member-state')).toBe('idle')
+
+    act(() => {
+      useChatStore.getState().handleServerMessage('lead-session', {
+        type: 'team_workbench_updated',
+        teamName: 'visual-team',
+      })
+    })
+    await waitFor(() => {
+      expect(builder().getAttribute('data-member-state')).toBe('working')
+    })
+
+    act(() => {
+      useChatStore.getState().handleServerMessage('lead-session', {
+        type: 'team_workbench_updated',
+        teamName: 'visual-team',
+      })
+    })
+    await waitFor(() => {
+      expect(builder().getAttribute('data-member-state')).toBe('idle')
+    })
+  })
+
+  it('opens a teammate in the shared agent run desktop instead of replacing the map', async () => {
     getWorkbenchMock.mockResolvedValueOnce(workbench('v1', ['completed', 'in_progress', 'pending']))
     await act(async () => {
       await useTeamStore.getState().fetchWorkbench('visual-team')
@@ -143,41 +202,49 @@ describe('AgentTeamsWorkbench', () => {
       fireEvent.click(screen.getByTestId('agent-teams-member-reviewer@visual-team'))
     })
 
-    const memberView = screen.getByTestId('agent-teams-member-view')
-    expect(memberView.getAttribute('data-member-agent-id')).toBe('reviewer@visual-team')
-    expect(screen.getByTestId('agent-teams-member-current-task').textContent).toContain('Working on task 2')
-    // The map is replaced, not overlaid — the panel is too narrow to show both.
-    expect(screen.queryByTestId('agent-teams-office')).toBeNull()
-    // Selecting a teammate must not steal the tab; that is what the explicit
-    // "open in tab" action is for.
-    expect(useTabStore.getState().activeTabId).toBeNull()
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Back to team overview' }))
+    expect(useTabStore.getState().activeTabId).toBe('team-member:reviewer@visual-team')
+    expect(useTabStore.getState().tabs.find((tab) => tab.sessionId === 'team-member:reviewer@visual-team')).toMatchObject({
+      type: 'team-member',
+      teamLeadSessionId: 'lead-session',
     })
     expect(screen.getByTestId('agent-teams-office')).toBeTruthy()
     expect(screen.queryByTestId('agent-teams-member-view')).toBeNull()
   })
 
-  it('detaches the selected teammate into its own tab on request', async () => {
+  it('opens a teammate when the user clicks or keyboards anywhere on an owned task card', async () => {
     getWorkbenchMock.mockResolvedValueOnce(workbench('v1', ['completed', 'in_progress', 'pending']))
     await act(async () => {
       await useTeamStore.getState().fetchWorkbench('visual-team')
     })
     render(<AgentTeamsWorkbench sessionId="lead-session" />)
 
-    await act(async () => {
-      fireEvent.click(screen.getByTestId('agent-teams-member-reviewer@visual-team'))
-    })
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Open in tab' }))
-    })
+    const builderTask = screen.getByTestId('agent-teams-task-1')
+    fireEvent.click(builderTask)
+    expect(useTabStore.getState().activeTabId).toBe('team-member:builder@visual-team')
 
+    act(() => useTabStore.setState({ tabs: [], activeTabId: null }))
+    const reviewerTask = screen.getByTestId('agent-teams-task-2')
+    fireEvent.keyDown(reviewerTask, { key: 'Enter' })
     expect(useTabStore.getState().activeTabId).toBe('team-member:reviewer@visual-team')
   })
 
-  // Opening the workbench tab and closing the docked side now belong to
-  // AgentTeamsReport — see AgentTeamsReport.test.tsx.
+  it('opens an archived teammate in the same shared agent run desktop', async () => {
+    const archived = workbench('v1', ['completed', 'completed', 'completed'])
+    archived.deletedAt = '2026-08-08T00:10:00.000Z'
+    archived.team.members = archived.team.members.map((member) => ({
+      ...member,
+      status: 'completed',
+    }))
+    getWorkbenchMock.mockResolvedValueOnce(archived)
+    await act(async () => {
+      await useTeamStore.getState().fetchWorkbench('visual-team')
+    })
+    render(<AgentTeamsWorkbench sessionId="lead-session" />)
+
+    fireEvent.click(screen.getByTestId('agent-teams-member-reviewer@visual-team'))
+
+    expect(useTabStore.getState().activeTabId).toBe('team-member:reviewer@visual-team')
+  })
 
   it('carries no docked-panel chrome of its own', async () => {
     getWorkbenchMock.mockResolvedValueOnce(workbench('v1', ['completed', 'in_progress', 'pending']))
@@ -192,6 +259,27 @@ describe('AgentTeamsWorkbench', () => {
     const feed = screen.getByTestId('agent-teams-communication')
     expect(feed.className).toContain('h-full')
     expect(feed.className).not.toContain('h-[210px]')
+  })
+
+  it('resizes the communication column by pointer and keyboard without collapsing the DAG', async () => {
+    getWorkbenchMock.mockResolvedValueOnce(workbench('v1', ['completed', 'in_progress', 'pending']))
+    await act(async () => {
+      await useTeamStore.getState().fetchWorkbench('visual-team')
+    })
+    render(<AgentTeamsWorkbench sessionId="lead-session" />)
+
+    const divider = screen.getByTestId('agent-teams-split-divider')
+    const pane = screen.getByTestId('agent-teams-communication-pane')
+    expect(pane.style.width).toBe('440px')
+
+    firePointer(divider, 'pointerdown', 800)
+    firePointer(window, 'pointermove', 700)
+    firePointer(window, 'pointerup', 700)
+    expect(pane.style.width).toBe('540px')
+
+    fireEvent.keyDown(divider, { key: 'ArrowRight' })
+    expect(pane.style.width).toBe('508px')
+    expect(screen.getByTestId('agent-teams-office')).toBeTruthy()
   })
 
   it('keeps every archived teammate character visible inside the organization tree', async () => {
@@ -215,14 +303,7 @@ describe('AgentTeamsWorkbench', () => {
       expect(figure.getAttribute('style') ?? '').not.toContain('opacity: 0')
     }
 
-    await act(async () => {
-      fireEvent.click(screen.getByTestId('agent-teams-member-reviewer@visual-team'))
-    })
-    const executionButton = screen.getByRole('button', { name: 'Open in tab' })
-    expect((executionButton as HTMLButtonElement).disabled).toBe(false)
-    await act(async () => {
-      fireEvent.click(executionButton)
-    })
+    fireEvent.click(screen.getByTestId('agent-teams-member-reviewer@visual-team'))
     expect(useTabStore.getState().activeTabId).toBe('team-member:reviewer@visual-team')
   })
 })

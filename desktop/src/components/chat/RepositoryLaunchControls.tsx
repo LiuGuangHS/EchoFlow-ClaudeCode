@@ -169,6 +169,17 @@ export function RepositoryLaunchControls({
   /** Read after an await to tell whether the directory moved on under us. */
   const latestWorkDirRef = useRef(workDir)
   latestWorkDirRef.current = workDir
+  /**
+   * Creating a branch updates this component's context and the parent-owned
+   * launch target together. An external store can publish the target first,
+   * so remember the exact context that makes that new target valid until the
+   * local state commit catches up.
+   */
+  const createdBranchTransitionRef = useRef<{
+    workDir: string
+    branch: string
+    context: RepositoryContextResult
+  } | null>(null)
   const searchInputId = useId()
   const listboxId = useId()
   const menuId = useId()
@@ -225,9 +236,25 @@ export function RepositoryLaunchControls({
   }, [workDir, onBranchChange])
 
   useEffect(() => {
+    createdBranchTransitionRef.current = null
+  }, [workDir])
+
+  useEffect(() => {
     if (context?.state !== 'ok') {
       if (context && branch !== null) onBranchChange(null)
       return
+    }
+
+    const createdBranchTransition = createdBranchTransitionRef.current
+    if (createdBranchTransition?.workDir === workDir) {
+      if (context === createdBranchTransition.context) {
+        createdBranchTransitionRef.current = null
+      } else if (branch === createdBranchTransition.branch) {
+        // The parent selection reached us before the refreshed branch list.
+        // It is valid against the in-flight create response, so do not replace
+        // it with the old context's current branch during this single render.
+        return
+      }
     }
 
     const branchExists = branch && context.branches.some((candidate) => candidate.name === branch)
@@ -240,7 +267,7 @@ export function RepositoryLaunchControls({
     ].find((name) => name && context.branches.some((candidate) => candidate.name === name))
 
     onBranchChange(fallbackBranch || null)
-  }, [branch, context, onBranchChange])
+  }, [branch, context, onBranchChange, workDir])
 
   const closeMenu = useCallback(() => {
     setMenuOpen(false)
@@ -346,7 +373,11 @@ export function RepositoryLaunchControls({
 
   const createBranch = async () => {
     const name = newBranchName.trim()
-    if (!name || creatingBranch || context?.state !== 'ok') return
+    if (creatingBranch || context?.state !== 'ok') return
+    if (!name) {
+      setCreateBranchError(t('repoLaunch.newBranchErrorInvalid'))
+      return
+    }
 
     const requestWorkDir = workDir
     setCreatingBranch(true)
@@ -363,6 +394,11 @@ export function RepositoryLaunchControls({
       if (latestWorkDirRef.current !== requestWorkDir) return
       // The response carries the context the branch was created against, so the
       // list is correct without a second round trip.
+      createdBranchTransitionRef.current = {
+        workDir: requestWorkDir,
+        branch: result.branch,
+        context: result.context,
+      }
       setContext(result.context)
       setError(null)
       onBranchChange(result.branch)
@@ -641,7 +677,6 @@ export function RepositoryLaunchControls({
           variant="primary"
           size="base"
           loading={creatingBranch}
-          disabled={!newBranchName.trim()}
         >
           {t('repoLaunch.newBranchSubmit')}
         </Button>

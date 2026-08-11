@@ -134,8 +134,12 @@ export function AgentManager() {
   const activeSession = sessions.find((session) => session.id === activeSessionId)
   const currentWorkDir = getSessionBrowsablePath(activeSession)
   const [agentContextPath, setAgentContextPath] = useState<string | undefined>(currentWorkDir)
-  const contextSessionId = sessions.find(
-    (session) => getSessionBrowsablePath(session) === agentContextPath,
+  const contextSessionId = (
+    activeSession && getSessionBrowsablePath(activeSession) === agentContextPath
+      ? activeSession
+      : sessions.find(
+          (session) => getSessionBrowsablePath(session) === agentContextPath,
+        )
   )?.id
 
   useEffect(() => {

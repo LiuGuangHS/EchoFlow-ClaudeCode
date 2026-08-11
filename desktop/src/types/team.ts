@@ -4,6 +4,7 @@ export type TeamSummary = {
   name: string
   memberCount: number
   createdAt?: string
+  incarnationId?: string
 }
 
 export type TeamMember = {
@@ -18,6 +19,7 @@ export type TeamMember = {
 
 export type TeamDetail = {
   name: string
+  incarnationId?: string
   leadAgentId?: string
   leadSessionId?: string
   members: TeamMember[]
@@ -70,6 +72,7 @@ export type TeamWorkbenchTimeline = {
 export type TeamWorkbenchSessionTimeline = {
   sessionId: string
   teamName: string
+  incarnationId?: string
   snapshots: TeamWorkbenchSnapshot[]
   source: 'live' | 'archive' | 'transcript'
 }
@@ -77,6 +80,11 @@ export type TeamWorkbenchSessionTimeline = {
 export type AgentColor = 'red' | 'blue' | 'green' | 'yellow' | 'purple' | 'orange' | 'pink' | 'cyan'
 
 export const AGENT_COLORS: AgentColor[] = ['red', 'blue', 'green', 'yellow', 'purple', 'orange', 'pink', 'cyan']
+
+export function teamMemberSessionId(agentId: string, incarnationId?: string): string {
+  if (!incarnationId) return `team-member:${agentId}`
+  return `team-member:${encodeURIComponent(incarnationId)}:${encodeURIComponent(agentId)}`
+}
 
 /** Lifecycle message types that should be filtered from agent output display */
 export const AGENT_LIFECYCLE_TYPES = new Set([

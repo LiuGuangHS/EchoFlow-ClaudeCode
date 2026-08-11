@@ -62,8 +62,8 @@ export const TaskListTool = buildTool({
   renderToolUseMessage() {
     return null
   },
-  async call() {
-    const taskListId = getTaskListId()
+  async call(_input, context) {
+    const taskListId = getTaskListId(context?.agentId)
 
     const allTasks = (await listTasks(taskListId)).filter(
       t => !t.metadata?._internal,

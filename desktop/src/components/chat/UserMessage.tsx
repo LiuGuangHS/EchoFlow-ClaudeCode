@@ -7,6 +7,7 @@ import { openPreviewLink } from '../../lib/openPreviewLink'
 import { splitTextByUrls } from '../../lib/urlBoundary'
 import { AttachmentGallery } from './AttachmentGallery'
 import { MessageActionBar, type MessageBranchAction } from './MessageActionBar'
+import { MarkdownRenderer } from '../markdown/MarkdownRenderer'
 
 type Props = {
   content: string
@@ -16,21 +17,36 @@ type Props = {
   sessionId?: string
   /** Set when this turn came from another agent rather than from the user. */
   teammateFrom?: string
+  teammateAvatarSrc?: string
+  teammateAvatarKey?: string
+  teammateAccent?: string
 }
 
-export const UserMessage = memo(function UserMessage({ content, attachments, branchAction, timestamp, sessionId, teammateFrom }: Props) {
+export const UserMessage = memo(function UserMessage({
+  content,
+  attachments,
+  branchAction,
+  timestamp,
+  sessionId,
+  teammateFrom,
+  teammateAvatarSrc,
+  teammateAvatarKey,
+  teammateAccent,
+}: Props) {
   const t = useTranslation()
   const hasText = content.trim().length > 0
 
-  // The prompt is literal text, NOT markdown — `**`, `#` and file paths have to
-  // stay exactly as the user typed them. So instead of running it through the
-  // markdown renderer we only split the bare URLs out and wrap those.
+  // The operator's prompt is literal text, NOT markdown — `**`, `#` and file
+  // paths have to stay exactly as typed. Teammate traffic is rendered separately
+  // below because agent-to-agent messages intentionally use Markdown.
   const segments = useMemo(() => splitTextByUrls(content), [content])
 
   const handleLinkClick = useCallback(
-    (event: ReactMouseEvent<HTMLAnchorElement>, href: string) => {
-      if (!sessionId) return
-      if (openPreviewLink(href, sessionId)) event.preventDefault()
+    (href: string, event: ReactMouseEvent<HTMLElement>): boolean => {
+      if (!sessionId) return false
+      const handled = openPreviewLink(href, sessionId)
+      if (handled) event.preventDefault()
+      return handled
     },
     [sessionId],
   )
@@ -43,7 +59,7 @@ export const UserMessage = memo(function UserMessage({ content, attachments, bra
         target="_blank"
         rel="noreferrer noopener"
         className="text-[var(--color-text-accent)] underline decoration-[1px] underline-offset-[3px] decoration-[var(--color-text-accent)] [overflow-wrap:anywhere] hover:decoration-[2px]"
-        onClick={(event) => handleLinkClick(event, segment.value)}
+        onClick={(event) => handleLinkClick(segment.value, event)}
       >
         {segment.value}
       </a>
@@ -64,8 +80,28 @@ export const UserMessage = memo(function UserMessage({ content, attachments, bra
           data-teammate-from={teammateFrom}
           className="group flex min-w-0 max-w-[82%] flex-col items-start sm:max-w-[78%] lg:max-w-[680px]"
         >
-          <div className="mb-1 flex min-w-0 items-center gap-1.5 px-0.5 text-[11px] text-[var(--color-text-tertiary)]">
-            <UsersRound size={12} strokeWidth={2.2} aria-hidden="true" className="shrink-0 text-[var(--color-brand)]" />
+          <div className="mb-1 flex min-w-0 items-center gap-2 px-0.5 text-[11px] text-[var(--color-text-tertiary)]">
+            {teammateAvatarSrc ? (
+              <span
+                data-testid="teammate-message-avatar"
+                data-avatar-key={teammateAvatarKey}
+                aria-hidden="true"
+                className="relative h-8 w-7 shrink-0"
+              >
+                <img
+                  src={teammateAvatarSrc}
+                  alt=""
+                  draggable={false}
+                  className="h-full w-full select-none object-contain drop-shadow-[0_2px_2px_rgba(0,0,0,0.14)]"
+                />
+                <span
+                  className="absolute bottom-0 left-1/2 h-1 w-4 -translate-x-1/2 rounded-full border border-[var(--color-surface)]"
+                  style={{ background: teammateAccent }}
+                />
+              </span>
+            ) : (
+              <UsersRound size={12} strokeWidth={2.2} aria-hidden="true" className="shrink-0 text-[var(--color-brand)]" />
+            )}
             <span className="min-w-0 truncate font-mono font-bold text-[var(--color-text-secondary)]">
               {teammateFrom}
             </span>
@@ -79,10 +115,14 @@ export const UserMessage = memo(function UserMessage({ content, attachments, bra
             {hasText && (
               <div
                 data-message-body="teammate"
-                className="min-w-0 max-w-full whitespace-pre-wrap break-words rounded-[var(--radius-lg)] border-l-2 border-[var(--color-brand)] bg-[var(--color-surface-container)] px-[16px] py-[12px] text-[14px] leading-relaxed text-[var(--color-text-primary)]"
+                className="min-w-0 max-w-full rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-container)] px-[16px] py-[12px] text-[14px] leading-relaxed text-[var(--color-text-primary)]"
                 style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}
               >
-                {body}
+                <MarkdownRenderer
+                  content={content}
+                  onLinkClick={sessionId ? handleLinkClick : undefined}
+                  className="[&>:first-child]:mt-0 [&>:last-child]:mb-0 [&_h1]:text-lg [&_h2]:text-base [&_h3]:text-sm [&_h4]:text-sm"
+                />
               </div>
             )}
           </div>

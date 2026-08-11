@@ -5,6 +5,7 @@ import { subagentsApi } from '../api/subagents'
 import { useTeamStore } from './teamStore'
 import { useSessionStore } from './sessionStore'
 import { useCLITaskStore } from './cliTaskStore'
+import { useWorkflowStore } from './workflowStore'
 import { useSessionRuntimeStore } from './sessionRuntimeStore'
 import { useTabStore } from './tabStore'
 import { randomSpinnerVerb } from '../config/spinnerVerbs'
@@ -373,6 +374,163 @@ const TASK_TOOL_NAMES = new Set(['TaskCreate', 'TaskUpdate', 'TaskGet', 'TaskLis
 const TASK_STOP_TOOL_NAMES = new Set(['TaskStop', 'KillShell'])
 const pendingTaskToolUseIdsBySession = new Map<string, Set<string>>()
 const pendingToolParentUseIdsBySession = new Map<string, Map<string, string>>()
+type OwnedTaskRouteRegistration = {
+  count: number
+  eventIdPrefix?: string
+}
+type OwnedTaskEventTarget = {
+  sessionId: string
+  eventIdPrefix?: string
+}
+const runSessionIdsByOwner = new Map<
+  string,
+  Map<string, Map<string, OwnedTaskRouteRegistration>>
+>()
+type OwnedTaskEventSubtype = 'task_started' | 'task_progress' | 'task_notification'
+type PendingOwnedTaskEvent = {
+  subtype: OwnedTaskEventSubtype
+  data: Record<string, unknown>
+}
+const pendingOwnedTaskEvents = new Map<string, Map<string, PendingOwnedTaskEvent[]>>()
+const MAX_PENDING_OWNED_TASK_EVENTS = 200
+
+function ownedTaskRouteKey(ownerAgentId: string, ownerScopeId?: string): string {
+  return JSON.stringify([ownerScopeId ?? null, ownerAgentId])
+}
+
+/**
+ * Bind an owning runtime agent to the synthetic chat session that renders its
+ * transcript. Owner-scoped task events arrive on the parent session socket;
+ * this explicit join routes them to the same store surface the run page uses
+ * instead of either leaking them into main or silently throwing them away.
+ */
+export function registerAgentRunSession(
+  sourceSessionId: string,
+  runSessionId: string,
+  ownerAliases: Array<string | null | undefined>,
+  options: { ownerScopeId?: string; eventIdPrefix?: string } = {},
+): () => void {
+  const aliases = [...new Set(ownerAliases
+    .map((alias) => alias?.trim())
+    .filter((alias): alias is string => Boolean(alias)))]
+  if (aliases.length === 0) return () => undefined
+
+  const byOwner = runSessionIdsByOwner.get(sourceSessionId) ??
+    new Map<string, Map<string, OwnedTaskRouteRegistration>>()
+  for (const alias of aliases) {
+    const routeKey = ownedTaskRouteKey(alias, options.ownerScopeId)
+    const sessions = byOwner.get(routeKey) ?? new Map<string, OwnedTaskRouteRegistration>()
+    const existing = sessions.get(runSessionId)
+    sessions.set(runSessionId, {
+      count: (existing?.count ?? 0) + 1,
+      ...(options.eventIdPrefix
+        ? { eventIdPrefix: options.eventIdPrefix }
+        : existing?.eventIdPrefix
+          ? { eventIdPrefix: existing.eventIdPrefix }
+          : {}),
+    })
+    byOwner.set(routeKey, sessions)
+  }
+  runSessionIdsByOwner.set(sourceSessionId, byOwner)
+
+  // A run page learns its concrete agent id from the first API response, but
+  // lifecycle events can beat that response. Replay the bounded owner queue as
+  // soon as the explicit join exists so fast workflows do not disappear.
+  const pendingByOwner = pendingOwnedTaskEvents.get(sourceSessionId)
+  const routeKeys = aliases.map(alias => ownedTaskRouteKey(alias, options.ownerScopeId))
+  const pending = routeKeys.flatMap((routeKey) => pendingByOwner?.get(routeKey) ?? [])
+  for (const routeKey of routeKeys) pendingByOwner?.delete(routeKey)
+  if (pendingByOwner?.size === 0) pendingOwnedTaskEvents.delete(sourceSessionId)
+  for (const event of pending) {
+    useChatStore.getState().handleServerMessage(sourceSessionId, {
+      type: 'system_notification',
+      subtype: event.subtype,
+      data: event.data,
+    })
+  }
+
+  return () => {
+    const current = runSessionIdsByOwner.get(sourceSessionId)
+    if (!current) return
+    for (const alias of aliases) {
+      const routeKey = ownedTaskRouteKey(alias, options.ownerScopeId)
+      const sessions = current.get(routeKey)
+      const registration = sessions?.get(runSessionId)
+      if (registration && registration.count > 1) {
+        sessions?.set(runSessionId, { ...registration, count: registration.count - 1 })
+      } else {
+        sessions?.delete(runSessionId)
+      }
+      if (sessions?.size === 0) current.delete(routeKey)
+    }
+    if (current.size === 0) runSessionIdsByOwner.delete(sourceSessionId)
+  }
+}
+
+function taskEventTargets(
+  sourceSessionId: string,
+  data: Record<string, unknown>,
+): OwnedTaskEventTarget[] {
+  const ownerAgentId = readNonEmptyString(data, 'owner_agent_id', 'ownerAgentId')
+  if (!ownerAgentId) return [{ sessionId: sourceSessionId }]
+  const ownerScopeId = readNonEmptyString(data, 'owner_scope_id', 'ownerScopeId')
+  return [...(
+    runSessionIdsByOwner.get(sourceSessionId)?.get(
+      ownedTaskRouteKey(ownerAgentId, ownerScopeId),
+    ) ?? new Map<string, OwnedTaskRouteRegistration>()
+  )].map(([sessionId, registration]) => ({
+    sessionId,
+    ...(registration.eventIdPrefix
+      ? { eventIdPrefix: registration.eventIdPrefix }
+      : {}),
+  }))
+}
+
+function projectOwnedTaskEventData(
+  data: Record<string, unknown>,
+  eventIdPrefix: string | undefined,
+): Record<string, unknown> {
+  if (!eventIdPrefix) return data
+  const projected = { ...data }
+  for (const key of ['task_id', 'taskId', 'tool_use_id', 'toolUseId'] as const) {
+    const value = projected[key]
+    if (typeof value !== 'string' || !value.trim()) continue
+    projected[key] = value.startsWith(`${eventIdPrefix}/`)
+      ? value
+      : `${eventIdPrefix}/${value}`
+  }
+  return projected
+}
+
+function bufferUnroutedOwnedTaskEvent(
+  sourceSessionId: string,
+  subtype: OwnedTaskEventSubtype,
+  data: Record<string, unknown>,
+): void {
+  const ownerAgentId = readNonEmptyString(data, 'owner_agent_id', 'ownerAgentId')
+  if (!ownerAgentId) return
+  const ownerScopeId = readNonEmptyString(data, 'owner_scope_id', 'ownerScopeId')
+  const routeKey = ownedTaskRouteKey(ownerAgentId, ownerScopeId)
+  const byOwner = pendingOwnedTaskEvents.get(sourceSessionId) ?? new Map<string, PendingOwnedTaskEvent[]>()
+  const events = byOwner.get(routeKey) ?? []
+  events.push({ subtype, data: { ...data } })
+  if (events.length > MAX_PENDING_OWNED_TASK_EVENTS) {
+    events.splice(0, events.length - MAX_PENDING_OWNED_TASK_EVENTS)
+  }
+  byOwner.set(routeKey, events)
+  pendingOwnedTaskEvents.set(sourceSessionId, byOwner)
+}
+
+function teamLifecycleIdentity(
+  incarnationId: string | undefined,
+  createdAt: number | undefined,
+): { incarnationId?: string; createdAt?: number } | undefined {
+  if (!incarnationId && createdAt === undefined) return undefined
+  return {
+    ...(incarnationId ? { incarnationId } : {}),
+    ...(createdAt !== undefined ? { createdAt } : {}),
+  }
+}
 
 function addPendingTaskToolUseId(sessionId: string, toolUseId: string): void {
   const ids = pendingTaskToolUseIdsBySession.get(sessionId) ?? new Set<string>()
@@ -786,6 +944,7 @@ function upsertBackgroundTaskMessage(
   const isSameTaskMessage = (message: UIMessage) =>
     message.type === 'background_task' &&
     (message.task.taskId === task.taskId ||
+      (task.workflowRunId && message.task.workflowRunId === task.workflowRunId) ||
       (task.toolUseId && message.task.toolUseId === task.toolUseId))
 
   if (isAgentBackgroundTask(task)) {
@@ -803,10 +962,22 @@ function upsertBackgroundTaskMessage(
     }]
   }
 
-  return messages.map((message, index) =>
-    index === existingIndex && message.type === 'background_task'
-      ? { ...message, task: { ...message.task, ...task }, timestamp: message.timestamp || timestamp }
-      : message)
+  const existingMessage = messages[existingIndex]
+  if (existingMessage?.type !== 'background_task') return messages
+  const replacement: UIMessage = {
+    ...existingMessage,
+    task:
+      task.workflowRunId &&
+      existingMessage.task.workflowRunId === task.workflowRunId &&
+      existingMessage.task.taskId !== task.taskId
+        ? task
+        : { ...existingMessage.task, ...task },
+    timestamp: existingMessage.timestamp || timestamp,
+  }
+  return messages.flatMap((message, index) => {
+    if (index === existingIndex) return [replacement]
+    return isSameTaskMessage(message) ? [] : [message]
+  })
 }
 
 function buildBackgroundTaskSessionUpdate(
@@ -1325,19 +1496,68 @@ function summarizeTokenUsageFromHistory(messages: MessageEntry[]): TokenUsage | 
   }
 }
 
-async function fetchAndMapSessionHistory(sessionId: string) {
+function transcriptToolUseIds(messages: MessageEntry[]): Set<string> {
+  const ids = new Set<string>()
+  for (const message of messages) {
+    if (!Array.isArray(message.content)) continue
+    for (const block of message.content as AssistantHistoryBlock[]) {
+      if (block.type !== 'tool_use') continue
+      if (block.id) ids.add(block.id)
+      if (block.original_tool_use_id) ids.add(block.original_tool_use_id)
+    }
+  }
+  return ids
+}
+
+function sessionOwnedActivityToolUseIds(session: PerSessionState | undefined): Set<string> {
+  const ids = new Set<string>()
+  for (const message of session?.messages ?? []) {
+    if (message.type === 'tool_use' && !message.parentToolUseId) {
+      ids.add(message.toolUseId)
+    }
+  }
+  for (const task of Object.values(session?.backgroundAgentTasks ?? {})) {
+    ids.add(task.taskId)
+    if (task.toolUseId) ids.add(task.toolUseId)
+  }
+  return ids
+}
+
+async function fetchAndMapSessionHistory(
+  sessionId: string,
+  existingOwnedToolUseIds = new Set<string>(),
+) {
   const { messages, taskNotifications } = await sessionsApi.getMessages(sessionId)
   const uiMessages = mapHistoryMessagesToUiMessages(messages)
-  const restoredNotifications = {
-    ...reconstructAgentNotifications(messages),
-    ...agentNotificationRecordFromList(taskNotifications ?? []),
-  }
+  // Session history intentionally joins child tool activity back into the
+  // parent transcript for the conversation timeline. Activity ownership is
+  // narrower: restoring from that joined stream would put a child's shell
+  // jobs and notifications into the parent rail after every reload.
+  const rootRunMessages = messages.filter((message) => !message.parentToolUseId)
+  const rootToolUseIds = transcriptToolUseIds(rootRunMessages)
+  const rootRunNotifications = (taskNotifications ?? []).filter(
+    (notification) => (
+      !notification.ownerAgentId && (
+        // workflow_run_id predates owner_agent_id. Keep restoring those
+        // legacy root workflow terminals; newly owned child runs carry an
+        // explicit owner and are rejected by the guard above.
+        Boolean(notification.workflowRunId) ||
+        rootToolUseIds.has(notification.toolUseId) ||
+        existingOwnedToolUseIds.has(notification.toolUseId) ||
+        existingOwnedToolUseIds.has(notification.taskId)
+      )
+    ),
+  )
+  const restoredActivity = reconstructRunActivityFromTranscript(
+    rootRunMessages,
+    rootRunNotifications,
+  )
   return {
     rawMessages: messages,
     uiMessages,
     activeGoal: deriveActiveGoalFromMessages(uiMessages),
-    restoredNotifications,
-    restoredBackgroundTasks: backgroundTaskRecordFromNotifications(Object.values(restoredNotifications)),
+    restoredNotifications: restoredActivity.agentTaskNotifications,
+    restoredBackgroundTasks: restoredActivity.backgroundAgentTasks,
     lastTodos: extractLastTodoWriteFromHistory(messages),
     hasMessagesAfterTaskCompletion: hasUserMessagesAfterTaskCompletion(messages),
     tokenUsage: summarizeTokenUsageFromHistory(messages),
@@ -1797,6 +2017,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const existingLoad = historyLoadsInFlight.get(sessionId)
     if (existingLoad) return existingLoad
 
+    // Workflow runs are rebuilt from disk alongside the transcript. Without
+    // this, reopening a session that ran a workflow showed no trace of it —
+    // the progress stream that populates the panel is live-only.
+    void useWorkflowStore.getState().hydrateSession(sessionId)
+
     const requestedMutationEpoch = get().sessions[sessionId]?.historyMutationEpoch ?? 0
     let load!: Promise<void>
     load = (async () => {
@@ -1819,7 +2044,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           lastTodos,
           hasMessagesAfterTaskCompletion,
           tokenUsage,
-        } = await fetchAndMapSessionHistory(sessionId)
+        } = await fetchAndMapSessionHistory(
+          sessionId,
+          sessionOwnedActivityToolUseIds(get().sessions[sessionId]),
+        )
         let historyApplied = false
         set((state) => {
           const session = state.sessions[sessionId]
@@ -1851,7 +2079,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                 historyStatus: 'ready',
                 historyError: null,
                 activeGoal: activeGoal ?? s.activeGoal ?? null,
-                agentTaskNotifications: { ...restoredNotifications, ...s.agentTaskNotifications },
+                agentTaskNotifications: mergeAgentTaskNotificationRecords(
+                  s.agentTaskNotifications,
+                  restoredNotifications,
+                  backgroundAgentTasks,
+                ),
                 backgroundAgentTasks,
                 tokenUsage: tokenUsage ?? s.tokenUsage,
                 ...reconcilePendingBackgroundTaskStopFailures(
@@ -1872,7 +2104,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
               historyStatus: 'ready',
               historyError: null,
               activeGoal,
-              agentTaskNotifications: { ...restoredNotifications, ...s.agentTaskNotifications },
+              agentTaskNotifications: mergeAgentTaskNotificationRecords(
+                s.agentTaskNotifications,
+                restoredNotifications,
+                backgroundAgentTasks,
+              ),
               backgroundAgentTasks,
               tokenUsage: tokenUsage ?? s.tokenUsage,
               ...reconcilePendingBackgroundTaskStopFailures(
@@ -1956,7 +2192,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         lastTodos,
         hasMessagesAfterTaskCompletion,
         tokenUsage,
-      } = await fetchAndMapSessionHistory(sessionId)
+      } = await fetchAndMapSessionHistory(
+        sessionId,
+        sessionOwnedActivityToolUseIds(get().sessions[sessionId]),
+      )
 
       if (historyReloadGenerations.get(sessionId) !== reloadGeneration) return
 
@@ -1987,7 +2226,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             historyStatus: 'ready',
             historyError: null,
             activeGoal,
-            agentTaskNotifications: { ...restoredNotifications, ...session.agentTaskNotifications },
+            agentTaskNotifications: mergeAgentTaskNotificationRecords(
+              session.agentTaskNotifications,
+              restoredNotifications,
+              backgroundAgentTasks,
+            ),
             backgroundAgentTasks,
             tokenUsage: tokenUsage ?? session.tokenUsage,
             chatState: 'idle',
@@ -2247,6 +2490,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     clearPendingTaskToolUseIds(sessionId)
     clearPendingToolParentUseIds(sessionId)
     clearPendingToolInputDelta(sessionId)
+    pendingOwnedTaskEvents.delete(sessionId)
     set((s) => ({ sessions: updateSessionIn(s.sessions, sessionId, () => ({
       messages: [],
       activeGoal: null,
@@ -2285,6 +2529,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
     switch (msg.type) {
       case 'connected':
+        // Team lifecycle broadcasts are transition-only. A reconnect must
+        // reconcile against the durable workbench so missed update/delete or
+        // same-name recreate events cannot leave a live cache authoritative.
+        void useTeamStore.getState().fetchTeamForSession(sessionId, { force: true })
         break
 
       case 'session_state': {
@@ -3207,16 +3455,31 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         break
 
       case 'team_created':
-        useTeamStore.getState().handleTeamCreated(msg.teamName)
+        useTeamStore.getState().handleTeamCreated(
+          msg.teamName,
+          msg.leadSessionId ?? sessionId,
+          teamLifecycleIdentity(msg.incarnationId, msg.createdAt),
+        )
         break
       case 'team_update':
-        useTeamStore.getState().handleTeamUpdate(msg.teamName, msg.members)
+        useTeamStore.getState().handleTeamUpdate(
+          msg.teamName,
+          msg.members,
+          teamLifecycleIdentity(msg.incarnationId, msg.createdAt),
+        )
         break
       case 'team_workbench_updated':
-        useTeamStore.getState().handleTeamWorkbenchUpdated(msg.teamName)
+        useTeamStore.getState().handleTeamWorkbenchUpdated(
+          msg.teamName,
+          teamLifecycleIdentity(msg.incarnationId, msg.createdAt),
+        )
         break
       case 'team_deleted':
-        useTeamStore.getState().handleTeamDeleted(msg.teamName)
+        useTeamStore.getState().handleTeamDeleted(
+          msg.teamName,
+          msg.leadSessionId ?? sessionId,
+          teamLifecycleIdentity(msg.incarnationId, msg.createdAt),
+        )
         break
       case 'task_update':
         break
@@ -3244,6 +3507,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             })
         }
         if (msg.subtype === 'session_cleared') {
+          pendingOwnedTaskEvents.delete(sessionId)
           const session = get().sessions[sessionId]
           if (session?.elapsedTimer) clearInterval(session.elapsedTimer)
           update(() => ({
@@ -3281,6 +3545,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           clearPendingTaskToolUseIds(sessionId)
           clearPendingToolParentUseIds(sessionId)
           useCLITaskStore.getState().clearTasks(sessionId)
+          useWorkflowStore.getState().clearSession(sessionId)
           useSessionStore.getState().updateSessionTitle(sessionId, 'New Session')
           useSessionStore.getState().updateSessionMessageCount(sessionId, 0)
           useTabStore.getState().updateTabTitle(sessionId, 'New Session')
@@ -3359,58 +3624,110 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             }))
           }
         }
-        if ((msg.subtype === 'task_started' || msg.subtype === 'task_progress') && msg.data && typeof msg.data === 'object') {
-          const taskEvent = normalizeBackgroundAgentTaskEvent(msg.data, msg.subtype)
-          if (taskEvent) {
+        if (
+          (msg.subtype === 'task_started' || msg.subtype === 'task_progress') &&
+          msg.data &&
+          typeof msg.data === 'object'
+        ) {
+          const data = msg.data as Record<string, unknown>
+          // Workflow ownership is durable even before a detail page has
+          // registered its synthetic session. Keep the persisted source
+          // session on the run and let the owner selector project it into the
+          // detail page; background-task rows below still need the explicit
+          // source-owner-to-synthetic join.
+          useWorkflowStore.getState().handleTaskEvent(sessionId, msg.subtype, data)
+          const targets = taskEventTargets(sessionId, data)
+          if (targets.length === 0) {
+            bufferUnroutedOwnedTaskEvent(sessionId, msg.subtype, data)
+          }
+          for (const target of targets) {
+            const targetSessionId = target.sessionId
+            const taskEvent = normalizeBackgroundAgentTaskEvent(
+              projectOwnedTaskEventData(data, target.eventIdPrefix),
+              msg.subtype,
+            )
+            if (!taskEvent || !get().sessions[targetSessionId]) continue
             const now = Date.now()
             let shouldUpdateIdleTabStatus = false
             let hasRunningBackgroundAgentsAfterUpdate = false
-            update((session) => {
+            set((state) => ({
+              sessions: updateSessionIn(state.sessions, targetSessionId, (targetSession) => {
               const backgroundAgentTasks = upsertBackgroundAgentTask(
-                session.backgroundAgentTasks ?? {},
+                targetSession.backgroundAgentTasks ?? {},
                 taskEvent,
                 now,
+                { workflowAttemptBoundary: msg.subtype === 'task_started' },
               )
-              shouldUpdateIdleTabStatus = session.chatState === 'idle'
+              shouldUpdateIdleTabStatus = targetSession.chatState === 'idle'
               hasRunningBackgroundAgentsAfterUpdate = hasRunningBackgroundTasks(backgroundAgentTasks)
               const task = backgroundAgentTasks[taskEvent.taskId]
-              const stoppingBackgroundTaskIds = { ...session.stoppingBackgroundTaskIds }
+              const agentTaskNotifications = { ...targetSession.agentTaskNotifications }
+              if (msg.subtype === 'task_started') {
+                if (taskEvent.toolUseId) {
+                  // A resumed task reuses its original tool id. Its previous
+                  // terminal notification must not keep the new lifecycle
+                  // visually completed while progress is running.
+                  delete agentTaskNotifications[taskEvent.toolUseId]
+                }
+                if (taskEvent.workflowRunId) {
+                  for (const [toolUseId, notification] of Object.entries(agentTaskNotifications)) {
+                    if (notification.workflowRunId === taskEvent.workflowRunId) {
+                      delete agentTaskNotifications[toolUseId]
+                    }
+                  }
+                }
+              }
+              const stoppingBackgroundTaskIds = { ...targetSession.stoppingBackgroundTaskIds }
               if (
                 msg.subtype === 'task_started' &&
-                session.stopAllSubagentsRequested &&
+                targetSession.stopAllSubagentsRequested &&
                 task &&
                 isCancellableSubagentTask(task)
               ) {
                 stoppingBackgroundTaskIds[task.taskId] = true
               }
               return {
-                ...buildBackgroundTaskSessionUpdate(session, backgroundAgentTasks, task, now),
+                ...buildBackgroundTaskSessionUpdate(targetSession, backgroundAgentTasks, task, now),
+                agentTaskNotifications,
                 stoppingBackgroundTaskIds,
-                historyMutationEpoch: (session.historyMutationEpoch ?? 0) + 1,
+                historyMutationEpoch: (targetSession.historyMutationEpoch ?? 0) + 1,
               }
-            })
+              }),
+            }))
             if (shouldUpdateIdleTabStatus) {
               useTabStore.getState().updateTabStatus(
-                sessionId,
+                targetSessionId,
                 hasRunningBackgroundAgentsAfterUpdate ? 'running' : 'idle',
               )
             }
           }
         }
-        if (msg.subtype === 'task_notification' && msg.data && typeof msg.data === 'object') {
+        if (
+          msg.subtype === 'task_notification' &&
+          msg.data &&
+          typeof msg.data === 'object'
+        ) {
           const data = msg.data as Record<string, unknown>
-          const taskEvent = normalizeBackgroundAgentTaskEvent(data, 'task_notification')
-          const toolUseId =
-            typeof data.tool_use_id === 'string' && data.tool_use_id.trim()
-              ? data.tool_use_id
-              : null
-          const taskResult = readNonEmptyString(data, 'result')
-          const taskStatus = data.status
-          if (taskEvent) {
+          useWorkflowStore.getState().handleTaskEvent(sessionId, 'task_notification', data)
+          const targets = taskEventTargets(sessionId, data)
+          if (targets.length === 0) {
+            bufferUnroutedOwnedTaskEvent(sessionId, 'task_notification', data)
+          }
+          for (const target of targets) {
+            const targetSessionId = target.sessionId
+            const projectedData = projectOwnedTaskEventData(data, target.eventIdPrefix)
+            const taskEvent = normalizeBackgroundAgentTaskEvent(
+              projectedData,
+              'task_notification',
+            )
+            const toolUseId = readNonEmptyString(projectedData, 'tool_use_id', 'toolUseId')
+            const taskResult = readNonEmptyString(projectedData, 'result')
+            if (!taskEvent || !get().sessions[targetSessionId]) continue
             const now = Date.now()
             let shouldUpdateIdleTabStatus = false
             let hasRunningBackgroundAgentsAfterUpdate = false
-            update((session) => {
+            set((state) => ({
+              sessions: updateSessionIn(state.sessions, targetSessionId, (session) => {
               const backgroundAgentTasks = upsertBackgroundAgentTask(
                 session.backgroundAgentTasks ?? {},
                 taskEvent,
@@ -3419,7 +3736,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
               shouldUpdateIdleTabStatus = session.chatState === 'idle'
               hasRunningBackgroundAgentsAfterUpdate = hasRunningBackgroundTasks(backgroundAgentTasks)
               const task = backgroundAgentTasks[taskEvent.taskId]
+              const accepted = Boolean(task)
               const suppressNotificationResponse =
+                accepted &&
                 (taskEvent.status === 'completed' ||
                   taskEvent.status === 'failed' ||
                   taskEvent.status === 'stopped') &&
@@ -3432,15 +3751,17 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                 ...(suppressNotificationResponse ? { suppressNextTaskNotificationResponse: true } : {}),
                 agentTaskNotifications: {
                   ...session.agentTaskNotifications,
-                  ...(toolUseId &&
-                  (taskStatus === 'completed' ||
-                    taskStatus === 'failed' ||
-                    taskStatus === 'stopped')
+                  ...(accepted &&
+                  toolUseId &&
+                  (taskEvent.status === 'completed' ||
+                    taskEvent.status === 'failed' ||
+                    taskEvent.status === 'stopped')
                     ? {
                         [toolUseId]: {
                           taskId: taskEvent.taskId,
                           toolUseId,
-                          status: taskStatus,
+                          status: taskEvent.status,
+                          workflowRunId: taskEvent.workflowRunId,
                           summary: taskEvent.summary,
                           result: taskResult,
                           outputFile: taskEvent.outputFile,
@@ -3451,10 +3772,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                 },
                 historyMutationEpoch: (session.historyMutationEpoch ?? 0) + 1,
               }
-            })
+              }),
+            }))
             if (shouldUpdateIdleTabStatus) {
               useTabStore.getState().updateTabStatus(
-                sessionId,
+                targetSessionId,
                 hasRunningBackgroundAgentsAfterUpdate ? 'running' : 'idle',
               )
             }
@@ -3881,6 +4203,7 @@ function normalizeBackgroundAgentTaskEvent(
     description: readNonEmptyString(record, 'description', 'message', 'title'),
     taskType: readNonEmptyString(record, 'task_type', 'taskType'),
     workflowName: readNonEmptyString(record, 'workflow_name', 'workflowName'),
+    workflowRunId: readNonEmptyString(record, 'workflow_run_id', 'workflowRunId'),
     prompt: readNonEmptyString(record, 'prompt'),
     result: readNonEmptyString(record, 'result'),
     summary: readNonEmptyString(record, 'summary'),
@@ -3894,15 +4217,53 @@ function upsertBackgroundAgentTask(
   current: Record<string, BackgroundAgentTask>,
   event: Partial<BackgroundAgentTask> & Pick<BackgroundAgentTask, 'taskId' | 'status'>,
   now: number,
+  options?: { workflowAttemptBoundary?: boolean },
 ): Record<string, BackgroundAgentTask> {
-  const existingKey = current[event.taskId]
+  const directExisting = current[event.taskId]
+  const workflowRunPeerKeys = event.workflowRunId
+    ? Object.keys(current).filter((key) =>
+      key !== event.taskId && current[key]?.workflowRunId === event.workflowRunId)
+    : []
+  const workflowRunMatchKey = !directExisting && event.workflowRunId
+    ? workflowRunPeerKeys[0]
+    : undefined
+  const workflowRunMatch = workflowRunMatchKey
+    ? current[workflowRunMatchKey]
+    : undefined
+  const replacesWorkflowAttempt = Boolean(
+    workflowRunMatchKey && workflowRunMatchKey !== event.taskId,
+  )
+
+  if (replacesWorkflowAttempt) {
+    // task_started is the authoritative boundary between attempts of the same
+    // logical workflow. Progress can recover that boundary after reconnect
+    // once the known attempt has settled. Everything else is stale activity
+    // from the task id that the resume superseded.
+    const canReplace =
+      event.status === 'running' &&
+      (options?.workflowAttemptBoundary || workflowRunMatch?.status !== 'running')
+    if (!canReplace) return current
+  }
+
+  const toolUseMatchKey = !directExisting && !workflowRunMatchKey && event.toolUseId
+    ? Object.keys(current).find((key) =>
+      key === event.toolUseId || current[key]?.toolUseId === event.toolUseId)
+    : undefined
+  const existingKey = directExisting
     ? event.taskId
-    : event.toolUseId
-      ? Object.keys(current).find((key) =>
-        key === event.toolUseId || current[key]?.toolUseId === event.toolUseId)
+    : workflowRunMatchKey ?? toolUseMatchKey
+  // A resumed workflow is a fresh task snapshot. Carrying the old terminal
+  // summary/result/usage into it makes the single surviving row lie about the
+  // attempt that is actually running.
+  const existing = replacesWorkflowAttempt
+    ? undefined
+    : existingKey
+      ? current[existingKey]
       : undefined
-  const existing = existingKey ? current[existingKey] : undefined
   const next = { ...current }
+  if (replacesWorkflowAttempt || options?.workflowAttemptBoundary) {
+    for (const key of workflowRunPeerKeys) delete next[key]
+  }
   if (existingKey && existingKey !== event.taskId) {
     delete next[existingKey]
   }
@@ -3919,6 +4280,7 @@ function upsertBackgroundAgentTask(
       description: event.description ?? existing?.description,
       taskType: event.taskType ?? existing?.taskType,
       workflowName: event.workflowName ?? existing?.workflowName,
+      workflowRunId: event.workflowRunId ?? existing?.workflowRunId,
       prompt: event.prompt ?? existing?.prompt,
       result: event.result ?? existing?.result,
       summary: event.summary ?? existing?.summary,
@@ -4083,7 +4445,8 @@ function extractTaskNotification(content: unknown): AgentTaskNotification | null
   if (!xml) return null
 
   const toolUseId = readXmlTag(xml, 'tool-use-id')
-  const status = readXmlTag(xml, 'status')
+  const rawStatus = readXmlTag(xml, 'status')
+  const status = rawStatus === 'killed' ? 'stopped' : rawStatus
   if (
     !toolUseId ||
     (status !== 'completed' && status !== 'failed' && status !== 'stopped')
@@ -4092,6 +4455,7 @@ function extractTaskNotification(content: unknown): AgentTaskNotification | null
   }
 
   const taskId = readXmlTag(xml, 'task-id') || toolUseId
+  const workflowRunId = readXmlTag(xml, 'workflow-run-id')
   const summary = readXmlTag(xml, 'summary')
   const result = readXmlTag(xml, 'result')
   const outputFile = readXmlTag(xml, 'output-file')
@@ -4099,6 +4463,7 @@ function extractTaskNotification(content: unknown): AgentTaskNotification | null
     taskId,
     toolUseId,
     status,
+    ...(workflowRunId ? { workflowRunId } : {}),
     ...(summary ? { summary } : {}),
     ...(result ? { result } : {}),
     ...(outputFile ? { outputFile } : {}),
@@ -4108,37 +4473,86 @@ function extractTaskNotification(content: unknown): AgentTaskNotification | null
 function agentNotificationRecordFromList(
   notifications: AgentTaskNotification[],
 ): Record<string, AgentTaskNotification> {
-  return Object.fromEntries(
-    notifications.map((notification) => [notification.toolUseId, notification]),
-  )
+  const records: Record<string, AgentTaskNotification> = {}
+  const sorted = [...notifications].sort((a, b) => {
+    const aTime = a.timestamp ? new Date(a.timestamp).getTime() : 0
+    const bTime = b.timestamp ? new Date(b.timestamp).getTime() : 0
+    return aTime - bTime
+  })
+  for (const notification of sorted) {
+    if (notification.workflowRunId) {
+      for (const [toolUseId, current] of Object.entries(records)) {
+        if (current.workflowRunId === notification.workflowRunId) {
+          delete records[toolUseId]
+        }
+      }
+    }
+    records[notification.toolUseId] = notification
+  }
+  return records
 }
 
 function backgroundTaskRecordFromNotifications(
   notifications: AgentTaskNotification[],
 ): Record<string, BackgroundAgentTask> {
-  return notifications.reduce<Record<string, BackgroundAgentTask>>((tasks, notification) => {
-    const parsedTimestamp = notification.timestamp ? new Date(notification.timestamp).getTime() : NaN
-    const now = Number.isFinite(parsedTimestamp) ? parsedTimestamp : Date.now()
-    return upsertBackgroundAgentTask(tasks, {
-      taskId: notification.taskId,
-      toolUseId: notification.toolUseId,
-      status: notification.status,
-      summary: notification.summary,
-      outputFile: notification.outputFile,
-      usage: notification.usage,
-    }, now)
-  }, {})
+  return [...notifications]
+    .sort((a, b) => {
+      const aTime = a.timestamp ? new Date(a.timestamp).getTime() : 0
+      const bTime = b.timestamp ? new Date(b.timestamp).getTime() : 0
+      return aTime - bTime
+    })
+    .reduce<Record<string, BackgroundAgentTask>>((tasks, notification) => {
+      const parsedTimestamp = notification.timestamp
+        ? new Date(notification.timestamp).getTime()
+        : NaN
+      const now = Number.isFinite(parsedTimestamp) ? parsedTimestamp : Date.now()
+      if (notification.workflowRunId) {
+        for (const [taskId, task] of Object.entries(tasks)) {
+          if (task.workflowRunId === notification.workflowRunId) delete tasks[taskId]
+        }
+      }
+      return upsertBackgroundAgentTask(tasks, {
+        taskId: notification.taskId,
+        toolUseId: notification.toolUseId,
+        status: notification.status,
+        workflowRunId: notification.workflowRunId,
+        summary: notification.summary,
+        result: notification.result,
+        outputFile: notification.outputFile,
+        usage: notification.usage,
+      }, now)
+    }, {})
 }
 
-function mergeBackgroundAgentTaskRecords(
+export function mergeBackgroundAgentTaskRecords(
   current: Record<string, BackgroundAgentTask>,
   restored: Record<string, BackgroundAgentTask>,
 ): Record<string, BackgroundAgentTask> {
   return Object.values(restored).reduce(
     (tasks, task) => {
-      const existing = tasks[task.taskId] ?? (task.toolUseId
-        ? Object.values(tasks).find((candidate) => candidate.toolUseId === task.toolUseId)
-        : undefined)
+      const existing =
+        tasks[task.taskId] ??
+        (task.toolUseId
+          ? Object.values(tasks).find((candidate) => candidate.toolUseId === task.toolUseId)
+          : undefined) ??
+        (task.workflowRunId
+          ? Object.values(tasks).find(
+            (candidate) => candidate.workflowRunId === task.workflowRunId,
+          )
+          : undefined)
+      const differentWorkflowAttempt = Boolean(
+        existing &&
+        task.workflowRunId &&
+        existing.workflowRunId === task.workflowRunId &&
+        existing.taskId !== task.taskId,
+      )
+      if (
+        differentWorkflowAttempt &&
+        existing &&
+        task.updatedAt < existing.updatedAt
+      ) {
+        return tasks
+      }
       if (
         existing?.status === 'running' &&
         task.status !== 'running' &&
@@ -4146,10 +4560,232 @@ function mergeBackgroundAgentTaskRecords(
       ) {
         return tasks
       }
+      if (
+        differentWorkflowAttempt &&
+        existing &&
+        task.workflowRunId
+      ) {
+        const next = { ...tasks }
+        for (const [taskId, candidate] of Object.entries(next)) {
+          if (candidate.workflowRunId === task.workflowRunId) delete next[taskId]
+        }
+        return upsertBackgroundAgentTask(next, task, task.updatedAt)
+      }
       return upsertBackgroundAgentTask(tasks, task, task.updatedAt)
     },
     current,
   )
+}
+
+function mergeAgentTaskNotificationRecords(
+  current: Record<string, AgentTaskNotification>,
+  restored: Record<string, AgentTaskNotification>,
+  backgroundTasks: Record<string, BackgroundAgentTask>,
+): Record<string, AgentTaskNotification> {
+  const merged = { ...restored, ...current }
+  const survivingWorkflowTaskByRunId = new Map<string, string>()
+  for (const task of Object.values(backgroundTasks)) {
+    if (task.workflowRunId) {
+      survivingWorkflowTaskByRunId.set(task.workflowRunId, task.taskId)
+    }
+  }
+  for (const [toolUseId, notification] of Object.entries(merged)) {
+    if (
+      notification.workflowRunId &&
+      survivingWorkflowTaskByRunId.get(notification.workflowRunId) !== undefined &&
+      survivingWorkflowTaskByRunId.get(notification.workflowRunId) !== notification.taskId
+    ) {
+      delete merged[toolUseId]
+    }
+  }
+  return merged
+}
+
+export function mergeReconstructedRunActivity(
+  current: {
+    agentTaskNotifications: Record<string, AgentTaskNotification>
+    backgroundAgentTasks: Record<string, BackgroundAgentTask>
+  },
+  restored: {
+    agentTaskNotifications: Record<string, AgentTaskNotification>
+    backgroundAgentTasks: Record<string, BackgroundAgentTask>
+  },
+  options: { preferCurrent?: boolean } = {},
+): {
+  agentTaskNotifications: Record<string, AgentTaskNotification>
+  backgroundAgentTasks: Record<string, BackgroundAgentTask>
+} {
+  if (options.preferCurrent) {
+    const backgroundAgentTasks = mergeBackgroundAgentTaskRecords(
+      restored.backgroundAgentTasks,
+      current.backgroundAgentTasks,
+    )
+    return {
+      agentTaskNotifications: mergeAgentTaskNotificationRecords(
+        current.agentTaskNotifications,
+        restored.agentTaskNotifications,
+        backgroundAgentTasks,
+      ),
+      backgroundAgentTasks,
+    }
+  }
+
+  const agentTaskNotifications = { ...current.agentTaskNotifications }
+  for (const [toolUseId, notification] of Object.entries(restored.agentTaskNotifications)) {
+    const runningTask = Object.values(current.backgroundAgentTasks).find((task) => (
+      task.status === 'running' &&
+      (task.toolUseId === toolUseId || task.taskId === notification.taskId)
+    ))
+    const restoredAt = notification.timestamp
+      ? Date.parse(notification.timestamp)
+      : Number.NaN
+    if (runningTask && (!Number.isFinite(restoredAt) || restoredAt < runningTask.startedAt)) {
+      continue
+    }
+    agentTaskNotifications[toolUseId] = notification
+  }
+
+  const backgroundAgentTasks = mergeBackgroundAgentTaskRecords(
+    current.backgroundAgentTasks,
+    restored.backgroundAgentTasks,
+  )
+  return {
+    agentTaskNotifications: mergeAgentTaskNotificationRecords(
+      agentTaskNotifications,
+      {},
+      backgroundAgentTasks,
+    ),
+    backgroundAgentTasks,
+  }
+}
+
+const BACKGROUND_SHELL_TOOL_NAMES = new Set(['Bash', 'PowerShell'])
+const BACKGROUND_SHELL_RESULT_RE = /\bCommand (?:running in background|was manually backgrounded by user|exceeded[^\n]*?\band was moved to the background) with ID:\s*([A-Za-z0-9_-]+)/i
+
+type TranscriptShellToolUse = {
+  toolUseId: string
+  description: string
+  startedAt: number
+  allowLegacyTextResult: boolean
+}
+
+function transcriptTimestamp(timestamp: string): number {
+  const parsed = new Date(timestamp).getTime()
+  return Number.isFinite(parsed) ? parsed : Date.now()
+}
+
+function shellBackgroundTaskIdFromResult(
+  content: unknown,
+  toolUseResult: unknown,
+  allowLegacyTextResult: boolean,
+): string | undefined {
+  const structured = readRecord(toolUseResult)
+  if (structured) {
+    return readNonEmptyString(structured, 'backgroundTaskId', 'background_task_id')
+  }
+  if (!allowLegacyTextResult) return undefined
+
+  const text = extractHistoryTextBlocks(content).join('\n')
+  return text.match(BACKGROUND_SHELL_RESULT_RE)?.[1]
+}
+
+function reconstructBackgroundShellTasks(
+  messages: MessageEntry[],
+): Record<string, BackgroundAgentTask> {
+  const shellToolUses = new Map<string, TranscriptShellToolUse>()
+  let tasks: Record<string, BackgroundAgentTask> = {}
+
+  for (const message of messages) {
+    if (
+      (message.type !== 'assistant' && message.type !== 'tool_use') ||
+      !Array.isArray(message.content)
+    ) continue
+
+    for (const block of message.content as AssistantHistoryBlock[]) {
+      if (
+        block.type !== 'tool_use' ||
+        !block.id ||
+        !BACKGROUND_SHELL_TOOL_NAMES.has(block.name ?? '')
+      ) continue
+      const input = readRecord(block.input) ?? {}
+      const description = readNonEmptyString(input, 'description', 'command')
+      if (!description) continue
+      shellToolUses.set(block.id, {
+        toolUseId: block.id,
+        description,
+        startedAt: transcriptTimestamp(message.timestamp),
+        allowLegacyTextResult: input.run_in_background === true,
+      })
+    }
+  }
+
+  for (const message of messages) {
+    if (
+      (message.type !== 'user' && message.type !== 'tool_result') ||
+      !Array.isArray(message.content)
+    ) continue
+
+    for (const block of message.content as UserHistoryBlock[]) {
+      if (block.type !== 'tool_result' || !block.tool_use_id) continue
+      const shellToolUse = shellToolUses.get(block.tool_use_id)
+      if (!shellToolUse) continue
+      const taskId = shellBackgroundTaskIdFromResult(
+        block.content,
+        message.toolUseResult,
+        shellToolUse.allowLegacyTextResult,
+      )
+      if (!taskId) continue
+
+      const event = {
+        taskId,
+        toolUseId: shellToolUse.toolUseId,
+        status: 'running' as const,
+        description: shellToolUse.description,
+        taskType: 'local_bash',
+      }
+      tasks = upsertBackgroundAgentTask(tasks, event, shellToolUse.startedAt)
+      tasks = upsertBackgroundAgentTask(tasks, event, transcriptTimestamp(message.timestamp))
+    }
+  }
+
+  return tasks
+}
+
+/**
+ * Project the activity owned by one transcript into the same state shape used
+ * by a live session. Callers must pass the complete transcript for that run.
+ */
+export function reconstructRunActivityFromTranscript(
+  messages: MessageEntry[],
+  supplementalNotifications: AgentTaskNotification[] = [],
+): {
+  agentTaskNotifications: Record<string, AgentTaskNotification>
+  backgroundAgentTasks: Record<string, BackgroundAgentTask>
+} {
+  const agentTaskNotifications = agentNotificationRecordFromList([
+    ...Object.values(reconstructAgentNotifications(messages)),
+    ...supplementalNotifications,
+  ])
+
+  for (const message of messages) {
+    if (message.type !== 'user') continue
+    const notification = extractTaskNotification(message.content)
+    if (!notification) continue
+    const existing = agentTaskNotifications[notification.toolUseId]
+    if (existing && !existing.timestamp) {
+      agentTaskNotifications[notification.toolUseId] = {
+        ...existing,
+        timestamp: message.timestamp,
+      }
+    }
+  }
+
+  const backgroundAgentTasks = mergeBackgroundAgentTaskRecords(
+    reconstructBackgroundShellTasks(messages),
+    backgroundTaskRecordFromNotifications(Object.values(agentTaskNotifications)),
+  )
+
+  return { agentTaskNotifications, backgroundAgentTasks }
 }
 
 function reconcilePendingBackgroundTaskStopFailures(
@@ -4250,6 +4886,7 @@ function pushAssistantHistoryText(
   timestamp: number,
   model?: string,
   transcriptMessageId?: string,
+  stableId?: string,
 ): void {
   if (!content.trim()) return
 
@@ -4271,7 +4908,7 @@ function pushAssistantHistoryText(
   }
 
   messages.push({
-    id: nextId(),
+    id: stableId ?? nextId(),
     type: 'assistant_text',
     content,
     timestamp,
@@ -4946,7 +5583,14 @@ export function mapHistoryMessagesToUiMessages(
       for (const [blockIndex, block] of (msg.content as AssistantHistoryBlock[]).entries()) {
         if (block.type === 'thinking' && block.thinking) pushAssistantHistoryThinking(uiMessages, `${msg.id}-block-${blockIndex}`, block.thinking, timestamp)
         else if (block.type === 'text' && block.text) {
-          pushAssistantHistoryText(uiMessages, block.text, timestamp, msg.model, msg.id || undefined)
+          pushAssistantHistoryText(
+            uiMessages,
+            block.text,
+            timestamp,
+            msg.model,
+            msg.id || undefined,
+            msg.id ? `${msg.id}-block-${blockIndex}` : undefined,
+          )
         }
         else if (block.type === 'tool_use') uiMessages.push({ id: `${msg.id}-block-${blockIndex}`, type: 'tool_use', toolName: block.name ?? 'unknown', toolUseId: block.id ?? '', originalToolUseId: block.original_tool_use_id, input: block.input, timestamp, parentToolUseId: msg.parentToolUseId })
       }

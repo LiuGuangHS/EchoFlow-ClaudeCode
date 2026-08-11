@@ -505,29 +505,38 @@ export async function setMemberActive(
   memberName: string,
   isActive: boolean,
 ): Promise<void> {
-  const teamFile = await readTeamFileAsync(teamName)
-  if (!teamFile) {
+  const existing = await readTeamFileAsync(teamName)
+  if (!existing) {
     logForDebugging(
       `[TeammateTool] Cannot set member active: team ${teamName} not found`,
     )
     return
   }
 
-  const member = teamFile.members.find(m => m.name === memberName)
-  if (!member) {
+  let memberFound = false
+  let didChange = false
+  await mutateTeamFileAsync(teamName, teamFile => {
+    const member = teamFile.members.find(m => m.name === memberName)
+    if (!member) return
+    memberFound = true
+    if (member.isActive === isActive) return
+    didChange = true
+    return {
+      ...teamFile,
+      members: teamFile.members.map(current =>
+        current.name === memberName ? { ...current, isActive } : current,
+      ),
+    }
+  })
+
+  if (!memberFound) {
     logForDebugging(
       `[TeammateTool] Cannot set member active: member ${memberName} not found in team ${teamName}`,
     )
     return
   }
+  if (!didChange) return
 
-  // Only write if the value is actually changing
-  if (member.isActive === isActive) {
-    return
-  }
-
-  member.isActive = isActive
-  await writeTeamFileAsync(teamName, teamFile)
   logForDebugging(
     `[TeammateTool] Set member ${memberName} in team ${teamName} to ${isActive ? 'active' : 'idle'}`,
   )
