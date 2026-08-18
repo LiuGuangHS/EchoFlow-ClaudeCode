@@ -42,7 +42,7 @@ import {
 } from '../../utils/envUtils.js'
 
 export const ECHOFLOW_OPENAI_OAUTH_PROVIDER_ENV_KEY = 'ECHOFLOW_OPENAI_OAUTH_PROVIDER'
-export const LEGACY_ECHOFLOW_OPENAI_OAUTH_PROVIDER_ENV_KEY = 'CC_HAHA_OPENAI_OAUTH_PROVIDER'
+const LEGACY_OPENAI_OAUTH_PROVIDER_ENV_KEY = 'CC_HAHA_OPENAI_OAUTH_PROVIDER'
 
 /**
  * Environment variables for different client types:
@@ -203,10 +203,8 @@ export function shouldUseOpenAICodexTransport({
 export function shouldForceOpenAICodexProvider(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  return (
-    isEnvTruthy(env[ECHOFLOW_OPENAI_OAUTH_PROVIDER_ENV_KEY]) ||
-    isEnvTruthy(env[LEGACY_ECHOFLOW_OPENAI_OAUTH_PROVIDER_ENV_KEY])
-  )
+  return isEnvTruthy(env[ECHOFLOW_OPENAI_OAUTH_PROVIDER_ENV_KEY])
+    || isEnvTruthy(env[LEGACY_OPENAI_OAUTH_PROVIDER_ENV_KEY])
 }
 
 export async function getAnthropicClient({

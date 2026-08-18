@@ -125,7 +125,7 @@ describe('Electron app mode service', () => {
     const customDir = path.join(tempDir(), 'custom-data')
     const managedEnv: NodeJS.ProcessEnv = {
       CLAUDE_CONFIG_DIR: customDir,
-      CC_HAHA_APP_PORTABLE_DIR: '1',
+      ECHOFLOW_APP_PORTABLE_DIR: '1',
       WEBVIEW2_USER_DATA_FOLDER: path.join(customDir, 'EBWebView'),
       APPDATA: 'C:\\Users\\someone\\AppData\\Roaming',
     }
@@ -135,6 +135,14 @@ describe('Electron app mode service', () => {
     const externalEnv: NodeJS.ProcessEnv = { CLAUDE_CONFIG_DIR: customDir }
     clearAppManagedPortableEnv(externalEnv)
     expect(externalEnv).toEqual({ CLAUDE_CONFIG_DIR: customDir })
+
+    const legacyManagedEnv: NodeJS.ProcessEnv = {
+      CLAUDE_CONFIG_DIR: customDir,
+      CC_HAHA_APP_PORTABLE_DIR: '1',
+      WEBVIEW2_USER_DATA_FOLDER: path.join(customDir, 'EBWebView'),
+    }
+    clearAppManagedPortableEnv(legacyManagedEnv)
+    expect(legacyManagedEnv).toEqual({})
   })
 
   it('drops inherited app-managed env so switching back to ~/.claude survives relaunch', () => {

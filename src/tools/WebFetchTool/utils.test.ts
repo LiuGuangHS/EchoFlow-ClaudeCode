@@ -44,10 +44,10 @@ describe('shouldSkipWebFetchPreflight', () => {
     expect(shouldSkipWebFetchPreflight({})).toBe(true)
   })
 
-  test('keeps legacy desktop server env compatible', () => {
+  test('does not enable the desktop bridge from a retired environment variable', () => {
     process.env.CC_HAHA_DESKTOP_SERVER_URL = 'http://127.0.0.1:3456'
 
-    expect(shouldSkipWebFetchPreflight({})).toBe(true)
+    expect(shouldSkipWebFetchPreflight({})).toBe(false)
   })
 
   test('defaults to disabled outside desktop sessions', () => {

@@ -76,7 +76,7 @@ describe('analyzeContextUsage', () => {
           content: [
             {
               type: 'redacted_thinking',
-              data: `cc-haha:openai-reasoning:v1:${JSON.stringify({
+              data: `echoflow-code:openai-reasoning:v1:${JSON.stringify({
                 id: 'rs_test',
                 summary: [],
                 encrypted_content: 'x'.repeat(400_000),

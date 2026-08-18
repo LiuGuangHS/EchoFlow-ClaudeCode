@@ -39,12 +39,12 @@ export const DESKTOP_UI_SMOKE_ALLOW_SELECTOR = 'button[aria-label^="Allow: "]'
 
 export function buildDesktopUiSmokeBootstrap(sessionId: string) {
   return [
-    `localStorage.setItem('cc-haha-locale', ${JSON.stringify(DESKTOP_UI_SMOKE_LOCALE)})`,
-    `localStorage.setItem('cc-haha-open-tabs', ${JSON.stringify(JSON.stringify({
+    `localStorage.setItem('echoflow-code-locale', ${JSON.stringify(DESKTOP_UI_SMOKE_LOCALE)})`,
+    `localStorage.setItem('echoflow-code-open-tabs', ${JSON.stringify(JSON.stringify({
       openTabs: [{ sessionId, title: 'Desktop UI Smoke', type: 'session' }],
       activeTabId: sessionId,
     }))})`,
-    `localStorage.removeItem('cc-haha-session-runtime')`,
+    `localStorage.removeItem('echoflow-code-session-runtime')`,
   ].join(';')
 }
 
@@ -88,11 +88,13 @@ export function describeDesktopUiSmokePrerequisites(rootDir: string): string | n
   if (!existsSync(join(rootDir, 'desktop', 'node_modules', '.bin'))) {
     return 'desktop dependencies are not installed (run `bun install` in desktop/)'
   }
-  const probe = Bun.spawnSync(['agent-browser', '--version'], { stdout: 'pipe', stderr: 'pipe' })
-  if (probe.exitCode !== 0) {
-    return 'agent-browser is not installed (see https://github.com/anthropics/agent-browser)'
+  try {
+    const probe = Bun.spawnSync(['agent-browser', '--version'], { stdout: 'pipe', stderr: 'pipe' })
+    if (probe.exitCode === 0) return null
+  } catch {
+    // Missing executables cause Bun.spawnSync to throw instead of returning a non-zero exit code.
   }
-  return null
+  return 'agent-browser is not installed (see https://github.com/anthropics/agent-browser)'
 }
 
 export async function executeDeterministicDesktopSmoke(
@@ -136,7 +138,7 @@ export async function executeDeterministicDesktopSmoke(
     seedProviders: false,
     envOverrides: {
       CLAUDE_CLI_PATH: resolve(rootDir, MOCK_CLI),
-      CC_HAHA_DISABLE_TERMINAL_SHELL_ENV: '1',
+      ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV: '1',
     },
   })
 

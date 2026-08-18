@@ -20,7 +20,7 @@ export type OpenAIResponsesTransformOptions = {
   /** Stable cache routing key, forwarded as `prompt_cache_key`. */
   cacheKey?: string
   passSamplingParams?: boolean
-  /** Restore only cc-haha namespaced OpenAI reasoning envelopes. */
+  /** Restore only EchoFlow namespaced OpenAI reasoning envelopes. */
   preserveOpenAIReasoning?: boolean
 }
 

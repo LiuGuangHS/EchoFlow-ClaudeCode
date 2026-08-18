@@ -191,9 +191,9 @@ describe('Electron updater service', () => {
     await service.downloadUpdate(() => {})
 
     const env: NodeJS.ProcessEnv = {
-      CLAUDE_CONFIG_DIR: 'E:\\cc-haha-data',
-      CC_HAHA_APP_PORTABLE_DIR: '1',
-      WEBVIEW2_USER_DATA_FOLDER: 'E:\\cc-haha-data\\EBWebView',
+      CLAUDE_CONFIG_DIR: 'E:\\echoflow-data',
+      ECHOFLOW_APP_PORTABLE_DIR: '1',
+      WEBVIEW2_USER_DATA_FOLDER: 'E:\\echoflow-data\\EBWebView',
       APPDATA: 'C:\\Users\\someone\\AppData\\Roaming',
     }
     service.quitAndInstallDownloadedUpdate(env)

@@ -20,6 +20,14 @@ const FOLLOW_SYSTEM_THEME_STORAGE_KEY = 'echoflow-code-follow-system-theme'
 const LIGHT_THEME_STORAGE_KEY = 'echoflow-code-light-theme'
 const DARK_THEME_STORAGE_KEY = 'echoflow-code-dark-theme'
 const LOCALE_STORAGE_KEY = 'echoflow-code-locale'
+const LEGACY_STORAGE_RULES = [
+  { targetKey: TAB_STORAGE_KEY, sourceKeys: ['cc-haha-open-tabs'] },
+  { targetKey: SESSION_RUNTIME_STORAGE_KEY, sourceKeys: ['cc-haha-session-runtime'] },
+  { targetKey: THEME_STORAGE_KEY, sourceKeys: ['cc-haha-theme'] },
+  { targetKey: LOCALE_STORAGE_KEY, sourceKeys: ['cc-haha-locale'] },
+  { targetKey: APP_ZOOM_STORAGE_KEY, sourceKeys: ['cc-haha-app-zoom', 'cc-haha-ui-zoom', 'echoflow-code-ui-zoom'] },
+  { targetKey: 'echoflow-code-dismissed-update-version', sourceKeys: ['cc-haha-dismissed-update-version'] },
+] as const
 const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max']
 const PERSISTED_SPECIAL_TAB_TYPES = ['settings', 'scheduled', 'market', 'traces'] as const
 const PERSISTED_SPECIAL_TAB_IDS: Record<(typeof PERSISTED_SPECIAL_TAB_TYPES)[number], string> = {
@@ -54,6 +62,18 @@ function getPersistedSpecialTabType(tab: Record<string, unknown>): (typeof PERSI
 
 function writeJson(storage: StorageLike, key: string, value: unknown): void {
   storage.setItem(key, JSON.stringify(value))
+}
+
+function copyLegacyStorage(storage: StorageLike, report: DesktopMigrationReport): void {
+  for (const rule of LEGACY_STORAGE_RULES) {
+    if (storage.getItem(rule.targetKey) !== null) continue
+    const sourceKey = rule.sourceKeys.find(key => storage.getItem(key) !== null)
+    if (!sourceKey) continue
+    const value = storage.getItem(sourceKey)
+    if (value === null) continue
+    storage.setItem(rule.targetKey, value)
+    report.migratedKeys.push(rule.targetKey)
+  }
 }
 
 function migrateTabs(storage: StorageLike, report: DesktopMigrationReport): void {
@@ -219,6 +239,7 @@ export function runDesktopPersistenceMigrations(storage: StorageLike | null = ge
   const report: DesktopMigrationReport = { migratedKeys: [] }
   if (!storage) return report
 
+  runMigrationStep(report, TAB_STORAGE_KEY, () => copyLegacyStorage(storage, report))
   runMigrationStep(report, TAB_STORAGE_KEY, () => migrateTabs(storage, report))
   runMigrationStep(report, SESSION_RUNTIME_STORAGE_KEY, () => migrateSessionRuntime(storage, report))
   runMigrationStep(report, THEME_STORAGE_KEY, () =>

@@ -52,6 +52,7 @@ import {
   type TitleConversationTurn,
 } from '../services/titleService.js'
 import { parseSlashCommand } from '../../utils/slashCommandParsing.js'
+import { isContextOverflowErrorText } from '../../services/api/errors.js'
 import { archiveRemoteSession } from '../../utils/teleport/api.js'
 import { shouldCreateWorktreeForSessionLaunch } from '../services/repositoryLaunchService.js'
 import { getDisconnectGraceMs } from './disconnectGraceConfig.js'
@@ -2785,14 +2786,18 @@ export function translateCliMessage(cliMsg: any, sessionId: string): ServerMessa
         const message = extractAssistantText(cliMsg) || cliMsg.error || 'Unknown API error'
         const fallbackCode = typeof cliMsg.error === 'string' ? cliMsg.error : 'API_ERROR'
         const code = classifyRuntimeErrorCode(message, fallbackCode)
+        const businessErrorCode =
+          typeof cliMsg.businessErrorCode === 'string'
+            ? cliMsg.businessErrorCode
+            : isContextOverflowErrorText(message)
+              ? 'prompt_too_long'
+              : undefined
         streamState.lastApiError = { message, code }
         return [{
           type: 'error',
           message,
           code,
-          ...(typeof cliMsg.businessErrorCode === 'string'
-            ? { businessErrorCode: cliMsg.businessErrorCode }
-            : {}),
+          ...(businessErrorCode ? { businessErrorCode } : {}),
         }]
       }
 
@@ -3165,6 +3170,9 @@ export function translateCliMessage(cliMsg: any, sessionId: string): ServerMessa
             type: 'error',
             message: resultMessage,
             code: classifyRuntimeErrorCode(resultMessage, 'CLI_ERROR'),
+            ...(isContextOverflowErrorText(resultMessage)
+              ? { businessErrorCode: 'prompt_too_long' }
+              : {}),
           },
           { type: 'message_complete', usage },
         ]

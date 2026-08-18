@@ -28,7 +28,6 @@ import { handleActivityStatsApi } from './api/activityStats.js'
 import { handleOpenTargetsApi } from './api/open-targets.js'
 import { handleMemoryApi } from './api/memory.js'
 import { handleDesktopUiApi } from './api/desktop-ui.js'
-import { handleLegacyMigrationApi } from './api/legacy-migration.js'
 import { handleEchoFlowApi } from './api/echoflow.js'
 import { handleTracesApi } from './api/traces.js'
 import { handleWorkflowsApi } from './api/workflows.js'
@@ -86,15 +85,12 @@ export async function handleApiRequest(req: Request, url: URL): Promise<Response
       return handleProvidersApi(req, url, segments)
 
     case 'echoflow-oauth':
-    case 'haha-oauth':
       return handleEchoFlowOAuthApi(req, url, segments)
 
     case 'echoflow-openai-oauth':
-    case 'haha-openai-oauth':
       return handleEchoFlowOpenAIOAuthApi(req, url, segments)
 
     case 'echoflow-grok-oauth':
-    case 'haha-grok-oauth':
       return handleEchoFlowGrokOAuthApi(req, url, segments)
 
     case 'adapters':
@@ -137,9 +133,6 @@ export async function handleApiRequest(req: Request, url: URL): Promise<Response
 
     case 'desktop-ui':
       return handleDesktopUiApi(req, url, segments)
-
-    case 'legacy-migration':
-      return handleLegacyMigrationApi(req, url, segments)
 
     case 'echoflow':
       return handleEchoFlowApi(req, url, segments)

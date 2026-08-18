@@ -345,7 +345,8 @@
         {
           "type": "error",
           "message": "Prompt is too long",
-          "code": "invalid_request"
+          "code": "invalid_request",
+          "businessErrorCode": "prompt_too_long"
         }
       ]
     },

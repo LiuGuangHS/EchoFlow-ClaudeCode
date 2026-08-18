@@ -3737,7 +3737,7 @@ describe('Sessions API', () => {
     await writeSessionFile('-tmp-api-owned-terminal', sessionId, [
       makeSnapshotEntry(),
       {
-        type: 'cc-haha-task-notification',
+        type: 'echoflow-code-task-notification',
         isMeta: true,
         taskNotification: {
           taskId: 'nested-workflow-task',

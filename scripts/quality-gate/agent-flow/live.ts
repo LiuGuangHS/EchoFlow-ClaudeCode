@@ -293,7 +293,7 @@ export async function executeLiveAgentFlow(options: {
 
   const port = await getPort()
   const baseUrl = `http://127.0.0.1:${port}`
-  const workRoot = await mkdtemp(join(tmpdir(), 'cc-haha-agent-flow-live-'))
+  const workRoot = await mkdtemp(join(tmpdir(), 'echoflow-agent-flow-live-'))
   cpSync(join(rootDir, FIXTURE), workRoot, { recursive: true })
 
   // Seeded, not shared: the sandbox gets a copy of the real provider config so the
@@ -303,7 +303,7 @@ export async function executeLiveAgentFlow(options: {
   const sandbox = createQualityGateSandbox({
     label: 'agent-flow-live',
     seedProviders: true,
-    envOverrides: { CC_HAHA_DISABLE_TERMINAL_SHELL_ENV: '1' },
+    envOverrides: { ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV: '1' },
   })
 
   const server = Bun.spawn(['bun', 'run', 'src/server/index.ts', '--host', '127.0.0.1', '--port', String(port)], {

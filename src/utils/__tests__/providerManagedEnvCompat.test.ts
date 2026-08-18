@@ -41,7 +41,8 @@ describe('provider managed env compatibility', () => {
     expect(env).toBe(input)
   })
 
-  test('treats attribution header routing as provider-managed env', () => {
+  test('treats attribution header and legacy OpenAI OAuth routing as provider-managed env', () => {
     expect(isProviderManagedEnvVar('CLAUDE_CODE_ATTRIBUTION_HEADER')).toBe(true)
+    expect(isProviderManagedEnvVar('CC_HAHA_OPENAI_OAUTH_PROVIDER')).toBe(true)
   })
 })

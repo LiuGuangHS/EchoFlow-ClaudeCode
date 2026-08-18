@@ -74,15 +74,12 @@ describe('GET /api/echoflow-oauth/status', () => {
   beforeEach(setup)
   afterEach(teardown)
 
-  test('keeps the legacy resource route compatible with the canonical route', async () => {
-    const canonicalUrl = new URL('http://localhost:3456/api/echoflow-oauth')
+  test('rejects the retired resource route', async () => {
     const legacyUrl = new URL('http://localhost:3456/api/haha-oauth')
 
-    const canonical = await handleApiRequest(new Request(canonicalUrl), canonicalUrl)
     const legacy = await handleApiRequest(new Request(legacyUrl), legacyUrl)
 
-    expect(legacy.status).toBe(canonical.status)
-    expect(await legacy.json()).toEqual(await canonical.json())
+    expect(legacy.status).toBe(404)
   })
 
   test('returns loggedIn=false when no token file', async () => {

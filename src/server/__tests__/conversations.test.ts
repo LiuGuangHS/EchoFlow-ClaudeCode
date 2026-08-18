@@ -1266,7 +1266,7 @@ describe('ConversationService', () => {
       expect(found).not.toBeNull()
 
       const encryptedReasoning =
-        `cc-haha:openai-reasoning:v1:${JSON.stringify({
+        `echoflow-code:openai-reasoning:v1:${JSON.stringify({
           summary: [],
           encrypted_content: 'x'.repeat(400_000),
         })}`

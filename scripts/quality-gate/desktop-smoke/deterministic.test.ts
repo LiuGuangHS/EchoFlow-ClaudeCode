@@ -14,11 +14,11 @@ describe('deterministic desktop UI smoke setup', () => {
   test('pins the locale so the approval button label is stable for every contributor', () => {
     const bootstrap = buildDesktopUiSmokeBootstrap('session-1')
 
-    expect(bootstrap).toContain(`localStorage.setItem('cc-haha-locale', "${DESKTOP_UI_SMOKE_LOCALE}")`)
-    expect(bootstrap).toContain('cc-haha-open-tabs')
+    expect(bootstrap).toContain(`localStorage.setItem('echoflow-code-locale', "${DESKTOP_UI_SMOKE_LOCALE}")`)
+    expect(bootstrap).toContain('echoflow-code-open-tabs')
     expect(bootstrap).toContain('session-1')
     // No runtime is pinned: the lane must exercise the default no-provider path.
-    expect(bootstrap).toContain("localStorage.removeItem('cc-haha-session-runtime')")
+    expect(bootstrap).toContain("localStorage.removeItem('echoflow-code-session-runtime')")
   })
 
   test('matches the approval button the desktop actually renders', () => {
@@ -45,9 +45,10 @@ describe('deterministic desktop UI smoke setup', () => {
   })
 
   test('skips with an actionable reason instead of failing when prerequisites are missing', () => {
-    const empty = mkdtempSync(join(tmpdir(), 'cc-haha-ui-smoke-prereq-'))
+    const empty = mkdtempSync(join(tmpdir(), 'echoflow-ui-smoke-prereq-'))
     try {
       expect(describeDesktopUiSmokePrerequisites(empty)).toContain('desktop dependencies')
+    expect(readFileSync('scripts/quality-gate/desktop-smoke/deterministic.ts', 'utf8')).toContain('Missing executables cause Bun.spawnSync to throw')
     } finally {
       rmSync(empty, { recursive: true, force: true })
     }

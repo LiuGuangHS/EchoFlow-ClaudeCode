@@ -10,7 +10,6 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { ProviderService } from './providerService.js'
 import {
-  LEGACY_OPENAI_OAUTH_PROVIDER_ENV_KEY,
   OPENAI_CODEX_OAUTH_FILE_ENV_KEY,
   OPENAI_OAUTH_PROVIDER_ENV_KEY,
   isOpenAIOfficialProviderId,
@@ -29,7 +28,6 @@ import {
   IMAGE_GENERATION_MODEL_ENV_KEY,
   IMAGE_GENERATION_PROVIDER_ID_ENV_KEY,
   IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY,
-  LEGACY_IMAGE_GENERATION_ENV_KEYS,
 } from '../../services/imageGeneration/config.js'
 import { sessionService } from './sessionService.js'
 import { diagnosticsService } from './diagnosticsService.js'
@@ -92,15 +90,10 @@ const AUTO_MEMORY_DIRNAME = 'memory'
 export const DESKTOP_CLI_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 6_000
 const DESKTOP_BRIDGE_ENV_KEYS = [
   'ECHOFLOW_COMPUTER_USE_HOST_BUNDLE_ID',
-  'CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID',
   'ECHOFLOW_DESKTOP_SERVER_URL',
-  'CC_HAHA_DESKTOP_SERVER_URL',
   'ECHOFLOW_DESKTOP_AWAIT_MCP',
-  'CC_HAHA_DESKTOP_AWAIT_MCP',
   'ECHOFLOW_DESKTOP_AWAIT_MCP_TIMEOUT_MS',
-  'CC_HAHA_DESKTOP_AWAIT_MCP_TIMEOUT_MS',
   'ECHOFLOW_SKIP_DOTENV',
-  'CC_HAHA_SKIP_DOTENV',
 ] as const
 
 /**
@@ -1564,8 +1557,7 @@ export class ConversationService {
       'CLAUDE_CODE_ATTRIBUTION_HEADER',
       'CLAUDE_CODE_MODEL_CONTEXT_WINDOWS',
       OPENAI_OAUTH_PROVIDER_ENV_KEY,
-      LEGACY_OPENAI_OAUTH_PROVIDER_ENV_KEY,
-      OPENAI_CODEX_OAUTH_FILE_ENV_KEY,
+          OPENAI_CODEX_OAUTH_FILE_ENV_KEY,
       OPENAI_CODEX_REASONING_EFFORT_ENV_KEY,
       GROK_OAUTH_PROVIDER_ENV_KEY,
       GROK_OAUTH_FILE_ENV_KEY,
@@ -1574,7 +1566,6 @@ export class ConversationService {
       IMAGE_GENERATION_BASE_URL_ENV_KEY,
       IMAGE_GENERATION_API_KEY_ENV_KEY,
       IMAGE_GENERATION_MODEL_ENV_KEY,
-      ...Object.values(LEGACY_IMAGE_GENERATION_ENV_KEYS),
     ] as const
 
     const cleanEnv = await getProcessEnvWithTerminalShellEnvironment()
@@ -1850,8 +1841,7 @@ export class ConversationService {
         'CLAUDE_CODE_ATTRIBUTION_HEADER',
         'CLAUDE_CODE_MODEL_CONTEXT_WINDOWS',
         OPENAI_OAUTH_PROVIDER_ENV_KEY,
-        LEGACY_OPENAI_OAUTH_PROVIDER_ENV_KEY,
-        OPENAI_CODEX_OAUTH_FILE_ENV_KEY,
+              OPENAI_CODEX_OAUTH_FILE_ENV_KEY,
         GROK_OAUTH_PROVIDER_ENV_KEY,
         GROK_OAUTH_FILE_ENV_KEY,
         IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY,
@@ -1887,10 +1877,7 @@ export class ConversationService {
       const raw = fs.readFileSync(settingsPath, 'utf-8')
       const parsed = JSON.parse(raw) as { env?: Record<string, string> }
       const env = parsed.env ?? {}
-      if (
-        env[OPENAI_OAUTH_PROVIDER_ENV_KEY] === '1' ||
-        env[LEGACY_OPENAI_OAUTH_PROVIDER_ENV_KEY] === '1'
-      ) {
+      if (env[OPENAI_OAUTH_PROVIDER_ENV_KEY] === '1') {
         return false
       }
       if (env[GROK_OAUTH_PROVIDER_ENV_KEY] === '1') {

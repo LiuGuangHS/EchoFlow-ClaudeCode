@@ -2880,7 +2880,7 @@ export const zh: Record<TranslationKey, string> = {
   'settings.general.legacyMigrationConfirmTitle': '导入旧版本数据？',
   'settings.general.legacyMigrationConfirmBody': '将从旧版本目录复制配置到当前 EchoFlow 数据目录，不会删除旧数据，不会覆盖当前已有数据。',
   'settings.general.legacyMigrationSuccess': '已导入旧版本数据。新会话将使用导入后的 provider 配置，已有运行中的会话不受影响。',
-  'settings.general.legacyMigrationFailed': '旧版本数据导入失败：{error}',
+  'settings.general.legacyMigrationFailed': '旧数据导入失败：{error}',
   'settings.general.legacyMigrationNoData': '未发现可导入的旧版本数据。',
   'settings.general.h5AccessMobileDownloadTitle': '还没有手机版？',
   'settings.general.h5AccessMobileDownloadDescription': '先下载并安装 EchoFlow Code 手机版，再用下方二维码或链接连接桌面端。',

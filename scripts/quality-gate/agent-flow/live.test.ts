@@ -13,7 +13,7 @@ import { LIVE_AGENT_FLOW_SCENARIOS, LIVE_FLOW_COVERAGE, LIVE_FLOW_EXCLUSIONS } f
  */
 
 function configDirWith(providers: Array<{ id: string; name: string; models?: Record<string, string> }>) {
-  const dir = mkdtempSync(join(tmpdir(), 'cc-haha-live-test-'))
+  const dir = mkdtempSync(join(tmpdir(), 'echoflow-live-test-'))
   mkdirSync(join(dir, 'echoflow-code'), { recursive: true })
   writeFileSync(
     join(dir, 'echoflow-code', 'providers.json'),

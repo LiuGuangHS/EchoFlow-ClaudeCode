@@ -61,12 +61,6 @@ export class EchoFlowApiService {
     return account ? toPublicAccount(account) : null
   }
 
-  async migrateLegacyAccount(userId: string, managementToken: string): Promise<boolean> {
-    if (await this.readAccount()) return false
-    await this.writeAccount({ userId, managementToken })
-    return true
-  }
-
   async bindAccount(userId: string, managementToken: string): Promise<EchoFlowAccount> {
     const account = await this.refreshWithCredentials(userId, managementToken)
     const stored = { ...account, managementToken }

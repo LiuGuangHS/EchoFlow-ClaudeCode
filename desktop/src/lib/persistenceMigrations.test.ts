@@ -10,6 +10,37 @@ describe('desktop persistence migrations', () => {
     window.localStorage.clear()
   })
 
+  test('copies allowlisted legacy localStorage keys without overwriting or deleting sources', () => {
+    window.localStorage.setItem('cc-haha-open-tabs', '{"openTabs":[{"sessionId":"session-1","title":"Legacy tab"}]}')
+    window.localStorage.setItem('cc-haha-session-runtime', '{"session-1":{"providerId":null,"modelId":"claude"}}')
+    window.localStorage.setItem('cc-haha-theme', 'dark')
+    window.localStorage.setItem('cc-haha-locale', 'en')
+    window.localStorage.setItem('cc-haha-ui-zoom', '1.25')
+    window.localStorage.setItem('cc-haha-dismissed-update-version', '0.3.2')
+    window.localStorage.setItem('echoflow-code-theme', 'white')
+
+    const report = runDesktopPersistenceMigrations()
+
+    expect(report.migratedKeys).toEqual(expect.arrayContaining([
+      'echoflow-code-open-tabs',
+      'echoflow-code-session-runtime',
+      'echoflow-code-locale',
+      'echoflow-code-app-zoom',
+      'echoflow-code-dismissed-update-version',
+    ]))
+    expect(JSON.parse(window.localStorage.getItem('echoflow-code-open-tabs') || '{}')).toEqual({
+      openTabs: [{ sessionId: 'session-1', title: 'Legacy tab', type: 'session' }],
+      activeTabId: 'session-1',
+    })
+    expect(window.localStorage.getItem('echoflow-code-session-runtime')).toBe('{"session-1":{"providerId":null,"modelId":"claude"}}')
+    expect(window.localStorage.getItem('echoflow-code-theme')).toBe('white')
+    expect(window.localStorage.getItem('echoflow-code-app-zoom')).toBe('1.25')
+    expect(window.localStorage.getItem('echoflow-code-dismissed-update-version')).toBe('0.3.2')
+    expect(window.localStorage.getItem('cc-haha-open-tabs')).toBe('{"openTabs":[{"sessionId":"session-1","title":"Legacy tab"}]}')
+    expect(window.localStorage.getItem('cc-haha-dismissed-update-version')).toBe('0.3.2')
+    expect(window.localStorage.getItem('cc-haha-ui-zoom')).toBe('1.25')
+  })
+
   test('migrates legacy open-tab arrays into the current tab persistence shape', () => {
     window.localStorage.setItem('echoflow-code-open-tabs', JSON.stringify([
       { sessionId: 'session-1', title: 'Old tab' },
@@ -200,14 +231,13 @@ describe('desktop persistence migrations', () => {
     expect(window.localStorage.getItem('echoflow-code-app-zoom')).toBeNull()
   })
 
-  test('does not auto-migrate legacy echoflow-code UI zoom storage', () => {
+  test('copies legacy echoflow-code UI zoom storage without deleting the source', () => {
     window.localStorage.setItem('echoflow-code-ui-zoom', '1.25')
 
     const report = runDesktopPersistenceMigrations()
 
-    expect(report.migratedKeys).not.toContain('echoflow-code-ui-zoom')
-    expect(report.migratedKeys).not.toContain('echoflow-code-app-zoom')
-    expect(window.localStorage.getItem('echoflow-code-app-zoom')).toBeNull()
+    expect(report.migratedKeys).toContain('echoflow-code-app-zoom')
+    expect(window.localStorage.getItem('echoflow-code-app-zoom')).toBe('1.25')
     expect(window.localStorage.getItem('echoflow-code-ui-zoom')).toBe('1.25')
   })
 

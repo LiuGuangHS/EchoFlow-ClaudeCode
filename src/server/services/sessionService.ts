@@ -47,7 +47,6 @@ import {
 import { ProviderService } from './providerService.js'
 import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
 import { shouldHideCommandMetadataContent } from '../../utils/commandMetadata.js'
-import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
 import {
   extractGoalCreationTitle,
   extractTranscriptUserTitle,
@@ -514,6 +513,10 @@ const USER_INTERRUPTION_TEXTS = new Set([
 const NO_RESPONSE_REQUESTED_TEXT = 'No response requested.'
 const TASK_NOTIFICATION_RE = /^<task-notification>\s*[\s\S]*<\/task-notification>$/i
 const TASK_NOTIFICATION_BLOCK_RE = /<task-notification>\s*[\s\S]*?<\/task-notification>/i
+const PERSISTED_TASK_NOTIFICATION_ENTRY_TYPES = new Set([
+  'echoflow-code-task-notification',
+  'cc-haha-task-notification',
+])
 const PERSISTED_TASK_NOTIFICATION_ENTRY_TYPE = 'echoflow-code-task-notification'
 const PROVIDER_MODEL_ALIAS_SEPARATORS = ['-', '_', ':', '/', '.', ' ']
 
@@ -4134,6 +4137,20 @@ export class SessionService {
       )
         ? preservedPermissionMode
         : this.resolvePermissionModeFromEntries(entries)
+      let runtimeProviderId: string | null | undefined
+      let runtimeModelId: string | undefined
+      let effortLevel: string | undefined
+      for (const entry of entries) {
+        if (entry.type !== 'session-meta') continue
+        const record = entry as Record<string, unknown>
+        if (record.runtimeProviderId === null || typeof record.runtimeProviderId === 'string') {
+          runtimeProviderId = record.runtimeProviderId as string | null
+        }
+        if (typeof record.runtimeModelId === 'string') runtimeModelId = record.runtimeModelId
+        if (typeof record.effortLevel === 'string' && VALID_SESSION_EFFORT_LEVELS.has(record.effortLevel)) {
+          effortLevel = record.effortLevel
+        }
+      }
       const now = new Date().toISOString()
 
       const initialEntry = {
@@ -4153,6 +4170,9 @@ export class SessionService {
         workDir,
         repository,
         ...(permissionMode ? { permissionMode } : {}),
+        ...(runtimeProviderId !== undefined ? { runtimeProviderId } : {}),
+        ...(runtimeModelId ? { runtimeModelId } : {}),
+        ...(effortLevel ? { effortLevel } : {}),
         timestamp: now,
       }
 
@@ -4459,7 +4479,7 @@ export class SessionService {
 
     const entries = await this.readTargetedJsonlEntries(
       found,
-      ['user', PERSISTED_TASK_NOTIFICATION_ENTRY_TYPE],
+      ['user', ...PERSISTED_TASK_NOTIFICATION_ENTRY_TYPES],
     ) ?? await this.readJsonlFile(found.filePath)
     return this.taskNotificationsFromEntries(entries)
   }
@@ -4469,7 +4489,7 @@ export class SessionService {
   ): SessionTaskNotification[] {
     const notifications = new Map<string, SessionTaskNotification>()
     for (const entry of entries) {
-      const notification = entry.type === PERSISTED_TASK_NOTIFICATION_ENTRY_TYPE
+      const notification = PERSISTED_TASK_NOTIFICATION_ENTRY_TYPES.has(entry.type)
         ? this.parsePersistedTaskNotification(entry.taskNotification, entry.timestamp)
         : entry.message?.role === 'user'
           ? this.parseTaskNotificationContent(entry.message.content, entry.timestamp)

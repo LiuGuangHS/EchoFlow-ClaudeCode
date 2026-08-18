@@ -5,6 +5,7 @@ import * as path from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { ensureEchoFlowConfigRoot, getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 import { diagnosticsService } from './diagnosticsService.js'
+import { normalizeLegacyImageGenerationEnv } from '../../utils/providerManagedEnvCompat.js'
 
 type LegacyMigrationSource = 'current-cc-haha' | 'legacy-home-cc-haha' | 'current-root-providers' | 'legacy-home-root-providers'
 type LegacyMigrationTarget = 'providers' | 'settings' | 'oauth' | 'openai-oauth' | 'desktop-ui'
@@ -162,12 +163,27 @@ async function pathExists(filePath: string): Promise<boolean> {
   }
 }
 
+async function isSymbolicLink(filePath: string): Promise<boolean> {
+  try {
+    return (await fs.lstat(filePath)).isSymbolicLink()
+  } catch (error) {
+    if (errnoCode(error) === 'ENOENT') return false
+    throw error
+  }
+}
+
 async function readJsonFile(filePath: string): Promise<unknown> {
   return JSON.parse(await fs.readFile(filePath, 'utf-8'))
 }
 
+function migrateLegacyImageEnv(value: unknown): unknown {
+  if (!isRecord(value) || !isRecord(value.env)) return value
+
+  const { env, changed } = normalizeLegacyImageGenerationEnv(value.env)
+  return changed ? { ...value, env } : value
+}
+
 async function writeJsonFileIfMissing(filePath: string, value: unknown): Promise<void> {
-  await fs.mkdir(path.dirname(filePath), { recursive: true })
   const tmpPath = path.join(
     path.dirname(filePath),
     `.${path.basename(filePath)}.tmp.${Date.now()}-${randomBytes(3).toString('hex')}`,
@@ -354,6 +370,10 @@ export class LegacyMigrationService {
 
   async run(): Promise<LegacyMigrationResult> {
     await ensureEchoFlowConfigRoot(this.configDir)
+    if (await isSymbolicLink(getEchoFlowInternalDir(this.configDir))) {
+      throw new Error('unsafe_migration_target_path')
+    }
+    await fs.mkdir(getEchoFlowInternalDir(this.configDir), { recursive: true })
     const items = await this.buildItems(true)
     void diagnosticsService.recordEvent({
       type: 'legacy_migration_run',
@@ -490,11 +510,17 @@ export class LegacyMigrationService {
     const label = `${source} ${target}`
 
     try {
+      if (await isSymbolicLink(sourceDir)) {
+        return { id, label, source, target, status: 'invalid', message: 'unsafe_source_path' }
+      }
       if (await pathExists(targetPath)) {
         return { id, label, source, target, status: 'target-exists' }
       }
       if (!(await pathExists(sourcePath))) {
         return { id, label, source, target, status: 'missing' }
+      }
+      if (await isSymbolicLink(sourcePath)) {
+        return { id, label, source, target, status: 'invalid', message: 'unsafe_source_path' }
       }
 
       if (target === 'providers') {
@@ -506,7 +532,11 @@ export class LegacyMigrationService {
         await writeJsonFileIfMissing(targetPath, normalized)
       } else {
         if (!run) return { id, label, source, target, status: 'ready' }
-        await copyFileIfMissing(sourcePath, targetPath)
+        if (target === 'settings') {
+          await writeJsonFileIfMissing(targetPath, migrateLegacyImageEnv(await readJsonFile(sourcePath)))
+        } else {
+          await copyFileIfMissing(sourcePath, targetPath)
+        }
       }
       return { id, label, source, target, status: 'migrated' }
     } catch (error) {
@@ -553,6 +583,9 @@ export class LegacyMigrationService {
       const settingsTargetExists = await pathExists(settingsTargetPath)
       if (!(await pathExists(sourcePath))) {
         return [{ ...providerItem, status: providerTargetExists ? 'target-exists' : 'missing' }]
+      }
+      if (await isSymbolicLink(sourcePath)) {
+        return [{ ...providerItem, status: 'invalid', message: 'unsafe_source_path' }]
       }
       if (providerTargetExists) {
         return [{ ...providerItem, status: 'target-exists' }]

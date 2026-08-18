@@ -15,7 +15,7 @@ import {
 const scratchDirs: string[] = []
 
 function scratch(prefix: string) {
-  const dir = mkdtempSync(join(tmpdir(), `cc-haha-sandbox-test-${prefix}-`))
+  const dir = mkdtempSync(join(tmpdir(), `echoflow-code-sandbox-test-${prefix}-`))
   scratchDirs.push(dir)
   return dir
 }
@@ -84,21 +84,21 @@ describe('provider state seeding', () => {
   test('copies provider identity and credentials but not regenerable local state', () => {
     const source = scratch('seed-source')
     const target = scratch('seed-target')
-    writeJson(join(source, 'cc-haha', 'providers.json'), { activeId: 'p1', providers: [{ id: 'p1', name: 'Gateway' }] })
-    writeJson(join(source, 'cc-haha', 'settings.json'), { env: { ANTHROPIC_BASE_URL: 'https://gateway.example' } })
-    writeJson(join(source, 'cc-haha', 'oauth.json'), { token: 'secret' })
-    mkdirSync(join(source, 'cc-haha', 'db'), { recursive: true })
-    writeFileSync(join(source, 'cc-haha', 'db', 'index-v1.sqlite'), 'binary')
-    mkdirSync(join(source, 'cc-haha', 'diagnostics'), { recursive: true })
-    writeFileSync(join(source, 'cc-haha', 'diagnostics', 'run.log'), 'noise')
+    writeJson(join(source, 'echoflow-code', 'providers.json'), { activeId: 'p1', providers: [{ id: 'p1', name: 'Gateway' }] })
+    writeJson(join(source, 'echoflow-code', 'settings.json'), { env: { ANTHROPIC_BASE_URL: 'https://gateway.example' } })
+    writeJson(join(source, 'echoflow-code', 'oauth.json'), { token: 'secret' })
+    mkdirSync(join(source, 'echoflow-code', 'db'), { recursive: true })
+    writeFileSync(join(source, 'echoflow-code', 'db', 'index-v1.sqlite'), 'binary')
+    mkdirSync(join(source, 'echoflow-code', 'diagnostics'), { recursive: true })
+    writeFileSync(join(source, 'echoflow-code', 'diagnostics', 'run.log'), 'noise')
     writeJson(join(source, 'settings.json'), { permissionMode: 'plan' })
 
     const copied = seedProviderState(source, target)
 
     expect(copied).toEqual(['providers.json', 'settings.json', 'oauth.json'])
-    expect(JSON.parse(readFileSync(join(target, 'cc-haha', 'providers.json'), 'utf8')).activeId).toBe('p1')
-    expect(existsSync(join(target, 'cc-haha', 'db'))).toBe(false)
-    expect(existsSync(join(target, 'cc-haha', 'diagnostics'))).toBe(false)
+    expect(JSON.parse(readFileSync(join(target, 'echoflow-code', 'providers.json'), 'utf8')).activeId).toBe('p1')
+    expect(existsSync(join(target, 'echoflow-code', 'db'))).toBe(false)
+    expect(existsSync(join(target, 'echoflow-code', 'diagnostics'))).toBe(false)
     // The user-level settings.json is never seeded: a lane must not inherit the
     // developer's permission mode, and must not be able to write it back.
     expect(existsSync(join(target, 'settings.json'))).toBe(false)
@@ -115,16 +115,16 @@ describe('user state guard', () => {
   test('reports created, modified, and deleted guarded files', () => {
     const config = scratch('guard-diff')
     writeJson(join(config, 'settings.json'), { permissionMode: 'default' })
-    writeJson(join(config, 'cc-haha', 'providers.json'), { activeId: 'p1' })
+    writeJson(join(config, 'echoflow-code', 'providers.json'), { activeId: 'p1' })
     const before = fingerprintUserState(config)
 
     writeJson(join(config, 'settings.json'), { permissionMode: 'bypassPermissions', extra: true })
-    writeJson(join(config, 'cc-haha', 'oauth.json'), { token: 'new' })
-    rmSync(join(config, 'cc-haha', 'providers.json'))
+    writeJson(join(config, 'echoflow-code', 'oauth.json'), { token: 'new' })
+    rmSync(join(config, 'echoflow-code', 'providers.json'))
 
     expect(describeUserStateMutations(before, fingerprintUserState(config))).toEqual([
-      'created: cc-haha/oauth.json',
-      'deleted: cc-haha/providers.json',
+      'created: echoflow-code/oauth.json',
+      'deleted: echoflow-code/providers.json',
       'modified: settings.json',
     ])
   })
@@ -205,7 +205,7 @@ describe('user state guard', () => {
 describe('sandbox lifecycle', () => {
   test('creates an isolated config dir seeded from the given source and cleans up', () => {
     const source = scratch('lifecycle-source')
-    writeJson(join(source, 'cc-haha', 'providers.json'), { activeId: 'p1', providers: [{ id: 'p1', name: 'Gateway' }] })
+    writeJson(join(source, 'echoflow-code', 'providers.json'), { activeId: 'p1', providers: [{ id: 'p1', name: 'Gateway' }] })
     writeJson(join(source, 'settings.json'), { permissionMode: 'plan' })
 
     const sandbox = createQualityGateSandbox({
@@ -216,7 +216,7 @@ describe('sandbox lifecycle', () => {
     })
 
     expect(sandbox.configDir.startsWith(sandbox.home)).toBe(true)
-    expect(existsSync(join(sandbox.configDir, 'cc-haha', 'providers.json'))).toBe(true)
+    expect(existsSync(join(sandbox.configDir, 'echoflow-code', 'providers.json'))).toBe(true)
     expect(existsSync(join(sandbox.configDir, 'settings.json'))).toBe(false)
     expect(sandbox.detectUserStateMutations()).toEqual([])
 

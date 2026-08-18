@@ -343,11 +343,12 @@ describe('remote H5 auth and CORS integration', () => {
     expect(tokenlessResponse.status).toBe(200)
     await expect(tokenlessResponse.json()).resolves.toMatchObject({ status: 'ok' })
 
-    for (const path of ['/api/echoflow-grok-oauth/success', '/api/haha-grok-oauth/success']) {
-      const oauthSuccessResponse = await fetch(`${baseUrl}${path}`)
-      expect(oauthSuccessResponse.status).toBe(200)
-      expect(oauthSuccessResponse.headers.get('Content-Type')).toContain('text/html')
-    }
+    const oauthSuccessResponse = await fetch(`${baseUrl}/api/echoflow-grok-oauth/success`)
+    expect(oauthSuccessResponse.status).toBe(200)
+    expect(oauthSuccessResponse.headers.get('Content-Type')).toContain('text/html')
+
+    const retiredOauthResponse = await fetch(`${baseUrl}/api/haha-grok-oauth/success`)
+    expect(retiredOauthResponse.status).toBe(404)
 
     const desktopResponse = await fetch(`${baseUrl}/api/status`, {
       headers: { Authorization: 'Bearer desktop-local-secret' },

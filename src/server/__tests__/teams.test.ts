@@ -488,7 +488,7 @@ describe('TeamService', () => {
         timestamp: `${timestampPrefix}4.000Z`,
       },
       {
-        type: 'cc-haha-task-notification',
+        type: 'echoflow-code-task-notification',
         isMeta: true,
         taskNotification: {
           taskId: 'task-0',
@@ -1320,7 +1320,7 @@ describe('TeamService', () => {
       message: { role: 'user', content: 'Indexed' },
       timestamp: '2026-01-01T00:01:00.000Z',
     }, {
-      type: 'cc-haha-task-notification',
+      type: 'echoflow-code-task-notification',
       isMeta: true,
       taskNotification: {
         taskId: 'indexed-task',
@@ -1362,7 +1362,7 @@ describe('TeamService', () => {
         source: { path: filePath, size: stat.size, mtimeMs: stat.mtimeMs, fileIdentity: null, fingerprint, indexedBytes: stat.size, parserVersion: 3, state: 'ready', lastErrorCode: null, updatedAtMs: 1 },
         entries: [
           { ordinal: 0, jsonlLine: 1, byteStart: 0, byteLength: lineLengths[0]!, entryType: 'user', messageId: 'u1', role: 'user', timestamp: '2026-01-01T00:01:00.000Z', parentToolUseId: null },
-          { ordinal: 1, jsonlLine: 2, byteStart: lineLengths[0]!, byteLength: lineLengths[1]!, entryType: 'cc-haha-task-notification', messageId: null, role: null, timestamp: '2026-01-01T00:02:00.000Z', parentToolUseId: null },
+          { ordinal: 1, jsonlLine: 2, byteStart: lineLengths[0]!, byteLength: lineLengths[1]!, entryType: 'echoflow-code-task-notification', messageId: null, role: null, timestamp: '2026-01-01T00:02:00.000Z', parentToolUseId: null },
         ],
       }),
       async rebuild() { return this.getPublicStatus() },
@@ -2450,7 +2450,7 @@ describe('Teams API', () => {
     })
 
     await fs.appendFile(transcriptPath, `${JSON.stringify({
-      type: 'cc-haha-task-notification',
+      type: 'echoflow-code-task-notification',
       isMeta: true,
       taskNotification: {
         taskId: 'persisted-task',

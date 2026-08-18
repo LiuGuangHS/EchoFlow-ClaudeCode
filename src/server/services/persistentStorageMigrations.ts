@@ -1,12 +1,14 @@
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import { randomBytes } from 'node:crypto'
-import { normalizeLegacyDeepSeekManagedEnv } from '../../utils/providerManagedEnvCompat.js'
+import {
+  normalizeLegacyDeepSeekManagedEnv,
+  normalizeLegacyImageGenerationEnv,
+} from '../../utils/providerManagedEnvCompat.js'
 import { getEchoFlowConfigDir, getEchoFlowInternalDir, ensureEchoFlowConfigRoot } from './echoFlowConfigRoot.js'
 import { isOpenAIOfficialProviderId } from './openaiOfficialProvider.js'
 import { isGrokOfficialProviderId } from './grokOfficialProvider.js'
 import { BUILT_IN_PROVIDER_IDS } from '../types/provider.js'
-import { EchoFlowApiService } from './echoflowApiService.js'
 
 export const CURRENT_PROVIDER_INDEX_SCHEMA_VERSION = 3
 
@@ -16,19 +18,6 @@ type MigrationReport = {
 }
 
 type JsonObject = Record<string, unknown>
-type LegacyProviderModel = {
-  id: string
-  name?: string
-}
-type LegacyRootProvider = {
-  id: string
-  name: string
-  baseUrl: string
-  apiKey: string
-  models: LegacyProviderModel[]
-  isActive?: boolean
-  notes?: string
-}
 
 let migrationPromise: Promise<MigrationReport> | null = null
 let migrationConfigDir: string | null = null
@@ -57,22 +46,6 @@ function isSavedProvider(value: unknown): value is JsonObject {
     typeof value.apiKey === 'string' &&
     typeof value.baseUrl === 'string' &&
     isProviderModels(value.models)
-  )
-}
-
-function isLegacyProviderModel(value: unknown): value is LegacyProviderModel {
-  return isRecord(value) && typeof value.id === 'string'
-}
-
-function isLegacyRootProvider(value: unknown): value is LegacyRootProvider {
-  return (
-    isRecord(value) &&
-    typeof value.id === 'string' &&
-    typeof value.name === 'string' &&
-    typeof value.baseUrl === 'string' &&
-    typeof value.apiKey === 'string' &&
-    Array.isArray(value.models) &&
-    value.models.every(isLegacyProviderModel)
   )
 }
 
@@ -189,52 +162,20 @@ function migrateProvidersIndex(value: unknown): JsonObject {
   }
 }
 
-async function migrateLegacyEchoFlowAccount(
-  echoFlowDir: string,
-  report: MigrationReport,
-): Promise<void> {
-  const providersPath = path.join(echoFlowDir, 'providers.json')
-  try {
-    const providers = await readJsonFile(providersPath)
-    if (providers.missing || !isRecord(providers.value) || !Array.isArray(providers.value.providers)) return
-
-    const management = providers.value.providers
-      .map((provider) => isRecord(provider) ? provider.echoflowManagement : undefined)
-      .find((value): value is { userId: string; managementToken: string } =>
-        isRecord(value) && typeof value.userId === 'string' && typeof value.managementToken === 'string',
-      )
-    if (!management) return
-
-    const migrated = await new EchoFlowApiService().migrateLegacyAccount(
-      management.userId,
-      management.managementToken,
-    )
-    const sanitizedProviders = providers.value.providers.map((provider) => {
-      if (!isRecord(provider)) return provider
-      const { echoflowManagement: _management, echoflowToken: _token, ...sanitized } = provider
-      return sanitized
-    })
-
-    await backupFile(providersPath, 'bak-before-migration')
-    await writeJsonFile(providersPath, { ...providers.value, providers: sanitizedProviders })
-    if (migrated) report.migratedEntries.push('providers.json -> echoflow/qingyun-account.json')
-    report.migratedEntries.push('echoflow/providers.json')
-  } catch (error) {
-    if (error instanceof SyntaxError) return
-    report.failures.push(`qingyun account: ${error instanceof Error ? error.message : String(error)}`)
-  }
-}
-
 function migrateManagedSettings(value: unknown): JsonObject {
   if (!isRecord(value)) return {}
   if (value.env !== undefined && !isRecord(value.env)) {
     return { ...value, env: {} }
   }
-  if (isRecord(value.env)) {
-    const { env, changed } = normalizeLegacyDeepSeekManagedEnv(value.env as Record<string, string>)
-    if (changed) return { ...value, env }
-  }
-  return value
+  if (!isRecord(value.env)) return value
+
+  const imageMigration = normalizeLegacyImageGenerationEnv(value.env)
+  const deepSeekMigration = normalizeLegacyDeepSeekManagedEnv(
+    imageMigration.env as Record<string, string>,
+  )
+  if (!imageMigration.changed && !deepSeekMigration.changed) return value
+
+  return { ...value, env: deepSeekMigration.env }
 }
 
 async function migrateJsonEntry(
@@ -270,156 +211,12 @@ async function migrateJsonEntry(
   }
 }
 
-function legacyProviderModelId(
-  provider: LegacyRootProvider,
-  preferredModelId: unknown,
-): string {
-  if (
-    typeof preferredModelId === 'string' &&
-    provider.models.some((model) => model.id === preferredModelId)
-  ) {
-    return preferredModelId
-  }
-
-  return provider.models[0]?.id ?? ''
-}
-
-function migrateLegacyRootProvidersConfig(value: unknown): JsonObject | null {
-  if (!isRecord(value) || !Array.isArray(value.providers)) {
-    return null
-  }
-
-  const providers = value.providers
-    .filter(isLegacyRootProvider)
-    .map((provider) => {
-      const main = legacyProviderModelId(provider, value.activeModel)
-      return {
-        id: provider.id,
-        presetId: 'custom',
-        name: provider.name,
-        apiKey: provider.apiKey,
-        baseUrl: provider.baseUrl,
-        apiFormat: 'anthropic',
-        models: {
-          main,
-          haiku: main,
-          sonnet: main,
-          opus: main,
-        },
-        ...(provider.notes !== undefined && { notes: provider.notes }),
-      }
-    })
-
-  if (providers.length === 0) {
-    return null
-  }
-
-  const activeLegacyProvider = value.providers
-    .filter(isLegacyRootProvider)
-    .find((provider) =>
-      provider.isActive === true ||
-      (typeof value.activeModel === 'string' &&
-        provider.models.some((model) => model.id === value.activeModel)),
-    )
-  const activeId =
-    activeLegacyProvider && providers.some((provider) => provider.id === activeLegacyProvider.id)
-      ? activeLegacyProvider.id
-      : null
-
-  return {
-    schemaVersion: CURRENT_PROVIDER_INDEX_SCHEMA_VERSION,
-    activeId,
-    providers,
-    providerOrder: normalizeProviderOrder(undefined, providers),
-  }
-}
-
-function buildManagedSettingsForMigratedProvider(provider: JsonObject | undefined): JsonObject | null {
-  if (!provider || !isProviderModels(provider.models)) return null
-  const apiKey = typeof provider.apiKey === 'string' ? provider.apiKey : ''
-  const baseUrl = typeof provider.baseUrl === 'string' ? provider.baseUrl : ''
-  if (!apiKey || !baseUrl) return null
-
-  return {
-    env: {
-      ANTHROPIC_BASE_URL: baseUrl,
-      ANTHROPIC_AUTH_TOKEN: apiKey,
-      ANTHROPIC_MODEL: provider.models.main,
-      ...(provider.models.fable ? { ANTHROPIC_DEFAULT_FABLE_MODEL: provider.models.fable } : {}),
-      ANTHROPIC_DEFAULT_HAIKU_MODEL: provider.models.haiku,
-      ANTHROPIC_DEFAULT_SONNET_MODEL: provider.models.sonnet,
-      ANTHROPIC_DEFAULT_OPUS_MODEL: provider.models.opus,
-    },
-  }
-}
-
-async function migrateLegacyRootProviders(
-  configDir: string,
-  echoFlowDir: string,
-  report: MigrationReport,
-): Promise<void> {
-  const targetPath = path.join(echoFlowDir, 'providers.json')
-  try {
-    await fs.access(targetPath)
-    return
-  } catch (error) {
-    if (errnoCode(error) !== 'ENOENT') {
-      report.failures.push(`echoflow/providers.json: ${error instanceof Error ? error.message : String(error)}`)
-      return
-    }
-  }
-
-  const legacyPath = path.join(configDir, 'providers.json')
-
-  try {
-    const legacy = await readJsonFile(legacyPath)
-    if (legacy.missing) return
-
-    const migrated = migrateLegacyRootProvidersConfig(legacy.value)
-    if (!migrated) return
-
-    await writeJsonFile(targetPath, migrated)
-    report.migratedEntries.push('providers.json -> echoflow/providers.json')
-
-    const settingsPath = path.join(echoFlowDir, 'settings.json')
-    const settings = await readJsonFile(settingsPath).catch(() => ({ missing: false, value: undefined, raw: '' }))
-    if (!settings.missing) return
-
-    const activeId = typeof migrated.activeId === 'string' ? migrated.activeId : null
-    const activeProvider = Array.isArray(migrated.providers)
-      ? migrated.providers.find((provider) => isRecord(provider) && provider.id === activeId)
-      : undefined
-    const managedSettings = buildManagedSettingsForMigratedProvider(
-      isRecord(activeProvider) ? activeProvider : undefined,
-    )
-    if (managedSettings) {
-      await writeJsonFile(settingsPath, managedSettings)
-      report.migratedEntries.push('providers.json -> echoflow/settings.json')
-    }
-  } catch (error) {
-    if (error instanceof SyntaxError) {
-      report.failures.push(`providers.json: ${error.message}`)
-      return
-    }
-    report.failures.push(`providers.json: ${error instanceof Error ? error.message : String(error)}`)
-  }
-}
-
 async function runPersistentStorageMigrations(configDir: string): Promise<MigrationReport> {
   const report: MigrationReport = { migratedEntries: [], failures: [] }
   const echoFlowDir = getEchoFlowInternalDir(configDir)
 
   await ensureEchoFlowConfigRoot(configDir)
 
-  await migrateLegacyRootProviders(configDir, echoFlowDir, report)
-  await migrateLegacyEchoFlowAccount(echoFlowDir, report)
-
-  await migrateJsonEntry(
-    path.join(configDir, 'cc-haha', 'providers.json'),
-    'legacy-cc-haha/providers.json',
-    report,
-    migrateProvidersIndex,
-  )
   await migrateJsonEntry(
     path.join(echoFlowDir, 'providers.json'),
     'echoflow/providers.json',

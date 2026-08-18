@@ -562,7 +562,7 @@ describe('RepositoryLaunchControls', () => {
       // Success closes the menu so the selected branch is immediately visible
       // on the pill instead of leaving the user inside an apparently unchanged
       // menu. The returned list is adopted without a second request.
-      const pill = await screen.findByRole('button', { name: 'Location: cc-haha / feature/new' })
+      const pill = await screen.findByRole('button', { name: 'Location: echoflow-code / feature/new' })
       expect(screen.queryByRole('menu', { name: 'Location' })).not.toBeInTheDocument()
       expect(apiMocks.getRepositoryContext).toHaveBeenCalledTimes(1)
       expect(uiMocks.addToast).toHaveBeenCalledWith({
@@ -661,7 +661,7 @@ describe('RepositoryLaunchControls', () => {
       try {
         root.render(<ExternalLaunchHarness />)
         const pill = await eventually(() => (
-          screen.getByRole('button', { name: 'Location: cc-haha / main' })
+          screen.getByRole('button', { name: 'Location: echoflow-code / main' })
         ))
         pill.click()
         const branchEntry = await eventually(() => screen.getByRole('menuitem', { name: /Branch/ }))
@@ -681,7 +681,7 @@ describe('RepositoryLaunchControls', () => {
         createButton.click()
 
         await eventually(() => (
-          screen.getByRole('button', { name: 'Location: cc-haha / qa/launch-picker' })
+          screen.getByRole('button', { name: 'Location: echoflow-code / qa/launch-picker' })
         ))
         await eventually(() => {
           if (screen.queryByRole('menu', { name: 'Location' })) {
@@ -697,7 +697,7 @@ describe('RepositoryLaunchControls', () => {
           repository: { branch: 'qa/launch-picker', worktree: false },
         })
         expect(useLaunchTarget.getState().branch).toBe('qa/launch-picker')
-        expect(screen.getByRole('button', { name: 'Location: cc-haha / qa/launch-picker' }))
+        expect(screen.getByRole('button', { name: 'Location: echoflow-code / qa/launch-picker' }))
           .toBeInTheDocument()
         expect(screen.queryByRole('menu', { name: 'Location' })).not.toBeInTheDocument()
       } finally {
@@ -720,7 +720,7 @@ describe('RepositoryLaunchControls', () => {
           message: 'Created and selected “feature/new”. An isolated worktree will be created from it when the session starts.',
         })
       })
-      expect(await screen.findByRole('button', { name: 'Location: cc-haha / feature/new' }))
+      expect(await screen.findByRole('button', { name: 'Location: echoflow-code / feature/new' }))
         .toBeInTheDocument()
       expect(screen.getByText('Isolated')).toBeInTheDocument()
     })
@@ -955,7 +955,7 @@ describe('RepositoryLaunchControls', () => {
       fireEvent.change(input, { target: { value: 'feature/new' } })
       fireEvent.click(screen.getByRole('button', { name: 'Create' }))
 
-      await screen.findByRole('button', { name: 'Location: cc-haha / feature/new' })
+      await screen.findByRole('button', { name: 'Location: echoflow-code / feature/new' })
       expect(screen.queryByRole('status', { name: 'Dirty worktree' })).not.toBeInTheDocument()
     })
 
@@ -967,7 +967,7 @@ describe('RepositoryLaunchControls', () => {
 
       renderControls({ branch: 'feature/new' })
 
-      await screen.findByRole('button', { name: 'Location: cc-haha / feature/new' })
+      await screen.findByRole('button', { name: 'Location: echoflow-code / feature/new' })
       expect(screen.queryByRole('status', { name: 'Dirty worktree' })).not.toBeInTheDocument()
     })
 

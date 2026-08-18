@@ -1,5 +1,7 @@
 import { z } from 'zod'
 import { EchoFlowApiError, EchoFlowApiService } from '../services/echoflowApiService.js'
+import { LegacyMigrationService } from '../services/legacyMigrationService.js'
+import { isLocalAccessAuthorized } from '../localAccessAuth.js'
 import { ProviderService } from '../services/providerService.js'
 import { errorResponse } from '../middleware/errorHandler.js'
 
@@ -24,6 +26,10 @@ const SelectTokenSchema = z.object({
   providerId: z.string().trim().min(1).optional(),
 })
 
+const LegacyMigrationConfirmationSchema = z.object({
+  confirmed: z.literal(true),
+})
+
 export async function handleEchoFlowApi(req: Request, _url: URL, segments: string[]): Promise<Response> {
   try {
     const action = segments[2]
@@ -43,6 +49,20 @@ export async function handleEchoFlowApi(req: Request, _url: URL, segments: strin
       if (req.method === 'DELETE') {
         await service.disconnectAccount()
         return Response.json({ ok: true })
+      }
+    }
+
+    if (action === 'migration') {
+      if (!isLocalAccessAuthorized(req)) {
+        return Response.json({ error: 'local_access_required' }, { status: 403 })
+      }
+      const migrationService = new LegacyMigrationService()
+      if (req.method === 'GET') {
+        return Response.json(await migrationService.getStatus())
+      }
+      if (req.method === 'POST') {
+        LegacyMigrationConfirmationSchema.parse(await req.json())
+        return Response.json(await migrationService.run())
       }
     }
 

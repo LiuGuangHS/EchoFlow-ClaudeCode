@@ -5,6 +5,7 @@ import process from 'node:process'
 import type { AppModeConfig, AppModeSetInput } from '../../src/lib/desktopHost/types'
 
 const APP_MODE_FILE = 'app-mode.json'
+const LEGACY_APP_PORTABLE_ENV_KEY = 'CC_HAHA_APP_PORTABLE_DIR'
 
 export type AppModeAppLike = {
   getPath(name: 'exe' | 'home' | 'userData'): string
@@ -99,10 +100,10 @@ function externallyControlled(env: NodeJS.ProcessEnv): boolean {
 // spawned by quitAndInstall()), otherwise the child would trust a snapshot
 // that may no longer match the persisted mode (#1160).
 export function clearAppManagedPortableEnv(env: NodeJS.ProcessEnv = process.env): void {
-  if (env.ECHOFLOW_APP_PORTABLE_DIR !== '1' && env.CC_HAHA_APP_PORTABLE_DIR !== '1') return
+  if (env.ECHOFLOW_APP_PORTABLE_DIR !== '1' && env[LEGACY_APP_PORTABLE_ENV_KEY] !== '1') return
   delete env.CLAUDE_CONFIG_DIR
   delete env.ECHOFLOW_APP_PORTABLE_DIR
-  delete env.CC_HAHA_APP_PORTABLE_DIR
+  delete env[LEGACY_APP_PORTABLE_ENV_KEY]
   delete env.WEBVIEW2_USER_DATA_FOLDER
 }
 

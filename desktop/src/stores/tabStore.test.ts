@@ -225,7 +225,7 @@ describe('tabStore', () => {
       teamMemberAgentId: 'reviewer@review-team',
       returnTabId: workbenchTabId,
     })
-    expect(localStorage.getItem('cc-haha-open-tabs')).toBe(JSON.stringify({
+    expect(localStorage.getItem('echoflow-code-open-tabs')).toBe(JSON.stringify({
       openTabs: [{ sessionId: 'session-1', title: 'Lead session', type: 'session' }],
       activeTabId: 'session-1',
     }))

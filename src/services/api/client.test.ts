@@ -110,7 +110,7 @@ describe('shouldUseOpenAICodexTransport', () => {
       ECHOFLOW_OPENAI_OAUTH_PROVIDER: '1',
     })).toBe(true)
     expect(shouldForceOpenAICodexProvider({
-      ECHOFLOW_OPENAI_OAUTH_PROVIDER: '1',
+      CC_HAHA_OPENAI_OAUTH_PROVIDER: '1',
     })).toBe(true)
     expect(shouldForceOpenAICodexProvider({})).toBe(false)
   })
@@ -158,10 +158,12 @@ describe('getAnthropicClient', () => {
       marker: process.env.ECHOFLOW_GROK_OAUTH_PROVIDER,
       tokenFile: process.env.GROK_OAUTH_FILE,
       configDir: process.env.CLAUDE_CONFIG_DIR,
+      authToken: process.env.ANTHROPIC_AUTH_TOKEN,
     }
     process.env.ECHOFLOW_GROK_OAUTH_PROVIDER = '1'
     process.env.GROK_OAUTH_FILE = tokenFile
     process.env.CLAUDE_CONFIG_DIR = tempDir
+    delete process.env.ANTHROPIC_AUTH_TOKEN
     try {
       const client = await getAnthropicClient({ maxRetries: 0, model: 'grok-4.5' })
       expect(client.apiKey).toBe(GROK_OAUTH_DUMMY_KEY)
@@ -174,6 +176,8 @@ describe('getAnthropicClient', () => {
       else process.env.GROK_OAUTH_FILE = previous.tokenFile
       if (previous.configDir === undefined) delete process.env.CLAUDE_CONFIG_DIR
       else process.env.CLAUDE_CONFIG_DIR = previous.configDir
+      if (previous.authToken === undefined) delete process.env.ANTHROPIC_AUTH_TOKEN
+      else process.env.ANTHROPIC_AUTH_TOKEN = previous.authToken
       await fs.rm(tempDir, { recursive: true, force: true })
     }
   })

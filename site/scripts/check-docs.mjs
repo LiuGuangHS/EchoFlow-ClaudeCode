@@ -259,7 +259,7 @@ async function checkLocaleRedirect() {
   }
 
   // 少了这道判断，/en/start 这类地址也会被卷进分流。
-  if (!shellSource.includes("window.location.pathname.replace(/\\/+$/, '') !== ''")) {
+  if (!shellSource.includes("window.location.pathname.replace(/\\/+$/, '') !== base")) {
     problems.push('index.html: 内联语言脚本缺少「只在根路径生效」的判断')
   }
 

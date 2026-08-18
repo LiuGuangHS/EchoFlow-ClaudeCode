@@ -4778,9 +4778,7 @@ describe('chatStore history mapping', () => {
         .filter(row => row.groupProgress)
         .map(row => row.label),
     ).toEqual(['VERIFY'])
-    expect(model.sections.backgroundTasks.rows.map(row => [row.id, row.taskId])).toEqual([
-      ['workflow-tool-resumed', 'workflow-task-resumed'],
-    ])
+    expect(model.sections.backgroundTasks.rows).toEqual([])
     expect(session.backgroundAgentTasks?.['workflow-task-resumed']?.summary).toBeUndefined()
     expect(session.backgroundAgentTasks?.['workflow-task-resumed']?.result).toBeUndefined()
     expect(session.agentTaskNotifications).toEqual({})

@@ -193,7 +193,7 @@ describe('feature quality contract', () => {
     expect(sandbox).toContain('createSandboxedTestEnvironment')
     expect(sandbox).toContain('GUARDED_USER_STATE_PATHS')
     expect(sandbox).toContain("'settings.json'")
-    expect(sandbox).toContain("'cc-haha/providers.json'")
+    expect(sandbox).toContain("'echoflow-code/providers.json'")
   })
 
   test('keeps general AI coding tools pointed at the same quality bar', () => {

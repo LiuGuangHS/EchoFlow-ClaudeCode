@@ -8,6 +8,14 @@ const DEEPSEEK_CAPABILITY_ENV_KEYS = [
   'ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES',
 ] as const
 
+const LEGACY_IMAGE_ENV_KEY_MAP = {
+  CC_HAHA_IMAGE_PROVIDER_KIND: 'ECHOFLOW_IMAGE_PROVIDER_KIND',
+  CC_HAHA_IMAGE_PROVIDER_ID: 'ECHOFLOW_IMAGE_PROVIDER_ID',
+  CC_HAHA_IMAGE_BASE_URL: 'ECHOFLOW_IMAGE_BASE_URL',
+  CC_HAHA_IMAGE_API_KEY: 'ECHOFLOW_IMAGE_API_KEY',
+  CC_HAHA_IMAGE_MODEL: 'ECHOFLOW_IMAGE_MODEL',
+} as const
+
 function looksLikeDeepSeekManagedEnv(env: Record<string, string>): boolean {
   const baseUrl = env.ANTHROPIC_BASE_URL ?? ''
   const modelIds = [
@@ -39,4 +47,22 @@ export function normalizeLegacyDeepSeekManagedEnv(
   }
 
   return { env: next, changed: true }
+}
+
+export function normalizeLegacyImageGenerationEnv(
+  env: Record<string, unknown>,
+): { env: Record<string, unknown>; changed: boolean } {
+  const next = { ...env }
+  let changed = false
+
+  for (const [legacyKey, nextKey] of Object.entries(LEGACY_IMAGE_ENV_KEY_MAP)) {
+    if (!(legacyKey in next)) continue
+    if (next[nextKey] === undefined && typeof next[legacyKey] === 'string') {
+      next[nextKey] = next[legacyKey]
+    }
+    delete next[legacyKey]
+    changed = true
+  }
+
+  return { env: next, changed }
 }

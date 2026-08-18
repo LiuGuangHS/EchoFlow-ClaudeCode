@@ -1136,6 +1136,11 @@ export function buildSessionActivityModel(input: BuildSessionActivityModelInput)
       badgeCount += 1
     }
   }
+  const workflowTaskIds = new Set(
+    (input.workflowRuns ?? [])
+      .filter((run) => buildWorkflowRows(run).length > 0)
+      .map((run) => run.taskId),
+  )
 
   for (const member of input.teamMembers ?? []) {
     sections.team.rows.push(buildTeamRow(member))
@@ -1176,6 +1181,9 @@ export function buildSessionActivityModel(input: BuildSessionActivityModelInput)
   }
 
   for (const task of input.backgroundTasks) {
+    if (task.taskType === 'local_workflow' && workflowTaskIds.has(task.taskId)) {
+      continue
+    }
     if (!isVisibleSessionBackgroundTask(task)) {
       hiddenChildTaskIds.add(task.taskId)
       continue

@@ -32,6 +32,16 @@ function providerIndexPath(): string {
 }
 
 describe('providerRuntimeEnv', () => {
+  test('treats retired image environment keys as managed cleanup keys', () => {
+    expect(getManagedEnvKeys()).toEqual(expect.arrayContaining([
+      'CC_HAHA_IMAGE_PROVIDER_KIND',
+      'CC_HAHA_IMAGE_PROVIDER_ID',
+      'CC_HAHA_IMAGE_BASE_URL',
+      'CC_HAHA_IMAGE_API_KEY',
+      'CC_HAHA_IMAGE_MODEL',
+    ]))
+  })
+
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'provider-runtime-env-'))
     originalConfigDir = process.env.CLAUDE_CONFIG_DIR

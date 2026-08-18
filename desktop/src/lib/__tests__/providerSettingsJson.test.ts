@@ -60,6 +60,24 @@ describe('provider settings JSON helpers', () => {
     expect(restored.env.ANTHROPIC_AUTH_TOKEN).toBe('previous-auth-token')
   })
 
+  it('masks and restores the image-generation API key independently', () => {
+    const previousRaw = JSON.stringify({ env: { ECHOFLOW_IMAGE_API_KEY: 'image-key' } })
+    const masked = JSON.parse(maskSettingsJsonSecrets(previousRaw)) as { env: Record<string, string> }
+    expect(masked.env.ECHOFLOW_IMAGE_API_KEY).toBe(API_KEY_JSON_PLACEHOLDER)
+
+    const restored = restoreSettingsJsonSecrets(masked, previousRaw)
+
+    expect(restored.env.ECHOFLOW_IMAGE_API_KEY).toBe('image-key')
+  })
+
+  it('does not use the Anthropic fallback for an image-generation key', () => {
+    const edited = { env: { ECHOFLOW_IMAGE_API_KEY: API_KEY_JSON_PLACEHOLDER } }
+
+    const restored = restoreSettingsJsonSecrets(edited, '{}', 'anthropic-key')
+
+    expect(restored.env.ECHOFLOW_IMAGE_API_KEY).toBe(API_KEY_JSON_PLACEHOLDER)
+  })
+
   it('strips provider-managed env vars from existing settings before preview merge', () => {
     const cleaned = stripProviderSettingsJsonEnv(
       {

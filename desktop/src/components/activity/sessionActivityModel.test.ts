@@ -712,6 +712,76 @@ describe('buildSessionActivityModel', () => {
     expect(model.badgeCount).toBe(3)
   })
 
+  it('keeps a workflow background task visible before its structured workflow run has progress', () => {
+    const model = buildSessionActivityModel({
+      sessionId: 'session-1',
+      tasks: [],
+      completedAndDismissed: false,
+      backgroundTasks: [
+        background({
+          taskId: 'local-workflow-1',
+          toolUseId: 'local-workflow-tool',
+          taskType: 'local_workflow',
+          description: 'Release audit workflow',
+        }),
+      ],
+      agentNotifications: [],
+      workflowRuns: [{
+        taskId: 'local-workflow-1',
+        sessionId: 'session-1',
+        workflowName: 'Release audit workflow',
+        status: 'running',
+        startedAt: 0,
+        updatedAt: 0,
+        agentCount: 0,
+        totalTokens: 0,
+        toolCalls: 0,
+        progress: [],
+      } as never],
+    })
+
+    expect(model.sections.workflow.rows).toEqual([])
+    expect(model.sections.backgroundTasks.rows).toEqual([
+      expect.objectContaining({ taskId: 'local-workflow-1' }),
+    ])
+    expect(model.badgeCount).toBe(1)
+  })
+
+  it('hides a workflow background task when its structured workflow run is available', () => {
+    const model = buildSessionActivityModel({
+      sessionId: 'session-1',
+      tasks: [],
+      completedAndDismissed: false,
+      backgroundTasks: [
+        background({
+          taskId: 'local-workflow-1',
+          toolUseId: 'local-workflow-tool',
+          taskType: 'local_workflow',
+          description: 'Release audit workflow',
+        }),
+      ],
+      agentNotifications: [],
+      workflowRuns: [{
+        taskId: 'local-workflow-1',
+        sessionId: 'session-1',
+        workflowName: 'Release audit workflow',
+        status: 'running',
+        startedAt: 0,
+        updatedAt: 0,
+        agentCount: 0,
+        totalTokens: 0,
+        toolCalls: 0,
+        progress: [{ type: 'workflow_phase', index: 0, title: 'Run' }],
+      } as never],
+    })
+
+    expect(model.sections.workflow.rows).toEqual([
+      expect.objectContaining({ label: 'Run', groupProgress: { done: 0, total: 0 } }),
+    ])
+    expect(model.sections.backgroundTasks.rows).toEqual([])
+    expect(model.badgeCount).toBe(0)
+  })
+
   it('restores task rows from the latest TodoWrite message', () => {
     const model = buildSessionActivityModel({
       sessionId: 'session-1',

@@ -34,6 +34,10 @@ const tauriDialogMock = vi.hoisted(() => ({
 const tauriProcessMock = vi.hoisted(() => ({
   relaunch: vi.fn(),
 }))
+const echoFlowMigrationMock = vi.hoisted(() => ({
+  getStatus: vi.fn(),
+  run: vi.fn(),
+}))
 const providerStoreState = {
   providers: [] as SavedProvider[],
   providerOrder: [] as string[],
@@ -90,6 +94,10 @@ vi.mock('../api/providers', () => ({
     getSettings: MOCK_GET_SETTINGS,
     updateSettings: MOCK_UPDATE_SETTINGS,
   },
+}))
+
+vi.mock('../api/echoFlowMigration', () => ({
+  echoFlowMigrationApi: echoFlowMigrationMock,
 }))
 
 vi.mock('../lib/desktopNotifications', () => desktopNotificationsMock)
@@ -212,6 +220,14 @@ describe('Settings > General tab', () => {
     tauriDialogMock.open.mockResolvedValue('/Users/test/echoflow-code-data')
     tauriProcessMock.relaunch.mockReset()
     tauriProcessMock.relaunch.mockResolvedValue(undefined)
+    echoFlowMigrationMock.getStatus.mockReset()
+    echoFlowMigrationMock.getStatus.mockResolvedValue({
+      summary: { ready: 0, 'target-exists': 0, missing: 0, invalid: 0, failed: 0, migrated: 0, skipped: 0 },
+    })
+    echoFlowMigrationMock.run.mockReset()
+    echoFlowMigrationMock.run.mockResolvedValue({
+      summary: { ready: 0, 'target-exists': 0, missing: 0, invalid: 0, failed: 0, migrated: 0, skipped: 0 },
+    })
     delete (window as unknown as { __TAURI_INTERNALS__?: object }).__TAURI_INTERNALS__
     delete (window as unknown as { __TAURI__?: object }).__TAURI__
     installElectronDesktopHost()
@@ -606,20 +622,20 @@ describe('Settings > General tab', () => {
 
     fireEvent.change(timeoutInput, { target: { value: '180' } })
 
-    await act(async () => {
-      fireEvent.click(saveButton)
-    })
+    fireEvent.click(saveButton)
 
-    expect(useSettingsStore.getState().setNetwork).toHaveBeenCalledWith({
-      aiRequestTimeoutMs: 180_000,
-      proxy: {
-        mode: 'manual',
-        url: 'http://user:p%40ss@127.0.0.1:7890',
-      },
-    })
-    expect(useUIStore.getState().toasts[useUIStore.getState().toasts.length - 1]).toMatchObject({
-      type: 'success',
-      message: 'Network settings saved.',
+    await waitFor(() => {
+      expect(useSettingsStore.getState().setNetwork).toHaveBeenCalledWith({
+        aiRequestTimeoutMs: 180_000,
+        proxy: {
+          mode: 'manual',
+          url: 'http://user:p%40ss@127.0.0.1:7890',
+        },
+      })
+      expect(useUIStore.getState().toasts[useUIStore.getState().toasts.length - 1]).toMatchObject({
+        type: 'success',
+        message: 'Network settings saved.',
+      })
     })
   })
 
@@ -654,6 +670,71 @@ describe('Settings > General tab', () => {
 
     expect((webSearchHeading.compareDocumentPosition(storageHeading) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0).toBe(true)
     expect(screen.getByText(/Windows, upgrades recover verified legacy app-adjacent data/)).toBeInTheDocument()
+  })
+
+  it('requires a check and confirmation before importing legacy data', async () => {
+    echoFlowMigrationMock.getStatus.mockResolvedValueOnce({
+      summary: { ready: 1, 'target-exists': 0, missing: 0, invalid: 0, failed: 0, migrated: 0, skipped: 0 },
+    })
+
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+    expect(screen.queryByRole('button', { name: 'Import Legacy Data' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Check Legacy Data' }))
+
+    await waitFor(() => {
+      expect(echoFlowMigrationMock.getStatus).toHaveBeenCalledTimes(1)
+      expect(screen.getByRole('button', { name: 'Import Legacy Data' })).toBeInTheDocument()
+    })
+    expect(echoFlowMigrationMock.run).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Import Legacy Data' }))
+    expect(screen.getByText('Import legacy data?')).toBeInTheDocument()
+    expect(echoFlowMigrationMock.run).not.toHaveBeenCalled()
+
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Import Legacy Data' }))
+    await waitFor(() => expect(echoFlowMigrationMock.run).toHaveBeenCalledTimes(1))
+  })
+
+  it('shows an import failure inside the confirmation dialog', async () => {
+    echoFlowMigrationMock.getStatus.mockResolvedValueOnce({
+      summary: { ready: 1, 'target-exists': 0, missing: 0, invalid: 0, failed: 0, migrated: 0, skipped: 0 },
+    })
+    echoFlowMigrationMock.run.mockRejectedValueOnce(new Error('migration unavailable'))
+
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByRole('button', { name: 'Check Legacy Data' }))
+    await screen.findByRole('button', { name: 'Import Legacy Data' })
+    fireEvent.click(screen.getByRole('button', { name: 'Import Legacy Data' }))
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Import Legacy Data' }))
+
+    await waitFor(() => {
+      expect(within(screen.getByRole('dialog')).getByRole('alert')).toHaveTextContent('migration unavailable')
+    })
+  })
+
+  it('removes import eligibility when a later legacy data check fails', async () => {
+    echoFlowMigrationMock.getStatus
+      .mockResolvedValueOnce({
+        summary: { ready: 1, 'target-exists': 0, missing: 0, invalid: 0, failed: 0, migrated: 0, skipped: 0 },
+      })
+      .mockRejectedValueOnce(new Error('status unavailable'))
+
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByRole('button', { name: 'Check Legacy Data' }))
+    await screen.findByRole('button', { name: 'Import Legacy Data' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Check Legacy Data' }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Import Legacy Data' })).not.toBeInTheDocument()
+      expect(screen.getByRole('alert')).toHaveTextContent('status unavailable')
+    })
   })
 
   it('lets desktop users choose a custom data directory and relaunch immediately', async () => {

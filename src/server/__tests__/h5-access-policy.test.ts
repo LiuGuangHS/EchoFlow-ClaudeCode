@@ -242,7 +242,6 @@ describe('h5AccessPolicy', () => {
 
     for (const pathname of [
       '/api/echoflow-grok-oauth/success',
-      '/api/haha-grok-oauth/success',
       '/api/sessions',
       '/preview-fs/session-1/index.html',
       '/ws/session-1',

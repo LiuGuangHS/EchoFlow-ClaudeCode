@@ -723,7 +723,7 @@ describe('anthropicToOpenaiResponses', () => {
     expect(result.reasoning).toEqual({ effort: 'high' })
   })
 
-  test('OpenAI OAuth mode restores namespaced redacted thinking as encrypted reasoning input', () => {
+  test('OpenAI OAuth mode restores legacy namespaced redacted thinking as encrypted reasoning input', () => {
     const req = {
       model: 'gpt-5.6-terra',
       max_tokens: 100,

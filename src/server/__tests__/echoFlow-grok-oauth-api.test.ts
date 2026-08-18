@@ -23,15 +23,12 @@ afterEach(async () => {
 })
 
 describe('EchoFlow Grok OAuth API', () => {
-  test('keeps the legacy resource route compatible with the canonical route', async () => {
-    const canonicalUrl = new URL('http://localhost:3456/api/echoflow-grok-oauth/success')
+  test('rejects the retired resource route', async () => {
     const legacyUrl = new URL('http://localhost:3456/api/haha-grok-oauth/success')
 
-    const canonical = await handleApiRequest(new Request(canonicalUrl), canonicalUrl)
     const legacy = await handleApiRequest(new Request(legacyUrl), legacyUrl)
 
-    expect(legacy.status).toBe(canonical.status)
-    expect(await legacy.text()).toBe(await canonical.text())
+    expect(legacy.status).toBe(404)
   })
 
   test('serves a clear local success page after browser authorization', async () => {
