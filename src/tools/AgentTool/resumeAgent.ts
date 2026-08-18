@@ -241,6 +241,7 @@ export async function resumeAgentBackground({
     description: meta?.description,
     spawningToolUseId,
     ownerAgentId,
+    streamTargetAgentId: agentId,
     persistedAgentType: resumedAgentType,
     alreadyPersistedMessageCount: resumedMessages.length,
     contentReplacementState: resumedReplacementState,

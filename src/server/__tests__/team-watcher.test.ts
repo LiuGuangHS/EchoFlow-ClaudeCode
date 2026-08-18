@@ -134,14 +134,28 @@ describe('TeamWatcher.extractMemberStatuses', () => {
       agentId: 'agent-lead',
       role: 'Lead Agent',
       status: 'running',
+      activity: 'active',
       currentTask: undefined,
     })
     expect(statuses[1]).toEqual({
       agentId: 'agent-worker',
       role: 'Worker Agent',
       status: 'idle',
+      activity: 'idle',
       currentTask: undefined,
     })
+  })
+
+  it('reports no activity for a member whose runner never recorded a turn', () => {
+    const config = makeTeamConfig()
+    delete (config.members[0] as Record<string, unknown>).isActive
+
+    // `status` still defaults to running for backwards compatibility, but the
+    // watcher must not claim the member is mid-turn -- the last full team read,
+    // which can consult the transcript, stays authoritative.
+    const status = watcher.extractMemberStatuses(config)[0]!
+    expect(status.status).toBe('running')
+    expect(status.activity).toBeUndefined()
   })
 
   it('should return running status when isActive is undefined', () => {
@@ -264,6 +278,111 @@ describe('TeamWatcher polling', () => {
     // No error means the diff detection worked
   })
 
+  it('uses subagent identity metadata instead of tool names when projecting members', async () => {
+    const deliveries: Array<{ message: ServerMessage; sessionId?: string }> = []
+    watcher = new TeamWatcher(
+      (message, sessionId) => deliveries.push({ message, sessionId }),
+      {
+        getWorkbench: async () => ({}) as never,
+        markWorkbenchArchiveDeleted: async () => {},
+      },
+    )
+    const config = makeTeamConfig({
+      name: 'identity-team',
+      leadSessionId: 'lead-session-identity',
+    })
+    await writeTeamConfig('identity-team', config)
+    await writeJsonFile(
+      'projects/project/lead-session-identity/subagents/agent-reviewer.jsonl',
+      {
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'tool_use', id: 'tool-read', name: 'Read', input: {} },
+            { type: 'tool_use', id: 'tool-task-create', name: 'TaskCreate', input: {} },
+          ],
+        },
+      },
+    )
+    await writeJsonFile(
+      'projects/project/lead-session-identity/subagents/agent-reviewer.meta.json',
+      { agentType: 'real-reviewer' },
+    )
+
+    await watcher.checkNow()
+    deliveries.length = 0
+    await writeTeamConfig('identity-team', { ...config, description: 'updated' })
+    await watcher.checkNow()
+
+    const update = deliveries.find(({ message }) => message.type === 'team_update')
+    if (update?.message.type !== 'team_update') throw new Error('Expected team_update')
+    expect(update.message.members.find((member) => member.role === 'real-reviewer')).toMatchObject({
+      agentId: 'real-reviewer@identity-team',
+      role: 'real-reviewer',
+    })
+    const roles = update.message.members.map((member) => member.role)
+    expect(roles).not.toContain('Read')
+    expect(roles).not.toContain('TaskCreate')
+  })
+
+  it('only discovers structured top-level identities from subagent transcripts', async () => {
+    const deliveries: Array<{ message: ServerMessage; sessionId?: string }> = []
+    watcher = new TeamWatcher(
+      (message, sessionId) => deliveries.push({ message, sessionId }),
+      {
+        getWorkbench: async () => ({}) as never,
+        markWorkbenchArchiveDeleted: async () => {},
+      },
+    )
+    const config = makeTeamConfig({
+      name: 'structured-identity-team',
+      leadSessionId: 'lead-session-structured-identity',
+    })
+    await writeTeamConfig('structured-identity-team', config)
+    await writeJsonFile(
+      'projects/project/lead-session-structured-identity/subagents/agent-named.jsonl',
+      {
+        type: 'assistant',
+        agentName: 'named-worker',
+        message: {
+          content: [{ type: 'tool_use', id: 'tool-read', name: 'Read', input: {} }],
+        },
+      },
+    )
+    await writeJsonFile(
+      'projects/project/lead-session-structured-identity/subagents/agent-identified.jsonl',
+      {
+        type: 'assistant',
+        agentId: 'identified-worker@structured-identity-team',
+        message: {
+          content: [{ type: 'tool_use', id: 'tool-task-create', name: 'TaskCreate', input: {} }],
+        },
+      },
+    )
+    await writeJsonFile(
+      'projects/project/lead-session-structured-identity/subagents/agent-tool-only.jsonl',
+      {
+        type: 'assistant',
+        message: {
+          content: [{ type: 'tool_use', id: 'tool-only', name: 'TaskCreate', input: {} }],
+        },
+      },
+    )
+
+    await watcher.checkNow()
+    deliveries.length = 0
+    await writeTeamConfig('structured-identity-team', { ...config, description: 'updated' })
+    await watcher.checkNow()
+
+    const update = deliveries.find(({ message }) => message.type === 'team_update')
+    if (update?.message.type !== 'team_update') throw new Error('Expected team_update')
+    const roles = update.message.members.map((member) => member.role)
+    expect(roles).toContain('named-worker')
+    expect(roles).toContain('identified-worker')
+    expect(roles).not.toContain('Read')
+    expect(roles).not.toContain('TaskCreate')
+  })
+
   it('invalidates the joined workbench when tasks or mailboxes change', async () => {
     const deliveries: Array<{ message: ServerMessage; sessionId?: string }> = []
     watcher = new TeamWatcher((message, sessionId) => deliveries.push({ message, sessionId }))
@@ -365,6 +484,44 @@ describe('TeamWatcher polling', () => {
       },
       sessionId: 'new-lead',
     }])
+  })
+
+  it('uses the canonical config name when a sanitized Team directory is deleted', async () => {
+    const deliveries: Array<{ message: ServerMessage; sessionId?: string }> = []
+    const deleted: Array<[string, string | undefined, string | undefined]> = []
+    const workbenchNames: string[] = []
+    watcher = new TeamWatcher(
+      (message, sessionId) => deliveries.push({ message, sessionId }),
+      {
+        getWorkbench: async (name) => {
+          workbenchNames.push(name)
+          return {} as never
+        },
+        markWorkbenchArchiveDeleted: async (name, sessionId, incarnationId) => {
+          deleted.push([name, sessionId, incarnationId])
+        },
+      },
+    )
+    const config = makeTeamConfig({
+      name: 'My Team',
+      createdAt: 1900000000000,
+      leadSessionId: 'canonical-lead',
+    })
+    await writeTeamConfig('my-team', config)
+    await watcher.checkNow()
+    await fs.rm(path.join(tmpDir, 'teams', 'my-team'), { recursive: true, force: true })
+    await watcher.checkNow()
+
+    expect(workbenchNames).toEqual(['my-team'])
+    expect(deleted).toEqual([[
+      'My Team',
+      'canonical-lead',
+      teamIncarnationId(config),
+    ]])
+    expect(deliveries.map(delivery => delivery.message)).toEqual([
+      expect.objectContaining({ type: 'team_created', teamName: 'My Team' }),
+      expect.objectContaining({ type: 'team_deleted', teamName: 'My Team' }),
+    ])
   })
 
   it('should detect team deletion', async () => {

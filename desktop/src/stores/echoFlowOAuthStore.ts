@@ -2,6 +2,7 @@
 
 import { create } from 'zustand'
 import { echoFlowOAuthApi, type EchoFlowOAuthStatus } from '../api/echoFlowOAuth'
+import { useSettingsStore } from './settingsStore'
 
 const POLL_INTERVAL_MS = 2_000
 
@@ -29,8 +30,19 @@ export const useEchoFlowOAuthStore = create<EchoFlowOAuthState>((set, get) => {
 
     fetchStatus: async () => {
       try {
+        const previous = get().status
         const status = await echoFlowOAuthApi.status()
         set({ status, error: null })
+        if (
+          status.loggedIn &&
+          (
+            previous?.loggedIn !== true ||
+            previous.expiresAt !== status.expiresAt ||
+            previous.subscriptionType !== status.subscriptionType
+          )
+        ) {
+          await useSettingsStore.getState().fetchAll()
+        }
       } catch (err) {
         set({ error: err instanceof Error ? err.message : String(err) })
       }

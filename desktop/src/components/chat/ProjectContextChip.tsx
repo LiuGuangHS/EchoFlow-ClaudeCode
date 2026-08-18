@@ -2,10 +2,12 @@ import { GitFork } from 'lucide-react'
 import { Tooltip } from '@/components/ui/Tooltip'
 import { useTranslation } from '../../i18n'
 import { getFileNameFromPath } from '../../lib/composerAttachments'
+import { useProjectDisplayName } from '../../stores/projectDisplayNameStore'
 import { getWorktreeDisplayName, WorktreeDetails } from './WorktreeDetails'
 
 type Props = {
   workDir?: string | null
+  projectRoot?: string | null
   repoName?: string | null
   branch?: string | null
   sourceWorkDir?: string | null
@@ -30,6 +32,7 @@ function basename(path: string | null | undefined): string {
 
 export function ProjectContextChip({
   workDir,
+  projectRoot,
   repoName,
   branch,
   sourceWorkDir,
@@ -41,7 +44,9 @@ export function ProjectContextChip({
 }: Props) {
   const t = useTranslation()
   const labelRoot = isWorktree ? (sourceWorkDir || workDir) : workDir
-  const label = branch ? (repoName || basename(labelRoot)) : (basename(labelRoot) || repoName || '')
+  const displayNameKey = projectRoot ?? sourceWorkDir ?? workDir ?? ''
+  const displayName = useProjectDisplayName(displayNameKey)
+  const label = displayName || (branch ? (repoName || basename(labelRoot)) : (basename(labelRoot) || repoName || ''))
   const worktreeName = getWorktreeDisplayName(worktreeSlug, worktreePath) || 'isolated'
   const isToolbar = variant === 'toolbar'
   // The chip variant hides the branch for worktrees — the worktree name already
@@ -50,10 +55,17 @@ export function ProjectContextChip({
   const showBranch = !!branch && (isToolbar || !isWorktree)
   const title = [
     label,
+    displayName ? `project root: ${displayNameKey}` : null,
     branch ? `branch: ${branch}` : null,
     workDir ? `cwd: ${workDir}` : null,
   ].filter(Boolean).join('\n')
-  const worktreeDetails = <WorktreeDetails name={worktreeName} path={worktreePath} />
+  const worktreeDetails = (
+    <WorktreeDetails
+      name={worktreeName}
+      path={worktreePath}
+      projectRoot={displayName ? displayNameKey : null}
+    />
+  )
 
   if (!label) return null
 

@@ -89,13 +89,15 @@ import { jsonStringify } from '../slowOperations.js'
 import { asSystemPrompt } from '../systemPromptType.js'
 import {
   claimTask,
-  getTeamTaskListId,
+  getCanonicalTeamTaskListId,
   listTasks,
   type Task,
-  updateTask,
 } from '../tasks.js'
 import type { TeammateContext } from '../teammateContext.js'
-import { runWithTeammateContext } from '../teammateContext.js'
+import {
+  createTeamStreamScopeId,
+  runWithTeammateContext,
+} from '../teammateContext.js'
 import {
   createIdleNotification,
   getLastPeerDmSummary,
@@ -116,7 +118,7 @@ import {
   createPermissionRequest,
   sendPermissionRequestViaMailbox,
 } from './permissionSync.js'
-import { setMemberActive } from './teamHelpers.js'
+import { readTeamFile, setMemberActive } from './teamHelpers.js'
 import { TEAMMATE_SYSTEM_PROMPT_ADDENDUM } from './teammatePromptAddendum.js'
 
 type SetAppStateFn = (updater: (prev: AppState) => AppState) => void
@@ -689,28 +691,37 @@ function formatTaskAsPrompt(task: Task): string {
 }
 
 /**
- * Try to claim an available task from the team's task list.
- * Returns the formatted prompt if a task was claimed, or undefined if none available.
+ * Try to claim follow-up work from the team's task list.
+ *
+ * A newly spawned teammate must first receive an explicit owner assignment from
+ * the lead. Otherwise concurrent spawns race through the same unowned list and
+ * can attach another member's task to the teammate's first prompt. Once the
+ * member has appeared as an owner, completed ownership is the durable signal
+ * that it may autonomously continue with the next available task.
  */
 export async function claimNextInProcessTask(
   identity: Pick<TeammateIdentity, 'agentName' | 'teamName'>,
 ): Promise<string | undefined> {
   const { agentName } = identity
-  const taskListId = getTeamTaskListId(identity.teamName)
+  const taskListId = getCanonicalTeamTaskListId(identity.teamName)
 
   try {
     const tasks = await listTasks(taskListId)
+    if (!tasks.some(task => task.owner === agentName)) return undefined
+
     for (const availableTask of findAvailableTasks(tasks)) {
-      const result = await claimTask(taskListId, availableTask.id, agentName)
+      const result = await claimTask(
+        taskListId,
+        availableTask.id,
+        agentName,
+        { checkAgentBusy: true, markInProgress: true },
+      )
       if (!result.success) {
         logForDebugging(
           `[inProcessRunner] Failed to claim task #${availableTask.id}: ${result.reason}`,
         )
         continue
       }
-
-      // Also set status to in_progress so the UI reflects it immediately
-      await updateTask(taskListId, availableTask.id, { status: 'in_progress' })
 
       logForDebugging(
         `[inProcessRunner] Claimed task #${availableTask.id}: ${availableTask.subject}`,
@@ -723,15 +734,6 @@ export async function claimNextInProcessTask(
     logForDebugging(`[inProcessRunner] Error checking task list: ${err}`)
     return undefined
   }
-}
-
-export function composeInitialTeammatePrompt(
-  initialPrompt: string,
-  claimedTaskPrompt: string | undefined,
-): string {
-  return claimedTaskPrompt
-    ? `${initialPrompt}\n\n${claimedTaskPrompt}`
-    : initialPrompt
 }
 
 /**
@@ -977,6 +979,13 @@ export async function runInProcessTeammate(
     invokingRequestId,
   } = config
   const { setAppState } = toolUseContext
+  const teamFile = readTeamFile(identity.teamName)
+  const scopedTeammateContext: TeammateContext = {
+    ...teammateContext,
+    ...(teamFile
+      ? { streamScopeId: createTeamStreamScopeId(teamFile) }
+      : {}),
+  }
 
   logForDebugging(
     `[inProcessRunner] Starting agent loop for ${identity.agentId}`,
@@ -1068,13 +1077,6 @@ export async function runInProcessTeammate(
   )
   let currentPrompt = wrappedInitialPrompt
   let shouldExit = false
-
-  // Try to claim an available task immediately so the UI can show activity
-  // from the very start. The idle loop handles claiming for subsequent tasks.
-  currentPrompt = composeInitialTeammatePrompt(
-    wrappedInitialPrompt,
-    await claimNextInProcessTask(identity),
-  )
 
   try {
     // Add initial prompt to task.messages for display (wrapped with XML)
@@ -1215,7 +1217,7 @@ export async function runInProcessTeammate(
       let workWasAborted = false
 
       // Run agent within contexts
-      const runActiveTurn = () => runWithTeammateContext(teammateContext, async () => {
+      const runActiveTurn = () => runWithTeammateContext(scopedTeammateContext, async () => {
         return runWithAgentContext(agentContext, async () => {
           // Mark task as running (not idle)
           updateTaskState(
@@ -1258,6 +1260,7 @@ export async function runInProcessTeammate(
             availableTools: toolUseContext.options.tools,
             allowedTools,
             contentReplacementState: teammateReplacementState,
+            streamTargetAgentId: identity.agentId,
           })) {
             // Check lifecycle abort first (kills whole teammate)
             if (abortController.signal.aborted) {

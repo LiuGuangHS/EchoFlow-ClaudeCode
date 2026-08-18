@@ -1,4 +1,4 @@
-export const GROK_DEFAULT_MAIN_MODEL = 'grok-4.5'
+export const GROK_DEFAULT_MAIN_MODEL = 'grok-4.6'
 export const GROK_DEFAULT_SONNET_MODEL = GROK_DEFAULT_MAIN_MODEL
 export const GROK_DEFAULT_HAIKU_MODEL = GROK_DEFAULT_MAIN_MODEL
 export const GROK_DEFAULT_MODEL = GROK_DEFAULT_MAIN_MODEL
@@ -16,6 +16,12 @@ export type GrokModelCatalogEntry = {
 }
 
 export const GROK_MODEL_CATALOG: GrokModelCatalogEntry[] = [
+  {
+    ...model('grok-4.6', 'Grok 4.6', "SpaceXAI's latest frontier model", 500_000),
+    supportsReasoningEffort: true,
+    reasoningEffort: 'high',
+    reasoningEfforts: ['xhigh', 'high', 'medium', 'low'],
+  },
   {
     ...model('grok-4.5', 'Grok 4.5', 'Grok frontier text model', 500_000),
     supportsReasoningEffort: true,

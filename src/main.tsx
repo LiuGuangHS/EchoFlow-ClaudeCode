@@ -3161,6 +3161,9 @@ async function run(): Promise<CommanderCommand> {
       appendSystemPrompt,
       taskListId,
       thinkingConfig,
+      // An explicit --effort flag is authoritative over CLAUDE_CODE_EFFORT_LEVEL
+      // env (resolveAppliedEffort), matching the effectiveEffort precedence.
+      effortValueOverridesEnv: options.effort !== undefined,
       ...(uploaderReady && {
         onTurnComplete: (messages: MessageType[]) => {
           void uploaderReady.then(uploader => uploader?.(messages));

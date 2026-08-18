@@ -3,6 +3,11 @@ import type { TaskSummaryItem, UIMessage } from '../../types/chat'
 import type { CLITask, TaskStatus } from '../../types/cliTask'
 import type { TeamMember } from '../../types/team'
 import {
+  EMPTY_TEAM_LIFECYCLE_CURSOR,
+  isTeamLifecycleScopedAt,
+  updateTeamLifecycleCursor,
+} from '../../lib/teamLifecycleScope'
+import {
   createBackgroundTaskDismissKey,
   isVisibleSessionBackgroundTask,
 } from '../../lib/backgroundTasks'
@@ -96,9 +101,17 @@ export type BuildSessionActivityModelInput = {
   dismissedBackgroundTaskKeys?: Set<string>
   agentNotifications: AgentTaskNotification[]
   teamMembers?: TeamMember[]
+  /** AgentTeam has its own strip/workbench in a main session. Set false at
+   * that ownership boundary so transcript spawn rows cannot affect Activity. */
+  includeTeamActivity?: boolean
   /** Live workflow runs for this session, newest first. */
   workflowRuns?: WorkflowRun[]
 }
+
+export type BuildMainSessionActivityModelInput = Omit<
+  BuildSessionActivityModelInput,
+  'runScope' | 'taskScope' | 'teamTasks' | 'teamMembers' | 'includeTeamActivity'
+>
 
 /**
  * Ordered by how directly each section answers "what is this turn doing":
@@ -351,16 +364,6 @@ function projectMessagesToRun(messages: UIMessage[], runScope: 'session' | 'agen
   return runScope === 'agent' ? messages : messages.filter(keepSessionRunMessage)
 }
 
-function isWithinTeamTaskWindow(
-  timestamp: number,
-  windows: Array<{ startedAt: number; endedAt?: number }>,
-): boolean {
-  return windows.some((window) => (
-    timestamp >= window.startedAt &&
-    (window.endedAt === undefined || timestamp <= window.endedAt)
-  ))
-}
-
 function explicitSuccessFlag(value: unknown): boolean | undefined {
   if (Array.isArray(value)) {
     for (const item of value) {
@@ -401,14 +404,24 @@ function projectMessagesToTaskScope(
 
   const sharedTaskToolUseIds = new Set<string>()
   const resultsByToolUseId = collectToolResults(messages)
-  let transcriptTeamActive: boolean | undefined
+  let transcriptTeamCursor = EMPTY_TEAM_LIFECYCLE_CURSOR
   for (const message of messages) {
     if (taskScope === 'team-session' && message.type === 'tool_use') {
       const lifecycleSucceeded = teamLifecycleSucceeded(
         resultsByToolUseId.get(message.toolUseId),
       )
-      if (message.toolName === 'TeamCreate' && lifecycleSucceeded) transcriptTeamActive = true
-      if (message.toolName === 'TeamDelete' && lifecycleSucceeded) transcriptTeamActive = false
+      if (message.toolName === 'TeamCreate' && lifecycleSucceeded) {
+        transcriptTeamCursor = updateTeamLifecycleCursor(
+          true,
+          message.timestamp,
+        )
+      }
+      if (message.toolName === 'TeamDelete' && lifecycleSucceeded) {
+        transcriptTeamCursor = updateTeamLifecycleCursor(
+          false,
+          message.timestamp,
+        )
+      }
     }
     if (
       message.type === 'tool_use' &&
@@ -416,9 +429,11 @@ function projectMessagesToTaskScope(
       (
         taskScope === 'team' ||
         (
-          transcriptTeamActive === undefined
-            ? isWithinTeamTaskWindow(message.timestamp, teamTaskWindows)
-            : transcriptTeamActive
+          isTeamLifecycleScopedAt(
+            message.timestamp,
+            transcriptTeamCursor,
+            teamTaskWindows,
+          )
         )
       )
     ) {
@@ -627,6 +642,7 @@ function updatedActiveTeamName(
   if (!output) return undefined
 
   if (toolCall.toolName === 'TeamCreate') {
+    if (output.success === false) return undefined
     return stringField(output, 'team_name') || undefined
   }
   if (toolCall.toolName === 'TeamDelete' && output.success === true) {
@@ -644,25 +660,30 @@ function teamSpawnIdentity(
   toolCall: Extract<UIMessage, { type: 'tool_use' }>,
   result: Extract<UIMessage, { type: 'tool_result' }> | undefined,
   activeTeamName: string | undefined,
+  teamScoped: boolean,
 ): TeamSpawnIdentity | null {
   const input = isRecordValue(toolCall.input) ? toolCall.input : {}
   const inputMemberName = stringField(input, 'name')
-  if (!inputMemberName) return null
-
   const inputTeamName = stringField(input, 'team_name')
-  if (inputTeamName || activeTeamName) {
+  if (inputMemberName && (inputTeamName || teamScoped)) {
     return {
       memberName: inputMemberName,
-      teamName: inputTeamName || activeTeamName,
+      ...((inputTeamName || (teamScoped && activeTeamName))
+        ? { teamName: inputTeamName || activeTeamName }
+        : {}),
     }
   }
 
   const output = parseToolResultRecord(result)
   if (stringField(output ?? {}, 'status') === 'teammate_spawned') {
+    const memberName = stringField(output ?? {}, 'name') || inputMemberName
+    if (!memberName) return null
     const outputTeamName = stringField(output ?? {}, 'team_name')
     return {
-      memberName: stringField(output ?? {}, 'name') || inputMemberName,
-      ...(outputTeamName ? { teamName: outputTeamName } : {}),
+      memberName,
+      ...((outputTeamName || activeTeamName)
+        ? { teamName: outputTeamName || activeTeamName }
+        : {}),
     }
   }
 
@@ -681,7 +702,10 @@ function teamSpawnIdentity(
   }
 }
 
-function buildAgentRowsFromMessages(messages: UIMessage[]): ActivityRow[] {
+function buildAgentRowsFromMessages(
+  messages: UIMessage[],
+  teamTaskWindows: Array<{ startedAt: number; endedAt?: number }>,
+): ActivityRow[] {
   const resultsByToolUseId = new Map<string, Extract<UIMessage, { type: 'tool_result' }>>()
   const toolCallsByToolUseId = new Map<string, Extract<UIMessage, { type: 'tool_use' }>>()
   for (const message of messages) {
@@ -694,6 +718,7 @@ function buildAgentRowsFromMessages(messages: UIMessage[]): ActivityRow[] {
 
   const rows: ActivityRow[] = []
   let activeTeamName: string | undefined
+  let transcriptTeamCursor = EMPTY_TEAM_LIFECYCLE_CURSOR
   for (const message of messages) {
     if (message.type === 'tool_result') {
       const toolCall = toolCallsByToolUseId.get(message.toolUseId)
@@ -703,11 +728,32 @@ function buildAgentRowsFromMessages(messages: UIMessage[]): ActivityRow[] {
       }
       continue
     }
-    if (message.type !== 'tool_use' || message.toolName !== 'Agent') continue
+    if (message.type !== 'tool_use') continue
 
     const result = resultsByToolUseId.get(message.toolUseId)
+    const lifecycleSucceeded = teamLifecycleSucceeded(result)
+    if (message.toolName === 'TeamCreate' && lifecycleSucceeded) {
+      transcriptTeamCursor = updateTeamLifecycleCursor(true, message.timestamp)
+    } else if (message.toolName === 'TeamDelete' && lifecycleSucceeded) {
+      transcriptTeamCursor = updateTeamLifecycleCursor(false, message.timestamp)
+    }
+    if (message.toolName !== 'Agent') continue
+
     const resultText = result ? stripAgentMetadata(extractTextContent(result.content)) : ''
-    const teamIdentity = teamSpawnIdentity(message, result, activeTeamName)
+    const teamIdentity = teamSpawnIdentity(
+      message,
+      result,
+      activeTeamName,
+      isTeamLifecycleScopedAt(
+        message.timestamp,
+        transcriptTeamCursor,
+        teamTaskWindows,
+      ),
+    )
+    // Agent inputs stream before their ownership fields. Until the input is
+    // complete, treating an unknown owner as direct makes Team members flash
+    // through the main session's SubAgents section.
+    if (message.isPending && !teamIdentity) continue
     if (teamIdentity) {
       rows.push({
         id: message.toolUseId,
@@ -1110,6 +1156,7 @@ function buildOutputRow(key: string, outputFile: string): ActivityRow {
 export function buildSessionActivityModel(input: BuildSessionActivityModelInput): SessionActivityModel {
   const sections = createEmptySections()
   let badgeCount = 0
+  const includeTeamActivity = input.includeTeamActivity !== false
   const runMessages = projectMessagesToRun(input.messages ?? [], input.runScope ?? 'session')
   const runTaskRows = buildTaskRowsFromMessages(
     runMessages,
@@ -1120,7 +1167,9 @@ export function buildSessionActivityModel(input: BuildSessionActivityModelInput)
   const settledRunTaskRows = input.isForegroundTurnActive === false
     ? sealUnfinishedTaskRows(runTaskRows)
     : runTaskRows
-  const teamTaskRows = input.teamTasks?.map(buildTeamTaskRow) ?? []
+  const teamTaskRows = includeTeamActivity
+    ? input.teamTasks?.map(buildTeamTaskRow) ?? []
+    : []
   sections.tasks.rows = [...settledRunTaskRows, ...teamTaskRows]
   for (const row of sections.tasks.rows) {
     if (isBadgeStatus(row.status)) {
@@ -1142,8 +1191,10 @@ export function buildSessionActivityModel(input: BuildSessionActivityModelInput)
       .map((run) => run.taskId),
   )
 
-  for (const member of input.teamMembers ?? []) {
-    sections.team.rows.push(buildTeamRow(member))
+  if (includeTeamActivity) {
+    for (const member of input.teamMembers ?? []) {
+      sections.team.rows.push(buildTeamRow(member))
+    }
   }
 
   const subagentRowsByKey = new Map<string, ActivityRow>()
@@ -1154,7 +1205,6 @@ export function buildSessionActivityModel(input: BuildSessionActivityModelInput)
   const dismissedNotificationTaskIds = new Set<string>()
   const visibleBackgroundTaskIds = new Set<string>()
   const hiddenChildTaskIds = new Set<string>()
-
   const knownTeamMemberNames = new Set(
     (input.teamMembers ?? []).flatMap((member) => [
       member.name,
@@ -1162,8 +1212,9 @@ export function buildSessionActivityModel(input: BuildSessionActivityModelInput)
     ]).filter((name): name is string => Boolean(name)),
   )
   const teamLaunchRowsByMember = new Map<string, ActivityRow>()
-  for (const row of buildAgentRowsFromMessages(runMessages)) {
+  for (const row of buildAgentRowsFromMessages(runMessages, input.teamTaskWindows ?? [])) {
     if (row.section === 'team') {
+      if (!includeTeamActivity) continue
       if (row.teamMemberName && knownTeamMemberNames.has(row.teamMemberName)) continue
       const key = row.teamName && row.teamMemberName
         ? `${row.teamName}:${row.teamMemberName}`
@@ -1272,4 +1323,20 @@ export function buildSessionActivityModel(input: BuildSessionActivityModelInput)
     badgeCount,
     sections,
   }
+}
+
+/**
+ * Main-session Activity is the lead agent's run projection. AgentTeam owns a
+ * separate strip/workbench, so its shared DAG, roster and launch rows cannot
+ * enter this model or affect the toolbar badge/auto-open state.
+ */
+export function buildMainSessionActivityModel(
+  input: BuildMainSessionActivityModelInput,
+): SessionActivityModel {
+  return buildSessionActivityModel({
+    ...input,
+    runScope: 'session',
+    taskScope: 'team-session',
+    includeTeamActivity: false,
+  })
 }

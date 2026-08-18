@@ -943,6 +943,272 @@ describe('teamStore incremental transcript polling', () => {
     }
   })
 
+  it('keeps a settled live member turn when an older terminal poll resolves', async () => {
+    const staleTerminalPoll = deferred<any>()
+    getMemberTranscriptMock
+      .mockResolvedValueOnce({ messages: [] })
+      .mockReturnValueOnce(staleTerminalPoll.promise)
+      .mockResolvedValueOnce({
+        messages: [{
+          id: 'durable-live-answer',
+          type: 'assistant',
+          content: [{ type: 'text', text: 'Durable teammate answer' }],
+          timestamp: '2026-08-10T00:00:02.000Z',
+        }],
+      })
+    const member = {
+      agentId: 'worker@terminal-race-team',
+      name: 'worker',
+      role: 'worker',
+      status: 'running' as const,
+    }
+    const team = {
+      name: 'terminal-race-team',
+      leadSessionId: 'terminal-race-lead',
+      incarnationId: 'terminal-race-incarnation',
+      createdAt: '2026-08-10T00:00:00.000Z',
+      members: [member],
+    }
+    const sessionId = memberSessionId(member.agentId, team.incarnationId)
+    useTeamStore.setState({
+      activeTeam: team,
+      memberTeamBySession: { [sessionId]: team },
+    })
+    await useTeamStore.getState().refreshMemberSession(sessionId)
+    const unregister = registerAgentRunSession(
+      team.leadSessionId,
+      sessionId,
+      [member.agentId],
+    )
+
+    try {
+      const pendingPoll = useTeamStore.getState().refreshMemberSession(sessionId)
+      const send = (event: Extract<import('../types/chat').ServerMessage, { type: 'agent_run_event' }>['event']) => {
+        useChatStore.getState().handleServerMessage(team.leadSessionId, {
+          type: 'agent_run_event',
+          runAgentId: 'terminal-race-worker-run',
+          streamId: 'terminal-race-stream',
+          targetAgentId: member.agentId,
+          event,
+        })
+      }
+      send({ type: 'content_start', blockType: 'text' })
+      send({ type: 'content_delta', text: 'Live teammate answer' })
+      send({ type: 'status', state: 'idle' })
+
+      const completedTeam = {
+        ...team,
+        members: [{ ...member, status: 'completed' as const }],
+      }
+      useTeamStore.setState({
+        activeTeam: completedTeam,
+        memberTeamBySession: { [sessionId]: completedTeam },
+      })
+      staleTerminalPoll.resolve({ messages: [] })
+      await pendingPoll
+
+      expect(useChatStore.getState().sessions[sessionId]?.messages).toEqual([
+        expect.objectContaining({ content: 'Live teammate answer' }),
+      ])
+      expect(useChatStore.getState().sessions[sessionId]?.agentStreamRevision).toBe(2)
+
+      await useTeamStore.getState().refreshMemberSession(sessionId)
+      expect(useChatStore.getState().sessions[sessionId]?.messages).toEqual([
+        expect.objectContaining({ content: 'Durable teammate answer' }),
+      ])
+      expect(useChatStore.getState().sessions[sessionId]?.agentStreamRevision).toBe(0)
+    } finally {
+      unregister()
+    }
+  })
+
+  it('backfills durable member history ahead of an active live stream and converges without duplicates', async () => {
+    const initialTranscript = deferred<any>()
+    const now = new Date().toISOString()
+    getMemberTranscriptMock
+      .mockReturnValueOnce(initialTranscript.promise)
+      .mockResolvedValueOnce({
+        messages: [
+          {
+            id: 'durable-tool-result',
+            type: 'tool_result',
+            content: [{
+              type: 'tool_result',
+              tool_use_id: 'durable-fragment/Read:0',
+              original_tool_use_id: 'Read:0',
+              content: 'file body',
+            }],
+            timestamp: now,
+          },
+          {
+            id: 'durable-final-answer',
+            type: 'assistant',
+            content: [{ type: 'text', text: 'Done.' }],
+            timestamp: now,
+          },
+        ],
+        signature: 'terminal-signature',
+        cursor: 'terminal-cursor',
+        afterOrdinal: 3,
+      })
+    const member = {
+      agentId: 'worker@live-transcript-team',
+      name: 'worker',
+      role: 'worker',
+      status: 'running' as const,
+      activity: 'active' as const,
+    }
+    const team = {
+      name: 'live-transcript-team',
+      leadSessionId: 'live-transcript-lead',
+      incarnationId: 'live-transcript-incarnation',
+      createdAt: '2026-08-10T00:00:00.000Z',
+      members: [member],
+    }
+    const sessionId = memberSessionId(member.agentId, team.incarnationId)
+    useTeamStore.setState({
+      activeTeam: team,
+      memberTeamBySession: { [sessionId]: team },
+    })
+    const pendingInitialRead = useTeamStore.getState().refreshMemberSession(sessionId)
+    const unregister = registerAgentRunSession(
+      team.leadSessionId,
+      sessionId,
+      [member.agentId],
+      { streamEventIdPrefix: 'runAgentId' },
+    )
+
+    const send = (event: Extract<import('../types/chat').ServerMessage, { type: 'agent_run_event' }>['event']) => {
+      useChatStore.getState().handleServerMessage(team.leadSessionId, {
+        type: 'agent_run_event',
+        runAgentId: 'live-fragment',
+        streamId: 'live-transcript-stream',
+        targetAgentId: member.agentId,
+        event,
+      })
+    }
+
+    try {
+      send({ type: 'thinking', text: 'Working through the request', complete: true })
+      send({ type: 'content_start', blockType: 'text' })
+      send({ type: 'content_delta', text: 'Live preface' })
+      send({
+        type: 'content_start',
+        blockType: 'tool_use',
+        toolName: 'Read',
+        toolUseId: 'Read:0',
+      })
+      useChatStore.setState((state) => ({
+        sessions: {
+          ...state.sessions,
+          [sessionId]: {
+            ...state.sessions[sessionId]!,
+            streamingText: 'Live preface — unpersisted live tail',
+            streamingToolInput: '{"file_path":',
+          },
+        },
+      }))
+
+      initialTranscript.resolve({
+        messages: [
+          {
+            id: 'captain-initial-prompt',
+            type: 'user',
+            content: '<teammate-message teammate_id="team-lead" color="blue">Implement the API</teammate-message>',
+            timestamp: now,
+          },
+          {
+            id: 'durable-active-turn',
+            type: 'assistant',
+            content: [
+              { type: 'thinking', thinking: 'Working through the request' },
+              { type: 'text', text: 'Live preface' },
+              {
+                type: 'tool_use',
+                id: 'durable-fragment/Read:0',
+                original_tool_use_id: 'Read:0',
+                name: 'Read',
+                input: { file_path: '/tmp/input.ts' },
+              },
+            ],
+            timestamp: now,
+          },
+        ],
+        signature: 'active-signature',
+        cursor: 'active-cursor',
+        afterOrdinal: 1,
+      })
+      await pendingInitialRead
+
+      const activeSession = useChatStore.getState().sessions[sessionId]!
+      expect(activeSession.messages.map(message => message.type)).toEqual([
+        'user_text',
+        'thinking',
+        'assistant_text',
+        'tool_use',
+      ])
+      expect(activeSession.messages[0]).toMatchObject({
+        content: 'Implement the API',
+        teammateFrom: 'team-lead',
+      })
+      expect(activeSession.messages.filter(message => message.type === 'tool_use')).toEqual([
+        expect.objectContaining({
+          toolUseId: 'live-fragment/Read:0',
+          isPending: true,
+        }),
+      ])
+      expect(activeSession.messages.filter(message => message.type === 'thinking')).toHaveLength(1)
+      expect(activeSession.messages.filter(message => message.type === 'assistant_text')).toHaveLength(1)
+      expect(activeSession.chatState).toBe('tool_executing')
+      expect(activeSession.agentStreamRevision).toBe(1)
+      expect(activeSession.activeToolUseId).toBe('live-fragment/Read:0')
+      expect(activeSession.streamingText).toBe(' — unpersisted live tail')
+      expect(activeSession.streamingToolInput).toBe('{"file_path":')
+
+      send({
+        type: 'tool_use_complete',
+        toolName: 'Read',
+        toolUseId: 'Read:0',
+        input: { file_path: '/tmp/input.ts' },
+      })
+      send({
+        type: 'tool_result',
+        toolUseId: 'Read:0',
+        content: 'file body',
+        isError: false,
+      })
+      send({ type: 'status', state: 'idle' })
+      const completedTeam = {
+        ...team,
+        members: [{ ...member, status: 'completed' as const, activity: 'exited' as const }],
+      }
+      useTeamStore.setState({
+        activeTeam: completedTeam,
+        memberTeamBySession: { [sessionId]: completedTeam },
+      })
+
+      await useTeamStore.getState().refreshMemberSession(sessionId)
+
+      const settledSession = useChatStore.getState().sessions[sessionId]!
+      expect(settledSession.messages[0]).toMatchObject({
+        type: 'user_text',
+        content: 'Implement the API',
+      })
+      expect(settledSession.messages.filter(message => message.type === 'tool_use')).toHaveLength(1)
+      expect(settledSession.messages.filter(message => message.type === 'tool_result')).toHaveLength(1)
+      expect(settledSession.messages.filter(message => (
+        message.type === 'assistant_text' && message.content === 'Live preface'
+      ))).toHaveLength(1)
+      expect(settledSession.messages.filter(message => (
+        message.type === 'assistant_text' && message.content === 'Done.'
+      ))).toHaveLength(1)
+      expect(settledSession.chatState).toBe('idle')
+      expect(settledSession.agentStreamRevision).toBe(0)
+    } finally {
+      unregister()
+    }
+  })
+
   it('joins physical-owner live activity with its fragment-scoped transcript identity', async () => {
     getMemberTranscriptMock
       .mockResolvedValueOnce({
@@ -1119,6 +1385,63 @@ describe('teamStore workbench timeline', () => {
 
   afterEach(() => {
     useTeamStore.getState().clearTeam()
+  })
+
+  it('keeps unknown watcher identities out of each roster and refreshes authoritative data', () => {
+    getTeamMock.mockReturnValue(new Promise(() => {}))
+    getWorkbenchMock.mockReturnValue(new Promise(() => {}))
+    const snapshot = workbench('v1', 'in_progress')
+    const memberSession = memberSessionId('lead@team-workbench')
+    useTeamStore.setState({
+      activeTeam: snapshot.team,
+      memberTeamBySession: {
+        [memberSession]: {
+          ...snapshot.team,
+          members: [snapshot.team.members[0]!],
+        },
+      },
+      workbenchesBySession: {
+        'lead-session': {
+          teamName: 'team-workbench',
+          snapshots: [snapshot],
+          loading: false,
+          error: null,
+        },
+      },
+    })
+
+    useTeamStore.getState().handleTeamUpdate('team-workbench', [
+      {
+        agentId: 'worker@team-workbench',
+        role: 'worker',
+        status: 'completed',
+        activity: 'exited',
+      },
+      { agentId: 'Read@team-workbench', role: 'Read', status: 'running' },
+      { agentId: 'TaskCreate@team-workbench', role: 'TaskCreate', status: 'running' },
+    ])
+
+    const state = useTeamStore.getState()
+    expect(state.activeTeam?.members).toEqual([
+      expect.objectContaining({ agentId: 'lead@team-workbench' }),
+      expect.objectContaining({
+        agentId: 'worker@team-workbench',
+        status: 'completed',
+        activity: 'exited',
+      }),
+    ])
+    expect(state.memberTeamBySession[memberSession]?.members.map((member) => member.agentId))
+      .toEqual(['lead@team-workbench'])
+    expect(
+      state.workbenchesBySession['lead-session']?.snapshots.at(-1)?.team.members.map(
+        (member) => member.agentId,
+      ),
+    ).toEqual(['lead@team-workbench', 'worker@team-workbench'])
+    expect(
+      state.workbenchesBySession['lead-session']?.snapshots.at(-1)?.team.members[1],
+    ).toMatchObject({ status: 'completed', activity: 'exited' })
+    expect(getTeamMock).toHaveBeenCalledWith('team-workbench')
+    expect(getWorkbenchMock).toHaveBeenCalledWith('team-workbench')
   })
 
   it('keeps collecting live snapshots while the user remains on a historical state', async () => {

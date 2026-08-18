@@ -33,8 +33,17 @@ type SessionRuntimeStore = {
   syncFromSessions: (sessions: SessionListItem[]) => void
 }
 
-function normalizeSelection(selection: RuntimeSelection): RuntimeSelection {
+function normalizeSelection(selection: RuntimeSelection): RuntimeSelection | null {
   const normalizedSelection = normalizeRuntimeSelection(selection)
+  if (
+    normalizedSelection.providerId === null &&
+    normalizedSelection.modelId.trim().toLowerCase() === 'opus[1m]'
+  ) {
+    // Older builds persisted the dynamic Claude default as an explicit model.
+    // Drop only that Claude Official sentinel so the OAuth subscription tier
+    // can resolve the current default. Third-party `[1m]` model ids stay intact.
+    return null
+  }
   if (
     normalizedSelection.providerId !== GROK_OFFICIAL_PROVIDER_ID ||
     !RETIRED_GROK_MODEL_IDS.has(normalizedSelection.modelId)
@@ -58,13 +67,16 @@ function normalizeSelections(
   selections: Record<string, RuntimeSelection>,
 ): { selections: Record<string, RuntimeSelection>; changed: boolean } {
   let changed = false
-  const normalized = Object.fromEntries(
-    Object.entries(selections).map(([key, selection]) => {
-      const next = normalizeSelection(selection)
-      if (next !== selection) changed = true
-      return [key, next]
-    }),
-  )
+  const normalized: Record<string, RuntimeSelection> = {}
+  for (const [key, selection] of Object.entries(selections)) {
+    const next = normalizeSelection(selection)
+    if (!next) {
+      changed = true
+      continue
+    }
+    if (next !== selection) changed = true
+    normalized[key] = next
+  }
   return { selections: normalized, changed }
 }
 
@@ -98,10 +110,10 @@ export const useSessionRuntimeStore = create<SessionRuntimeStore>((set) => ({
 
   setSelection: (key, selection) =>
     set((state) => {
-      const selections = {
-        ...state.selections,
-        [key]: normalizeSelection(selection),
-      }
+      const normalized = normalizeSelection(selection)
+      const selections = { ...state.selections }
+      if (normalized) selections[key] = normalized
+      else delete selections[key]
       persistSelections(selections)
       return { selections }
     }),
@@ -179,6 +191,12 @@ export const useSessionRuntimeStore = create<SessionRuntimeStore>((set) => ({
           modelId: session.runtimeModelId,
           ...(session.effortLevel ? { effortLevel: session.effortLevel } : {}),
         })
+        if (!selection) {
+          if (!(session.id in selections)) continue
+          if (selections === state.selections) selections = { ...state.selections }
+          delete selections[session.id]
+          continue
+        }
         const current = selections[session.id]
         if (
           current?.providerId === selection.providerId &&

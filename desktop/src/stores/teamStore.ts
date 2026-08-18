@@ -1,9 +1,11 @@
 import { create } from 'zustand'
 import { teamsApi } from '../api/teams'
+import type { TeamTaskAnchor } from '../api/teams'
 import type {
   TeamSummary,
   TeamDetail,
   TeamMember,
+  TeamMemberActivity,
   AgentColor,
   TeamWorkbenchSnapshot,
   TeamWorkbenchTimeline,
@@ -14,7 +16,6 @@ import type {
   TeamMemberStatus,
   UIMessage,
 } from '../types/chat'
-import { runningTaskForMember } from '../components/agentTeams/agentTeamsModel'
 import {
   useChatStore,
   mapHistoryMessagesToUiMessages,
@@ -106,6 +107,7 @@ function createMemberSessionState() {
     agentTaskNotifications: {},
     backgroundAgentTasks: {},
     historyMutationEpoch: 0,
+    agentStreamRevision: 0,
     elapsedTimer: null,
   }
 }
@@ -115,6 +117,15 @@ function normalizeMemberStatus(status: string | undefined): TeamMember['status']
     return status
   }
   return status === 'failed' ? 'error' : 'idle'
+}
+
+function normalizeMemberActivity(activity: unknown): TeamMemberActivity | undefined {
+  return activity === 'active' ||
+    activity === 'idle' ||
+    activity === 'exited' ||
+    activity === 'unknown'
+    ? activity
+    : undefined
 }
 
 function toTeamMember(raw: Record<string, unknown>): TeamMember {
@@ -128,6 +139,7 @@ function toTeamMember(raw: Record<string, unknown>): TeamMember {
       (raw.agentId as string) ||
       '',
     status: normalizeMemberStatus(raw.status as string | undefined),
+    activity: normalizeMemberActivity(raw.activity),
     currentTask: raw.currentTask as string | undefined,
     color: raw.color as AgentColor | undefined,
     sessionId: raw.sessionId as string | undefined,
@@ -213,23 +225,25 @@ function mergeTeamMemberStatuses(
   incoming: TeamMemberStatus[],
 ): TeamDetail {
   if (incoming.length === 0) return team
-  const existingById = new Map(team.members.map((member) => [member.agentId, member]))
-  const incomingIds = new Set(incoming.map((member) => member.agentId))
-  const kept = team.members.filter((member) => !incomingIds.has(member.agentId))
-  const updated = incoming.map((member, index): TeamMember => {
-    const existing = existingById.get(member.agentId)
+  // A watcher event is a volatile status patch, not an authoritative roster.
+  // In particular, never let an identity found in one cached view leak into a
+  // different view that did not already know that exact agent id.
+  const incomingById = new Map(incoming.map((member) => [member.agentId, member]))
+  const members = team.members.map((existing, index): TeamMember => {
+    const member = incomingById.get(existing.agentId)
+    if (!member) return existing
     return {
-      ...(existing ?? {}),
-      name: existing?.name,
-      agentId: member.agentId,
+      ...existing,
       role: member.role,
       status: normalizeMemberStatus(member.status),
-      currentTask: member.currentTask,
-      color: existing?.color ?? AGENT_COLORS[index % AGENT_COLORS.length]!,
-      sessionId: existing?.sessionId,
+      // The watcher omits whatever it could not determine from the roster
+      // alone, so an absent field must not erase what a full team read knew.
+      activity: normalizeMemberActivity(member.activity) ?? existing.activity,
+      currentTask: member.currentTask ?? existing.currentTask,
+      color: existing.color ?? AGENT_COLORS[index % AGENT_COLORS.length]!,
     }
   })
-  return { ...team, members: [...kept, ...updated] }
+  return { ...team, members }
 }
 
 function teamTimestamp(value: string | undefined, fallback = Date.now()): number {
@@ -443,16 +457,39 @@ function latestWorkbenchSnapshotForTeam(
     ?.snapshots.at(-1)
 }
 
-function memberHasActiveTask(
+/**
+ * Whether the member's own run is still producing output, which is what decides
+ * if its conversation shows a busy indicator. Owning an `in_progress` task used
+ * to stand in for this and kept a teammate marked busy for as long as its
+ * umbrella task stayed open.
+ *
+ * This needs positive evidence, unlike the workbench figure: an unresolved
+ * activity would leave a spinner running forever, and a member that really is
+ * mid-turn still reads as busy through its unsettled replies.
+ */
+function memberIsWorking(
   member: TeamMember,
   snapshot: TeamWorkbenchSnapshot | undefined,
 ): boolean {
   if (member.status === 'completed' || member.status === 'error' || snapshot?.deletedAt) {
     return false
   }
-  if (!snapshot) return member.status === 'running'
+  return member.activity === 'active'
+}
 
-  return Boolean(runningTaskForMember(snapshot.tasks, member))
+/**
+ * Anchors are append-only records of a task transition, so a repeated cursor
+ * page must not duplicate them. Identity is the transition itself.
+ */
+function mergeTaskAnchors(
+  existing: TeamTaskAnchor[],
+  incoming: TeamTaskAnchor[],
+): TeamTaskAnchor[] {
+  const key = (anchor: TeamTaskAnchor) =>
+    `${anchor.messageId}\u0000${anchor.taskId}\u0000${anchor.status}`
+  const byTransition = new Map(existing.map((anchor) => [key(anchor), anchor]))
+  for (const anchor of incoming) byTransition.set(key(anchor), anchor)
+  return [...byTransition.values()]
 }
 
 function memberMessageKey(message: UIMessage): string {
@@ -544,6 +581,192 @@ function mergeTranscriptNotifications(
   return [...merged.values()]
 }
 
+type MemberToolMessage = Extract<UIMessage, { type: 'tool_use' | 'tool_result' }>
+
+function memberToolIdentity(message: MemberToolMessage): string {
+  const identity = message.originalToolUseId ?? message.toolUseId
+  return identity.includes('/') ? identity.slice(identity.lastIndexOf('/') + 1) : identity
+}
+
+function memberMessageTimesOverlap(left: UIMessage, right: UIMessage): boolean {
+  return Math.abs(left.timestamp - right.timestamp) <= MEMBER_TRANSCRIPT_MATCH_WINDOW_MS
+}
+
+function sameSerializableValue(left: unknown, right: unknown): boolean {
+  if (left === right) return true
+  try {
+    const stableStringify = (value: unknown) => JSON.stringify(value, (_key, nested) => {
+      if (!nested || typeof nested !== 'object' || Array.isArray(nested)) return nested
+      return Object.fromEntries(
+        Object.entries(nested).sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey)),
+      )
+    })
+    return stableStringify(left) === stableStringify(right)
+  } catch {
+    return false
+  }
+}
+
+function isExactMemberMessageMatch(durable: UIMessage, live: UIMessage): boolean {
+  if (durable.type !== live.type) return false
+  if (durable.id === live.id) return true
+
+  if (
+    (durable.type === 'user_text' || durable.type === 'assistant_text') &&
+    (live.type === 'user_text' || live.type === 'assistant_text') &&
+    durable.transcriptMessageId &&
+    durable.transcriptMessageId === live.transcriptMessageId
+  ) {
+    return true
+  }
+  if (
+    (durable.type === 'tool_use' || durable.type === 'tool_result') &&
+    (live.type === 'tool_use' || live.type === 'tool_result')
+  ) {
+    return durable.toolUseId === live.toolUseId
+  }
+  if (durable.type === 'permission_request' && live.type === 'permission_request') {
+    return durable.requestId === live.requestId
+  }
+  if (durable.type === 'background_task' && live.type === 'background_task') {
+    return durable.task.taskId === live.task.taskId
+  }
+  return false
+}
+
+function isSemanticMemberMessageMatch(durable: UIMessage, live: UIMessage): boolean {
+  if (durable.type !== live.type || !memberMessageTimesOverlap(durable, live)) return false
+
+  if (durable.type === 'user_text' && live.type === 'user_text') {
+    if (
+      durable.transcriptMessageId &&
+      live.transcriptMessageId &&
+      durable.transcriptMessageId !== live.transcriptMessageId
+    ) return false
+    return durable.content.trim() === live.content.trim() &&
+      durable.teammateFrom === live.teammateFrom
+  }
+  if (durable.type === 'assistant_text' && live.type === 'assistant_text') {
+    if (
+      durable.transcriptMessageId &&
+      live.transcriptMessageId &&
+      durable.transcriptMessageId !== live.transcriptMessageId
+    ) return false
+    return durable.content.trim() === live.content.trim()
+  }
+  if (durable.type === 'thinking' && live.type === 'thinking') {
+    return durable.content === live.content
+  }
+  if (durable.type === 'tool_use' && live.type === 'tool_use') {
+    return memberToolIdentity(durable) === memberToolIdentity(live) &&
+      durable.toolName === live.toolName &&
+      (live.isPending === true || sameSerializableValue(durable.input, live.input))
+  }
+  if (durable.type === 'tool_result' && live.type === 'tool_result') {
+    return memberToolIdentity(durable) === memberToolIdentity(live) &&
+      sameSerializableValue(durable.content, live.content)
+  }
+  return false
+}
+
+function mergeDurableMemberMessage(durable: UIMessage, live: UIMessage): UIMessage {
+  if (durable.type === 'user_text' && live.type === 'user_text') {
+    // A durable echo settles an optimistic direct message. Do not copy the
+    // live `pending` flag back over the authoritative transcript entry.
+    return durable
+  }
+  if (durable.type === 'assistant_text' && live.type === 'assistant_text') {
+    return {
+      ...durable,
+      ...live,
+      transcriptMessageId: durable.transcriptMessageId ?? live.transcriptMessageId,
+    }
+  }
+  if (durable.type === 'tool_use' && live.type === 'tool_use') {
+    // Keep the live id and pending/partial state so the next stream event still
+    // upserts this exact row; the terminal transcript read canonicalizes it.
+    return { ...durable, ...live }
+  }
+  if (durable.type === 'tool_result' && live.type === 'tool_result') {
+    return { ...durable, ...live }
+  }
+  if (durable.type === 'thinking' && live.type === 'thinking') return live
+  return durable
+}
+
+/**
+ * A member transcript request can lose a race to the member's live stream.
+ * Durable history remains the ordered base, while live-only output is appended
+ * and matching live rows retain their in-progress rendering state.
+ */
+function mergeDurableMemberTranscriptWithLive(
+  durableMessages: UIMessage[],
+  liveMessages: UIMessage[],
+): UIMessage[] {
+  const matches = new Map<number, number>()
+  const claimedLive = new Set<number>()
+
+  for (const [durableIndex, durable] of durableMessages.entries()) {
+    const liveIndex = liveMessages.findIndex((live, index) => (
+      !claimedLive.has(index) && isExactMemberMessageMatch(durable, live)
+    ))
+    if (liveIndex < 0) continue
+    matches.set(durableIndex, liveIndex)
+    claimedLive.add(liveIndex)
+  }
+
+  // Fuzzy identities (notably fragment-scoped tool ids) can repeat across
+  // teammate resumes. Match newest-first and choose the nearest timestamp so a
+  // current live call does not attach to an older durable occurrence.
+  for (let durableIndex = durableMessages.length - 1; durableIndex >= 0; durableIndex -= 1) {
+    if (matches.has(durableIndex)) continue
+    const durable = durableMessages[durableIndex]!
+    let nearestLiveIndex = -1
+    let nearestDistance = Number.POSITIVE_INFINITY
+    for (const [liveIndex, live] of liveMessages.entries()) {
+      if (claimedLive.has(liveIndex) || !isSemanticMemberMessageMatch(durable, live)) continue
+      const distance = Math.abs(durable.timestamp - live.timestamp)
+      if (distance < nearestDistance) {
+        nearestDistance = distance
+        nearestLiveIndex = liveIndex
+      }
+    }
+    if (nearestLiveIndex < 0) continue
+    matches.set(durableIndex, nearestLiveIndex)
+    claimedLive.add(nearestLiveIndex)
+  }
+
+  const merged = durableMessages.map((durable, durableIndex) => {
+    const liveIndex = matches.get(durableIndex)
+    return liveIndex === undefined
+      ? durable
+      : mergeDurableMemberMessage(durable, liveMessages[liveIndex]!)
+  })
+  for (const [liveIndex, live] of liveMessages.entries()) {
+    if (!claimedLive.has(liveIndex)) merged.push(live)
+  }
+  return merged
+}
+
+function removePersistedMemberStreamingText(
+  durableMessages: UIMessage[],
+  streamingText: string,
+): string {
+  if (!streamingText) return streamingText
+  const latestDurableText = durableMessages.findLast(
+    (message): message is Extract<UIMessage, { type: 'assistant_text' }> => (
+      message.type === 'assistant_text'
+    ),
+  )?.content
+  if (!latestDurableText) return streamingText
+
+  if (latestDurableText.endsWith(streamingText)) return ''
+  if (streamingText.startsWith(latestDurableText)) {
+    return streamingText.slice(latestDurableText.length)
+  }
+  return streamingText
+}
+
 function syncMemberSessionMessages(
   sessionId: string,
   member: TeamMember,
@@ -552,6 +775,7 @@ function syncMemberSessionMessages(
   activity?: ReturnType<typeof reconstructRunActivityFromTranscript>,
   requestedMutationEpoch?: number,
   requestedTaskUpdatedAt?: Map<string, number>,
+  requestedStreamRevision?: number,
 ) {
   const isTerminal = member.status === 'completed' ||
     member.status === 'error' ||
@@ -575,12 +799,23 @@ function syncMemberSessionMessages(
     awaitingMemberReplies.set(sessionId, unsettledReplies)
   }
   const isActive = !isTerminal && (
-    memberHasActiveTask(member, snapshot) ||
+    memberIsWorking(member, snapshot) ||
     unsettledReplies.length > 0
   )
   useChatStore.setState((state) => {
     const existing = state.sessions[sessionId]
     const nextState = existing ?? createMemberSessionState()
+    const currentStreamRevision = nextState.agentStreamRevision ?? 0
+    const preserveLiveConversation = currentStreamRevision > 0 && (
+      nextState.chatState !== 'idle' ||
+      (
+        requestedStreamRevision !== undefined &&
+        currentStreamRevision !== requestedStreamRevision
+      )
+    )
+    const streamingText = preserveLiveConversation
+      ? removePersistedMemberStreamingText(messages, nextState.streamingText)
+      : ''
     const mutationEpochChanged = requestedMutationEpoch !== undefined &&
       (nextState.historyMutationEpoch ?? 0) !== requestedMutationEpoch
     const taskFreshnessChanged = existing && Object.values(
@@ -627,13 +862,28 @@ function syncMemberSessionMessages(
         ...state.sessions,
         [sessionId]: {
           ...nextState,
-          messages,
+          messages: preserveLiveConversation
+            ? mergeDurableMemberTranscriptWithLive(messages, nextState.messages)
+            : messages,
           ...(activity ? {
             agentTaskNotifications: mergedActivity!.agentTaskNotifications,
             backgroundAgentTasks: mergedActivity!.backgroundAgentTasks,
           } : {}),
           connectionState: 'connected',
-          chatState: isActive ? 'thinking' : 'idle',
+          chatState: preserveLiveConversation
+            ? nextState.chatState
+            : isActive
+              ? 'thinking'
+              : 'idle',
+          ...(preserveLiveConversation ? { streamingText } : {}),
+          ...(!preserveLiveConversation ? {
+            agentStreamRevision: 0,
+            streamingText: '',
+            streamingToolInput: '',
+            activeToolUseId: null,
+            activeToolName: null,
+            activeThinkingId: null,
+          } : {}),
         },
       },
     }
@@ -709,6 +959,8 @@ type TeamStore = {
   memberTeamBySession: Record<string, TeamDetail | undefined>
   memberSnapshotBySession: Record<string, TeamWorkbenchSnapshot | undefined>
   memberOwnerAgentIdsBySession: Record<string, string[] | undefined>
+  /** Task boundaries inside each member conversation, keyed by member session. */
+  memberTaskAnchorsBySession: Record<string, TeamTaskAnchor[] | undefined>
 
   fetchTeams: () => Promise<void>
   fetchTeamDetail: (name: string) => Promise<void>
@@ -769,6 +1021,7 @@ export const useTeamStore = create<TeamStore>((set, get) => ({
   memberTeamBySession: {},
   memberSnapshotBySession: {},
   memberOwnerAgentIdsBySession: {},
+  memberTaskAnchorsBySession: {},
 
   fetchTeams: async () => {
     set({ error: null })
@@ -1059,6 +1312,7 @@ export const useTeamStore = create<TeamStore>((set, get) => ({
     const incarnationKey = memberIncarnationKey(team, member)
     const requestedSession = useChatStore.getState().sessions[sessionId]
     const requestedMutationEpoch = requestedSession?.historyMutationEpoch ?? 0
+    const requestedStreamRevision = requestedSession?.agentStreamRevision ?? 0
     const requestedTaskUpdatedAt = new Map<string, number>()
     for (const task of Object.values(requestedSession?.backgroundAgentTasks ?? {})) {
       requestedTaskUpdatedAt.set(task.taskId, task.updatedAt)
@@ -1127,6 +1381,7 @@ export const useTeamStore = create<TeamStore>((set, get) => ({
         memberTranscriptEntries.set(sessionId, mergedEntries)
         memberTranscriptNotifications.set(sessionId, mergedNotifications)
         const incomingOwnerAgentIds = response.ownerAgentIds ?? []
+        const incomingTaskAnchors = response.taskAnchors ?? []
         set((state) => ({
           memberOwnerAgentIdsBySession: {
             ...state.memberOwnerAgentIdsBySession,
@@ -1136,6 +1391,17 @@ export const useTeamStore = create<TeamStore>((set, get) => ({
                   ...(state.memberOwnerAgentIdsBySession[sessionId] ?? []),
                   ...incomingOwnerAgentIds,
                 ])],
+          },
+          // Anchors arrive per cursor page, so a delta appends the same way the
+          // transcript does and a reset replaces the whole run.
+          memberTaskAnchorsBySession: {
+            ...state.memberTaskAnchorsBySession,
+            [sessionId]: mergeTaskAnchors(
+              response.reset || !cursorMatchesMember
+                ? []
+                : state.memberTaskAnchorsBySession[sessionId] ?? [],
+              incomingTaskAnchors,
+            ),
           },
         }))
         // Mapping the complete durable transcript preserves suppression state
@@ -1175,6 +1441,7 @@ export const useTeamStore = create<TeamStore>((set, get) => ({
           activity,
           requestedMutationEpoch,
           requestedTaskUpdatedAt,
+          requestedStreamRevision,
         )
       } catch {
         const currentTeam = get().getTeamByMemberSessionId(sessionId)
@@ -1197,6 +1464,10 @@ export const useTeamStore = create<TeamStore>((set, get) => ({
           currentMember,
           snapshot,
           existingMessages,
+          undefined,
+          undefined,
+          undefined,
+          requestedStreamRevision,
         )
       }
     })()
@@ -1433,6 +1704,7 @@ export const useTeamStore = create<TeamStore>((set, get) => ({
       memberTeamBySession: {},
       memberSnapshotBySession: {},
       memberOwnerAgentIdsBySession: {},
+      memberTaskAnchorsBySession: {},
     })
   },
 
@@ -1550,15 +1822,19 @@ export const useTeamStore = create<TeamStore>((set, get) => ({
     ].filter((team): team is TeamDetail => Boolean(
       team && teamMatchesLifecycle(team, teamName, team.leadSessionId, identity),
     ))
-    const baseTeam = knownTeams[0]
-    if (!baseTeam) {
+    if (knownTeams.length === 0) {
       void get().fetchTeamDetail(teamName)
       void get().fetchWorkbench(teamName)
       return
     }
 
-    if (members.length > baseTeam.members.length) {
+    const hasUnknownMembers = knownTeams.some((team) => {
+      const knownAgentIds = new Set(team.members.map((member) => member.agentId))
+      return members.some((member) => !knownAgentIds.has(member.agentId))
+    })
+    if (hasUnknownMembers) {
       void get().fetchTeamDetail(teamName)
+      void get().fetchWorkbench(teamName)
     }
 
     set((current) => {

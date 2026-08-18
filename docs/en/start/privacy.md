@@ -1,13 +1,13 @@
 ---
 title: Privacy and network access
 nav_title: Privacy
-description: What Claude Code Haha stores locally, when it uses the network, and how to remove its data.
+description: What EchoFlow Code stores locally, when it uses the network, and how to remove its data.
 order: 6
 ---
 
 # Privacy and network access
 
-Claude Code Haha is a local-first, open-source development tool. The project itself does not operate a cloud backend that receives session content. The application is not fully offline: when you choose a model provider, MCP server, messaging integration, or update feature, relevant data is sent to the third-party service you selected or configured.
+EchoFlow Code is a local-first, open-source development tool. The project itself does not operate a cloud backend that receives session content. The application is not fully offline: when you choose a model provider, MCP server, messaging integration, or update feature, relevant data is sent to the third-party service you selected or configured.
 
 ## Data stored locally
 
@@ -32,10 +32,10 @@ The project maintainers do not sell user data or place advertising based on pers
 
 ## Removing data
 
-Uninstalling the application does not automatically delete sessions and configuration under `~/.claude`. To remove local data completely, first back up anything you want to keep, then manually delete `~/.claude` and the Claude Code Haha data in your operating system's application-data directory. To remove data already sent to a third-party service, follow that provider's process.
+Uninstalling the application does not automatically delete sessions and configuration under `~/.claude`. To remove local data completely, first back up anything you want to keep, then manually delete `~/.claude` and the EchoFlow Code data in your operating system's application-data directory. To remove data already sent to a third-party service, follow that provider's process.
 
 ## Contact
 
-For privacy or security questions, contact the maintainer through a [private GitHub security advisory](https://github.com/NanmiCoder/cc-haha/security/advisories/new) or at [relakkes@gmail.com](mailto:relakkes@gmail.com).
+For privacy or security questions, contact the maintainer through a [private GitHub security advisory](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/security/advisories/new) or at [relakkes@gmail.com](mailto:relakkes@gmail.com).
 
 Last updated: August 5, 2026.

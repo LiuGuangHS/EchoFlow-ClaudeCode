@@ -21,7 +21,7 @@
 
 </div>
 
-EchoFlow Code is a local coding agent workspace for real projects. It combines terminal, desktop, and IM workflows with official Claude, Anthropic-compatible models, Qingyun API, multiple agents, persistent memory, Skills, image generation, visual MCP and SubAgent management, model tracing, Computer Use, H5 remote access, and scheduled tasks.
+EchoFlow Code is a **desktop Claude Code workspace** for macOS, Windows, and Linux: multi-session workspaces, global search, branch / Worktree launch, diff review, built-in browser preview, GUI permission approval, official Claude, ChatGPT, Grok, vendor APIs, local endpoints, image generation, visual MCP and SubAgent management, Agent Teams, dynamic Workflow orchestration, model tracing, Computer Use, skill marketplace, themes, desktop pets, H5 remote access, IM integration, and scheduled tasks, all in one app.
 
 <p align="center">
   <a href="#desktop-preview">Desktop preview</a> · <a href="#install-the-desktop-app">Install</a> · <a href="#desktop-highlights">Highlights</a> · <a href="#documentation">Documentation</a> · <a href="#community">Community</a>
@@ -65,17 +65,27 @@ See [environment variables](docs/en/cli/env.md) and [CLI setup](docs/en/cli/inde
 
 ## Desktop Highlights
 
-- **Multi-session workspace and global search**: keep tabs, projects, terminal entry points, history, and cross-session search in one place.
-- **Branch and Worktree launch**: choose a repository branch and use either the current working tree or an isolated Worktree.
-- **Diff review and built-in preview**: review each edited file and verify the real page in the integrated browser.
-- **Five permission modes**: approve risky commands, tool calls, and agent questions from the desktop UI.
-- **Model and reasoning configuration**: sign in to Claude, ChatGPT, or Grok; use Qingyun, official vendor APIs, local models, or Custom; normalize reasoning controls to model capabilities.
-- **Image generation**: create and edit images in chat, or configure any OpenAI-compatible Images API.
-- **Visual MCP and SubAgent management**: manage MCP servers, SubAgents, models, tools, and permission modes from the UI.
-- **Model tracing**: record request status and timing locally, then search and filter failed or stalled calls.
-- **Skills, Computer Use, and desktop pets**: install third-party skills, authorize desktop control, and optionally enable pets.
-- **H5 and IM relay**: continue a session and approve actions through a mobile browser, Telegram, Feishu, WeChat, DingTalk, or WhatsApp.
-- **Scheduled tasks and usage**: run planned work in separate sessions and inspect local token trends.
+- **Multi-session workspace**: tabs, project switching, terminal entry, and session history in one place, with a resizable sidebar.
+- **Global search**: press Cmd+K to search across every session and jump to the match.
+- **Branch / Worktree launch**: choose a repository branch and decide whether to use the current working tree or an isolated Worktree.
+- **Review edits file by file**: the workspace lists this turn's changes; open any file for a syntax-highlighted diff, or undo the whole turn.
+- **Built-in browser preview**: the page your agent just edited renders right inside the app, cookies and login state included.
+- **Five permission modes**: from "ask every time" to "skip permissions" — risky commands, tool calls, and follow-up questions are all approved in the GUI.
+- **Bring your own model**: sign in to Claude, ChatGPT, or Grok; use presets for DeepSeek, Kimi, Zhipu GLM and others; or point it at LM Studio and Ollama running locally.
+- **Image generation**: generate and edit images right in the chat — sign in with ChatGPT or Grok for instant use, or plug in any OpenAI-compatible Images API.
+- **Visual MCP manager**: add and edit MCP servers in a GUI — STDIO / Streamable HTTP / SSE, with project, shared, or global scope.
+- **Six colour themes**: white, paper, warm classic, celadon, ink night, and ink blue — optionally following your system's light/dark setting.
+- **Skill marketplace**: discover, preview, and install third-party skills from ClawHub / SkillHub, with source and safety status shown up front.
+- **Session activity panel**: track task progress, background tasks, SubAgents, and sources in one side panel.
+- **Visual SubAgent manager**: create and tune SubAgents in a GUI — model, tools, and permission mode.
+- **Agent Teams workbench**: visualize multi-agent collaboration in the GUI — members, tasks, a communication feed, and a dependency-lane canvas.
+- **Dynamic Workflow orchestration**: the model writes and runs orchestration scripts on the fly, driving subagents concurrently or in pipelines, with phase views, interrupts, and resume.
+- **Model trace**: every model request is logged locally with status and timing — search and filter to diagnose stuck or failed calls.
+- **Computer Use**: let the agent take screenshots, click, type, and control desktop apps after authorization.
+- **Desktop pets**: Dada, Huhu, Bubu, and Huihui change what they do with the task at hand — or raise one of your own (off by default).
+- **H5 remote access**: scan a QR code to continue the session in your phone browser; locking the screen won't kill a running task.
+- **IM integration**: chat, switch projects, and approve actions through Telegram / Feishu / WeChat / DingTalk / WhatsApp.
+- **Scheduled tasks and usage stats**: run planned tasks in their own sessions and track local token usage trends.
 
 ## Documentation
 

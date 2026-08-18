@@ -78,6 +78,8 @@ import {
 } from '../../utils/telemetry/perfettoTracing.js'
 import type { ContentReplacementState } from '../../utils/toolResultStorage.js'
 import { createAgentId } from '../../utils/uuid.js'
+import { emitAgentRunMessage } from '../../utils/sdkEventQueue.js'
+import { getTeammateContext } from '../../utils/teammateContext.js'
 import { resolveAgentTools } from './agentToolUtils.js'
 import { type AgentDefinition, isBuiltInAgent } from './loadAgentsDir.js'
 
@@ -309,6 +311,7 @@ export async function* runAgent({
   description,
   spawningToolUseId,
   ownerAgentId,
+  streamTargetAgentId,
   persistedAgentType,
   alreadyPersistedMessageCount,
   workflow,
@@ -370,6 +373,8 @@ export async function* runAgent({
   spawningToolUseId?: string
   /** Parent agent that owns this run's task lifecycle. Undefined means root. */
   ownerAgentId?: string
+  /** Logical target used only to route live output to a synthetic desktop run. */
+  streamTargetAgentId?: string
   /** Stable upstream identity for a resumed agent. A named teammate may use
    * the general-purpose runtime definition after its original definition is
    * no longer active, but its transcript metadata must keep the teammate name
@@ -407,6 +412,25 @@ export async function* runAgent({
   )
 
   const agentId = override?.agentId ? override.agentId : createAgentId()
+  const teammateContext = getTeammateContext()
+  const agentRunRoute = spawningToolUseId || ownerAgentId || streamTargetAgentId || querySource === 'workflow_agent'
+    ? {
+        runAgentId: agentId,
+        streamId: createAgentId(),
+        targetAgentId: streamTargetAgentId ?? agentId,
+        ...(teammateContext?.streamScopeId
+          ? { targetAgentScopeId: teammateContext.streamScopeId }
+          : {}),
+      }
+    : undefined
+  let agentRunTerminalEmitted = false
+  const emitAgentRunTerminal = (
+    event: { kind: 'complete' } | { kind: 'cancelled' } | { kind: 'error'; error: string },
+  ) => {
+    if (!agentRunRoute || agentRunTerminalEmitted) return
+    agentRunTerminalEmitted = true
+    emitAgentRunMessage(agentRunRoute, event)
+  }
 
   // Register agent in Perfetto trace for hierarchy visualization
   if (isPerfettoTracingEnabled()) {
@@ -842,6 +866,18 @@ export async function* runAgent({
       maxTurns: maxTurns ?? agentDefinition.maxTurns,
     })) {
       onQueryProgress?.()
+      if (
+        agentRunRoute &&
+        (message.type === 'stream_event' ||
+          message.type === 'assistant' ||
+          message.type === 'user' ||
+          (
+            message.type === 'system' &&
+            (message.subtype === 'streaming_fallback' || message.subtype === 'api_retry')
+          ))
+      ) {
+        emitAgentRunMessage(agentRunRoute, { kind: 'message', message })
+      }
       // Forward subagent API request starts to parent's metrics display
       // so TTFT/OTPS update during subagent execution.
       if (
@@ -899,7 +935,23 @@ export async function* runAgent({
     if (isBuiltInAgent(agentDefinition) && agentDefinition.callback) {
       agentDefinition.callback()
     }
+    if (agentRunRoute) {
+      emitAgentRunTerminal({ kind: 'complete' })
+    }
+  } catch (error) {
+    if (error instanceof AbortError) {
+      emitAgentRunTerminal({ kind: 'cancelled' })
+    } else {
+      emitAgentRunTerminal({
+        kind: 'error',
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+    throw error
   } finally {
+    // A consumer can stop the async generator with return()/break() without
+    // throwing. Discard its unfinished partial before settling the stream.
+    emitAgentRunTerminal({ kind: 'cancelled' })
     // Clean up agent-specific MCP servers (runs on normal completion, abort, or error)
     await mcpCleanup()
     // Clean up agent's session hooks

@@ -663,6 +663,136 @@ describe('WebSocket handler session isolation', () => {
     ])
   })
 
+  it('forwards directed Agent output while a foreground admission awaits send acknowledgement', async () => {
+    const sessionId = `agent-run-during-admission-${crypto.randomUUID()}`
+    const ws = makeClientSocket(sessionId)
+    const outputCallbacks = new Set<(cliMsg: any) => void>()
+    let resolveSend!: (sent: boolean) => void
+    spyOn(conversationService, 'hasSession').mockReturnValue(true)
+    spyOn(conversationService, 'getPendingPermissionRequests').mockReturnValue([])
+    spyOn(conversationService, 'onOutput').mockImplementation((_sid, callback) => {
+      outputCallbacks.add(callback)
+    })
+    spyOn(conversationService, 'removeOutputCallback').mockImplementation((_sid, callback) => {
+      outputCallbacks.delete(callback)
+    })
+    spyOn(sessionService, 'getCustomTitle').mockResolvedValue('Existing title')
+    spyOn(conversationService, 'sendMessage').mockImplementation(
+      () => new Promise<boolean>((resolve) => {
+        resolveSend = resolve
+      }),
+    )
+
+    handleWebSocket.open(ws)
+    ws.sent.length = 0
+    handleWebSocket.message(ws, JSON.stringify({
+      type: 'user_message',
+      content: 'Start another foreground turn',
+    }))
+    await flushMicrotasks(30)
+
+    const directedDelta = {
+      type: 'system',
+      subtype: 'agent_run_message',
+      run_agent_id: 'background-physical-agent',
+      stream_id: 'background-invocation',
+      target_agent_id: 'background-logical-agent',
+      event_kind: 'message',
+      message: {
+        type: 'stream_event',
+        event: {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'text_delta', text: 'background is still live' },
+        },
+      },
+    }
+    for (const callback of [...outputCallbacks]) callback(directedDelta)
+
+    expect(ws.sent.map((payload) => JSON.parse(payload))).toContainEqual({
+      type: 'agent_run_event',
+      runAgentId: 'background-physical-agent',
+      streamId: 'background-invocation',
+      targetAgentId: 'background-logical-agent',
+      event: { type: 'content_delta', text: 'background is still live' },
+    })
+
+    resolveSend(true)
+    await flushMicrotasks(30)
+  })
+
+  it('lets directed Agent terminals through the stop fence after suppressing late content', () => {
+    const sessionId = `agent-run-terminal-after-stop-${crypto.randomUUID()}`
+    const ws = makeClientSocket(sessionId)
+    let outputCallback: ((cliMsg: any) => void) | null = null
+    spyOn(globalThis, 'setTimeout').mockImplementation(() => 1 as any)
+    spyOn(conversationService, 'hasSession').mockReturnValue(true)
+    spyOn(conversationService, 'sendInterrupt').mockReturnValue(true)
+    spyOn(conversationService, 'onOutput').mockImplementation((_sid, callback) => {
+      outputCallback = callback
+    })
+
+    handleWebSocket.open(ws)
+    __markActiveTurnForTests(sessionId)
+    ws.sent.length = 0
+    handleWebSocket.message(ws, JSON.stringify({ type: 'stop_generation' }))
+
+    const route = {
+      type: 'system',
+      subtype: 'agent_run_message',
+      run_agent_id: 'stopped-physical-agent',
+      target_agent_id: 'stopped-logical-agent',
+    }
+    outputCallback?.({
+      ...route,
+      stream_id: 'stopped-content-invocation',
+      event_kind: 'message',
+      message: {
+        type: 'stream_event',
+        event: {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'text_delta', text: 'must stay hidden after stop' },
+        },
+      },
+    })
+    outputCallback?.({
+      ...route,
+      stream_id: 'stopped-content-invocation',
+      event_kind: 'complete',
+    })
+    outputCallback?.({
+      ...route,
+      stream_id: 'stopped-error-invocation',
+      event_kind: 'error',
+      error: 'stopped child settled with an error',
+    })
+
+    const sent = ws.sent.map((payload) => JSON.parse(payload))
+    expect(sent).not.toContainEqual(expect.objectContaining({
+      type: 'agent_run_event',
+      event: { type: 'content_delta', text: 'must stay hidden after stop' },
+    }))
+    expect(sent).toContainEqual({
+      type: 'agent_run_event',
+      runAgentId: 'stopped-physical-agent',
+      streamId: 'stopped-content-invocation',
+      targetAgentId: 'stopped-logical-agent',
+      event: { type: 'status', state: 'idle' },
+    })
+    expect(sent).toContainEqual({
+      type: 'agent_run_event',
+      runAgentId: 'stopped-physical-agent',
+      streamId: 'stopped-error-invocation',
+      targetAgentId: 'stopped-logical-agent',
+      event: {
+        type: 'error',
+        message: 'stopped child settled with an error',
+        code: 'AGENT_RUN_ERROR',
+      },
+    })
+  })
+
   it('suppresses an interrupted result for every client bound to the stopped session', () => {
     const sessionId = `stopped-turn-multi-client-${crypto.randomUUID()}`
     const first = makeClientSocket(sessionId)

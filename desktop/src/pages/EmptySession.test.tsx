@@ -707,6 +707,64 @@ describe('EmptySession', () => {
     ])
   })
 
+  it('materializes the resolved Claude OAuth model before the first draft message', async () => {
+    mocks.getProviderAuthStatus.mockResolvedValue({
+      hasAuth: true,
+      source: 'claude-oauth',
+      activeProvider: 'Claude Official',
+    })
+    useSettingsStore.setState({
+      currentModel: {
+        id: 'claude-sonnet-5',
+        name: 'Sonnet 5',
+        description: 'Claude OAuth Pro default',
+        context: '1m',
+      },
+      effortLevel: 'high',
+      activeProviderName: null,
+    })
+    useProviderStore.setState({
+      providers: [],
+      activeId: null,
+      providerOrder: ['claude-official', 'openai-official', 'grok-official'],
+      hasLoadedProviders: true,
+    })
+
+    render(<EmptySession />)
+    setComposerText('Claude OAuth question', 21)
+    fireEvent.click(screen.getByRole('button', { name: /Run/i }))
+
+    await waitFor(() => {
+      expect(mocks.createSession).toHaveBeenCalledWith({ permissionMode: 'default' })
+    })
+
+    expect(useSessionRuntimeStore.getState().selections['draft-session']).toEqual({
+      providerId: null,
+      modelId: 'claude-sonnet-5',
+      effortLevel: 'high',
+    })
+    expect(mocks.wsSend.mock.calls.slice(0, 3)).toEqual([
+      [
+        'draft-session',
+        {
+          type: 'set_runtime_config',
+          providerId: null,
+          modelId: 'claude-sonnet-5',
+          effortLevel: 'high',
+        },
+      ],
+      ['draft-session', { type: 'prewarm_session' }],
+      [
+        'draft-session',
+        {
+          type: 'user_message',
+          content: 'Claude OAuth question',
+          attachments: [],
+        },
+      ],
+    ])
+  })
+
   it('opens provider settings instead of creating a session when no model authentication exists', async () => {
     mocks.getProviderAuthStatus.mockResolvedValue({ hasAuth: false, source: 'none' })
 

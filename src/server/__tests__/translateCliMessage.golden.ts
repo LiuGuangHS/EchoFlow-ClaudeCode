@@ -273,6 +273,18 @@ export const goldenScenarios: GoldenScenario[] = [
     ],
   },
   {
+    id: 'agent-run-stream',
+    description: 'A child run completion stays wrapped for its synthetic conversation.',
+    messages: [{
+      type: 'system',
+      subtype: 'agent_run_message',
+      run_agent_id: 'agent_golden_physical',
+      stream_id: 'agent_golden_invocation',
+      target_agent_id: 'agent_golden_target',
+      event_kind: 'complete',
+    }],
+  },
+  {
     id: 'task-lifecycle',
     description: 'Detached task frames update Activity without reviving an idle foreground turn.',
     hasActiveUserTurn: true,

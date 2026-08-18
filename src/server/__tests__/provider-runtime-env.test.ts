@@ -81,10 +81,10 @@ describe('providerRuntimeEnv', () => {
       [IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY]: 'grok_oauth',
       [IMAGE_GENERATION_PROVIDER_ID_ENV_KEY]: 'grok-official',
       [IMAGE_GENERATION_MODEL_ENV_KEY]: 'grok-imagine-image-quality',
-      ANTHROPIC_MODEL: 'grok-4.5',
-      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'grok-4.5',
-      ANTHROPIC_DEFAULT_SONNET_MODEL: 'grok-4.5',
-      ANTHROPIC_DEFAULT_OPUS_MODEL: 'grok-4.5',
+      ANTHROPIC_MODEL: 'grok-4.6',
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'grok-4.6',
+      ANTHROPIC_DEFAULT_SONNET_MODEL: 'grok-4.6',
+      ANTHROPIC_DEFAULT_OPUS_MODEL: 'grok-4.6',
       DISABLE_AUTOUPDATER: '1',
     })
     expect(env.ECHOFLOW_OPENAI_OAUTH_PROVIDER).toBeUndefined()

@@ -86,6 +86,32 @@ type TruncateResult = {
   truncated: boolean
 }
 
+/**
+ * A resumed teammate rewrites its whole transcript each turn, so its fragments
+ * form a chain where each one repeats its predecessor's messages. Deduplicating
+ * by message id hides the repetition from the transcript, but activity scopes
+ * every tool id to its own fragment: the surviving `tool_use` would keep the
+ * first fragment's scope while a `tool_result` that only reached the rewrite
+ * keeps the later one, and the pair stops matching. Dropping the superseded
+ * fragments first keeps each call and its result inside one scope.
+ *
+ * Only a strict prefix counts as superseded, so independent resumes that reuse
+ * message ids for different work are all preserved.
+ */
+export function dropSupersededTeammateFragments<T extends { messages: MessageEntry[] }>(
+  fragments: T[],
+): T[] {
+  if (fragments.length < 2) return fragments
+  const identities = fragments.map(fragment => (
+    fragment.messages.map(message => JSON.stringify(message))
+  ))
+  return fragments.filter((_unused, index) => !identities.some((candidate, other) => (
+    other !== index &&
+    identities[index]!.length < candidate.length &&
+    identities[index]!.every((identity, position) => identity === candidate[position])
+  )))
+}
+
 export function mergeTeammateTranscriptFragments(
   fragments: Array<{ messages: MessageEntry[] }>,
 ): MessageEntry[] {
@@ -203,9 +229,8 @@ function mergeTeammateActivityFragments(
     taskNotifications: SessionTaskNotification[]
   }>,
 ): ActivityProjection {
-  const projected = fragments.map(fragment => projectSubagentActivityFragment(
-    fragment,
-    { scopeAllToolIds: true },
+  const projected = dropSupersededTeammateFragments(fragments).map(fragment => (
+    projectSubagentActivityFragment(fragment, { scopeAllToolIds: true })
   ))
   return {
     messages: mergeTeammateTranscriptFragments(projected),

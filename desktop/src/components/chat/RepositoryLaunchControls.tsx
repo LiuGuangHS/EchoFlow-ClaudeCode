@@ -19,6 +19,7 @@ import {
 } from '../../api/sessions'
 import { useTranslation } from '../../i18n'
 import { useUIStore } from '../../stores/uiStore'
+import { useProjectDisplayName } from '../../stores/projectDisplayNameStore'
 import { RecentProjectsPanel } from '@/components/composite/DirectoryPicker'
 import { useDismissable } from '@/hooks/useDismissable'
 import { useMobileViewport } from '../../hooks/useMobileViewport'
@@ -145,6 +146,7 @@ export function RepositoryLaunchControls({
   const isMobileBrowser = useMobileViewport() && !isDesktopRuntime()
   const isToolbar = placement === 'toolbar' && !isMobileBrowser
   const [context, setContext] = useState<RepositoryContextResult | null>(null)
+  const [contextSourceWorkDir, setContextSourceWorkDir] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -207,23 +209,28 @@ export function RepositoryLaunchControls({
   useEffect(() => {
     if (!workDir) {
       setContext(null)
+      setContextSourceWorkDir(null)
       setError(null)
       setLoading(false)
       onBranchChange(null)
       return
     }
 
+    const requestedWorkDir = workDir
     let cancelled = false
+    setContextSourceWorkDir(null)
     setLoading(true)
     setError(null)
-    sessionsApi.getRepositoryContext(workDir)
+    sessionsApi.getRepositoryContext(requestedWorkDir)
       .then((result) => {
         if (cancelled) return
         setContext(result)
+        setContextSourceWorkDir(requestedWorkDir)
       })
       .catch((err) => {
         if (cancelled) return
         setContext(null)
+        setContextSourceWorkDir(null)
         setError(err instanceof Error ? err.message : String(err))
       })
       .finally(() => {
@@ -500,14 +507,18 @@ export function RepositoryLaunchControls({
   // reading either one unguarded decides on the wrong repo.
   useEffect(() => {
     if (!revealAfterPick || loading) return
-    const settled = context?.workDir === revealAfterPick
+    const settled = contextSourceWorkDir === revealAfterPick
       || (!!error && workDir === revealAfterPick)
     if (!settled) return
     setRevealAfterPick(null)
     if (context?.state !== 'ok') closeMenu()
-  }, [revealAfterPick, loading, context, error, workDir, closeMenu])
+  }, [revealAfterPick, loading, context, contextSourceWorkDir, error, workDir, closeMenu])
 
-  const repoLabel = context?.repoName || basename(context?.repoRoot) || basename(workDir)
+  const projectKey = contextSourceWorkDir === workDir && context
+    ? (context.repoRoot || context.workDir)
+    : workDir
+  const displayName = useProjectDisplayName(projectKey)
+  const repoLabel = displayName || context?.repoName || basename(context?.repoRoot) || basename(workDir)
   const selectedBranchName = isGitReady ? (selectedBranch?.name ?? null) : null
   // The worktree cards name the branch their changes would land on.
   const branchLabel = selectedBranch?.name ?? context?.currentBranch ?? t('repoLaunch.noBranch')

@@ -4,7 +4,7 @@ import { useSessionRuntimeStore } from './sessionRuntimeStore'
 
 const EXPECTED_GROK_SELECTION = {
   providerId: 'grok-official',
-  modelId: 'grok-4.5',
+  modelId: 'grok-4.6',
   effortLevel: 'high',
 }
 
@@ -139,5 +139,48 @@ describe('sessionRuntimeStore runtime cleanup', () => {
     expect(JSON.parse(localStorage.getItem('echoflow-code-session-runtime')!)).toEqual({
       'session-loaded-kimi': expectedSelection,
     })
+  })
+
+  it('drops only the legacy Claude Official opus[1m] default and preserves the same suffix for third-party providers', async () => {
+    localStorage.setItem('cc-haha-session-runtime', JSON.stringify({
+      'session-loaded-claude': {
+        providerId: null,
+        modelId: 'opus[1m]',
+        effortLevel: 'max',
+      },
+      'session-loaded-minimax': {
+        providerId: 'provider-minimax',
+        modelId: 'MiniMax-M3[1m]',
+        effortLevel: 'max',
+      },
+    }))
+    vi.resetModules()
+
+    const { useSessionRuntimeStore: loadedStore } = await import('./sessionRuntimeStore')
+
+    expect(loadedStore.getState().selections['session-loaded-claude']).toBeUndefined()
+    expect(loadedStore.getState().selections['session-loaded-minimax']).toEqual({
+      providerId: 'provider-minimax',
+      modelId: 'MiniMax-M3[1m]',
+      effortLevel: 'max',
+    })
+    expect(JSON.parse(localStorage.getItem('cc-haha-session-runtime')!)).toEqual({
+      'session-loaded-minimax': {
+        providerId: 'provider-minimax',
+        modelId: 'MiniMax-M3[1m]',
+        effortLevel: 'max',
+      },
+    })
+  })
+
+  it('does not restore a legacy Claude Official default from old session metadata', () => {
+    useSessionRuntimeStore.getState().syncFromSessions([{
+      id: 'legacy-claude-session',
+      runtimeProviderId: null,
+      runtimeModelId: 'opus[1m]',
+      effortLevel: 'max',
+    } as SessionListItem])
+
+    expect(useSessionRuntimeStore.getState().selections['legacy-claude-session']).toBeUndefined()
   })
 })

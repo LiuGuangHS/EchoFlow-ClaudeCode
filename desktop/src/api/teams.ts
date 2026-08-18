@@ -25,6 +25,8 @@ type TranscriptResponse = {
   taskNotifications?: AgentTaskNotification[]
   /** Physical transcript fragments that own this member's nested activity. */
   ownerAgentIds?: string[]
+  /** Where this member's work on each team task starts and ends. */
+  taskAnchors?: TeamTaskAnchor[]
   signature?: string
   cursor?: string
   afterOrdinal?: number
@@ -37,6 +39,13 @@ type TranscriptOptions = {
   afterOrdinal?: number
   leadSessionId?: string
   incarnationId?: string
+}
+
+export type TeamTaskAnchor = {
+  taskId: string
+  status: 'pending' | 'in_progress' | 'completed'
+  messageId: string
+  timestamp: string
 }
 
 export type { TranscriptMessage }

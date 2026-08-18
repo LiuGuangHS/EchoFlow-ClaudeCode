@@ -31,6 +31,8 @@ import { SessionService, sessionService } from '../services/sessionService.js'
 import { createRepositoryBranch } from '../services/repositoryLaunchService.js'
 import { ProviderService } from '../services/providerService.js'
 import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
+import { SettingsService } from '../services/settingsService.js'
+import { echoFlowOAuthService } from '../services/echoFlowOAuthService.js'
 import { resetTerminalShellEnvironmentCacheForTests } from '../../utils/terminalShellEnvironment.js'
 import * as openAIModelCatalog from '../../services/openaiAuth/modelCatalog.js'
 import { IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY } from '../../services/imageGeneration/config.js'
@@ -3361,6 +3363,75 @@ describe('WebSocket Chat Integration', () => {
       ws.close()
       conversationService.startSession = originalStartSession
       conversationService.stopSession(sessionId)
+    }
+  }, 20_000)
+
+  it('should migrate a persisted opus[1m] Claude OAuth Pro session before starting the CLI', async () => {
+    const providerService = new ProviderService()
+    await providerService.activateOfficial()
+    await echoFlowOAuthService.saveTokens({
+      accessToken: 'persisted-pro-access',
+      refreshToken: 'persisted-pro-refresh',
+      expiresAt: Date.now() + 60 * 60_000,
+      scopes: ['user:inference'],
+      subscriptionType: 'pro',
+    })
+    const settingsService = new SettingsService()
+    const previousSettings = await settingsService.getUserSettings()
+    await settingsService.updateUserSettings({ model: 'opus[1m]' })
+
+    const createRes = await fetch(`${baseUrl}/api/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workDir: process.cwd() }),
+    })
+    expect(createRes.status).toBe(201)
+    const { sessionId } = await createRes.json() as { sessionId: string }
+    await sessionService.appendSessionMetadata(sessionId, {
+      workDir: process.cwd(),
+      runtimeProviderId: null,
+      runtimeModelId: 'opus[1m]',
+    })
+
+    const originalStartSession = conversationService.startSession.bind(conversationService)
+    const startCalls: Array<{
+      sessionId: string
+      options: { model?: string; providerId?: string | null } | undefined
+    }> = []
+    conversationService.startSession = (async function patchedStartSession(
+      sid: string,
+      workDir: string,
+      sdkUrl: string,
+      options?: { permissionMode?: string; model?: string; effort?: string; thinking?: 'enabled' | 'adaptive' | 'disabled'; providerId?: string | null },
+    ) {
+      startCalls.push({ sessionId: sid, options })
+      return originalStartSession(sid, workDir, sdkUrl, options)
+    }) as typeof conversationService.startSession
+
+    try {
+      const messages = await runTurn(sessionId, 'resume the migrated Claude session')
+      expect(messages.some((message) => message.type === 'message_complete')).toBe(true)
+      expect(startCalls).toHaveLength(1)
+      expect(startCalls[0]).toMatchObject({
+        sessionId,
+        options: {
+          providerId: null,
+          model: 'claude-sonnet-5',
+        },
+      })
+      await expect(sessionService.getSessionLaunchInfo(sessionId)).resolves.toMatchObject({
+        runtimeProviderId: null,
+        runtimeModelId: 'claude-sonnet-5',
+      })
+    } finally {
+      conversationService.startSession = originalStartSession
+      conversationService.stopSession(sessionId)
+      await echoFlowOAuthService.deleteTokens()
+      await fs.writeFile(
+        path.join(tmpDir, 'settings.json'),
+        JSON.stringify(previousSettings, null, 2),
+        'utf-8',
+      )
     }
   }, 20_000)
 

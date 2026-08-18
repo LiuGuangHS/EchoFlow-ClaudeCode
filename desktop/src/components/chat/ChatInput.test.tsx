@@ -113,6 +113,10 @@ import { useWorkflowStore } from '../../stores/workflowStore'
 import { workflowsApi } from '../../api/workflows'
 import { browserHost } from '../../lib/desktopHost/browserHost'
 import { settingsApi } from '../../api/settings'
+import {
+  captureProjectDisplayNameHydrationRevision,
+  hydrateProjectDisplayNames,
+} from '../../stores/projectDisplayNameStore'
 
 /**
  * Opens the run-location pill's menu. Directory, branch and worktree all live
@@ -197,6 +201,9 @@ describe('ChatInput file mentions', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.createRepositoryBranch.mockReset()
+    act(() => {
+      hydrateProjectDisplayNames({}, Number.MAX_SAFE_INTEGER)
+    })
     mocks.webviewDragHandlers.length = 0
     Reflect.deleteProperty(window, 'desktopHost')
     delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
@@ -285,6 +292,9 @@ describe('ChatInput file mentions', () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
+    act(() => {
+      hydrateProjectDisplayNames({}, Number.MAX_SAFE_INTEGER)
+    })
     vi.unstubAllGlobals()
     if (originalOffsetWidth) {
       Object.defineProperty(HTMLElement.prototype, 'offsetWidth', originalOffsetWidth)
@@ -889,6 +899,64 @@ describe('ChatInput file mentions', () => {
     expect(screen.getByTestId('chat-input-panel')).toContainElement(chip)
     expect(screen.queryByTestId('run-location-outside')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^Location/ })).not.toBeInTheDocument()
+  })
+
+  it('reactively uses the active session project root display name while retaining the active worktree path in context', async () => {
+    const worktreePath = '/repo/.claude/worktrees/desktop-main-12345678'
+    useSessionStore.setState({
+      sessions: [{
+        id: sessionId,
+        title: 'Project',
+        createdAt: '2026-05-01T00:00:00.000Z',
+        modifiedAt: '2026-05-01T00:00:00.000Z',
+        messageCount: 1,
+        projectPath: '/repo',
+        projectRoot: '/repo',
+        workDir: worktreePath,
+        workDirExists: true,
+      }],
+      activeSessionId: sessionId,
+    })
+    mocks.getGitInfo.mockResolvedValue({
+      branch: 'main',
+      repoName: 'repo',
+      workDir: worktreePath,
+      changedFiles: 0,
+      worktree: {
+        enabled: true,
+        path: worktreePath,
+        plannedPath: null,
+        sourceWorkDir: '/repo',
+        slug: 'desktop-main-12345678',
+        branch: 'main',
+      },
+    })
+
+    render(<ChatInput />)
+
+    const chip = await screen.findByTestId('run-location-readonly')
+    expect(chip).toHaveTextContent('repo')
+
+    act(() => {
+      hydrateProjectDisplayNames(
+        { '/repo': 'Personal repo' },
+        captureProjectDisplayNameHydrationRevision(),
+      )
+    })
+
+    expect(chip).toHaveTextContent('Personal repo')
+
+    // Once the alias takes over the label, the worktree details tooltip is the
+    // only place still naming the real project root and the active worktree
+    // path — the toolbar variant carries no `title` for a worktree.
+    expect(chip).not.toHaveAttribute('title')
+    fireEvent.mouseEnter(screen.getByTestId('worktree-details-trigger'))
+
+    const tooltip = await screen.findByRole('tooltip')
+    // Exact-text lookups: '/repo' is a prefix of the worktree path, so a
+    // substring assertion would pass even if the project root row went missing.
+    expect(within(tooltip).getByText('/repo')).toBeInTheDocument()
+    expect(within(tooltip).getByText(worktreePath)).toBeInTheDocument()
   })
 
   // The narrow layouts never adopted the in-toolbar pill: there is no room for

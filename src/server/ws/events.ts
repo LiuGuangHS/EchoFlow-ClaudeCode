@@ -58,6 +58,14 @@ export const RUNTIME_CONFIG_APPLIED_EVENT = 'runtime_config_applied' as const
 export type ServerMessage =
   | { type: 'connected'; sessionId: string }
   | { type: 'session_state'; turnState: 'running' | 'idle' }
+  | {
+      type: 'agent_run_event'
+      runAgentId: string
+      streamId: string
+      targetAgentId: string
+      targetAgentScopeId?: string
+      event: AgentRunStreamMessage
+    }
   | { type: 'content_start'; blockType: 'text' | 'tool_use'; toolName?: string; toolUseId?: string; originalToolUseId?: string; parentToolUseId?: string }
   | { type: 'content_delta'; text?: string; toolInput?: string }
   | { type: 'tool_use_complete'; toolName: string; toolUseId: string; originalToolUseId?: string; input: unknown; parentToolUseId?: string }
@@ -130,6 +138,17 @@ export type ServerMessage =
   | { type: 'task_update'; taskId: string; status: string; progress?: string }
   | { type: 'session_title_updated'; sessionId: string; title: string }
 
+export type AgentRunStreamMessage =
+  | { type: 'content_start'; blockType: 'text' | 'tool_use'; toolName?: string; toolUseId?: string; originalToolUseId?: string; parentToolUseId?: string }
+  | { type: 'content_delta'; text?: string; toolInput?: string }
+  | { type: 'tool_use_complete'; toolName: string; toolUseId: string; originalToolUseId?: string; input: unknown; parentToolUseId?: string }
+  | { type: 'tool_result'; toolUseId: string; originalToolUseId?: string; content: unknown; isError: boolean; parentToolUseId?: string }
+  | { type: 'thinking'; text: string; complete?: boolean }
+  | { type: 'status'; state: ChatState; verb?: string; attemptStart?: boolean }
+  | { type: 'api_retry'; attempt: number; maxRetries: number; retryDelayMs: number; errorStatus: number | null; errorType?: string; errorMessage?: string }
+  | { type: 'streaming_fallback'; cause: StreamingFallbackCause }
+  | { type: 'error'; message: string; code: string; retryable?: boolean; businessErrorCode?: string }
+
 export type TokenUsage = {
   input_tokens: number
   output_tokens: number
@@ -147,6 +166,11 @@ export type TeamMemberStatus = {
   agentId: string
   role: string
   status: 'running' | 'idle' | 'completed' | 'error'
+  /**
+   * Omitted when the watcher cannot tell, so a receiver keeps whatever the last
+   * full team read established rather than being told the member went quiet.
+   */
+  activity?: 'active' | 'idle' | 'exited' | 'unknown'
   currentTask?: string
 }
 

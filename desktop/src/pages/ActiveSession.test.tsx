@@ -97,7 +97,6 @@ vi.mock('./TerminalSettings', () => ({
 }))
 
 import { ActiveSession } from './ActiveSession'
-import { teamsApi } from '../api/teams'
 import { createDefaultSessionState, useChatStore } from '../stores/chatStore'
 import { useCLITaskStore } from '../stores/cliTaskStore'
 import { useSessionStore } from '../stores/sessionStore'
@@ -1301,224 +1300,6 @@ describe('ActiveSession task polling', () => {
     )
   })
 
-  it('routes an Agent Teams activity row to the same member run as the workbench', async () => {
-    const sessionId = 'team-agent-activity-route-session'
-    const incarnationId = 'team-agent-activity-incarnation'
-    const teamName = 'activity-route-team'
-    const memberAgentId = 'ui-reviewer@activity-route-team'
-
-    vi.mocked(teamsApi.getWorkbenchForSession).mockResolvedValueOnce({
-      sessionId,
-      teamName,
-      incarnationId,
-      source: 'live',
-      snapshots: [{
-        version: 'route-v1',
-        generatedAt: '2026-08-10T00:00:00.000Z',
-        team: {
-          name: teamName,
-          incarnationId,
-          leadAgentId: `team-lead@${teamName}`,
-          leadSessionId: sessionId,
-          createdAt: '2026-08-09T00:00:00.000Z',
-          members: [
-            {
-              agentId: `team-lead@${teamName}`,
-              name: 'team-lead',
-              role: 'team-lead',
-              status: 'running',
-              sessionId,
-            },
-            {
-              agentId: memberAgentId,
-              name: 'ui-reviewer',
-              role: 'reviewer',
-              status: 'completed',
-              sessionId: 'reviewer-session',
-            },
-          ],
-        },
-        tasks: [],
-        messages: [],
-      }],
-    })
-    vi.mocked(teamsApi.getMemberTranscript).mockResolvedValueOnce({
-      messages: [],
-      taskNotifications: [],
-    })
-
-    useActivityPanelStore.getState().open(sessionId)
-    useSessionStore.setState({
-      sessions: [{
-        id: sessionId,
-        title: 'Team Agent Activity Route',
-        createdAt: '2026-08-10T00:00:00.000Z',
-        modifiedAt: '2026-08-10T00:00:00.000Z',
-        messageCount: 1,
-        projectPath: '/workspace/project',
-        workDir: '/workspace/project',
-        workDirExists: true,
-      }],
-      activeSessionId: sessionId,
-      isLoading: false,
-      error: null,
-    })
-    useTabStore.setState({
-      tabs: [{ sessionId, title: 'Team Agent Activity Route', type: 'session', status: 'idle' }],
-      activeTabId: sessionId,
-    })
-    useChatStore.setState({ sessions: { [sessionId]: createDefaultSessionState() } })
-
-    await act(async () => {
-      await useTeamStore.getState().fetchTeamForSession(sessionId, { force: true })
-    })
-    act(() => {
-      const handleServerMessage = useChatStore.getState().handleServerMessage
-      handleServerMessage(sessionId, {
-        type: 'tool_use_complete',
-        toolName: 'Agent',
-        toolUseId: 'team-agent-tool',
-        input: {
-          team_name: teamName,
-          name: 'ui-reviewer',
-          description: 'Review ownership UI',
-        },
-      })
-      handleServerMessage(sessionId, {
-        type: 'tool_result',
-        toolUseId: 'team-agent-tool',
-        content: 'Reviewer ready',
-        isError: false,
-      })
-    })
-
-    render(<ActiveSession />)
-    fireEvent.click(screen.getByRole('button', { name: /Open team member reviewer/ }))
-
-    const memberTab = useTabStore.getState().tabs.find((tab) => tab.type === 'team-member')
-    expect(memberTab).toMatchObject({
-      teamLeadSessionId: sessionId,
-      teamMemberAgentId: memberAgentId,
-      teamIncarnationId: incarnationId,
-    })
-    expect(useTabStore.getState().activeTabId).toBe(memberTab?.sessionId)
-    expect(useActivityPanelStore.getState().openSessionId).toBe(memberTab?.sessionId)
-    expect(useTabStore.getState().tabs).not.toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: 'subagent', subagentToolUseId: 'team-agent-tool' }),
-    ]))
-    await waitFor(() => {
-      expect(teamsApi.getMemberTranscript).toHaveBeenCalledWith(
-        teamName,
-        memberAgentId,
-        expect.objectContaining({ incarnationId }),
-      )
-    })
-  })
-
-  it('waits for authoritative Team discovery instead of opening a plain subagent', async () => {
-    const sessionId = 'team-agent-deferred-route-session'
-    const teamName = 'deferred-route-team'
-    const incarnationId = 'deferred-route-incarnation'
-    const memberAgentId = `reviewer@${teamName}`
-    let resolveInitialDiscovery!: () => void
-    const initialDiscovery = new Promise<any>((resolve) => {
-      resolveInitialDiscovery = () => resolve(undefined)
-    })
-    const exactTimeline = {
-      sessionId,
-      teamName,
-      incarnationId,
-      source: 'archive' as const,
-      snapshots: [{
-        version: 'deferred-route-v1',
-        generatedAt: '2026-08-10T00:00:01.000Z',
-        team: {
-          name: teamName,
-          incarnationId,
-          leadAgentId: `team-lead@${teamName}`,
-          leadSessionId: sessionId,
-          createdAt: '2026-08-10T00:00:00.000Z',
-          members: [{
-            agentId: memberAgentId,
-            name: 'reviewer',
-            role: 'reviewer',
-            status: 'completed' as const,
-          }],
-        },
-        tasks: [],
-        messages: [],
-      }],
-    }
-    vi.mocked(teamsApi.getWorkbenchForSession)
-      .mockReturnValueOnce(initialDiscovery)
-      .mockResolvedValueOnce(exactTimeline)
-    vi.mocked(teamsApi.getMemberTranscript).mockResolvedValueOnce({
-      messages: [],
-      taskNotifications: [],
-      ownerAgentIds: [],
-    })
-
-    useActivityPanelStore.getState().open(sessionId)
-    useSessionStore.setState({
-      sessions: [{
-        id: sessionId,
-        title: 'Deferred Team Route',
-        createdAt: '2026-08-10T00:00:00.000Z',
-        modifiedAt: '2026-08-10T00:00:01.000Z',
-        messageCount: 1,
-        projectPath: '/workspace/project',
-        workDir: '/workspace/project',
-        workDirExists: true,
-      }],
-      activeSessionId: sessionId,
-      isLoading: false,
-      error: null,
-    })
-    useTabStore.setState({
-      tabs: [{ sessionId, title: 'Deferred Team Route', type: 'session', status: 'idle' }],
-      activeTabId: sessionId,
-    })
-    const session = createDefaultSessionState()
-    session.messages = [{
-      id: 'deferred-team-agent',
-      type: 'tool_use',
-      toolName: 'Agent',
-      toolUseId: 'deferred-team-agent-tool',
-      input: {
-        team_name: teamName,
-        name: 'reviewer',
-        description: 'Review deferred ownership',
-      },
-      timestamp: Date.parse('2026-08-10T00:00:00.500Z'),
-    }]
-    useChatStore.setState({ sessions: { [sessionId]: session } })
-
-    render(<ActiveSession />)
-    await waitFor(() => {
-      expect(teamsApi.getWorkbenchForSession).toHaveBeenCalledWith(sessionId)
-    })
-    fireEvent.click(screen.getByRole('button', { name: /Open run reviewer/ }))
-
-    expect(useTabStore.getState().tabs.some((tab) => tab.type === 'subagent')).toBe(false)
-    await waitFor(() => {
-      expect(teamsApi.getWorkbenchForSession).toHaveBeenCalledWith(sessionId, {
-        teamName,
-        at: Date.parse('2026-08-10T00:00:00.500Z'),
-      })
-      expect(useTabStore.getState().tabs).toEqual(expect.arrayContaining([
-        expect.objectContaining({
-          type: 'team-member',
-          teamIncarnationId: incarnationId,
-          teamMemberAgentId: memberAgentId,
-        }),
-      ]))
-    })
-
-    // Let the obsolete discovery settle after the exact route has opened; its
-    // generation guard must not replace the selected member lifecycle.
-    resolveInitialDiscovery()
-  })
-
   it('opens the full team workbench directly from the header strip', () => {
     const sessionId = 'team-activity-panel-session'
 
@@ -1640,7 +1421,7 @@ describe('ActiveSession task polling', () => {
     expect(useTeamStore.getState().workbenchesBySession[sessionId]?.snapshots).toHaveLength(1)
   })
 
-  it('moves the team strip and Activity from 1/4 to 4/4 through one workbench transition', async () => {
+  it('updates the Team workbench without leaking its DAG, roster, or transcript spawns into main Activity', async () => {
     const sessionId = 'team-activity-runtime-state-session'
     const teamName = 'runtime-state-team'
     const taskDefinitions = [
@@ -1800,17 +1581,38 @@ describe('ActiveSession task polling', () => {
       isError: false,
     })
     useChatStore.getState().handleServerMessage(sessionId, {
+      type: 'tool_use_complete',
+      toolName: 'Agent',
+      toolUseId: 'spawn-late-reviewer',
+      input: {
+        team_name: teamName,
+        name: 'late-reviewer',
+        description: 'Review the shared Team DAG',
+      },
+    })
+    useChatStore.getState().handleServerMessage(sessionId, {
+      type: 'tool_result',
+      toolUseId: 'spawn-late-reviewer',
+      content: 'Agent launched successfully',
+      isError: false,
+    })
+    useChatStore.getState().handleServerMessage(sessionId, {
       type: 'message_complete',
       usage: { input_tokens: 1, output_tokens: 1 },
     })
 
     render(<ActiveSession />)
 
-    const panel = await screen.findByTestId('session-activity-panel')
     await waitFor(() => {
-      expect(within(panel).getByRole('progressbar', { name: 'Task progress 1/4' })).toBeInTheDocument()
       expect(within(screen.getByTestId('agent-teams-strip')).getByText(/1\/4/)).toBeInTheDocument()
     })
+    // Opening a stale Activity preference must not give Team-only state a
+    // panel. The shared DAG, roster, and member launch all belong to the Team
+    // tab/workbench, not to the main agent's run.
+    expect(screen.queryByTestId('session-activity-panel')).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(useActivityPanelStore.getState().isOpen(sessionId)).toBe(false)
+    }, { timeout: 4000 })
 
     act(() => {
       useChatStore.getState().handleServerMessage(sessionId, {
@@ -1820,15 +1622,28 @@ describe('ActiveSession task polling', () => {
     })
 
     await waitFor(() => {
-      expect(within(panel).getByRole('progressbar', { name: 'Task progress 4/4' })).toBeInTheDocument()
       expect(within(screen.getByTestId('agent-teams-strip')).getByText(/4\/4/)).toBeInTheDocument()
-      expect(within(panel).getAllByLabelText('Task completed')).toHaveLength(4)
     })
+    expect(screen.queryByTestId('session-activity-panel')).not.toBeInTheDocument()
     const timeline = useTeamStore.getState().workbenchesBySession[sessionId]
     expect(timeline?.snapshots.map(current => current.version)).toEqual(['v1', 'v2'])
     expect(timeline?.snapshots.at(-1)?.messages).toEqual([
       expect.objectContaining({ id: 'route-mapper-to-security-reviewer' }),
     ])
+
+    act(() => {
+      useChatStore.getState().handleServerMessage(sessionId, {
+        type: 'tool_use_complete',
+        toolName: 'Agent',
+        toolUseId: 'direct-main-subagent',
+        input: { description: 'Inspect a main-session seam' },
+      })
+    })
+
+    // Filtering is ownership-based, not a blanket Activity shutdown: a
+    // direct SubAgent spawned by the main session still opens the shared UI.
+    const panel = await screen.findByTestId('session-activity-panel')
+    expect(within(panel).getByText('Inspect a main-session seam')).toBeInTheDocument()
   })
 
   it('clears the last visible background task by closing Activity while preserving later runs', async () => {
@@ -2624,6 +2439,10 @@ describe('ActiveSession header', () => {
 
     render(<ActiveSession />)
 
+    expect(screen.getByTestId('session-chat-surface')).toHaveAttribute(
+      'data-session-chat-kind',
+      'main',
+    )
     const header = screen.getByTestId('session-header')
     const heading = within(header).getByRole('heading', { level: 1 })
     const titleRow = heading.parentElement as HTMLElement

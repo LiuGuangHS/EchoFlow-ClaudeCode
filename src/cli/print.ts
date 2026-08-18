@@ -361,7 +361,10 @@ import { unassignTeammateTasks } from '../utils/tasks.js'
 import { getRunningTasks } from '../utils/task/framework.js'
 import { isBackgroundTask } from '../tasks/types.js'
 import { stopTask } from '../tasks/stopTask.js'
-import { drainSdkEvents } from '../utils/sdkEventQueue.js'
+import {
+  drainSdkEvents,
+  setAgentRunMessageSink,
+} from '../utils/sdkEventQueue.js'
 import { initializeGrowthBook } from '../services/analytics/growthbook.js'
 import { errorMessage, toError } from '../utils/errors.js'
 import { sleep } from '../utils/sleep.js'
@@ -991,6 +994,13 @@ export async function runHeadless(
   )
 }
 
+export function bindAgentRunMessageSink(structuredIO: StructuredIO): () => void {
+  if (!(structuredIO instanceof RemoteIO)) return () => undefined
+  return setAgentRunMessageSink(event => {
+    structuredIO.outbound.enqueue(event)
+  })
+}
+
 function runHeadlessStreaming(
   structuredIO: StructuredIO,
   mcpClients: MCPServerConnection[],
@@ -1040,6 +1050,7 @@ function runHeadlessStreaming(
   let abortController: AbortController | undefined
   // Same queue sendRequest() enqueues to — one FIFO for everything.
   const output = structuredIO.outbound
+  const removeAgentRunMessageSink = bindAgentRunMessageSink(structuredIO)
 
   // Ctrl+C in -p mode: abort the in-flight query, then shut down gracefully.
   // gracefulShutdown persists session state and flushes analytics, with a
@@ -2658,6 +2669,7 @@ function runHeadlessStreaming(
         unsubscribeSkillChanges()
         unsubscribeAuthStatus?.()
         statusListeners.delete(rateLimitListener)
+        removeAgentRunMessageSink()
         output.done()
       }
     }
@@ -4177,12 +4189,15 @@ function runHeadlessStreaming(
       unsubscribeSkillChanges()
       unsubscribeAuthStatus?.()
       statusListeners.delete(rateLimitListener)
+      removeAgentRunMessageSink()
       output.done()
     }
   })()
 
   return output
 }
+
+export { runHeadlessStreaming as __runHeadlessStreamingForTests }
 
 /**
  * Creates a CanUseToolFn that incorporates a custom permission prompt tool.

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import {
   MessageList,
@@ -17,6 +17,7 @@ import type { ConversationNavigationItem } from './ConversationNavigator'
 import type { VirtualRenderItemMetric } from './virtualHeightCache'
 import { relativizeWorkspacePath } from './CurrentTurnChangeCard'
 import { sessionsApi } from '../../api/sessions'
+import { teamsApi } from '../../api/teams'
 import { useChatStore } from '../../stores/chatStore'
 import { useWorkspaceChatContextStore } from '../../stores/workspaceChatContextStore'
 import { useWorkspacePanelStore } from '../../stores/workspacePanelStore'
@@ -24,6 +25,7 @@ import { useSettingsStore } from '../../stores/settingsStore'
 import { useSessionStore } from '../../stores/sessionStore'
 import { useTabStore } from '../../stores/tabStore'
 import { useUIStore } from '../../stores/uiStore'
+import { useTeamStore } from '../../stores/teamStore'
 import { formatExactMessageTimestamp, formatMessageHoverTime } from '../../lib/formatMessageTimestamp'
 import type { UIMessage } from '../../types/chat'
 import type { PerSessionState } from '../../stores/chatStore'
@@ -305,6 +307,7 @@ describe('MessageList nested tool calls', () => {
     useTabStore.setState({ activeTabId: ACTIVE_TAB, tabs: [{ sessionId: ACTIVE_TAB, title: 'Test', type: 'session' as const, status: 'idle' }] })
     useSessionStore.setState({ sessions: [], activeSessionId: null, isLoading: false, error: null })
     useChatStore.setState({ sessions: { [ACTIVE_TAB]: makeSessionState() } })
+    useTeamStore.getState().clearTeam()
     useWorkspaceChatContextStore.setState(useWorkspaceChatContextStore.getInitialState(), true)
     // The workspace panel store is a shared singleton; reset it so preview tabs opened by
     // one test (clicking a change-card row) don't dedupe/leak into the next test.
@@ -320,6 +323,10 @@ describe('MessageList nested tool calls', () => {
       isGitRepo: false,
       changedFiles: [],
     })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('windows long transcripts instead of mounting every historical message at once', () => {
@@ -7256,6 +7263,12 @@ describe('turn rail positions', () => {
 })
 
 describe('Agent Teams chat projection', () => {
+  function renderedToolUseIds(messages: UIMessage[], options?: Parameters<typeof buildRenderModel>[2]) {
+    return buildRenderModel(messages, null, options).renderItems.flatMap((item) => (
+      item.kind === 'tool_group' ? item.toolCalls.map((toolCall) => toolCall.toolUseId) : []
+    ))
+  }
+
   function sendMessageRun(
     id: string,
     result: unknown,
@@ -7292,10 +7305,14 @@ describe('Agent Teams chat projection', () => {
     })
 
     expect(buildRenderModel(messages).renderItems).toHaveLength(1)
-    expect(buildRenderModel(messages, null, {
+    const lead = buildRenderModel(messages, null, {
       hideTeamCoordinationTools: true,
       teamMemberNames: new Set(['worker']),
-    }).renderItems).toHaveLength(0)
+      teamName: 'audit-team',
+    })
+    expect(lead.renderItems).toEqual([
+      expect.objectContaining({ kind: 'team_card', coordinationToolCalls: [messages[0]] }),
+    ])
   })
 
   it('hides successful team messages from their real input shape when the transport omits routing', () => {
@@ -7306,10 +7323,14 @@ describe('Agent Teams chat projection', () => {
     })
     const messages = [...direct, ...broadcast]
 
-    expect(buildRenderModel(messages, null, {
+    const lead = buildRenderModel(messages, null, {
       hideTeamCoordinationTools: true,
       teamMemberNames: new Set(['worker']),
-    }).renderItems).toHaveLength(0)
+      teamName: 'audit-team',
+    })
+    expect(lead.renderItems).toEqual([
+      expect.objectContaining({ kind: 'team_card', coordinationToolCalls: [direct[0], broadcast[0]] }),
+    ])
   })
 
   it('keeps ordinary agent continuation and failed team SendMessage calls visible', () => {
@@ -7330,6 +7351,75 @@ describe('Agent Teams chat projection', () => {
     expect(buildRenderModel(failed, null, {
       hideTeamCoordinationTools: true,
     }).renderItems).toHaveLength(1)
+  })
+
+  it('stops using a historical Team roster after delete when a same-name direct Agent is messaged', () => {
+    const messages: UIMessage[] = [
+      {
+        id: 'create-tool', type: 'tool_use', toolName: 'TeamCreate', toolUseId: 'create',
+        input: { team_name: 'audit-team' }, timestamp: 1,
+      },
+      {
+        id: 'create-result', type: 'tool_result', toolUseId: 'create',
+        content: { success: true, team_name: 'audit-team' }, isError: false, timestamp: 2,
+      },
+      {
+        id: 'team-message-tool', type: 'tool_use', toolName: 'SendMessage', toolUseId: 'team-message',
+        input: { to: 'reviewer', message: 'Finish the Team review' }, timestamp: 3,
+      },
+      {
+        id: 'team-message-result', type: 'tool_result', toolUseId: 'team-message',
+        content: 'Message sent to reviewer inbox', isError: false, timestamp: 4,
+      },
+      {
+        id: 'delete-tool', type: 'tool_use', toolName: 'TeamDelete', toolUseId: 'delete',
+        input: {}, timestamp: 5,
+      },
+      {
+        id: 'delete-result', type: 'tool_result', toolUseId: 'delete',
+        content: { success: true, team_name: 'audit-team' }, isError: false, timestamp: 6,
+      },
+      {
+        id: 'direct-agent-tool', type: 'tool_use', toolName: 'Agent', toolUseId: 'direct-agent',
+        input: { name: 'reviewer', description: 'Continue as an ordinary SubAgent' }, timestamp: 7,
+      },
+      {
+        id: 'direct-agent-result', type: 'tool_result', toolUseId: 'direct-agent',
+        content: { status: 'completed', agentId: 'direct-reviewer' }, isError: false, timestamp: 8,
+      },
+      {
+        id: 'direct-message-tool', type: 'tool_use', toolName: 'SendMessage', toolUseId: 'direct-message',
+        input: { to: 'reviewer', message: 'Continue the direct review' }, timestamp: 9,
+      },
+      {
+        id: 'direct-message-result', type: 'tool_result', toolUseId: 'direct-message',
+        content: 'Message queued for delivery to reviewer at its next tool round.',
+        isError: false,
+        timestamp: 10,
+      },
+    ]
+
+    const options = {
+      hideTeamCoordinationTools: true,
+      teamMemberNames: new Set(['reviewer']),
+      teamName: 'audit-team',
+    }
+    const model = buildRenderModel(messages, null, options)
+    const teamCards = model.renderItems.filter((item) => item.kind === 'team_card')
+
+    expect(teamCards).toHaveLength(1)
+    expect(teamCards[0]).toMatchObject({
+      teamName: 'audit-team',
+      endedAt: 5,
+      coordinationToolCalls: [
+        expect.objectContaining({ toolUseId: 'team-message' }),
+        expect.objectContaining({ toolUseId: 'delete' }),
+      ],
+    })
+    expect(renderedToolUseIds(messages, options)).toEqual([
+      'direct-agent',
+      'direct-message',
+    ])
   })
 
   it('replaces the TeamCreate call with a team card at the point the team was formed', () => {
@@ -7364,5 +7454,561 @@ describe('Agent Teams chat projection', () => {
     // An ordinary session with no workbench keeps the raw tool call.
     expect(buildRenderModel(messages).renderItems.map((item) => item.kind))
       .toEqual(['message', 'tool_group', 'message'])
+  })
+
+  it('projects team orchestration into the team card without hiding ordinary tools', () => {
+    const tool = (
+      id: string,
+      toolName: string,
+      input: unknown,
+      timestamp: number,
+    ): UIMessage => ({
+      id: `tool-${id}`,
+      type: 'tool_use',
+      toolName,
+      toolUseId: id,
+      input,
+      timestamp,
+    })
+    const result = (
+      id: string,
+      content: unknown,
+      timestamp: number,
+      isError = false,
+    ): UIMessage => ({
+      id: `result-${id}`,
+      type: 'tool_result',
+      toolUseId: id,
+      content,
+      isError,
+      timestamp,
+    })
+    const messages: UIMessage[] = [
+      tool('pre-task', 'TaskCreate', { subject: 'Operator todo' }, 1),
+      result('pre-task', 'Task #1 created successfully', 2),
+      tool('create-team', 'TeamCreate', { team_name: 'audit-team' }, 3),
+      result('create-team', { team_name: 'audit-team' }, 4),
+      tool('team-task', 'TaskCreate', { subject: 'Review API' }, 5),
+      result('team-task', 'Task #1 created successfully', 6),
+      tool('team-update', 'TaskUpdate', { taskId: '1', owner: 'reviewer' }, 7),
+      result('team-update', 'Task #1 updated successfully', 8),
+      tool('team-agent', 'Agent', {
+        description: 'Review API',
+        name: 'reviewer',
+        team_name: 'audit-team',
+      }, 9),
+      result('team-agent', { status: 'teammate_spawned', name: 'reviewer', team_name: 'audit-team' }, 10),
+      tool('direct-agent', 'Agent', { description: 'Check an unrelated question' }, 11),
+      result('direct-agent', 'agentId: direct-1', 12),
+      tool('team-message', 'SendMessage', { to: 'reviewer', message: 'Start task #1' }, 13),
+      result('team-message', 'Message sent to reviewer inbox', 14),
+      tool('failed-update', 'TaskUpdate', { taskId: 'missing', status: 'completed' }, 15),
+      result('failed-update', 'Task missing not found', 16, true),
+      tool('failed-team-agent', 'Agent', {
+        description: 'Spawn missing teammate',
+        name: 'missing',
+        team_name: 'audit-team',
+      }, 17),
+      result('failed-team-agent', 'Agent spawn failed', 18, true),
+      tool('delete-team', 'TeamDelete', {}, 19),
+      result('delete-team', { success: true, team_name: 'audit-team' }, 20),
+      tool('post-task', 'TaskCreate', { subject: 'Operator follow-up' }, 21),
+      result('post-task', 'Task #2 created successfully', 22),
+      tool('post-agent', 'Agent', { description: 'Summarize the follow-up' }, 23),
+      result('post-agent', 'agentId: direct-2', 24),
+    ]
+
+    const model = buildRenderModel(messages, null, {
+      hideTeamCoordinationTools: true,
+      teamMemberNames: new Set(['reviewer']),
+    })
+
+    expect(renderedToolUseIds(messages, {
+      hideTeamCoordinationTools: true,
+      teamMemberNames: new Set(['reviewer']),
+    })).toEqual([
+      'pre-task',
+      'direct-agent',
+      'failed-update',
+      'failed-team-agent',
+      'post-task',
+      'post-agent',
+    ])
+    const teamCards = model.renderItems.filter((item) => item.kind === 'team_card')
+    expect(teamCards).toHaveLength(1)
+    expect(teamCards[0]).toMatchObject({
+      teamName: 'audit-team',
+      endedAt: 19,
+      coordinationToolCalls: [
+        expect.objectContaining({ toolUseId: 'team-task' }),
+        expect.objectContaining({ toolUseId: 'team-update' }),
+        expect.objectContaining({ toolUseId: 'team-agent' }),
+        expect.objectContaining({ toolUseId: 'team-message' }),
+        expect.objectContaining({ toolUseId: 'delete-team' }),
+      ],
+    })
+    // Projection removes duplicate UI only. The raw audit result remains
+    // available to the transcript/store and the workbench owns its presentation.
+    expect(model.toolResultMap.get('team-task')?.content).toBe('Task #1 created successfully')
+    expect(messages).toHaveLength(24)
+  })
+
+  it('does not enter Team scope when TeamCreate returns success false', () => {
+    const messages: UIMessage[] = [
+      {
+        id: 'create-tool', type: 'tool_use', toolName: 'TeamCreate', toolUseId: 'create',
+        input: { team_name: 'failed-team' }, timestamp: 1,
+      },
+      {
+        id: 'create-result', type: 'tool_result', toolUseId: 'create',
+        content: { success: false, error: 'already exists' }, isError: false, timestamp: 2,
+      },
+      {
+        id: 'task-tool', type: 'tool_use', toolName: 'TaskCreate', toolUseId: 'task',
+        input: { subject: 'Main-session task' }, timestamp: 3,
+      },
+    ]
+
+    expect(renderedToolUseIds(messages, {
+      hideTeamCoordinationTools: true,
+    })).toEqual(['create', 'task'])
+    expect(buildRenderModel(messages, null, {
+      hideTeamCoordinationTools: true,
+    }).renderItems.some(item => item.kind === 'team_card')).toBe(false)
+  })
+
+  it('keeps Team scope active when TeamDelete returns success false', () => {
+    const messages: UIMessage[] = [
+      {
+        id: 'create-tool', type: 'tool_use', toolName: 'TeamCreate', toolUseId: 'create',
+        input: { team_name: 'audit-team' }, timestamp: 1,
+      },
+      {
+        id: 'create-result', type: 'tool_result', toolUseId: 'create',
+        content: { success: true }, isError: false, timestamp: 2,
+      },
+      {
+        id: 'delete-tool', type: 'tool_use', toolName: 'TeamDelete', toolUseId: 'delete',
+        input: {}, timestamp: 3,
+      },
+      {
+        id: 'delete-result', type: 'tool_result', toolUseId: 'delete',
+        content: { success: false, team_name: 'audit-team', error: 'still running' }, isError: false, timestamp: 4,
+      },
+      {
+        id: 'task-tool', type: 'tool_use', toolName: 'TaskCreate', toolUseId: 'task',
+        input: { subject: 'Shared Team task' }, timestamp: 5,
+      },
+    ]
+
+    expect(renderedToolUseIds(messages, {
+      hideTeamCoordinationTools: true,
+    })).toEqual(['delete'])
+  })
+
+  it('never renders an identity-unknown pending Agent as a SubAgent during a team lifecycle', () => {
+    vi.useFakeTimers()
+    const sessionId = 'team-transcript-stream'
+    useChatStore.setState({
+      sessions: { [sessionId]: makeSessionState() },
+    })
+    const store = useChatStore.getState()
+    const renderedIds = () => renderedToolUseIds(
+      useChatStore.getState().sessions[sessionId]?.messages ?? [],
+      { hideTeamCoordinationTools: true },
+    )
+
+    store.handleServerMessage(sessionId, {
+      type: 'content_start', blockType: 'tool_use', toolName: 'TeamCreate', toolUseId: 'create-team',
+    })
+    store.handleServerMessage(sessionId, {
+      type: 'tool_use_complete',
+      toolName: 'TeamCreate',
+      toolUseId: 'create-team',
+      input: { team_name: 'audit-team' },
+    })
+    store.handleServerMessage(sessionId, {
+      type: 'tool_result',
+      toolUseId: 'create-team',
+      content: { team_name: 'audit-team' },
+      isError: false,
+    })
+
+    store.handleServerMessage(sessionId, {
+      type: 'content_start', blockType: 'tool_use', toolName: 'Agent', toolUseId: 'team-agent',
+    })
+    store.handleServerMessage(sessionId, {
+      type: 'content_delta', toolInput: '{"description":"Review API","name":',
+    })
+    vi.advanceTimersByTime(60)
+
+    expect(useChatStore.getState().sessions[sessionId]?.messages).toContainEqual(
+      expect.objectContaining({
+        type: 'tool_use',
+        toolUseId: 'team-agent',
+        input: { description: 'Review API' },
+        isPending: true,
+      }),
+    )
+    expect(renderedIds()).toEqual([])
+
+    store.handleServerMessage(sessionId, {
+      type: 'tool_use_complete',
+      toolName: 'Agent',
+      toolUseId: 'team-agent',
+      input: { description: 'Review API', name: 'reviewer', team_name: 'audit-team' },
+    })
+    store.handleServerMessage(sessionId, {
+      type: 'tool_result',
+      toolUseId: 'team-agent',
+      content: { status: 'teammate_spawned', name: 'reviewer', team_name: 'audit-team' },
+      isError: false,
+    })
+    expect(renderedIds()).toEqual([])
+
+    store.handleServerMessage(sessionId, {
+      type: 'content_start', blockType: 'tool_use', toolName: 'Agent', toolUseId: 'direct-agent',
+    })
+    store.handleServerMessage(sessionId, {
+      type: 'content_delta', toolInput: '{"description":"Check an unrelated question"',
+    })
+    vi.advanceTimersByTime(60)
+    expect(renderedIds()).toEqual([])
+
+    store.handleServerMessage(sessionId, {
+      type: 'tool_use_complete',
+      toolName: 'Agent',
+      toolUseId: 'direct-agent',
+      input: { description: 'Check an unrelated question' },
+    })
+    expect(renderedIds()).toEqual(['direct-agent'])
+
+    vi.runOnlyPendingTimers()
+    vi.useRealTimers()
+  })
+
+  it('uses a team lifecycle window only when compacted history omits TeamCreate', () => {
+    const messages: UIMessage[] = [
+      {
+        id: 'pre-task', type: 'tool_use', toolName: 'TaskCreate', toolUseId: 'pre-task',
+        input: { subject: 'Before team' }, timestamp: 90,
+      },
+      {
+        id: 'team-task', type: 'tool_use', toolName: 'TaskCreate', toolUseId: 'team-task',
+        input: { subject: 'Team task' }, timestamp: 150,
+      },
+      {
+        id: 'post-task', type: 'tool_use', toolName: 'TaskCreate', toolUseId: 'post-task',
+        input: { subject: 'After team' }, timestamp: 210,
+      },
+    ]
+
+    expect(renderedToolUseIds(messages, {
+      hideTeamCoordinationTools: true,
+      teamTaskWindows: [{ startedAt: 100, endedAt: 200 }],
+      teamName: 'audit-team',
+    })).toEqual(['pre-task', 'post-task'])
+    expect(renderedToolUseIds(messages)).toEqual(['pre-task', 'team-task', 'post-task'])
+  })
+
+  it('lets a durable end close an explicit TeamCreate when TeamDelete was compacted', () => {
+    const messages: UIMessage[] = [
+      {
+        id: 'create-tool', type: 'tool_use', toolName: 'TeamCreate', toolUseId: 'create',
+        input: { team_name: 'audit-team' }, timestamp: 100,
+      },
+      {
+        id: 'create-result', type: 'tool_result', toolUseId: 'create',
+        content: { success: true }, isError: false, timestamp: 101,
+      },
+      {
+        id: 'team-task', type: 'tool_use', toolName: 'TaskCreate', toolUseId: 'team-task',
+        input: { subject: 'Inside lifecycle' }, timestamp: 150,
+      },
+      {
+        id: 'post-task', type: 'tool_use', toolName: 'TaskCreate', toolUseId: 'post-task',
+        input: { subject: 'After lifecycle' }, timestamp: 250,
+      },
+    ]
+
+    expect(renderedToolUseIds(messages, {
+      hideTeamCoordinationTools: true,
+      teamTaskWindows: [{ startedAt: 100, endedAt: 200 }],
+      teamName: 'audit-team',
+    })).toEqual(['post-task'])
+  })
+
+  it('uses a newer durable Team window after an older explicit TeamDelete', () => {
+    const messages: UIMessage[] = [
+      {
+        id: 'old-delete', type: 'tool_use', toolName: 'TeamDelete', toolUseId: 'old-delete',
+        input: {}, timestamp: 90,
+      },
+      {
+        id: 'old-delete-result', type: 'tool_result', toolUseId: 'old-delete',
+        content: { success: true, team_name: 'old-team' }, isError: false, timestamp: 91,
+      },
+      {
+        id: 'team-task', type: 'tool_use', toolName: 'TaskCreate', toolUseId: 'team-task',
+        input: { subject: 'Compacted new Team task' }, timestamp: 150,
+      },
+      {
+        id: 'post-task', type: 'tool_use', toolName: 'TaskCreate', toolUseId: 'post-task',
+        input: { subject: 'After compacted Team' }, timestamp: 250,
+      },
+    ]
+
+    const options = {
+      hideTeamCoordinationTools: true,
+      teamTaskWindows: [{ startedAt: 100, endedAt: 200 }],
+      teamName: 'audit-team',
+      teamStartedAt: 100,
+    }
+    expect(renderedToolUseIds(messages, options)).toEqual(['post-task'])
+    expect(buildRenderModel(messages, null, options).renderItems.filter(
+      (item) => item.kind === 'team_card',
+    )).toEqual([
+      expect.objectContaining({
+        teamName: 'old-team',
+        endedAt: 90,
+        coordinationToolCalls: [expect.objectContaining({ toolUseId: 'old-delete' })],
+      }),
+      expect.objectContaining({
+        teamName: 'audit-team',
+        startedAt: 100,
+        coordinationToolCalls: [expect.objectContaining({ toolUseId: 'team-task' })],
+      }),
+    ])
+  })
+
+  it('starts a new audit card when a compacted Team lifecycle follows an explicit delete', () => {
+    const messages: UIMessage[] = [
+      {
+        id: 'old-create', type: 'tool_use', toolName: 'TeamCreate', toolUseId: 'old-create',
+        input: { team_name: 'old-team' }, timestamp: 10,
+      },
+      {
+        id: 'old-create-result', type: 'tool_result', toolUseId: 'old-create',
+        content: { success: true, team_name: 'old-team' }, isError: false, timestamp: 11,
+      },
+      {
+        id: 'old-delete', type: 'tool_use', toolName: 'TeamDelete', toolUseId: 'old-delete',
+        input: {}, timestamp: 20,
+      },
+      {
+        id: 'old-delete-result', type: 'tool_result', toolUseId: 'old-delete',
+        content: { success: true, team_name: 'old-team' }, isError: false, timestamp: 21,
+      },
+      {
+        id: 'new-team-task', type: 'tool_use', toolName: 'TaskCreate', toolUseId: 'new-team-task',
+        input: { subject: 'Task from compacted new Team' }, timestamp: 150,
+      },
+    ]
+
+    const model = buildRenderModel(messages, null, {
+      hideTeamCoordinationTools: true,
+      teamTaskWindows: [{ startedAt: 100, endedAt: 200 }],
+      teamName: 'new-team',
+      teamStartedAt: 100,
+    })
+    const cards = model.renderItems.filter((item) => item.kind === 'team_card')
+
+    expect(cards).toHaveLength(2)
+    expect(cards[0]).toMatchObject({
+      teamName: 'old-team',
+      startedAt: 10,
+      endedAt: 20,
+      coordinationToolCalls: [expect.objectContaining({ toolUseId: 'old-delete' })],
+    })
+    expect(cards[1]).toMatchObject({
+      teamName: 'new-team',
+      startedAt: 100,
+      coordinationToolCalls: [expect.objectContaining({ toolUseId: 'new-team-task' })],
+    })
+  })
+
+  it('uses the successful TeamCreate identity and never substitutes the current Team for an explicit old scope', () => {
+    const createMessages: UIMessage[] = [
+      {
+        id: 'create-tool', type: 'tool_use', toolName: 'TeamCreate', toolUseId: 'create',
+        input: { team_name: 'requested-name' }, timestamp: 10,
+      },
+      {
+        id: 'create-result', type: 'tool_result', toolUseId: 'create',
+        content: { success: true, team_name: 'requested-name-2' }, isError: false, timestamp: 11,
+      },
+    ]
+    const createdCard = buildRenderModel(createMessages, null, {
+      hideTeamCoordinationTools: true,
+    }).renderItems.find((item) => item.kind === 'team_card')
+    expect(createdCard).toMatchObject({
+      teamName: 'requested-name-2',
+      startedAt: 10,
+    })
+
+    const explicitOldScope = buildRenderModel([{
+      id: 'old-agent', type: 'tool_use', toolName: 'Agent', toolUseId: 'old-agent',
+      input: { name: 'reviewer', team_name: 'old-team', description: 'Review the old run' },
+      timestamp: 150,
+    }], null, {
+      hideTeamCoordinationTools: true,
+      teamName: 'new-team',
+      teamStartedAt: 200,
+    }).renderItems.find((item) => item.kind === 'team_card')
+    expect(explicitOldScope).toMatchObject({
+      teamName: 'old-team',
+      startedAt: 150,
+      coordinationToolCalls: [expect.objectContaining({ toolUseId: 'old-agent' })],
+    })
+  })
+
+  it('uses synchronous Team lifecycle ownership before the first workbench snapshot resolves', async () => {
+    let resolveWorkbench!: (snapshot: Awaited<ReturnType<typeof teamsApi.getWorkbench>>) => void
+    vi.spyOn(teamsApi, 'get').mockImplementation(() => new Promise(() => {}))
+    vi.spyOn(teamsApi, 'getWorkbench').mockImplementation(() => new Promise((resolve) => {
+      resolveWorkbench = resolve
+    }))
+    useChatStore.setState({
+      sessions: {
+        [ACTIVE_TAB]: makeSessionState({
+          messages: [
+            {
+              id: 'task-tool', type: 'tool_use', toolName: 'TaskCreate', toolUseId: 'team-task',
+              input: { subject: 'Never flash this Team task' }, timestamp: 102,
+            },
+            {
+              id: 'agent-tool', type: 'tool_use', toolName: 'Agent', toolUseId: 'team-agent',
+              input: { description: 'Never flash this teammate', name: 'reviewer' },
+              timestamp: 103, isPending: true,
+            },
+            {
+              id: 'message-tool', type: 'tool_use', toolName: 'SendMessage', toolUseId: 'team-message',
+              input: { to: 'reviewer', message: 'Never flash this Team message' },
+              timestamp: 104, isPending: false,
+            },
+          ],
+        }),
+      },
+    })
+
+    act(() => {
+      useTeamStore.getState().handleTeamCreated('audit-team', ACTIVE_TAB, { createdAt: 100 })
+    })
+    render(<MessageList sessionId={ACTIVE_TAB} />)
+
+    const pendingCard = screen.getByTestId('agent-teams-inline-card')
+    const audit = screen.getByTestId('agent-teams-coordination-audit')
+    expect((pendingCard as HTMLButtonElement).disabled).toBe(true)
+    expect(within(audit).getByText('Never flash this Team task')).toBeTruthy()
+    expect(within(audit).getByText(/Never flash this teammate/)).toBeTruthy()
+    expect(within(audit).getByText(/Never flash this Team message/)).toBeTruthy()
+    expect(screen.getAllByText('Never flash this Team task')).toHaveLength(1)
+    expect(screen.getAllByText(/Never flash this teammate/)).toHaveLength(1)
+    expect(screen.getAllByText(/Never flash this Team message/)).toHaveLength(1)
+    expect(useTeamStore.getState().workbenchesBySession[ACTIVE_TAB]).toBeUndefined()
+
+    await act(async () => {
+      resolveWorkbench({
+        version: 'snapshot-v1',
+        generatedAt: new Date(110).toISOString(),
+        team: {
+          name: 'audit-team',
+          leadSessionId: ACTIVE_TAB,
+          leadAgentId: 'team-lead@audit-team',
+          createdAt: '100',
+          members: [{
+            agentId: 'team-lead@audit-team', name: 'team-lead', role: 'lead', status: 'running',
+          }],
+        },
+        tasks: [],
+        messages: [],
+      })
+      await Promise.resolve()
+    })
+
+    await waitFor(() => expect(
+      (screen.getByTestId('agent-teams-inline-card') as HTMLButtonElement).disabled,
+    ).toBe(false))
+    expect(screen.getAllByText('Never flash this Team task')).toHaveLength(1)
+    expect(screen.getAllByText(/Never flash this teammate/)).toHaveLength(1)
+    expect(screen.getAllByText(/Never flash this Team message/)).toHaveLength(1)
+  })
+
+  it('never binds an older TeamCreate card to a newer incarnation with the same name', async () => {
+    let resolveWorkbench!: (snapshot: Awaited<ReturnType<typeof teamsApi.getWorkbench>>) => void
+    vi.spyOn(teamsApi, 'get').mockImplementation(() => new Promise(() => {}))
+    vi.spyOn(teamsApi, 'getWorkbench').mockImplementation(() => new Promise((resolve) => {
+      resolveWorkbench = resolve
+    }))
+    const createRun = (id: string, timestamp: number): UIMessage[] => [
+      {
+        id: `${id}-tool`, type: 'tool_use', toolName: 'TeamCreate', toolUseId: id,
+        input: { team_name: 'reused-team' }, timestamp,
+      },
+      {
+        id: `${id}-result`, type: 'tool_result', toolUseId: id,
+        content: { success: true, team_name: 'reused-team' }, isError: false, timestamp: timestamp + 1,
+      },
+    ]
+    useChatStore.setState({
+      sessions: {
+        [ACTIVE_TAB]: makeSessionState({
+          messages: [
+            ...createRun('old-create', 100_000),
+            {
+              id: 'old-delete-tool', type: 'tool_use', toolName: 'TeamDelete', toolUseId: 'old-delete',
+              input: {}, timestamp: 101_000,
+            },
+            {
+              id: 'old-delete-result', type: 'tool_result', toolUseId: 'old-delete',
+              content: { success: true, team_name: 'reused-team' }, isError: false, timestamp: 101_001,
+            },
+            // The next incarnation starts within the transport-tolerance
+            // window of the first. Its snapshot must still never revive the
+            // already-ended historical card.
+            ...createRun('new-create', 102_000),
+          ],
+        }),
+      },
+    })
+
+    act(() => {
+      useTeamStore.getState().handleTeamCreated('reused-team', ACTIVE_TAB, { createdAt: 102_000 })
+    })
+    render(<MessageList sessionId={ACTIVE_TAB} />)
+
+    await act(async () => {
+      resolveWorkbench({
+        version: 'new-incarnation',
+        generatedAt: new Date(102_010).toISOString(),
+        team: {
+          name: 'reused-team',
+          leadSessionId: ACTIVE_TAB,
+          leadAgentId: 'team-lead@reused-team',
+          incarnationId: 'new-incarnation',
+          createdAt: '102000',
+          members: [{
+            agentId: 'team-lead@reused-team', name: 'team-lead', role: 'lead', status: 'running',
+          }],
+        },
+        tasks: [],
+        messages: [],
+      })
+      await Promise.resolve()
+    })
+
+    const cards = await screen.findAllByTestId('agent-teams-inline-card')
+    expect(cards).toHaveLength(2)
+    expect((cards[0] as HTMLButtonElement).disabled).toBe(true)
+    expect((cards[1] as HTMLButtonElement).disabled).toBe(false)
+    expect(within(cards[0]!).getByText('Completed')).toBeTruthy()
+    expect(within(cards[1]!).getByText('Forming team')).toBeTruthy()
+
+    fireEvent.click(cards[1]!)
+    expect(useTabStore.getState().tabs).toContainEqual(expect.objectContaining({
+      type: 'team',
+      title: 'reused-team',
+      teamLeadSessionId: ACTIVE_TAB,
+    }))
   })
 })

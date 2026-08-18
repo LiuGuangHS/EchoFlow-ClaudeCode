@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { startMock, statusMock, logoutMock } = vi.hoisted(() => ({
+const { startMock, statusMock, logoutMock, settingsFetchAllMock } = vi.hoisted(() => ({
   startMock: vi.fn(),
   statusMock: vi.fn(),
   logoutMock: vi.fn(),
+  settingsFetchAllMock: vi.fn(),
 }))
 
 vi.mock('../api/echoFlowOAuth', () => ({
@@ -15,6 +16,11 @@ vi.mock('../api/echoFlowOAuth', () => ({
 }))
 
 import { useEchoFlowOAuthStore } from './echoFlowOAuthStore'
+vi.mock('./settingsStore', () => ({
+  useSettingsStore: {
+    getState: () => ({ fetchAll: settingsFetchAllMock }),
+  },
+}))
 
 const initialState = useEchoFlowOAuthStore.getState()
 
@@ -24,6 +30,8 @@ describe('echoFlowOAuthStore', () => {
     startMock.mockReset()
     statusMock.mockReset()
     logoutMock.mockReset()
+    settingsFetchAllMock.mockReset()
+    settingsFetchAllMock.mockResolvedValue(undefined)
     useEchoFlowOAuthStore.setState({
       ...initialState,
       status: null,
@@ -73,5 +81,7 @@ describe('echoFlowOAuthStore', () => {
       subscriptionType: 'max',
     })
     expect(useEchoFlowOAuthStore.getState().isPolling).toBe(false)
+    expect(useEchoFlowOAuthStore.getState().isPolling).toBe(false)
+    expect(settingsFetchAllMock).toHaveBeenCalledTimes(1)
   })
 })

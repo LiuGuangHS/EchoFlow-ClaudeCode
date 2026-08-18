@@ -54,6 +54,7 @@ import {
   createToolUseSummaryMessage,
   createMicrocompactBoundaryMessage,
   stripSignatureBlocks,
+  stripSignatureBlocksAfterModelChange,
 } from './utils/messages.js'
 import { generateToolUseSummary } from './services/toolUseSummary/toolUseSummaryGenerator.js'
 import { prependUserContext, appendSystemContext } from './utils/api.js'
@@ -578,6 +579,7 @@ async function* queryLoop(
         permissionMode === 'plan' &&
         doesMostRecentAssistantMessageExceed200k(messagesForQuery),
     })
+    messagesForQuery = stripSignatureBlocksAfterModelChange(messagesForQuery, currentModel)
 
     queryCheckpoint('query_setup_end')
 

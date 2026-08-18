@@ -6,8 +6,10 @@ import {
 } from '../../Tool.js'
 
 const capturedOwners: Array<string | undefined> = []
-const runAgentMock = mock((params: { ownerAgentId?: string }) => {
+const capturedSources: Array<string | undefined> = []
+const runAgentMock = mock((params: { ownerAgentId?: string; querySource?: string }) => {
   capturedOwners.push(params.ownerAgentId)
+  capturedSources.push(params.querySource)
   return (async function* () {})()
 })
 const runAgentModule = await import('../../tools/AgentTool/runAgent.js')
@@ -54,10 +56,12 @@ async function invoke(ownerAgentId?: string): Promise<void> {
 describe('runWorkflowAgent ownership', () => {
   test('persists nested ownership without adding an owner to root workers', async () => {
     capturedOwners.length = 0
+    capturedSources.length = 0
 
     await invoke('parent-agent')
     await invoke()
 
     expect(capturedOwners).toEqual(['parent-agent', undefined])
+    expect(capturedSources).toEqual(['workflow_agent', 'workflow_agent'])
   })
 })

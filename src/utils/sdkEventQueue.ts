@@ -107,15 +107,47 @@ type AgentToolActivityEvent = {
   owner_agent_id?: string
 }
 
+export type AgentRunMessageEvent = {
+  type: 'system'
+  subtype: 'agent_run_message'
+  run_agent_id: string
+  stream_id: string
+  target_agent_id: string
+  target_agent_scope_id?: string
+  event_kind: 'message' | 'complete' | 'cancelled' | 'error'
+  message?: unknown
+  error?: string
+}
+
 export type SdkEvent =
   | TaskStartedEvent
   | TaskProgressEvent
   | TaskNotificationSdkEvent
   | SessionStateChangedEvent
   | AgentToolActivityEvent
+  | AgentRunMessageEvent
 
 const MAX_QUEUE_SIZE = 1000
 const queue: SdkEvent[] = []
+type EnvelopedAgentRunMessage = AgentRunMessageEvent & {
+  uuid: UUID
+  session_id: string
+}
+let agentRunMessageSink: ((event: EnvelopedAgentRunMessage) => void) | undefined
+
+/**
+ * Agent runs execute below the main query generator, so their token deltas
+ * cannot wait for the next drainSdkEvents() call. The headless printer binds
+ * this sink to its existing outbound FIFO while it is alive.
+ */
+export function setAgentRunMessageSink(
+  sink: ((event: EnvelopedAgentRunMessage) => void) | undefined,
+): () => void {
+  agentRunMessageSink = sink
+  return () => {
+    if (agentRunMessageSink === sink) agentRunMessageSink = undefined
+  }
+}
 
 export function enqueueSdkEvent(event: SdkEvent): void {
   // SDK events are only consumed (drained) in headless/streaming mode.
@@ -123,10 +155,48 @@ export function enqueueSdkEvent(event: SdkEvent): void {
   if (!getIsNonInteractiveSession()) {
     return
   }
+  if (event.subtype === 'agent_run_message') {
+    if (agentRunMessageSink) {
+      agentRunMessageSink({
+        ...event,
+        uuid: randomUUID(),
+        session_id: getSessionId(),
+      })
+    }
+    return
+  }
   if (queue.length >= MAX_QUEUE_SIZE) {
     queue.shift()
   }
   queue.push(event)
+}
+
+export function emitAgentRunMessage(
+  route: {
+    runAgentId: string
+    streamId: string
+    targetAgentId?: string
+    targetAgentScopeId?: string
+  },
+  event:
+    | { kind: 'message'; message: unknown }
+    | { kind: 'complete' }
+    | { kind: 'cancelled' }
+    | { kind: 'error'; error: string },
+): void {
+  enqueueSdkEvent({
+    type: 'system',
+    subtype: 'agent_run_message',
+    run_agent_id: route.runAgentId,
+    stream_id: route.streamId,
+    target_agent_id: route.targetAgentId ?? route.runAgentId,
+    ...(route.targetAgentScopeId
+      ? { target_agent_scope_id: route.targetAgentScopeId }
+      : {}),
+    event_kind: event.kind,
+    ...(event.kind === 'message' ? { message: event.message } : {}),
+    ...(event.kind === 'error' ? { error: event.error } : {}),
+  })
 }
 
 export function drainSdkEvents(): Array<

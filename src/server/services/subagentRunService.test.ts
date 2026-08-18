@@ -5,6 +5,7 @@ import * as path from 'node:path'
 import {
   getSubagentRunByAgentId,
   getSubagentRunByTool,
+  dropSupersededTeammateFragments,
   mergeTeammateTranscriptFragments,
   parseCanonicalNestedAgentToolRef,
   resolveSubagentRunFromMessages,
@@ -211,6 +212,40 @@ describe('subagentRunService helpers', () => {
       repeated('legitimate-repeat-1'),
       repeated('legitimate-repeat-2'),
     ])
+  })
+
+  it('drops a rewritten fragment that its successor already carries forward', () => {
+    const call: MessageEntry = {
+      id: 'tool-call',
+      type: 'tool_use',
+      content: [{ type: 'tool_use', id: 'Bash:0', name: 'Bash', input: { command: 'ls' } }],
+      timestamp: '2026-01-01T00:00:01.000Z',
+    } as MessageEntry
+    const result: MessageEntry = {
+      id: 'tool-result',
+      type: 'tool_result',
+      content: [{ type: 'tool_result', tool_use_id: 'Bash:0', content: 'ok' }],
+      timestamp: '2026-01-01T00:00:02.000Z',
+    } as MessageEntry
+
+    expect(dropSupersededTeammateFragments([
+      { agentId: 'first', messages: [call] },
+      { agentId: 'rewrite', messages: [call, result] },
+    ])).toEqual([{ agentId: 'rewrite', messages: [call, result] }])
+  })
+
+  it('keeps independent resumes that reuse message ids for different work', () => {
+    const reply = (text: string): MessageEntry => ({
+      id: 'shared-message-id',
+      type: 'assistant',
+      content: text,
+      timestamp: '2026-01-01T00:00:01.000Z',
+    } as MessageEntry)
+
+    expect(dropSupersededTeammateFragments([
+      { agentId: 'first', messages: [reply('first run')] },
+      { agentId: 'second', messages: [reply('second run'), reply('second run tail')] },
+    ])).toHaveLength(2)
   })
 
   it('resolves agentId, description, and prompt from parent Agent messages by toolUseId', () => {

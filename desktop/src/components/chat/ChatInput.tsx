@@ -1436,6 +1436,7 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
                     ) : (
                       <ProjectContextChip
                         workDir={resolvedWorkDir}
+                        projectRoot={activeSession?.projectRoot}
                         repoName={gitInfo?.repoName || null}
                         branch={gitInfo?.branch || null}
                         sourceWorkDir={gitInfo?.worktree?.sourceWorkDir || null}
@@ -1541,6 +1542,7 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
             {messageCount > 0 ? (
               <ProjectContextChip
                 workDir={resolvedWorkDir}
+                projectRoot={activeSession?.projectRoot}
                 repoName={gitInfo?.repoName || null}
                 branch={gitInfo?.branch || null}
                 sourceWorkDir={gitInfo?.worktree?.sourceWorkDir || null}

@@ -464,6 +464,32 @@
   animation: agent-teams-flow 700ms linear infinite;
 }
 
+/* The collaboration board uses motion only to explain state transitions:
+   a live signal, a dependency flow, a claim/message flight and indeterminate
+   work. None of these animations changes layout or carries the only copy of
+   the information. */
+.agent-teams-live-dot {
+  animation: agent-teams-pulse 1.1s ease-in-out infinite;
+}
+
+.agent-teams-member-ring {
+  animation: agent-teams-ring 1.1s ease-out infinite;
+}
+
+.agent-teams-unlocked {
+  animation: agent-teams-pulse 500ms ease-in-out infinite;
+}
+
+.agent-teams-flight {
+  offset-distance: 0%;
+  animation: agent-teams-flight 1.5s cubic-bezier(0.22, 0.72, 0.25, 1) both;
+}
+
+.agent-teams-task-running-fill {
+  width: 42%;
+  animation: agent-teams-task-running 1.5s ease-in-out infinite;
+}
+
 @keyframes agent-teams-enter {
   from { opacity: 0; transform: translateY(-6px); }
   to { opacity: 1; transform: none; }
@@ -501,6 +527,29 @@
   to { stroke-dashoffset: -18; }
 }
 
+@keyframes agent-teams-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+@keyframes agent-teams-ring {
+  0% { opacity: 0.55; transform: scale(0.6); }
+  100% { opacity: 0; transform: scale(1.5); }
+}
+
+@keyframes agent-teams-flight {
+  0% { opacity: 0; offset-distance: 0%; transform: scale(0.88); }
+  12% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { opacity: 0; offset-distance: 100%; transform: scale(1); }
+}
+
+@keyframes agent-teams-task-running {
+  0% { transform: translateX(-115%); }
+  50% { transform: translateX(75%); }
+  100% { transform: translateX(240%); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .agent-teams-bot,
   .agent-teams-person,
@@ -510,9 +559,19 @@
   .agent-teams-character-idle,
   .agent-teams-character-message,
   .agent-teams-zz,
-  .agent-teams-flow {
+  .agent-teams-flow,
+  .agent-teams-live-dot,
+  .agent-teams-member-ring,
+  .agent-teams-unlocked,
+  .agent-teams-flight,
+  .agent-teams-task-running-fill {
     animation: none !important;
     transition: none !important;
+  }
+
+  .agent-teams-task-running-fill {
+    opacity: 0;
+    transform: none !important;
   }
 }
 

@@ -172,6 +172,10 @@ import { safeParseJSON } from './json.js'
 import { logError, logMCPDebug } from './log.js'
 import { normalizeLegacyToolName } from './permissions/permissionRuleParser.js'
 import {
+  normalizeModelStringForAPI,
+  parseUserSpecifiedModel,
+} from './model/model.js'
+import {
   getPlanModeV2AgentCount,
   getPlanModeV2ExploreAgentCount,
   isPlanModeInterviewPhaseEnabled,
@@ -5311,6 +5315,35 @@ export function stripSignatureBlocks(messages: Message[]): Message[] {
   })
 
   return changed ? result : messages
+}
+
+/**
+ * Protected thinking signatures are model-bound. When a resumed session moves
+ * to another model, replaying those blocks can either fail signature validation
+ * or send a block type the new provider does not implement. Keep the transcript
+ * intact and clean only the in-memory request history.
+ */
+export function stripSignatureBlocksAfterModelChange(
+  messages: Message[],
+  currentModel: string,
+): Message[] {
+  const signatureSource = messages.findLast(msg => (
+    msg.type === 'assistant' &&
+    msg.message.model !== SYNTHETIC_MODEL &&
+    msg.message.content.some(isThinkingBlock)
+  ))
+  if (signatureSource?.type !== 'assistant' || !signatureSource.message.model) {
+    return messages
+  }
+
+  const normalize = (model: string) => normalizeModelStringForAPI(
+    parseUserSpecifiedModel(model),
+  ).trim().toLowerCase()
+
+  if (normalize(signatureSource.message.model) === normalize(currentModel)) {
+    return messages
+  }
+  return stripSignatureBlocks(messages)
 }
 
 /**

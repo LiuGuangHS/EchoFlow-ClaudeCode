@@ -7,7 +7,6 @@ import {
   Bolt,
   Braces,
   Check,
-  ChevronDown,
   CircleAlert,
   Folder,
   Hammer,
@@ -24,6 +23,7 @@ import {
 } from 'lucide-react'
 import { useTranslation } from '../../i18n'
 import type { TranslationKey } from '../../i18n'
+import type { ModelInfo } from '../../types/settings'
 import type {
   AgentDefinition,
   AgentMutationInput,
@@ -32,6 +32,7 @@ import type {
 } from '../../api/agents'
 import { useAgentStore } from '../../stores/agentStore'
 import { useSessionStore } from '../../stores/sessionStore'
+import { useSettingsStore } from '../../stores/settingsStore'
 import { getSessionBrowsablePath } from '../../lib/sessionWorkspace'
 import { useUIStore } from '../../stores/uiStore'
 import { MarkdownRenderer } from '../markdown/MarkdownRenderer'
@@ -42,12 +43,13 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { ErrorState } from '@/components/ui/ErrorState'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { DirectoryPicker } from '@/components/composite/DirectoryPicker'
-import { Dropdown } from '@/components/ui/Dropdown'
 import { IconButton } from '@/components/ui/IconButton'
 import { Input } from '@/components/ui/Input'
 import { Modal } from '@/components/ui/Modal'
 import { SearchField } from '@/components/ui/SearchField'
+import { SelectField } from '@/components/ui/SelectField'
 import { SettingsPageHeader } from '@/components/settings/SettingsSection'
+import { ModelSelector } from '@/components/controls/ModelSelector'
 
 const AGENT_COLORS: Record<string, string> = {
   red: '#ef4444',
@@ -511,12 +513,7 @@ function AgentFormModal({
   const [name, setName] = useState(agent?.agentType || '')
   const [description, setDescription] = useState(agent?.description || '')
   const [systemPrompt, setSystemPrompt] = useState(agent?.systemPrompt || '')
-  const [modelChoice, setModelChoice] = useState(
-    initialModel === 'inherit' || BUILT_IN_MODELS.includes(initialModel as typeof BUILT_IN_MODELS[number])
-      ? initialModel
-      : 'custom',
-  )
-  const [customModel, setCustomModel] = useState(modelChoice === 'custom' ? initialModel : '')
+  const [modelChoice, setModelChoice] = useState(initialModel)
   const initialEffort = agent?.effort === undefined ? 'inherit' : String(agent.effort)
   const hasLegacyEffort = initialEffort !== 'inherit' && !EFFORTS.includes(initialEffort as typeof EFFORTS[number])
   const [effort, setEffort] = useState(initialEffort)
@@ -548,7 +545,6 @@ function AgentFormModal({
     if (!NAME_PATTERN.test(trimmedName)) nextErrors.name = t('settings.agents.form.nameError')
     if (!description.trim()) nextErrors.description = t('settings.agents.form.descriptionRequired')
     if (mode === 'create' && !systemPrompt.trim()) nextErrors.systemPrompt = t('settings.agents.form.systemPromptRequired')
-    if (modelChoice === 'custom' && !customModel.trim()) nextErrors.customModel = t('settings.agents.form.customModelRequired')
     if (toolAccess === 'custom' && parsedTools.length === 0) nextErrors.tools = t('settings.agents.form.toolsCustomRequired')
     if (scope === 'project' && !projectPath) nextErrors.scope = t('settings.agents.form.projectUnavailable')
     setFieldErrors(nextErrors)
@@ -566,8 +562,8 @@ function AgentFormModal({
       description: description.trim(),
       systemPrompt: systemPrompt.trim(),
       ...(mode === 'edit'
-        ? { model: modelChoice === 'inherit' ? null : modelChoice === 'custom' ? customModel.trim() : modelChoice }
-        : modelChoice === 'inherit' ? {} : { model: modelChoice === 'custom' ? customModel.trim() : modelChoice }),
+        ? { model: modelChoice === 'inherit' ? null : modelChoice }
+        : modelChoice === 'inherit' ? {} : { model: modelChoice }),
       ...(mode === 'edit'
         ? { effort: effort === 'inherit' ? null : typeof agent?.effort === 'number' && effort === initialEffort ? agent.effort : effort }
         : effort === 'inherit' ? {} : { effort }),
@@ -699,15 +695,10 @@ function AgentFormModal({
 
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label={t('settings.agents.form.model')}>
-            <AgentSelect
+            <AgentModelSelector
               label={t('settings.agents.form.model')}
               value={modelChoice}
               onChange={setModelChoice}
-              items={[
-                { value: 'inherit', label: t('settings.agents.form.inherit') },
-                ...BUILT_IN_MODELS.map((model) => ({ value: model, label: model })),
-                { value: 'custom', label: t('settings.agents.form.customModel') },
-              ]}
             />
           </Field>
           <Field label={t('settings.agents.form.effort')}>
@@ -724,15 +715,9 @@ function AgentFormModal({
           </Field>
         </div>
 
-        {modelChoice === 'custom' && (
-          <Input
-            label={t('settings.agents.form.customModelId')}
-            required
-            value={customModel}
-            error={fieldErrors.customModel}
-            onChange={(event) => setCustomModel(event.target.value)}
-          />
-        )}
+        <p className="-mt-2 text-xs leading-5 text-[var(--color-text-tertiary)]">
+          {t('settings.agents.form.modelProviderHint')}
+        </p>
 
         <Field label={t('settings.agents.form.tools')}>
           <AgentSelect<ToolAccessMode>
@@ -780,7 +765,6 @@ function AgentFormModal({
               ...Object.keys(AGENT_COLORS).map((value) => ({
                 value,
                 label: value,
-                icon: <span className="h-3 w-3 rounded-full" style={{ backgroundColor: AGENT_COLORS[value] }} />,
               })),
             ]}
           />
@@ -1018,19 +1002,11 @@ function BuiltInAgentOverrideModal({
   const initialModel = agent.override?.model
   const initialEffort = agent.override?.effort
   const [modelChoice, setModelChoice] = useState(
-    initialModel === undefined
-      ? DEFAULT_CHOICE
-      : initialModel === 'inherit' || BUILT_IN_MODELS.includes(initialModel as typeof BUILT_IN_MODELS[number])
-        ? initialModel
-        : 'custom',
-  )
-  const [customModel, setCustomModel] = useState(
-    modelChoice === 'custom' ? (initialModel ?? '') : '',
+    initialModel ?? DEFAULT_CHOICE,
   )
   const [effort, setEffort] = useState(
     initialEffort === undefined ? DEFAULT_CHOICE : String(initialEffort),
   )
-  const [customModelError, setCustomModelError] = useState<string | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
   const describeDefault = (value: string | number | undefined) =>
@@ -1039,11 +1015,6 @@ function BuiltInAgentOverrideModal({
       : t('settings.agents.overrideDefault', { value: String(value) })
 
   const handleSave = async () => {
-    if (modelChoice === 'custom' && !customModel.trim()) {
-      setCustomModelError(t('settings.agents.form.customModelRequired'))
-      return
-    }
-    setCustomModelError(null)
     setSubmitError(null)
     try {
       await setAgentOverride(
@@ -1056,9 +1027,7 @@ function BuiltInAgentOverrideModal({
           model:
             modelChoice === DEFAULT_CHOICE
               ? null
-              : modelChoice === 'custom'
-                ? customModel.trim()
-                : modelChoice,
+              : modelChoice,
           effort: effort === DEFAULT_CHOICE ? null : effort,
         },
         sessionId,
@@ -1127,20 +1096,12 @@ function BuiltInAgentOverrideModal({
 
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label={t('settings.agents.form.model')}>
-            <AgentSelect
+            <AgentModelSelector
               label={t('settings.agents.form.model')}
               value={modelChoice}
               onChange={setModelChoice}
               disabled={isManaged}
-              items={[
-                // Two separate entries on purpose. For Explore the built-in
-                // default is haiku while "inherit" means follow the main
-                // session — collapsing them makes inherit unreachable.
-                { value: DEFAULT_CHOICE, label: describeDefault(defaultModel) },
-                { value: 'inherit', label: t('settings.agents.form.inherit') },
-                ...BUILT_IN_MODELS.map((model) => ({ value: model, label: model })),
-                { value: 'custom', label: t('settings.agents.form.customModel') },
-              ]}
+              defaultLabel={describeDefault(defaultModel)}
             />
           </Field>
           <Field label={t('settings.agents.form.effort')}>
@@ -1159,19 +1120,11 @@ function BuiltInAgentOverrideModal({
           </Field>
         </div>
 
-        {modelChoice === 'custom' && (
-          <Input
-            label={t('settings.agents.form.customModelId')}
-            required
-            value={customModel}
-            error={customModelError ?? undefined}
-            disabled={isManaged}
-            onChange={(event) => setCustomModel(event.target.value)}
-          />
-        )}
-
         <p className="text-xs leading-5 text-[var(--color-text-tertiary)]">
           {t('settings.agents.overrideHint')}
+        </p>
+        <p className="text-xs leading-5 text-[var(--color-text-tertiary)]">
+          {t('settings.agents.form.modelProviderHint')}
         </p>
         <p className="text-xs leading-5 text-[var(--color-text-tertiary)]">
           {t('settings.agents.overrideScopeHint')}
@@ -1317,6 +1270,78 @@ function getAgentSourceAccentClass(source: AgentSource) {
   }
 }
 
+function AgentModelSelector({
+  label,
+  value,
+  onChange,
+  disabled,
+  defaultLabel,
+}: {
+  label: string
+  value: string
+  onChange: (value: string) => void
+  disabled?: boolean
+  defaultLabel?: string
+}) {
+  const t = useTranslation()
+  const availableModels = useSettingsStore((state) => state.availableModels)
+  const models = useMemo(() => {
+    const choices: ModelInfo[] = []
+    const seen = new Set<string>()
+    const add = (model: ModelInfo) => {
+      if (seen.has(model.id)) return
+      seen.add(model.id)
+      choices.push(model)
+    }
+
+    if (defaultLabel) {
+      add({
+        id: DEFAULT_CHOICE,
+        name: defaultLabel,
+        description: t('settings.agents.form.modelDefaultDescription'),
+        context: '',
+      })
+    }
+    add({
+      id: 'inherit',
+      name: t('settings.agents.form.inherit'),
+      description: t('settings.agents.form.modelInheritDescription'),
+      context: '',
+    })
+    for (const alias of BUILT_IN_MODELS) {
+      add({
+        id: alias,
+        name: alias,
+        description: t('settings.agents.form.modelAliasDescription'),
+        context: '',
+      })
+    }
+
+    if (!seen.has(value) && value) {
+      add({
+        id: value,
+        name: value,
+        description: t('settings.agents.form.modelUnavailableDescription'),
+        context: '',
+      })
+    }
+    availableModels.forEach(add)
+    return choices
+  }, [availableModels, defaultLabel, t, value])
+
+  return (
+    <ModelSelector
+      value={value}
+      onChange={onChange}
+      models={models}
+      ariaLabel={label}
+      appearance="field"
+      disabled={disabled}
+      fluid
+    />
+  )
+}
+
 function AgentSelect<T extends string>({
   label,
   items,
@@ -1325,33 +1350,23 @@ function AgentSelect<T extends string>({
   disabled,
 }: {
   label: string
-  items: Array<{ value: T; label: string; icon?: ReactNode }>
+  items: Array<{ value: T; label: string }>
   value: T
   onChange: (value: T) => void
   disabled?: boolean
 }) {
-  const selected = items.find((item) => item.value === value) ?? items[0]
   return (
-    <Dropdown<T>
-      items={items}
+    <SelectField<T>
+      label={label}
+      labelHidden
+      options={items.map(({ value: optionValue, label: optionLabel }) => ({
+        value: optionValue,
+        label: optionLabel,
+      }))}
       value={value}
       onChange={onChange}
-      width="100%"
-      maxHeight={280}
-      placement="top"
-      className="block w-full"
-      trigger={(
-        <button
-          type="button"
-          aria-label={label}
-          disabled={disabled}
-          className="flex h-10 w-full items-center gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-left text-sm text-[var(--color-text-primary)] outline-none transition-colors hover:border-[var(--color-border-focus)] hover:bg-[var(--color-surface-container-low)] focus-visible:border-[var(--color-border-focus)] focus-visible:shadow-[var(--shadow-focus-ring)] disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {selected?.icon && <span className="shrink-0">{selected.icon}</span>}
-          <span className="min-w-0 flex-1 truncate">{selected?.label ?? value}</span>
-          <ChevronDown size={16} className="shrink-0 text-[var(--color-text-tertiary)]" />
-        </button>
-      )}
+      disabled={disabled}
+      size="lg"
     />
   )
 }

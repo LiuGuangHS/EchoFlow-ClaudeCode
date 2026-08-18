@@ -58,11 +58,11 @@ describe('getTaskListId', () => {
     })
   })
 
-  test('canonicalizes teammate names and still honors an explicit list', () => {
+  test('keeps a teammate on the canonical Team list despite a standalone override', () => {
     runWithTeammateContext({ ...TEAMMATE, teamName: 'My_Team' }, () => {
       expect(getTaskListId('teammate-agent')).toBe('my-team')
       process.env.CLAUDE_CODE_TASK_LIST_ID = 'explicit-team-list'
-      expect(getTaskListId('teammate-agent')).toBe('explicit-team-list')
+      expect(getTaskListId('teammate-agent')).toBe('my-team')
     })
   })
 })

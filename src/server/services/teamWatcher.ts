@@ -26,6 +26,7 @@ function getTeamsDir(): string {
 }
 
 type WatchedTeamIdentity = {
+  teamName: string
   incarnationId: string
   createdAt: number
   leadSessionId?: string
@@ -107,7 +108,7 @@ export class TeamWatcher {
       for (const [name] of this.lastSnapshots) {
         const identity = this.lastTeamIdentities.get(name)
         await this.archive.markWorkbenchArchiveDeleted(
-          name,
+          identity?.teamName ?? name,
           identity?.leadSessionId ?? this.lastLeadSessionIds.get(name),
           identity?.incarnationId,
         ).catch(() => {})
@@ -166,7 +167,7 @@ export class TeamWatcher {
           previousIdentity.incarnationId !== currentIdentity.incarnationId
         ) {
           await this.archive.markWorkbenchArchiveDeleted(
-            teamName,
+            previousIdentity.teamName,
             previousIdentity.leadSessionId,
             previousIdentity.incarnationId,
           ).catch(() => {})
@@ -241,7 +242,7 @@ export class TeamWatcher {
         const identity = this.lastTeamIdentities.get(name)
         const leadSessionId = identity?.leadSessionId ?? this.lastLeadSessionIds.get(name)
         await this.archive.markWorkbenchArchiveDeleted(
-          name,
+          identity?.teamName ?? name,
           leadSessionId,
           identity?.incarnationId,
         ).catch(() => {})
@@ -314,14 +315,18 @@ export class TeamWatcher {
       const leadSessionId = typeof config.leadSessionId === 'string' && config.leadSessionId
         ? config.leadSessionId
         : undefined
+      const canonicalTeamName = typeof config.name === 'string' && config.name
+        ? config.name
+        : teamName
       const identity = {
+        teamName: canonicalTeamName,
         createdAt,
         ...(leadSessionId ? { leadSessionId } : {}),
       }
       return {
         ...identity,
         incarnationId: teamIncarnationId({
-          name: teamName,
+          name: canonicalTeamName,
           createdAt,
           leadSessionId,
         }),
@@ -351,6 +356,11 @@ export class TeamWatcher {
         agentId: (m.agentId as string) || '',
         role: (m.name as string) || (m.agentType as string) || 'member',
         status,
+        // Only the runner's own turn markers are cheap enough to read on every
+        // poll. Without one, say nothing so the last full team read stands.
+        ...(typeof m.isActive === 'boolean'
+          ? { activity: (m.isActive ? 'active' : 'idle') as const }
+          : {}),
         currentTask: (m.currentTask as string) || undefined,
       }
     })
@@ -390,6 +400,8 @@ export class TeamWatcher {
           agentId: `${name}@${teamName}`,
           role: name,
           status: 'running', // assume running — they have an inbox
+          // An inbox proves the member exists, never that it is mid-turn.
+          activity: 'unknown',
         })
       }
 
@@ -436,9 +448,9 @@ export class TeamWatcher {
 
         for (const file of files) {
           if (!file.endsWith('.jsonl')) continue
-          const inferredName = this.extractSubagentName(
-            path.join(subagentsDir, file),
-          )
+          const filePath = path.join(subagentsDir, file)
+          const inferredName = this.extractSubagentMetadataName(filePath) ??
+            this.extractSubagentName(filePath)
           if (
             inferredName &&
             inferredName !== 'team-lead' &&
@@ -449,6 +461,7 @@ export class TeamWatcher {
               agentId: `${inferredName}@${teamName}`,
               role: inferredName,
               status: 'running',
+              activity: 'unknown',
             })
           }
         }
@@ -497,6 +510,18 @@ export class TeamWatcher {
     return members
   }
 
+  private extractSubagentMetadataName(filePath: string): string | null {
+    try {
+      const metadataPath = filePath.replace(/\.jsonl$/, '.meta.json')
+      const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8')) as Record<string, unknown>
+      return typeof metadata.agentType === 'string' && metadata.agentType.trim()
+        ? metadata.agentType
+        : null
+    } catch {
+      return null
+    }
+  }
+
   private extractSubagentName(filePath: string): string | null {
     try {
       const head = fs.readFileSync(filePath, 'utf-8').slice(0, 8192)
@@ -516,12 +541,7 @@ export class TeamWatcher {
         }
       }
 
-      const match =
-        head.match(/"agentName"\s*:\s*"([^"]+)"/) ||
-        head.match(/"name"\s*:\s*"([^"]+)"/) ||
-        head.match(/\*\*([a-zA-Z0-9_-]+)\*\*/)
-
-      return match?.[1] ?? null
+      return null
     } catch {
       return null
     }

@@ -8,7 +8,7 @@ import { useSessionStore } from '../../stores/sessionStore'
 import { useWorkspaceChatContextStore } from '../../stores/workspaceChatContextStore'
 import { useWorkspacePanelStore, type WorkspacePanelOrigin } from '../../stores/workspacePanelStore'
 import { SETTINGS_TAB_ID, useTabStore } from '../../stores/tabStore'
-import { useTeamStore } from '../../stores/teamStore'
+import { teamTaskWindowsForSnapshot, useTeamStore } from '../../stores/teamStore'
 import { useUIStore } from '../../stores/uiStore'
 import { useTranslation } from '../../i18n'
 import type { TranslationKey } from '../../i18n/locales/en'
@@ -26,7 +26,11 @@ import { InlineTaskSummary } from './InlineTaskSummary'
 import { CurrentTurnChangeCard } from './CurrentTurnChangeCard'
 import { AgentTeamsInlineCard } from '../agentTeams/AgentTeamsSummary'
 import { MEMBER_AVATARS, memberAccentColor } from '../agentTeams/agentTeamsAvatars'
-import { getMemberAvatarKey, resolveTeamMemberIdentity } from '../agentTeams/agentTeamsModel'
+import {
+  getMemberAvatarKey,
+  resolveTeamMemberIdentity,
+  snapshotWithHistoricalMembers,
+} from '../agentTeams/agentTeamsModel'
 import {
   buildConversationNavigationItems,
   ConversationNavigator,
@@ -34,11 +38,16 @@ import {
   type ConversationNavigationMode,
 } from './ConversationNavigator'
 import type { AgentTaskNotification, BackgroundAgentTask, UIMessage } from '../../types/chat'
-import type { TeamDetail } from '../../types/team'
+import type { TeamDetail, TeamWorkbenchSnapshot } from '../../types/team'
 import { formatTokenCount } from '../../lib/formatTokenCount'
 import { formatDurationMs, hasRunningBackgroundTasks as hasAnyRunningBackgroundTasks } from '../../lib/backgroundTasks'
 import { buildTurnCompletionByMessageId, type TurnCompletion } from '../../lib/turnCompletion'
 import { isTouchH5Document } from '../../lib/touchH5'
+import {
+  EMPTY_TEAM_LIFECYCLE_CURSOR,
+  isTeamLifecycleScopedAt,
+  updateTeamLifecycleCursor,
+} from '../../lib/teamLifecycleScope'
 import { Button } from '@/components/ui/Button'
 import { ActionDialog, type ActionDialogAction } from '@/components/ui/ActionDialog'
 import { clearWindowSelection, getSelectionPopoverPosition, useSelectionPopoverDismiss } from '../../hooks/useSelectionPopoverDismiss'
@@ -72,7 +81,14 @@ type RenderItem =
    * Stands in for the TeamCreate call so the transcript records that this turn
    * handed work to a team, without expanding into the workbench inline.
    */
-  | { kind: 'team_card'; id: string }
+  | {
+      kind: 'team_card'
+      id: string
+      teamName: string
+      startedAt: number
+      endedAt?: number
+      coordinationToolCalls: ToolCall[]
+    }
 
 type RenderModel = {
   renderItems: RenderItem[]
@@ -674,10 +690,94 @@ function isTeamCoordinationSendMessage(
   input: unknown,
   result: unknown,
   teamMemberNames: ReadonlySet<string> | undefined,
+  allowRosterFallback: boolean,
 ): boolean {
   if (hasTeamMessageRouting(result)) return true
+  if (!allowRosterFallback) return false
   const target = getSendMessageTarget(input)
   return target === '*' || Boolean(target && teamMemberNames?.has(target))
+}
+
+function parseRecordValue(value: unknown): Record<string, unknown> | null {
+  if (isRecordValue(value)) return value
+  if (typeof value !== 'string') return null
+  const text = value.trim()
+  if (!text.startsWith('{')) return null
+  try {
+    const parsed = JSON.parse(text) as unknown
+    return isRecordValue(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function nestedStringField(value: unknown, field: string): string {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const nested = nestedStringField(item, field)
+      if (nested) return nested
+    }
+    return ''
+  }
+  const record = parseRecordValue(value)
+  if (!record) return ''
+  const direct = record[field]
+  if (typeof direct === 'string' && direct.trim()) return direct.trim()
+  for (const child of [record.content, record.text]) {
+    const nested = nestedStringField(child, field)
+    if (nested) return nested
+  }
+  return ''
+}
+
+function explicitSuccessFlag(value: unknown): boolean | undefined {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const nested = explicitSuccessFlag(item)
+      if (nested !== undefined) return nested
+    }
+    return undefined
+  }
+  const record = parseRecordValue(value)
+  if (!record) return undefined
+  if (typeof record.success === 'boolean') return record.success
+  if ('content' in record) return explicitSuccessFlag(record.content)
+  if ('text' in record) return explicitSuccessFlag(record.text)
+  return undefined
+}
+
+function canSummarizeCoordinationResult(result: ToolResult | undefined): boolean {
+  return !result || (!result.isError && explicitSuccessFlag(result.content) !== false)
+}
+
+function lifecycleToolSucceeded(result: ToolResult | undefined): boolean {
+  return Boolean(result) && canSummarizeCoordinationResult(result)
+}
+
+function teamNameFromCreate(toolCall: ToolCall, result: ToolResult | undefined): string {
+  const input = parseRecordValue(toolCall.input)
+  // TeamCreate can uniquify a requested name. The successful result owns the
+  // durable identity that the workbench will expose.
+  for (const value of [nestedStringField(result?.content, 'team_name'), input?.team_name]) {
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return 'Agent Teams'
+}
+
+function isExplicitTeamAgent(
+  input: unknown,
+  result: ToolResult | undefined,
+  teamActive: boolean,
+): boolean {
+  const inputRecord = parseRecordValue(input)
+  const inputTeamName = inputRecord?.team_name
+  if (typeof inputTeamName === 'string' && inputTeamName.trim()) return true
+  const inputName = inputRecord?.name
+  if (teamActive && typeof inputName === 'string' && inputName.trim()) return true
+
+  if (nestedStringField(result?.content, 'status') === 'teammate_spawned') return true
+  if (typeof result?.content !== 'string') return false
+  return /^\s*team_name:\s*\S+/m.test(result.content) && /^\s*name:\s*\S+/m.test(result.content)
 }
 
 export function buildRenderModel(
@@ -686,6 +786,9 @@ export function buildRenderModel(
   options: {
     hideTeamCoordinationTools?: boolean
     teamMemberNames?: ReadonlySet<string>
+    teamTaskWindows?: Array<{ startedAt: number; endedAt?: number }>
+    teamName?: string
+    teamStartedAt?: number
   } = {},
 ): RenderModel {
   const items: RenderItem[] = []
@@ -694,6 +797,8 @@ export function buildRenderModel(
   const toolUseIds = new Set<string>()
   const lastUnresolvedAskUserQuestionIndexByToolUseId = new Map<string, number>()
   let lastUnresolvedAskUserQuestionIndex: number | null = null
+  let transcriptTeamCursor = EMPTY_TEAM_LIFECYCLE_CURSOR
+  let activeTeamCard: Extract<RenderItem, { kind: 'team_card' }> | undefined
   let pendingSteps: ActivityStep[] = []
   let pendingToolCount = 0
   let pendingAgentCount = 0
@@ -743,6 +848,40 @@ export function buildRenderModel(
     if (pendingToolCount > 0 && pendingAgentCount === pendingToolCount) flushGroup()
     pendingSteps.push({ kind: 'thinking', message })
   }
+  const ensureTeamCardForCoordination = (
+    message: ToolCall,
+    result: ToolResult | undefined,
+  ) => {
+    const input = parseRecordValue(message.input)
+    const outputTeamName = nestedStringField(result?.content, 'team_name')
+    const inputTeamName = typeof input?.team_name === 'string'
+      ? input.team_name.trim()
+      : ''
+    const explicitTeamName = outputTeamName || inputTeamName
+    if (
+      activeTeamCard &&
+      (!explicitTeamName || activeTeamCard.teamName === explicitTeamName)
+    ) return activeTeamCard
+    if (activeTeamCard) activeTeamCard = undefined
+
+    const scopedTeamName = options.teamName?.trim() || ''
+    const teamName = explicitTeamName || scopedTeamName
+    if (!teamName) return undefined
+    const usesDurableScope = !explicitTeamName || explicitTeamName === scopedTeamName
+
+    flushGroup()
+    activeTeamCard = {
+      kind: 'team_card',
+      id: `team-card-scope-${message.id}`,
+      teamName,
+      startedAt: usesDurableScope
+        ? options.teamStartedAt ?? message.timestamp
+        : message.timestamp,
+      coordinationToolCalls: [],
+    }
+    items.push(activeTeamCard)
+    return activeTeamCard
+  }
 
   for (const msg of messages) {
     if (msg.type === 'tool_use') {
@@ -752,6 +891,11 @@ export function buildRenderModel(
       toolResultMap.set(msg.toolUseId, msg)
     }
   }
+  const hasTeamLifecycleEvidence = Boolean(options.teamTaskWindows?.length) || messages.some((msg) => (
+    msg.type === 'tool_use' &&
+    (msg.toolName === 'TeamCreate' || msg.toolName === 'TeamDelete') &&
+    lifecycleToolSucceeded(toolResultMap.get(msg.toolUseId))
+  ))
   messages.forEach((msg, index) => {
     if (
       msg.type === 'tool_use' &&
@@ -785,19 +929,96 @@ export function buildRenderModel(
         continue
       }
       const toolResult = toolResultMap.get(msg.toolUseId)
-      if (
-        options.hideTeamCoordinationTools &&
-        msg.toolName === 'SendMessage' &&
-        toolResult?.isError === false &&
-        isTeamCoordinationSendMessage(msg.input, toolResult.content, options.teamMemberNames)
-      ) {
-        continue
+      let summarizedTeamDelete = false
+      if (options.hideTeamCoordinationTools) {
+        if (msg.toolName === 'TeamCreate' && lifecycleToolSucceeded(toolResult)) {
+          transcriptTeamCursor = updateTeamLifecycleCursor(
+            true,
+            msg.timestamp,
+          )
+        } else if (msg.toolName === 'TeamDelete' && lifecycleToolSucceeded(toolResult)) {
+          transcriptTeamCursor = updateTeamLifecycleCursor(
+            false,
+            msg.timestamp,
+          )
+          const deletedTeamCard = ensureTeamCardForCoordination(msg, toolResult)
+          if (deletedTeamCard) {
+            deletedTeamCard.endedAt = msg.timestamp
+            deletedTeamCard.coordinationToolCalls.push(msg)
+            summarizedTeamDelete = true
+          }
+          // A later lifecycle can be present only in the durable workbench
+          // window after transcript compaction. Do not attach that run's
+          // coordination audit to the card from the lifecycle just deleted.
+          activeTeamCard = undefined
+        }
+
+        const isTeamScopedAtMessage = isTeamLifecycleScopedAt(
+          msg.timestamp,
+          transcriptTeamCursor,
+          options.teamTaskWindows,
+        )
+        const isTeamTask =
+          (msg.toolName === 'TaskCreate' || msg.toolName === 'TaskUpdate') &&
+          isTeamScopedAtMessage
+        const explicitTeamAgent = msg.toolName === 'Agent' &&
+          isExplicitTeamAgent(msg.input, toolResult, isTeamScopedAtMessage)
+        const ambiguousTeamAgent = msg.toolName === 'Agent' &&
+          isTeamScopedAtMessage &&
+          !explicitTeamAgent &&
+          msg.isPending === true
+        const isTeamAgent = msg.toolName === 'Agent' && (
+          explicitTeamAgent
+        )
+        const isTeamMessage = msg.toolName === 'SendMessage' && (
+          isTeamScopedAtMessage ||
+          isTeamCoordinationSendMessage(
+            msg.input,
+            toolResult?.content,
+            options.teamMemberNames,
+            !hasTeamLifecycleEvidence,
+          )
+        )
+
+        // During an active Team lifecycle, a streamed Agent without
+        // teammate identity is not yet classifiable: it can settle as a direct
+        // SubAgent if `name` stays absent, or as a teammate once that identity
+        // arrives. Keep it out of both projections during that partial state.
+        if (ambiguousTeamAgent) continue
+
+        // These records remain untouched in `messages` and `toolResultMap`.
+        // The lead transcript projects them through the inline team card while
+        // the workbench owns the roster, DAG, and communication presentation.
+        // A failed coordination call stays visible because it changes what the
+        // turn means and is not represented by successful workbench state.
+        if (
+          (isTeamTask || isTeamAgent || isTeamMessage) &&
+          canSummarizeCoordinationResult(toolResult)
+        ) {
+          const teamCard = ensureTeamCardForCoordination(msg, toolResult)
+          if (teamCard) {
+            teamCard.coordinationToolCalls.push(msg)
+            continue
+          }
+        }
       }
+      if (summarizedTeamDelete) continue
       // The raw TeamCreate call and its JSON result say nothing a reader can
       // use; the team card in its place links to the workbench that does.
-      if (options.hideTeamCoordinationTools && msg.toolName === 'TeamCreate') {
+      if (
+        options.hideTeamCoordinationTools &&
+        msg.toolName === 'TeamCreate' &&
+        canSummarizeCoordinationResult(toolResult)
+      ) {
         flushGroup()
-        items.push({ kind: 'team_card', id: `team-card-${msg.id}` })
+        activeTeamCard = {
+          kind: 'team_card',
+          id: `team-card-${msg.id}`,
+          teamName: teamNameFromCreate(msg, toolResult),
+          startedAt: msg.timestamp,
+          coordinationToolCalls: [],
+        }
+        items.push(activeTeamCard)
         continue
       }
       if (msg.toolName === 'AskUserQuestion') {
@@ -844,6 +1065,77 @@ export function buildRenderModel(
 
   flushGroup()
   return { renderItems: items, toolResultMap, childToolCallsByParent }
+}
+
+function coordinationToolSummary(toolCall: ToolCall): string | null {
+  const input = parseRecordValue(toolCall.input)
+  if (!input) return null
+  const values = toolCall.toolName === 'TaskCreate'
+    ? [input.subject]
+    : toolCall.toolName === 'TaskUpdate'
+      ? [input.taskId, input.status, input.owner]
+      : toolCall.toolName === 'Agent'
+        ? [input.name, input.description]
+        : toolCall.toolName === 'SendMessage'
+          ? [input.to, input.message]
+          : []
+  const summary = values
+    .filter((value): value is string => typeof value === 'string' && Boolean(value.trim()))
+    .join(' · ')
+  return summary || null
+}
+
+function TeamCoordinationAudit({ toolCalls }: { toolCalls: ToolCall[] }) {
+  const t = useTranslation()
+  if (toolCalls.length === 0) return null
+
+  return (
+    <details
+      data-testid="agent-teams-coordination-audit"
+      className="mx-2 border-x border-b border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] px-3 py-1.5 text-[11px] text-[var(--color-text-secondary)]"
+    >
+      <summary className="cursor-pointer select-none font-medium text-[var(--color-text-secondary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]">
+        {t('agentTeams.inline.coordination', { count: toolCalls.length })}
+      </summary>
+      <ol className="mt-2 space-y-1 border-t border-[var(--color-border)] pt-2">
+        {toolCalls.map((toolCall) => {
+          const summary = coordinationToolSummary(toolCall)
+          return (
+            <li key={toolCall.toolUseId} className="flex min-w-0 items-start gap-2">
+              <code className="shrink-0 font-mono text-[10px] font-semibold text-[var(--color-text-tertiary)]">
+                {toolCall.toolName}
+              </code>
+              {summary ? <span className="min-w-0 break-words">{summary}</span> : null}
+            </li>
+          )
+        })}
+      </ol>
+    </details>
+  )
+}
+
+function teamTimestamp(value: string | number | undefined): number | undefined {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined
+  if (!value) return undefined
+  const numeric = Number(value)
+  if (Number.isFinite(numeric)) return numeric
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
+function snapshotForTeamCard(
+  snapshot: TeamWorkbenchSnapshot | undefined,
+  item: Extract<RenderItem, { kind: 'team_card' }>,
+): TeamWorkbenchSnapshot | undefined {
+  if (!snapshot || snapshot.team.name !== item.teamName) return undefined
+  const startedAt = teamTimestamp(snapshot.team.createdAt)
+  if (startedAt === undefined) return snapshot
+  if (item.endedAt !== undefined && item.endedAt < startedAt) return undefined
+
+  // The TeamCreate tool and server lifecycle event are emitted by separate
+  // transports, so allow a small clock/order gap while still refusing to bind
+  // an older card to a newer incarnation that reused the same team name.
+  return Math.abs(item.startedAt - startedAt) <= 5_000 ? snapshot : undefined
 }
 
 function isTurnResponseMessage(message: UIMessage) {
@@ -1606,10 +1898,16 @@ function estimateMessageHeight(message: UIMessage): number {
 const ACTIVITY_GROUP_COLLAPSED_HEIGHT = 34
 /** Avatar row plus two text lines, plus the turn's padding-bottom. */
 const TEAM_CARD_HEIGHT = 86
+/** Collapsed coordination disclosure below the card adds one compact row. */
+const TEAM_CARD_WITH_AUDIT_HEIGHT = 116
 
 export function estimateRenderItemHeight(item: RenderItem): number {
   if (item.kind === 'message') return estimateMessageHeight(item.message)
-  if (item.kind === 'team_card') return TEAM_CARD_HEIGHT
+  if (item.kind === 'team_card') {
+    return item.coordinationToolCalls.length > 0
+      ? TEAM_CARD_WITH_AUDIT_HEIGHT
+      : TEAM_CARD_HEIGHT
+  }
   // Agent dispatch groups keep their taller per-agent cards; everything else
   // collapses to the single-line activity header.
   const isAgentGroup = item.toolCalls.length > 0 && item.toolCalls.every((toolCall) => toolCall.toolName === 'Agent')
@@ -1649,7 +1947,9 @@ function getMessageMetricSignature(message: UIMessage): string {
 
 function getRenderItemMetricSignature(item: RenderItem): string {
   if (item.kind === 'message') return getMessageMetricSignature(item.message)
-  if (item.kind === 'team_card') return `team_card:${item.id}`
+  if (item.kind === 'team_card') {
+    return `team_card:${item.id}:${item.coordinationToolCalls.length}`
+  }
   return item.steps
     .map((step) => getMessageMetricSignature(step.kind === 'tool' ? step.toolCall : step.message))
     .join('|')
@@ -1892,25 +2192,39 @@ export function MessageList({
     resolvedSessionId ? s.getTeamByMemberSessionId(resolvedSessionId) : null
   ))
   const isMemberSession = Boolean(memberSessionTeam)
-  const isSubagentSession = useTabStore((s) => s.tabs.some((tab) => (
-    tab.sessionId === resolvedSessionId && tab.type === 'subagent'
+  const isAgentRunTab = useTabStore((s) => s.tabs.some((tab) => (
+    tab.sessionId === resolvedSessionId &&
+    (tab.type === 'subagent' || tab.type === 'team-member')
   )))
-  const isDirectAgentSession = isMemberSession || isSubagentSession
+  const isDirectAgentSession = isMemberSession || isAgentRunTab
   const teamWorkbench = useTeamStore((s) =>
     resolvedSessionId ? s.workbenchesBySession[resolvedSessionId] : undefined,
   )
-  const isTeamLeadSession = Boolean(teamWorkbench?.snapshots.length)
-  const teamSnapshot = teamWorkbench?.snapshots.at(-1)
+  const activeTeamName = useTeamStore((s) => (
+    resolvedSessionId ? s.teamNameBySession[resolvedSessionId] : undefined
+  ))
+  const activeTeamStartedAt = useTeamStore((s) => (
+    resolvedSessionId ? s.activeTeamStartedAtBySession[resolvedSessionId] : undefined
+  ))
+  const teamSnapshot = useMemo(() => {
+    const snapshots = teamWorkbench?.snapshots
+    return snapshots?.length
+      ? snapshotWithHistoricalMembers(snapshots, snapshots.length - 1)
+      : undefined
+  }, [teamWorkbench?.snapshots])
+  const teamTaskWindows = useMemo(
+    () => teamTaskWindowsForSnapshot(teamSnapshot, activeTeamStartedAt),
+    [activeTeamStartedAt, teamSnapshot],
+  )
   const openTeamWorkbench = useCallback((leadSessionId: string, teamName: string) => {
     useTabStore.getState().openTeamWorkbenchTab(leadSessionId, teamName)
   }, [])
   const teamMemberNames = useMemo(() => {
-    const snapshots = teamWorkbench?.snapshots
-    if (!snapshots?.length) return undefined
-    return new Set(snapshots[snapshots.length - 1]!.team.members.flatMap((member) =>
+    if (!teamSnapshot) return undefined
+    return new Set(teamSnapshot.team.members.flatMap((member) =>
       member.name ? [member.name] : [],
     ))
-  }, [teamWorkbench?.snapshots])
+  }, [teamSnapshot])
   const addToast = useUIStore((s) => s.addToast)
   const messages = sessionState?.messages ?? EMPTY_MESSAGES
   const chatState = sessionState?.chatState ?? 'idle'
@@ -2424,10 +2738,22 @@ export function MessageList({
 
   const { toolResultMap, childToolCallsByParent, renderItems } = useMemo(
     () => buildRenderModel(messages, activeAskUserQuestionToolUseId, {
-      hideTeamCoordinationTools: isTeamLeadSession,
+      hideTeamCoordinationTools: !isDirectAgentSession,
       teamMemberNames,
+      teamTaskWindows,
+      teamName: activeTeamName ?? teamSnapshot?.team.name,
+      teamStartedAt: activeTeamStartedAt,
     }),
-    [activeAskUserQuestionToolUseId, isTeamLeadSession, messages, teamMemberNames],
+    [
+      activeAskUserQuestionToolUseId,
+      activeTeamName,
+      activeTeamStartedAt,
+      isDirectAgentSession,
+      messages,
+      teamMemberNames,
+      teamSnapshot?.team.name,
+      teamTaskWindows,
+    ],
   )
   // Defer the per-message branchable / completed-turn computations so the first
   // commit on tab switch can render the virtualization window without doing two
@@ -3087,12 +3413,27 @@ export function MessageList({
             isLive={chatState !== 'idle' && index === renderItems.length - 1 && !hasTrailingStreamingItem}
           />
         ) : item.kind === 'team_card' ? (
-          teamSnapshot && resolvedSessionId ? (
+          resolvedSessionId ? (() => {
+            const cardSnapshot = snapshotForTeamCard(teamSnapshot, item)
+            const fallbackPhase = item.endedAt !== undefined || teamTaskWindows.some((window) => (
+              item.startedAt >= window.startedAt &&
+              window.endedAt !== undefined &&
+              item.startedAt <= window.endedAt
+            )) ? 'completed' : 'forming'
+            return (
             <AgentTeamsInlineCard
-              snapshot={teamSnapshot}
-              onOpen={() => openTeamWorkbench(resolvedSessionId, teamSnapshot.team.name)}
-            />
-          ) : null
+              snapshot={cardSnapshot}
+              teamName={item.teamName}
+              fallbackPhase={fallbackPhase}
+              phaseOverride={item.endedAt !== undefined ? 'completed' : undefined}
+              onOpen={cardSnapshot
+                ? () => openTeamWorkbench(resolvedSessionId, cardSnapshot.team.name)
+                : undefined}
+            >
+              <TeamCoordinationAudit toolCalls={item.coordinationToolCalls} />
+            </AgentTeamsInlineCard>
+            )
+          })() : null
         ) : (
           <MessageBlock
             sessionId={resolvedSessionId}

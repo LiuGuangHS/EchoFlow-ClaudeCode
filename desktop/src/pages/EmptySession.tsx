@@ -349,7 +349,19 @@ export function EmptySession() {
           activeCustomProvider.apiFormat,
         )
         : defaultActiveProviderSelection
-      const runtimeSelection = explicitDraftSelection ?? defaultRuntimeSelection ?? undefined
+      const claudeOAuthRuntimeSelection = !explicitDraftSelection &&
+        authStatus.source === 'claude-oauth' &&
+        activeProviderId === null &&
+        currentModel?.id
+        ? {
+            providerId: null,
+            modelId: currentModel.id,
+            effortLevel,
+          }
+        : undefined
+      const runtimeSelection = explicitDraftSelection
+        ?? defaultRuntimeSelection
+        ?? claudeOAuthRuntimeSelection
       const sessionId = await createSession(
         workDir || undefined,
         {

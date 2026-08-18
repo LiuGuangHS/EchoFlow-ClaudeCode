@@ -1,4 +1,5 @@
 import { ChevronRight, UsersRound } from 'lucide-react'
+import type { ReactNode } from 'react'
 import { Badge, StatusDot, type Tone } from '@/components/ui/Badge'
 import { useTranslation, type TranslationKey } from '../../i18n'
 import type { TeamMember, TeamWorkbenchSnapshot } from '../../types/team'
@@ -126,15 +127,24 @@ export function AgentTeamsStrip({
  */
 export function AgentTeamsInlineCard({
   snapshot,
+  teamName,
+  fallbackPhase = 'forming',
+  phaseOverride,
   onOpen,
+  children,
 }: {
-  snapshot: TeamWorkbenchSnapshot
-  onOpen: () => void
+  snapshot?: TeamWorkbenchSnapshot
+  teamName: string
+  fallbackPhase?: WorkbenchPhase
+  phaseOverride?: WorkbenchPhase
+  onOpen?: () => void
+  children?: ReactNode
 }) {
   const t = useTranslation()
-  const phase = getWorkbenchPhase(snapshot)
-  const progress = getWorkbenchProgress(snapshot)
-  const members = snapshot.team.members
+  const phase = phaseOverride ?? (snapshot ? getWorkbenchPhase(snapshot) : fallbackPhase)
+  const progress = snapshot ? getWorkbenchProgress(snapshot) : { completed: 0, total: 0 }
+  const members = snapshot?.team.members ?? []
+  const canOpen = Boolean(snapshot && onOpen)
 
   return (
     <div className="mb-5 px-1">
@@ -142,35 +152,47 @@ export function AgentTeamsInlineCard({
         type="button"
         data-testid="agent-teams-inline-card"
         onClick={onOpen}
+        disabled={!canOpen}
         className="flex w-full items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] px-3.5 py-2.5 text-left shadow-[var(--shadow-card)] transition-colors hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]"
       >
-        <AvatarStack members={members} leadAgentId={snapshot.team.leadAgentId} size={30} />
+        {members.length > 0 ? (
+          <AvatarStack members={members} leadAgentId={snapshot?.team.leadAgentId} size={30} />
+        ) : (
+          <span className="inline-flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full bg-[var(--color-surface-container)] text-[var(--color-brand)] ring-1 ring-[var(--color-border)]">
+            <UsersRound size={16} strokeWidth={2.2} aria-hidden="true" />
+          </span>
+        )}
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-center gap-1.5">
             <span className="min-w-0 truncate font-mono text-[12px] font-extrabold text-[var(--color-text-primary)]">
-              {snapshot.team.name}
+              {teamName}
             </span>
             <Badge tone={phaseTone(phase)} size="xs" bordered>
               {t(`agentTeams.phase.${phase}` as TranslationKey)}
             </Badge>
           </span>
-          <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-[var(--color-text-tertiary)]">
-            <span>{t('agentTeams.inline.created', { count: members.length })}</span>
-            {progress.total > 0 ? (
-              <>
-                <span aria-hidden="true">·</span>
-                <span className="tabular-nums">
-                  {t('agentTeams.inline.tasks', { completed: progress.completed, total: progress.total })}
-                </span>
-              </>
-            ) : null}
+          {snapshot ? (
+            <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-[var(--color-text-tertiary)]">
+              <span>{t('agentTeams.inline.created', { count: members.length })}</span>
+              {progress.total > 0 ? (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <span className="tabular-nums">
+                    {t('agentTeams.inline.tasks', { completed: progress.completed, total: progress.total })}
+                  </span>
+                </>
+              ) : null}
+            </span>
+          ) : null}
+        </span>
+        {canOpen ? (
+          <span className="flex shrink-0 items-center gap-0.5 text-[11.5px] font-medium text-[var(--color-brand)]">
+            {t('agentTeams.inline.open')}
+            <ChevronRight size={13} strokeWidth={2.4} aria-hidden="true" />
           </span>
-        </span>
-        <span className="flex shrink-0 items-center gap-0.5 text-[11.5px] font-medium text-[var(--color-brand)]">
-          {t('agentTeams.inline.open')}
-          <ChevronRight size={13} strokeWidth={2.4} aria-hidden="true" />
-        </span>
+        ) : null}
       </button>
+      {children}
     </div>
   )
 }

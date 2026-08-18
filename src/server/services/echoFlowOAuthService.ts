@@ -1,9 +1,9 @@
 /**
- * EchoFlowOAuthService — desktop-managed Claude OAuth token
+ * EchoFlowOAuthService — 桌面端自管 Claude OAuth token
  *
  * 为什么存在: macOS Keychain ACL 在 .app 被打上 quarantine 属性后
  * 对无 UI sidecar 静默拒绝,导致 CLI 读不到 OAuth token → 403。
- * This service stores tokens in EchoFlow-owned AppData and injects them into the CLI env.
+ * 这个 service 把 token 存到 haha 自己的目录,并通过 env 注入给 CLI。
  *
  * 复用 src/services/oauth/{crypto,client}.ts 里的 PKCE + token exchange 逻辑,
  * 不复制粘贴 —— 保证跟 CLI 走同一套协议实现。
@@ -30,12 +30,12 @@ import type {
   SubscriptionType,
 } from '../../services/oauth/types.js'
 import { getOauthConfig } from '../../constants/oauth.js'
+import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 import {
   getNetworkProxyFetchOptions,
   getNetworkProxyUrl,
   loadNetworkSettings,
 } from './networkSettings.js'
-import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 
 export type StoredOAuthTokens = {
   accessToken: string
@@ -67,6 +67,7 @@ const OAUTH_CALLBACK_PATH = '/callback'
 
 export class EchoFlowOAuthService {
   private sessions = new Map<string, OAuthSession>()
+  private tokenRefreshes = new Map<string, Promise<StoredOAuthTokens | null>>()
   private refreshFn: RefreshFn = refreshOAuthToken
   private fetchProfileFn: FetchProfileFn = fetchProfileInfo
 
@@ -239,25 +240,75 @@ export class EchoFlowOAuthService {
 
     if (!tokens.refreshToken) return null
 
-    try {
-      const networkSettings = await loadNetworkSettings()
-      const refreshed = await this.refreshFn(tokens.refreshToken, {
-        scopes: tokens.scopes,
-        proxyUrl: getNetworkProxyUrl(networkSettings),
-      })
-      const updated: StoredOAuthTokens = {
-        accessToken: refreshed.accessToken,
-        refreshToken: refreshed.refreshToken ?? tokens.refreshToken,
-        expiresAt: refreshed.expiresAt,
-        scopes: refreshed.scopes,
-        subscriptionType: refreshed.subscriptionType ?? tokens.subscriptionType,
+    return this.refreshTokensOnce(tokens)
+  }
+
+  async recoverFromUnauthorized(
+    failedAccessToken: string,
+  ): Promise<StoredOAuthTokens | null> {
+    const rejectedToken = failedAccessToken.trim()
+    if (!rejectedToken) return null
+    return this.refreshRejectedToken(rejectedToken)
+  }
+
+  private async refreshRejectedToken(
+    rejectedToken: string,
+  ): Promise<StoredOAuthTokens | null> {
+    const tokens = await this.loadTokens()
+    if (!tokens) return null
+
+    // Another session may already have rotated the shared token while this
+    // 401 event was in flight. Reuse that value instead of rotating again.
+    if (tokens.accessToken !== rejectedToken) return tokens
+    if (!tokens.refreshToken) return null
+
+    return this.refreshTokensOnce(tokens)
+  }
+
+  private async refreshTokensOnce(
+    tokens: StoredOAuthTokens,
+  ): Promise<StoredOAuthTokens | null> {
+    const pending = this.tokenRefreshes.get(tokens.accessToken)
+    if (pending) return pending
+
+    const refresh = (async () => {
+      try {
+        return await this.refreshStoredTokens(tokens)
+      } catch (err) {
+        logTokenRefreshFailure('[EchoFlowOAuthService]', err)
+        return null
       }
-      await this.saveTokens(updated)
-      return updated
-    } catch (err) {
-      logTokenRefreshFailure('[EchoFlowOAuthService]', err)
-      return null
+    })()
+    this.tokenRefreshes.set(tokens.accessToken, refresh)
+    try {
+      return await refresh
+    } finally {
+      if (this.tokenRefreshes.get(tokens.accessToken) === refresh) {
+        this.tokenRefreshes.delete(tokens.accessToken)
+      }
     }
+  }
+
+  private async refreshStoredTokens(
+    tokens: StoredOAuthTokens,
+  ): Promise<StoredOAuthTokens> {
+    if (!tokens.refreshToken) {
+      throw new Error('Claude OAuth refresh token is unavailable')
+    }
+    const networkSettings = await loadNetworkSettings()
+    const refreshed = await this.refreshFn(tokens.refreshToken, {
+      scopes: tokens.scopes,
+      proxyUrl: getNetworkProxyUrl(networkSettings),
+    })
+    const updated: StoredOAuthTokens = {
+      accessToken: refreshed.accessToken,
+      refreshToken: refreshed.refreshToken ?? tokens.refreshToken,
+      expiresAt: refreshed.expiresAt,
+      scopes: refreshed.scopes,
+      subscriptionType: refreshed.subscriptionType ?? tokens.subscriptionType,
+    }
+    await this.saveTokens(updated)
+    return updated
   }
 
   async ensureFreshAccessToken(): Promise<string | null> {

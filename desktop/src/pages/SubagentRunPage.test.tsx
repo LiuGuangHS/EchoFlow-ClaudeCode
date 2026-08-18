@@ -17,6 +17,11 @@ const {
   sendMemberMessageMock: vi.fn(),
   workflowSessionRunsMock: vi.fn(),
 }))
+const viewportMocks = vi.hoisted(() => ({ isMobile: false }))
+
+vi.mock('../hooks/useMobileViewport', () => ({
+  useMobileViewport: () => viewportMocks.isMobile,
+}))
 
 vi.mock('../api/subagents', async (importOriginal) => ({
   // Keep the real ref helpers: they decide whether the page fetches by tool
@@ -52,7 +57,7 @@ vi.mock('../api/workflows', async (importOriginal) => {
 import { subagentsApi } from '../api/subagents'
 import { createDefaultSessionState, useChatStore } from '../stores/chatStore'
 import { useActivityPanelStore } from '../stores/activityPanelStore'
-import { useTabStore } from '../stores/tabStore'
+import { SUBAGENT_TAB_PREFIX, useTabStore } from '../stores/tabStore'
 import { memberSessionId, useTeamStore } from '../stores/teamStore'
 import { useWorkflowStore } from '../stores/workflowStore'
 import { SubagentRunPage, TeamMemberRunPage } from './SubagentRunPage'
@@ -121,8 +126,20 @@ function deferred<T>() {
   return { promise, reject, resolve }
 }
 
+function expectSharedSessionSurface(agentRunKind: 'subagent' | 'team-member') {
+  const surface = screen.getByTestId('session-chat-surface')
+  expect(surface).toHaveAttribute('data-session-chat-kind', 'agent')
+  expect(surface).toHaveAttribute(
+    'data-agent-run-kind',
+    agentRunKind,
+  )
+  expect(screen.getByTestId('agent-run-conversation-column')).toHaveClass('min-w-[360px]')
+  expect(screen.getByTestId('session-header').firstElementChild).toHaveClass('max-w-[900px]')
+}
+
 describe('SubagentRunPage', () => {
   beforeEach(() => {
+    viewportMocks.isMobile = false
     useSettingsStore.setState({ locale: 'en' })
     useChatStore.setState({ sessions: {} })
     useTabStore.setState({ tabs: [], activeTabId: null })
@@ -183,6 +200,162 @@ describe('SubagentRunPage', () => {
     expect(await screen.findByText('survey response.js')).toBeInTheDocument()
     expect(subagentsApi.getRunByAgent).toHaveBeenCalledWith('session-1', 'wfagent1')
     expect(subagentsApi.getRunByTool).not.toHaveBeenCalled()
+    expectSharedSessionSurface('subagent')
+  })
+
+  it.each([
+    ['foreground SubAgent', 'tool-direct', 'direct-agent', false],
+    ['background Agent', 'tool-background', 'background-agent', false],
+    ['workflow Agent', 'agent:workflow-agent', 'workflow-agent', true],
+  ] as const)('renders %s text, thinking and tools before the next transcript poll', async (
+    _kind,
+    toolUseId,
+    agentId,
+    byAgentId,
+  ) => {
+    const response = subagentRun({
+      toolUseId,
+      agentId,
+      status: 'running',
+      messages: [],
+      prompt: `Prompt for ${agentId}`,
+    })
+    if (byAgentId) {
+      vi.mocked(subagentsApi.getRunByAgent).mockResolvedValue(response)
+    } else {
+      vi.mocked(subagentsApi.getRunByTool).mockResolvedValue(response)
+    }
+
+    render(
+      <SubagentRunPage
+        sourceSessionId="session-1"
+        toolUseId={toolUseId}
+        title={agentId}
+      />,
+    )
+    const conversation = await screen.findByTestId('subagent-conversation')
+    const send = (
+      event: Extract<import('../types/chat').ServerMessage, { type: 'agent_run_event' }>['event'],
+    ) => useChatStore.getState().handleServerMessage('session-1', {
+      type: 'agent_run_event',
+      runAgentId: agentId,
+      streamId: `stream-${agentId}`,
+      targetAgentId: agentId,
+      event,
+    })
+
+    act(() => {
+      send({ type: 'thinking', text: `Live thinking from ${agentId}` })
+      send({ type: 'content_start', blockType: 'text' })
+      send({ type: 'content_delta', text: `Live answer from ${agentId}` })
+      send({
+        type: 'content_start',
+        blockType: 'tool_use',
+        toolName: 'Read',
+        toolUseId: 'live-read',
+      })
+      send({ type: 'content_delta', toolInput: '{"file_path":"src/live.ts"}' })
+    })
+    const runSessionId = `${SUBAGENT_TAB_PREFIX}session-1__${toolUseId}`
+    expect(useChatStore.getState().sessions[runSessionId]?.activeToolName).toBe('Read')
+    await waitFor(() => {
+      expect(useChatStore.getState().sessions[runSessionId]?.streamingToolInput)
+        .toContain('src/live.ts')
+    })
+
+    act(() => {
+      send({
+        type: 'tool_use_complete',
+        toolName: 'Read',
+        toolUseId: 'live-read',
+        input: { file_path: 'src/live.ts' },
+      })
+      send({
+        type: 'tool_result',
+        toolUseId: 'live-read',
+        content: 'live file contents',
+        isError: false,
+      })
+    })
+
+    expect(conversation).toHaveTextContent(`Live thinking from ${agentId}`)
+    expect(conversation).toHaveTextContent(`Live answer from ${agentId}`)
+    expect(conversation).toHaveTextContent('live.ts')
+    expect(conversation).toHaveTextContent('live file contents')
+    expect(useChatStore.getState().sessions['session-1']?.messages ?? []).toEqual([])
+    expect(byAgentId ? subagentsApi.getRunByAgent : subagentsApi.getRunByTool)
+      .toHaveBeenCalledTimes(1)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh SubAgent run' }))
+    await waitFor(() => {
+      expect(byAgentId ? subagentsApi.getRunByAgent : subagentsApi.getRunByTool)
+        .toHaveBeenCalledTimes(2)
+    })
+    expect(conversation).toHaveTextContent(`Live answer from ${agentId}`)
+    expect(conversation).toHaveTextContent('live file contents')
+  })
+
+  it('keeps a live SubAgent turn across a stale poll, then reconciles the next durable poll', async () => {
+    const stalePoll = deferred<SubagentRunResponse>()
+    vi.mocked(subagentsApi.getRunByTool)
+      .mockResolvedValueOnce(subagentRun({
+        status: 'running',
+        messages: [],
+      }))
+      .mockReturnValueOnce(stalePoll.promise)
+      .mockResolvedValueOnce(subagentRun({
+        status: 'completed',
+        messages: [{
+          id: 'durable-live-turn',
+          type: 'assistant',
+          content: [{ type: 'text', text: 'Durable answer after the live turn' }],
+          timestamp: TRANSCRIPT_TIMESTAMP,
+        }],
+      }))
+
+    render(
+      <SubagentRunPage
+        sourceSessionId="session-1"
+        toolUseId="tool-1"
+        title="SubAgent"
+      />,
+    )
+    const conversation = await screen.findByTestId('subagent-conversation')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh SubAgent run' }))
+    await waitFor(() => expect(subagentsApi.getRunByTool).toHaveBeenCalledTimes(2))
+
+    act(() => {
+      const send = (
+        event: Extract<import('../types/chat').ServerMessage, { type: 'agent_run_event' }>['event'],
+      ) => useChatStore.getState().handleServerMessage('session-1', {
+        type: 'agent_run_event',
+        runAgentId: 'abc123',
+        streamId: 'stale-boundary-stream',
+        targetAgentId: 'abc123',
+        event,
+      })
+      send({ type: 'content_start', blockType: 'text' })
+      send({ type: 'content_delta', text: 'Live answer that the stale poll must not erase' })
+      send({ type: 'status', state: 'idle' })
+    })
+    expect(conversation).toHaveTextContent('Live answer that the stale poll must not erase')
+
+    await act(async () => {
+      stalePoll.resolve(subagentRun({ status: 'completed', messages: [] }))
+      await stalePoll.promise
+    })
+    expect(conversation).toHaveTextContent('Live answer that the stale poll must not erase')
+    const runSessionId = `${SUBAGENT_TAB_PREFIX}session-1__tool-1`
+    expect(useChatStore.getState().sessions[runSessionId]?.agentStreamRevision)
+      .toBe(2)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh SubAgent run' }))
+    await waitFor(() => expect(subagentsApi.getRunByTool).toHaveBeenCalledTimes(3))
+    expect(await screen.findByText('Durable answer after the live turn')).toBeInTheDocument()
+    expect(conversation).not.toHaveTextContent('Live answer that the stale poll must not erase')
+    expect(useChatStore.getState().sessions[runSessionId]?.agentStreamRevision)
+      .toBe(0)
   })
 
   it('uses live workflow progress instead of sealing a running agent as completed', async () => {
@@ -268,7 +441,26 @@ describe('SubagentRunPage', () => {
     expect(transcript).toHaveTextContent('Read files')
     expect(transcript).toHaveTextContent('Finding')
     expect(transcript).not.toHaveTextContent('assistant_text')
-    expect(screen.getByTestId('agent-run-desktop')).toHaveAttribute('data-agent-run-kind', 'subagent')
+    expectSharedSessionSurface('subagent')
+  })
+
+  it('uses compact main-session chrome and mobile transcript behavior on narrow screens', async () => {
+    viewportMocks.isMobile = true
+    vi.mocked(subagentsApi.getRunByTool).mockResolvedValue(subagentRun({
+      messages: Array.from({ length: 4 }, (_, index) => ({
+        id: `mobile-turn-${index}`,
+        type: 'user' as const,
+        content: `Mobile turn ${index + 1}`,
+        timestamp: TRANSCRIPT_TIMESTAMP,
+      })),
+    }))
+
+    render(<SubagentRunPage sourceSessionId="session-1" toolUseId="tool-1" title="Mobile child" />)
+
+    await screen.findByTestId('subagent-conversation')
+    expect(screen.getByTestId('session-header')).toHaveClass('px-4', 'py-2.5')
+    expect(screen.getByTestId('agent-run-conversation-column')).toHaveClass('flex-1')
+    expect(screen.queryByTestId('conversation-navigator')).not.toBeInTheDocument()
   })
 
   it('auto-opens the owning SubAgent Task and Bash activity without another click', async () => {
@@ -689,7 +881,7 @@ describe('SubagentRunPage', () => {
       }],
     }))
 
-    render(
+    const parent = render(
       <SubagentRunPage
         sourceSessionId="session-1"
         toolUseId={currentRef}
@@ -708,6 +900,22 @@ describe('SubagentRunPage', () => {
       subagentToolUseId: expectedRef,
       returnTabId: `__subagent__session-1__${currentRef}`,
     })
+
+    parent.unmount()
+    vi.mocked(subagentsApi.getRunByTool).mockResolvedValue(subagentRun({
+      toolUseId: expectedRef,
+      agentId: 'nested-target',
+    }))
+    render(
+      <SubagentRunPage
+        sourceSessionId="session-1"
+        toolUseId={expectedRef}
+        title="Nested review"
+      />,
+    )
+
+    await screen.findByTestId('subagent-conversation')
+    expectSharedSessionSurface('subagent')
   })
 
   it('fetches a nested workflow Agent by canonical tool path, not by agent id', async () => {
@@ -757,6 +965,7 @@ describe('SubagentRunPage', () => {
       )
     })
     expect(subagentsApi.getRunByAgent).toHaveBeenCalledTimes(1)
+    expectSharedSessionSurface('subagent')
   })
 
   it('projects a parent-linked TodoWrite into its owning SubAgent panel', async () => {
@@ -869,6 +1078,58 @@ describe('SubagentRunPage', () => {
     expect(within(panel).queryByText('Do not show the whole shared list')).not.toBeInTheDocument()
   })
 
+  it('routes a scoped nested teammate Agent into its shared run UI', async () => {
+    vi.mocked(subagentsApi.getRunByTool).mockResolvedValue(subagentRun({
+      agentId: 'nested-team-agent',
+      status: 'running',
+      messages: [],
+    }))
+    const createdAt = Date.parse('2026-08-09T00:00:00.000Z')
+    useChatStore.setState({ sessions: { 'session-1': createDefaultSessionState() } })
+    useTeamStore.setState({
+      workbenchesBySession: {
+        'session-1': {
+          teamName: 'review-team',
+          loading: false,
+          error: null,
+          snapshots: [{
+            version: 'review-team-v1',
+            generatedAt: TRANSCRIPT_TIMESTAMP,
+            team: {
+              name: 'review-team',
+              leadSessionId: 'session-1',
+              createdAt: String(createdAt),
+              members: [{
+                agentId: 'reviewer@review-team',
+                name: 'reviewer',
+                role: 'security-reviewer',
+                status: 'running',
+              }],
+            },
+            tasks: [],
+            messages: [],
+          }],
+        },
+      },
+    })
+
+    render(<SubagentRunPage sourceSessionId="session-1" toolUseId="nested-Agent:0" title="Nested review" />)
+    const conversation = await screen.findByTestId('subagent-conversation')
+    act(() => {
+      useChatStore.getState().handleServerMessage('session-1', {
+        type: 'agent_run_event',
+        runAgentId: 'nested-team-agent',
+        streamId: 'nested-team-stream',
+        targetAgentId: 'nested-team-agent',
+        targetAgentScopeId: JSON.stringify(['review-team', 'session-1', createdAt]),
+        event: { type: 'content_delta', text: 'Scoped nested answer' },
+      })
+    })
+
+    await waitFor(() => expect(conversation).toHaveTextContent('Scoped nested answer'))
+    expect(useChatStore.getState().sessions['session-1']?.streamingText).toBe('')
+  })
+
   it('isolates a teammate shared task list before its workbench snapshot arrives', async () => {
     vi.mocked(subagentsApi.getRunByTool).mockResolvedValue(subagentRun({
       agentId: 'reviewer@review-team',
@@ -916,7 +1177,7 @@ describe('SubagentRunPage', () => {
     expect(within(panel).queryByText('Never leak the early shared task')).not.toBeInTheDocument()
   })
 
-  it('renders an Agent Teams member in the shared run desktop and returns to the workbench', async () => {
+  it('renders and streams an Agent Teams member in the shared run desktop', async () => {
     const member = {
       agentId: 'reviewer@review-team',
       name: 'reviewer',
@@ -938,6 +1199,7 @@ describe('SubagentRunPage', () => {
         incarnationId: 'review-team:2026-08-09:lead-session',
         leadAgentId: 'lead@review-team',
         leadSessionId: 'lead-session',
+        createdAt: String(Date.parse('2026-08-09T00:00:00.000Z')),
         members: [member, peer],
       },
       tasks: [],
@@ -1013,6 +1275,66 @@ describe('SubagentRunPage', () => {
 
     expect(await screen.findByTestId('team-member-conversation')).toHaveTextContent('Auth review is in progress.')
     const transcript = screen.getByTestId('team-member-conversation')
+    act(() => {
+      const targetAgentScopeId = JSON.stringify([
+        snapshot.team.name,
+        snapshot.team.leadSessionId,
+        Number(snapshot.team.createdAt),
+      ])
+      const send = (
+        event: Extract<import('../types/chat').ServerMessage, { type: 'agent_run_event' }>['event'],
+      ) => useChatStore.getState().handleServerMessage('lead-session', {
+        type: 'agent_run_event',
+        runAgentId: 'reviewer-fragment-uuid',
+        streamId: 'teammate-live-stream',
+        targetAgentId: member.agentId,
+        targetAgentScopeId,
+        event,
+      })
+      send({ type: 'thinking', text: 'Live teammate thinking' })
+      send({ type: 'content_start', blockType: 'text' })
+      send({ type: 'content_delta', text: 'Live teammate answer' })
+      send({
+        type: 'content_start',
+        blockType: 'tool_use',
+        toolName: 'Read',
+        toolUseId: 'member-live-read',
+      })
+      send({
+        type: 'tool_use_complete',
+        toolName: 'Read',
+        toolUseId: 'member-live-read',
+        input: { file_path: 'src/member-live.ts' },
+      })
+      send({
+        type: 'tool_result',
+        toolUseId: 'member-live-read',
+        content: 'member live file contents',
+        isError: false,
+      })
+    })
+    expect(transcript).toHaveTextContent('Live teammate thinking')
+    expect(transcript).toHaveTextContent('Live teammate answer')
+    expect(transcript).toHaveTextContent('member-live.ts')
+    expect(transcript).toHaveTextContent('member live file contents')
+    expect(useChatStore.getState().sessions['lead-session']?.messages ?? []).toEqual([])
+
+    act(() => {
+      useChatStore.getState().handleServerMessage('lead-session', {
+        type: 'agent_run_event',
+        runAgentId: 'reviewer-fragment-uuid',
+        streamId: 'teammate-live-stream',
+        targetAgentId: member.agentId,
+        targetAgentScopeId: JSON.stringify([
+          snapshot.team.name,
+          snapshot.team.leadSessionId,
+          Number(snapshot.team.createdAt),
+        ]),
+        event: { type: 'status', state: 'idle' },
+      })
+    })
+    expect(transcript).toHaveTextContent('Live teammate answer')
+    expect(transcript).toHaveTextContent('member live file contents')
     expect(transcript).toHaveTextContent('Prioritize the auth flow.')
     expect(transcript).toHaveTextContent('Check src/auth.ts before merge.')
     // Drive the real transcript adapter: both lead-to-member and member-to-member
@@ -1030,7 +1352,7 @@ describe('SubagentRunPage', () => {
     expect(peerShell).toBeTruthy()
     expect(leadShell?.querySelector('[data-testid="teammate-message-avatar"]'))
       .toHaveAttribute('data-avatar-key', 'team-lead')
-    expect(screen.getByTestId('agent-run-desktop')).toHaveAttribute('data-agent-run-kind', 'team-member')
+    expectSharedSessionSurface('team-member')
     expect(screen.getByText('Review auth changes')).toBeInTheDocument()
     expect(screen.queryByTestId('team-member-readonly-note')).not.toBeInTheDocument()
     const activityPanel = await screen.findByRole('dialog', { name: 'Activity' })
@@ -1282,17 +1604,21 @@ describe('SubagentRunPage', () => {
       role: 'ui-designer',
       status: 'running' as const,
     }
+    // The member's own turn marker says whether it is producing output. Its
+    // task status cannot: a teammate marks a task started and can then end its
+    // turn, and an umbrella task stays open across every turn beneath it.
     const workbench = (
       version: string,
       taskStatus: 'in_progress' | 'completed',
       owner: string | null = 'ui-designer',
+      activity: 'active' | 'idle' = taskStatus === 'in_progress' ? 'active' : 'idle',
     ) => ({
       version,
       generatedAt: `2026-08-09T00:00:0${version.slice(-1)}.000Z`,
       team: {
         name: 'review-team',
         leadSessionId: 'lead-session',
-        members: [member],
+        members: [{ ...member, activity }],
       },
       tasks: [{
         id: 'design-system',
@@ -1321,7 +1647,7 @@ describe('SubagentRunPage', () => {
     getWorkbenchMock
       .mockResolvedValueOnce(workbench('v1', 'in_progress'))
       .mockResolvedValueOnce(workbench('v2', 'completed'))
-      .mockResolvedValueOnce(workbench('v3', 'in_progress', null))
+      .mockResolvedValueOnce(workbench('v3', 'in_progress', null, 'idle'))
     getMemberTranscriptMock
       .mockResolvedValueOnce({
         messages: [initialTranscriptMessage],
@@ -1802,6 +2128,7 @@ describe('SubagentRunPage', () => {
     render(<SubagentRunPage sourceSessionId="session-1" toolUseId="tool-1" title="SubAgent" />)
 
     expect(await screen.findByText('Running')).toBeInTheDocument()
+    expectSharedSessionSurface('subagent')
     expect(subagentsApi.getRunByTool).toHaveBeenCalledWith('session-1', 'tool-1', undefined)
 
     act(() => {
@@ -1825,6 +2152,7 @@ describe('SubagentRunPage', () => {
     await waitFor(() => {
       expect(subagentsApi.getRunByTool).toHaveBeenCalledWith('session-1', 'tool-1', 'agent-1')
     })
+    expectSharedSessionSurface('subagent')
   })
 
   it('keeps the tab open on API errors', async () => {

@@ -59,7 +59,7 @@ order: 3
 
 在列表里点内置 Agent 那一行的「调整模型」，或者进详情页点右上角的同名按钮。能改的只有两项：
 
-- **模型** — 「内置默认」「继承主会话」「Haiku / Sonnet / Opus / Fable」，也可以填自定义模型 ID。
+- **模型** — 「内置默认」「继承主会话」、Haiku / Sonnet / Opus / Fable 别名，以及当前 Provider 已配置的模型。
 - **思考强度** — 「内置默认」或低 / 中 / 高 / 极高 / 最大。
 
 系统提示词、工具范围和颜色不能改，仍由 Claude Code 固定。
@@ -69,6 +69,8 @@ order: 3
 :::
 
 覆盖写进 EchoFlow 用户设置的 `builtInAgentOverrides`。默认位置是 `<平台数据目录>/echoflow-code/settings.json`；设置 `CLAUDE_CONFIG_DIR` 时则使用 `$CLAUDE_CONFIG_DIR/echoflow-code/settings.json`。它对所有项目生效。恢复默认时这条记录会被整个删掉，不会在配置文件里留下空壳。
+
+Agent 配置只保存模型 ID，不绑定 Provider。选择器会列出当前 Provider 的可用模型；如果以后切换 Provider，别名会按新 Provider 的映射解析，完整模型 ID 则需要新 Provider 也支持。
 
 如果你自己建了一个同名的用户 Agent（比如手写一个 `name: Explore` 的 md 文件），它会完全盖住内置的那个，此时改内置的模型不会有任何效果——弹窗里会提示这一点。
 
@@ -82,7 +84,7 @@ order: 3
 2. **名称** — 1–64 位小写字母、数字、连字符或下划线，比如 `code-reviewer`。这是主 Agent 调用它时用的名字。
 3. **描述** — 说明主 Agent 应该在什么场景下委派给它。**这一条最重要**：主 Agent 就是靠它决定要不要派这个 Agent，写含糊了就永远不会被叫到。
 4. **系统提示词** — 定义这个 Agent 的职责、边界和预期输出。
-5. **模型** — 继承主 Agent，或指定 Haiku / Sonnet / Opus / Fable，也可以填自定义模型 ID。简单重复的活给 Haiku 更快更省。
+5. **模型** — 继承主 Agent，选择 Haiku / Sonnet / Opus / Fable 别名，或选择当前 Provider 已配置的模型。简单重复的活给 Haiku 更快更省。
 6. **思考强度** — 继承，或单独指定低 / 中 / 高 / 极高 / 最大。模型不支持某档时会自动降级或忽略。
 7. **工具** — 三选一：全部工具、不允许使用工具、自定义列表。选自定义时按读取与搜索 / 修改文件 / 执行命令 / 工作流分类勾选，下面还有一个自由输入框，用来填 MCP 工具名或者 `Bash(git:*)` 这样的权限规则。
 8. **颜色** — 用来在界面上区分，可选。

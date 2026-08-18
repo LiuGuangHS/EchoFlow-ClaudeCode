@@ -1,244 +1,211 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
-} from 'react'
-import { ChevronLeft, ChevronRight, Radio } from 'lucide-react'
-import { Badge, StatusDot, type Tone } from '@/components/ui/Badge'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ChevronLeft, ChevronRight, Pause, Play, Radio, X } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { IconButton } from '@/components/ui/IconButton'
-import { Progress } from '@/components/ui/Progress'
 import { useTranslation, type TranslationKey } from '../../i18n'
+import { useChatStore } from '../../stores/chatStore'
 import { useTeamStore } from '../../stores/teamStore'
+import { useTabStore } from '../../stores/tabStore'
 import type {
   TeamMember,
-  TeamWorkbenchMessage,
   TeamWorkbenchSnapshot,
+  TeamWorkbenchTask,
 } from '../../types/team'
-import { MEMBER_AVATARS, memberAccentColor } from './agentTeamsAvatars'
+import { AgentTeamsCanvas } from './AgentTeamsCanvas'
 import { AgentTeamsCommunicationFeed } from './AgentTeamsCommunicationFeed'
+import { AgentTeamsMemberInspector } from './AgentTeamsMemberInspector'
 import {
+  getMemberWorkState,
   getWorkbenchPhase,
-  getWorkbenchProgress,
-  getMemberAvatarKey,
-  layoutWorkbenchTasks,
-  runningTaskForMember,
-  taskOwnedByMember,
-  WORKBENCH_TASK_HEIGHT,
-  WORKBENCH_TASK_WIDTH,
-  type PositionedWorkbenchTask,
+  getWorkbenchTaskState,
+  inferTaskOwner,
+  resolveTeamMemberIdentity,
+  snapshotWithHistoricalMembers,
   type WorkbenchPhase,
   type WorkbenchTaskState,
 } from './agentTeamsModel'
 
-type MemberWorkState = 'working' | 'idle' | 'stopped' | 'exited' | 'error'
-
-type BotPosition = {
-  x: number
-  y: number
-  opacity: number
-  state: MemberWorkState
-}
-
 type TranslationFn = ReturnType<typeof useTranslation>
 
-const COMMUNICATION_DEFAULT_WIDTH = 440
-const COMMUNICATION_MIN_WIDTH = 320
-const COMMUNICATION_MAX_WIDTH = 960
-const COMMUNICATION_RESIZE_STEP = 32
-const DAG_MIN_WIDTH = 360
+const REPLAY_SPEEDS = [0.5, 1, 2, 4] as const
+const REPLAY_FALLBACK_FRAME_MS = 720
+const MESSAGE_FLIGHT_MS = 1500
 
-function clampCommunicationWidth(width: number, availableWidth = 0): number {
-  const dynamicMaximum = availableWidth > 0
-    ? Math.min(COMMUNICATION_MAX_WIDTH, Math.max(COMMUNICATION_MIN_WIDTH, availableWidth - DAG_MIN_WIDTH))
-    : COMMUNICATION_MAX_WIDTH
-  return Math.min(dynamicMaximum, Math.max(COMMUNICATION_MIN_WIDTH, Math.round(width)))
+function timestamp(value: string | undefined): number | null {
+  if (!value) return null
+  const numeric = /^\d+$/.test(value) ? Number(value) : Number.NaN
+  const parsed = Number.isFinite(numeric) ? numeric : Date.parse(value)
+  return Number.isFinite(parsed) ? parsed : null
 }
 
-function phaseTone(phase: WorkbenchPhase): Tone {
-  if (phase === 'forming') return 'warning'
-  if (phase === 'running') return 'brand'
-  if (phase === 'finishing') return 'info'
-  return 'success'
+function formatDuration(valueMs: number): string {
+  const seconds = Math.max(0, Math.round(valueMs / 1000))
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  const rest = seconds % 60
+  if (hours > 0) {
+    return [hours, minutes, rest].map((part) => String(part).padStart(2, '0')).join(':')
+  }
+  return `${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`
+}
+
+function formatClock(value: string | undefined): string {
+  const time = timestamp(value)
+  if (time === null) return '--:--:--'
+  return new Date(time).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+}
+
+function replayFrameDelay(
+  snapshots: TeamWorkbenchSnapshot[],
+  selectedIndex: number,
+  speed: number,
+): number {
+  const currentTime = timestamp(snapshots[selectedIndex]?.generatedAt)
+  const nextTime = timestamp(snapshots[selectedIndex + 1]?.generatedAt)
+  const sourceDelay = currentTime !== null && nextTime !== null && nextTime > currentTime
+    ? nextTime - currentTime
+    : REPLAY_FALLBACK_FRAME_MS
+  return Math.max(16, sourceDelay / speed)
 }
 
 function phaseLabel(phase: WorkbenchPhase, t: TranslationFn): string {
   return t(`agentTeams.phase.${phase}` as TranslationKey)
 }
 
-function taskStateLabel(state: WorkbenchTaskState, t: TranslationFn): string {
-  return t(`agentTeams.task.${state}` as TranslationKey)
+function stateCounts(snapshot: TeamWorkbenchSnapshot) {
+  const tasksById = new Map(snapshot.tasks.map((task) => [task.id, task]))
+  const counts: Record<WorkbenchTaskState, number> = {
+    blocked: 0,
+    open: 0,
+    running: 0,
+    completed: 0,
+  }
+  for (const task of snapshot.tasks) counts[getWorkbenchTaskState(task, tasksById)] += 1
+  return counts
 }
 
-function taskTone(state: WorkbenchTaskState): Tone {
-  if (state === 'running') return 'brand'
-  if (state === 'completed') return 'success'
-  if (state === 'open') return 'warning'
-  return 'neutral'
-}
-
-function taskBorder(state: WorkbenchTaskState): string {
-  if (state === 'running') return 'var(--color-brand)'
-  if (state === 'completed') return 'var(--color-success)'
-  if (state === 'open') return 'var(--color-warning)'
-  return 'var(--color-border)'
-}
-
-function memberState(
-  member: TeamMember,
-  snapshot: TeamWorkbenchSnapshot,
-  isLead: boolean,
-): MemberWorkState {
-  if (snapshot.deletedAt || member.status === 'completed') return 'exited'
-  if (member.status === 'error') return 'error'
-  if (
-    member.status === 'running' ||
-    runningTaskForMember(snapshot.tasks, member) ||
-    isLead
-  ) return 'working'
-  if (member.status === 'idle') return 'idle'
-  return 'idle'
-}
-
-function memberStateLabel(state: MemberWorkState, t: TranslationFn): string {
-  return t(`agentTeams.member.${state}` as TranslationKey)
-}
-
-function memberAccent(member: TeamMember, index: number): string {
-  return memberAccentColor(member.color, index)
-}
-
-function memberName(member: TeamMember): string {
-  return member.name || member.role || member.agentId.split('@')[0] || member.agentId
-}
-
-function memberMatchesIdentity(member: TeamMember, identity: string): boolean {
-  return [member.agentId, member.agentId.split('@')[0], member.name, member.role]
-    .filter(Boolean)
-    .includes(identity)
-}
-
-function formatSnapshotTime(snapshot: TeamWorkbenchSnapshot): string {
-  const time = new Date(snapshot.generatedAt)
-  return Number.isNaN(time.getTime())
-    ? snapshot.generatedAt
-    : time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+function TimelineStat({ label, value, tone }: {
+  label: string
+  value: string | number
+  tone?: 'brand' | 'muted'
+}) {
+  return (
+    <div className="min-w-[52px]">
+      <div className="text-[10px] font-semibold text-[var(--color-text-tertiary)]">{label}</div>
+      <div
+        className={[
+          'whitespace-nowrap font-mono text-[14px] font-extrabold tabular-nums',
+          tone === 'brand'
+            ? 'text-[var(--color-brand)]'
+            : tone === 'muted'
+              ? 'text-[var(--color-text-tertiary)]'
+              : 'text-[var(--color-text-primary)]',
+        ].join(' ')}
+      >
+        {value}
+      </div>
+    </div>
+  )
 }
 
 /**
- * The working view of a team run: the dependency map, the per-member
- * message log and history scrubbing. It only ever renders in its own tab;
- * selecting a member leaves this map intact and opens the shared agent run
- * desktop.
+ * The full Agent Teams surface. The snapshot stream is the only source of
+ * truth for both live mode and replay; replay merely moves the cursor through
+ * that same stream, so the canvas, counters, member history and communication
+ * feed cannot drift into different stories.
  */
 export function AgentTeamsWorkbench({ sessionId }: { sessionId: string }) {
   const t = useTranslation()
   const timeline = useTeamStore((state) => state.workbenchesBySession[sessionId])
-  const historyIndex = useTeamStore((state) => state.workbenchHistoryIndexBySession[sessionId] ?? null)
+  const historyIndex = useTeamStore(
+    (state) => state.workbenchHistoryIndexBySession[sessionId] ?? null,
+  )
   const setHistoryIndex = useTeamStore((state) => state.setWorkbenchHistoryIndex)
   const openMemberSession = useTeamStore((state) => state.openMemberSession)
-  const splitViewportRef = useRef<HTMLDivElement>(null)
-  const officeViewportRef = useRef<HTMLDivElement>(null)
-  const [officeWidth, setOfficeWidth] = useState(604)
-  const [communicationWidth, setCommunicationWidth] = useState(COMMUNICATION_DEFAULT_WIDTH)
-  const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null)
-  const communicationWidthRef = useRef(communicationWidth)
-  const communicationDragRef = useRef<{ startX: number; startWidth: number } | null>(null)
-  communicationWidthRef.current = communicationWidth
+  const leadIsStreaming = useChatStore(
+    (state) => (state.sessions[sessionId]?.chatState ?? 'idle') !== 'idle',
+  )
+  const [communicationOpen, setCommunicationOpen] = useState(false)
+  const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null)
+  const [selectedTask, setSelectedTask] = useState<TeamWorkbenchTask | null>(null)
+  const [replaySpeed, setReplaySpeed] = useState<(typeof REPLAY_SPEEDS)[number]>(1)
+  const [playing, setPlaying] = useState(false)
+  const [messageFlightQueue, setMessageFlightQueue] = useState<string[]>([])
+  const [feedFocusedTaskId, setFeedFocusedTaskId] = useState<string | null>(null)
+  const [now, setNow] = useState(() => Date.now())
+  const seenMessageIdsRef = useRef<Set<string> | null>(null)
 
   const snapshots = timeline?.snapshots ?? []
   const latestIndex = snapshots.length - 1
-  const selectedIndex = historyIndex === null ? latestIndex : Math.min(historyIndex, latestIndex)
-  const snapshot = selectedIndex >= 0 ? snapshots[selectedIndex] : undefined
-  const previousSnapshot = selectedIndex > 0 ? snapshots[selectedIndex - 1] : undefined
-
-  useEffect(() => {
-    const element = officeViewportRef.current
-    if (!element || typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver((entries) => {
-      const width = entries[0]?.contentRect.width ?? 604
-      setOfficeWidth(Math.max(360, Math.min(760, width - 32)))
-    })
-    observer.observe(element)
-    return () => observer.disconnect()
-  }, [])
-
-  const resizeCommunication = useCallback((requestedWidth: number) => {
-    const availableWidth = splitViewportRef.current?.getBoundingClientRect().width ?? 0
-    setCommunicationWidth(clampCommunicationWidth(requestedWidth, availableWidth))
-  }, [])
-
-  const stopCommunicationResize = useCallback(() => {
-    if (!communicationDragRef.current) return
-    communicationDragRef.current = null
-    document.body.style.removeProperty('cursor')
-    document.body.style.removeProperty('user-select')
-  }, [])
-
-  const handleCommunicationPointerMove = useCallback((event: PointerEvent) => {
-    const drag = communicationDragRef.current
-    if (!drag) return
-    resizeCommunication(drag.startWidth - (event.clientX - drag.startX))
-  }, [resizeCommunication])
-
-  useEffect(() => {
-    window.addEventListener('pointermove', handleCommunicationPointerMove)
-    window.addEventListener('pointerup', stopCommunicationResize)
-    window.addEventListener('pointercancel', stopCommunicationResize)
-    return () => {
-      window.removeEventListener('pointermove', handleCommunicationPointerMove)
-      window.removeEventListener('pointerup', stopCommunicationResize)
-      window.removeEventListener('pointercancel', stopCommunicationResize)
-      stopCommunicationResize()
-    }
-  }, [handleCommunicationPointerMove, stopCommunicationResize])
-
-  useEffect(() => {
-    const element = splitViewportRef.current
-    if (!element || typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver((entries) => {
-      const width = entries[0]?.contentRect.width ?? 0
-      setCommunicationWidth((current) => clampCommunicationWidth(current, width))
-    })
-    observer.observe(element)
-    return () => observer.disconnect()
-  }, [])
-
-  const handleDividerPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return
-    event.preventDefault()
-    communicationDragRef.current = {
-      startX: event.clientX,
-      startWidth: communicationWidthRef.current,
-    }
-    document.body.style.cursor = 'col-resize'
-    document.body.style.userSelect = 'none'
-  }, [])
-
-  const handleDividerKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (event.key === 'ArrowLeft') {
-      event.preventDefault()
-      resizeCommunication(communicationWidthRef.current + COMMUNICATION_RESIZE_STEP)
-    } else if (event.key === 'ArrowRight') {
-      event.preventDefault()
-      resizeCommunication(communicationWidthRef.current - COMMUNICATION_RESIZE_STEP)
-    } else if (event.key === 'Home') {
-      event.preventDefault()
-      resizeCommunication(COMMUNICATION_MIN_WIDTH)
-    } else if (event.key === 'End') {
-      event.preventDefault()
-      resizeCommunication(COMMUNICATION_MAX_WIDTH)
-    }
-  }, [resizeCommunication])
-
-  const layout = useMemo(
-    () => layoutWorkbenchTasks(snapshot?.tasks ?? [], officeWidth),
-    [officeWidth, snapshot?.tasks],
+  const latestSnapshot = snapshots[latestIndex]
+  const followingLive = historyIndex === null && !latestSnapshot?.deletedAt
+  const selectedIndex = historyIndex === null
+    ? latestIndex
+    : Math.max(0, Math.min(latestIndex, historyIndex))
+  const snapshot = useMemo(
+    () => snapshotWithHistoricalMembers(snapshots, selectedIndex),
+    [selectedIndex, snapshots],
   )
+  const previousSnapshot = useMemo(
+    () => snapshotWithHistoricalMembers(snapshots, selectedIndex - 1),
+    [selectedIndex, snapshots],
+  )
+
+  useEffect(() => {
+    if (!followingLive) return
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [followingLive])
+
+  const visibleMessageIds = useMemo(
+    () => snapshot?.messages.map(message => message.id) ?? [],
+    [snapshot?.messages],
+  )
+  useEffect(() => {
+    const current = new Set(visibleMessageIds)
+    const previous = seenMessageIdsRef.current
+    seenMessageIdsRef.current = current
+    if (previous === null) return
+
+    const movedBackward = Array.from(previous).some(id => !current.has(id))
+    const added = visibleMessageIds.filter(id => !previous.has(id))
+    setMessageFlightQueue(queue => {
+      const retained = movedBackward ? [] : queue.filter(id => current.has(id))
+      const known = new Set(retained)
+      return [...retained, ...added.filter(id => !known.has(id))]
+    })
+  }, [visibleMessageIds])
+
+  const activeMessageId = messageFlightQueue[0] ?? null
+  useEffect(() => {
+    if (!activeMessageId) return
+    const timer = window.setTimeout(() => {
+      setMessageFlightQueue(queue => (
+        queue[0] === activeMessageId ? queue.slice(1) : queue.filter(id => id !== activeMessageId)
+      ))
+    }, MESSAGE_FLIGHT_MS)
+    return () => window.clearTimeout(timer)
+  }, [activeMessageId])
+
+  useEffect(() => {
+    if (!playing) return
+    if (latestIndex <= 0 || selectedIndex >= latestIndex) {
+      setPlaying(false)
+      return
+    }
+    const timer = window.setTimeout(() => {
+      setHistoryIndex(sessionId, selectedIndex + 1)
+    }, replayFrameDelay(snapshots, selectedIndex, replaySpeed))
+    return () => window.clearTimeout(timer)
+  }, [latestIndex, playing, replaySpeed, selectedIndex, sessionId, setHistoryIndex, snapshots])
+
+  useEffect(() => {
+    if (followingLive) setPlaying(false)
+  }, [followingLive])
 
   if (!snapshot) {
     return (
@@ -252,662 +219,421 @@ export function AgentTeamsWorkbench({ sessionId }: { sessionId: string }) {
   }
 
   const phase = getWorkbenchPhase(snapshot)
-  const progress = getWorkbenchProgress(snapshot)
-  const leadId = snapshot.team.leadAgentId
-  const members = snapshot.team.members
-  const leadMember = members.find((member) => member.agentId === leadId) ?? members[0]
-  const workerMembers = members.filter((member) => member.agentId !== leadId)
-  const primaryTaskByMemberId = new Map<string, string>()
-  for (const member of workerMembers) {
-    const firstOwnedTask = snapshot.tasks.find((task) => taskOwnedByMember(task, member))
-    if (firstOwnedTask) primaryTaskByMemberId.set(member.agentId, firstOwnedTask.id)
-  }
-  const unassignedMembers = workerMembers.filter((member) => !primaryTaskByMemberId.has(member.agentId))
-  const rootTasks = layout.tasks.filter(({ task }) =>
-    task.blockedBy.every((dependencyId) => !layout.byId.has(dependencyId)),
+  const counts = stateCounts(snapshot)
+  const startTime = timestamp(snapshot.team.createdAt) ?? timestamp(snapshots[0]?.generatedAt) ?? now
+  const cursorTime = timestamp(snapshot.generatedAt) ?? startTime
+  const endTime = timestamp(latestSnapshot?.deletedAt) ?? timestamp(latestSnapshot?.generatedAt) ?? now
+  const elapsed = followingLive ? now - startTime : cursorTime - startTime
+  const totalElapsed = Math.max(0, endTime - startTime)
+  const workerMembers = snapshot.team.members.filter(
+    (member) => member.agentId !== snapshot.team.leadAgentId,
   )
-  const memberPositions = new Map<string, BotPosition>()
-
-  members.forEach((member) => {
-    const isLead = member.agentId === leadId
-    const state = memberState(member, snapshot, isLead)
-    const taskPosition = isLead
-      ? undefined
-      : layout.byId.get(primaryTaskByMemberId.get(member.agentId) ?? '')
-    if (isLead) {
-      memberPositions.set(member.agentId, { x: layout.width / 2, y: 66, opacity: 1, state })
-    } else if (taskPosition) {
-      memberPositions.set(member.agentId, {
-        x: taskPosition.x + 22,
-        y: taskPosition.y + WORKBENCH_TASK_HEIGHT / 2,
-        opacity: 1,
-        state,
-      })
-    } else {
-      const unassignedIndex = unassignedMembers.findIndex((worker) => worker.agentId === member.agentId)
-      const pitch = Math.min(62, (layout.width - 48) / Math.max(unassignedMembers.length, 1))
-      const rowWidth = Math.max(0, (unassignedMembers.length - 1) * pitch)
-      memberPositions.set(member.agentId, {
-        x: layout.width / 2 - rowWidth / 2 + Math.max(0, unassignedIndex) * pitch,
-        y: 147,
-        opacity: 1,
-        state,
-      })
-    }
+  const workingCount = workerMembers.filter((member) => (
+    getMemberWorkState(member) === 'working'
+  )).length
+  const liveHint = phase === 'forming'
+    ? t('agentTeams.live.formingHint')
+    : workingCount > 0
+      ? t('agentTeams.live.runningHint', { count: workingCount })
+      : t('agentTeams.live.waitingHint')
+  const selectedMember = selectedMemberId
+    ? snapshot.team.members.find((member) => member.agentId === selectedMemberId)
+    : undefined
+  const selectedMemberIsLead = Boolean(
+    selectedMember && selectedMember.agentId === snapshot.team.leadAgentId,
+  )
+  const timelineTickPositions = snapshots.map((entry, index) => {
+    const at = timestamp(entry.generatedAt)
+    const position = totalElapsed > 0 && at !== null
+      ? ((at - startTime) / totalElapsed) * 100
+      : latestIndex > 0
+        ? (index / latestIndex) * 100
+        : 0
+    return Math.max(0, Math.min(100, position))
   })
+  const timelineExtent = totalElapsed > 0 ? totalElapsed : Math.max(1, latestIndex)
+  const timelineValue = totalElapsed > 0
+    ? Math.max(0, Math.min(totalElapsed, cursorTime - startTime))
+    : Math.max(0, selectedIndex)
+  const timelinePosition = latestIndex <= 0
+    ? 100
+    : Math.max(0, Math.min(100, (timelineValue / timelineExtent) * 100))
 
-  const latestMessage = snapshot.messages.at(-1)
-  const hasNewMessage = Boolean(
-    previousSnapshot && latestMessage && previousSnapshot.messages.at(-1)?.id !== latestMessage.id,
-  )
-  const selectMember = (member: TeamMember) => openMemberSession(member, snapshot.team, snapshot)
+  const enterReplay = () => {
+    setPlaying(false)
+    setHistoryIndex(sessionId, Math.max(0, selectedIndex))
+  }
+  const returnToLive = () => {
+    setPlaying(false)
+    setHistoryIndex(sessionId, null)
+  }
+  const togglePlayback = () => {
+    if (selectedIndex >= latestIndex) {
+      setHistoryIndex(sessionId, 0)
+      setPlaying(latestIndex > 0)
+      return
+    }
+    setPlaying((current) => !current)
+  }
+  const closeCommunication = () => {
+    setCommunicationOpen(false)
+    setSelectedMemberId(null)
+    setFeedFocusedTaskId(null)
+  }
+  const selectMember = (member: TeamMember) => {
+    if (communicationOpen && selectedMemberId === member.agentId) {
+      closeCommunication()
+      return
+    }
+    setFeedFocusedTaskId(null)
+    setSelectedMemberId(member.agentId)
+    setCommunicationOpen(true)
+  }
+  const seekTimeline = (value: number) => {
+    setPlaying(false)
+    if (totalElapsed <= 0) {
+      setHistoryIndex(sessionId, Math.max(0, Math.min(latestIndex, Math.round(value))))
+      return
+    }
+    const targetTime = startTime + value
+    let targetIndex = 0
+    snapshots.forEach((entry, index) => {
+      const at = timestamp(entry.generatedAt)
+      if (at !== null && at <= targetTime) targetIndex = index
+    })
+    setHistoryIndex(sessionId, targetIndex)
+  }
+  const openSelectedExecution = () => {
+    if (!selectedMember) return
+    if (selectedMemberIsLead) {
+      useTabStore.getState().openTab(
+        snapshot.team.leadSessionId ?? sessionId,
+        selectedMember.name || selectedMember.role,
+        'session',
+      )
+      return
+    }
+    openMemberSession(selectedMember, snapshot.team, snapshot)
+  }
 
   return (
     <section
       aria-label={t('agentTeams.title')}
       className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--color-surface)] text-[var(--color-text-primary)]"
     >
-      <header className="flex h-[42px] shrink-0 items-center gap-2.5 border-b border-[var(--color-border)] px-4">
-        <span className="min-w-0 truncate font-mono text-[12px] font-extrabold" title={snapshot.team.name}>
-          {snapshot.team.name}
-        </span>
-        <Badge tone={phaseTone(phase)} size="xs" bordered>{phaseLabel(phase, t)}</Badge>
-        {/* Progress is `w-full` internally and `cx` does not merge Tailwind
-            classes, so the width has to come from a wrapper rather than from
-            a `w-*` passed through `className`. */}
-        <div className="w-[84px] shrink-0">
-          <Progress
-            value={progress.percent}
-            tone="auto"
-            size="xs"
-            label={t('agentTeams.progressLabel')}
-          />
-        </div>
-        <span className="shrink-0 text-[11px] tabular-nums text-[var(--color-text-secondary)]">
-          {progress.completed}/{progress.total}
-        </span>
-        <span className="hidden text-[9.5px] text-[var(--color-text-tertiary)] 2xl:inline">
-          {t('agentTeams.dependencyLegend')}
-        </span>
-        <div className="ml-auto flex min-w-0 items-center gap-1">
-          {historyIndex === null ? (
-            <>
-              <span className="hidden items-center gap-1.5 text-[10.5px] font-medium text-[var(--color-success)] xl:flex">
-                <StatusDot tone="success" pulse={phase !== 'completed'} />
-                {t('agentTeams.followingLive')}
-              </span>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={snapshots.length < 2}
-                onClick={() => setHistoryIndex(sessionId, Math.max(0, latestIndex - 1))}
+      <header className="shrink-0 overflow-x-auto border-b border-[var(--color-border)] bg-[var(--color-surface-container-lowest)]">
+        <div className="flex min-w-[1180px] items-center gap-5 px-[18px] py-2.5">
+          <div className="min-w-[260px]">
+            <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--color-text-tertiary)]">
+              Agent Teams · {t('agentTeams.sharedTaskList')}
+            </div>
+            <div className="mt-0.5 flex min-w-0 items-center gap-2">
+              <span
+                className="max-w-[300px] truncate font-mono text-[16px] font-extrabold"
+                title={snapshot.team.name}
               >
+                {snapshot.team.name}
+              </span>
+              <span className="shrink-0 rounded-full border border-[var(--color-primary-fixed-dim)] bg-[var(--color-brand-soft)] px-2 py-0.5 text-[10px] font-bold text-[var(--color-on-brand-soft)]">
+                {t('agentTeams.experimental')}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex shrink-0 items-center gap-[18px] border-x border-[var(--color-border)] px-[18px]">
+            <div className="min-w-[74px]">
+              <div className="text-[10px] font-semibold text-[var(--color-text-tertiary)]">
+                {t('agentTeams.stats.phase')}
+              </div>
+              <div className="whitespace-nowrap text-[14px] font-extrabold">
+                {phaseLabel(phase, t)}
+              </div>
+            </div>
+            <TimelineStat
+              label={t('agentTeams.stats.completed')}
+              value={`${counts.completed}/${snapshot.tasks.length}`}
+            />
+            <TimelineStat label={t('agentTeams.stats.running')} value={counts.running} tone="brand" />
+            <TimelineStat label={t('agentTeams.stats.available')} value={counts.open} />
+            <TimelineStat label={t('agentTeams.stats.blocked')} value={counts.blocked} tone="muted" />
+          </div>
+
+          {followingLive ? (
+            <div data-testid="agent-teams-live-controls" className="flex min-w-0 flex-1 items-center gap-3.5">
+              <div className="flex shrink-0 items-center gap-2 rounded-full border border-[var(--color-primary-fixed-dim)] bg-[var(--color-brand-soft)] px-3 py-[7px]">
+                <span className="agent-teams-live-dot h-2 w-2 rounded-full bg-[var(--color-brand)]" aria-hidden="true" />
+                <span className="whitespace-nowrap text-[12.5px] font-extrabold text-[var(--color-on-brand-soft)]">
+                  {t('agentTeams.live.following')}
+                </span>
+              </div>
+              <span className="min-w-0 flex-1 truncate text-[11.5px] text-[var(--color-text-secondary)]">
+                {liveHint}
+              </span>
+              <Button variant="secondary" size="sm" onClick={enterReplay}>
                 {t('agentTeams.reviewHistory')}
               </Button>
-            </>
+              <div className="shrink-0 border-l border-[var(--color-border)] pl-3.5">
+                <TimelineStat label={t('agentTeams.live.elapsed')} value={formatDuration(elapsed)} />
+              </div>
+              <div className="shrink-0 border-l border-[var(--color-border)] pl-3.5">
+                <TimelineStat label={t('agentTeams.live.sessionClock')} value={formatClock(snapshot.generatedAt)} />
+              </div>
+            </div>
           ) : (
-            <>
-              <IconButton
-                icon={<ChevronLeft aria-hidden="true" />}
-                label={t('agentTeams.older')}
-                size="sm"
-                tone="muted"
-                disabled={selectedIndex <= 0}
-                onClick={() => setHistoryIndex(sessionId, selectedIndex - 1)}
-              />
-              <IconButton
-                icon={<ChevronRight aria-hidden="true" />}
-                label={t('agentTeams.newer')}
-                size="sm"
-                tone="muted"
-                disabled={selectedIndex >= latestIndex}
-                onClick={() => setHistoryIndex(sessionId, selectedIndex + 1)}
-              />
+            <div data-testid="agent-teams-replay-controls" className="flex min-w-0 flex-1 items-center gap-3.5">
               <Button
                 variant="accent"
-                size="sm"
-                icon={<Radio size={13} aria-hidden="true" />}
-                onClick={() => setHistoryIndex(sessionId, null)}
+                size="base"
+                className="w-[86px]"
+                icon={playing ? <Pause size={13} aria-hidden="true" /> : <Play size={13} aria-hidden="true" />}
+                onClick={togglePlayback}
               >
-                {t('agentTeams.backToLive')}
+                {playing
+                  ? t('agentTeams.replay.pause')
+                  : selectedIndex >= latestIndex
+                    ? t('agentTeams.replay.replay')
+                    : t('agentTeams.replay.play')}
               </Button>
-            </>
+              <div
+                role="group"
+                aria-label={t('agentTeams.replay.speed')}
+                className="flex shrink-0 overflow-hidden rounded-[var(--radius-md)] border border-[var(--color-outline)]"
+              >
+                {REPLAY_SPEEDS.map((speed) => {
+                  const selected = replaySpeed === speed
+                  return (
+                    <button
+                      key={speed}
+                      type="button"
+                      aria-pressed={selected}
+                      onClick={() => setReplaySpeed(speed)}
+                      className={[
+                        'h-7 border-r border-[var(--color-border)] px-2.5 font-mono text-[11px] font-bold outline-none transition-colors last:border-r-0 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-border-focus)]',
+                        selected
+                          ? 'bg-[var(--color-brand)] text-[var(--color-on-primary)]'
+                          : 'bg-[var(--color-surface-container-lowest)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]',
+                      ].join(' ')}
+                    >
+                      {speed}×
+                    </button>
+                  )
+                })}
+              </div>
+              <div className="min-w-[200px] flex-1">
+                <div className="mb-1 flex justify-between text-[10px] font-semibold text-[var(--color-text-tertiary)]">
+                  <span>{t('agentTeams.replay.timeline')}</span>
+                  <span className="font-mono tabular-nums">
+                    {formatDuration(cursorTime - startTime)} / {formatDuration(totalElapsed)}
+                  </span>
+                </div>
+                <div className="relative h-[18px]">
+                  <div className="absolute inset-x-0 top-2 h-1 rounded-full bg-[var(--color-surface-container-high)]" />
+                  <div
+                    data-testid="agent-teams-replay-progress"
+                    className="absolute left-0 top-2 h-1 rounded-full bg-[var(--color-brand)]"
+                    style={{ width: `${timelinePosition}%` }}
+                  />
+                  {timelineTickPositions.map((position, index) => (
+                    <span
+                      key={`${snapshots[index]?.version ?? index}-${index}`}
+                      aria-hidden="true"
+                      className="absolute top-[5px] h-[10px] w-px bg-[var(--color-text-tertiary)] opacity-30"
+                      style={{ left: `${position}%` }}
+                    />
+                  ))}
+                  <span
+                    aria-hidden="true"
+                    data-testid="agent-teams-replay-thumb"
+                    className="absolute top-1 h-3 w-3 -translate-x-1/2 rounded-full border-[3px] border-[var(--color-brand)] bg-[var(--color-surface-container-lowest)] shadow-[var(--shadow-card)]"
+                    style={{ left: `${timelinePosition}%` }}
+                  />
+                  <input
+                    type="range"
+                    min={0}
+                    max={timelineExtent}
+                    step={1}
+                    value={timelineValue}
+                    aria-label={t('agentTeams.replay.timeline')}
+                    onChange={event => seekTimeline(Number(event.target.value))}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+                      event.preventDefault()
+                      setPlaying(false)
+                      setHistoryIndex(
+                        sessionId,
+                        Math.max(0, Math.min(latestIndex, selectedIndex + (event.key === 'ArrowRight' ? 1 : -1))),
+                      )
+                    }}
+                    className="absolute inset-0 h-full w-full cursor-pointer opacity-0 focus-visible:opacity-100 focus-visible:accent-[var(--color-brand)]"
+                  />
+                </div>
+              </div>
+              {!latestSnapshot?.deletedAt ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={<Radio size={12} aria-hidden="true" />}
+                  onClick={returnToLive}
+                >
+                  {t('agentTeams.backToLive')}
+                </Button>
+              ) : null}
+              <div className="shrink-0 border-l border-[var(--color-border)] pl-3.5">
+                <TimelineStat label={t('agentTeams.live.sessionClock')} value={formatClock(snapshot.generatedAt)} />
+              </div>
+            </div>
           )}
-          <span className="hidden w-[64px] text-right font-mono text-[10px] tabular-nums text-[var(--color-text-tertiary)] 2xl:block">
-            {historyIndex === null ? t('agentTeams.live') : `T+${selectedIndex}`} · {formatSnapshotTime(snapshot)}
-          </span>
         </div>
       </header>
 
-      <div
-        ref={splitViewportRef}
-        data-testid="agent-teams-split-container"
-        className="flex min-h-0 flex-1"
-      >
-
-      <div
-        ref={officeViewportRef}
-        data-testid="agent-teams-office-viewport"
-        className="min-h-0 min-w-0 flex-1 overflow-auto"
-      >
+      <div className="relative flex min-h-0 flex-1">
         <div
-          data-testid="agent-teams-office"
-          data-layout-columns={layout.columns}
-          className="agent-teams-org-canvas relative mx-auto"
-          style={{ width: layout.width, height: layout.height }}
+          data-testid="agent-teams-office-viewport"
+          className="min-h-0 min-w-0 flex-1 overflow-auto bg-[var(--color-surface)]"
         >
-          <svg
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-0"
-            width={layout.width}
-            height={layout.height}
-          >
-            {rootTasks.map((positioned) => (
-              <LeaderEdge
-                key={`leader-${positioned.task.id}`}
-                canvasWidth={layout.width}
-                to={positioned}
-                active={positioned.state === 'running'}
-              />
-            ))}
-            {layout.tasks.flatMap((positioned) => positioned.task.blockedBy.map((dependencyId, dependencyIndex) => {
-              const dependency = layout.byId.get(dependencyId)
-              if (!dependency) return null
-              const isFocused = focusedTaskId === positioned.task.id || focusedTaskId === dependencyId
-              return (
-                <DependencyEdge
-                  key={`${dependencyId}-${positioned.task.id}`}
-                  from={dependency}
-                  to={positioned}
-                  secondary={dependencyIndex > 0}
-                  focused={isFocused}
-                  dimmed={Boolean(focusedTaskId) && !isFocused}
-                />
-              )
-            }))}
-            {hasNewMessage && latestMessage ? (
-              <MessageFlight
-                message={latestMessage}
-                positions={memberPositions}
-                members={members}
-                width={layout.width}
-              />
-            ) : null}
-          </svg>
-
-          {leadMember ? (
-            <LeaderNode
-              member={leadMember}
-              state={memberPositions.get(leadMember.agentId)?.state ?? 'idle'}
-              canvasWidth={layout.width}
-              accent={memberAccent(leadMember, members.indexOf(leadMember))}
-              isMessageSender={Boolean(hasNewMessage && latestMessage && memberMatchesIdentity(leadMember, latestMessage.from))}
-              onSelect={() => selectMember(leadMember)}
-              t={t}
-            />
-          ) : null}
-
-          {unassignedMembers.map((member) => {
-            const position = memberPositions.get(member.agentId)
-            if (!position) return null
-            return (
-              <UnassignedMemberNode
-                key={member.agentId}
-                member={member}
-                state={position.state}
-                position={position}
-                accent={memberAccent(member, members.indexOf(member))}
-                isMessageSender={Boolean(hasNewMessage && latestMessage && memberMatchesIdentity(member, latestMessage.from))}
-                onSelect={() => selectMember(member)}
-                t={t}
-              />
-            )
-          })}
-
-          {layout.tasks.length === 0 ? (
-            <div className="absolute inset-x-4 top-[196px] text-center text-[12px] leading-7 text-[var(--color-text-tertiary)]">
-              {t('agentTeams.emptyTasks')}
-            </div>
-          ) : null}
-
-          {layout.tasks.map((positioned) => (
-            <TaskCard
-              key={positioned.task.id}
-              positioned={positioned}
-              members={members}
-              snapshot={snapshot}
-              primaryTaskByMemberId={primaryTaskByMemberId}
-              latestMessage={hasNewMessage ? latestMessage : undefined}
-              onSelectMember={selectMember}
-              onFocusTask={setFocusedTaskId}
-              t={t}
-            />
-          ))}
+          <AgentTeamsCanvas
+            snapshots={snapshots}
+            selectedIndex={selectedIndex}
+            snapshot={snapshot}
+            previousSnapshot={previousSnapshot}
+            leadIsStreaming={leadIsStreaming}
+            activeMessageId={activeMessageId}
+            focusedTaskId={feedFocusedTaskId}
+            selectedMemberId={selectedMemberId}
+            onSelectMember={(member) => selectMember(member)}
+            onSelectTask={setSelectedTask}
+          />
         </div>
-      </div>
 
-      <div
-        role="separator"
-        aria-label={t('agentTeams.resizeCommunication')}
-        aria-orientation="vertical"
-        aria-valuemin={COMMUNICATION_MIN_WIDTH}
-        aria-valuemax={COMMUNICATION_MAX_WIDTH}
-        aria-valuenow={communicationWidth}
-        tabIndex={0}
-        data-testid="agent-teams-split-divider"
-        onPointerDown={handleDividerPointerDown}
-        onKeyDown={handleDividerKeyDown}
-        onDoubleClick={() => resizeCommunication(COMMUNICATION_DEFAULT_WIDTH)}
-        className="group relative w-px shrink-0 cursor-col-resize bg-[var(--color-border)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]"
-      >
-        <span
-          aria-hidden="true"
-          className="absolute inset-y-0 -left-1 w-[9px] transition-colors duration-150 group-hover:bg-[var(--color-primary-fixed-dim)] group-focus-visible:bg-[var(--color-primary-fixed-dim)]"
-        />
-      </div>
+        {communicationOpen ? (
+          <aside
+            data-testid="agent-teams-communication-pane"
+            className="h-full w-[400px] shrink-0 border-l border-[var(--color-border)] bg-[var(--color-surface-container-lowest)]"
+          >
+            {selectedMember ? (
+              <AgentTeamsMemberInspector
+                snapshots={snapshots}
+                selectedIndex={selectedIndex}
+                snapshot={snapshot}
+                member={selectedMember}
+                isLead={selectedMemberIsLead}
+                leadIsStreaming={leadIsStreaming}
+                onBack={() => setSelectedMemberId(null)}
+                onClose={closeCommunication}
+                onOpenExecution={openSelectedExecution}
+              />
+            ) : (
+              <div className="relative h-full min-h-0">
+                <AgentTeamsCommunicationFeed
+                  snapshot={snapshot}
+                  fill
+                  onFocusTask={setFeedFocusedTaskId}
+                />
+                <div className="absolute right-3 top-2.5 z-[var(--z-raised)]">
+                  <IconButton
+                    icon={<ChevronRight aria-hidden="true" />}
+                    label={t('agentTeams.communication.close')}
+                    size="sm"
+                    tone="muted"
+                    bordered
+                    onClick={closeCommunication}
+                  />
+                </div>
+              </div>
+            )}
+          </aside>
+        ) : (
+          <button
+            type="button"
+            data-testid="agent-teams-communication-rail"
+            aria-label={t('agentTeams.communication.open')}
+            onClick={() => setCommunicationOpen(true)}
+            className="flex h-full w-14 shrink-0 flex-col items-center gap-3 border-l border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] py-3 outline-none transition-colors hover:bg-[var(--color-surface-container-low)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-border-focus)]"
+          >
+            <span className="flex h-[30px] w-[30px] items-center justify-center rounded-[var(--radius-md)] border border-[var(--color-outline)] text-[var(--color-text-secondary)]">
+              <ChevronLeft size={14} strokeWidth={2.4} aria-hidden="true" />
+            </span>
+            <span className="text-[11px] font-extrabold tracking-[0.28em] text-[var(--color-text-secondary)] [writing-mode:vertical-rl]">
+              {t('agentTeams.communication.title')}
+            </span>
+            <span className="rounded-full bg-[var(--color-brand)] px-1.5 py-0.5 font-mono text-[10px] font-extrabold text-[var(--color-on-primary)]">
+              {snapshot.messages.length}
+            </span>
+            <span
+              className={[
+                'h-2 w-2 rounded-full',
+                activeMessageId
+                  ? 'agent-teams-live-dot bg-[var(--color-brand)]'
+                  : 'bg-[var(--color-outline)]',
+              ].join(' ')}
+              aria-hidden="true"
+            />
+          </button>
+        )}
 
-      {/* The width owner sits outside the feed so the same feed component can
-          still render as a horizontal strip in compact contexts. */}
-      <div
-        data-testid="agent-teams-communication-pane"
-        className="h-full min-w-0 shrink-0 overflow-hidden"
-        style={{
-          width: communicationWidth,
-          maxWidth: `calc(100% - ${DAG_MIN_WIDTH}px)`,
-        }}
-      >
-        <AgentTeamsCommunicationFeed snapshot={snapshot} fill />
-      </div>
+        {selectedTask && snapshot.tasks.some(task => task.id === selectedTask.id) ? (
+          <TaskDetailPanel
+            task={snapshot.tasks.find(task => task.id === selectedTask.id)!}
+            snapshot={snapshot}
+            communicationOpen={communicationOpen}
+            onClose={() => setSelectedTask(null)}
+            t={t}
+          />
+        ) : null}
       </div>
     </section>
   )
 }
 
-function MemberFigure({
-  member,
-  state,
-  accent,
-  isLead = false,
-  isMessageSender = false,
-  showName = false,
-  testId,
-  className,
-  onSelect,
-  t,
-}: {
-  member: TeamMember
-  state: MemberWorkState
-  accent: string
-  isLead?: boolean
-  isMessageSender?: boolean
-  showName?: boolean
-  testId?: string
-  className: string
-  onSelect: () => void
-  t: TranslationFn
-}) {
-  const name = memberName(member)
-  const avatarKey = getMemberAvatarKey(member, isLead)
-  const motionClass = state === 'working'
-    ? 'agent-teams-character-working'
-    : state === 'idle'
-      ? 'agent-teams-character-idle'
-      : ''
-  return (
-    <button
-      type="button"
-      data-testid={testId}
-      data-avatar-key={avatarKey}
-      data-member-state={state}
-      aria-label={t('agentTeams.openMember', { name })}
-      title={`${name} · ${memberStateLabel(state, t)}`}
-      onClick={(event) => {
-        event.stopPropagation()
-        onSelect()
-      }}
-      className={`agent-teams-person relative z-[var(--z-raised)] cursor-pointer rounded-[var(--radius-lg)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)] ${className}`}
-    >
-      <span className={`agent-teams-character relative block h-full w-full ${motionClass} ${state === 'exited' ? 'agent-teams-character-archived' : ''} ${isMessageSender ? 'agent-teams-character-message' : ''}`}>
-        <img
-          src={MEMBER_AVATARS[avatarKey]}
-          alt=""
-          draggable={false}
-          className="h-full w-full select-none object-contain drop-shadow-[0_4px_3px_rgba(0,0,0,0.16)]"
-        />
-        <span
-          aria-hidden="true"
-          className="absolute bottom-0 left-1/2 h-1.5 w-6 -translate-x-1/2 rounded-full border border-[var(--color-surface-container-lowest)] shadow-sm"
-          style={{ background: accent }}
-        />
-      </span>
-      {state === 'idle' ? (
-        <span className="agent-teams-zz absolute -top-1 right-0 text-[8.5px] font-bold text-[var(--color-text-tertiary)]">zZ</span>
-      ) : null}
-      {showName ? (
-        <span className="pointer-events-none absolute left-1/2 top-[calc(100%-2px)] max-w-[112px] -translate-x-1/2 truncate rounded-[var(--radius-sm)] bg-[var(--color-surface-container-lowest)] px-1.5 font-mono text-[9px] font-extrabold leading-5 text-[var(--color-text-secondary)] shadow-[var(--shadow-card)]">
-          {name}
-        </span>
-      ) : null}
-    </button>
-  )
-}
-
-function LeaderNode({
-  member,
-  state,
-  canvasWidth,
-  accent,
-  isMessageSender,
-  onSelect,
-  t,
-}: {
-  member: TeamMember
-  state: MemberWorkState
-  canvasWidth: number
-  accent: string
-  isMessageSender: boolean
-  onSelect: () => void
-  t: TranslationFn
-}) {
-  const name = memberName(member)
-  return (
-    <div
-      data-layout-role="leader-root"
-      data-center-x={canvasWidth / 2}
-      className="absolute top-3 z-[var(--z-raised)] flex w-[184px] flex-col items-center"
-      style={{ left: canvasWidth / 2 - 92 }}
-    >
-      <div className="absolute top-[70px] h-[58px] w-px bg-[var(--color-border-strong)]" aria-hidden="true" />
-      <MemberFigure
-        member={member}
-        state={state}
-        accent={accent}
-        isLead
-        isMessageSender={isMessageSender}
-        testId={`agent-teams-member-${member.agentId}`}
-        className="h-[88px] w-[88px]"
-        onSelect={onSelect}
-        t={t}
-      />
-      <button
-        type="button"
-        onClick={onSelect}
-        className="relative -mt-1 flex min-w-[150px] max-w-[184px] cursor-pointer items-center justify-center gap-2 rounded-[var(--radius-lg)] border border-[var(--color-border-strong)] bg-[var(--color-surface-container-lowest)] px-3 py-2 shadow-[var(--shadow-card)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]"
-      >
-        <span className="min-w-0 truncate font-mono text-[11px] font-extrabold">{name}</span>
-        <Badge tone="brand" size="xs" bordered>{t('agentTeams.leader')}</Badge>
-      </button>
-    </div>
-  )
-}
-
-function UnassignedMemberNode({
-  member,
-  state,
-  position,
-  accent,
-  isMessageSender,
-  onSelect,
-  t,
-}: {
-  member: TeamMember
-  state: MemberWorkState
-  position: BotPosition
-  accent: string
-  isMessageSender: boolean
-  onSelect: () => void
-  t: TranslationFn
-}) {
-  return (
-    <div className="absolute" style={{ left: position.x - 28, top: position.y - 28 }}>
-      <MemberFigure
-        member={member}
-        state={state}
-        accent={accent}
-        isMessageSender={isMessageSender}
-        showName
-        testId={`agent-teams-member-${member.agentId}`}
-        className="h-14 w-14"
-        onSelect={onSelect}
-        t={t}
-      />
-    </div>
-  )
-}
-
-function LeaderEdge({
-  canvasWidth,
-  to,
-  active,
-}: {
-  canvasWidth: number
-  to: PositionedWorkbenchTask
-  active: boolean
-}) {
-  const x1 = canvasWidth / 2
-  const y1 = 132
-  const x2 = to.x + WORKBENCH_TASK_WIDTH / 2
-  const y2 = to.y
-  return (
-    <path
-      data-edge-kind="leader-root"
-      d={`M ${x1} ${y1} C ${x1} ${y1 + 34}, ${x2} ${y2 - 34}, ${x2} ${y2}`}
-      fill="none"
-      stroke="var(--color-brand)"
-      strokeWidth={active ? 2.4 : 1.8}
-      strokeDasharray={active ? '6 5' : undefined}
-      strokeLinecap="round"
-      className={active ? 'agent-teams-flow' : undefined}
-    />
-  )
-}
-
-function DependencyEdge({
-  from,
-  to,
-  secondary,
-  focused,
-  dimmed,
-}: {
-  from: PositionedWorkbenchTask
-  to: PositionedWorkbenchTask
-  secondary: boolean
-  focused: boolean
-  dimmed: boolean
-}) {
-  const x1 = from.x + WORKBENCH_TASK_WIDTH / 2
-  const y1 = from.y + WORKBENCH_TASK_HEIGHT
-  const x2 = to.x + WORKBENCH_TASK_WIDTH / 2
-  const y2 = to.y
-  const isSatisfied = from.task.status === 'completed'
-  const isFlowing = isSatisfied && to.state === 'running'
-  const stroke = focused || isFlowing
-    ? 'var(--color-brand)'
-    : secondary
-      ? 'var(--color-border-separator)'
-      : 'var(--color-outline)'
-  const opacity = dimmed
-    ? 0.06
-    : focused
-      ? 0.92
-      : secondary
-        ? 0.16
-        : 0.5
-  return (
-    <path
-      data-edge-kind={secondary ? 'dependency-secondary' : 'dependency-primary'}
-      data-edge-active={focused ? 'true' : undefined}
-      d={`M ${x1} ${y1} C ${x1} ${y1 + 20}, ${x2} ${y2 - 20}, ${x2} ${y2}`}
-      fill="none"
-      stroke={stroke}
-      strokeWidth={focused ? 2 : secondary ? 1 : 1.35}
-      strokeDasharray={secondary ? '3 6' : isFlowing ? '6 5' : isSatisfied ? undefined : '4 5'}
-      strokeLinecap="round"
-      className={`transition-opacity duration-150 ${isFlowing && !secondary ? 'agent-teams-flow' : ''}`}
-      style={{ opacity }}
-    />
-  )
-}
-
-function MessageFlight({
-  message,
-  positions,
-  members,
-  width,
-}: {
-  message: TeamWorkbenchMessage
-  positions: Map<string, BotPosition>
-  members: TeamMember[]
-  width: number
-}) {
-  const findMember = (identity: string) => members.find((member) => memberMatchesIdentity(member, identity))
-  const sender = findMember(message.from)
-  const senderPosition = sender ? positions.get(sender.agentId) : undefined
-  if (!senderPosition || message.kind === 'system') return null
-  const color = message.kind === 'broadcast' ? 'var(--color-warning)' : 'var(--color-brand)'
-  if (message.kind === 'broadcast') {
-    return (
-      <>
-        <path
-          d={`M ${senderPosition.x} ${senderPosition.y} L ${width - 14} ${senderPosition.y}`}
-          fill="none"
-          stroke={color}
-          strokeWidth="1.8"
-          strokeDasharray="5 4"
-          className="agent-teams-flow"
-        />
-        <circle cx={width - 14} cy={senderPosition.y} r="3" fill={color} />
-      </>
-    )
-  }
-  const recipient = findMember(message.to)
-  const recipientPosition = recipient ? positions.get(recipient.agentId) : undefined
-  if (!recipientPosition) return null
-  const x1 = senderPosition.x
-  const y1 = senderPosition.y
-  const x2 = recipientPosition.x
-  const y2 = recipientPosition.y
-  return (
-    <>
-      <path
-        d={`M ${x1} ${y1} Q ${(x1 + x2) / 2} ${Math.min(y1, y2) - 34}, ${x2} ${y2}`}
-        fill="none"
-        stroke={color}
-        strokeWidth="1.8"
-        strokeDasharray="5 4"
-        className="agent-teams-flow"
-      />
-      <circle cx={x2} cy={y2} r="3" fill={color} />
-    </>
-  )
-}
-
-function TaskCard({
-  positioned,
-  members,
+function TaskDetailPanel({
+  task,
   snapshot,
-  primaryTaskByMemberId,
-  latestMessage,
-  onSelectMember,
-  onFocusTask,
+  communicationOpen,
+  onClose,
   t,
 }: {
-  positioned: PositionedWorkbenchTask
-  members: TeamMember[]
+  task: TeamWorkbenchTask
   snapshot: TeamWorkbenchSnapshot
-  primaryTaskByMemberId: Map<string, string>
-  latestMessage?: TeamWorkbenchMessage
-  onSelectMember: (member: TeamMember) => void
-  onFocusTask: (taskId: string | null) => void
+  communicationOpen: boolean
+  onClose: () => void
   t: TranslationFn
 }) {
-  const { task, state, x, y } = positioned
-  const owner = task.owner
-    ? members.find((member) => taskOwnedByMember(task, member))
+  const owner = inferTaskOwner(task, snapshot)
+  const ownerMember = owner
+    ? resolveTeamMemberIdentity(snapshot.team, owner.identity).member
     : undefined
-  const dependencyLabel = task.blockedBy.map((dependency) => `#${dependency}`).join(' ')
-  const ownerState = owner
-    ? memberState(owner, snapshot, owner.agentId === snapshot.team.leadAgentId)
-    : undefined
-  const isPrimaryOwnerFigure = Boolean(
-    owner
-    && owner.agentId !== snapshot.team.leadAgentId
-    && primaryTaskByMemberId.get(owner.agentId) === task.id,
-  )
-  const openOwner = () => {
-    if (owner) onSelectMember(owner)
-  }
   return (
-    <article
-      data-testid={`agent-teams-task-${task.id}`}
-      data-state={state}
-      data-owner-agent-id={owner?.agentId}
-      tabIndex={0}
-      role={owner ? 'button' : undefined}
-      aria-label={owner ? t('agentTeams.openMember', { name: memberName(owner) }) : undefined}
-      onClick={(event) => {
-        if (!owner || (event.target as HTMLElement).closest('button')) return
-        openOwner()
-      }}
-      onKeyDown={(event) => {
-        if (!owner || (event.key !== 'Enter' && event.key !== ' ')) return
-        event.preventDefault()
-        openOwner()
-      }}
-      onMouseEnter={() => onFocusTask(task.id)}
-      onMouseLeave={() => onFocusTask(null)}
-      onFocus={() => onFocusTask(task.id)}
-      onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) onFocusTask(null)
-      }}
-      className={`agent-teams-task absolute h-[94px] w-[216px] rounded-[var(--radius-xl)] border bg-[var(--color-surface-container-lowest)] py-[10px] pr-3 shadow-[var(--shadow-card)] outline-none transition-[transform,box-shadow,border-color] duration-200 focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)] ${owner ? 'cursor-pointer pl-[58px] hover:-translate-y-px hover:shadow-[var(--shadow-composer)] active:scale-[0.99]' : 'pl-3'}`}
-      style={{
-        left: x,
-        top: y,
-        borderColor: taskBorder(state),
-      }}
+    <aside
+      data-testid="agent-teams-task-detail"
+      data-task-id={task.id}
+      className="agent-teams-drawer absolute bottom-4 z-[var(--z-drawer)] w-[360px] rounded-[var(--radius-lg)] border border-[var(--color-outline)] bg-[var(--color-surface-container-lowest)] p-4 shadow-[var(--shadow-overlay)]"
+      style={{ right: communicationOpen ? 416 : 72 }}
     >
-      {owner && ownerState ? (
-        <div className="absolute -left-[18px] top-[13px]">
-          <MemberFigure
-            member={owner}
-            state={ownerState}
-            accent={memberAccent(owner, members.indexOf(owner))}
-            isLead={owner.agentId === snapshot.team.leadAgentId}
-            isMessageSender={Boolean(latestMessage && memberMatchesIdentity(owner, latestMessage.from))}
-            testId={isPrimaryOwnerFigure ? `agent-teams-member-${owner.agentId}` : `agent-teams-task-owner-${task.id}`}
-            className="h-[66px] w-[66px]"
-            onSelect={() => onSelectMember(owner)}
-            t={t}
-          />
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="font-mono text-[10px] font-extrabold text-[var(--color-text-tertiary)]">
+            #{task.id}
+          </div>
+          <h3 className="mt-1 text-[13px] font-extrabold leading-snug">{task.subject}</h3>
         </div>
+        <IconButton
+          icon={<X aria-hidden="true" />}
+          label={t('agentTeams.task.closeDetail')}
+          size="sm"
+          tone="muted"
+          onClick={onClose}
+        />
+      </div>
+      {task.description ? (
+        <p className="mt-3 whitespace-pre-wrap text-[12px] leading-relaxed text-[var(--color-text-secondary)]">
+          {task.description}
+        </p>
       ) : null}
-      <div className="flex items-center gap-1">
-        <span className={`font-mono text-[10px] font-extrabold ${state === 'running' ? 'text-[var(--color-brand)]' : 'text-[var(--color-text-tertiary)]'}`}>
-          #{task.id}
-        </span>
-        <span className="flex-1" />
-        <span className="inline-flex items-center gap-1 text-[9px] font-extrabold" style={{ color: taskBorder(state) }}>
-          <StatusDot tone={taskTone(state)} pulse={state === 'running'} />
-          {taskStateLabel(state, t)}
-        </span>
+      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 border-t border-[var(--color-border)] pt-3 text-[10.5px] text-[var(--color-text-secondary)]">
+        <span>{t('agentTeams.task.ownerLabel')}: {ownerMember?.name ?? owner?.identity ?? '—'}</span>
+        <span>{t('agentTeams.task.dependsOn')}: {task.blockedBy.map((id) => `#${id}`).join(', ') || '—'}</span>
+        <span>{t('agentTeams.task.unblocks')}: {task.blocks.map((id) => `#${id}`).join(', ') || '—'}</span>
       </div>
-      <div className="mt-1 line-clamp-2 min-h-[32px] text-[11.5px] font-bold leading-[1.4]" title={task.subject}>
-        {task.subject}
-      </div>
-      <div className="mt-1 flex min-h-4 items-center gap-1.5">
-        {owner ? (
-          <span className="truncate font-mono text-[10px] font-semibold text-[var(--color-text-secondary)]">
-            {memberName(owner)}
-          </span>
-        ) : (
-          <span className="truncate text-[9.5px] text-[var(--color-text-tertiary)]">
-            {state === 'blocked'
-              ? t('agentTeams.task.dependencies', { dependencies: dependencyLabel })
-              : t('agentTeams.task.unclaimed')}
-          </span>
-        )}
-      </div>
-    </article>
+    </aside>
   )
 }

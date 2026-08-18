@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MessageEntry } from '../types/session'
-import { buildSessionActivityModel } from '../components/activity/sessionActivityModel'
+import {
+  buildMainSessionActivityModel,
+  buildSessionActivityModel,
+  hasVisibleSessionActivity,
+} from '../components/activity/sessionActivityModel'
 import { useSessionRuntimeStore } from './sessionRuntimeStore'
 
 const {
@@ -154,6 +158,7 @@ vi.mock('./cliTaskStore', () => ({
 }))
 
 import { sessionsApi } from '../api/sessions'
+import type { ServerMessage } from '../types/chat'
 import { useSettingsStore } from './settingsStore'
 import { runsForOwner, runsForSession, useWorkflowStore } from './workflowStore'
 import {
@@ -3363,6 +3368,97 @@ describe('chatStore history mapping', () => {
     vi.useRealTimers()
   })
 
+  it('never projects sequential streaming teammates into main Activity', () => {
+    vi.useFakeTimers()
+
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession(),
+      },
+    })
+
+    const buildMainActivity = () => buildMainSessionActivityModel({
+      sessionId: TEST_SESSION_ID,
+      messages: useChatStore.getState().sessions[TEST_SESSION_ID]?.messages ?? [],
+      tasks: [],
+      completedAndDismissed: false,
+      backgroundTasks: [],
+      agentNotifications: [],
+    })
+
+    for (const [index, member] of ['feature-analyst', 'bug-analyst', 'quality-analyst'].entries()) {
+      const toolUseId = `team-agent-${index + 1}`
+      const description = `分析第 ${index + 1} 组 commit`
+
+      useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+        type: 'content_start',
+        blockType: 'tool_use',
+        toolName: 'Agent',
+        toolUseId,
+      })
+      useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+        type: 'content_delta',
+        toolInput: `{"description":"${description}","name":`,
+      })
+      vi.advanceTimersByTime(60)
+
+      expect(useChatStore.getState().sessions[TEST_SESSION_ID]?.messages).toContainEqual(
+        expect.objectContaining({
+          type: 'tool_use',
+          toolUseId,
+          input: { description },
+          isPending: true,
+        }),
+      )
+      expect(hasVisibleSessionActivity(buildMainActivity())).toBe(false)
+
+      useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+        type: 'tool_use_complete',
+        toolName: 'Agent',
+        toolUseId,
+        input: {
+          description,
+          name: member,
+          team_name: 'commit-analysis',
+        },
+      })
+
+      expect(hasVisibleSessionActivity(buildMainActivity())).toBe(false)
+    }
+
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'content_start',
+      blockType: 'tool_use',
+      toolName: 'Agent',
+      toolUseId: 'direct-agent',
+    })
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'content_delta',
+      toolInput: '{"description":"审查普通 SubAgent 路径"',
+    })
+    vi.advanceTimersByTime(60)
+
+    expect(hasVisibleSessionActivity(buildMainActivity())).toBe(false)
+
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'tool_use_complete',
+      toolName: 'Agent',
+      toolUseId: 'direct-agent',
+      input: { description: '审查普通 SubAgent 路径' },
+    })
+
+    expect(buildMainActivity().sections.subagents.rows).toEqual([
+      expect.objectContaining({
+        id: 'direct-agent',
+        label: '审查普通 SubAgent 路径',
+        status: 'running',
+      }),
+    ])
+
+    vi.runOnlyPendingTimers()
+    vi.useRealTimers()
+  })
+
   it('batches streaming tool input deltas before updating the pending card', () => {
     vi.useFakeTimers()
 
@@ -4150,6 +4246,92 @@ describe('chatStore history mapping', () => {
       effortLevel: 'high',
     })
     expect(useChatStore.getState().sessions[TEST_SESSION_ID]?.runtimeConfigReadyCount).toBe(1)
+  })
+
+  it('shows AskUserQuestion when permission arrives before the streamed tool block', () => {
+    const input = {
+      questions: [
+        {
+          question: 'Should we persist data?',
+          options: [{ label: 'No' }, { label: 'Yes' }],
+        },
+      ],
+    }
+    useChatStore.setState({
+      sessions: { [TEST_SESSION_ID]: makeSession() },
+    })
+
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'permission_request',
+      requestId: 'perm-ask-permission-first',
+      toolName: 'AskUserQuestion',
+      toolUseId: 'tool-ask-permission-first',
+      input,
+    })
+
+    expect(useChatStore.getState().sessions[TEST_SESSION_ID]?.messages).toContainEqual(
+      expect.objectContaining({
+        type: 'tool_use',
+        toolName: 'AskUserQuestion',
+        toolUseId: 'tool-ask-permission-first',
+        input,
+      }),
+    )
+
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'tool_use_complete',
+      toolName: 'AskUserQuestion',
+      toolUseId: 'tool-ask-permission-first',
+      input,
+    })
+
+    expect(
+      useChatStore.getState().sessions[TEST_SESSION_ID]?.messages.filter(
+        (message) => message.type === 'tool_use' &&
+          message.toolUseId === 'tool-ask-permission-first',
+      ),
+    ).toHaveLength(1)
+  })
+
+  it('keeps one AskUserQuestion when the streamed tool block arrives first', () => {
+    const input = {
+      questions: [
+        {
+          question: 'Which scope?',
+          options: [{ label: 'Current file' }, { label: 'Repository' }],
+        },
+      ],
+    }
+    useChatStore.setState({
+      sessions: { [TEST_SESSION_ID]: makeSession() },
+    })
+    const store = useChatStore.getState()
+
+    store.handleServerMessage(TEST_SESSION_ID, {
+      type: 'tool_use_complete',
+      toolName: 'AskUserQuestion',
+      toolUseId: 'tool-ask-stream-first',
+      input,
+    })
+    store.handleServerMessage(TEST_SESSION_ID, {
+      type: 'permission_request',
+      requestId: 'perm-ask-stream-first',
+      toolName: 'AskUserQuestion',
+      toolUseId: 'tool-ask-stream-first',
+      input,
+    })
+
+    const session = useChatStore.getState().sessions[TEST_SESSION_ID]
+    expect(session?.pendingPermission).toMatchObject({
+      requestId: 'perm-ask-stream-first',
+      toolUseId: 'tool-ask-stream-first',
+    })
+    expect(
+      session?.messages.filter(
+        (message) => message.type === 'tool_use' &&
+          message.toolUseId === 'tool-ask-stream-first',
+      ),
+    ).toHaveLength(1)
   })
 
   it('keeps AskUserQuestion permission requests out of the message list while tracking the pending request', () => {
@@ -5109,6 +5291,180 @@ describe('chatStore history mapping', () => {
       status: 'completed',
       toolUseId: 'nested-agent',
     })
+  })
+
+  it('replays live agent output that arrives before the run page registers its target id', () => {
+    vi.useFakeTimers()
+    const runSessionId = '__subagent__test-session-1__early-workflow'
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession(),
+        [runSessionId]: makeSession(),
+      },
+    })
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'agent_run_event',
+      runAgentId: 'early-workflow-agent',
+      streamId: 'early-workflow-stream',
+      targetAgentId: 'early-workflow-agent',
+      event: { type: 'content_delta', text: 'arrived before REST identity' },
+    })
+
+    expect(useChatStore.getState().sessions[runSessionId]?.streamingText).toBe('')
+    const unregister = registerAgentRunSession(
+      TEST_SESSION_ID,
+      runSessionId,
+      ['early-workflow-agent'],
+    )
+    try {
+      vi.advanceTimersByTime(60)
+      expect(useChatStore.getState().sessions[runSessionId]?.streamingText).toBe(
+        'arrived before REST identity',
+      )
+      expect(useChatStore.getState().sessions[TEST_SESSION_ID]?.streamingText).toBe('')
+    } finally {
+      unregister()
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not replay buffered output after an unregistered run has completed', () => {
+    vi.useFakeTimers()
+    const runSessionId = '__subagent__test-session-1__completed-before-open'
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession(),
+        [runSessionId]: makeSession({
+          messages: [{
+            id: 'durable-answer',
+            type: 'assistant_text',
+            content: 'durable completed answer',
+            timestamp: 1,
+          }],
+        }),
+      },
+    })
+
+    for (const event of [
+      { type: 'content_start', blockType: 'text' },
+      { type: 'content_delta', text: 'transient answer' },
+      { type: 'status', state: 'idle' },
+    ] as const) {
+      useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+        type: 'agent_run_event',
+        runAgentId: 'completed-agent',
+        streamId: 'completed-stream',
+        targetAgentId: 'completed-agent',
+        event,
+      })
+    }
+
+    const unregister = registerAgentRunSession(
+      TEST_SESSION_ID,
+      runSessionId,
+      ['completed-agent'],
+    )
+    try {
+      vi.advanceTimersByTime(60)
+      expect(useChatStore.getState().sessions[runSessionId]?.messages).toEqual([
+        expect.objectContaining({ id: 'durable-answer', content: 'durable completed answer' }),
+      ])
+      expect(useChatStore.getState().sessions[runSessionId]?.streamingText).toBe('')
+    } finally {
+      unregister()
+      vi.useRealTimers()
+    }
+  })
+
+  it('isolates a reused Team member target by creation scope', () => {
+    vi.useFakeTimers()
+    const oldSessionId = 'team-member:old-scope:worker'
+    const newSessionId = 'team-member:new-scope:worker'
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession(),
+        [oldSessionId]: makeSession(),
+        [newSessionId]: makeSession(),
+      },
+    })
+    const unregisterOld = registerAgentRunSession(
+      TEST_SESSION_ID,
+      oldSessionId,
+      ['worker@reused-team'],
+      { streamScopeId: 'old-team-scope' },
+    )
+    const unregisterNew = registerAgentRunSession(
+      TEST_SESSION_ID,
+      newSessionId,
+      ['worker@reused-team'],
+      { streamScopeId: 'new-team-scope' },
+    )
+
+    try {
+      useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+        type: 'agent_run_event',
+        runAgentId: 'physical-new-worker',
+        streamId: 'new-worker-stream',
+        targetAgentId: 'worker@reused-team',
+        targetAgentScopeId: 'new-team-scope',
+        event: { type: 'content_delta', text: 'new incarnation output' },
+      })
+      vi.advanceTimersByTime(60)
+      expect(useChatStore.getState().sessions[newSessionId]?.streamingText).toBe(
+        'new incarnation output',
+      )
+      expect(useChatStore.getState().sessions[oldSessionId]?.streamingText).toBe('')
+    } finally {
+      unregisterNew()
+      unregisterOld()
+      vi.useRealTimers()
+    }
+  })
+
+  it('ignores a superseded foreground stream after its background continuation starts', () => {
+    vi.useFakeTimers()
+    const runSessionId = '__subagent__test-session-1__background-handoff'
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession(),
+        [runSessionId]: makeSession(),
+      },
+    })
+    const unregister = registerAgentRunSession(
+      TEST_SESSION_ID,
+      runSessionId,
+      ['handoff-agent'],
+    )
+    const send = (streamId: string, event: Extract<ServerMessage, { type: 'agent_run_event' }>['event']) => {
+      useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+        type: 'agent_run_event',
+        runAgentId: 'handoff-agent',
+        streamId,
+        targetAgentId: 'handoff-agent',
+        event,
+      })
+    }
+
+    try {
+      send('foreground-stream', { type: 'content_delta', text: 'abandoned partial' })
+      vi.advanceTimersByTime(60)
+      send('foreground-stream', { type: 'streaming_fallback', cause: 'stream_retry' })
+      send('foreground-stream', { type: 'status', state: 'idle' })
+      send('background-stream', { type: 'content_start', blockType: 'text' })
+      send('background-stream', { type: 'content_delta', text: 'background answer' })
+      send('foreground-stream', { type: 'content_delta', text: 'late foreground text' })
+      vi.advanceTimersByTime(60)
+
+      const session = useChatStore.getState().sessions[runSessionId]
+      expect(session?.streamingText).toBe('background answer')
+      expect(session?.messages).not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ content: expect.stringContaining('abandoned partial') }),
+      ]))
+      expect(session?.chatState).toBe('streaming')
+    } finally {
+      unregister()
+      vi.useRealTimers()
+    }
   })
 
   it('replays owner task events that arrive before the run identity is registered', () => {

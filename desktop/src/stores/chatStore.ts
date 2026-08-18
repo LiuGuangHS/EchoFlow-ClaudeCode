@@ -162,6 +162,8 @@ export type PerSessionState = {
   pendingBackgroundTaskStopFailures?: Record<string, string>
   stopAllSubagentsRequested?: boolean
   historyMutationEpoch?: number
+  /** Changes when a directed child stream starts or settles. */
+  agentStreamRevision?: number
   suppressNextTaskNotificationResponse?: boolean
   replaceHistoryOnCompletion?: boolean
   activeGoal?: ActiveGoalState | null
@@ -210,6 +212,7 @@ const DEFAULT_SESSION_STATE: PerSessionState = {
   pendingBackgroundTaskStopFailures: {},
   stopAllSubagentsRequested: false,
   historyMutationEpoch: 0,
+  agentStreamRevision: 0,
   suppressNextTaskNotificationResponse: false,
   replaceHistoryOnCompletion: false,
   activeGoal: null,
@@ -393,9 +396,30 @@ type PendingOwnedTaskEvent = {
 }
 const pendingOwnedTaskEvents = new Map<string, Map<string, PendingOwnedTaskEvent[]>>()
 const MAX_PENDING_OWNED_TASK_EVENTS = 200
+type AgentStreamRouteRegistration = {
+  count: number
+  eventIdPrefix?: string | 'runAgentId'
+}
+type AgentStreamEventTarget = {
+  sessionId: string
+  eventIdPrefix?: string
+}
+const runSessionIdsByStreamAlias = new Map<
+  string,
+  Map<string, Map<string, AgentStreamRouteRegistration>>
+>()
+const pendingAgentRunEvents = new Map<string, Extract<ServerMessage, { type: 'agent_run_event' }>[]>()
+const activeAgentStreamIdBySession = new Map<string, string>()
+const retiredAgentStreamIdsBySession = new Map<string, Set<string>>()
+const MAX_PENDING_AGENT_RUN_EVENTS = 1000
+const MAX_RETIRED_AGENT_STREAM_IDS = 32
 
 function ownedTaskRouteKey(ownerAgentId: string, ownerScopeId?: string): string {
   return JSON.stringify([ownerScopeId ?? null, ownerAgentId])
+}
+
+function agentStreamRouteKey(targetAgentId: string, targetAgentScopeId?: string): string {
+  return JSON.stringify([targetAgentScopeId ?? null, targetAgentId])
 }
 
 /**
@@ -408,7 +432,12 @@ export function registerAgentRunSession(
   sourceSessionId: string,
   runSessionId: string,
   ownerAliases: Array<string | null | undefined>,
-  options: { ownerScopeId?: string; eventIdPrefix?: string } = {},
+  options: {
+    ownerScopeId?: string
+    eventIdPrefix?: string
+    streamScopeId?: string
+    streamEventIdPrefix?: string | 'runAgentId'
+  } = {},
 ): () => void {
   const aliases = [...new Set(ownerAliases
     .map((alias) => alias?.trim())
@@ -433,6 +462,24 @@ export function registerAgentRunSession(
   }
   runSessionIdsByOwner.set(sourceSessionId, byOwner)
 
+  const byStreamAlias = runSessionIdsByStreamAlias.get(sourceSessionId) ??
+    new Map<string, Map<string, AgentStreamRouteRegistration>>()
+  for (const alias of aliases) {
+    const routeKey = agentStreamRouteKey(alias, options.streamScopeId)
+    const sessions = byStreamAlias.get(routeKey) ?? new Map<string, AgentStreamRouteRegistration>()
+    const existing = sessions.get(runSessionId)
+    sessions.set(runSessionId, {
+      count: (existing?.count ?? 0) + 1,
+      ...(options.streamEventIdPrefix
+        ? { eventIdPrefix: options.streamEventIdPrefix }
+        : existing?.eventIdPrefix
+          ? { eventIdPrefix: existing.eventIdPrefix }
+          : {}),
+    })
+    byStreamAlias.set(routeKey, sessions)
+  }
+  runSessionIdsByStreamAlias.set(sourceSessionId, byStreamAlias)
+
   // A run page learns its concrete agent id from the first API response, but
   // lifecycle events can beat that response. Replay the bounded owner queue as
   // soon as the explicit join exists so fast workflows do not disappear.
@@ -449,22 +496,187 @@ export function registerAgentRunSession(
     })
   }
 
+  replayPendingAgentRunEvents(sourceSessionId)
+
   return () => {
     const current = runSessionIdsByOwner.get(sourceSessionId)
-    if (!current) return
+    if (current) {
+      for (const alias of aliases) {
+        const routeKey = ownedTaskRouteKey(alias, options.ownerScopeId)
+        const sessions = current.get(routeKey)
+        const registration = sessions?.get(runSessionId)
+        if (registration && registration.count > 1) {
+          sessions?.set(runSessionId, { ...registration, count: registration.count - 1 })
+        } else {
+          sessions?.delete(runSessionId)
+        }
+        if (sessions?.size === 0) current.delete(routeKey)
+      }
+      if (current.size === 0) runSessionIdsByOwner.delete(sourceSessionId)
+    }
+
+    const currentStreams = runSessionIdsByStreamAlias.get(sourceSessionId)
+    if (!currentStreams) return
     for (const alias of aliases) {
-      const routeKey = ownedTaskRouteKey(alias, options.ownerScopeId)
-      const sessions = current.get(routeKey)
+      const routeKey = agentStreamRouteKey(alias, options.streamScopeId)
+      const sessions = currentStreams.get(routeKey)
       const registration = sessions?.get(runSessionId)
       if (registration && registration.count > 1) {
         sessions?.set(runSessionId, { ...registration, count: registration.count - 1 })
       } else {
         sessions?.delete(runSessionId)
       }
-      if (sessions?.size === 0) current.delete(routeKey)
+      if (sessions?.size === 0) currentStreams.delete(routeKey)
     }
-    if (current.size === 0) runSessionIdsByOwner.delete(sourceSessionId)
+    if (currentStreams.size === 0) runSessionIdsByStreamAlias.delete(sourceSessionId)
   }
+}
+
+function agentStreamTargets(
+  sourceSessionId: string,
+  event: Extract<ServerMessage, { type: 'agent_run_event' }>,
+): AgentStreamEventTarget[] {
+  const registrations = runSessionIdsByStreamAlias
+    .get(sourceSessionId)
+    ?.get(agentStreamRouteKey(event.targetAgentId, event.targetAgentScopeId))
+  if (!registrations) return []
+  return [...registrations].map(([sessionId, registration]) => ({
+    sessionId,
+    ...(registration.eventIdPrefix
+      ? {
+          eventIdPrefix: registration.eventIdPrefix === 'runAgentId'
+            ? event.runAgentId
+            : registration.eventIdPrefix,
+        }
+      : {}),
+  }))
+}
+
+function prefixAgentStreamId(prefix: string, value: string): string {
+  return value.startsWith(`${prefix}/`) ? value : `${prefix}/${value}`
+}
+
+function projectAgentRunStreamEvent(
+  event: Extract<ServerMessage, { type: 'agent_run_event' }>['event'],
+  eventIdPrefix: string | undefined,
+): Extract<ServerMessage, { type: 'agent_run_event' }>['event'] {
+  if (!eventIdPrefix) return event
+  if (event.type === 'content_start' && event.toolUseId) {
+    return {
+      ...event,
+      toolUseId: prefixAgentStreamId(eventIdPrefix, event.toolUseId),
+      ...(event.parentToolUseId
+        ? { parentToolUseId: prefixAgentStreamId(eventIdPrefix, event.parentToolUseId) }
+        : {}),
+    }
+  }
+  if (event.type === 'tool_use_complete' || event.type === 'tool_result') {
+    return {
+      ...event,
+      toolUseId: prefixAgentStreamId(eventIdPrefix, event.toolUseId),
+      ...(event.parentToolUseId
+        ? { parentToolUseId: prefixAgentStreamId(eventIdPrefix, event.parentToolUseId) }
+        : {}),
+    }
+  }
+  return event
+}
+
+function retireAgentStream(sessionId: string, streamId: string): void {
+  const retired = retiredAgentStreamIdsBySession.get(sessionId) ?? new Set<string>()
+  retired.add(streamId)
+  while (retired.size > MAX_RETIRED_AGENT_STREAM_IDS) {
+    const oldest = retired.values().next().value
+    if (!oldest) break
+    retired.delete(oldest)
+  }
+  retiredAgentStreamIdsBySession.set(sessionId, retired)
+}
+
+function advanceAgentStreamRevision(sessionId: string): void {
+  useChatStore.setState((state) => ({
+    sessions: {
+      ...state.sessions,
+      [sessionId]: {
+        ...(state.sessions[sessionId] ?? createDefaultSessionState()),
+        agentStreamRevision: (state.sessions[sessionId]?.agentStreamRevision ?? 0) + 1,
+      },
+    },
+  }))
+}
+
+function dispatchAgentRunEvent(
+  sourceSessionId: string,
+  event: Extract<ServerMessage, { type: 'agent_run_event' }>,
+): boolean {
+  const targets = agentStreamTargets(sourceSessionId, event)
+  if (targets.length === 0) return false
+  for (const target of targets) {
+    const isTerminal = event.event.type === 'error' ||
+      (event.event.type === 'status' && event.event.state === 'idle')
+    const retired = retiredAgentStreamIdsBySession.get(target.sessionId)
+    if (retired?.has(event.streamId)) continue
+
+    const activeStreamId = activeAgentStreamIdBySession.get(target.sessionId)
+    if (isTerminal) {
+      // A foreground run can be superseded by its background continuation.
+      // Its delayed terminal must not settle the newer stream.
+      if (activeStreamId && activeStreamId !== event.streamId) {
+        retireAgentStream(target.sessionId, event.streamId)
+        continue
+      }
+      activeAgentStreamIdBySession.delete(target.sessionId)
+      retireAgentStream(target.sessionId, event.streamId)
+      if (activeStreamId === event.streamId) advanceAgentStreamRevision(target.sessionId)
+    } else if (activeStreamId !== event.streamId) {
+      if (activeStreamId) {
+        retireAgentStream(target.sessionId, activeStreamId)
+        useChatStore.getState().handleServerMessage(target.sessionId, {
+          type: 'streaming_fallback',
+          cause: 'stream_retry',
+        })
+      }
+      activeAgentStreamIdBySession.set(target.sessionId, event.streamId)
+      advanceAgentStreamRevision(target.sessionId)
+    }
+    useChatStore.getState().handleServerMessage(
+      target.sessionId,
+      projectAgentRunStreamEvent(event.event, target.eventIdPrefix),
+    )
+  }
+  return true
+}
+
+function replayPendingAgentRunEvents(sourceSessionId: string): void {
+  const pending = pendingAgentRunEvents.get(sourceSessionId)
+  if (!pending?.length) return
+  const remaining = pending.filter(event => !dispatchAgentRunEvent(sourceSessionId, event))
+  if (remaining.length > 0) pendingAgentRunEvents.set(sourceSessionId, remaining)
+  else pendingAgentRunEvents.delete(sourceSessionId)
+}
+
+function bufferAgentRunEvent(
+  sourceSessionId: string,
+  event: Extract<ServerMessage, { type: 'agent_run_event' }>,
+): void {
+  const pending = pendingAgentRunEvents.get(sourceSessionId) ?? []
+  const isTerminal = event.event.type === 'error' ||
+    (event.event.type === 'status' && event.event.state === 'idle')
+  if (isTerminal) {
+    const remaining = pending.filter(candidate => !(
+      candidate.streamId === event.streamId &&
+      candidate.targetAgentId === event.targetAgentId &&
+      candidate.targetAgentScopeId === event.targetAgentScopeId
+    ))
+    if (remaining.length > 0) pendingAgentRunEvents.set(sourceSessionId, remaining)
+    else pendingAgentRunEvents.delete(sourceSessionId)
+    return
+  }
+  pending.push(event)
+  if (pending.length > MAX_PENDING_AGENT_RUN_EVENTS) {
+    pending.splice(0, pending.length - MAX_PENDING_AGENT_RUN_EVENTS)
+  }
+  pendingAgentRunEvents.set(sourceSessionId, pending)
 }
 
 function taskEventTargets(
@@ -2491,6 +2703,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     clearPendingToolParentUseIds(sessionId)
     clearPendingToolInputDelta(sessionId)
     pendingOwnedTaskEvents.delete(sessionId)
+    pendingAgentRunEvents.delete(sessionId)
+    activeAgentStreamIdBySession.delete(sessionId)
+    retiredAgentStreamIdsBySession.delete(sessionId)
     set((s) => ({ sessions: updateSessionIn(s.sessions, sessionId, () => ({
       messages: [],
       activeGoal: null,
@@ -2505,6 +2720,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   handleServerMessage: (sessionId, msg) => {
+    if (msg.type === 'agent_run_event') {
+      if (!dispatchAgentRunEvent(sessionId, msg)) {
+        bufferAgentRunEvent(sessionId, msg)
+      }
+      return
+    }
     const update = (updater: (session: PerSessionState) => Partial<PerSessionState>) => {
       set((s) => ({ sessions: updateSessionIn(s.sessions, sessionId, updater) }))
     }
@@ -3121,6 +3342,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           }
           const hasPermissionMessage = s.messages.some((message) =>
             message.type === 'permission_request' && message.requestId === msg.requestId)
+          const isAskUserQuestion = msg.toolName === 'AskUserQuestion'
 
           return {
             pendingPermission,
@@ -3130,8 +3352,21 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             apiRetry: null,
             streamingFallback: null,
             messages:
-              msg.toolName === 'AskUserQuestion' || hasPermissionMessage
-                ? s.messages
+              isAskUserQuestion && msg.toolUseId
+                ? upsertToolUseMessage(s.messages, msg.toolUseId, (existing) => ({
+                    id: existing?.id ?? nextId(),
+                    type: 'tool_use',
+                    toolName: msg.toolName,
+                    toolUseId: msg.toolUseId!,
+                    originalToolUseId: existing?.originalToolUseId,
+                    input: msg.input,
+                    timestamp: existing?.timestamp ?? Date.now(),
+                    parentToolUseId: existing?.parentToolUseId,
+                    isPending: false,
+                    partialInput: existing?.partialInput,
+                  }))
+                : isAskUserQuestion || hasPermissionMessage
+                  ? s.messages
                 : [...s.messages, {
                     id: nextId(),
                     type: 'permission_request',

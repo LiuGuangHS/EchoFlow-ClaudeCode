@@ -1,9 +1,9 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { useState, type ComponentProps } from 'react'
+import { act, useState, type ComponentProps } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
 import { create } from 'zustand'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import '@testing-library/jest-dom'
 
 const viewportMocks = vi.hoisted(() => ({
@@ -104,6 +104,10 @@ vi.mock('../../i18n', () => ({
 }))
 
 import { RepositoryLaunchControls } from './RepositoryLaunchControls'
+import {
+  captureProjectDisplayNameHydrationRevision,
+  hydrateProjectDisplayNames,
+} from '../../stores/projectDisplayNameStore'
 
 const HEAD_COMMIT = 'a'.repeat(40)
 const OTHER_COMMIT = 'b'.repeat(40)
@@ -243,6 +247,9 @@ async function openBranchView() {
 
 describe('RepositoryLaunchControls', () => {
   beforeEach(() => {
+    act(() => {
+      hydrateProjectDisplayNames({}, Number.MAX_SAFE_INTEGER)
+    })
     viewportMocks.isMobile = false
     viewportMocks.isTauri = false
     apiMocks.getRepositoryContext.mockReset()
@@ -257,6 +264,12 @@ describe('RepositoryLaunchControls', () => {
     Element.prototype.scrollIntoView = vi.fn()
   })
 
+  afterEach(() => {
+    act(() => {
+      hydrateProjectDisplayNames({}, Number.MAX_SAFE_INTEGER)
+    })
+  })
+
   it('collapses directory, branch and worktree into a single pill', async () => {
     renderControls()
 
@@ -268,6 +281,28 @@ describe('RepositoryLaunchControls', () => {
     // The three separate triggers are gone — that was the point of the change.
     expect(screen.queryByRole('button', { name: /Select branch:/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Select worktree mode:/ })).not.toBeInTheDocument()
+  })
+
+  it('uses the repository-root display name when repository context canonicalizes the requested path', async () => {
+    const workDir = '/repo/subdirectory'
+    apiMocks.getRepositoryContext.mockResolvedValue({
+      ...okRepositoryContext,
+      workDir: '/repo',
+      repoRoot: '/repo',
+    })
+    renderControls({ workDir })
+    await screen.findByRole('button', { name: 'Location: cc-haha / main' })
+
+    act(() => {
+      hydrateProjectDisplayNames(
+        { '/repo': 'Custom repository' },
+        captureProjectDisplayNameHydrationRevision(),
+      )
+    })
+
+    const pill = await screen.findByRole('button', { name: 'Location: Custom repository / main' })
+    expect(pill).toHaveAttribute('title', `${workDir}\nBranch: main`)
+    expect(within(pill).getByText('main')).toBeInTheDocument()
   })
 
   it('truncates the branch from the start so its tail survives', async () => {

@@ -1,5 +1,5 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ReactElement, RefObject } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { RefObject } from 'react'
 import { GitFork, Target } from 'lucide-react'
 import {
   SCHEDULED_TAB_ID,
@@ -28,15 +28,21 @@ import { Tooltip } from '@/components/ui/Tooltip'
 import { BrandSeal } from '@/components/composite/BrandSeal'
 import { MessageList } from '../components/chat/MessageList'
 import { ChatInput } from '../components/chat/ChatInput'
+import {
+  SessionChatHeader,
+  SessionChatSurface,
+  type SessionHeaderMetaItem,
+} from '@/components/chat/SessionChatSurface'
 import { getWorktreeDisplayName, WorktreeDetails } from '../components/chat/WorktreeDetails'
 import { ComputerUsePermissionModal } from '../components/chat/ComputerUsePermissionModal'
 import { WorkbenchPanel } from '../components/workbench/WorkbenchPanel'
 import { AgentTeamsStrip } from '../components/agentTeams/AgentTeamsSummary'
+import { snapshotWithHistoricalMembers } from '../components/agentTeams/agentTeamsModel'
 import {
   SessionActivityPanel,
   type OpenSubagentPayload,
 } from '../components/activity/SessionActivityPanel'
-import { buildSessionActivityModel, hasVisibleSessionActivity } from '../components/activity/sessionActivityModel'
+import { buildMainSessionActivityModel, hasVisibleSessionActivity } from '../components/activity/sessionActivityModel'
 import { runsForSession, useWorkflowStore } from '../stores/workflowStore'
 import { TerminalSettings } from './TerminalSettings'
 import type { SessionListItem } from '../types/session'
@@ -68,8 +74,6 @@ const TASK_POLL_INTERVAL_MS = 1000
 const ACTIVITY_AUTOCLOSE_GRACE_MS = 2000
 const WORKSPACE_RESIZE_STEP = 32
 const TERMINAL_RESIZE_STEP = 24
-const CHAT_COLUMN_WITH_WORKSPACE_CLASS =
-  'min-w-[400px] flex-1 bg-[var(--color-surface)]'
 const EMPTY_DISMISSED_BACKGROUND_TASK_KEYS: readonly string[] = []
 
 function isSessionTabState(activeTabId: string | null, activeTabType: TabType | null | undefined) {
@@ -344,9 +348,14 @@ export function ActiveSession() {
     session?.messageCount ?? 0,
   )
   const sessionSlashCommandCount = sessionState?.slashCommands.length ?? 0
-  const agentTeamsSnapshot = useTeamStore((s) => activeTabId
-    ? s.workbenchesBySession[activeTabId]?.snapshots.at(-1)
+  const agentTeamsSnapshots = useTeamStore((s) => activeTabId
+    ? s.workbenchesBySession[activeTabId]?.snapshots
     : undefined)
+  const agentTeamsSnapshot = useMemo(() => (
+    agentTeamsSnapshots?.length
+      ? snapshotWithHistoricalMembers(agentTeamsSnapshots, agentTeamsSnapshots.length - 1)
+      : undefined
+  ), [agentTeamsSnapshots])
   const activeTeamStartedAt = useTeamStore((s) => activeTabId
     ? s.activeTeamStartedAtBySession[activeTabId]
     : undefined)
@@ -522,30 +531,21 @@ export function ActiveSession() {
     if (!activeTabId) return null
     const includeCliTasks = trackedTaskSessionId === activeTabId
     const teamTaskWindows = teamTaskWindowsForSnapshot(agentTeamsSnapshot, activeTeamStartedAt)
-    const teamTasks = agentTeamsSnapshot && (
-      !agentTeamsSnapshot.team.leadSessionId ||
-      agentTeamsSnapshot.team.leadSessionId === activeTabId
-    )
-      ? agentTeamsSnapshot.tasks
-      : undefined
 
-    return buildSessionActivityModel({
+    return buildMainSessionActivityModel({
       sessionId: activeTabId,
       messages,
       // cliTaskStore is explicitly loaded from the session-id list, so these
-      // remain the lead's own tasks. An owned workbench adds its canonical
-      // shared DAG beside them; member-internal activity remains isolated by
-      // run ownership.
+      // remain the lead's own tasks. AgentTeam's shared DAG, roster and launch
+      // rows live in its strip/workbench, while member-internal activity stays
+      // isolated by run ownership.
       tasks: includeCliTasks ? cliTasks : [],
-      teamTasks,
-      taskScope: 'team-session',
       teamTaskWindows,
       completedAndDismissed: includeCliTasks ? cliTasksCompletedAndDismissed : false,
       isForegroundTurnActive: chatState !== 'idle',
       backgroundTasks,
       dismissedBackgroundTaskKeys,
       agentNotifications: Object.values(agentTaskNotifications),
-      teamMembers: agentTeamsSnapshot?.team.members,
       workflowRuns,
     })
   }, [
@@ -663,20 +663,115 @@ export function ActiveSession() {
     !isMobileLayout &&
     isSessionTabState(activeTabId, activeTabType)
   const isActivityRailOpen = showActivityRail && isActivityPanelOpen
+  const headerMetadataCandidates: Array<SessionHeaderMetaItem | null> = [
+    isActive
+      ? {
+          key: 'active',
+          content: (
+            <span className="flex shrink-0 items-center gap-1.5 text-[var(--color-text-secondary)]">
+              <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-success)] animate-pulse-dot" />
+              {t('session.active')}
+            </span>
+          ),
+        }
+      : null,
+    worktreeName
+      ? {
+          key: 'worktree',
+          content: (
+            <Tooltip
+              placement="bottom-start"
+              content={<WorktreeDetails name={worktreeName} path={worktreePath} />}
+            >
+              <span
+                data-testid="session-worktree-indicator"
+                tabIndex={0}
+                className="flex min-w-0 max-w-[260px] shrink cursor-help items-center gap-1 rounded-[4px] text-[var(--color-text-secondary)] outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[var(--color-border-focus)]"
+              >
+                <GitFork size={11} className="shrink-0 text-[var(--color-brand)]" aria-hidden="true" />
+                <span className="shrink-0 capitalize">{t('sidebar.worktree')}:</span>
+                <span className="min-w-0 truncate font-medium">{worktreeName}</span>
+              </span>
+            </Tooltip>
+          ),
+        }
+      : null,
+    totalTokens > 0
+      ? {
+          key: 'tokens',
+          content: (
+            <span
+              className="shrink-0"
+              title={t('session.apiTokenBreakdown', {
+                total: totalTokens.toLocaleString(),
+                input: tokenUsage.input_tokens.toLocaleString(),
+                output: tokenUsage.output_tokens.toLocaleString(),
+                cache: cachedTokens.toLocaleString(),
+              })}
+            >
+              {t('session.apiTokens', { count: formatTokenCount(totalTokens) })}
+            </span>
+          ),
+        }
+      : null,
+    lastUpdated
+      ? {
+          key: 'updated',
+          content: <span className="truncate">{t('session.lastUpdated', { time: lastUpdated })}</span>,
+        }
+      : null,
+    !showRightPanel && visibleMessageCount > 0
+      ? {
+          key: 'messages',
+          content: <span className="shrink-0">{t('session.messages', { count: visibleMessageCount })}</span>,
+        }
+      : null,
+  ]
+  const headerMetadata = headerMetadataCandidates.filter(
+    (item): item is SessionHeaderMetaItem => item !== null,
+  )
 
   return (
-    <div className="flex-1 flex relative overflow-hidden bg-background text-on-surface">
-      <div data-testid="active-session-content-row" className="flex min-h-0 min-w-0 flex-1">
-        <div
-          data-testid="active-session-chat-column"
-          className={[
-            'relative flex min-h-0 min-w-0 flex-col overflow-hidden',
-            'transition-[padding] duration-200 ease-out motion-reduce:transition-none',
-            // 340px panel + 20px right inset leaves the 8px gap the handoff draws.
-            isActivityRailOpen ? 'pr-[352px]' : '',
-            showRightPanel ? CHAT_COLUMN_WITH_WORKSPACE_CLASS : isMobileLayout ? 'flex-1' : 'min-w-[360px] flex-1',
-          ].filter(Boolean).join(' ')}
-        >
+    <SessionChatSurface
+      surfaceKind="main"
+      isMobileLayout={isMobileLayout}
+      compact={showRightPanel}
+      activityRailOpen={isActivityRailOpen}
+      contentRowTestId="active-session-content-row"
+      chatColumnTestId="active-session-chat-column"
+      activityRail={activityModel && showActivityRail ? (
+        <SessionActivityPanel
+          model={activityModel}
+          open={isActivityPanelOpen}
+          onClose={() => closeActivityPanel(activeTabId)}
+          onOpenSubagent={handleOpenSubagentRun}
+          onClearFinishedBackgroundTasks={handleClearFinishedBackgroundTasks}
+          onOpenMember={handleOpenTeamMember}
+          onStopBackgroundTask={handleStopBackgroundTask}
+          stoppingBackgroundTaskIds={stoppingBackgroundTaskIds}
+          placement="rail"
+        />
+      ) : null}
+      sidePanel={showWorkbench ? (
+        <>
+          <WorkspaceResizeHandle panelRef={workbenchPanelRef} />
+          <aside
+            ref={workbenchPanelRef}
+            data-testid="workbench-panel"
+            className="flex h-full shrink-0 flex-col bg-[var(--color-surface)]"
+            style={{ width: rightPanelWidth, maxWidth: '62%', minWidth: 'min(420px, 54%)' }}
+          >
+            <WorkbenchPanel sessionId={activeTabId} />
+          </aside>
+        </>
+      ) : null}
+      overlay={(
+        <ComputerUsePermissionModal
+          sessionId={activeTabId}
+          request={pendingComputerUsePermission?.request ?? null}
+        />
+      )}
+    >
           {isEmpty ? (
             <div
               data-testid="empty-session-hero"
@@ -704,116 +799,43 @@ export function ActiveSession() {
           ) : (
             <>
               {!isMobileLayout && (
-                <div
-                  data-testid="session-header"
-                  className={[
-                    'w-full border-b border-[var(--color-border)]',
-                    showRightPanel ? 'px-4 py-2.5' : 'px-9 py-3',
-                  ].join(' ')}
+                <SessionChatHeader
+                  title={headerTitle}
+                  compact={showRightPanel}
+                  metadata={headerMetadata}
                 >
-                  {/* Stays centred on the same 900px measure as the transcript
-                      regardless of the right-hand panel — only the padding
-                      tightens, so the header never drifts out of alignment
-                      with the messages beneath it. */}
-                  <div className="mx-auto w-full min-w-0 max-w-[900px]">
-                    <div className="flex min-w-0 items-center gap-3">
-                      <h1
-                        className={`min-w-0 flex-1 truncate font-bold leading-tight tracking-[-0.2px] text-[var(--color-text-primary)] ${
-                          showRightPanel ? 'text-[15px]' : 'text-[17px]'
-                        }`}
-                        style={{ fontFamily: 'var(--font-headline)' }}
-                        title={headerTitle}
-                      >
-                        {headerTitle}
-                      </h1>
+                  {session && getSessionWorkspaceState(session) !== 'available' && (
+                    <div className={`mt-2 inline-flex max-w-full items-center gap-2 rounded-[var(--radius-md)] border px-3 py-1.5 text-[11px] ${
+                      getSessionWorkspaceState(session) === 'worktree_removed'
+                        ? 'border-[var(--color-border)] bg-[var(--color-surface-container)] text-[var(--color-text-secondary)]'
+                        : 'border-[var(--color-error)] bg-[var(--color-error-container)] text-[var(--color-on-error-container)]'
+                    }`}>
+                      <span className="material-symbols-outlined text-[14px]">
+                        {getSessionWorkspaceState(session) === 'worktree_removed' ? 'history' : 'warning'}
+                      </span>
+                      <span className="truncate">
+                        {getSessionWorkspaceState(session) === 'worktree_removed'
+                          ? t('session.worktreeRemoved', { dir: session.projectRoot || '' })
+                          : t('session.workspaceUnavailable', { dir: session.workDir || 'directory no longer exists' })}
+                      </span>
                     </div>
-                    <div className="mt-1 flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[11px] text-[var(--color-text-tertiary)]">
-                      {[
-                        isActive && (
-                          <span key="active" className="flex shrink-0 items-center gap-1.5 text-[var(--color-text-secondary)]">
-                            <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-success)] animate-pulse-dot" />
-                            {t('session.active')}
-                          </span>
-                        ),
-                        worktreeName && (
-                          <Tooltip
-                            key="worktree"
-                            placement="bottom-start"
-                            content={<WorktreeDetails name={worktreeName} path={worktreePath} />}
-                          >
-                            <span
-                              data-testid="session-worktree-indicator"
-                              tabIndex={0}
-                              className="flex min-w-0 max-w-[260px] shrink cursor-help items-center gap-1 rounded-[4px] text-[var(--color-text-secondary)] outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[var(--color-border-focus)]"
-                            >
-                              <GitFork size={11} className="shrink-0 text-[var(--color-brand)]" aria-hidden="true" />
-                              <span className="shrink-0 capitalize">{t('sidebar.worktree')}:</span>
-                              <span className="min-w-0 truncate font-medium">{worktreeName}</span>
-                            </span>
-                          </Tooltip>
-                        ),
-                        totalTokens > 0 && (
-                          <span
-                            key="tokens"
-                            className="shrink-0"
-                            title={t('session.apiTokenBreakdown', {
-                              total: totalTokens.toLocaleString(),
-                              input: tokenUsage.input_tokens.toLocaleString(),
-                              output: tokenUsage.output_tokens.toLocaleString(),
-                              cache: cachedTokens.toLocaleString(),
-                            })}
-                          >
-                            {t('session.apiTokens', { count: formatTokenCount(totalTokens) })}
-                          </span>
-                        ),
-                        lastUpdated && (
-                          <span key="updated" className="truncate">{t('session.lastUpdated', { time: lastUpdated })}</span>
-                        ),
-                        !showRightPanel && visibleMessageCount > 0 && (
-                          <span key="messages" className="shrink-0">{t('session.messages', { count: visibleMessageCount })}</span>
-                        ),
-                      ]
-                        .filter((part): part is ReactElement => Boolean(part))
-                        .map((part, index) => (
-                          <Fragment key={part.key}>
-                            {index > 0 && <span aria-hidden="true" className="shrink-0">·</span>}
-                            {part}
-                          </Fragment>
-                        ))}
-                    </div>
-                    {session && getSessionWorkspaceState(session) !== 'available' && (
-                      <div className={`mt-2 inline-flex max-w-full items-center gap-2 rounded-[var(--radius-md)] border px-3 py-1.5 text-[11px] ${
-                        getSessionWorkspaceState(session) === 'worktree_removed'
-                          ? 'border-[var(--color-border)] bg-[var(--color-surface-container)] text-[var(--color-text-secondary)]'
-                          : 'border-[var(--color-error)] bg-[var(--color-error-container)] text-[var(--color-on-error-container)]'
-                      }`}>
-                        <span className="material-symbols-outlined text-[14px]">
-                          {getSessionWorkspaceState(session) === 'worktree_removed' ? 'history' : 'warning'}
-                        </span>
-                        <span className="truncate">
-                          {getSessionWorkspaceState(session) === 'worktree_removed'
-                            ? t('session.worktreeRemoved', { dir: session.projectRoot || '' })
-                            : t('session.workspaceUnavailable', { dir: session.workDir || 'directory no longer exists' })}
-                        </span>
-                      </div>
-                    )}
-                    <ActiveGoalStrip
-                      goal={activeGoal}
-                      isRunning={isActive}
+                  )}
+                  <ActiveGoalStrip
+                    goal={activeGoal}
+                    isRunning={isActive}
+                    compact={showRightPanel}
+                  />
+                  {agentTeamsSnapshot ? (
+                    <AgentTeamsStrip
+                      snapshot={agentTeamsSnapshot}
                       compact={showRightPanel}
+                      onOpen={() => useTabStore.getState().openTeamWorkbenchTab(
+                        activeTabId,
+                        agentTeamsSnapshot.team.name,
+                      )}
                     />
-                    {agentTeamsSnapshot ? (
-                      <AgentTeamsStrip
-                        snapshot={agentTeamsSnapshot}
-                        compact={showRightPanel}
-                        onOpen={() => useTabStore.getState().openTeamWorkbenchTab(
-                          activeTabId,
-                          agentTeamsSnapshot.team.name,
-                        )}
-                      />
-                    ) : null}
-                  </div>
-                </div>
+                  ) : null}
+                </SessionChatHeader>
               )}
 
               {isHistoryLoading ? (
@@ -875,43 +897,6 @@ export function ActiveSession() {
               />
             </div>
           ) : null}
-        </div>
-
-        {activityModel && showActivityRail ? (
-          <SessionActivityPanel
-            model={activityModel}
-            open={isActivityPanelOpen}
-            onClose={() => closeActivityPanel(activeTabId)}
-            onOpenSubagent={handleOpenSubagentRun}
-            onClearFinishedBackgroundTasks={handleClearFinishedBackgroundTasks}
-            onOpenMember={handleOpenTeamMember}
-            onStopBackgroundTask={handleStopBackgroundTask}
-            stoppingBackgroundTaskIds={stoppingBackgroundTaskIds}
-            placement="rail"
-          />
-        ) : null}
-
-        {showWorkbench ? (
-          <>
-            <WorkspaceResizeHandle panelRef={workbenchPanelRef} />
-            <aside
-              ref={workbenchPanelRef}
-              data-testid="workbench-panel"
-              className="flex h-full shrink-0 flex-col bg-[var(--color-surface)]"
-              style={{ width: rightPanelWidth, maxWidth: '62%', minWidth: 'min(420px, 54%)' }}
-            >
-              <WorkbenchPanel sessionId={activeTabId} />
-            </aside>
-          </>
-        ) : null}
-      </div>
-
-      {activeTabId ? (
-        <ComputerUsePermissionModal
-          sessionId={activeTabId}
-          request={pendingComputerUsePermission?.request ?? null}
-        />
-      ) : null}
-    </div>
+    </SessionChatSurface>
   )
 }

@@ -128,6 +128,7 @@ describe('resumed Agent ownership', () => {
     expect(runAgentSpy).toHaveBeenCalledWith(expect.objectContaining({
       spawningToolUseId: 'toolu_original_agent',
       ownerAgentId: 'current-parent',
+      streamTargetAgentId: agentId,
     }))
   })
 })

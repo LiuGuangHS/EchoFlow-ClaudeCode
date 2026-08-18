@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import '@testing-library/jest-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -109,11 +109,15 @@ async function renderManager(response: AgentListResponse = EMPTY_RESPONSE) {
 }
 
 function chooseAgentSelect(label: string, option: string) {
-  // The trigger is a button; the entries inside the panel are listbox options.
-  // They used to be buttons, which is invalid inside a `role="listbox"` and
-  // left the dropdown without arrow-key navigation.
-  fireEvent.click(screen.getByRole('button', { name: label }))
-  fireEvent.click(screen.getByRole('option', { name: option }))
+  const select = screen.getByRole('combobox', { name: label })
+  const selectedOption = within(select).getByRole('option', { name: option }) as HTMLOptionElement
+  fireEvent.change(select, { target: { value: selectedOption.value } })
+}
+
+function chooseAgentModel(option: string | RegExp) {
+  fireEvent.click(screen.getByRole('button', { name: 'Model' }))
+  const picker = screen.getByTestId('model-selector-dropdown')
+  fireEvent.click(within(picker).getByRole('button', { name: option }))
 }
 
 describe('AgentManager', () => {
@@ -131,7 +135,23 @@ describe('AgentManager', () => {
       },
     })
     recentProjectsMock.mockResolvedValue({ projects: [] })
-    useSettingsStore.setState({ locale: 'en' })
+    useSettingsStore.setState({
+      locale: 'en',
+      availableModels: [
+        {
+          id: 'provider/custom-model',
+          name: 'Provider Custom',
+          description: 'Current provider model',
+          context: '200k',
+        },
+        {
+          id: 'deepseek-v4-pro',
+          name: 'DeepSeek V4 Pro',
+          description: 'Current provider model',
+          context: '200k',
+        },
+      ],
+    })
     setProjectSession('/workspace/project')
     useAgentStore.setState({
       activeAgents: [],
@@ -165,17 +185,19 @@ describe('AgentManager', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create Agent' }))
     fireEvent.click(screen.getByRole('button', { name: 'Project' }))
     expect(screen.getByRole('button', { name: 'Select a project...' })).toBeInTheDocument()
-    expect(document.querySelector('select')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Select a project...' }).tagName).toBe('BUTTON')
     fireEvent.click(screen.getByRole('button', { name: 'Select a project...' }))
     fireEvent.click(await screen.findByRole('button', { name: /Selected Project/ }))
     expect(screen.getByText('Target project: /workspace/selected')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Model' }))
-    const modelMenuOption = screen.getByRole('option', { name: 'fable' })
+    const modelPicker = screen.getByTestId('model-selector-dropdown')
+    const modelMenuOption = within(modelPicker).getByRole('button', { name: /fable/i })
     expect(modelMenuOption).toBeInTheDocument()
-    expect(modelMenuOption.parentElement).toHaveClass('bottom-full')
+    expect(screen.getByRole('dialog', { name: 'Create Agent' })).not.toContainElement(modelPicker)
+    expect(modelPicker).toHaveClass('fixed', 'z-[var(--z-dropdown)]')
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.getByRole('heading', { name: 'Create Agent' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'fable' })).not.toBeInTheDocument()
+    expect(screen.queryByTestId('model-selector-dropdown')).not.toBeInTheDocument()
     expect(screen.getByLabelText('System prompt').parentElement).toHaveTextContent('System prompt*')
   })
 
@@ -253,7 +275,7 @@ describe('AgentManager', () => {
     expect(apiListMock).toHaveBeenNthCalledWith(3, '/workspace/b')
   })
 
-  it('creates an underscore slug with custom model and effort, then selects the refreshed agent', async () => {
+  it('creates an underscore slug with a configured provider model and effort, then selects the refreshed agent', async () => {
     const created = makeAgent({
       source: 'projectSettings',
       model: 'provider/custom-model',
@@ -278,8 +300,7 @@ describe('AgentManager', () => {
     fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: 'code_reviewer' } })
     fireEvent.change(screen.getByLabelText(/^Description/), { target: { value: 'Review code' } })
     fireEvent.change(screen.getByLabelText('System prompt'), { target: { value: 'Review carefully.' } })
-    chooseAgentSelect('Model', 'Custom model ID')
-    fireEvent.change(screen.getByLabelText(/^Custom model ID/), { target: { value: 'provider/custom-model' } })
+    chooseAgentModel(/Provider Custom/)
     chooseAgentSelect('Reasoning effort', 'xhigh')
     chooseAgentSelect('Tools', 'Custom list')
     fireEvent.click(screen.getByRole('checkbox', { name: /Read/ }))
@@ -445,7 +466,7 @@ describe('AgentManager', () => {
     render(<AgentManager />)
     await waitFor(() => expect(apiListMock).toHaveBeenCalledTimes(1))
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
-    chooseAgentSelect('Model', 'Inherit from parent')
+    chooseAgentModel(/Inherit from parent/)
     chooseAgentSelect('Reasoning effort', 'Inherit from parent')
     chooseAgentSelect('Tools', 'All tools')
     chooseAgentSelect('Color', 'Default')
@@ -466,6 +487,27 @@ describe('AgentManager', () => {
     expect(screen.getAllByText('Inherit').length).toBeGreaterThanOrEqual(2)
   })
 
+  it('preserves a saved model ID that the current provider no longer lists', async () => {
+    const agent = makeAgent({ model: 'legacy/provider-model' })
+    apiListMock.mockResolvedValue({ activeAgents: [agent], allAgents: [agent] })
+    apiUpdateMock.mockResolvedValue({ agent })
+    useAgentStore.setState({ selectedAgent: agent, activeAgents: [agent], allAgents: [agent] })
+
+    render(<AgentManager />)
+    await waitFor(() => expect(apiListMock).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Model' }))
+    const picker = screen.getByTestId('model-selector-dropdown')
+    expect(within(picker).getByRole('button', { name: /legacy\/provider-model.*not listed by the current provider/i })).toBeInTheDocument()
+    fireEvent.click(within(picker).getByRole('button', { name: /legacy\/provider-model/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(apiUpdateMock).toHaveBeenCalledWith(
+      'code_reviewer',
+      expect.objectContaining({ model: 'legacy/provider-model' }),
+    ))
+  })
+
   it('preserves an explicit empty tools list when editing only the description', async () => {
     const agent = makeAgent({ tools: [] })
     const updated = makeAgent({ tools: [], description: 'Updated review' })
@@ -480,7 +522,7 @@ describe('AgentManager', () => {
     render(<AgentManager />)
     await waitFor(() => expect(useAgentStore.getState().availableTools).toContain('Read'))
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
-    expect(screen.getByRole('button', { name: 'Tools' })).toHaveTextContent('No tools')
+    expect(screen.getByRole('combobox', { name: 'Tools' })).toHaveValue('none')
     fireEvent.change(screen.getByLabelText(/^Description/), { target: { value: 'Updated review' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
@@ -529,7 +571,7 @@ describe('AgentManager', () => {
     render(<AgentManager />)
     await waitFor(() => expect(apiListMock).toHaveBeenCalledTimes(1))
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
-    expect(screen.getByRole('button', { name: 'Reasoning effort' })).toHaveTextContent('7')
+    expect(screen.getByRole('combobox', { name: 'Reasoning effort' })).toHaveValue('7')
     fireEvent.change(screen.getByLabelText(/^Description/), { target: { value: 'Updated review' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
@@ -776,10 +818,7 @@ describe('AgentManager', () => {
     fireEvent.click(
       screen.getByRole('button', { name: 'Adjust the model and effort for Explore' }),
     )
-    chooseAgentSelect('Model', 'Custom model ID')
-    fireEvent.change(screen.getByLabelText(/^Custom model ID/), {
-      target: { value: 'deepseek-v4-pro' },
-    })
+    chooseAgentModel(/DeepSeek V4 Pro/)
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => expect(apiReloadMock).toHaveBeenCalledWith('running-session'))
@@ -819,9 +858,10 @@ describe('AgentManager', () => {
     // inherit means "follow the main session" — collapsing them would make
     // inherit unreachable, and the default label is read from the server.
     fireEvent.click(screen.getByRole('button', { name: 'Model' }))
-    expect(screen.getByRole('option', { name: 'Built-in default (haiku)' })).toBeInTheDocument()
-    expect(screen.getByRole('option', { name: 'Inherit from parent' })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('option', { name: 'Built-in default (haiku)' }))
+    const modelPicker = screen.getByTestId('model-selector-dropdown')
+    expect(within(modelPicker).getByRole('button', { name: /Built-in default \(haiku\)/ })).toBeInTheDocument()
+    expect(within(modelPicker).getByRole('button', { name: /Inherit from parent/ })).toBeInTheDocument()
+    fireEvent.click(within(modelPicker).getByRole('button', { name: /Built-in default \(haiku\)/ }))
 
     chooseAgentSelect('Reasoning effort', 'high')
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
@@ -844,7 +884,7 @@ describe('AgentManager', () => {
     fireEvent.click(
       screen.getByRole('button', { name: 'Adjust the model and effort for Explore' }),
     )
-    chooseAgentSelect('Model', 'Inherit from parent')
+    chooseAgentModel(/Inherit from parent/)
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => expect(apiSetOverrideMock).toHaveBeenCalledWith('Explore', {
@@ -893,7 +933,7 @@ describe('AgentManager', () => {
     )
 
     expect(screen.getByRole('button', { name: 'Model' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Reasoning effort' })).toBeDisabled()
+    expect(screen.getByRole('combobox', { name: 'Reasoning effort' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
     // Resetting would write to the user file, which cannot win over a policy.
     expect(screen.queryByRole('button', { name: 'Reset to built-in default' })).toBeNull()
@@ -925,7 +965,7 @@ describe('AgentManager', () => {
     fireEvent.click(
       screen.getByRole('button', { name: 'Adjust the model and effort for Explore' }),
     )
-    chooseAgentSelect('Model', 'sonnet')
+    chooseAgentModel(/^sonnet/i)
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Failed to save the override')

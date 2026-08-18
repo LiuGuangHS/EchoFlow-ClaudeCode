@@ -7,11 +7,21 @@ export type TeamSummary = {
   incarnationId?: string
 }
 
+/**
+ * Whether a teammate is mid-turn right now, as reported by the server. Distinct
+ * from `status`, which says whether the member is still part of the run. Owning
+ * an `in_progress` task is evidence of neither: a teammate marks a task started
+ * and can then end its turn, and an umbrella task stays open underneath every
+ * turn it covers.
+ */
+export type TeamMemberActivity = 'active' | 'idle' | 'exited' | 'unknown'
+
 export type TeamMember = {
   agentId: string
   name?: string
   role: string
   status: 'running' | 'idle' | 'completed' | 'error'
+  activity?: TeamMemberActivity
   currentTask?: string
   color?: AgentColor
   sessionId?: string
@@ -56,6 +66,8 @@ export type TeamWorkbenchMessage = {
 export type TeamWorkbenchSnapshot = {
   version: string
   generatedAt: string
+  taskListRevision?: number
+  terminalTaskFrameId?: string
   team: TeamDetail
   tasks: TeamWorkbenchTask[]
   messages: TeamWorkbenchMessage[]
