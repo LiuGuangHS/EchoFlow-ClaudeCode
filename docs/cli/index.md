@@ -16,7 +16,7 @@ CLI 目前只从源码运行，没有单独的安装包。
 先装好 [Git](https://git-scm.com/downloads) 和 [Bun](https://bun.sh)，然后：
 
 ```bash
-git clone https://github.com/LiuGuangHS/EchoFlow-ClaudeCode.git
+git clone https://github.com/LiuGuangHS/EchoFlow-ClaudeCode.git echoflow-code
 cd echoflow-code
 bun install
 ```

@@ -295,6 +295,12 @@ export const ELECTRON_IPC_VALIDATORS = {
   [ELECTRON_IPC_CHANNELS.appModePrepareRestart]: noPayload,
   [ELECTRON_IPC_CHANNELS.appModeRestart]: noPayload,
   [ELECTRON_IPC_CHANNELS.adaptersRestartSidecar]: noPayload,
+  [ELECTRON_IPC_CHANNELS.deepSeekHarnessGetStatus]: noPayload,
+  [ELECTRON_IPC_CHANNELS.deepSeekHarnessInstall]: noPayload,
+  [ELECTRON_IPC_CHANNELS.deepSeekHarnessStart]: noPayload,
+  [ELECTRON_IPC_CHANNELS.deepSeekHarnessStop]: noPayload,
+  [ELECTRON_IPC_CHANNELS.deepSeekHarnessRestart]: noPayload,
+  [ELECTRON_IPC_CHANNELS.deepSeekHarnessOpen]: noPayload,
   [ELECTRON_IPC_CHANNELS.zoomSet]: zoomPayload,
   [ELECTRON_IPC_CHANNELS.appearanceSetApplied]: appliedAppearance,
 } satisfies Record<ElectronIpcChannel, Validator>

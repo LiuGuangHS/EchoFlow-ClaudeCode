@@ -142,7 +142,7 @@ describe('sessionRuntimeStore runtime cleanup', () => {
   })
 
   it('drops only the legacy Claude Official opus[1m] default and preserves the same suffix for third-party providers', async () => {
-    localStorage.setItem('cc-haha-session-runtime', JSON.stringify({
+    localStorage.setItem('echoflow-code-session-runtime', JSON.stringify({
       'session-loaded-claude': {
         providerId: null,
         modelId: 'opus[1m]',
@@ -164,7 +164,7 @@ describe('sessionRuntimeStore runtime cleanup', () => {
       modelId: 'MiniMax-M3[1m]',
       effortLevel: 'max',
     })
-    expect(JSON.parse(localStorage.getItem('cc-haha-session-runtime')!)).toEqual({
+    expect(JSON.parse(localStorage.getItem('echoflow-code-session-runtime')!)).toEqual({
       'session-loaded-minimax': {
         providerId: 'provider-minimax',
         modelId: 'MiniMax-M3[1m]',

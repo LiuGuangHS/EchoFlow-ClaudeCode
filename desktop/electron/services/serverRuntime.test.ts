@@ -42,6 +42,7 @@ class FakeSidecarChild extends EventEmitter {
 
 function createRuntime(options: {
   appRoot?: string
+  appVersion?: string
   diagnosticsFile?: string
   env?: NodeJS.ProcessEnv
   resolveSystemProxy?: (url: string) => Promise<string>
@@ -50,6 +51,7 @@ function createRuntime(options: {
   return new ElectronServerRuntime({
     desktopRoot: '/isolated/desktop',
     appRoot: options.appRoot,
+    appVersion: options.appVersion,
     diagnosticsFile: options.diagnosticsFile,
     env: { CLAUDE_CONFIG_DIR: isolatedConfigDir, ...options.env },
     resolveSystemProxy: options.resolveSystemProxy,
@@ -135,6 +137,14 @@ describe('ElectronServerRuntime', () => {
     expect(sidecarMocks.serverPlans[0]!.env.CLAUDE_CONFIG_DIR).toBe(isolatedConfigDir)
     expect(sidecarMocks.serverPlans[0]!.env.CLAUDE_CONFIG_DIR)
       .not.toBe(path.join(homedir(), '.claude'))
+  })
+
+  it('passes the desktop application version to the server sidecar', async () => {
+    const runtime = createRuntime({ appVersion: '0.5.2' })
+
+    await runtime.startServer()
+
+    expect(sidecarMocks.serverPlans[0]!.env.APP_VERSION).toBe('0.5.2')
   })
 
   it('keeps the pet capability independent and exposes it only to the server sidecar', async () => {

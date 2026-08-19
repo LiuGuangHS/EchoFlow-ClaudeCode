@@ -121,8 +121,7 @@ function getConfigDir(): string {
 }
 
 function getVersion(): string {
-  // 从 package.json 的 version 字段读取；回退到环境变量或 unknown
-  return process.env.APP_VERSION || '999.0.0-local'
+  return process.env.APP_VERSION || 'unknown'
 }
 
 /**

@@ -91,7 +91,7 @@ ARM64 机器换成对应的 `linux-arm64` 文件。
 想改代码、调试内核，或者只想在终端里用 CLI，可以从源码起：
 
 ```bash
-git clone https://github.com/LiuGuangHS/EchoFlow-ClaudeCode.git
+git clone https://github.com/LiuGuangHS/EchoFlow-ClaudeCode.git echoflow-code
 cd echoflow-code
 bun install
 cp .env.example .env

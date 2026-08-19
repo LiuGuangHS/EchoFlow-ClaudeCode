@@ -16,7 +16,7 @@ import { FindInPageModal } from '../search/FindInPageModal'
 import { ProjectEditorModal, type ProjectEditorSubmission } from './ProjectEditorModal'
 import { sessionsApi } from '../../api/sessions'
 import type { SessionListItem } from '../../types/session'
-import { useTabStore, SETTINGS_TAB_ID, SCHEDULED_TAB_ID, MARKET_TAB_ID } from '../../stores/tabStore'
+import { useTabStore, SETTINGS_TAB_ID, SCHEDULED_TAB_ID, MARKET_TAB_ID, DEEPSEEK_HARNESS_TAB_ID } from '../../stores/tabStore'
 import { useChatStore } from '../../stores/chatStore'
 import { useOpenTargetStore } from '../../stores/openTargetStore'
 import {
@@ -857,7 +857,7 @@ export function Sidebar({
               the section's own `px-3` alone left it sticking out on its own.
               Collapsed, the mark is centered on the rail instead. */}
           <div className={`flex min-w-0 items-center ${expanded ? 'gap-2.5 pl-3' : 'justify-center'}`}>
-            {!expanded ? <BrandSeal size="sm" /> : null}
+            <BrandSeal size="sm" />
             {/* One form, at every width. The header used to carry "Claude Code
                 EchoFlow Code" and swap to this below ~230px of title region, which meant
                 the app answered to two names depending on how the sidebar was
@@ -952,6 +952,21 @@ export function Sidebar({
             icon={<StorefrontIcon />}
           >
             {t('sidebar.market')}
+          </NavItem>
+        )}
+        {!isMobile && isDesktopRuntime && (
+          <NavItem
+            active={activeTabId === DEEPSEEK_HARNESS_TAB_ID}
+            collapsed={!expanded}
+            label="DeepSeek Harness"
+            touchFriendly={isMobile}
+            onClick={() => {
+              useTabStore.getState().openTab(DEEPSEEK_HARNESS_TAB_ID, 'DeepSeek Harness', 'deepseek-harness')
+              closeMobileDrawer()
+            }}
+            icon={<span className="material-symbols-outlined text-[20px]" aria-hidden="true">deployed_code</span>}
+          >
+            DeepSeek Harness
           </NavItem>
         )}
       </div>

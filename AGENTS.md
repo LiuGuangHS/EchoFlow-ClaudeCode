@@ -38,8 +38,10 @@ These are repository policies, not guarantees enforced by Git. Use them for ever
 3. Compare `main...origin/main` and `main...upstream/main` before merging.
 4. Merge upstream with a merge commit; do not rebase public `main`.
 5. Run `/ecc:plan "合并上游，保留修复，替换品牌名"`, use `@code-reviewer` on conflicted and high-risk files, and use `@architect` for provider-policy decisions.
-6. Resolve file contents intentionally; never apply blanket `--ours` or `--theirs`. Preserve the fork identity and provider policy, sponsor-free public docs, persistence compatibility, Electron release flow, and quality gates.
-7. Conflict analysis and worktree edits may be automated, but `git add` and `git commit` require explicit developer confirmation. Never stage or commit a conflict resolution automatically.
+6. Before editing, write one complete conflict matrix: file, base/ours/theirs behavior, final policy decision, and validating command. Resolve the complete matrix in one focused edit pass; do not discover and patch conflicts one at a time.
+7. Resolve file contents intentionally; never apply blanket `--ours` or `--theirs`. Preserve the fork identity and provider policy, sponsor-free public docs, persistence compatibility, Electron release flow, and quality gates.
+8. Audit public identity after every upstream merge: README, docs, release notes, package metadata, diagnostics export, signing/privacy pages, updater links, and desktop About/profile defaults must not identify NanmiCoder/阿江 or `cc-haha` as the current EchoFlow author, maintainer, contact, or product.
+9. Conflict analysis and worktree edits may be automated, but `git add` and `git commit` require explicit developer confirmation. Never stage or commit a conflict resolution automatically.
 8. After writing conflict resolutions, run `/ecc:code-review` and `/ecc:quality-gate` before asking the developer to stage or commit. If a build or type check fails, use `/ecc:build-fix`, rerun the narrow failed check, and run `bun run verify` before claiming the merge push-ready.
 9. Push `main` before or together with release tags, then verify the remote branch and tag targets.
 

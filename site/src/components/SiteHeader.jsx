@@ -15,6 +15,9 @@ const copy = {
     entries: [
       ['/start', '开始使用'],
       ['/desktop', '桌面端功能'],
+      ['/mobile', '移动端'],
+      ['/im', 'IM 接入'],
+      ['/cli', '命令行'],
       ['/internals', '深入原理']
     ],
     menu: '打开导航',
@@ -30,6 +33,9 @@ const copy = {
     entries: [
       ['/en/start', 'Get started'],
       ['/en/desktop', 'Desktop app'],
+      ['/en/mobile', 'Mobile'],
+      ['/en/im', 'Messaging'],
+      ['/en/cli', 'Command line'],
       ['/en/internals', 'Internals']
     ],
     menu: 'Open navigation',

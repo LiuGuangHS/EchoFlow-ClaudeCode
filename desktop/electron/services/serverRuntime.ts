@@ -34,6 +34,7 @@ import {
 type ServerRuntimeOptions = {
   desktopRoot: string
   appRoot?: string
+  appVersion?: string
   h5DistDir?: string
   diagnosticsFile?: string
   env?: NodeJS.ProcessEnv
@@ -101,6 +102,7 @@ function createServerStartState(child: SidecarChild): ServerStartState {
 export class ElectronServerRuntime {
   private readonly desktopRoot: string
   private readonly appRoot: string
+  private readonly appVersion?: string
   private readonly h5DistDir: string
   private readonly diagnosticsFile?: string
   private readonly baseEnv: NodeJS.ProcessEnv
@@ -122,6 +124,7 @@ export class ElectronServerRuntime {
   constructor(options: ServerRuntimeOptions) {
     this.desktopRoot = options.desktopRoot
     this.appRoot = options.appRoot ?? options.desktopRoot
+    this.appVersion = options.appVersion
     this.h5DistDir = options.h5DistDir ?? path.join(options.desktopRoot, 'dist')
     this.diagnosticsFile = options.diagnosticsFile
     this.baseEnv = options.env ?? process.env
@@ -211,7 +214,10 @@ export class ElectronServerRuntime {
     const url = `http://${SERVER_CONTROL_HOST}:${port}`
     const logs: string[] = []
     let startState: ServerStartState | null = null
-    const env = this.withServerAccessTokens(await this.resolveSidecarBaseEnv())
+    const env = this.withServerAccessTokens({
+      ...(await this.resolveSidecarBaseEnv()),
+      ...(this.appVersion ? { APP_VERSION: this.appVersion } : {}),
+    })
     this.assertCurrentGeneration(generation)
     const plan = createServerPlan({
       desktopRoot: this.desktopRoot,

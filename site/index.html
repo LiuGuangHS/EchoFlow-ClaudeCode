@@ -6,14 +6,14 @@
     <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#201d17" media="(prefers-color-scheme: dark)">
     <meta name="description" content="EchoFlow Code — Claude Code 的本地优先桌面客户端。会话、改动、Agent、定时任务都摆在明处，接哪个模型你说了算。">
-    <link rel="icon" href="/images/app-icon.png" type="image/png">
+    <link rel="icon" href="%BASE_URL%images/app-icon.png" type="image/png">
     <link rel="preload" href="/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="preload" href="/fonts/noto-serif-sc-latin.woff2" as="font" type="font/woff2" crossorigin>
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="EchoFlow Code">
     <meta property="og:title" content="EchoFlow Code — Claude Code 的本地优先桌面客户端">
     <meta property="og:description" content="会话、改动、Agent、定时任务都摆在明处。接哪个模型你说了算，改哪一行你点头才算。">
-    <meta property="og:image" content="https://code.echoflow.cn/images/banner.png">
+    <meta property="og:image" content="https://code.echoflow.cn/images/banner.svg">
     <meta name="twitter:card" content="summary_large_image">
     <title>EchoFlow Code — Claude Code 的本地优先桌面客户端</title>
     <script>
@@ -33,7 +33,7 @@
             }) ? 'zh' : 'en')
 
           if (locale === 'en') {
-            window.location.replace('/en' + window.location.search + window.location.hash)
+            window.location.replace(base + '/en' + window.location.search + window.location.hash)
           }
         } catch (error) {
           // 读不到偏好就维持中文站，别让语言分流把首页整个拦死。

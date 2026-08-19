@@ -63,6 +63,12 @@ export const ELECTRON_IPC_CHANNELS = {
   appModePrepareRestart: 'desktop:app-mode:prepare-restart',
   appModeRestart: 'desktop:app-mode:restart',
   adaptersRestartSidecar: 'desktop:adapters:restart-sidecar',
+  deepSeekHarnessGetStatus: 'desktop:deepseek-harness:get-status',
+  deepSeekHarnessInstall: 'desktop:deepseek-harness:install',
+  deepSeekHarnessStart: 'desktop:deepseek-harness:start',
+  deepSeekHarnessStop: 'desktop:deepseek-harness:stop',
+  deepSeekHarnessRestart: 'desktop:deepseek-harness:restart',
+  deepSeekHarnessOpen: 'desktop:deepseek-harness:open',
   zoomSet: 'desktop:zoom:set',
   appearanceSetApplied: 'desktop:appearance:set-applied',
 } as const

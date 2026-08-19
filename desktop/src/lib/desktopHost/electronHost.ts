@@ -201,6 +201,14 @@ export function createElectronHost(bridge: ElectronHostBridge): DesktopHost {
     adapters: {
       restartSidecar: () => invoke(ELECTRON_IPC_CHANNELS.adaptersRestartSidecar),
     },
+    deepSeekHarness: {
+      getStatus: () => invoke(ELECTRON_IPC_CHANNELS.deepSeekHarnessGetStatus),
+      install: () => invoke(ELECTRON_IPC_CHANNELS.deepSeekHarnessInstall),
+      start: () => invoke(ELECTRON_IPC_CHANNELS.deepSeekHarnessStart),
+      stop: () => invoke(ELECTRON_IPC_CHANNELS.deepSeekHarnessStop),
+      restart: () => invoke(ELECTRON_IPC_CHANNELS.deepSeekHarnessRestart),
+      open: () => invoke(ELECTRON_IPC_CHANNELS.deepSeekHarnessOpen),
+    },
     zoom: {
       set: level => invoke(ELECTRON_IPC_CHANNELS.zoomSet, level),
     },

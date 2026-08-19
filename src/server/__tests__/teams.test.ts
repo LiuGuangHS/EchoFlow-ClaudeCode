@@ -4653,6 +4653,11 @@ describe('Teams API', () => {
     expect(response.status).toBe(400)
   })
 
+  it('GET /api/teams/:name rejects encoded path traversal', async () => {
+    const res = await fetch(`${baseUrl}/api/teams/..%2F..%2Foutside`)
+    expect(res.status).toBe(400)
+  })
+
   it('GET /api/teams/:name should 404 for unknown team', async () => {
     const res = await fetch(`${baseUrl}/api/teams/nonexistent`)
     expect(res.status).toBe(404)

@@ -8,6 +8,7 @@ import {
   validateElectronIpcPayload,
 } from './ipc/capabilities'
 import { ElectronServerRuntime } from './services/serverRuntime'
+import { DeepSeekHarnessRuntime } from './services/deepseekHarnessRuntime'
 import { appendHostDiagnostic, electronHostDiagnosticsFile, sanitizeHostDiagnostic } from './services/sidecarManager'
 import { openDialog, saveDialog } from './services/dialogs'
 import { openExternalUrl, openSystemPath, openSystemSettingsUrl } from './services/shell'
@@ -39,7 +40,7 @@ import {
 import { installMacOsChromiumKeychainPromptGuard } from './services/keychain'
 import { installStdioWriteFailureGuards } from './services/stdioGuards'
 import { applyWindowsAppUserModelId } from './services/appIdentity'
-import { installMainWindowNavigationGuards, installPreviewNavigationGuards } from './services/navigationGuards'
+import { installMainWindowNavigationGuards, installPreviewNavigationGuards, isHttpUrl } from './services/navigationGuards'
 import { installPreviewCleanupOnRendererNavigation } from './services/previewLifecycle'
 import { logNotificationSmokeRendererAck, scheduleNotificationSmoke } from './services/notificationSmoke'
 import { normalizeZoomFactor } from './services/zoom'
@@ -91,6 +92,8 @@ import {
 
 let mainWindow: BrowserWindow | null = null
 let serverRuntime: ElectronServerRuntime | null = null
+let deepSeekHarnessRuntime: DeepSeekHarnessRuntime | null = null
+let deepSeekHarnessWindow: BrowserWindow | null = null
 let updaterService: ElectronUpdaterService | null = null
 let terminalService: ElectronTerminalService | null = null
 let previewService: ElectronPreviewService | null = null
@@ -236,10 +239,61 @@ function getServerRuntime() {
   serverRuntime ??= new ElectronServerRuntime({
     desktopRoot: unpackedRoot(),
     appRoot: appRoot(),
+    appVersion: app.getVersion(),
     h5DistDir: path.join(unpackedRoot(), 'dist'),
     resolveSystemProxy: (url) => session.defaultSession.resolveProxy(url),
   })
   return serverRuntime
+}
+
+function getDeepSeekHarnessRuntime() {
+  deepSeekHarnessRuntime ??= new DeepSeekHarnessRuntime({ userDataPath: app.getPath('userData') })
+  return deepSeekHarnessRuntime
+}
+
+async function openDeepSeekHarnessWindow() {
+  const status = await getDeepSeekHarnessRuntime().getStatus()
+  if (status.state !== 'running' || !status.url) {
+    throw new Error('Start DeepSeek Harness before opening it')
+  }
+  if (deepSeekHarnessWindow && !deepSeekHarnessWindow.isDestroyed()) {
+    deepSeekHarnessWindow.focus()
+    return
+  }
+
+  const targetUrl = status.url
+  const window = new BrowserWindow({
+    title: 'DeepSeek Harness',
+    width: 1280,
+    height: 860,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      partition: 'persist:deepseek-harness',
+    },
+  })
+  deepSeekHarnessWindow = window
+  window.on('closed', () => {
+    if (deepSeekHarnessWindow === window) deepSeekHarnessWindow = null
+  })
+  configurePreviewSessionPermissions(window.webContents.session)
+  const isHarnessUrl = (url: string) => url === targetUrl || url.startsWith(`${targetUrl}/`)
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (isHttpUrl(url)) openExternalUrl(url)
+    return { action: 'deny' }
+  })
+  window.webContents.on('will-navigate', (event, url) => {
+    if (isHarnessUrl(url)) return
+    event.preventDefault()
+    if (isHttpUrl(url)) openExternalUrl(url)
+  })
+  window.webContents.on('will-redirect', (event, url) => {
+    if (isHarnessUrl(url)) return
+    event.preventDefault()
+    if (isHttpUrl(url)) openExternalUrl(url)
+  })
+  await window.loadURL(targetUrl)
 }
 
 function resolvePetServerAccess(): PreviewLocalAccess | null {
@@ -702,6 +756,30 @@ function registerIpcHandlers() {
     app.quit()
   })
   registerHandler(ELECTRON_IPC_CHANNELS.adaptersRestartSidecar, () => getServerRuntime().restartAdaptersSidecars())
+  registerHandler(ELECTRON_IPC_CHANNELS.deepSeekHarnessGetStatus, event => {
+    requireMainWindow(event)
+    return getDeepSeekHarnessRuntime().getStatus()
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.deepSeekHarnessInstall, event => {
+    requireMainWindow(event)
+    return getDeepSeekHarnessRuntime().install()
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.deepSeekHarnessStart, event => {
+    requireMainWindow(event)
+    return getDeepSeekHarnessRuntime().start()
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.deepSeekHarnessStop, event => {
+    requireMainWindow(event)
+    return getDeepSeekHarnessRuntime().stop()
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.deepSeekHarnessRestart, event => {
+    requireMainWindow(event)
+    return getDeepSeekHarnessRuntime().restart()
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.deepSeekHarnessOpen, async event => {
+    requireMainWindow(event)
+    await openDeepSeekHarnessWindow()
+  })
   registerHandler(ELECTRON_IPC_CHANNELS.zoomSet, (event, payload) => currentWindow(event).webContents.setZoomFactor(normalizeZoomFactor(payload)))
   registerHandler(ELECTRON_IPC_CHANNELS.appearanceSetApplied, (_event, payload) => {
     if (!isAppliedAppearance(payload)) return
@@ -863,6 +941,9 @@ app.on('before-quit', () => {
   previewService?.close()
   petWindowController?.dispose()
   petWindowController = null
+  deepSeekHarnessWindow?.close()
+  deepSeekHarnessWindow = null
+  void deepSeekHarnessRuntime?.stop(true)
   // Synchronous on quit so the Windows taskkill completes before the process
   // exits, otherwise the fire-and-forget kill can leave orphaned sidecars.
   getServerRuntime().stopAll(true)

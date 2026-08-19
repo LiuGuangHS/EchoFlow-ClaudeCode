@@ -4,6 +4,7 @@ import { EmptySession } from '../../pages/EmptySession'
 import { ActiveSession } from '../../pages/ActiveSession'
 import { ScheduledTasks } from '../../pages/ScheduledTasks'
 import { Market } from '../../pages/Market'
+import { DeepSeekHarness } from '../../pages/DeepSeekHarness'
 import { Settings } from '../../pages/Settings'
 import { TerminalSettings } from '../../pages/TerminalSettings'
 import { TraceList } from '../../pages/TraceList'
@@ -34,6 +35,8 @@ export function ContentRouter() {
     page = <ScheduledTasks />
   } else if (activeTabType === 'market') {
     page = <Market />
+  } else if (activeTabType === 'deepseek-harness') {
+    page = <DeepSeekHarness />
   } else if (activeTabType === 'trace') {
     const traceTabId = activeTabId
     const traceSessionId = tabs.find((t) => t.sessionId === traceTabId)?.traceSessionId

@@ -301,8 +301,8 @@ function makeDesktopUiPreferencesResponse({
       sidebar,
       projectDisplayNames,
       profile: {
-        displayName: 'cc-haha',
-        subtitle: 'github.com/NanmiCoder/cc-haha',
+        displayName: 'EchoFlow Code',
+        subtitle: 'github.com/LiuGuangHS/EchoFlow-ClaudeCode',
         avatarFile: null,
         avatarUpdatedAt: null,
       },
@@ -498,6 +498,7 @@ describe('Sidebar', () => {
 
     expect(region).toHaveTextContent('EchoFlow Code')
     expect(region).not.toHaveTextContent('Claude Code')
+    expect(region.querySelector('img[src="/app-icon.png"]')).not.toBeNull()
   })
 
   it('groups sessions by project and expands overflow rows', () => {

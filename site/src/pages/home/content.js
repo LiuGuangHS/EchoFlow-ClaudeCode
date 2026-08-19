@@ -83,7 +83,7 @@ export const content = {
           id: 'start',
           label: '开始',
           title: '第一眼，就是空会话',
-          body: '刚打开项目时不塞演示内容。输入框、权限模式、运行位置和 GPT-5.6-Luna 都在首屏直接可见。',
+          body: '刚打开项目时不塞演示内容。输入框、权限模式、运行位置和模型选择都在首屏直接可见。',
           image: localizedImages.zh.sessionNew
         },
         {
@@ -111,7 +111,7 @@ export const content = {
           id: 'models',
           label: '模型',
           title: '接哪个模型，你自己定',
-          body: 'Claude / ChatGPT / Grok 官方账号直接登录，每条会话再选具体模型；这次真实任务使用 ChatGPT 官方与 GPT-5.6-Luna。',
+          body: 'Claude / ChatGPT / Grok 官方账号可直接登录，也可以连接厂商 API、本地模型或自定义兼容端点；每条会话再选具体模型。',
           image: localizedImages.zh.modelPicker
         },
         {
@@ -149,12 +149,12 @@ export const content = {
       ]
     },
     paths: {
-      title: '你是哪一种',
-      lede: '文档只分两条路，别的都是这两条的支线。',
+      title: '从哪开始',
+      lede: '按你的目标选一条路，文档会带你走到下一步。',
       items: [
         {
           eyebrow: '我想用起来',
-          title: '从 0 到 1 把它跑起来',
+          title: '从 0 到 1 跑通第一条会话',
           body: '装好应用、接上模型、跑通第一条会话，再一个个把功能用熟。不需要懂代码。',
           links: [
             ['/start/install', '下载与安装'],
@@ -164,14 +164,25 @@ export const content = {
           ]
         },
         {
-          eyebrow: '我想拆开看',
+          eyebrow: '我想协作',
+          title: '多 Agent、手机与 IM 接力',
+          body: '用团队工作台和工作流拆解复杂任务；离开桌面后，用手机或聊天工具继续跟进。',
+          links: [
+            ['/desktop/agent-teams', 'Agent Teams'],
+            ['/desktop/dynamic-workflow', 'Dynamic Workflow'],
+            ['/mobile', '移动端'],
+            ['/im', 'IM 接入']
+          ]
+        },
+        {
+          eyebrow: '我想贡献',
           title: '架构、实现与贡献',
-          body: 'CLI 内核怎么分层、Agent 与 Skills 怎么调度、记忆怎么落盘、本地服务有哪些 API。',
+          body: '了解 CLI 内核、Agent 与 Skills 调度、记忆落盘和本地 Server，再提交可验证的改动。',
           links: [
             ['/internals', '架构总览'],
             ['/internals/agent', '多 Agent 系统'],
-            ['/internals/server', '本地 Server 与 API'],
-            ['/internals/contributing', '参与贡献']
+            ['/internals/contributing', '参与贡献'],
+            ['/start/privacy', '隐私与联网']
           ]
         }
       ]
@@ -219,13 +230,13 @@ export const content = {
     },
     tour: {
       title: 'Real app, real tasks, no concept art',
-      lede: 'Every shot uses Pure White at 100% UI zoom. The task flow ran in a real test project through ChatGPT Official and GPT-5.6-Luna.',
+      lede: 'Every shot uses Pure White at 100% UI zoom and shows real session, review, and local-preview flows in a test project.',
       tabs: [
-        { id: 'start', label: 'Start', title: 'The first screen is an empty session', body: 'No staged demo content. The composer, permission mode, working location and GPT-5.6-Luna are visible before the first task starts.', image: localizedImages.en.sessionNew },
+        { id: 'start', label: 'Start', title: 'The first screen is an empty session', body: 'No staged demo content. The composer, permission mode, working location, and model selector are visible before the first task starts.', image: localizedImages.en.sessionNew },
         { id: 'session', label: 'Run', title: 'Say it once. Watch it get done.', body: 'Pick a project, a permission mode and a model. Every file it read, every command it ran and every line it changed stays in the thread.', image: localizedImages.en.sessionMain },
         { id: 'review', label: 'Review', title: 'Know exactly what changed', body: 'The workspace lists this turn’s edits; open any file for a syntax-highlighted diff. Don’t like it? Undo the whole turn.', image: localizedImages.en.workspaceDiff },
         { id: 'preview', label: 'Preview', title: 'Check the page without leaving', body: 'Open your dev server in the built-in browser, see the result immediately, and bring screenshots or picked elements back into the thread.', image: localizedImages.en.workspacePreview },
-        { id: 'models', label: 'Models', title: 'Bring your own model', body: 'Sign in to Claude, ChatGPT or Grok, then choose the exact model for each session. This real run uses ChatGPT Official with GPT-5.6-Luna.', image: localizedImages.en.modelPicker },
+        { id: 'models', label: 'Models', title: 'Bring your own model', body: 'Sign in to Claude, ChatGPT, or Grok, or connect vendor APIs, local models, and compatible custom endpoints. Then choose the exact model for each session.', image: localizedImages.en.modelPicker },
         { id: 'skills', label: 'Skills', title: 'Missing a trick? Install it.', body: 'The marketplace aggregates ClawHub and SkillHub, and labels every skill with its source and safety status before you install.', image: localizedImages.en.skillMarket },
         { id: 'schedule', label: 'Schedule', title: 'Set the time. It comes back with results.', body: 'Choose a cadence, model, directory and notification. Jobs run in their own sessions and every run leaves a record.', image: localizedImages.en.scheduleCreate },
         { id: 'remote', label: 'Mobile', title: 'Step away, keep the session', body: 'Scan the QR code and continue in your phone browser. Locking the screen won’t kill a running task.', image: localizedImages.en.h5Session }
@@ -243,8 +254,8 @@ export const content = {
       ]
     },
     paths: {
-      title: 'Which one are you',
-      lede: 'The docs run along two tracks. Everything else branches off them.',
+      title: 'Where to start',
+      lede: 'Choose the path that matches your goal; the docs take you to the next step.',
       items: [
         {
           eyebrow: 'I want to use it',
@@ -258,14 +269,25 @@ export const content = {
           ]
         },
         {
-          eyebrow: 'I want to read the source',
+          eyebrow: 'I want to coordinate work',
+          title: 'Multiple agents, mobile, and messaging',
+          body: 'Use the team workbench and workflows for complex tasks, then follow work from a phone or chat integration.',
+          links: [
+            ['/en/desktop/agent-teams', 'Agent Teams'],
+            ['/en/desktop/dynamic-workflow', 'Dynamic Workflow'],
+            ['/en/mobile', 'Mobile'],
+            ['/en/im', 'Messaging']
+          ]
+        },
+        {
+          eyebrow: 'I want to contribute',
           title: 'Architecture, internals and contributing',
-          body: 'How the CLI core is layered, how agents and skills are scheduled, how memory is persisted, what the local server exposes.',
+          body: 'Understand the CLI core, agent and skill scheduling, persistence, and the local server before submitting a verifiable change.',
           links: [
             ['/en/internals', 'Architecture overview'],
             ['/en/internals/agent', 'Multi-agent system'],
-            ['/en/internals/server', 'Local server & API'],
-            ['/en/internals/contributing', 'Contributing']
+            ['/en/internals/contributing', 'Contributing'],
+            ['/en/start/privacy', 'Privacy and network access']
           ]
         }
       ]

@@ -1,3 +1,9 @@
+---
+title: 移动端 Android 客户端
+nav_title: 移动端
+order: 0
+---
+
 # 移动端 Android 客户端
 
 EchoFlow Code Mobile 是面向 Android 的远程客户端。它不会在手机上运行 Coding Agent 或桌面 sidecar，而是通过扫码或手动输入连接到已经运行的 EchoFlow Desktop / 本地服务，并在 WebView 中复用现有 H5 聊天界面。

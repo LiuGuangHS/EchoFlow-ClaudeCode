@@ -291,7 +291,7 @@ describe('RepositoryLaunchControls', () => {
       repoRoot: '/repo',
     })
     renderControls({ workDir })
-    await screen.findByRole('button', { name: 'Location: cc-haha / main' })
+    await screen.findByRole('button', { name: 'Location: echoflow-code / main' })
 
     act(() => {
       hydrateProjectDisplayNames(

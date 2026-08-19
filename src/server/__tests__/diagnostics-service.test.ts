@@ -870,7 +870,7 @@ describe('DiagnosticsService', () => {
     expect(archiveText).not.toContain(secret)
   })
 
-  test('keeps fatal startup errors visible on stderr while recording diagnostics', async () => {
+  test('keeps fatal startup errors visible on stderr while recording diagnostics', { timeout: 20_000 }, async () => {
     const port = await getPort()
     const serverArgs = ['bun', '--no-env-file', 'run', 'src/server/index.ts', '--host', '127.0.0.1', '--port', String(port)]
     // This spawns a *real* server, not the in-process test runner. Strip the

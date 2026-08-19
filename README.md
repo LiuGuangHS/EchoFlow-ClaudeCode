@@ -21,11 +21,15 @@
 
 </div>
 
-EchoFlow Code is a **desktop Claude Code workspace** for macOS, Windows, and Linux: multi-session workspaces, global search, branch / Worktree launch, diff review, built-in browser preview, GUI permission approval, official Claude, ChatGPT, Grok, vendor APIs, local endpoints, image generation, visual MCP and SubAgent management, Agent Teams, dynamic Workflow orchestration, model tracing, Computer Use, skill marketplace, themes, desktop pets, H5 remote access, IM integration, and scheduled tasks, all in one app.
+EchoFlow Code is a **local-first desktop workspace for Claude Code and model providers**. Run coding sessions, inspect every diff, coordinate Agent Teams and Dynamic Workflows, and keep control of every tool call and model connection.
 
 <p align="center">
-  <a href="#desktop-preview">Desktop preview</a> · <a href="#install-the-desktop-app">Install</a> · <a href="#desktop-highlights">Highlights</a> · <a href="#documentation">Documentation</a> · <a href="#community">Community</a>
+  <a href="https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest"><strong>Download desktop app</strong></a> · <a href="docs/en/start/first-session.md"><strong>Start in five minutes</strong></a> · <a href="https://code.echoflow.cn">Documentation</a> · <a href="https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/discussions">Feedback and discussions</a>
 </p>
+
+| Inspect every change | Coordinate complex work | Keep control of your setup |
+| --- | --- | --- |
+| Tool calls, workspace diffs, and undo stay visible. | Subagents, Agent Teams, and Dynamic Workflow make parallel work readable. | Connect official OAuth, vendor APIs, local models, or custom compatible endpoints. |
 
 ## Desktop Preview
 
@@ -63,6 +67,16 @@ cp .env.example .env
 
 See [environment variables](docs/en/cli/env.md) and [CLI setup](docs/en/cli/index.md) for configuration details.
 
+## Why EchoFlow Code
+
+EchoFlow Code turns a coding-agent runtime into a visible, reviewable workspace rather than another opaque chat window.
+
+- **Coordinate real multi-agent work**: the Agent Teams workbench shows members, a shared task list, communication, dependency lanes, and completed-session history. Dynamic Workflow runs parallel or pipeline orchestration with phase progress, interruption, and recovery.
+- **Keep every change inspectable**: sessions expose permission requests, tool calls, workspace diffs, browser previews, model traces, diagnostics, and an undo path instead of hiding agent execution behind a single response.
+- **Use the setup you trust**: connect official Claude, ChatGPT, and Grok sign-in flows; vendor APIs; LM Studio or Ollama; and compatible custom endpoints. Provider credentials, model selection, and permissions remain under your control.
+- **Continue beyond one desktop**: keep the same session moving through H5, Android, and messaging integrations while the desktop remains the source of truth for project context and approval.
+- **Recover with evidence**: local activity, diagnostics exports, upgrade-safe persistence, and controlled repair paths help investigate startup, provider, or session failures without exposing secrets.
+
 ## Desktop Highlights
 
 - **Multi-session workspace**: tabs, project switching, terminal entry, and session history in one place, with a resizable sidebar.
@@ -94,13 +108,13 @@ Full documentation: <https://code.echoflow.cn>
 | Area | Documents |
 |------|-----------|
 | Getting started | [Install](docs/en/start/install.md) · [Connect a model](docs/en/start/models.md) · [First session](docs/en/start/first-session.md) · [Troubleshooting](docs/en/start/troubleshooting.md) |
-| Desktop | [Overview](docs/en/desktop/index.md) · [Computer Use](docs/en/desktop/computer-use.md) · [Pets](docs/en/desktop/pets.md) · [H5 and IM relay](docs/en/desktop/remote.md) |
+| Desktop | [Overview](docs/en/desktop/index.md) · [Agent Teams](docs/en/desktop/agent-teams.md) · [Dynamic Workflow](docs/en/desktop/dynamic-workflow.md) · [Computer Use](docs/en/desktop/computer-use.md) · [Pets](docs/en/desktop/pets.md) · [H5 and IM relay](docs/en/desktop/remote.md) |
 | CLI | [Setup](docs/en/cli/index.md) · [Reference](docs/en/cli/reference.md) · [Environment](docs/en/cli/env.md) |
 | Internals | [Desktop architecture](docs/en/internals/desktop.md) · [Agents](docs/en/internals/agent.md) · [Skills](docs/en/internals/skills.md) · [Server API](docs/en/internals/server.md) · [Contributing](docs/en/internals/contributing.md) |
 
-## Community
+## Feedback and discussions
 
-Report bugs, share feedback, or discuss usage through [Issues](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/issues).
+Use [Discussions](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/discussions) for questions, ideas, and usage notes. Use [Issues](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/issues) for reproducible bugs. Read [SUPPORT.md](SUPPORT.md) before sharing logs, and use [SECURITY.md](SECURITY.md) for vulnerabilities.
 
 ## Stack
 
@@ -117,7 +131,6 @@ Report bugs, share feedback, or discuss usage through [Issues](https://github.co
 
 ## Acknowledgements
 
-- [NanmiCoder/cc-haha](https://github.com/NanmiCoder/cc-haha): upstream project that continues to inform EchoFlow Code.
 - [React](https://github.com/facebook/react): UI ecosystem and component model.
 - [Electron](https://github.com/electron/electron): cross-platform desktop capabilities.
 - [cc-switch](https://github.com/farion1231/cc-switch): provider configuration references.

@@ -16,7 +16,7 @@ The CLI runs from source only. There is no separate installer for it.
 Install [Git](https://git-scm.com/downloads) and [Bun](https://bun.sh) first, then:
 
 ```bash
-git clone https://github.com/LiuGuangHS/EchoFlow-ClaudeCode.git
+git clone https://github.com/LiuGuangHS/EchoFlow-ClaudeCode.git echoflow-code
 cd echoflow-code
 bun install
 ```

@@ -710,9 +710,9 @@ describe('in-process teammate task claiming', () => {
       const prompt = await claimNextInProcessTask({ agentName, teamName })
 
       expect(prompt).toContain('Audit workflow')
-      const claimedTasks = await listTasks(taskListId)
-      expect(claimedTasks[1]?.owner).toBe(agentName)
-      expect(claimedTasks[1]?.status).toBe('in_progress')
+      const claimedTask = (await listTasks(taskListId)).find((task) => task.subject === 'Audit workflow')
+      expect(claimedTask?.owner).toBe(agentName)
+      expect(claimedTask?.status).toBe('in_progress')
 
       const unrelatedTasks = await listTasks(parentSessionId)
       expect(unrelatedTasks).toHaveLength(1)

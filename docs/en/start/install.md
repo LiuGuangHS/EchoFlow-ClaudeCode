@@ -91,7 +91,7 @@ On ARM64 machines, use the corresponding `linux-arm64` file.
 If you want to modify the code, debug the engine, or just use the CLI in a terminal:
 
 ```bash
-git clone https://github.com/LiuGuangHS/EchoFlow-ClaudeCode.git
+git clone https://github.com/LiuGuangHS/EchoFlow-ClaudeCode.git echoflow-code
 cd echoflow-code
 bun install
 cp .env.example .env

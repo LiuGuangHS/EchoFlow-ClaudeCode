@@ -326,6 +326,26 @@ export const browserHost: DesktopHost = {
       unsupported('Adapter sidecar restart')
     },
   },
+  deepSeekHarness: {
+    async getStatus() {
+      unsupported('DeepSeek Harness')
+    },
+    async install() {
+      unsupported('DeepSeek Harness')
+    },
+    async start() {
+      unsupported('DeepSeek Harness')
+    },
+    async stop() {
+      unsupported('DeepSeek Harness')
+    },
+    async restart() {
+      unsupported('DeepSeek Harness')
+    },
+    async open() {
+      unsupported('DeepSeek Harness')
+    },
+  },
   zoom: {
     async set() {
       unsupported('Native app zoom')

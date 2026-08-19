@@ -1,1 +1,11 @@
 blank_issues_enabled: false
+contact_links:
+  - name: 使用文档 / Documentation
+    url: https://code.echoflow.cn
+    about: 先查看安装、模型配置、第一条会话和故障排查。
+  - name: 讨论与交流 / Discussions
+    url: https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/discussions
+    about: 提问、分享使用经验或讨论尚未形成可复现 Bug 的想法。
+  - name: 安全政策 / Security policy
+    url: https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/security/policy
+    about: 不要在公开 Issue 中提交漏洞细节、密钥、Token 或私密日志；私密报告入口启用后会在安全政策中说明。

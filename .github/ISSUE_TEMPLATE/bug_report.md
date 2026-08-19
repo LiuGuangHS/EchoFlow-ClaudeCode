@@ -25,7 +25,7 @@ assignees: ''
 - 使用方式: 桌面端 / CLI / 其他:
 - 操作系统: Windows / macOS / Linux:
 - 系统版本: 例如 Windows 11 23H2 / macOS 15.4:
-- 桌面端版本: 例如 v0.1.8（设置页 -> 关于 中可查看）:
+- 桌面端版本: 设置 → 关于 中显示的版本:
 - 安装来源: GitHub Release / 源码本地构建 / 其他:
 - Bun 版本（CLI 问题填写，`bun --version`）:
 - Node 版本（CLI 问题填写，`node --version`）:

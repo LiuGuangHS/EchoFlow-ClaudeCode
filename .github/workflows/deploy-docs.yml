@@ -44,7 +44,7 @@ jobs:
       - name: Build React site
         run: npm --prefix site run build
         env:
-          DOCS_BASE: /EchoFlow-ClaudeCode/
+          DOCS_BASE: /
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

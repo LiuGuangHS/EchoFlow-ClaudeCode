@@ -24,7 +24,7 @@ import { deserializeSourceFingerprint } from './localIndex/sourceFingerprint.js'
 import type { LocalIndexGateway } from './localIndex/sessionIndex.js'
 import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
 import { getEchoFlowConfigDir, getEchoFlowInternalDir } from '../../utils/echoFlowConfigRoot.js'
-import { taskService, type TaskInfo } from './taskService.js'
+import type { TaskInfo } from './taskService.js'
 import {
   getCanonicalTeamTaskListId,
   readTaskListLifecycleState,
@@ -2334,7 +2334,7 @@ export class TeamService {
   // ── Internal helpers ────────────────────────────────────────────────────
 
   private async loadTeamConfig(name: string): Promise<TeamFileRaw> {
-    const configPath = path.join(this.getTeamsDir(), name, 'config.json')
+    const configPath = path.join(this.getTeamsDir(), this.requireSafeTeamName(name), 'config.json')
 
     try {
       const raw = await fs.readFile(configPath, 'utf-8')
@@ -2344,13 +2344,20 @@ export class TeamService {
     }
   }
 
+  private requireSafeTeamName(name: string): string {
+    if (!name || name === '.' || name === '..' || name.includes('/') || name.includes('\\')) {
+      throw ApiError.badRequest('Invalid team name')
+    }
+    return name
+  }
+
   /**
    * Discover member names from the inboxes/ directory.
    * Each file `{name}.json` in inboxes/ represents a team member.
    * Excludes the team-lead inbox since the leader is already in config.
    */
   private async discoverInboxMembers(teamName: string): Promise<string[]> {
-    const inboxDir = path.join(this.getTeamsDir(), teamName, 'inboxes')
+    const inboxDir = path.join(this.getTeamsDir(), this.requireSafeTeamName(teamName), 'inboxes')
 
     try {
       const files = await fs.readdir(inboxDir)
@@ -2366,7 +2373,7 @@ export class TeamService {
   private async readWorkbenchMessages(
     teamName: string,
   ): Promise<TeamWorkbenchMessage[]> {
-    const inboxDir = path.join(this.getTeamsDir(), teamName, 'inboxes')
+    const inboxDir = path.join(this.getTeamsDir(), this.requireSafeTeamName(teamName), 'inboxes')
     let files: string[]
     try {
       files = (await fs.readdir(inboxDir)).filter((file) => file.endsWith('.json'))

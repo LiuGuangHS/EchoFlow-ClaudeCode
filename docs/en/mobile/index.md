@@ -1,3 +1,9 @@
+---
+title: Android Mobile Client
+nav_title: Mobile
+order: 0
+---
+
 # Android Mobile Client
 
 EchoFlow Code Mobile is a remote Android client. It does not run the coding agent or desktop sidecar on the phone. Instead, it connects to a running EchoFlow Desktop / local server by scanning a launch link or entering a Server URL and H5 Token, then opens the existing H5 chat UI in a WebView.

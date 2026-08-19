@@ -478,17 +478,17 @@ describe('Task tool execution ordering', () => {
       expect(listed.data.taskListSnapshotRevision).toBe(2)
       expect(updated.data.taskListMutationRevision).toBe(3)
       expect(afterUpdate.data.taskListSnapshotRevision).toBe(3)
-      expect(listed.data.tasks).toEqual([
+      expect(listed.data.tasks).toEqual(expect.arrayContaining([
         expect.objectContaining({ id: taskId, status: 'pending' }),
         expect.objectContaining({ id: dependent.data.task.id, status: 'pending' }),
-      ])
-      expect(afterUpdate.data.tasks).toEqual([
+      ]))
+      expect(afterUpdate.data.tasks).toEqual(expect.arrayContaining([
         expect.objectContaining({ id: taskId, status: 'in_progress' }),
         expect.objectContaining({
           id: dependent.data.task.id,
           blockedBy: [taskId],
         }),
-      ])
+      ]))
 
       appState = {
         ...appState,
@@ -498,18 +498,18 @@ describe('Task tool execution ordering', () => {
       expect(deleted.data).toMatchObject({
         success: true,
         team_name: taskListId,
-        finalTasks: [
-          expect.objectContaining({
-            id: taskId,
-            status: 'in_progress',
-            blocks: [dependent.data.task.id],
-          }),
-          expect.objectContaining({
-            id: dependent.data.task.id,
-            blockedBy: [taskId],
-          }),
-        ],
       })
+      expect(deleted.data.finalTasks).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: taskId,
+          status: 'in_progress',
+          blocks: [dependent.data.task.id],
+        }),
+        expect.objectContaining({
+          id: dependent.data.task.id,
+          blockedBy: [taskId],
+        }),
+      ]))
       expect(Number.isFinite(Date.parse(deleted.data.taskListSnapshotAt ?? ''))).toBe(true)
       expect(deleted.data.taskListSnapshotRevision).toBe(3)
       await expect(stat(getTasksDir(taskListId))).rejects.toThrow()

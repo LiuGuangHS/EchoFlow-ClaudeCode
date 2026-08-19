@@ -21,11 +21,15 @@
 
 </div>
 
-EchoFlow Code 是一个**桌面端 Claude Code 工作台**：多会话与全局搜索、分支 / Worktree 启动、Diff 审阅、内置浏览器预览、图形化权限审批、Claude / ChatGPT / Grok 官方账号、官方厂商 API、本地端点、图片生成、MCP 与 SubAgent 可视化管理、Agent Teams 协作工作台、动态 Workflow 编排、模型请求追踪、Computer Use、技能市场、多主题、桌面宠物、H5 远程访问、IM 接入和定时任务，集中在一个 macOS / Windows / Linux APP 里。
+EchoFlow Code 是一个**本地优先的 Claude Code 与模型服务商桌面工作台**：运行编程会话、逐项审阅 Diff、编排 Agent Teams 与 Dynamic Workflow，并掌控每一次工具调用和模型连接。
 
 <p align="center">
-  <a href="#桌面端预览">桌面端预览</a> · <a href="#安装桌面端">安装桌面端</a> · <a href="#桌面端亮点">桌面端亮点</a> · <a href="#更多文档">更多文档</a> · <a href="#用户交流群">用户交流群</a>
+  <a href="https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest"><strong>下载桌面端</strong></a> · <a href="docs/start/first-session.md"><strong>5 分钟跑通</strong></a> · <a href="https://code.echoflow.cn">查看文档</a> · <a href="https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/discussions">反馈与讨论</a>
 </p>
+
+| 每次改动可审阅 | 复杂任务可编排 | 环境由你掌控 |
+| --- | --- | --- |
+| 工具调用、工作区 Diff 和撤销都保持可见。 | SubAgent、Agent Teams 与 Dynamic Workflow 让并行工作可追踪。 | 使用官方 OAuth、厂商 API、本地模型或自定义兼容端点。 |
 
 ## 桌面端预览
 
@@ -63,6 +67,16 @@ cp .env.example .env
 
 更多配置见[环境变量](docs/cli/env.md)和[命令行安装与启动](docs/cli/index.md)。
 
+## EchoFlow 的特别强化
+
+EchoFlow Code 的目标不是再包一层聊天框，而是把 Coding Agent 变成看得见、审得了、能恢复的工作台。
+
+- **多 Agent 协作可视化**：Agent Teams 工作台集中展示成员、共享任务、通信流、依赖泳道和已完成会话历史；Dynamic Workflow 可并发或流水线编排，并显示阶段进度、中断与恢复。
+- **每一步都可审阅**：权限请求、工具调用、工作区 Diff、内置浏览器预览、模型 Trace、诊断和撤销路径都在界面中，不把 Agent 执行藏在一条回复后面。
+- **模型与权限由你掌控**：可连接 Claude、ChatGPT、Grok 官方登录、厂商 API、LM Studio、Ollama 和兼容的自定义端点；Provider 凭据、模型选择和权限模式都由你决定。
+- **不止一台桌面端**：通过 H5、Android 和 IM 接力同一个会话，同时仍以桌面端作为项目上下文与高风险审批的主界面。
+- **出问题有证据可查**：本地活动记录、诊断导出、兼容升级和受控修复路径帮助定位启动、Provider 或会话故障，同时避免暴露密钥。
+
 ## 桌面端亮点
 
 - **多会话与全局搜索**：标签页、项目切换、终端入口、会话历史和跨会话全文搜索集中管理。
@@ -95,13 +109,13 @@ cp .env.example .env
 | 分区 | 文档 |
 |------|------|
 | 开始使用 | [下载与安装](docs/start/install.md) · [连接模型服务](docs/start/models.md) · [跑通第一条会话](docs/start/first-session.md) · [故障排查](docs/start/troubleshooting.md) |
-| 桌面端功能 | [功能总览](docs/desktop/index.md) · [Computer Use](docs/desktop/computer-use.md) · [桌面宠物](docs/desktop/pets.md) · [手机 H5 与 IM 接力](docs/desktop/remote.md) |
+| 桌面端功能 | [功能总览](docs/desktop/index.md) · [Agent Teams](docs/desktop/agent-teams.md) · [Dynamic Workflow](docs/desktop/dynamic-workflow.md) · [Computer Use](docs/desktop/computer-use.md) · [桌面宠物](docs/desktop/pets.md) · [手机 H5 与 IM 接力](docs/desktop/remote.md) |
 | 命令行 | [安装与启动](docs/cli/index.md) · [命令参考](docs/cli/reference.md) · [环境变量](docs/cli/env.md) |
 | 深入原理 | [桌面端架构](docs/internals/desktop.md) · [多 Agent 系统](docs/internals/agent.md) · [Skills 系统](docs/internals/skills.md) · [本地 Server 与 API](docs/internals/server.md) · [参与贡献与质量门禁](docs/internals/contributing.md) |
 
-## 用户交流群
+## 反馈与讨论
 
-使用过程中有问题、想反馈 Bug，或想交流实践，欢迎通过 [Issues](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/issues) 联系。
+使用问题、功能想法和实践交流请到 [Discussions](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/discussions)；可复现的产品问题请提交 [Issues](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/issues)。分享日志前先看 [SUPPORT.md](SUPPORT.md)，安全漏洞请遵循 [SECURITY.md](SECURITY.md)。
 
 ## 技术栈
 
@@ -118,7 +132,6 @@ cp .env.example .env
 
 ## 致谢
 
-- [NanmiCoder/cc-haha](https://github.com/NanmiCoder/cc-haha)：上游项目，为 EchoFlow Code 的持续迭代提供基础。
 - [React](https://github.com/facebook/react)：前端工程与组件化 UI 生态。
 - [Electron](https://github.com/electron/electron)：跨端桌面应用能力与工程实践。
 - [cc-switch](https://github.com/farion1231/cc-switch)：模型供应商配置能力参考。
