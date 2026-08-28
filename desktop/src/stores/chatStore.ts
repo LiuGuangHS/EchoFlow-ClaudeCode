@@ -7,6 +7,7 @@ import { useSessionStore } from './sessionStore'
 import { useCLITaskStore } from './cliTaskStore'
 import { useWorkflowStore } from './workflowStore'
 import { useSessionRuntimeStore } from './sessionRuntimeStore'
+import { useSessionCliRuntimeStore } from './sessionCliRuntimeStore'
 import { useTabStore } from './tabStore'
 import { randomSpinnerVerb } from '../config/spinnerVerbs'
 import { notifyDesktop } from '../lib/desktopNotifications'
@@ -336,6 +337,7 @@ type ChatStore = {
     response: ComputerUsePermissionResponse,
   ) => void
   setSessionRuntime: (sessionId: string, selection: RuntimeSelection) => void
+  setSessionCliRuntime: (sessionId: string, runtimeId: 'bundled' | 'installed') => void
   setSessionPermissionMode: (sessionId: string, mode: PermissionMode) => void
   stopGeneration: (sessionId: string) => void
   stopBackgroundTask: (sessionId: string, taskId: string) => void
@@ -2151,6 +2153,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     useSessionRuntimeStore.getState().markRequestPending(sessionId)
   },
 
+  setSessionCliRuntime: (sessionId, runtimeId) => {
+    wsManager.send(sessionId, { type: 'set_cli_runtime', cliRuntimeId: runtimeId })
+    useSessionCliRuntimeStore.getState().request(sessionId, runtimeId)
+  },
+
   setSessionPermissionMode: (sessionId, mode) => {
     const session = get().sessions[sessionId]
     if (!session || session.chatState !== 'idle') return
@@ -2924,6 +2931,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         )
         break
 
+      case 'cli_runtime_applied':
+        useSessionCliRuntimeStore.getState().apply(sessionId, msg.cliRuntimeId)
+        break
+
       case 'runtime_config_applied': {
         const selected = useSessionRuntimeStore.getState().selections[sessionId]
         const matchesCurrentSelection = Boolean(selected) &&
@@ -3608,6 +3619,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       }
 
       case 'error':
+        if (msg.code === 'CLI_RUNTIME_INVALID' || msg.code === 'CLI_RUNTIME_PERSIST_FAILED' || msg.code === 'CLI_RUNTIME_RESTART_FAILED') {
+          useSessionCliRuntimeStore.getState().fail(sessionId)
+        }
         if (msg.code === 'RUNTIME_CONFIG_INVALID') {
           useSessionRuntimeStore.getState().markRequestFailed(sessionId)
         }

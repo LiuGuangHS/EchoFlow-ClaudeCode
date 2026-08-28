@@ -855,13 +855,38 @@ describe('ConversationService', () => {
     expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('kimi-k2.6')
     expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('kimi-k2.6')
     expect(env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST).toBe('1')
-    expect(env.ECHOFLOW_LOCAL_ACCESS_TOKEN).toBe('desktop-local-secret')
+    expect(env.ECHOFLOW_LOCAL_ACCESS_TOKEN).toBeUndefined()
     expect(env.CLAUDE_CODE_ATTRIBUTION_HEADER).toBe('0')
     expect(env.ECHOFLOW_TRANSCRIPT_ENTRYPOINT).toBe('claude-desktop')
     expect(env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined()
     expect(env.ECHOFLOW_TRACE_PROVIDER_ID).toBeUndefined()
     expect(env.ECHOFLOW_TRACE_PROVIDER_NAME).toBeUndefined()
     expect(env.ECHOFLOW_TRACE_PROVIDER_FORMAT).toBeUndefined()
+  })
+
+  test('buildChildEnv strips server credentials and runtime config from CLI children', async () => {
+    const previousLocalAccessToken = process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
+    const previousPetAccessToken = process.env.ECHOFLOW_PET_ACCESS_TOKEN
+    const previousRuntimeConfig = process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG
+    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+    process.env.ECHOFLOW_PET_ACCESS_TOKEN = 'pet-capability-secret'
+    process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG = path.join(tmpDir, 'runtime.json')
+
+    try {
+      const service = new ConversationService() as any
+      const env = (await service.buildChildEnv('/tmp')) as Record<string, string>
+
+      expect(env.ECHOFLOW_LOCAL_ACCESS_TOKEN).toBeUndefined()
+      expect(env.ECHOFLOW_PET_ACCESS_TOKEN).toBeUndefined()
+      expect(env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG).toBeUndefined()
+    } finally {
+      if (previousLocalAccessToken === undefined) delete process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
+      else process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = previousLocalAccessToken
+      if (previousPetAccessToken === undefined) delete process.env.ECHOFLOW_PET_ACCESS_TOKEN
+      else process.env.ECHOFLOW_PET_ACCESS_TOKEN = previousPetAccessToken
+      if (previousRuntimeConfig === undefined) delete process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG
+      else process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG = previousRuntimeConfig
+    }
   })
 
   test('buildChildEnv isolates experimental beta kill switch for session-scoped providers', async () => {
@@ -1204,6 +1229,56 @@ describe('ConversationService', () => {
       expect(args[3]).toContain(path.join('src', 'entrypoints', 'cli.tsx'))
     } else {
       expect(args[0]).toContain(path.join('bin', 'echoflow-code'))
+    }
+  })
+
+  test('bundled runtime ignores the CLAUDE_CLI_PATH override', () => {
+    const previousCliPath = process.env.CLAUDE_CLI_PATH
+    process.env.CLAUDE_CLI_PATH = path.join(tmpDir, 'untrusted-cli')
+
+    try {
+      const service = new ConversationService() as any
+      const args = service.resolveCliArgs(['--print'], 'bundled') as string[]
+
+      expect(args).not.toContain(process.env.CLAUDE_CLI_PATH)
+      if (process.platform === 'win32') {
+        expect(args[0]).toBe(process.execPath)
+        expect(args[1]).toBe('--preload')
+      } else {
+        expect(args[0]).toContain(path.join('bin', 'echoflow-code'))
+      }
+    } finally {
+      if (previousCliPath === undefined) delete process.env.CLAUDE_CLI_PATH
+      else process.env.CLAUDE_CLI_PATH = previousCliPath
+    }
+  })
+
+  test('buildSessionCliArgs uses the installed runtime from the trusted Electron config', async () => {
+    const executablePath = path.join(tmpDir, 'claude')
+    const runtimeConfigPath = path.join(tmpDir, 'claude-code-runtime.json')
+    await fs.writeFile(executablePath, '')
+    await fs.chmod(executablePath, 0o755)
+    await fs.writeFile(runtimeConfigPath, JSON.stringify({
+      schemaVersion: 1,
+      defaultRuntimeId: 'installed',
+      installedPath: executablePath,
+    }))
+    const previousRuntimeConfig = process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG
+    process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG = runtimeConfigPath
+
+    try {
+      const service = new ConversationService() as any
+      const args = service.buildSessionCliArgs(
+        '123e4567-e89b-12d3-a456-426614174000',
+        'ws://127.0.0.1:3456/sdk/test-session?token=test-token',
+        false,
+        { cliRuntimeId: 'installed' },
+      ) as string[]
+
+      expect(args[0]).toBe(await fs.realpath(executablePath))
+    } finally {
+      if (previousRuntimeConfig === undefined) delete process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG
+      else process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG = previousRuntimeConfig
     }
   })
 

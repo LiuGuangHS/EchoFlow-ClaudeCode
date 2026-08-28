@@ -81,6 +81,11 @@ export function DeepSeekHarness() {
                 启动
               </Button>
             )}
+            {installed && !running && (
+              <Button variant="secondary" loading={loading} onClick={() => void run(() => desktopHost.deepSeekHarness.install())}>
+                更新 / 重新安装
+              </Button>
+            )}
             {running && (
               <Button loading={loading} onClick={() => void run(async () => {
                 await desktopHost.deepSeekHarness.open()

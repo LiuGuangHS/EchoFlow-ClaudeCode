@@ -223,12 +223,9 @@ export class DeepSeekHarnessRuntime {
     return installation
   }
 
-  async start(): Promise<DeepSeekHarnessStatus> {
-    const current = await this.getStatus()
-    if (current.state === 'running') return current
-    if (!current.version) throw new Error('Install DeepSeek Harness before starting it')
+  start(): Promise<DeepSeekHarnessStatus> {
+    if (this.installPromise) return Promise.reject(new Error('Wait for the DeepSeek Harness update to finish before starting it'))
     if (this.startPromise) return this.startPromise
-
     const start = this.startOnce().finally(() => {
       if (this.startPromise === start) this.startPromise = null
     })
@@ -252,11 +249,13 @@ export class DeepSeekHarnessRuntime {
   }
 
   private async installOnce(): Promise<DeepSeekHarnessStatus> {
-    if (this.child) throw new Error('Stop DeepSeek Harness before installing updates')
+    if (this.child || this.startPromise) throw new Error('Stop DeepSeek Harness before installing updates')
     const nodePath = await this.resolveCompatibleNode()
     if (!nodePath) throw new Error('Node.js 22.19.0 or later is required to install DeepSeek Harness')
     const runtimeRoot = harnessRuntimeRoot(this.root)
     const temporaryRuntime = `${runtimeRoot}.installing-${randomUUID()}`
+    const backupRuntime = `${runtimeRoot}.backup-${randomUUID()}`
+    let backupCreated = false
     try {
       await this.deps.mkdir(temporaryRuntime, { recursive: true })
       await this.deps.installPackage(nodePath, temporaryRuntime)
@@ -264,14 +263,22 @@ export class DeepSeekHarnessRuntime {
       if (!this.deps.exists(executable)) throw new Error('DeepSeek Harness installation did not produce its launcher')
       await this.deps.mkdir(this.root, { recursive: true })
       await this.deps.mkdir(harnessDataRoot(this.root), { recursive: true })
-      await this.deps.rm(runtimeRoot, { recursive: true, force: true })
       await this.deps.mkdir(path.dirname(runtimeRoot), { recursive: true })
+      if (this.deps.exists(runtimeRoot)) {
+        await this.deps.rename(runtimeRoot, backupRuntime)
+        backupCreated = true
+      }
       await this.deps.rename(temporaryRuntime, runtimeRoot)
       await this.writeStoredState({ version: DSH_VERSION })
       this.currentStatus = status('installed', DSH_VERSION)
+      if (backupCreated) await this.deps.rm(backupRuntime, { recursive: true, force: true }).catch(() => undefined)
       return this.currentStatus
     } catch (error) {
       await this.deps.rm(temporaryRuntime, { recursive: true, force: true })
+      if (backupCreated) {
+        await this.deps.rm(runtimeRoot, { recursive: true, force: true })
+        await this.deps.rename(backupRuntime, runtimeRoot)
+      }
       const message = error instanceof Error ? error.message : String(error)
       const existing = await this.readStoredState()
       this.currentStatus = existing && this.deps.exists(harnessExecutable(this.root))
@@ -282,6 +289,9 @@ export class DeepSeekHarnessRuntime {
   }
 
   private async startOnce(): Promise<DeepSeekHarnessStatus> {
+    const current = await this.getStatus()
+    if (current.state === 'running') return current
+    if (!current.version) throw new Error('Install DeepSeek Harness before starting it')
     const nodePath = await this.resolveCompatibleNode()
     if (!nodePath) throw new Error('Node.js 22.19.0 or later is required to start DeepSeek Harness')
     const executable = harnessExecutable(this.root)

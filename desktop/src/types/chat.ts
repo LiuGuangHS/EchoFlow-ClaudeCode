@@ -25,6 +25,7 @@ export type ClientMessage =
     }
   | { type: 'set_permission_mode'; mode: PermissionMode }
   | ({ type: 'set_runtime_config' } & RuntimeSelection)
+  | { type: 'set_cli_runtime'; cliRuntimeId: 'bundled' | 'installed' }
   | { type: 'stop_generation' }
   | { type: 'stop_background_task'; taskId: string }
   | { type: 'ping' }
@@ -131,6 +132,10 @@ export type ServerMessage =
       providerId: string | null
       modelId: string
       effortLevel?: string
+    }
+  | {
+      type: 'cli_runtime_applied'
+      cliRuntimeId: 'bundled' | 'installed'
     }
   // CLI 回传的权限模式变化（如 ExitPlanMode 退出 plan 后恢复、Shift+Tab）。
   // 桌面端据此把选择器校正回 CLI 的真实权限，避免本地影子值漂移。

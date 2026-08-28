@@ -42,6 +42,11 @@ import {
   resolveClaudeCliLauncher,
 } from '../../utils/desktopBundledCli.js'
 import {
+  resolveClaudeCodeRuntimeId,
+  resolveClaudeCodeRuntimePath,
+  type ClaudeCodeRuntimeId,
+} from './claudeCodeRuntimeService.js'
+import {
   ASK_USER_QUESTION_CLARIFY_MESSAGE,
   ASK_USER_QUESTION_CLARIFY_WITH_QUESTIONS_PREFIX,
   PLAN_REJECTION_MESSAGE,
@@ -94,6 +99,15 @@ const DESKTOP_BRIDGE_ENV_KEYS = [
   'ECHOFLOW_DESKTOP_AWAIT_MCP',
   'ECHOFLOW_DESKTOP_AWAIT_MCP_TIMEOUT_MS',
   'ECHOFLOW_SKIP_DOTENV',
+] as const
+
+// Never expose server-only credentials or runtime configuration to a CLI
+// executable selected by the user. The installed runtime is a separate trust
+// boundary and can inspect its inherited environment.
+const CHILD_PROCESS_SECRET_ENV_KEYS = [
+  'ECHOFLOW_LOCAL_ACCESS_TOKEN',
+  'ECHOFLOW_PET_ACCESS_TOKEN',
+  'ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG',
 ] as const
 
 /**
@@ -231,6 +245,7 @@ type SessionProcess = {
   initMessage: any | null
   usesOfficialOAuth: boolean
   officialOAuthToken: string | null
+  cliRuntimeId?: ClaudeCodeRuntimeId
   officialOAuthRefreshPromise?: Promise<void>
   pendingPermissionRequests: Map<
     string,
@@ -259,6 +274,8 @@ type SessionStartOptions = {
   effort?: string
   thinking?: 'enabled' | 'adaptive' | 'disabled'
   providerId?: string | null
+  cliRuntimeId?: ClaudeCodeRuntimeId
+  persistCliRuntimeId?: boolean
   resumeInterruptedTurn?: boolean
 }
 
@@ -339,7 +356,7 @@ export class ConversationService {
       '--replay-user-messages',
       ...this.getRuntimeArgs(options),
       ...this.getPermissionArgs(options?.permissionMode, dangerousMode),
-    ])
+    ], options?.cliRuntimeId)
   }
 
   async startSession(
@@ -499,6 +516,7 @@ export class ConversationService {
       initMessage: null,
       usesOfficialOAuth,
       officialOAuthToken: childEnv.CLAUDE_CODE_OAUTH_TOKEN ?? null,
+      cliRuntimeId: resolveClaudeCodeRuntimeId(options?.cliRuntimeId) ?? 'bundled',
       pendingPermissionRequests: new Map(),
       pendingControlRequests: new Map(),
     }
@@ -565,7 +583,8 @@ export class ConversationService {
     const shouldPersistRuntimeMetadata =
       options?.providerId !== undefined ||
       !!options?.model ||
-      !!options?.effort
+      !!options?.effort ||
+      options?.persistCliRuntimeId === true
     if (shouldReplacePlaceholder || !launchInfo || shouldPersistRuntimeMetadata) {
       await sessionService.appendSessionMetadata(sessionId, {
         workDir: launchWorkDir,
@@ -577,6 +596,9 @@ export class ConversationService {
           : {}),
         ...(options?.model ? { runtimeModelId: options.model } : {}),
         ...(options?.effort ? { effortLevel: options.effort } : {}),
+        ...(options?.persistCliRuntimeId && options.cliRuntimeId
+          ? { cliRuntimeId: options.cliRuntimeId }
+          : {}),
       })
     }
 
@@ -955,6 +977,10 @@ export class ConversationService {
   getSessionWorkDir(sessionId: string): string {
     const session = this.sessions.get(sessionId)
     return session?.workDir || ''
+  }
+
+  getSessionCliRuntimeId(sessionId: string): ClaudeCodeRuntimeId | undefined {
+    return this.sessions.get(sessionId)?.cliRuntimeId
   }
 
   updateSessionWorkDir(sessionId: string, workDir: string): void {
@@ -1585,6 +1611,9 @@ export class ConversationService {
     for (const key of DESKTOP_BRIDGE_ENV_KEYS) {
       delete cleanEnv[key]
     }
+    for (const key of CHILD_PROCESS_SECRET_ENV_KEYS) {
+      delete cleanEnv[key]
+    }
     if (options?.resumeInterruptedTurn === false) {
       delete cleanEnv.CLAUDE_CODE_RESUME_INTERRUPTED_TURN
     }
@@ -1947,9 +1976,16 @@ export class ConversationService {
     }
   }
 
-  private resolveCliArgs(baseArgs: string[]): string[] {
+  private resolveCliArgs(
+    baseArgs: string[],
+    cliRuntimeId: ClaudeCodeRuntimeId | undefined = undefined,
+  ): string[] {
+    const effectiveRuntimeId = resolveClaudeCodeRuntimeId(cliRuntimeId)
+    const installedPath = resolveClaudeCodeRuntimePath(cliRuntimeId)
     const launcher = resolveClaudeCliLauncher({
-      cliPath: process.env.CLAUDE_CLI_PATH,
+      cliPath: effectiveRuntimeId === undefined
+        ? process.env.CLAUDE_CLI_PATH
+        : installedPath,
       execPath: process.execPath,
     })
 

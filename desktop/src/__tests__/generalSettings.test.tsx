@@ -182,6 +182,21 @@ function installElectronDesktopHost() {
       ...browserHost.app,
       getVersion: vi.fn().mockResolvedValue('0.3.2'),
     },
+    runtime: {
+      ...browserHost.runtime,
+      getClaudeCode: vi.fn().mockResolvedValue({
+        defaultRuntimeId: 'bundled',
+        hasInstalledRuntime: false,
+      }),
+      chooseClaudeCode: vi.fn().mockResolvedValue({
+        defaultRuntimeId: 'installed',
+        hasInstalledRuntime: true,
+      }),
+      setClaudeCode: vi.fn().mockResolvedValue({
+        defaultRuntimeId: 'bundled',
+        hasInstalledRuntime: false,
+      }),
+    },
     dialogs: {
       ...browserHost.dialogs,
       open: vi.fn((options) => tauriDialogMock.open(options)),
@@ -418,6 +433,19 @@ describe('Settings > General tab', () => {
       installUpdate: vi.fn().mockResolvedValue(undefined),
       dismissPrompt: vi.fn(),
     })
+  })
+
+  it('chooses an installed Claude Code runtime through the native picker', async () => {
+    const runtimeHost = window.desktopHost!.runtime
+    const chooseClaudeCode = vi.mocked(runtimeHost.chooseClaudeCode)
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+    await screen.findByText('Claude Code runtime')
+    fireEvent.click(screen.getByRole('button', { name: 'Choose installed runtime' }))
+
+    await waitFor(() => expect(chooseClaudeCode).toHaveBeenCalledTimes(1))
+    expect(screen.getByRole('button', { name: 'Installed' })).toBeEnabled()
   })
 
   it('shows WebFetch preflight toggle enabled by default', () => {

@@ -3,6 +3,26 @@ import { ELECTRON_EVENT_CHANNELS, ELECTRON_IPC_CHANNELS } from '../../../electro
 import { createElectronHost } from './electronHost'
 
 describe('electron desktop host', () => {
+  it('routes Claude Code runtime settings through narrow runtime IPC boundaries', async () => {
+    const status = { defaultRuntimeId: 'bundled' as const, hasInstalledRuntime: false }
+    const invoke = vi.fn()
+      .mockResolvedValueOnce(status)
+      .mockResolvedValueOnce({ defaultRuntimeId: 'installed', hasInstalledRuntime: true })
+      .mockResolvedValueOnce(status)
+    const host = createElectronHost({ invoke, subscribe: vi.fn() })
+
+    await expect(host.runtime.getClaudeCode()).resolves.toEqual(status)
+    await expect(host.runtime.chooseClaudeCode()).resolves.toEqual({
+      defaultRuntimeId: 'installed',
+      hasInstalledRuntime: true,
+    })
+    await expect(host.runtime.setClaudeCode('bundled')).resolves.toEqual(status)
+
+    expect(invoke).toHaveBeenNthCalledWith(1, ELECTRON_IPC_CHANNELS.runtimeGetClaudeCode, undefined)
+    expect(invoke).toHaveBeenNthCalledWith(2, ELECTRON_IPC_CHANNELS.runtimeChooseClaudeCode, undefined)
+    expect(invoke).toHaveBeenNthCalledWith(3, ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode, 'bundled')
+  })
+
   it('synchronizes locale preferences through narrow app IPC boundaries', async () => {
     const invoke = vi.fn()
       .mockResolvedValueOnce('jp')

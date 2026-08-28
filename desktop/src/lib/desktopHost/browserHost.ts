@@ -47,6 +47,15 @@ export const browserHost: DesktopHost = {
     async getLocalAccessToken() {
       unsupported('Resolving the bundled server access token')
     },
+    async getClaudeCode() {
+      unsupported('Claude Code runtime settings')
+    },
+    async chooseClaudeCode() {
+      unsupported('Claude Code runtime settings')
+    },
+    async setClaudeCode() {
+      unsupported('Claude Code runtime settings')
+    },
   },
   app: {
     async getVersion() {

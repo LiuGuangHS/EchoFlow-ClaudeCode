@@ -94,7 +94,7 @@ Tool activity from background subagents bubbles up here too, so you don't have t
 - **`@` file references** — type `@` for file search; the file you pick is attached to the message as a path.
 - **Attachments** — click `+`, drag files in, or paste a screenshot. Images, PDFs, and directories all work.
 - **Context usage ring** — the small ring shows how much of the context window is used; hover it for used, free, and window size. When it fills up, run `/compact`.
-- **Provider, model, and effort** — adjust the provider, model, or effort for the current session. Effort has five levels — low, medium, high, xhigh, max — and models that don't support a level ignore it. These are session-level configuration overrides, not switches between execution backends such as the built-in CLI, system CLI, Windows CLI, or WSL. Provider credentials and other shared configuration remain managed in Settings.
+- **Provider, model, and effort** — adjust the provider, model, or effort for the current session. Effort has five levels — low, medium, high, xhigh, max — and models that don't support a level ignore it. These are session-level configuration overrides, not a CLI execution-runtime selector; the desktop app does not yet provide a separate CLI runtime switcher. Provider credentials and other shared configuration remain managed in Settings.
 - **Location** — shows the current project and branch. In a Git project you can switch branches here, or turn on **Isolated worktree** to keep an experiment off your main branch. See [Workspace](./workspace.md).
 
 Enter sends and Shift+Enter inserts a newline by default; **Settings → General** can swap that to `Ctrl/Cmd+Enter`. `⌘.` stops the current generation.

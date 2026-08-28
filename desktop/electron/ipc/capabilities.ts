@@ -9,6 +9,7 @@ const noPayload: Validator = value => value === undefined
 const optionalRecord: Validator = value => value === undefined || isRecord(value)
 const stringPayload: Validator = value => typeof value === 'string'
 const booleanPayload: Validator = value => typeof value === 'boolean'
+const claudeCodeRuntimeId: Validator = value => value === 'bundled' || value === 'installed'
 const hasOnlyKeys = (value: Record<string, unknown>, allowedKeys: string[]) =>
   Object.keys(value).every(key => allowedKeys.includes(key))
 
@@ -238,6 +239,9 @@ export const ELECTRON_IPC_VALIDATORS = {
   [ELECTRON_IPC_CHANNELS.runtimeGetServerUrl]: noPayload,
   [ELECTRON_IPC_CHANNELS.runtimeGetLocalAccessToken]: noPayload,
   [ELECTRON_IPC_CHANNELS.runtimeGetPetAccessToken]: noPayload,
+  [ELECTRON_IPC_CHANNELS.runtimeGetClaudeCode]: noPayload,
+  [ELECTRON_IPC_CHANNELS.runtimeChooseClaudeCode]: noPayload,
+  [ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode]: claudeCodeRuntimeId,
   [ELECTRON_IPC_CHANNELS.commandInvoke]: commandInvoke,
   [ELECTRON_IPC_CHANNELS.clipboardReadText]: noPayload,
   [ELECTRON_IPC_CHANNELS.clipboardWriteText]: stringPayload,

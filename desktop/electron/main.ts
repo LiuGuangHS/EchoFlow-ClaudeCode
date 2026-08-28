@@ -8,6 +8,12 @@ import {
   validateElectronIpcPayload,
 } from './ipc/capabilities'
 import { ElectronServerRuntime } from './services/serverRuntime'
+import {
+  claudeCodeRuntimeConfigPath,
+  getClaudeCodeRuntimeConfig,
+  setClaudeCodeRuntimeConfig,
+  type ClaudeCodeRuntimeConfig,
+} from './services/claudeCodeRuntime'
 import { DeepSeekHarnessRuntime } from './services/deepseekHarnessRuntime'
 import { appendHostDiagnostic, electronHostDiagnosticsFile, sanitizeHostDiagnostic } from './services/sidecarManager'
 import { openDialog, saveDialog } from './services/dialogs'
@@ -240,6 +246,7 @@ function getServerRuntime() {
     desktopRoot: unpackedRoot(),
     appRoot: appRoot(),
     appVersion: app.getVersion(),
+    claudeCodeRuntimeConfigPath: claudeCodeRuntimeConfigPath(app.getPath('userData')),
     h5DistDir: path.join(unpackedRoot(), 'dist'),
     resolveSystemProxy: (url) => session.defaultSession.resolveProxy(url),
   })
@@ -450,6 +457,28 @@ function unsupported(name: string): never {
   throw new Error(`${name} is not implemented in the Electron host yet`)
 }
 
+function getClaudeCodeRuntimeStatus() {
+  const config = getClaudeCodeRuntimeConfig(app.getPath('userData'))
+  return {
+    defaultRuntimeId: config.defaultRuntimeId,
+    hasInstalledRuntime: config.installedPath !== null,
+  }
+}
+
+function setClaudeCodeRuntime(runtimeId: ClaudeCodeRuntimeConfig['defaultRuntimeId']) {
+  const next = setClaudeCodeRuntimeConfig(
+    app.getPath('userData'),
+    {
+      ...getClaudeCodeRuntimeConfig(app.getPath('userData')),
+      defaultRuntimeId: runtimeId,
+    },
+  )
+  return {
+    defaultRuntimeId: next.defaultRuntimeId,
+    hasInstalledRuntime: next.installedPath !== null,
+  }
+}
+
 function emitNotificationAction(payload: unknown) {
   showMainWindow(mainWindow, app)
   mainWindow?.webContents.send(ELECTRON_EVENT_CHANNELS.notificationAction, payload)
@@ -518,6 +547,32 @@ function registerIpcHandlers() {
     ELECTRON_IPC_CHANNELS.runtimeGetPetAccessToken,
     () => getServerRuntime().getPetAccessToken(),
   )
+  registerHandler(ELECTRON_IPC_CHANNELS.runtimeGetClaudeCode, (event) => {
+    requireMainWindow(event)
+    return getClaudeCodeRuntimeStatus()
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.runtimeChooseClaudeCode, async (event) => {
+    requireMainWindow(event)
+    const selectedPath = await openDialog(currentWindow(event), {
+      title: 'Choose Claude Code executable',
+      multiple: false,
+    })
+    if (typeof selectedPath !== 'string') return null
+    const current = getClaudeCodeRuntimeConfig(app.getPath('userData'))
+    const next = setClaudeCodeRuntimeConfig(app.getPath('userData'), {
+      ...current,
+      defaultRuntimeId: 'installed',
+      installedPath: selectedPath,
+    })
+    return {
+      defaultRuntimeId: next.defaultRuntimeId,
+      hasInstalledRuntime: next.installedPath !== null,
+    }
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode, (event, payload) => {
+    requireMainWindow(event)
+    return setClaudeCodeRuntime(payload as ClaudeCodeRuntimeConfig['defaultRuntimeId'])
+  })
   registerHandler(ELECTRON_IPC_CHANNELS.commandInvoke, (_event, payload) => handleCommandInvoke(payload))
   registerHandler(ELECTRON_IPC_CHANNELS.clipboardReadText, () => clipboard.readText())
   registerHandler(ELECTRON_IPC_CHANNELS.clipboardWriteText, (_event, payload) => clipboard.writeText(String(payload)))

@@ -43,6 +43,7 @@ class FakeSidecarChild extends EventEmitter {
 function createRuntime(options: {
   appRoot?: string
   appVersion?: string
+  claudeCodeRuntimeConfigPath?: string
   diagnosticsFile?: string
   env?: NodeJS.ProcessEnv
   resolveSystemProxy?: (url: string) => Promise<string>
@@ -52,6 +53,7 @@ function createRuntime(options: {
     desktopRoot: '/isolated/desktop',
     appRoot: options.appRoot,
     appVersion: options.appVersion,
+    claudeCodeRuntimeConfigPath: options.claudeCodeRuntimeConfigPath,
     diagnosticsFile: options.diagnosticsFile,
     env: { CLAUDE_CONFIG_DIR: isolatedConfigDir, ...options.env },
     resolveSystemProxy: options.resolveSystemProxy,
@@ -145,6 +147,22 @@ describe('ElectronServerRuntime', () => {
     await runtime.startServer()
 
     expect(sidecarMocks.serverPlans[0]!.env.APP_VERSION).toBe('0.5.2')
+  })
+
+  it('passes the private Claude Code runtime config only to the server sidecar', async () => {
+    const runtime = createRuntime({
+      claudeCodeRuntimeConfigPath: '/isolated/user-data/claude-code-runtime.json',
+    })
+
+    await runtime.startServer()
+
+    expect(sidecarMocks.serverPlans[0]!.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG)
+      .toBe('/isolated/user-data/claude-code-runtime.json')
+    for (const plan of sidecarMocks.spawnSidecar.mock.calls
+      .map(([plan]) => plan)
+      .filter(plan => plan.args[0] === 'adapters')) {
+      expect(plan.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG).toBeUndefined()
+    }
   })
 
   it('keeps the pet capability independent and exposes it only to the server sidecar', async () => {

@@ -283,6 +283,13 @@ export type AppModeSetInput = {
   portableDir: string | null
 }
 
+export type ClaudeCodeRuntimeId = 'bundled' | 'installed'
+
+export type ClaudeCodeRuntimeStatus = {
+  defaultRuntimeId: ClaudeCodeRuntimeId
+  hasInstalledRuntime: boolean
+}
+
 export type DesktopHost = {
   kind: DesktopHostKind
   isDesktop: boolean
@@ -290,6 +297,9 @@ export type DesktopHost = {
   runtime: {
     getServerUrl(): Promise<string>
     getLocalAccessToken(): Promise<string | null>
+    getClaudeCode(): Promise<ClaudeCodeRuntimeStatus>
+    chooseClaudeCode(): Promise<ClaudeCodeRuntimeStatus | null>
+    setClaudeCode(runtimeId: ClaudeCodeRuntimeId): Promise<ClaudeCodeRuntimeStatus>
   }
   app: {
     getVersion(): Promise<string>

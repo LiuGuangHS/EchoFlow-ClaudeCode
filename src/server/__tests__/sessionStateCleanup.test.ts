@@ -45,6 +45,8 @@ const CONTAINERS: Record<string, Classification> = {
   activeNonAgentTasks: { kind: 'cleared' },
   activeUserTurns: { kind: 'cleared' },
   agentStopRequestedSessions: { kind: 'cleared' },
+  cliRuntimeOverrides: { kind: 'cleared' },
+  deferredCliRuntimeRestarts: { kind: 'cleared' },
   authoritativeStoppedTaskIds: { kind: 'cleared' },
   deferredPermissionModes: { kind: 'cleared' },
   deferredRuntimeRestarts: { kind: 'cleared' },

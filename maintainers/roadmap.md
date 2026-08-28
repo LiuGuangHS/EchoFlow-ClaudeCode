@@ -11,6 +11,7 @@ Status snapshot: 2026-07-22. This is the repository-level task index: it records
 | Maintainer-document policy and index | `maintainers/AGENTS.md`, `maintainers/README.md` | Maintainer-only material is not public VitePress content. |
 | Repository task state and dependencies | This file | Detailed domain work remains in the linked domain document. |
 | Claude runtime architecture, checkpoints, and evidence | `maintainers/runtime/claude-runtime-roadmap.md` | `Next Agent Execution Contract` N0--N7 is the only execution order. M0--M6 is historical design context, not an alternative ordering. |
+| Independent DeepSeek Harness lifecycle and follow-up tasks | `maintainers/deepseek-harness-roadmap.md` | DSH-0--DSH-8 is the ordered task register; plugin marketplace work is explicitly deferred. |
 | Release procedure | `maintainers/release/desktop-release.md` | `desktop/package.json`, `scripts/release.ts`, `release-notes/`, and `.github/workflows/release-desktop.yml` are executable/product sources. |
 | Agent/Skill policy | `maintainers/agents/governance.md` | Skills invoke stable procedures; they do not copy roadmaps. |
 | Published setup and released behavior | `docs/` and `docs/en/` | Must not contain internal plans, runbooks, test counts, or unshipped contracts. |

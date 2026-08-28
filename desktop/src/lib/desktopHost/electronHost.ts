@@ -82,6 +82,9 @@ export function createElectronHost(bridge: ElectronHostBridge): DesktopHost {
     runtime: {
       getServerUrl: () => invoke(ELECTRON_IPC_CHANNELS.runtimeGetServerUrl),
       getLocalAccessToken: () => invoke(ELECTRON_IPC_CHANNELS.runtimeGetLocalAccessToken),
+      getClaudeCode: () => invoke(ELECTRON_IPC_CHANNELS.runtimeGetClaudeCode),
+      chooseClaudeCode: () => invoke(ELECTRON_IPC_CHANNELS.runtimeChooseClaudeCode),
+      setClaudeCode: runtimeId => invoke(ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode, runtimeId),
     },
     app: {
       getVersion: () => invoke(ELECTRON_IPC_CHANNELS.appGetVersion),

@@ -35,6 +35,7 @@ type ServerRuntimeOptions = {
   desktopRoot: string
   appRoot?: string
   appVersion?: string
+  claudeCodeRuntimeConfigPath?: string
   h5DistDir?: string
   diagnosticsFile?: string
   env?: NodeJS.ProcessEnv
@@ -103,6 +104,7 @@ export class ElectronServerRuntime {
   private readonly desktopRoot: string
   private readonly appRoot: string
   private readonly appVersion?: string
+  private readonly claudeCodeRuntimeConfigPath?: string
   private readonly h5DistDir: string
   private readonly diagnosticsFile?: string
   private readonly baseEnv: NodeJS.ProcessEnv
@@ -125,6 +127,7 @@ export class ElectronServerRuntime {
     this.desktopRoot = options.desktopRoot
     this.appRoot = options.appRoot ?? options.desktopRoot
     this.appVersion = options.appVersion
+    this.claudeCodeRuntimeConfigPath = options.claudeCodeRuntimeConfigPath
     this.h5DistDir = options.h5DistDir ?? path.join(options.desktopRoot, 'dist')
     this.diagnosticsFile = options.diagnosticsFile
     this.baseEnv = options.env ?? process.env
@@ -217,6 +220,9 @@ export class ElectronServerRuntime {
     const env = this.withServerAccessTokens({
       ...(await this.resolveSidecarBaseEnv()),
       ...(this.appVersion ? { APP_VERSION: this.appVersion } : {}),
+      ...(this.claudeCodeRuntimeConfigPath
+        ? { ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG: this.claudeCodeRuntimeConfigPath }
+        : {}),
     })
     this.assertCurrentGeneration(generation)
     const plan = createServerPlan({

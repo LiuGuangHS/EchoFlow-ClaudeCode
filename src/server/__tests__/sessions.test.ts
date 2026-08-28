@@ -2389,6 +2389,34 @@ describe('SessionService', () => {
     })
   })
 
+  it('should preserve CLI runtime metadata for launch recovery without exposing it in session lists', async () => {
+    const workDir = '/tmp/cli-runtime-metadata'
+    const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const filePath = await writeSessionFile(sanitizePath(workDir), sessionId, [
+      makeSnapshotEntry(),
+      {
+        ...makeSessionMetaEntry(workDir),
+        cliRuntimeId: 'invalid',
+      },
+      makeUserEntry('CLI runtime metadata'),
+    ])
+
+    await service.appendSessionMetadata(sessionId, {
+      workDir,
+      cliRuntimeId: 'installed',
+    })
+
+    expect((await service.getSessionLaunchInfo(sessionId))?.cliRuntimeId).toBe('installed')
+    const listed = (await service.listSessions()).sessions.find(session => session.id === sessionId)
+    expect(Object.hasOwn(listed!, 'cliRuntimeId')).toBe(false)
+    const persisted = await fs.readFile(filePath, 'utf-8')
+    await service.appendSessionMetadata(sessionId, { workDir, cliRuntimeId: 'installed' })
+    expect(await fs.readFile(filePath, 'utf-8')).toBe(persisted)
+
+    await service.clearSessionTranscript(sessionId, workDir)
+    expect((await service.getSessionLaunchInfo(sessionId))?.cliRuntimeId).toBe('installed')
+  })
+
   it('should not append duplicate runtime metadata when it already matches', async () => {
     const workDir = '/tmp/runtime-idempotent'
     const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'

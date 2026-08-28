@@ -689,6 +689,7 @@ describe('local index database', () => {
         notnull: 1,
         dflt_value: '0',
       })
+      expect(columns.map(column => column.name)).not.toContain('cli_runtime_id')
 
       const indexColumns = (name: string) => localIndexDatabase.read(operation =>
         operation.all<{

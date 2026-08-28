@@ -122,6 +122,10 @@ export function GeneralSettings() {
   const [legacyMigrationRunning, setLegacyMigrationRunning] = useState(false)
   const [legacyMigrationConfirmOpen, setLegacyMigrationConfirmOpen] = useState(false)
   const [legacyMigrationError, setLegacyMigrationError] = useState<string | null>(null)
+  const [claudeCodeRuntime, setClaudeCodeRuntime] = useState<'bundled' | 'installed'>('bundled')
+  const [hasInstalledClaudeCodeRuntime, setHasInstalledClaudeCodeRuntime] = useState(false)
+  const [claudeCodeRuntimeError, setClaudeCodeRuntimeError] = useState<string | null>(null)
+  const [claudeCodeRuntimeSaving, setClaudeCodeRuntimeSaving] = useState(false)
   const [uiZoomDraft, setUiZoomDraft] = useState(uiZoom)
   const [isUiZoomDragging, setIsUiZoomDragging] = useState(false)
   const isUiZoomDraggingRef = useRef(false)
@@ -174,6 +178,14 @@ export function GeneralSettings() {
   useEffect(() => {
     if (!isDesktopRuntime()) return
     void fetchAppMode()
+    void getDesktopHost().runtime.getClaudeCode()
+      .then((status) => {
+        setClaudeCodeRuntime(status.defaultRuntimeId)
+        setHasInstalledClaudeCodeRuntime(status.hasInstalledRuntime)
+      })
+      .catch((error) => {
+        setClaudeCodeRuntimeError(error instanceof Error ? error.message : String(error))
+      })
   }, [fetchAppMode])
 
   useEffect(() => {
@@ -435,6 +447,40 @@ export function GeneralSettings() {
       })
     } catch {
       // The store exposes outputStyleError below; keep the interaction local.
+    }
+  }
+
+  const chooseClaudeCodeRuntime = async () => {
+    setClaudeCodeRuntimeSaving(true)
+    setClaudeCodeRuntimeError(null)
+    try {
+      const status = await getDesktopHost().runtime.chooseClaudeCode()
+      if (status) {
+        setClaudeCodeRuntime(status.defaultRuntimeId)
+        setHasInstalledClaudeCodeRuntime(status.hasInstalledRuntime)
+      }
+    } catch (error) {
+      setClaudeCodeRuntimeError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setClaudeCodeRuntimeSaving(false)
+    }
+  }
+
+  const setClaudeCodeRuntimeChoice = async (runtimeId: 'bundled' | 'installed') => {
+    if (runtimeId === 'installed' && !hasInstalledClaudeCodeRuntime) {
+      await chooseClaudeCodeRuntime()
+      return
+    }
+    setClaudeCodeRuntimeSaving(true)
+    setClaudeCodeRuntimeError(null)
+    try {
+      const status = await getDesktopHost().runtime.setClaudeCode(runtimeId)
+      setClaudeCodeRuntime(status.defaultRuntimeId)
+      setHasInstalledClaudeCodeRuntime(status.hasInstalledRuntime)
+    } catch (error) {
+      setClaudeCodeRuntimeError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setClaudeCodeRuntimeSaving(false)
     }
   }
 
@@ -721,6 +767,40 @@ export function GeneralSettings() {
               </SettingsPill>
             ))}
           </div>
+        )}
+      </SettingsSection>
+
+      <SettingsSection
+        title="Claude Code runtime"
+        description="Choose which Claude Code executable starts new sessions."
+      >
+        <div className="flex flex-wrap gap-2">
+          <SettingsPill
+            selected={claudeCodeRuntime === 'bundled'}
+            disabled={claudeCodeRuntimeSaving}
+            onClick={() => void setClaudeCodeRuntimeChoice('bundled')}
+          >
+            Bundled
+          </SettingsPill>
+          <SettingsPill
+            selected={claudeCodeRuntime === 'installed'}
+            disabled={claudeCodeRuntimeSaving || !hasInstalledClaudeCodeRuntime}
+            onClick={() => void setClaudeCodeRuntimeChoice('installed')}
+          >
+            Installed
+          </SettingsPill>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={claudeCodeRuntimeSaving}
+            loading={claudeCodeRuntimeSaving}
+            onClick={() => void chooseClaudeCodeRuntime()}
+          >
+            Choose installed runtime
+          </Button>
+        </div>
+        {claudeCodeRuntimeError && (
+          <p role="alert" className="mt-2 text-xs text-[var(--color-error)]">{claudeCodeRuntimeError}</p>
         )}
       </SettingsSection>
 

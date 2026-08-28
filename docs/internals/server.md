@@ -124,10 +124,11 @@ ws://127.0.0.1:3456/ws/<session-id>
 - `user_message`、`stop_generation`
 - `permission_response`、`computer_use_permission_response`
 - `set_permission_mode`、`set_runtime_config`（会话级服务商、模型与推理参数覆盖）
+- `set_cli_runtime`（选择 `bundled` 或 `installed` CLI；当前为协议/Server 能力，桌面端尚无独立选择器）
 - `sync_state`、`prewarm_session`
 - `ping`
 
-服务端会发送连接与会话状态、文本增量、思考、工具调用与结果、权限请求、重试/降级状态、错误、任务/团队更新和 `pong`。`set_runtime_config` 当前只更新会话级的 `providerId`、`modelId` 和可选的推理参数，并触发当前会话的配置应用流程；它不选择内置 CLI、系统 CLI、Windows CLI、WSL 或 fallback 等独立执行后端。完整字段以 `src/server/ws/events.ts` 为准。
+服务端会发送连接与会话状态、文本增量、思考、工具调用与结果、权限请求、重试/降级状态、错误、任务/团队更新和 `pong`。`set_runtime_config` 当前只更新会话级的 `providerId`、`modelId` 和可选的推理参数，并触发当前会话的配置应用流程；它不选择 CLI 执行运行时。发送 `set_cli_runtime` 后，Server 会校验并应用 `bundled` 或 `installed`，成功时回传 `cli_runtime_applied`；活动回合可能延迟切换，非法或不可用的运行时会返回错误。完整字段以 `src/server/ws/events.ts` 为准。
 
 桌面客户端每 30 秒发送一次 ping；等待 pong 10 秒后会主动重连。重连退避上限为 30 秒，并不会在固定次数后永久停止。自定义客户端应能重复连接、重新同步状态，并忽略未知的新增消息字段。
 

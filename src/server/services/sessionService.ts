@@ -176,6 +176,7 @@ export type SessionLaunchInfo = {
   runtimeProviderId?: string | null
   runtimeModelId?: string
   effortLevel?: string
+  cliRuntimeId?: 'bundled' | 'installed'
 }
 
 type ProviderContextWindowHint = Pick<SessionLaunchInfo, 'runtimeProviderId' | 'runtimeModelId'>
@@ -839,6 +840,7 @@ export class SessionService {
       runtimeProviderId?: string | null
       runtimeModelId?: string
       effortLevel?: string
+      cliRuntimeId?: 'bundled' | 'installed'
     },
   ): boolean {
     if (!launchInfo) return false
@@ -871,6 +873,12 @@ export class SessionService {
       metadata.effortLevel &&
       VALID_SESSION_EFFORT_LEVELS.has(metadata.effortLevel) &&
       launchInfo.effortLevel !== metadata.effortLevel
+    ) {
+      return false
+    }
+    if (
+      metadata.cliRuntimeId !== undefined &&
+      launchInfo.cliRuntimeId !== metadata.cliRuntimeId
     ) {
       return false
     }
@@ -2931,6 +2939,7 @@ export class SessionService {
     let runtimeProviderId: string | null | undefined
     let runtimeModelId: string | undefined
     let effortLevel: string | undefined
+    let cliRuntimeId: 'bundled' | 'installed' | undefined
     let customTitle: string | null = null
     let transcriptMessageCount = 0
     const metadata: TranscriptMetadataSnapshot = {}
@@ -2982,6 +2991,9 @@ export class SessionService {
           VALID_SESSION_EFFORT_LEVELS.has(record.effortLevel)
         ) {
           effortLevel = record.effortLevel
+        }
+        if (record.cliRuntimeId === 'bundled' || record.cliRuntimeId === 'installed') {
+          cliRuntimeId = record.cliRuntimeId
         }
       }
 
@@ -3113,6 +3125,7 @@ export class SessionService {
       ...(runtimeProviderId !== undefined ? { runtimeProviderId } : {}),
       ...(runtimeModelId ? { runtimeModelId } : {}),
       ...(effortLevel ? { effortLevel } : {}),
+      ...(cliRuntimeId ? { cliRuntimeId } : {}),
     }
 
     for (const modelUsage of models.values()) {
@@ -4054,6 +4067,7 @@ export class SessionService {
     let runtimeProviderId: string | null | undefined
     let runtimeModelId: string | undefined
     let effortLevel: string | undefined
+    let cliRuntimeId: 'bundled' | 'installed' | undefined
 
     for (const entry of entries) {
       if (entry.type === 'custom-title' && typeof entry.customTitle === 'string') {
@@ -4073,6 +4087,9 @@ export class SessionService {
         ) {
           effortLevel = record.effortLevel
         }
+        if (record.cliRuntimeId === 'bundled' || record.cliRuntimeId === 'installed') {
+          cliRuntimeId = record.cliRuntimeId
+        }
       }
     }
     const transcriptMessageCount = this.countTranscriptMessages(entries)
@@ -4089,6 +4106,7 @@ export class SessionService {
       ...(runtimeProviderId !== undefined ? { runtimeProviderId } : {}),
       ...(runtimeModelId ? { runtimeModelId } : {}),
       ...(effortLevel ? { effortLevel } : {}),
+      ...(cliRuntimeId ? { cliRuntimeId } : {}),
     }
   }
 
@@ -4140,6 +4158,7 @@ export class SessionService {
       let runtimeProviderId: string | null | undefined
       let runtimeModelId: string | undefined
       let effortLevel: string | undefined
+      let cliRuntimeId: 'bundled' | 'installed' | undefined
       for (const entry of entries) {
         if (entry.type !== 'session-meta') continue
         const record = entry as Record<string, unknown>
@@ -4149,6 +4168,9 @@ export class SessionService {
         if (typeof record.runtimeModelId === 'string') runtimeModelId = record.runtimeModelId
         if (typeof record.effortLevel === 'string' && VALID_SESSION_EFFORT_LEVELS.has(record.effortLevel)) {
           effortLevel = record.effortLevel
+        }
+        if (record.cliRuntimeId === 'bundled' || record.cliRuntimeId === 'installed') {
+          cliRuntimeId = record.cliRuntimeId
         }
       }
       const now = new Date().toISOString()
@@ -4173,6 +4195,7 @@ export class SessionService {
         ...(runtimeProviderId !== undefined ? { runtimeProviderId } : {}),
         ...(runtimeModelId ? { runtimeModelId } : {}),
         ...(effortLevel ? { effortLevel } : {}),
+        ...(cliRuntimeId ? { cliRuntimeId } : {}),
         timestamp: now,
       }
 
@@ -4210,6 +4233,7 @@ export class SessionService {
       runtimeProviderId?: string | null
       runtimeModelId?: string
       effortLevel?: string
+      cliRuntimeId?: 'bundled' | 'installed'
     }
   ): Promise<void> {
     const matches = await this.findSessionFiles(sessionId)
@@ -4257,6 +4281,9 @@ export class SessionService {
       ...(metadata.runtimeModelId ? { runtimeModelId: metadata.runtimeModelId } : {}),
       ...(metadata.effortLevel && VALID_SESSION_EFFORT_LEVELS.has(metadata.effortLevel)
         ? { effortLevel: metadata.effortLevel }
+        : {}),
+      ...(metadata.cliRuntimeId === 'bundled' || metadata.cliRuntimeId === 'installed'
+        ? { cliRuntimeId: metadata.cliRuntimeId }
         : {}),
       timestamp: new Date().toISOString(),
     })

@@ -166,6 +166,32 @@ describe('Electron IPC capabilities', () => {
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.petsFocusSession, '../escape')).toBe(false)
   })
 
+  it('validates Claude Code runtime IPC without accepting executable paths', () => {
+    expect(validateElectronIpcPayload(
+      ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode,
+      'bundled',
+    )).toBe(true)
+    expect(validateElectronIpcPayload(
+      ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode,
+      'installed',
+    )).toBe(true)
+    expect(validateElectronIpcPayload(
+      ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode,
+      '/tmp/claude',
+    )).toBe(false)
+    expect(validateElectronIpcPayload(
+      ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode,
+      { runtimeId: 'installed' },
+    )).toBe(false)
+    expect(validateElectronIpcPayload(
+      ELECTRON_IPC_CHANNELS.runtimeChooseClaudeCode,
+      undefined,
+    )).toBe(true)
+    expect(isElectronIpcChannelAllowedForPetWindow(
+      ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode,
+    )).toBe(false)
+  })
+
   it('pins the reported appearance colors to literal 6-digit hex', () => {
     // Both values reach BrowserWindow.setBackgroundColor, which also accepts
     // #AARRGGBB — an 8-digit value would let a compromised renderer make the

@@ -113,7 +113,7 @@ Back in the provider list, on the entry you just created:
 2. Click "Set default" so new sessions use it.
 3. Multiple providers can be dragged to reorder. Order only affects how the list is displayed.
 
-Then start a new session and **pick the provider and specific model from the session configuration controls in the composer** — the model list reflects what the selected provider actually offers. The adjacent control sets reasoning effort; leave it at the default if you're unsure. These controls change the current session's provider, model, and reasoning parameters; they are not a selector for execution backends such as the built-in CLI, system CLI, Windows CLI, or WSL.
+Then start a new session and **pick the provider and specific model from the session configuration controls in the composer** — the model list reflects what the selected provider actually offers. The adjacent control sets reasoning effort; leave it at the default if you're unsure. These controls change the current session's provider, model, and reasoning parameters; they are not a CLI execution-runtime selector, and the desktop app does not yet provide a separate CLI runtime switcher.
 
 :::tip
 A passing test isn't a guarantee. It proves the endpoint is reachable and the credentials work — not that the model can sustain tool calls and long context. The real check is asking for a task that edits a file, and seeing whether it actually does.

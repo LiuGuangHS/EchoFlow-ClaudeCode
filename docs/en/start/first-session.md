@@ -15,7 +15,7 @@ Click "New session" in the sidebar, or press `Cmd/Ctrl + N`.
 
 ![Empty session, with permission mode, launch location, and model controls in the composer](../../images/app/en/session-new.webp)
 
-Look at the row along the bottom of the composer: `+` for attachments, then **permission mode**, **launch location**, **provider / model / effort**, and finally "Run". These provider and model controls apply to the current session; they are not an execution-runtime selector. Independent switching between backends such as the built-in CLI, system CLI, Windows CLI, and WSL is not available yet.
+Look at the row along the bottom of the composer: `+` for attachments, then **permission mode**, **launch location**, **provider / model / effort**, and finally "Run". These provider and model controls apply to the current session; they are not a CLI execution-runtime selector. The desktop app does not yet provide a separate CLI runtime switcher.
 
 Start with the **launch location** pill in the middle (it reads `task-board / main` in the screenshot) and pick a project folder. This sets the agent's boundary: reading files, searching, running commands, checking Git status — all of it happens inside this directory and nowhere else.
 
