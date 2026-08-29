@@ -24,13 +24,23 @@ type Props = {
   /** This turn's real changed files (absolute), used to anchor output chips onto
    *  files that were actually written instead of guessing from the prose. */
   turnChangedFiles?: string[]
+  /** Only one assistant message per turn owns fallback cards for unmentioned changed files. */
+  isTurnOutputOwner?: boolean
   /** Set only on the last reply of a finished turn: when it ended and how long it took. */
   turnCompletion?: TurnCompletion
 }
 
 const MAX_CARDS = 3
 
-export const AssistantMessage = memo(function AssistantMessage({ content, isStreaming, branchAction, sessionId, turnChangedFiles, turnCompletion }: Props) {
+export const AssistantMessage = memo(function AssistantMessage({
+  content,
+  isStreaming,
+  branchAction,
+  sessionId,
+  turnChangedFiles,
+  isTurnOutputOwner = true,
+  turnCompletion,
+}: Props) {
   const t = useTranslation()
   const workDir = useWorkspacePanelStore((s) => (sessionId ? s.statusBySession[sessionId]?.workDir : undefined))
 
@@ -78,10 +88,14 @@ export const AssistantMessage = memo(function AssistantMessage({ content, isStre
       isStreaming || !sessionId
         ? []
         : // Image/video targets render inline (InlineImageGallery/InlineVideoGallery); never also as a card.
-          extractAssistantOutputTargets(content, { workDir, changedFiles: turnChangedFiles }).filter(
+          extractAssistantOutputTargets(content, {
+            workDir,
+            changedFiles: turnChangedFiles,
+            includeChangedFileFallback: isTurnOutputOwner,
+          }).filter(
             (target) => target.kind !== 'image' && target.kind !== 'video',
           ),
-    [content, isStreaming, sessionId, workDir, turnChangedFiles],
+    [content, isStreaming, isTurnOutputOwner, sessionId, workDir, turnChangedFiles],
   )
 
   if (!content.trim()) return null

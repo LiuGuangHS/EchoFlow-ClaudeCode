@@ -8,11 +8,6 @@ import {
   ensurePersistentStorageUpgraded,
   resetPersistentStorageMigrationsForTests,
 } from '../services/persistentStorageMigrations.js'
-import {
-  ECHOFLOW_APP_ID,
-  ECHOFLOW_APP_NAME,
-  getEchoFlowInternalDir,
-} from '../services/echoFlowConfigRoot.js'
 
 let tempDir: string
 
@@ -24,13 +19,9 @@ async function listFiles(dir: string) {
   }
 }
 
-function echoFlowDir(): string {
-  return getEchoFlowInternalDir(tempDir)
-}
-
 describe('persistent storage upgrade migrations', () => {
   beforeEach(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'echoflow-persistence-'))
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cc-haha-persistence-'))
     process.env.CLAUDE_CONFIG_DIR = tempDir
     resetPersistentStorageMigrationsForTests()
   })
@@ -41,75 +32,11 @@ describe('persistent storage upgrade migrations', () => {
     await fs.rm(tempDir, { recursive: true, force: true })
   })
 
-  test('creates an EchoFlow ownership marker in the configured root', async () => {
-    const report = await ensurePersistentStorageUpgraded()
-
-    expect(report.failures).toEqual([])
-
-    const marker = JSON.parse(await fs.readFile(path.join(tempDir, 'app.json'), 'utf-8')) as {
-      owner?: string
-      appId?: string
-      schemaVersion?: number
-    }
-    expect(marker).toEqual({
-      owner: ECHOFLOW_APP_NAME,
-      appId: ECHOFLOW_APP_ID,
-      schemaVersion: 1,
-    })
-  })
-
-  test('repairs a stale EchoFlow ownership marker while preserving unknown fields', async () => {
+  test('migrates legacy providers index and writes a backup before changing it', async () => {
+    const ccHahaDir = path.join(tempDir, 'cc-haha')
+    await fs.mkdir(ccHahaDir, { recursive: true })
     await fs.writeFile(
-      path.join(tempDir, 'app.json'),
-      JSON.stringify({
-        owner: ECHOFLOW_APP_NAME,
-        appId: 'com.old.echo.desktop',
-        schemaVersion: 1,
-        userNote: 'keep-me',
-      }, null, 2),
-      'utf-8',
-    )
-
-    const report = await ensurePersistentStorageUpgraded()
-
-    expect(report.failures).toEqual([])
-    const marker = JSON.parse(await fs.readFile(path.join(tempDir, 'app.json'), 'utf-8')) as {
-      owner?: string
-      appId?: string
-      schemaVersion?: number
-      userNote?: string
-    }
-    expect(marker).toEqual({
-      owner: ECHOFLOW_APP_NAME,
-      appId: ECHOFLOW_APP_ID,
-      schemaVersion: 1,
-      userNote: 'keep-me',
-    })
-  })
-
-  test('rewrites a malformed EchoFlow ownership marker instead of blocking startup', async () => {
-    await fs.writeFile(path.join(tempDir, 'app.json'), '{"owner":', 'utf-8')
-
-    const report = await ensurePersistentStorageUpgraded()
-
-    expect(report.failures).toEqual([])
-    const marker = JSON.parse(await fs.readFile(path.join(tempDir, 'app.json'), 'utf-8')) as {
-      owner?: string
-      appId?: string
-      schemaVersion?: number
-    }
-    expect(marker).toEqual({
-      owner: ECHOFLOW_APP_NAME,
-      appId: ECHOFLOW_APP_ID,
-      schemaVersion: 1,
-    })
-  })
-
-  test('migrates current EchoFlow providers index and writes a backup before changing it', async () => {
-    const currentDir = echoFlowDir()
-    await fs.mkdir(currentDir, { recursive: true })
-    await fs.writeFile(
-      path.join(currentDir, 'providers.json'),
+      path.join(ccHahaDir, 'providers.json'),
       JSON.stringify({
         activeProviderId: 'provider-1',
         rootFutureField: { keep: true },
@@ -129,9 +56,9 @@ describe('persistent storage upgrade migrations', () => {
     const report = await ensurePersistentStorageUpgraded()
 
     expect(report.failures).toEqual([])
-    expect(report.migratedEntries).toContain('echoflow/providers.json')
+    expect(report.migratedEntries).toContain('cc-haha/providers.json')
 
-    const migrated = JSON.parse(await fs.readFile(path.join(currentDir, 'providers.json'), 'utf-8')) as {
+    const migrated = JSON.parse(await fs.readFile(path.join(ccHahaDir, 'providers.json'), 'utf-8')) as {
       schemaVersion?: number
       activeId?: string | null
       activeProviderId?: string
@@ -146,7 +73,7 @@ describe('persistent storage upgrade migrations', () => {
     expect(migrated.rootFutureField).toEqual({ keep: true })
     expect(migrated.providers?.[0]?.extraFutureField).toBe('keep-me')
 
-    const backups = (await listFiles(currentDir)).filter((file) => file.startsWith('providers.json.bak-before-migration-'))
+    const backups = (await listFiles(ccHahaDir)).filter((file) => file.startsWith('providers.json.bak-before-migration-'))
     expect(backups.length).toBe(1)
 
     const service = new ProviderService()
@@ -155,12 +82,248 @@ describe('persistent storage upgrade migrations', () => {
     expect(activeId).toBe('provider-1')
 
     await service.updateProvider('provider-1', { name: 'Renamed Provider' })
-    const rewritten = JSON.parse(await fs.readFile(path.join(currentDir, 'providers.json'), 'utf-8')) as {
+    const rewritten = JSON.parse(await fs.readFile(path.join(ccHahaDir, 'providers.json'), 'utf-8')) as {
       rootFutureField?: unknown
       providers?: Array<Record<string, unknown>>
     }
     expect(rewritten.rootFutureField).toEqual({ keep: true })
     expect(rewritten.providers?.[0]?.extraFutureField).toBe('keep-me')
+  })
+
+  test('upgrades a version 2 provider fixture without inventing image credentials', async () => {
+    const ccHahaDir = path.join(tempDir, 'cc-haha')
+    await fs.mkdir(ccHahaDir, { recursive: true })
+    await fs.writeFile(
+      path.join(ccHahaDir, 'providers.json'),
+      JSON.stringify({
+        schemaVersion: 2,
+        activeId: 'provider-v2',
+        providers: [{
+          id: 'provider-v2',
+          presetId: 'custom',
+          name: 'Version 2 Provider',
+          apiKey: 'chat-token',
+          baseUrl: 'https://v2.example.test',
+          apiFormat: 'anthropic',
+          models: {
+            main: 'chat-model',
+            haiku: 'chat-model',
+            sonnet: 'chat-model',
+            opus: 'chat-model',
+          },
+          futureField: { preserved: true },
+        }],
+        providerOrder: ['provider-v2', 'claude-official', 'openai-official', 'grok-official'],
+      }, null, 2),
+      'utf-8',
+    )
+
+    const report = await ensurePersistentStorageUpgraded()
+
+    expect(report.failures).toEqual([])
+    const migrated = JSON.parse(
+      await fs.readFile(path.join(ccHahaDir, 'providers.json'), 'utf-8'),
+    ) as { schemaVersion: number; providers: Array<Record<string, unknown>> }
+    expect(migrated.schemaVersion).toBe(CURRENT_PROVIDER_INDEX_SCHEMA_VERSION)
+    expect(migrated.providers[0]?.imageGeneration).toBeUndefined()
+    expect(migrated.providers[0]?.futureField).toEqual({ preserved: true })
+  })
+
+  test('turns legacy default Tool Search on into a safe opt-out during upgrade', async () => {
+    const ccHahaDir = path.join(tempDir, 'cc-haha')
+    await fs.mkdir(ccHahaDir, { recursive: true })
+    await fs.writeFile(
+      path.join(ccHahaDir, 'providers.json'),
+      JSON.stringify({
+        schemaVersion: 3,
+        activeId: 'provider-v3',
+        providers: [{
+          id: 'provider-v3',
+          presetId: 'custom',
+          name: 'Version 3 Provider',
+          apiKey: 'chat-token',
+          baseUrl: 'https://v3.example.test',
+          apiFormat: 'anthropic',
+          toolSearchEnabled: true,
+          models: {
+            main: 'chat-model',
+            haiku: 'chat-model',
+            sonnet: 'chat-model',
+            opus: 'chat-model',
+          },
+          futureField: { preserved: true },
+        }],
+        providerOrder: ['provider-v3', 'claude-official', 'openai-official', 'grok-official'],
+      }, null, 2),
+      'utf-8',
+    )
+
+    const report = await ensurePersistentStorageUpgraded()
+
+    expect(report.failures).toEqual([])
+    expect(report.migratedEntries).toContain('cc-haha/providers.json')
+    const migrated = JSON.parse(
+      await fs.readFile(path.join(ccHahaDir, 'providers.json'), 'utf-8'),
+    ) as { schemaVersion: number; providers: Array<Record<string, unknown>> }
+    expect(migrated.schemaVersion).toBe(CURRENT_PROVIDER_INDEX_SCHEMA_VERSION)
+    expect(migrated.providers[0]?.toolSearchEnabled).toBe(false)
+    expect(migrated.providers[0]?.futureField).toEqual({ preserved: true })
+  })
+
+  test('preserves Tool Search after explicit opt-in on the current provider schema', async () => {
+    const ccHahaDir = path.join(tempDir, 'cc-haha')
+    await fs.mkdir(ccHahaDir, { recursive: true })
+    await fs.writeFile(
+      path.join(ccHahaDir, 'providers.json'),
+      JSON.stringify({
+        schemaVersion: CURRENT_PROVIDER_INDEX_SCHEMA_VERSION,
+        activeId: 'provider-current',
+        providers: [{
+          id: 'provider-current',
+          presetId: 'custom',
+          name: 'Current Provider',
+          apiKey: 'chat-token',
+          baseUrl: 'https://current.example.test',
+          apiFormat: 'anthropic',
+          toolSearchEnabled: true,
+          models: {
+            main: 'chat-model',
+            haiku: 'chat-model',
+            sonnet: 'chat-model',
+            opus: 'chat-model',
+          },
+        }],
+        providerOrder: ['provider-current', 'claude-official', 'openai-official', 'grok-official'],
+      }, null, 2),
+      'utf-8',
+    )
+
+    const report = await ensurePersistentStorageUpgraded()
+
+    expect(report.failures).toEqual([])
+    expect(report.migratedEntries).not.toContain('cc-haha/providers.json')
+    const current = JSON.parse(
+      await fs.readFile(path.join(ccHahaDir, 'providers.json'), 'utf-8'),
+    ) as { providers: Array<Record<string, unknown>> }
+    expect(current.providers[0]?.toolSearchEnabled).toBe(true)
+  })
+
+  test('imports legacy root providers config into cc-haha storage without deleting the source', async () => {
+    await fs.writeFile(
+      path.join(tempDir, 'providers.json'),
+      JSON.stringify({
+        version: 1,
+        activeModel: 'legacy-sonnet',
+        providers: [{
+          id: 'legacy-provider',
+          name: 'Legacy Root Provider',
+          baseUrl: 'https://legacy.example.test',
+          apiKey: 'legacy-token',
+          models: [
+            { id: 'legacy-haiku', name: 'Legacy Haiku' },
+            { id: 'legacy-sonnet', name: 'Legacy Sonnet' },
+          ],
+          isActive: true,
+          createdAt: 1,
+          updatedAt: 2,
+          notes: 'keep note',
+        }],
+      }, null, 2),
+      'utf-8',
+    )
+
+    const report = await ensurePersistentStorageUpgraded()
+
+    expect(report.failures).toEqual([])
+    expect(report.migratedEntries).toContain('providers.json -> cc-haha/providers.json')
+    expect(report.migratedEntries).toContain('providers.json -> cc-haha/settings.json')
+    expect(JSON.parse(await fs.readFile(path.join(tempDir, 'providers.json'), 'utf-8'))).toMatchObject({
+      version: 1,
+      activeModel: 'legacy-sonnet',
+    })
+
+    const migrated = JSON.parse(await fs.readFile(path.join(tempDir, 'cc-haha', 'providers.json'), 'utf-8')) as {
+      activeId?: string | null
+      providerOrder?: string[]
+      providers?: Array<{
+        id?: string
+        presetId?: string
+        apiFormat?: string
+        models?: Record<string, string>
+        notes?: string
+      }>
+    }
+    expect(migrated.activeId).toBe('legacy-provider')
+    expect(migrated.providerOrder).toEqual(['legacy-provider', 'claude-official', 'openai-official', 'grok-official'])
+    expect(migrated.providers?.[0]).toMatchObject({
+      id: 'legacy-provider',
+      presetId: 'custom',
+      apiFormat: 'anthropic',
+      notes: 'keep note',
+      models: {
+        main: 'legacy-sonnet',
+        haiku: 'legacy-sonnet',
+        sonnet: 'legacy-sonnet',
+        opus: 'legacy-sonnet',
+      },
+    })
+
+    const managedSettings = JSON.parse(await fs.readFile(path.join(tempDir, 'cc-haha', 'settings.json'), 'utf-8')) as {
+      env?: Record<string, string>
+    }
+    expect(managedSettings.env).toMatchObject({
+      ANTHROPIC_BASE_URL: 'https://legacy.example.test',
+      ANTHROPIC_AUTH_TOKEN: 'legacy-token',
+      ANTHROPIC_MODEL: 'legacy-sonnet',
+    })
+
+    const service = new ProviderService()
+    const { providers, activeId } = await service.listProviders()
+    expect(activeId).toBe('legacy-provider')
+    expect(providers[0]?.models.main).toBe('legacy-sonnet')
+  })
+
+  test('does not overwrite current cc-haha provider storage with a legacy root config', async () => {
+    const ccHahaDir = path.join(tempDir, 'cc-haha')
+    await fs.mkdir(ccHahaDir, { recursive: true })
+    await fs.writeFile(
+      path.join(tempDir, 'providers.json'),
+      JSON.stringify({
+        version: 1,
+        activeModel: 'legacy-model',
+        providers: [{
+          id: 'legacy-provider',
+          name: 'Legacy Root Provider',
+          baseUrl: 'https://legacy.example.test',
+          apiKey: 'legacy-token',
+          models: [{ id: 'legacy-model' }],
+          isActive: true,
+        }],
+      }, null, 2),
+      'utf-8',
+    )
+    await fs.writeFile(
+      path.join(ccHahaDir, 'providers.json'),
+      JSON.stringify({
+        schemaVersion: CURRENT_PROVIDER_INDEX_SCHEMA_VERSION,
+        activeId: null,
+        providers: [],
+      }, null, 2),
+      'utf-8',
+    )
+
+    const report = await ensurePersistentStorageUpgraded()
+
+    expect(report.failures).toEqual([])
+    expect(report.migratedEntries).not.toContain('providers.json -> cc-haha/providers.json')
+    const current = JSON.parse(await fs.readFile(path.join(ccHahaDir, 'providers.json'), 'utf-8')) as {
+      activeId?: string | null
+      providerOrder?: string[]
+      providers?: unknown[]
+    }
+    expect(current.activeId).toBeNull()
+    expect(current.providerOrder).toEqual(['claude-official', 'openai-official', 'grok-official'])
+    expect(current.providers).toEqual([])
   })
 
   test('does not write repo-owned schema metadata into shared user settings', async () => {
@@ -182,134 +345,24 @@ describe('persistent storage upgrade migrations', () => {
   })
 
   test('quarantines malformed managed settings instead of blocking startup', async () => {
-    const currentDir = echoFlowDir()
-    await fs.mkdir(currentDir, { recursive: true })
-    await fs.writeFile(path.join(currentDir, 'settings.json'), '{"env":', 'utf-8')
+    const ccHahaDir = path.join(tempDir, 'cc-haha')
+    await fs.mkdir(ccHahaDir, { recursive: true })
+    await fs.writeFile(path.join(ccHahaDir, 'settings.json'), '{"env":', 'utf-8')
 
     const report = await ensurePersistentStorageUpgraded()
 
     expect(report.failures).toEqual([])
-    expect(report.migratedEntries).toContain('echoflow/settings.json')
-    expect(JSON.parse(await fs.readFile(path.join(currentDir, 'settings.json'), 'utf-8'))).toEqual({})
-    const quarantined = (await listFiles(currentDir)).filter((file) => file.startsWith('settings.json.invalid-'))
+    expect(report.migratedEntries).toContain('cc-haha/settings.json')
+    expect(JSON.parse(await fs.readFile(path.join(ccHahaDir, 'settings.json'), 'utf-8'))).toEqual({})
+    const quarantined = (await listFiles(ccHahaDir)).filter((file) => file.startsWith('settings.json.invalid-'))
     expect(quarantined.length).toBe(1)
   })
 
-  test('migrates legacy image env keys in current EchoFlow settings while preserving unknown fields and backing up the original', async () => {
-    const currentDir = echoFlowDir()
-    const legacySettings = {
-      futureRootField: { retain: true },
-      env: {
-        USER_CUSTOM_ENV: 'keep-me',
-        CC_HAHA_IMAGE_PROVIDER_KIND: 'openai_images',
-        CC_HAHA_IMAGE_PROVIDER_ID: 'legacy-image-provider',
-        CC_HAHA_IMAGE_BASE_URL: 'https://images.example.test/v1',
-        CC_HAHA_IMAGE_API_KEY: 'test-image-key',
-        CC_HAHA_IMAGE_MODEL: 'test-image-model',
-      },
-    }
-    await fs.mkdir(currentDir, { recursive: true })
-    await fs.writeFile(
-      path.join(currentDir, 'settings.json'),
-      JSON.stringify(legacySettings, null, 2),
-      'utf-8',
-    )
-
-    const report = await ensurePersistentStorageUpgraded()
-
-    expect(report.failures).toEqual([])
-    expect(report.migratedEntries).toContain('echoflow/settings.json')
-
-    const migrated = JSON.parse(await fs.readFile(path.join(currentDir, 'settings.json'), 'utf-8')) as {
-      futureRootField?: unknown
-      env?: Record<string, string>
-    }
-    expect(migrated.futureRootField).toEqual({ retain: true })
-    expect(migrated.env?.USER_CUSTOM_ENV).toBe('keep-me')
-    expect(migrated.env?.ECHOFLOW_IMAGE_PROVIDER_KIND).toBe('openai_images')
-    expect(migrated.env?.ECHOFLOW_IMAGE_PROVIDER_ID).toBe('legacy-image-provider')
-    expect(migrated.env?.ECHOFLOW_IMAGE_BASE_URL).toBe('https://images.example.test/v1')
-    expect(migrated.env?.ECHOFLOW_IMAGE_API_KEY).toBe('test-image-key')
-    expect(migrated.env?.ECHOFLOW_IMAGE_MODEL).toBe('test-image-model')
-    expect(migrated.env?.CC_HAHA_IMAGE_PROVIDER_KIND).toBeUndefined()
-    expect(migrated.env?.CC_HAHA_IMAGE_PROVIDER_ID).toBeUndefined()
-    expect(migrated.env?.CC_HAHA_IMAGE_BASE_URL).toBeUndefined()
-    expect(migrated.env?.CC_HAHA_IMAGE_API_KEY).toBeUndefined()
-    expect(migrated.env?.CC_HAHA_IMAGE_MODEL).toBeUndefined()
-
-    const backups = (await listFiles(currentDir)).filter((file) => file.startsWith('settings.json.bak-before-migration-'))
-    expect(backups).toHaveLength(1)
-    expect(JSON.parse(await fs.readFile(path.join(currentDir, backups[0]), 'utf-8'))).toEqual(legacySettings)
-  })
-
-  test('does not automatically migrate or remove legacy management credentials', async () => {
-    const currentDir = echoFlowDir()
-    const providersPath = path.join(currentDir, 'providers.json')
-    await fs.mkdir(currentDir, { recursive: true })
-    await fs.writeFile(
-      providersPath,
-      JSON.stringify({
-        schemaVersion: CURRENT_PROVIDER_INDEX_SCHEMA_VERSION,
-        activeId: null,
-        providers: [{
-          id: 'echoflow-api',
-          presetId: 'echoflow-api',
-          name: 'EchoFlow API',
-          apiKey: 'provider-key',
-          baseUrl: 'https://api.echoflow.cn',
-          models: { main: 'model', haiku: 'model', sonnet: 'model', opus: 'model' },
-          echoflowManagement: { userId: '106452', managementToken: 'management-token' },
-          echoflowToken: 'legacy-token',
-        }],
-      }, null, 2),
-      'utf-8',
-    )
-
-    const report = await ensurePersistentStorageUpgraded()
-
-    expect(report.failures).toEqual([])
-    expect(report.migratedEntries).not.toContain('providers.json -> echoflow/qingyun-account.json')
-    await expect(fs.access(path.join(currentDir, 'qingyun-account.json'))).rejects.toMatchObject({ code: 'ENOENT' })
-    const providers = await fs.readFile(providersPath, 'utf-8')
-    expect(providers).toContain('management-token')
-    expect(providers).toContain('legacy-token')
-  })
-
-  test('does not use legacy storage as a startup fallback or rewrite transcripts', async () => {
-    const legacyDir = path.join(tempDir, 'cc-haha')
-    const transcriptPath = path.join(tempDir, 'projects', 'legacy-project', 'session.jsonl')
-    const transcript = '{"type":"user","message":{"content":"keep"}}\n'
-    await fs.mkdir(legacyDir, { recursive: true })
-    await fs.mkdir(path.dirname(transcriptPath), { recursive: true })
-    await fs.writeFile(path.join(legacyDir, 'providers.json'), '{"providers":[]}', 'utf-8')
-    await fs.writeFile(transcriptPath, transcript, 'utf-8')
-
-    const report = await ensurePersistentStorageUpgraded()
-
-    expect(report.failures).toEqual([])
-    await expect(fs.access(path.join(echoFlowDir(), 'providers.json'))).rejects.toMatchObject({ code: 'ENOENT' })
-    expect(await fs.readFile(transcriptPath, 'utf-8')).toBe(transcript)
-  })
-
-  test('quarantines malformed providers index after skipping account extraction', async () => {
-    const currentDir = echoFlowDir()
-    await fs.mkdir(currentDir, { recursive: true })
-    await fs.writeFile(path.join(currentDir, 'providers.json'), '{"providers":', 'utf-8')
-
-    const report = await ensurePersistentStorageUpgraded()
-
-    expect(report.failures).toEqual([])
-    expect(report.migratedEntries).toContain('echoflow/providers.json')
-    expect(JSON.parse(await fs.readFile(path.join(currentDir, 'providers.json'), 'utf-8'))).toEqual({})
-    const quarantined = (await listFiles(currentDir)).filter((file) => file.startsWith('providers.json.invalid-'))
-    expect(quarantined).toHaveLength(1)
-  })
-
   test('upgrades existing DeepSeek managed env to follow global thinking settings', async () => {
-    const currentDir = echoFlowDir()
-    await fs.mkdir(currentDir, { recursive: true })
+    const ccHahaDir = path.join(tempDir, 'cc-haha')
+    await fs.mkdir(ccHahaDir, { recursive: true })
     await fs.writeFile(
-      path.join(currentDir, 'settings.json'),
+      path.join(ccHahaDir, 'settings.json'),
       JSON.stringify({
         env: {
           ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic',
@@ -318,7 +371,7 @@ describe('persistent storage upgrade migrations', () => {
           ANTHROPIC_DEFAULT_HAIKU_MODEL: 'deepseek-v4-flash',
           ANTHROPIC_DEFAULT_SONNET_MODEL: 'deepseek-v4-pro',
           ANTHROPIC_DEFAULT_OPUS_MODEL: 'deepseek-v4-pro',
-          ECHOFLOW_SEND_DISABLED_THINKING: '1',
+          CC_HAHA_SEND_DISABLED_THINKING: '1',
           USER_CUSTOM_ENV: 'keep-me',
         },
       }, null, 2),
@@ -328,12 +381,12 @@ describe('persistent storage upgrade migrations', () => {
     const report = await ensurePersistentStorageUpgraded()
 
     expect(report.failures).toEqual([])
-    expect(report.migratedEntries).toContain('echoflow/settings.json')
+    expect(report.migratedEntries).toContain('cc-haha/settings.json')
 
-    const migrated = JSON.parse(await fs.readFile(path.join(currentDir, 'settings.json'), 'utf-8')) as {
+    const migrated = JSON.parse(await fs.readFile(path.join(ccHahaDir, 'settings.json'), 'utf-8')) as {
       env?: Record<string, string>
     }
-    expect(migrated.env?.ECHOFLOW_SEND_DISABLED_THINKING).toBeUndefined()
+    expect(migrated.env?.CC_HAHA_SEND_DISABLED_THINKING).toBeUndefined()
     expect(migrated.env?.ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES).toBe(
       'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
     )
@@ -345,7 +398,7 @@ describe('persistent storage upgrade migrations', () => {
     )
     expect(migrated.env?.USER_CUSTOM_ENV).toBe('keep-me')
 
-    const backups = (await listFiles(currentDir)).filter((file) => file.startsWith('settings.json.bak-before-migration-'))
+    const backups = (await listFiles(ccHahaDir)).filter((file) => file.startsWith('settings.json.bak-before-migration-'))
     expect(backups.length).toBe(1)
   })
 })

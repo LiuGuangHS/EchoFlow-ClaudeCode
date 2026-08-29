@@ -23,6 +23,7 @@ import type {
 } from '../types/provider.js'
 import {
   BUILT_IN_PROVIDER_IDS,
+  PROVIDER_TOOL_SEARCH_OPT_IN_SCHEMA_VERSION,
 } from '../types/provider.js'
 import {
   ATTRIBUTION_HEADER_ENV_KEY,
@@ -153,7 +154,7 @@ export function normalizeToolSearchEnabled(value: unknown): boolean {
       return true
     }
   }
-  return true
+  return false
 }
 
 export function normalizeDisableExperimentalBetas(value: unknown): boolean {
@@ -305,9 +306,13 @@ export function normalizeProvidersIndex(value: unknown): ProvidersIndex | null {
     providerOrder: rawProviderOrder,
     ...rest
   } = value
+  const schemaVersion = typeof value.schemaVersion === 'number' ? value.schemaVersion : 1
   const providers = value.providers
     .filter(isSavedProvider)
     .map((provider) => normalizeSavedProvider(provider))
+    .map((provider) => schemaVersion < PROVIDER_TOOL_SEARCH_OPT_IN_SCHEMA_VERSION
+      ? { ...provider, toolSearchEnabled: false }
+      : provider)
   const rawActiveId =
     typeof value.activeId === 'string'
       ? value.activeId
@@ -324,7 +329,7 @@ export function normalizeProvidersIndex(value: unknown): ProvidersIndex | null {
 
   return {
     ...rest,
-    schemaVersion: typeof value.schemaVersion === 'number' ? value.schemaVersion : 1,
+    schemaVersion,
     activeId,
     providers,
     providerOrder: normalizeProviderOrder(rawProviderOrder, providers),
@@ -447,7 +452,7 @@ export function buildProviderManagedEnv(
       [MODEL_CONTEXT_WINDOWS_ENV_KEY]: JSON.stringify(modelContextWindows),
     }),
     ...(apiFormat === 'anthropic' && {
-      ENABLE_TOOL_SEARCH: provider.toolSearchEnabled === false ? 'false' : 'true',
+      ENABLE_TOOL_SEARCH: provider.toolSearchEnabled === true ? 'true' : 'false',
     }),
     ...(provider.disableExperimentalBetas === true && {
       CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: '1',

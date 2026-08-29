@@ -847,7 +847,7 @@ function readToolSearchEnabledFromEnv(env: Record<string, unknown>): boolean {
       return true
     }
   }
-  return true
+  return false
 }
 
 function readDisableExperimentalBetasFromEnv(env: Record<string, unknown>): boolean {
@@ -942,7 +942,7 @@ function updateSettingsJsonProviderConnection(
   preset: ProviderPreset,
   baseUrl: string,
   proxyBaseUrl: string,
-  toolSearchEnabled = true,
+  toolSearchEnabled = false,
   disableExperimentalBetas = false,
 ): string {
   try {
@@ -1039,7 +1039,8 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
       ? String(provider.autoCompactWindow)
       : getPresetAutoCompactWindow(initialPreset),
   )
-  const [toolSearchEnabled, setToolSearchEnabled] = useState(provider?.toolSearchEnabled ?? true)
+  const [toolSearchEnabled, setToolSearchEnabled] = useState(provider?.toolSearchEnabled ?? false)
+  const [toolSearchConfirmOpen, setToolSearchConfirmOpen] = useState(false)
   const [disableExperimentalBetas, setDisableExperimentalBetas] = useState(provider?.disableExperimentalBetas ?? false)
   const [imageGeneration, setImageGeneration] = useState<ImageGenerationFormValue>({
     enabled: Boolean(provider?.imageGeneration),
@@ -1175,7 +1176,8 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
     setModel1mSupport(nextModel1mSupport)
     setModelContextInputs(nextModelContextInputs)
     setAutoCompactWindow(getPresetAutoCompactWindow(preset))
-    setToolSearchEnabled(true)
+    setToolSearchEnabled(false)
+    setToolSearchConfirmOpen(false)
     setDisableExperimentalBetas(false)
     setShowContextSettings(false)
     setTestResult(null)
@@ -1306,8 +1308,17 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
   }
   const handleToolSearchToggle = (enabled: boolean) => {
     if (toolSearchUnsupported) return
-    setToolSearchEnabled(enabled)
-    setSettingsJson((current) => updateSettingsJsonToolSearch(current, apiFormat, enabled))
+    if (enabled) {
+      setToolSearchConfirmOpen(true)
+      return
+    }
+    setToolSearchEnabled(false)
+    setSettingsJson((current) => updateSettingsJsonToolSearch(current, apiFormat, false))
+  }
+  const confirmToolSearchEnable = () => {
+    setToolSearchEnabled(true)
+    setSettingsJson((current) => updateSettingsJsonToolSearch(current, apiFormat, true))
+    setToolSearchConfirmOpen(false)
   }
   const handleDisableExperimentalBetasToggle = (disabled: boolean) => {
     setDisableExperimentalBetas(disabled)
@@ -1547,7 +1558,8 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
   }
 
   return (
-    <Modal
+    <>
+      <Modal
       open={open}
       onClose={handleClose}
       title={mode === 'create' ? t('settings.providers.addTitle') : t('settings.providers.editTitle')}
@@ -2079,6 +2091,24 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
           <p className="text-[11px] text-[var(--color-text-tertiary)] mt-1">{t('settings.providers.settingsJsonDesc')}</p>
         </div>
       </div>
-    </Modal>
+      </Modal>
+      <ConfirmDialog
+        open={toolSearchConfirmOpen}
+        onClose={() => setToolSearchConfirmOpen(false)}
+        onConfirm={confirmToolSearchEnable}
+        title={t('settings.providers.toolSearchConfirmTitle')}
+        body={(
+          <div className="space-y-3 text-sm leading-6 text-[var(--color-text-secondary)]">
+            <p>{t('settings.providers.toolSearchConfirmBody')}</p>
+            <p className="rounded-[var(--radius-md)] border border-[var(--color-warning)] bg-[var(--color-warning-container)] px-3 py-2 text-[var(--color-on-warning-container)]">
+              {t('settings.providers.toolSearchConfirmRisk')}
+            </p>
+          </div>
+        )}
+        confirmLabel={t('settings.providers.toolSearchConfirmEnable')}
+        cancelLabel={t('common.cancel')}
+        confirmVariant="primary"
+      />
+    </>
   )
 }

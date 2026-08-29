@@ -6132,6 +6132,7 @@ describe('WebSocket Chat Integration', () => {
         expect(reconnectMessages).toContainEqual({
           type: 'session_state',
           turnState: 'idle',
+          activeBackgroundTaskIds: [],
         })
         expect(reconnectMessages.some((message) => message.type === 'message_complete')).toBe(false)
       } finally {
