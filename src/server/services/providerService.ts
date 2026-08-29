@@ -64,7 +64,7 @@ import {
 
 const DEFAULT_INDEX: ProvidersIndex = {
   schemaVersion: CURRENT_PROVIDER_INDEX_SCHEMA_VERSION,
-  activeId: null,
+  activeId: 'claude-official',
   providers: [],
   providerOrder: [...BUILT_IN_PROVIDER_IDS],
 }
