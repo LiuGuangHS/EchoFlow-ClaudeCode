@@ -6,7 +6,7 @@ import path from 'node:path'
 import { Readable } from 'node:stream'
 import { killSidecar, reserveLocalPort } from './sidecarManager'
 
-const DSH_VERSION = '0.1.0-rc.7'
+const DSH_VERSION = '0.1.1-rc.2'
 const DSH_PACKAGE = '@deepseek-ai/dsh'
 const DSH_EXECUTABLE_PATH = ['node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js']
 const DSH_MIN_NODE_VERSION = [22, 19, 0] as const
