@@ -83,7 +83,7 @@ describe('FileReadTool pages validation', () => {
 
 describe('FileReadTool Windows text fidelity', () => {
   test('preserves Unicode paths and literal tabs in model-facing output', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'cc-haha-read-'))
+    const root = await mkdtemp(join(tmpdir(), 'echoflow-code-read-'))
     temporaryDirectories.push(root)
     const directory = join(root, '中文目录')
     const filePath = join(directory, 'Tab 样例.txt')

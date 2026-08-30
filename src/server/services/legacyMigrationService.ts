@@ -7,7 +7,7 @@ import { ensureEchoFlowConfigRoot, getEchoFlowConfigDir, getEchoFlowInternalDir 
 import { diagnosticsService } from './diagnosticsService.js'
 import { normalizeLegacyImageGenerationEnv } from '../../utils/providerManagedEnvCompat.js'
 
-type LegacyMigrationSource = 'current-cc-haha' | 'legacy-home-cc-haha' | 'current-root-providers' | 'legacy-home-root-providers'
+type LegacyMigrationSource = 'current-echoflow-code' | 'legacy-home-echoflow-code' | 'current-root-providers' | 'legacy-home-root-providers'
 type LegacyMigrationTarget = 'providers' | 'settings' | 'oauth' | 'openai-oauth' | 'desktop-ui'
 type LegacyMigrationStatus = 'ready' | 'target-exists' | 'missing' | 'invalid' | 'failed' | 'migrated' | 'skipped'
 
@@ -31,8 +31,8 @@ type LegacyMigrationOptions = {
 }
 
 type JsonObject = Record<string, unknown>
-type CcHahaSourceEntry = {
-  source: Extract<LegacyMigrationSource, 'current-cc-haha' | 'legacy-home-cc-haha'>
+type EchoFlowSourceEntry = {
+  source: Extract<LegacyMigrationSource, 'current-echoflow-code' | 'legacy-home-echoflow-code'>
   dir: string
 }
 type RootProviderSourceEntry = {
@@ -397,13 +397,13 @@ export class LegacyMigrationService {
     return path.join(getEchoFlowInternalDir(this.configDir), TARGET_FILES[target])
   }
 
-  private sourceDirs(): CcHahaSourceEntry[] {
-    const entries: CcHahaSourceEntry[] = [
-      { source: 'current-cc-haha', dir: path.join(this.configDir, 'cc-haha') },
+  private sourceDirs(): EchoFlowSourceEntry[] {
+    const entries: EchoFlowSourceEntry[] = [
+      { source: 'current-echoflow-code', dir: path.join(this.configDir, 'echoflow-code') },
     ]
-    const legacyCcHaha = path.join(this.legacyHomeConfigDir, 'cc-haha')
-    if (path.resolve(legacyCcHaha) !== path.resolve(entries[0]!.dir)) {
-      entries.push({ source: 'legacy-home-cc-haha', dir: legacyCcHaha })
+    const legacyEchoFlow = path.join(this.legacyHomeConfigDir, 'echoflow-code')
+    if (path.resolve(legacyEchoFlow) !== path.resolve(entries[0]!.dir)) {
+      entries.push({ source: 'legacy-home-echoflow-code', dir: legacyEchoFlow })
     }
     return entries
   }
@@ -422,12 +422,12 @@ export class LegacyMigrationService {
   private async buildItems(run: boolean): Promise<LegacyMigrationItem[]> {
     const items: LegacyMigrationItem[] = []
     const consumedTargets = new Set<LegacyMigrationTarget>()
-    const ccHahaSources = this.sourceDirs()
+    const echoFlowSources = this.sourceDirs()
     const rootSources = this.rootProviderSources()
 
     const currentHadUsableData = await this.buildSourceGroupItems(
       {
-        ccHahaSource: ccHahaSources[0],
+        echoFlowSource: echoFlowSources[0],
         rootSource: rootSources[0],
       },
       consumedTargets,
@@ -438,7 +438,7 @@ export class LegacyMigrationService {
     if (!currentHadUsableData) {
       await this.buildSourceGroupItems(
         {
-          ccHahaSource: ccHahaSources[1],
+          echoFlowSource: echoFlowSources[1],
           rootSource: rootSources[1],
         },
         consumedTargets,
@@ -452,7 +452,7 @@ export class LegacyMigrationService {
 
   private async buildSourceGroupItems(
     sources: {
-      ccHahaSource?: CcHahaSourceEntry
+      echoFlowSource?: EchoFlowSourceEntry
       rootSource?: RootProviderSourceEntry
     },
     consumedTargets: Set<LegacyMigrationTarget>,
@@ -460,12 +460,12 @@ export class LegacyMigrationService {
     run: boolean,
   ): Promise<boolean> {
     let hasUsableData = false
-    const { ccHahaSource, rootSource } = sources
+    const { echoFlowSource, rootSource } = sources
 
-    if (ccHahaSource) {
+    if (echoFlowSource) {
       for (const target of ['providers', 'settings', 'oauth', 'openai-oauth', 'desktop-ui'] as const) {
         if (consumedTargets.has(target)) continue
-        const item = await this.handleCcHahaFile(ccHahaSource.source, ccHahaSource.dir, target, run)
+        const item = await this.handleEchoFlowFile(echoFlowSource.source, echoFlowSource.dir, target, run)
         items.push(item)
         if (foundUsableLegacyData(item.status)) {
           hasUsableData = true
@@ -498,8 +498,8 @@ export class LegacyMigrationService {
     return hasUsableData
   }
 
-  private async handleCcHahaFile(
-    source: Extract<LegacyMigrationSource, 'current-cc-haha' | 'legacy-home-cc-haha'>,
+  private async handleEchoFlowFile(
+    source: Extract<LegacyMigrationSource, 'current-echoflow-code' | 'legacy-home-echoflow-code'>,
     sourceDir: string,
     target: LegacyMigrationTarget,
     run: boolean,

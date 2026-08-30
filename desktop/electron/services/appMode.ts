@@ -5,7 +5,7 @@ import process from 'node:process'
 import type { AppModeConfig, AppModeSetInput } from '../../src/lib/desktopHost/types'
 
 const APP_MODE_FILE = 'app-mode.json'
-const LEGACY_APP_PORTABLE_ENV_KEY = 'CC_HAHA_APP_PORTABLE_DIR'
+const LEGACY_APP_PORTABLE_ENV_KEY = 'ECHOFLOW_APP_PORTABLE_DIR'
 
 export type AppModeAppLike = {
   getPath(name: 'exe' | 'home' | 'userData'): string

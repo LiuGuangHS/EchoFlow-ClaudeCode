@@ -101,7 +101,7 @@ describe('release desktop workflow', () => {
         "if: matrix.smoke_platform == 'windows' && matrix.arch == 'x64'",
       )
       expect(smokeStep, workflowPath).toContain('working-directory: desktop')
-      expect(smokeStep, workflowPath).toContain("CC_HAHA_COMPILED_SIDECAR_SMOKE_STARTS: '20'")
+      expect(smokeStep, workflowPath).toContain("ECHOFLOW_COMPILED_SIDECAR_SMOKE_STARTS: '20'")
       expect(smokeStep, workflowPath).toContain('bun run test:compiled-sidecar-smoke')
       expect(workflow.indexOf('Build sidecars'), workflowPath).toBeLessThan(
         workflow.indexOf('Verify compiled Windows sidecar startup'),
@@ -136,10 +136,9 @@ describe('release desktop workflow', () => {
     )?.[0]
 
     expect(collectStep).toContain('*.dmg')
-    // The macOS auto-update zip and blockmaps are not collected: unsigned builds
-    // ship manual downloads only, so the artifact stays the installer + script.
-    expect(collectStep).not.toContain('*.zip')
-    expect(collectStep).not.toContain('*.blockmap')
+    // Development builds collect all artifacts including zip and blockmap for testing
+    expect(collectStep).toContain('*.zip')
+    expect(collectStep).toContain('*.blockmap')
     expect(collectStep).toContain('*.yml')
     expect(collectStep).toContain('install-macos-unsigned.sh')
     expect(collectStep).toContain('[ "${{ matrix.smoke_platform }}" = "macos" ]')
@@ -162,10 +161,10 @@ describe('release desktop workflow', () => {
     }
 
     expect(desktopPackage.description).toBeTruthy()
-    expect(desktopPackage.homepage).toBe('https://github.com/NanmiCoder/cc-haha')
-    expect(desktopPackage.author?.name).toBe('NanmiCoder')
-    expect(desktopPackage.author?.email).toBe('relakkes@gmail.com')
-    expect(desktopPackage.build?.linux?.maintainer).toBe('NanmiCoder <relakkes@gmail.com>')
+    expect(desktopPackage.homepage).toBe('https://github.com/LiuGuangHS/EchoFlow-ClaudeCode')
+    expect(desktopPackage.author?.name).toBe('LiuGuangHS')
+    expect(desktopPackage.author?.email).toBe('zhijun2003@users.noreply.github.com')
+    expect(desktopPackage.build?.linux?.maintainer).toBe('LiuGuangHS <zhijun2003@users.noreply.github.com>')
   })
 
   test('release workflow requires macOS Gatekeeper launch approval for signed builds', () => {
@@ -226,7 +225,7 @@ describe('release desktop workflow', () => {
     expect(signedBuildStep).toContain('xcrun stapler staple "$app_path"')
     expect(signedBuildStep).toContain('xcrun stapler validate "$app_path"')
     expect(signedBuildStep).toContain('spctl -a -vv -t execute "$app_path"')
-    expect(signedBuildStep).toContain('app_path="build-artifacts/electron/${{ matrix.app_bundle_dir }}/Claude Code Haha.app"')
+    expect(signedBuildStep).toContain('app_path="build-artifacts/electron/${{ matrix.app_bundle_dir }}/EchoFlow Code.app"')
     expect(signedBuildStep).toContain('package_args=( ${{ matrix.builder_args }} --prepackaged "$app_path" --publish never -c.mac.notarize=false )')
     expect(signedBuildStep).toContain('find build-artifacts/electron -maxdepth 1 -type f -delete')
     expect(signedBuildStep).toContain('Signed electron-builder timed out')
@@ -292,7 +291,6 @@ describe('release desktop workflow', () => {
     expect(signingJob).toContain('macOS artifacts will be unsigned')
     expect(signingJob).toContain('install-macos-unsigned.sh')
     expect(signingJob).toContain("RELEASE_DRAFT: ${{ github.event_name == 'workflow_dispatch' && inputs.draft == true }}")
-    expect(signingJob).toContain('Refusing to publish a non-draft desktop release without macOS signing/notarization secrets.')
     expect(signingJob).toContain('macos_signed=false')
     expect(signingJob).toContain('macos_signed=true')
     expect(signingJob).toContain('SignPath configuration missing')
@@ -304,9 +302,12 @@ describe('release desktop workflow', () => {
     const macRequiredBlock = signingJob?.match(
       /missing=\(\)[\s\S]*?# Drafts may remain unsigned/,
     )?.[0]
-    expect(macRequiredBlock).toContain('if [ "$RELEASE_DRAFT" != "true" ]; then')
-    expect(macRequiredBlock).toContain('exit 1')
-    expect(signingJob).toContain('if [ "$RELEASE_DRAFT" != "true" ]; then')
+    expect(macRequiredBlock).toBeTruthy()
+    const winRequiredBlock = signingJob?.match(
+      /win_missing=\(\)[\s\S]*?windows_signed=true/,
+    )?.[0]
+    expect(winRequiredBlock).toContain('if [ "$RELEASE_DRAFT" != "true" ]; then')
+    expect(winRequiredBlock).toContain('exit 1')
     expect(signingJob).toContain('exit 1')
     expect(buildJob).toContain('- signing-preflight')
     expect(workflow.indexOf('signing-preflight:')).toBeLessThan(workflow.indexOf('build:'))
@@ -342,7 +343,7 @@ describe('release desktop workflow', () => {
     expect(workflow.indexOf('Verify Windows updater config before SignPath')).toBeLessThan(
       workflow.indexOf('Stage project-owned Windows application executables'),
     )
-    expect(stageApplicationStep).toContain('Claude Code Haha.exe')
+    expect(stageApplicationStep).toContain('EchoFlow Code.exe')
     expect(stageApplicationStep).toContain('claude-sidecar-${{ matrix.target_triple }}.exe')
     expect(stageApplicationStep).not.toContain('rg.exe')
     expect(stageApplicationStep).not.toContain('node-pty')
@@ -360,10 +361,10 @@ describe('release desktop workflow', () => {
     expect(restoreInstallerStep).toContain('A trusted production signature is required')
     expect(refreshMetadataStep).toContain('scripts/refresh-windows-update-metadata.ts')
     expect(refreshMetadataStep).toContain('desktop/build-artifacts/electron/latest.yml')
-    expect(applicationConfiguration).toContain('<pe-file path="Claude Code Haha.exe">')
+    expect(applicationConfiguration).toContain('<pe-file path="EchoFlow Code.exe">')
     expect(applicationConfiguration).toContain('<pe-file path="claude-sidecar-*.exe">')
     expect(applicationConfiguration).not.toContain('rg.exe')
-    expect(installerConfiguration).toContain('<pe-file path="Claude-Code-Haha-*-win-*.exe">')
+    expect(installerConfiguration).toContain('<pe-file path="EchoFlow-Code-*-win-*.exe">')
     expect(workflow).not.toContain('WINDOWS_CERTIFICATE')
     expect(workflow).not.toContain('WINDOWS_CERTIFICATE_PASSWORD')
     expect(workflow.indexOf('Restore and verify signed Windows application executables')).toBeLessThan(workflow.indexOf('Package NSIS installer from signed Windows application'))
@@ -394,7 +395,7 @@ describe('release desktop workflow', () => {
     expect(buildJob).toContain('builder_args: --win nsis --arm64')
     expect(buildJob).toContain('builder_args: --linux AppImage deb rpm --x64')
     expect(buildJob).toContain('builder_args: --linux AppImage deb rpm --arm64')
-    expect(buildJob).toContain('Claude-Code-Haha-${APP_VERSION}-win-arm64.exe')
+    expect(buildJob).toContain('EchoFlow-Code-${APP_VERSION}-win-arm64.exe')
     expect(buildJob).toContain('Upload release artifacts for final publish')
     expect(buildJob).toContain('actions/upload-artifact@v4')
     expect(buildJob).toContain('name: desktop-release-artifacts-${{ matrix.label }}')
@@ -471,27 +472,27 @@ describe('release desktop workflow', () => {
       }
     }
     const version = desktopPackage.version
-    expect(desktopPackage.build.artifactName).toBe('Claude-Code-Haha-${version}-${os}-${arch}.${ext}')
+    expect(desktopPackage.build.artifactName).toBe('EchoFlow-Code-${version}-${os}-${arch}.${ext}')
 
     const expectedReleaseAssets = [
-      `Claude-Code-Haha-${version}-mac-arm64.dmg`,
-      `Claude-Code-Haha-${version}-mac-arm64.dmg.blockmap`,
-      `Claude-Code-Haha-${version}-mac-arm64.zip`,
-      `Claude-Code-Haha-${version}-mac-arm64.zip.blockmap`,
-      `Claude-Code-Haha-${version}-mac-x64.dmg`,
-      `Claude-Code-Haha-${version}-mac-x64.dmg.blockmap`,
-      `Claude-Code-Haha-${version}-mac-x64.zip`,
-      `Claude-Code-Haha-${version}-mac-x64.zip.blockmap`,
-      `Claude-Code-Haha-${version}-linux-x86_64.AppImage`,
-      `Claude-Code-Haha-${version}-linux-amd64.deb`,
-      `Claude-Code-Haha-${version}-linux-x86_64.rpm`,
-      `Claude-Code-Haha-${version}-linux-arm64.AppImage`,
-      `Claude-Code-Haha-${version}-linux-arm64.deb`,
-      `Claude-Code-Haha-${version}-linux-aarch64.rpm`,
-      `Claude-Code-Haha-${version}-win-x64.exe`,
-      `Claude-Code-Haha-${version}-win-x64.exe.blockmap`,
-      `Claude-Code-Haha-${version}-win-arm64.exe`,
-      `Claude-Code-Haha-${version}-win-arm64.exe.blockmap`,
+      `EchoFlow-Code-${version}-mac-arm64.dmg`,
+      `EchoFlow-Code-${version}-mac-arm64.dmg.blockmap`,
+      `EchoFlow-Code-${version}-mac-arm64.zip`,
+      `EchoFlow-Code-${version}-mac-arm64.zip.blockmap`,
+      `EchoFlow-Code-${version}-mac-x64.dmg`,
+      `EchoFlow-Code-${version}-mac-x64.dmg.blockmap`,
+      `EchoFlow-Code-${version}-mac-x64.zip`,
+      `EchoFlow-Code-${version}-mac-x64.zip.blockmap`,
+      `EchoFlow-Code-${version}-linux-x86_64.AppImage`,
+      `EchoFlow-Code-${version}-linux-amd64.deb`,
+      `EchoFlow-Code-${version}-linux-x86_64.rpm`,
+      `EchoFlow-Code-${version}-linux-arm64.AppImage`,
+      `EchoFlow-Code-${version}-linux-arm64.deb`,
+      `EchoFlow-Code-${version}-linux-aarch64.rpm`,
+      `EchoFlow-Code-${version}-win-x64.exe`,
+      `EchoFlow-Code-${version}-win-x64.exe.blockmap`,
+      `EchoFlow-Code-${version}-win-arm64.exe`,
+      `EchoFlow-Code-${version}-win-arm64.exe.blockmap`,
     ]
     const namespacedMetadata = [
       'latest-mac-macOS-ARM64.yml',
@@ -536,20 +537,20 @@ describe('release desktop workflow', () => {
     const buildJob = extractJob(workflow, 'build')
     const publishJob = extractJob(workflow, 'publish-release')
     const expectedFiles = [
-      'Claude-Code-Haha-${APP_VERSION}-mac-arm64.dmg',
-      'Claude-Code-Haha-${APP_VERSION}-mac-arm64.zip',
-      'Claude-Code-Haha-${APP_VERSION}-mac-x64.dmg',
-      'Claude-Code-Haha-${APP_VERSION}-mac-x64.zip',
-      'Claude-Code-Haha-${APP_VERSION}-linux-x86_64.AppImage',
-      'Claude-Code-Haha-${APP_VERSION}-linux-amd64.deb',
-      'Claude-Code-Haha-${APP_VERSION}-linux-x86_64.rpm',
-      'Claude-Code-Haha-${APP_VERSION}-linux-arm64.AppImage',
-      'Claude-Code-Haha-${APP_VERSION}-linux-arm64.deb',
-      'Claude-Code-Haha-${APP_VERSION}-linux-aarch64.rpm',
-      'Claude-Code-Haha-${APP_VERSION}-win-x64.exe',
-      'Claude-Code-Haha-${APP_VERSION}-win-x64.exe.blockmap',
-      'Claude-Code-Haha-${APP_VERSION}-win-arm64.exe',
-      'Claude-Code-Haha-${APP_VERSION}-win-arm64.exe.blockmap',
+      'EchoFlow-Code-${APP_VERSION}-mac-arm64.dmg',
+      'EchoFlow-Code-${APP_VERSION}-mac-arm64.zip',
+      'EchoFlow-Code-${APP_VERSION}-mac-x64.dmg',
+      'EchoFlow-Code-${APP_VERSION}-mac-x64.zip',
+      'EchoFlow-Code-${APP_VERSION}-linux-x86_64.AppImage',
+      'EchoFlow-Code-${APP_VERSION}-linux-amd64.deb',
+      'EchoFlow-Code-${APP_VERSION}-linux-x86_64.rpm',
+      'EchoFlow-Code-${APP_VERSION}-linux-arm64.AppImage',
+      'EchoFlow-Code-${APP_VERSION}-linux-arm64.deb',
+      'EchoFlow-Code-${APP_VERSION}-linux-aarch64.rpm',
+      'EchoFlow-Code-${APP_VERSION}-win-x64.exe',
+      'EchoFlow-Code-${APP_VERSION}-win-x64.exe.blockmap',
+      'EchoFlow-Code-${APP_VERSION}-win-arm64.exe',
+      'EchoFlow-Code-${APP_VERSION}-win-arm64.exe.blockmap',
     ]
 
     for (const file of expectedFiles) {
@@ -581,8 +582,8 @@ describe('release desktop workflow', () => {
     expect(desktopPackage.build.publish).toEqual([
       {
         provider: 'github',
-        owner: 'NanmiCoder',
-        repo: 'cc-haha',
+        owner: 'LiuGuangHS',
+        repo: 'EchoFlow-ClaudeCode',
       },
     ])
     expect(desktopPackage.build.mac?.publish).toBeUndefined()
@@ -648,24 +649,24 @@ describe('release desktop workflow', () => {
     expect(installerHook).toContain('!macro customInit')
     expect(installerHook).toContain('!macro customCheckAppRunning')
     expect(installerHook).toContain('!macro customPageAfterChangeDir')
-    expect(installerHook).toContain('UAC_AsUser_Call Function CcHahaRecoverLegacy')
+    expect(installerHook).toContain('UAC_AsUser_Call Function EchoFlowRecoverLegacy')
     expect(installerHook).toContain('${UAC_IsInnerInstance}')
     expect(installerHook).toContain('recover-legacy-install-data.ps1')
     expect(installerHook).toContain('ReadRegStr $4 HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation')
     expect(installerHook).toContain('ReadRegStr $5 HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation')
-    expect(installerHook).toContain('Function CcHahaUninstallerParent')
-    expect(installerHook).toContain('Function CcHahaFinalInstallDir')
+    expect(installerHook).toContain('Function EchoFlowUninstallerParent')
+    expect(installerHook).toContain('Function EchoFlowFinalInstallDir')
     expect(installerHook).toContain('HKCU "${UNINSTALL_REGISTRY_KEY}" UninstallString')
     expect(installerHook).toContain('HKLM "${UNINSTALL_REGISTRY_KEY}" UninstallString')
     expect(installerHook).toContain('UNINSTALL_REGISTRY_KEY_2')
     expect(installerHook).toContain('ReadEnvStr $2 APPDATA')
     expect(installerHook).toContain('ReadEnvStr $3 USERPROFILE')
     expect(installerHook).toContain('ReadEnvStr $6 CLAUDE_CONFIG_DIR')
-    expect(installerHook).toContain('ReadEnvStr $7 CC_HAHA_APP_PORTABLE_DIR')
+    expect(installerHook).toContain('ReadEnvStr $7 ECHOFLOW_APP_PORTABLE_DIR')
     expect(installerHook).toContain('No registered installation needs legacy data recovery')
-    expect(installerHook).toContain('Var ccHahaPerUserInstallLocation')
-    expect(installerHook).toContain('Var ccHahaPerMachineInstallLocation')
-    expect(installerHook).toMatch(/!macro CcHahaRunLegacyRecovery[\s\S]*ReadRegStr \$ccHahaPerUserInstallLocation[\s\S]*\$ccHahaPerUserUninstallString == ""[\s\S]*No registered installation needs legacy data recovery[\s\S]*Call CcHahaRecoverLegacy/)
+    expect(installerHook).toContain('Var echoFlowPerUserInstallLocation')
+    expect(installerHook).toContain('Var echoFlowPerMachineInstallLocation')
+    expect(installerHook).toMatch(/!macro EchoFlowRunLegacyRecovery[\s\S]*ReadRegStr \$echoFlowPerUserInstallLocation[\s\S]*\$echoFlowPerUserUninstallString == ""[\s\S]*No registered installation needs legacy data recovery[\s\S]*Call EchoFlowRecoverLegacy/)
     expect(installerHook).toContain('SetErrorLevel 20')
     expect(installerHook).toContain('/SD IDOK')
     expect(installerHook).toContain('Quit')
@@ -683,7 +684,7 @@ describe('release desktop workflow', () => {
     expect(recoveryHelper).toContain('robocopy.exe')
     expect(recoveryHelper).not.toMatch(/\/XC|\/XN|\/XO/)
     expect(recoveryHelper).toContain('Multiple distinct legacy data sources')
-    expect(recoveryHelper).toContain('Active CLAUDE_CONFIG_DIR is managed outside Claude Code Haha')
+    expect(recoveryHelper).toContain('Active CLAUDE_CONFIG_DIR is managed outside EchoFlow Code')
     expect(recoveryHelper).toContain('Test-LexicalPathAtOrBelow')
     expect(recoveryHelper).toContain('-SharedInstallDirs @($PerMachineInstallDir)')
     expect(normalizedRecoveryHelper).toContain("function Invoke-LegacyRecovery {\n  param(\n    [Parameter(Mandatory = $true)][AllowEmptyCollection()][AllowEmptyString()][string[]]$InstallDirs")
@@ -724,9 +725,9 @@ describe('release desktop workflow', () => {
     expect(installerSmoke).toContain('$Stage completed successfully.')
     expect(installerSmoke).toContain('Fresh install did not create the application executable')
     expect(installerSmoke).toContain('Reinstall removed the application executable')
-    expect(installerSmoke).toContain("'中文 安装目录\\Claude Code Haha'")
+    expect(installerSmoke).toContain("'中文 安装目录\\EchoFlow Code'")
     expect(installerSmoke).toContain('Invoke-InstalledApplicationSmoke')
-    expect(installerSmoke).toContain('CC_HAHA_ELECTRON_WINDOW_SMOKE_LOG')
+    expect(installerSmoke).toContain('ECHOFLOW_ELECTRON_WINDOW_SMOKE_LOG')
     expect(installerSmoke).toContain('desktop-server-state.json')
     expect(installerSmoke).toContain('"reason":"after-final-show"')
     expect(installerSmoke).toContain('"http://127.0.0.1:$port/health"')

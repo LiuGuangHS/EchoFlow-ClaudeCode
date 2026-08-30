@@ -21,12 +21,12 @@ const LIGHT_THEME_STORAGE_KEY = 'echoflow-code-light-theme'
 const DARK_THEME_STORAGE_KEY = 'echoflow-code-dark-theme'
 const LOCALE_STORAGE_KEY = 'echoflow-code-locale'
 const LEGACY_STORAGE_RULES = [
-  { targetKey: TAB_STORAGE_KEY, sourceKeys: ['cc-haha-open-tabs'] },
-  { targetKey: SESSION_RUNTIME_STORAGE_KEY, sourceKeys: ['cc-haha-session-runtime'] },
-  { targetKey: THEME_STORAGE_KEY, sourceKeys: ['cc-haha-theme'] },
-  { targetKey: LOCALE_STORAGE_KEY, sourceKeys: ['cc-haha-locale'] },
-  { targetKey: APP_ZOOM_STORAGE_KEY, sourceKeys: ['cc-haha-app-zoom', 'cc-haha-ui-zoom', 'echoflow-code-ui-zoom'] },
-  { targetKey: 'echoflow-code-dismissed-update-version', sourceKeys: ['cc-haha-dismissed-update-version'] },
+  { targetKey: TAB_STORAGE_KEY, sourceKeys: ['echoflow-code-open-tabs'] },
+  { targetKey: SESSION_RUNTIME_STORAGE_KEY, sourceKeys: ['echoflow-code-session-runtime'] },
+  { targetKey: THEME_STORAGE_KEY, sourceKeys: ['echoflow-code-theme'] },
+  { targetKey: LOCALE_STORAGE_KEY, sourceKeys: ['echoflow-code-locale'] },
+  { targetKey: APP_ZOOM_STORAGE_KEY, sourceKeys: ['echoflow-code-app-zoom', 'echoflow-code-ui-zoom', 'echoflow-code-ui-zoom'] },
+  { targetKey: 'echoflow-code-dismissed-update-version', sourceKeys: ['echoflow-code-dismissed-update-version'] },
 ] as const
 const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max']
 const PERSISTED_SPECIAL_TAB_TYPES = ['settings', 'scheduled', 'market', 'traces'] as const

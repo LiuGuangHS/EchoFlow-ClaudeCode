@@ -64,6 +64,6 @@ describe('bundled imagegen skill', () => {
     expect(text).toContain('Preserve all relevant user-specified detail')
     expect(text).toContain('Provider and image model selection come from')
     expect(text).toContain('do not add either to the tool arguments')
-    expect(text).not.toContain('CC_HAHA_IMAGE_API_KEY')
+    expect(text).not.toContain('ECHOFLOW_IMAGE_API_KEY')
   })
 })

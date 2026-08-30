@@ -110,7 +110,7 @@ describe('shouldUseOpenAICodexTransport', () => {
       ECHOFLOW_OPENAI_OAUTH_PROVIDER: '1',
     })).toBe(true)
     expect(shouldForceOpenAICodexProvider({
-      CC_HAHA_OPENAI_OAUTH_PROVIDER: '1',
+      ECHOFLOW_OPENAI_OAUTH_PROVIDER: '1',
     })).toBe(true)
     expect(shouldForceOpenAICodexProvider({})).toBe(false)
   })

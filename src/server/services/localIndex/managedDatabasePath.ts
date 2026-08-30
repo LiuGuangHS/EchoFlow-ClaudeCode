@@ -104,9 +104,9 @@ export function prepareManagedDatabasePath(options: {
   if (!scopeSnapshot.isDirectory() && !scopeSnapshot.isSymbolicLink()) {
     throw new UnsafeLocalIndexPathError()
   }
-  const ccHahaDir = join(lexicalScope, 'echoflow-code')
-  const databaseDir = join(ccHahaDir, 'db')
-  ensureRealManagedDirectory(ccHahaDir, trustRoot)
+  const echoFlowDir = join(lexicalScope, 'echoflow-code')
+  const databaseDir = join(echoFlowDir, 'db')
+  ensureRealManagedDirectory(echoFlowDir, trustRoot)
   ensureRealManagedDirectory(databaseDir, trustRoot)
   assertDatabaseFamilySafe(databasePath)
 }

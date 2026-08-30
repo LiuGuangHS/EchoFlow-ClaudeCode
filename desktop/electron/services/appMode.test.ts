@@ -138,7 +138,7 @@ describe('Electron app mode service', () => {
 
     const legacyManagedEnv: NodeJS.ProcessEnv = {
       CLAUDE_CONFIG_DIR: customDir,
-      CC_HAHA_APP_PORTABLE_DIR: '1',
+      ECHOFLOW_APP_PORTABLE_DIR: '1',
       WEBVIEW2_USER_DATA_FOLDER: path.join(customDir, 'EBWebView'),
     }
     clearAppManagedPortableEnv(legacyManagedEnv)

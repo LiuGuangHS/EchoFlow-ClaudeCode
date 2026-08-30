@@ -277,7 +277,7 @@ describe('EmptySession', () => {
     mocks.resetTaskList.mockResolvedValue(undefined)
     mocks.getProviderAuthStatus.mockResolvedValue({
       hasAuth: true,
-      source: 'cc-haha-provider',
+      source: 'echoflow-code-provider',
     })
   })
 

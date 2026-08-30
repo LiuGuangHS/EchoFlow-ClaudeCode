@@ -1462,7 +1462,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
       : undefined
     setIsSubmitting(true)
     try {
-      // Write the edited cc-haha settings.json first so provider-specific model
+      // Write the edited echoflow-code settings.json first so provider-specific model
       // settings never conflict with the user's global ~/.claude/settings.json.
       if (settingsJson.trim()) {
         try {

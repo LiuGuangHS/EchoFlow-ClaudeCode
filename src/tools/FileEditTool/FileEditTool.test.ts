@@ -48,7 +48,7 @@ function makeToolUseContext(): ToolUseContext {
 
 describe('FileEditTool indentation matching', () => {
   test('edits a unique tab-indented target from a space-indented input', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'cc-haha-edit-'))
+    const root = await mkdtemp(join(tmpdir(), 'echoflow-code-edit-'))
     temporaryDirectories.push(root)
     const directory = join(root, '中文目录')
     const filePath = join(directory, 'Tab 样例.txt')

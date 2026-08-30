@@ -461,7 +461,7 @@ describe('desktopNotifications', () => {
     expect(pluginRegistered).toBe(true)
     nativeCallback({ payload: { target: JSON.stringify(sessionTarget) } })
     pluginCallback({ extra: { echoFlowTarget: JSON.stringify(scheduledTarget) } })
-    pluginCallback({ extra: { ccHahaTarget: JSON.stringify(scheduledTarget) } })
+    pluginCallback({ extra: { echoFlowTarget: JSON.stringify(scheduledTarget) } })
 
     expect(onTarget).toHaveBeenCalledWith(sessionTarget)
     expect(onTarget).toHaveBeenCalledTimes(3)

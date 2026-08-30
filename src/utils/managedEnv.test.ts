@@ -52,9 +52,9 @@ describe('managed environment', () => {
     delete process.env[IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY]
     delete process.env[IMAGE_GENERATION_PROVIDER_ID_ENV_KEY]
     delete process.env[IMAGE_GENERATION_MODEL_ENV_KEY]
-    delete process.env.CC_HAHA_IMAGE_PROVIDER_KIND
-    delete process.env.CC_HAHA_IMAGE_PROVIDER_ID
-    delete process.env.CC_HAHA_IMAGE_MODEL
+    delete process.env.ECHOFLOW_IMAGE_PROVIDER_KIND
+    delete process.env.ECHOFLOW_IMAGE_PROVIDER_ID
+    delete process.env.ECHOFLOW_IMAGE_MODEL
     setAllowedSettingSources(['userSettings'])
     resetSettingsCache()
   })
@@ -94,8 +94,8 @@ describe('managed environment', () => {
     expect(process.env.ECHOFLOW_ONLY).toBe('1')
   })
 
-  it('does not read legacy cc-haha managed settings implicitly', async () => {
-    await writeJson(join(tempDir, 'cc-haha', 'settings.json'), {
+  it('does not read legacy echoflow-code managed settings implicitly', async () => {
+    await writeJson(join(tempDir, 'echoflow-code', 'settings.json'), {
       env: {
         ANTHROPIC_BASE_URL: 'https://legacy.example.invalid',
         ANTHROPIC_AUTH_TOKEN: 'legacy-token',

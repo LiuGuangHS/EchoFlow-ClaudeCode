@@ -12,7 +12,7 @@ import {
 } from './module-graph'
 
 function fixtureRepo(files: Record<string, string>) {
-  const root = mkdtempSync(join(tmpdir(), 'cc-haha-module-graph-'))
+  const root = mkdtempSync(join(tmpdir(), 'echoflow-code-module-graph-'))
   for (const [path, contents] of Object.entries(files)) {
     const full = join(root, path)
     mkdirSync(dirname(full), { recursive: true })

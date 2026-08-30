@@ -516,7 +516,7 @@ const TASK_NOTIFICATION_RE = /^<task-notification>\s*[\s\S]*<\/task-notification
 const TASK_NOTIFICATION_BLOCK_RE = /<task-notification>\s*[\s\S]*?<\/task-notification>/i
 const PERSISTED_TASK_NOTIFICATION_ENTRY_TYPES = new Set([
   'echoflow-code-task-notification',
-  'cc-haha-task-notification',
+  'echoflow-code-task-notification',
 ])
 const PERSISTED_TASK_NOTIFICATION_ENTRY_TYPE = 'echoflow-code-task-notification'
 const PROVIDER_MODEL_ALIAS_SEPARATORS = ['-', '_', ':', '/', '.', ' ']

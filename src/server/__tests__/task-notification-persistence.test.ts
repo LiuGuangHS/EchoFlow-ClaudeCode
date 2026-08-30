@@ -75,7 +75,7 @@ describe('background task notification persistence', () => {
     const projectDir = path.join(configDir, 'projects', '-tmp-legacy-task-notification')
     const transcriptPath = path.join(projectDir, `${sessionId}.jsonl`)
     const legacyEntry = {
-      type: 'cc-haha-task-notification',
+      type: 'echoflow-code-task-notification',
       isMeta: true,
       timestamp: '2026-07-18T00:00:00.000Z',
       taskNotification: {
@@ -143,7 +143,7 @@ describe('background task notification persistence', () => {
     await append
 
     const cleared = await fs.readFile(transcriptPath, 'utf8')
-    expect(cleared).not.toContain('cc-haha-task-notification')
+    expect(cleared).not.toContain('echoflow-code-task-notification')
     expect(cleared).not.toContain('agent-task-clear-race')
     expect(cleared).toContain('"type":"session-meta"')
   })

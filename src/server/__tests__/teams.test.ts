@@ -1208,7 +1208,7 @@ describe('TeamService', () => {
     const archiveHash = crypto.createHash('sha256').update('archived-lead-session').digest('hex')
     await fs.access(path.join(tmpDir, 'echoflow-code', 'agent-teams', `${archiveHash}.json`))
     await expect(
-      fs.access(path.join(tmpDir, 'cc-haha', 'agent-teams', `${archiveHash}.json`)),
+      fs.access(path.join(tmpDir, 'echoflow-code', 'agent-teams', `${archiveHash}.json`)),
     ).rejects.toMatchObject({ code: 'ENOENT' })
     await fs.rm(path.join(tmpDir, 'teams', 'archived-team'), { recursive: true, force: true })
     await fs.rm(path.join(tmpDir, 'tasks', 'archived-team'), { recursive: true, force: true })

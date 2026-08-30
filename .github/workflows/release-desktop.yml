@@ -445,10 +445,10 @@ jobs:
           $unpackedDir = Join-Path $PWD "desktop/build-artifacts/electron/${{ matrix.unpacked_dir }}"
           $stageDir = Join-Path $env:RUNNER_TEMP "signpath-application-${{ matrix.arch }}"
           $sidecarName = "claude-sidecar-${{ matrix.target_triple }}.exe"
-          $mainExecutable = Join-Path $unpackedDir "Claude Code Haha.exe"
+          $mainExecutable = Join-Path $unpackedDir "EchoFlow Code.exe"
           $sidecarExecutable = Join-Path $unpackedDir "resources/app.asar.unpacked/src-tauri/binaries/$sidecarName"
           New-Item -ItemType Directory -Path $stageDir | Out-Null
-          Copy-Item -LiteralPath $mainExecutable -Destination (Join-Path $stageDir "Claude Code Haha.exe")
+          Copy-Item -LiteralPath $mainExecutable -Destination (Join-Path $stageDir "EchoFlow Code.exe")
           Copy-Item -LiteralPath $sidecarExecutable -Destination (Join-Path $stageDir $sidecarName)
           "stage_dir=$stageDir" >> $env:GITHUB_OUTPUT
           "unpacked_dir=$unpackedDir" >> $env:GITHUB_OUTPUT
@@ -486,9 +486,9 @@ jobs:
           $signedDir = Join-Path $env:RUNNER_TEMP "signpath-signed-application-${{ matrix.arch }}"
           $unpackedDir = "${{ steps.stage-signpath-application.outputs.unpacked_dir }}"
           $sidecarName = "${{ steps.stage-signpath-application.outputs.sidecar_name }}"
-          $mainExecutable = Join-Path $unpackedDir "Claude Code Haha.exe"
+          $mainExecutable = Join-Path $unpackedDir "EchoFlow Code.exe"
           $sidecarExecutable = Join-Path $unpackedDir "resources/app.asar.unpacked/src-tauri/binaries/$sidecarName"
-          Copy-Item -LiteralPath (Join-Path $signedDir "Claude Code Haha.exe") -Destination $mainExecutable -Force
+          Copy-Item -LiteralPath (Join-Path $signedDir "EchoFlow Code.exe") -Destination $mainExecutable -Force
           Copy-Item -LiteralPath (Join-Path $signedDir $sidecarName) -Destination $sidecarExecutable -Force
 
           function Assert-SignPathSignature([string] $Path) {
@@ -521,7 +521,7 @@ jobs:
         id: stage-signpath-installer
         shell: pwsh
         run: |
-          $installerName = "Claude-Code-Haha-${{ steps.version.outputs.value }}-win-${{ matrix.arch }}.exe"
+          $installerName = "EchoFlow-Code-${{ steps.version.outputs.value }}-win-${{ matrix.arch }}.exe"
           $installerPath = Join-Path $PWD "desktop/build-artifacts/electron/$installerName"
           $stageDir = Join-Path $env:RUNNER_TEMP "signpath-installer-${{ matrix.arch }}"
           New-Item -ItemType Directory -Path $stageDir | Out-Null

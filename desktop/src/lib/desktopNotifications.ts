@@ -30,7 +30,7 @@ export type DesktopNotificationPermission = NotificationPermission | 'unsupporte
 type PluginPermissionState = DesktopNotificationPermission | 'prompt' | 'prompt-with-rationale'
 
 const TARGET_EXTRA_KEY = 'echoFlowTarget'
-const LEGACY_TARGET_EXTRA_KEY = 'ccHahaTarget'
+const LEGACY_TARGET_EXTRA_KEY = 'echoFlowTarget'
 const notifiedKeys = new Set<string>()
 const pendingKeys = new Set<string>()
 const lastNotificationAtByScope = new Map<string, number>()

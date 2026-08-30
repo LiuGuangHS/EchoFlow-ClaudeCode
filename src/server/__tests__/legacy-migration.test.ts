@@ -76,26 +76,26 @@ describe('legacy migration service', () => {
   })
 
   test('status discovers legacy home echoflow-code provider settings and OAuth files', async () => {
-    await writeJson(path.join(legacyHomeDir, 'cc-haha', 'providers.json'), {
+    await writeJson(path.join(legacyHomeDir, 'echoflow-code', 'providers.json'), {
       activeId: 'provider-1',
       providers: [],
     })
-    await writeJson(path.join(legacyHomeDir, 'cc-haha', 'settings.json'), { env: { USER_ONLY: '1' } })
-    await writeJson(path.join(legacyHomeDir, 'cc-haha', 'oauth.json'), { accessToken: 'secret' })
+    await writeJson(path.join(legacyHomeDir, 'echoflow-code', 'settings.json'), { env: { USER_ONLY: '1' } })
+    await writeJson(path.join(legacyHomeDir, 'echoflow-code', 'oauth.json'), { accessToken: 'secret' })
 
     const result = await service().getStatus()
 
     expect(result.summary.ready).toBeGreaterThanOrEqual(3)
     expect(result.items).toEqual(expect.arrayContaining([
-      expect.objectContaining({ source: 'legacy-home-cc-haha', target: 'providers', status: 'ready' }),
-      expect.objectContaining({ source: 'legacy-home-cc-haha', target: 'settings', status: 'ready' }),
-      expect.objectContaining({ source: 'legacy-home-cc-haha', target: 'oauth', status: 'ready' }),
+      expect.objectContaining({ source: 'legacy-home-echoflow-code', target: 'providers', status: 'ready' }),
+      expect.objectContaining({ source: 'legacy-home-echoflow-code', target: 'settings', status: 'ready' }),
+      expect.objectContaining({ source: 'legacy-home-echoflow-code', target: 'oauth', status: 'ready' }),
     ]))
   })
 
   test('run copies legacy echoflow-code files into echoflow storage without deleting sources', async () => {
-    const sourceProviders = path.join(tempDir, 'cc-haha', 'providers.json')
-    const sourceSettings = path.join(tempDir, 'cc-haha', 'settings.json')
+    const sourceProviders = path.join(tempDir, 'echoflow-code', 'providers.json')
+    const sourceSettings = path.join(tempDir, 'echoflow-code', 'settings.json')
     await writeJson(sourceProviders, {
       activeProviderId: 'provider-1',
       providers: [{
@@ -110,11 +110,11 @@ describe('legacy migration service', () => {
     await writeJson(sourceSettings, {
       env: {
         ANTHROPIC_AUTH_TOKEN: 'legacy-token',
-        CC_HAHA_IMAGE_PROVIDER_KIND: 'openai_images',
-        CC_HAHA_IMAGE_PROVIDER_ID: 'legacy-image-provider',
-        CC_HAHA_IMAGE_BASE_URL: 'https://images.example.test',
-        CC_HAHA_IMAGE_API_KEY: 'legacy-image-token',
-        CC_HAHA_IMAGE_MODEL: 'legacy-image-model',
+        ECHOFLOW_IMAGE_PROVIDER_KIND: 'openai_images',
+        ECHOFLOW_IMAGE_PROVIDER_ID: 'legacy-image-provider',
+        ECHOFLOW_IMAGE_BASE_URL: 'https://images.example.test',
+        ECHOFLOW_IMAGE_API_KEY: 'legacy-image-token',
+        ECHOFLOW_IMAGE_MODEL: 'legacy-image-model',
       },
     })
 
@@ -136,11 +136,11 @@ describe('legacy migration service', () => {
         ECHOFLOW_IMAGE_MODEL: 'legacy-image-model',
       },
     })
-    expect((await readJson(path.join(getEchoFlowInternalDir(tempDir), 'settings.json')) as { env: Record<string, string> }).env.CC_HAHA_IMAGE_MODEL).toBeUndefined()
+    expect((await readJson(path.join(getEchoFlowInternalDir(tempDir), 'settings.json')) as { env: Record<string, string> }).env.ECHOFLOW_IMAGE_MODEL).toBeUndefined()
   })
 
   test('run preserves the built-in OpenAI provider active id when copying legacy provider index', async () => {
-    await writeJson(path.join(tempDir, 'cc-haha', 'providers.json'), {
+    await writeJson(path.join(tempDir, 'echoflow-code', 'providers.json'), {
       activeId: 'openai-official',
       providers: [],
     })
@@ -148,7 +148,7 @@ describe('legacy migration service', () => {
     const result = await service().run()
 
     expect(result.items).toEqual(expect.arrayContaining([
-      expect.objectContaining({ source: 'current-cc-haha', target: 'providers', status: 'migrated' }),
+      expect.objectContaining({ source: 'current-echoflow-code', target: 'providers', status: 'migrated' }),
     ]))
     expect(await readJson(path.join(getEchoFlowInternalDir(tempDir), 'providers.json'))).toMatchObject({
       schemaVersion: 1,
@@ -158,7 +158,7 @@ describe('legacy migration service', () => {
   })
 
   test('invalid echoflow-code provider index does not block root provider fallback', async () => {
-    await writeJson(path.join(tempDir, 'cc-haha', 'providers.json'), {
+    await writeJson(path.join(tempDir, 'echoflow-code', 'providers.json'), {
       notProviders: true,
     })
     await writeJson(path.join(tempDir, 'providers.json'), {
@@ -176,7 +176,7 @@ describe('legacy migration service', () => {
     const result = await service().run()
 
     expect(result.items).toEqual(expect.arrayContaining([
-      expect.objectContaining({ source: 'current-cc-haha', target: 'providers', status: 'invalid' }),
+      expect.objectContaining({ source: 'current-echoflow-code', target: 'providers', status: 'invalid' }),
       expect.objectContaining({ source: 'current-root-providers', target: 'providers', status: 'migrated' }),
     ]))
     expect(await readJson(path.join(getEchoFlowInternalDir(tempDir), 'providers.json'))).toMatchObject({
@@ -185,7 +185,7 @@ describe('legacy migration service', () => {
   })
 
   test('current root providers take priority over legacy home echoflow-code providers', async () => {
-    await writeJson(path.join(legacyHomeDir, 'cc-haha', 'providers.json'), {
+    await writeJson(path.join(legacyHomeDir, 'echoflow-code', 'providers.json'), {
       activeId: 'home-provider',
       providers: [{
         id: 'home-provider',
@@ -214,7 +214,7 @@ describe('legacy migration service', () => {
       expect.objectContaining({ source: 'current-root-providers', target: 'providers', status: 'migrated' }),
     ]))
     expect(result.items).not.toEqual(expect.arrayContaining([
-      expect.objectContaining({ source: 'legacy-home-cc-haha', target: 'providers', status: 'migrated' }),
+      expect.objectContaining({ source: 'legacy-home-echoflow-code', target: 'providers', status: 'migrated' }),
     ]))
     expect(await readJson(path.join(getEchoFlowInternalDir(tempDir), 'providers.json'))).toMatchObject({
       activeId: 'current-provider',
@@ -222,10 +222,10 @@ describe('legacy migration service', () => {
   })
 
   test('does not mix legacy home files into a current config-dir migration', async () => {
-    await writeJson(path.join(tempDir, 'cc-haha', 'settings.json'), {
+    await writeJson(path.join(tempDir, 'echoflow-code', 'settings.json'), {
       env: { ANTHROPIC_AUTH_TOKEN: 'current-settings-token' },
     })
-    await writeJson(path.join(legacyHomeDir, 'cc-haha', 'providers.json'), {
+    await writeJson(path.join(legacyHomeDir, 'echoflow-code', 'providers.json'), {
       activeId: 'home-provider',
       providers: [{
         id: 'home-provider',
@@ -240,10 +240,10 @@ describe('legacy migration service', () => {
     const result = await service().run()
 
     expect(result.items).toEqual(expect.arrayContaining([
-      expect.objectContaining({ source: 'current-cc-haha', target: 'settings', status: 'migrated' }),
+      expect.objectContaining({ source: 'current-echoflow-code', target: 'settings', status: 'migrated' }),
     ]))
     expect(result.items).not.toEqual(expect.arrayContaining([
-      expect.objectContaining({ source: 'legacy-home-cc-haha', target: 'providers', status: 'migrated' }),
+      expect.objectContaining({ source: 'legacy-home-echoflow-code', target: 'providers', status: 'migrated' }),
     ]))
     await expect(fs.readFile(path.join(getEchoFlowInternalDir(tempDir), 'providers.json'), 'utf-8')).rejects.toThrow()
     expect(await readJson(path.join(getEchoFlowInternalDir(tempDir), 'settings.json'))).toMatchObject({
@@ -252,7 +252,7 @@ describe('legacy migration service', () => {
   })
 
   test('root provider conversion does not overwrite settings claimed by current echoflow-code settings', async () => {
-    await writeJson(path.join(tempDir, 'cc-haha', 'settings.json'), {
+    await writeJson(path.join(tempDir, 'echoflow-code', 'settings.json'), {
       env: { ANTHROPIC_AUTH_TOKEN: 'echoflow-code-token' },
     })
     await writeJson(path.join(tempDir, 'providers.json'), {
@@ -270,7 +270,7 @@ describe('legacy migration service', () => {
     const result = await service().run()
 
     expect(result.items).toEqual(expect.arrayContaining([
-      expect.objectContaining({ source: 'current-cc-haha', target: 'settings', status: 'migrated' }),
+      expect.objectContaining({ source: 'current-echoflow-code', target: 'settings', status: 'migrated' }),
       expect.objectContaining({ source: 'current-root-providers', target: 'providers', status: 'migrated' }),
     ]))
     expect(result.items).not.toEqual(expect.arrayContaining([
@@ -328,7 +328,7 @@ describe('legacy migration service', () => {
   })
 
   test('run skips existing targets without overwriting current data', async () => {
-    await writeJson(path.join(tempDir, 'cc-haha', 'settings.json'), {
+    await writeJson(path.join(tempDir, 'echoflow-code', 'settings.json'), {
       env: { ANTHROPIC_AUTH_TOKEN: 'legacy-token' },
     })
     await writeJson(path.join(getEchoFlowInternalDir(tempDir), 'settings.json'), {
@@ -347,7 +347,7 @@ describe('legacy migration service', () => {
 
   test('malformed legacy root providers are reported without blocking other ready items', async () => {
     await fs.writeFile(path.join(tempDir, 'providers.json'), '{"providers":', 'utf-8')
-    await writeJson(path.join(tempDir, 'cc-haha', 'settings.json'), {
+    await writeJson(path.join(tempDir, 'echoflow-code', 'settings.json'), {
       env: { USER_ONLY: '1' },
     })
 
@@ -355,7 +355,7 @@ describe('legacy migration service', () => {
 
     expect(result.items).toEqual(expect.arrayContaining([
       expect.objectContaining({ source: 'current-root-providers', target: 'providers', status: 'invalid' }),
-      expect.objectContaining({ source: 'current-cc-haha', target: 'settings', status: 'migrated' }),
+      expect.objectContaining({ source: 'current-echoflow-code', target: 'settings', status: 'migrated' }),
     ]))
   })
 
@@ -365,8 +365,8 @@ describe('legacy migration service', () => {
       await writeJson(path.join(outsideDir, 'settings.json'), {
         env: { ANTHROPIC_AUTH_TOKEN: 'outside-token' },
       })
-      await fs.mkdir(path.join(tempDir, 'cc-haha'), { recursive: true })
-      await fs.symlink(path.join(outsideDir, 'settings.json'), path.join(tempDir, 'cc-haha', 'settings.json'))
+      await fs.mkdir(path.join(tempDir, 'echoflow-code'), { recursive: true })
+      await fs.symlink(path.join(outsideDir, 'settings.json'), path.join(tempDir, 'echoflow-code', 'settings.json'))
 
       const result = await service().run()
 
@@ -382,7 +382,7 @@ describe('legacy migration service', () => {
   test('run rejects a symbolic-link migration target without writing its target', async () => {
     const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), 'legacy-migration-target-link-'))
     try {
-      await writeJson(path.join(tempDir, 'cc-haha', 'settings.json'), {
+      await writeJson(path.join(tempDir, 'echoflow-code', 'settings.json'), {
         env: { ANTHROPIC_AUTH_TOKEN: 'legacy-token' },
       })
       await fs.symlink(outsideDir, getEchoFlowInternalDir(tempDir), 'dir')
@@ -410,14 +410,14 @@ describe('legacy migration service', () => {
   test('API ignores caller-supplied paths', async () => {
     const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), 'legacy-migration-outside-'))
     try {
-      await writeJson(path.join(outsideDir, 'cc-haha', 'settings.json'), {
+      await writeJson(path.join(outsideDir, 'echoflow-code', 'settings.json'), {
         env: { ANTHROPIC_AUTH_TOKEN: 'outside-token' },
       })
 
       const res = await request('POST', '/api/echoflow/migration', {
         confirmed: true,
         legacyHomeConfigDir: outsideDir,
-        sourcePath: path.join(outsideDir, 'cc-haha', 'settings.json'),
+        sourcePath: path.join(outsideDir, 'echoflow-code', 'settings.json'),
       })
       const body = await res.json() as { items: Array<Record<string, unknown>> }
 

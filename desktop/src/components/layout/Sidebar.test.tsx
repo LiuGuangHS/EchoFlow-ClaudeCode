@@ -222,11 +222,11 @@ const PROJECT_PINNED_STORAGE_KEY = 'echoflow-code-sidebar-pinned-projects'
 const PROJECT_HIDDEN_STORAGE_KEY = 'echoflow-code-sidebar-hidden-projects'
 const PROJECT_ORGANIZATION_STORAGE_KEY = 'echoflow-code-sidebar-project-organization'
 const PROJECT_SORT_STORAGE_KEY = 'echoflow-code-sidebar-project-sort'
-const LEGACY_PROJECT_ORDER_STORAGE_KEY = 'cc-haha-sidebar-project-order'
-const LEGACY_PROJECT_PINNED_STORAGE_KEY = 'cc-haha-sidebar-pinned-projects'
-const LEGACY_PROJECT_HIDDEN_STORAGE_KEY = 'cc-haha-sidebar-hidden-projects'
-const LEGACY_PROJECT_ORGANIZATION_STORAGE_KEY = 'cc-haha-sidebar-project-organization'
-const LEGACY_PROJECT_SORT_STORAGE_KEY = 'cc-haha-sidebar-project-sort'
+const LEGACY_PROJECT_ORDER_STORAGE_KEY = 'echoflow-code-sidebar-project-order'
+const LEGACY_PROJECT_PINNED_STORAGE_KEY = 'echoflow-code-sidebar-pinned-projects'
+const LEGACY_PROJECT_HIDDEN_STORAGE_KEY = 'echoflow-code-sidebar-hidden-projects'
+const LEGACY_PROJECT_ORGANIZATION_STORAGE_KEY = 'echoflow-code-sidebar-project-organization'
+const LEGACY_PROJECT_SORT_STORAGE_KEY = 'echoflow-code-sidebar-project-sort'
 
 function makeSession(
   id: string,

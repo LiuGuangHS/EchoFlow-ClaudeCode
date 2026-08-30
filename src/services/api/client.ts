@@ -42,7 +42,7 @@ import {
 } from '../../utils/envUtils.js'
 
 export const ECHOFLOW_OPENAI_OAUTH_PROVIDER_ENV_KEY = 'ECHOFLOW_OPENAI_OAUTH_PROVIDER'
-const LEGACY_OPENAI_OAUTH_PROVIDER_ENV_KEY = 'CC_HAHA_OPENAI_OAUTH_PROVIDER'
+const LEGACY_OPENAI_OAUTH_PROVIDER_ENV_KEY = 'ECHOFLOW_OPENAI_OAUTH_PROVIDER'
 
 /**
  * Environment variables for different client types:

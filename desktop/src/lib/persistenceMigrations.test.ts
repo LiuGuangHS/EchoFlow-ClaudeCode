@@ -11,12 +11,12 @@ describe('desktop persistence migrations', () => {
   })
 
   test('copies allowlisted legacy localStorage keys without overwriting or deleting sources', () => {
-    window.localStorage.setItem('cc-haha-open-tabs', '{"openTabs":[{"sessionId":"session-1","title":"Legacy tab"}]}')
-    window.localStorage.setItem('cc-haha-session-runtime', '{"session-1":{"providerId":null,"modelId":"claude"}}')
-    window.localStorage.setItem('cc-haha-theme', 'dark')
-    window.localStorage.setItem('cc-haha-locale', 'en')
-    window.localStorage.setItem('cc-haha-ui-zoom', '1.25')
-    window.localStorage.setItem('cc-haha-dismissed-update-version', '0.3.2')
+    window.localStorage.setItem('echoflow-code-open-tabs', '{"openTabs":[{"sessionId":"session-1","title":"Legacy tab"}]}')
+    window.localStorage.setItem('echoflow-code-session-runtime', '{"session-1":{"providerId":null,"modelId":"claude"}}')
+    window.localStorage.setItem('echoflow-code-theme', 'dark')
+    window.localStorage.setItem('echoflow-code-locale', 'en')
+    window.localStorage.setItem('echoflow-code-ui-zoom', '1.25')
+    window.localStorage.setItem('echoflow-code-dismissed-update-version', '0.3.2')
     window.localStorage.setItem('echoflow-code-theme', 'white')
 
     const report = runDesktopPersistenceMigrations()
@@ -36,9 +36,9 @@ describe('desktop persistence migrations', () => {
     expect(window.localStorage.getItem('echoflow-code-theme')).toBe('white')
     expect(window.localStorage.getItem('echoflow-code-app-zoom')).toBe('1.25')
     expect(window.localStorage.getItem('echoflow-code-dismissed-update-version')).toBe('0.3.2')
-    expect(window.localStorage.getItem('cc-haha-open-tabs')).toBe('{"openTabs":[{"sessionId":"session-1","title":"Legacy tab"}]}')
-    expect(window.localStorage.getItem('cc-haha-dismissed-update-version')).toBe('0.3.2')
-    expect(window.localStorage.getItem('cc-haha-ui-zoom')).toBe('1.25')
+    expect(window.localStorage.getItem('echoflow-code-open-tabs')).toBe('{"openTabs":[{"sessionId":"session-1","title":"Legacy tab"}]}')
+    expect(window.localStorage.getItem('echoflow-code-dismissed-update-version')).toBe('0.3.2')
+    expect(window.localStorage.getItem('echoflow-code-ui-zoom')).toBe('1.25')
   })
 
   test('migrates legacy open-tab arrays into the current tab persistence shape', () => {

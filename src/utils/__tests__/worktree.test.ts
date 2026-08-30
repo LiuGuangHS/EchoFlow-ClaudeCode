@@ -241,7 +241,7 @@ describe('agent worktree isolation outside a repository', () => {
     savedOriginalCwd = getOriginalCwd()
     savedConfigDir = process.env.CLAUDE_CONFIG_DIR
 
-    plainTempDir = mkdtempSync(join(tmpdir(), 'cc-haha-plain-dir-'))
+    plainTempDir = mkdtempSync(join(tmpdir(), 'echoflow-code-plain-dir-'))
     plainDir = join(plainTempDir, 'stock')
     mkdirSync(plainDir, { recursive: true })
 

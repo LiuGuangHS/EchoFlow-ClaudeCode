@@ -387,7 +387,7 @@ describe('MessageList nested tool calls', () => {
   })
 
   it('keeps the ImageGen result as the only image owner when final Markdown repeats its managed path', () => {
-    const generatedPath = '/Users/me/.claude/cc-haha/generated-images/session/result.png'
+    const generatedPath = '/Users/me/.claude/echoflow-code/generated-images/session/result.png'
     render(<MessageList sessionId={ACTIVE_TAB} />)
     const store = useChatStore.getState()
 

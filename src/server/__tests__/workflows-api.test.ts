@@ -639,7 +639,7 @@ describe('Workflows API', () => {
           },
         },
         {
-          type: 'cc-haha-task-notification',
+          type: 'echoflow-code-task-notification',
           isMeta: true,
           timestamp: '2026-01-01T00:00:02.000Z',
           taskNotification: {
