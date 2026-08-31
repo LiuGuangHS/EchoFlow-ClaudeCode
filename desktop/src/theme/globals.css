@@ -1186,7 +1186,7 @@
    the third: it renders transparent, and only in that one theme. */
 :root {
   /* Layout dimensions */
-  --sidebar-width: 280px;
+  --sidebar-width: 320px;
   --sidebar-rail-width: 72px;
   --titlebar-height: 52px;
   --motion-sidebar-duration: 280ms;
@@ -1761,6 +1761,17 @@ button, input, textarea, select, a, [role="button"] {
 
 .app-shell-backdrop {
   background: var(--color-overlay-scrim);
+}
+
+.sidebar-title-region {
+  container-type: inline-size;
+  container-name: sidebar-title;
+}
+
+@container sidebar-title (max-width: 300px) {
+  .sidebar-panel[data-state="open"] .sidebar-brand-mark {
+    display: none;
+  }
 }
 
 .sidebar-shell {

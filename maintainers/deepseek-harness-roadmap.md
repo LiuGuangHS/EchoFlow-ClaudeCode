@@ -33,7 +33,7 @@ The module must not:
 | Managed runtime | `runtime/dsh/<version>/` |
 | Harness home | `data/`, passed as `DSH_HOME` |
 | Other directories | `logs/`, `downloads/`, `backups/` remain reserved; do not imply they are active until code uses them |
-| DSH package | `@deepseek-ai/dsh@0.1.0-rc.7` (fixed for this phase) |
+| DSH package | `@deepseek-ai/dsh@0.1.1-rc.2` (fixed for this phase) |
 | Node policy | Reuse an absolute system Node.js executable only when version `>=22.19.0` is available; do not reuse system DSH |
 | Installer | Use the npm executable beside the selected Node; do not use `npx` |
 | Network binding | `127.0.0.1` only |
@@ -59,9 +59,9 @@ These files are mixed with unrelated in-flight changes. A future implementation 
 
 ### DSH-0 — ownership and baseline audit
 
-State: current handoff gate.
+State: completed for the current branch; re-run when the dirty worktree changes.
 
-Before editing implementation, record the current `git status --short`, inspect all Harness files above, and run the narrow tests. Separate Harness changes from unrelated runtime, server, docs, and generated build changes. Do not stage or commit generated artifacts.
+The current branch baseline was inspected before editing. Harness-owned files were separated from the pre-existing sidecar development changes, and the package/version contract was reconciled to `0.1.1-rc.2`. The real DSH Web CLI was also verified in a temporary `DSH_HOME` with loopback-only binding and `--no-open`.
 
 Acceptance:
 
@@ -100,7 +100,9 @@ Acceptance:
 
 ### DSH-3 — complete process and window lifecycle
 
-State: partially implemented; needs end-to-end proof.
+State: implementation improved; end-to-end and cross-platform proof pending.
+
+The managed command now includes the official `--no-open` flag, and readiness failure uses the shared process-tree cleanup helper. Remaining work is real lifecycle evidence for timeout, child error, app quit, window close, stale ports, and Windows process-tree behavior.
 
 Verify start, readiness, open, stop, restart, child exit, startup timeout, window close, app quit, and stale-port behavior against the real DSH Web CLI. Keep the server on loopback and keep the BrowserWindow navigation allowlist tied to the active loopback origin.
 
@@ -130,9 +132,9 @@ Acceptance:
 
 ### DSH-5 — fix desktop startup and visible UI evidence
 
-State: blocked by the previously observed renderer `Failed to fetch` startup issue.
+State: renderer startup implementation present; visible Electron evidence pending.
 
-Reproduce and fix the dynamic local-server URL/IPC startup ordering before using the preview as Harness evidence. The known symptom was a healthy sidecar on a dynamic port while the renderer still polled the default `127.0.0.1:3456`. Trace `getServerUrl()`, preload exposure, `initializeDesktopServerUrl()`, AppShell startup, and background polling as one flow; do not treat repeated retry clicks as a fix.
+The current renderer already resolves the dynamic local-server URL before AppShell readiness and has focused regression coverage for explicit and dynamic URLs. Do not reopen the old `Failed to fetch` fix without reproducing it on the current branch. The remaining task is to validate the complete Electron flow with an isolated user-data directory and record any actual startup-order defect before changing code.
 
 Acceptance:
 
@@ -182,6 +184,28 @@ Acceptance for a future task:
 - trust, update, uninstall, rollback, and user-code execution risks are reviewed;
 - the UI boundary remains separate from EchoFlow Skills, MCP, Agents, and Plugins;
 - marketplace work has its own implementation and security review rather than being folded into DSH-1.
+
+## Actual development execution plan
+
+The following slices are the implementation queue for the current product boundary. Each slice must leave the deterministic checks green before the next dependent slice starts.
+
+| Slice | Scope | Depends on | Exit gate |
+| --- | --- | --- | --- |
+| A. Runtime contract | version constant, `--no-open`, process-tree cleanup, status transitions | DSH-0 | `cd desktop && bun test ./electron/services/deepseekHarnessRuntime.test.ts ./electron/main.security.test.ts`; `bun run check:electron` |
+| B. Installer hardening | npm adjacency validation, install interruption handling, launcher validation, bounded diagnostics, reproducibility decision | A | focused runtime tests plus isolated temporary install; no EchoFlow credentials in child env |
+| C. Lifecycle smoke | real start/readiness/stop/restart/child-exit and stale-port cases | B | Linux host-service smoke with orphan-process and data-root evidence |
+| D. Electron boundary | active-origin navigation, popup/redirect, permission denial, no-payload IPC, environment and persisted-state hostile fixtures | A | Electron security tests and manual security review |
+| E. Desktop visible flow | install -> start -> open -> close -> restart -> stop, browser/H5 absence | C and D | isolated Electron smoke with build, data root, URL, actions, and cleanup recorded |
+| F. Package verification | Linux artifacts first, Windows unpacked/NSIS path, development-file independence | E | package smoke per supported OS; unsigned/macOS limits recorded |
+| G. Documentation | Chinese/English parity for shipped behavior and limits | F | `bun run check:docs`; no marketplace or sandbox claims |
+
+### Feature-completion gate
+
+DeepSeek Harness is feature-complete for the current phase only when slices A-G pass, the system-Node prerequisite is documented, and the explicit non-goals below remain enforced. A green unit suite alone is not a release gate.
+
+### Remote integration track
+
+Provider, Agent Loop, session, credential, Skills, MCP, Agent, and Plugin integration is a separate product track. Before implementation, it requires a capability review, data ownership decision, threat model, migration plan, and an explicit product approval. It must not be smuggled into the lifecycle or installer slices.
 
 ## Required verification matrix
 

@@ -225,6 +225,9 @@ async function compileExecutable({
   }
 
   const outputPath = result.outputs[0]?.path ?? outfileBase
+  if (!(await Bun.file(outputPath).exists())) {
+    throw new Error(`[build-sidecars] Compiler reported success but did not produce ${outputPath}`)
+  }
   console.log(`[build-sidecars] ${productName} -> ${outputPath}`)
 
   // macOS Apple System Policy (ASP) requires valid code signatures on all

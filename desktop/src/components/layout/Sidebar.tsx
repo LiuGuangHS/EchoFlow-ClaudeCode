@@ -866,7 +866,7 @@ export function Sidebar({
       <div
         data-testid="sidebar-title-region"
         data-desktop-drag-region
-        className={`px-3 pb-2 ${isDesktopRuntime && !isWindows ? 'pt-[44px]' : 'pt-3'}`}
+        className={`sidebar-title-region px-3 pb-2 ${isDesktopRuntime && !isWindows ? 'pt-[44px]' : 'pt-3'}`}
       >
         <div className={`flex ${expanded ? 'items-center justify-between gap-3' : 'flex-col items-center gap-2'}`}>
           {/* The mark only stands in for the wordmark on the rail. Expanded,
@@ -879,7 +879,7 @@ export function Sidebar({
               the section's own `px-3` alone left it sticking out on its own.
               Collapsed, the mark is centered on the rail instead. */}
           <div className={`flex min-w-0 items-center ${expanded ? 'gap-2.5 pl-3' : 'justify-center'}`}>
-            <BrandSeal size="sm" />
+            <BrandSeal size="sm" className="sidebar-brand-mark" />
             {/* One form, at every width. The header used to carry "Claude Code
                 EchoFlow Code" and swap to this below ~230px of title region, which meant
                 the app answered to two names depending on how the sidebar was

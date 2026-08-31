@@ -77,7 +77,7 @@ describe('useSidebarResize', () => {
 
   it('publishes the stored width onto the shell', () => {
     render(<Harness />)
-    expect(SIDEBAR_DEFAULT_WIDTH).toBe(280)
+    expect(SIDEBAR_DEFAULT_WIDTH).toBe(320)
     expect(shellWidth()).toBe(SIDEBAR_DEFAULT_WIDTH)
   })
 

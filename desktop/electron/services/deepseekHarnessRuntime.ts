@@ -301,7 +301,7 @@ export class DeepSeekHarnessRuntime {
     const generation = ++this.generation
     this.currentStatus = status('starting', DSH_VERSION, url)
     try {
-      const child = this.deps.spawn(nodePath, [executable, 'web', '--host', '127.0.0.1', '--port', String(port)], {
+      const child = this.deps.spawn(nodePath, [executable, 'web', '--no-open', '--host', '127.0.0.1', '--port', String(port)], {
         cwd: harnessDataRoot(this.root),
         env: harnessEnvironment(harnessDataRoot(this.root)),
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -324,8 +324,9 @@ export class DeepSeekHarnessRuntime {
       return this.currentStatus
     } catch (error) {
       if (generation === this.generation) {
-        this.child?.kill()
+        const child = this.child
         this.child = null
+        if (child) killSidecar(child)
         const message = error instanceof Error ? error.message : String(error)
         this.currentStatus = status('error', DSH_VERSION, null, message)
       }

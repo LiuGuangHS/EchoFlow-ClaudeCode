@@ -48,7 +48,7 @@ function createRuntime(overrides: RuntimeDepsOverrides = {}) {
   })
 }
 
-async function seedInstalledRuntime(version = '0.1.0-rc.7'): Promise<string> {
+async function seedInstalledRuntime(version = '0.1.1-rc.2'): Promise<string> {
   const runtimeRoot = path.join(root, 'deepseek-harness', 'runtime', 'dsh', version)
   const launcher = path.join(runtimeRoot, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
   await fs.mkdir(path.dirname(launcher), { recursive: true })
@@ -120,8 +120,9 @@ describe('DeepSeekHarnessRuntime', () => {
     const [command, args, options] = spawn.mock.calls.at(-1)!
     expect(command).toBe('/usr/local/bin/node')
     expect(args).toEqual([
-      path.join(root, 'deepseek-harness', 'runtime', 'dsh', '0.1.0-rc.7', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
+      path.join(root, 'deepseek-harness', 'runtime', 'dsh', '0.1.1-rc.2', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
       'web',
+      '--no-open',
       '--host',
       '127.0.0.1',
       '--port',
@@ -145,6 +146,17 @@ describe('DeepSeekHarnessRuntime', () => {
     expect(spawn).toHaveBeenCalledTimes(1)
     expect(children[0]?.kill).toHaveBeenCalled()
     await expect(runtime.getStatus()).resolves.toMatchObject({ state: 'stopped' })
+  })
+
+  it('cleans up the managed process when readiness fails', async () => {
+    waitForUrl.mockRejectedValueOnce(new Error('readiness failed'))
+    const runtime = createRuntime()
+    await runtime.install()
+
+    await expect(runtime.start()).rejects.toThrow('readiness failed')
+
+    expect(children[0]?.kill).toHaveBeenCalledTimes(1)
+    await expect(runtime.getStatus()).resolves.toMatchObject({ state: 'error', error: 'readiness failed' })
   })
 
   it('does not replace a running Harness during an update', async () => {
@@ -199,7 +211,7 @@ describe('DeepSeekHarnessRuntime', () => {
 
     await expect(runtime.install()).rejects.toThrow('npm failed')
     expect(existsSync(path.join(runtimeRoot, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'))).toBe(true)
-    await expect(runtime.getStatus()).resolves.toMatchObject({ state: 'installed', version: '0.1.0-rc.7', error: 'npm failed' })
+    await expect(runtime.getStatus()).resolves.toMatchObject({ state: 'installed', version: '0.1.1-rc.2', error: 'npm failed' })
   })
 
   it('restores the existing runtime when promotion fails', async () => {
@@ -228,7 +240,7 @@ describe('DeepSeekHarnessRuntime', () => {
 
     await expect(runtime.install()).rejects.toThrow('promotion failed')
     expect(await fs.readFile(path.join(runtimeRoot, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'), 'utf8')).toBe('old launcher')
-    await expect(runtime.getStatus()).resolves.toMatchObject({ state: 'installed', version: '0.1.0-rc.7', error: 'promotion failed' })
+    await expect(runtime.getStatus()).resolves.toMatchObject({ state: 'installed', version: '0.1.1-rc.2', error: 'promotion failed' })
   })
 
   it('restores the existing runtime when state persistence fails', async () => {
@@ -253,7 +265,7 @@ describe('DeepSeekHarnessRuntime', () => {
 
     await expect(runtime.install()).rejects.toThrow('state failed')
     expect(await fs.readFile(path.join(runtimeRoot, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'), 'utf8')).toBe('old launcher')
-    await expect(runtime.getStatus()).resolves.toMatchObject({ state: 'installed', version: '0.1.0-rc.7', error: 'state failed' })
+    await expect(runtime.getStatus()).resolves.toMatchObject({ state: 'installed', version: '0.1.1-rc.2', error: 'state failed' })
   })
 
   it('returns to stopped when the running Harness exits', async () => {

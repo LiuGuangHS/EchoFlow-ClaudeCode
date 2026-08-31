@@ -35,6 +35,22 @@ function extractWindowsX64BunTarget(source: string) {
   return match?.[1] ?? null
 }
 
+describe('sidecar build configuration', () => {
+  it('builds the host sidecar before starting Electron development', () => {
+    const packageJson = readJson(path.resolve(import.meta.dirname, '../package.json'))
+    expect(packageJson.scripts?.['electron:dev']).toBe(
+      'bun run build:sidecars && bun run build:electron && bun run ./scripts/electron-dev.ts',
+    )
+  })
+
+  it('checks that the compiler actually wrote the sidecar executable', () => {
+    expect(readBuildScript()).toContain(
+      'Compiler reported success but did not produce',
+    )
+    expect(readBuildScript()).toContain('await Bun.file(outputPath).exists()')
+  })
+})
+
 type SidecarProcess = {
   child: ChildProcessWithoutNullStreams
   exited: Promise<{ code: number | null; signal: NodeJS.Signals | null }>

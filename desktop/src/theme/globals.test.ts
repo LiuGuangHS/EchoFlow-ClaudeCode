@@ -153,7 +153,7 @@ describe('desktop theme tokens', () => {
   })
 
   it('keeps the startup sidebar width aligned with the compact store default', () => {
-    expect(getThemeBlock(':root')).toContain('--sidebar-width: 280px;')
+    expect(getThemeBlock(':root')).toContain('--sidebar-width: 320px;')
   })
 
   it('gives each theme its own color-scheme so native controls match the ground', () => {
