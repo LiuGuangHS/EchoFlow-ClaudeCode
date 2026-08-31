@@ -23,7 +23,7 @@
     "dingtalk-stream": "2.1.4",
     "grammy": "^1.42.0",
     "pino": "^9.6.0",
-    "undici": "^7.24.6",
+    "undici": "^8.10.0",
     "ws": "^8.18.0"
   },
   "overrides": {
