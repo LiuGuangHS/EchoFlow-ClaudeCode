@@ -196,7 +196,7 @@ jobs:
         run: bun run check:agent-flow
       - name: Upload agent flow artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: agent-flow
           path: artifacts/agent-flow/
@@ -318,7 +318,7 @@ jobs:
           fi
       - name: Upload coverage report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-report
           path: artifacts/coverage/

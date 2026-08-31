@@ -457,7 +457,7 @@ jobs:
       - name: Upload unsigned Windows application executables
         if: matrix.smoke_platform == 'windows' && needs.signing-preflight.outputs.windows_signed == 'true'
         id: upload-unsigned-signpath-application
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: signpath-unsigned-application-${{ matrix.arch }}
           path: ${{ steps.stage-signpath-application.outputs.stage_dir }}
@@ -533,7 +533,7 @@ jobs:
       - name: Upload unsigned Windows installer
         if: matrix.smoke_platform == 'windows' && needs.signing-preflight.outputs.windows_signed == 'true'
         id: upload-unsigned-signpath-installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: signpath-unsigned-installer-${{ matrix.arch }}
           path: ${{ steps.stage-signpath-installer.outputs.stage_dir }}
@@ -679,14 +679,14 @@ jobs:
           done
 
       - name: Upload update metadata for merge
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: desktop-update-metadata-${{ matrix.label }}
           path: desktop/build-artifacts/electron/latest*.yml
           if-no-files-found: ignore
 
       - name: Upload release artifacts for final publish
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: desktop-release-artifacts-${{ matrix.label }}
           path: |
