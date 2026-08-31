@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.60.0",
-    "@whiskeysockets/baileys": "7.0.0-rc.9",
+    "@whiskeysockets/baileys": "7.0.0-rc14",
     "dingtalk-stream": "2.1.4",
     "grammy": "^1.42.0",
     "pino": "^9.6.0",
