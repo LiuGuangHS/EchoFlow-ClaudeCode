@@ -3,6 +3,7 @@ import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { handleEchoFlowApi } from '../api/echoflow.js'
+import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 
 let temporaryConfigDir: string
 let previousConfigDir: string | undefined
@@ -57,6 +58,28 @@ describe('EchoFlow account API', () => {
     } finally {
       globalThis.fetch = originalFetch
     }
+  })
+
+  test('migrates the legacy account file to the EchoFlow account file on read', async () => {
+    const internalDir = getEchoFlowInternalDir(temporaryConfigDir)
+    const legacyPath = path.join(internalDir, 'qingyun-account.json')
+    const currentPath = path.join(internalDir, 'echoflow-account.json')
+    await fs.mkdir(internalDir, { recursive: true })
+    await fs.writeFile(legacyPath, JSON.stringify({
+      userId: '106452',
+      managementToken: 'management-token',
+      username: 'echo',
+    }))
+
+    const req = new Request('http://localhost:3456/api/echoflow', { method: 'GET' })
+    const url = new URL(req.url)
+    const response = await handleEchoFlowApi(req, url, url.pathname.split('/').filter(Boolean))
+    const body = await response.json() as { account: { userId: string; username: string } }
+
+    expect(response.status).toBe(200)
+    expect(body.account).toEqual({ userId: '106452', username: 'echo' })
+    expect(await fs.readFile(currentPath, 'utf-8')).toContain('management-token')
+    await expect(fs.access(legacyPath)).rejects.toThrow()
   })
 
   test('classifies management-token auth failures as token_invalid', async () => {

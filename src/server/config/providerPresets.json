@@ -15,8 +15,8 @@
   },
   {
     "id": "echoflowai",
-    "name": "清云 API",
-    "baseUrl": "https://api.echoflow.cn",
+    "name": "EchoFlow API",
+    "baseUrl": "https://api.echoflowai.cc",
     "apiFormat": "anthropic",
     "defaultModels": {
       "main": "claude-sonnet-4-6",
@@ -25,8 +25,8 @@
       "opus": "claude-opus-4-7"
     },
     "needsApiKey": true,
-    "websiteUrl": "https://api.echoflow.cn/",
-    "apiKeyUrl": "https://api.echoflow.cn/register",
+    "websiteUrl": "https://api.echoflowai.cc/",
+    "apiKeyUrl": "https://api.echoflowai.cc/register",
     "promoText": "一站式接入 500+ 模型，支持 Claude / OpenAI 协议，访问高速稳定。新用户注册赠送试用。",
     "featured": true,
     "authStrategy": "auth_token",

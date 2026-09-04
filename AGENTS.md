@@ -27,8 +27,8 @@ The repository contract is tool-independent: run `bun run check:impact` for scop
 - Public/release brand: `EchoFlow Code`; executable/docs: `echoflow-code`.
 - When touching fork-owned identifiers, convert `cc-haha` → `echoflow`, `Claude-Code-Haha` → `EchoFlow-Code`, and `CC_HAHA_*` → `ECHOFLOW_*`. Retain historical names only for explicit compatibility, attribution, migration fixtures, or supported variables.
 - Retain upstream `Claude Code`, `Claude CLI`, `claude-code-*`, and `CLAUDE_CODE_*` terminology for upstream/runtime compatibility.
-- Fork calls to action and service links use EchoFlow surfaces, including `https://code.echoflow.cn/` and `https://api.echoflow.cn/`.
-- `src/server/config/providerPresets.json` contains only official vendor APIs, official local integrations, EchoFlow/Qingyun API, and custom. Do not automatically add third-party relay, sponsor/referral gateway, or promotional provider presets; reject (`jiekouai`, `shengsuanyun`, `teamorouter`) and referral URLs. Official vendor APIs and official OAuth integrations, including Grok Official, may be synchronized from upstream; private gateways use custom.
+- Fork calls to action and service links use EchoFlow surfaces, including `https://code.echoflow.cn/` and `https://api.echoflowai.cc/`.
+- `src/server/config/providerPresets.json` contains only official vendor APIs, official local integrations, EchoFlow API, and custom. Do not automatically add third-party relay, sponsor/referral gateway, or promotional provider presets; reject (`jiekouai`, `shengsuanyun`, `teamorouter`) and referral URLs. Official vendor APIs and official OAuth integrations, including Grok Official, may be synchronized from upstream; private gateways use custom.
 
 ## Safe Upstream Sync Workflow
 These are repository policies, not guarantees enforced by Git. Use them for every upstream merge.

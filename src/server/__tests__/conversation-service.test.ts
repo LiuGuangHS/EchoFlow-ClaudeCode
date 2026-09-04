@@ -1024,7 +1024,7 @@ describe('ConversationService', () => {
       presetId: 'echoflowai',
       name: 'EchoFlow API',
       apiKey: 'provider-key',
-      baseUrl: 'https://api.echoflow.cn',
+      baseUrl: 'https://api.echoflowai.cc',
       apiFormat: 'anthropic',
       models: {
         main: 'claude-sonnet-4-6',
@@ -1040,7 +1040,7 @@ describe('ConversationService', () => {
       model: 'claude-sonnet-4-6',
     })) as Record<string, string>
 
-    expect(env.ANTHROPIC_BASE_URL).toBe('https://api.echoflow.cn')
+    expect(env.ANTHROPIC_BASE_URL).toBe('https://api.echoflowai.cc')
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe('provider-key')
     expect(env.ANTHROPIC_API_KEY).toBe('')
     expect(env.ANTHROPIC_MODEL).toBe('claude-sonnet-4-6')

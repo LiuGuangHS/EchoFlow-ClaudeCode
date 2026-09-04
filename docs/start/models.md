@@ -43,7 +43,7 @@ EchoFlow Code 自己不带模型，它只是那个替你干活的壳。装完之
 
 内置预设（按弹窗里的排列）：
 
-- **清云（EchoFlow）API** — EchoFlow 自有服务入口。
+- **EchoFlow API** — EchoFlow 自有服务入口。
 - **DeepSeek** · **Zhipu GLM** · **Kimi** · **MiniMax** — 官方模型厂商 API，接口地址是各家的 Anthropic 兼容端点。
 - **LM Studio** · **Ollama** — 官方本地模型集成，见下一节。
 - **Custom** — 上面都没有，自己填。

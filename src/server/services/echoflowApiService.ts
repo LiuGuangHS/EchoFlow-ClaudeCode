@@ -54,7 +54,7 @@ type StoredEchoFlowAccount = {
 }
 
 export class EchoFlowApiService {
-  constructor(private baseUrl = 'https://api.echoflow.cn') {}
+  constructor(private baseUrl = 'https://api.echoflowai.cc') {}
 
   async getAccount(): Promise<EchoFlowAccount | null> {
     const account = await this.readAccount()
@@ -147,6 +147,10 @@ export class EchoFlowApiService {
   }
 
   private getAccountPath(): string {
+    return path.join(getEchoFlowInternalDir(getEchoFlowConfigDir()), 'echoflow-account.json')
+  }
+
+  private getLegacyAccountPath(): string {
     return path.join(getEchoFlowInternalDir(getEchoFlowConfigDir()), 'qingyun-account.json')
   }
 
@@ -154,6 +158,18 @@ export class EchoFlowApiService {
     try {
       const parsed = JSON.parse(await fs.readFile(this.getAccountPath(), 'utf-8')) as unknown
       return isStoredAccount(parsed) ? parsed : null
+    } catch (error) {
+      if (errnoCode(error) !== 'ENOENT') throw error
+    }
+
+    try {
+      const parsed = JSON.parse(await fs.readFile(this.getLegacyAccountPath(), 'utf-8')) as unknown
+      if (!isStoredAccount(parsed)) return null
+      await this.writeAccount(parsed)
+      await fs.unlink(this.getLegacyAccountPath()).catch((error) => {
+        if (errnoCode(error) !== 'ENOENT') throw error
+      })
+      return parsed
     } catch (error) {
       if (errnoCode(error) === 'ENOENT') return null
       throw error

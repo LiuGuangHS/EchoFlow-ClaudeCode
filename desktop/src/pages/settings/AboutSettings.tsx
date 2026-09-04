@@ -37,8 +37,8 @@ const GITHUB_ISSUES = `${GITHUB_REPO}/issues`
 const GITHUB_RELEASES = `${GITHUB_REPO}/releases`
 const AUTHOR_GITHUB = 'https://github.com/LiuGuangHS'
 const SOCIAL_LINKS = [
-  { name: 'Bilibili', icon: '/icons/bilibili.svg', url: 'https://space.bilibili.com/2095003664', label: '清云AI' },
-  { name: 'Douyin', icon: '/icons/douyin.svg', url: 'https://www.douyin.com/user/MS4wLjABAAAAexLOuNgktpQZWZCsVXvAtA7-kCOA8sAlavNcFU_7EdA', label: '清云AI' },
+  { name: 'Bilibili', icon: '/icons/bilibili.svg', url: 'https://space.bilibili.com/2095003664', label: 'EchoFlow AI' },
+  { name: 'Douyin', icon: '/icons/douyin.svg', url: 'https://www.douyin.com/user/MS4wLjABAAAAexLOuNgktpQZWZCsVXvAtA7-kCOA8sAlavNcFU_7EdA', label: 'EchoFlow AI' },
 ] as const
 
 export function AboutSettings() {

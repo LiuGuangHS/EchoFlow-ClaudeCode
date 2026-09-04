@@ -265,8 +265,8 @@ export function ProviderSettings() {
         <div className="flex items-center gap-4 px-4 py-3.5">
           <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${activeId && providers.some((provider) => provider.id === activeId && provider.presetId === 'echoflowai') ? 'bg-[var(--color-success)]' : 'bg-[var(--color-text-tertiary)]'}`} />
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold text-[var(--color-text-primary)]">清云 API 官方</div>
-            <div className="mt-0.5 text-xs text-[var(--color-text-tertiary)]">https://api.echoflow.cn · Claude / OpenAI 兼容协议</div>
+            <div className="text-sm font-semibold text-[var(--color-text-primary)]">EchoFlow API 官方</div>
+            <div className="mt-0.5 text-xs text-[var(--color-text-tertiary)]">https://api.echoflowai.cc · Claude / OpenAI 兼容协议</div>
           </div>
         </div>
         <div className="border-t border-[var(--color-border-separator)] px-4 pb-4 pt-3">

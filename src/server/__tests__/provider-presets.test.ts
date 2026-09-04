@@ -75,7 +75,7 @@ describe('provider presets API', () => {
     const minimax = byId.get('minimax')
 
     expect(echoflow).toMatchObject({
-      baseUrl: 'https://api.echoflow.cn',
+      baseUrl: 'https://api.echoflowai.cc',
       authStrategy: 'auth_token',
       defaultModels: {
         main: 'claude-sonnet-4-6',

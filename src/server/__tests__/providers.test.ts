@@ -821,7 +821,7 @@ describe('ProviderService', () => {
       const provider = await svc.addProvider(sampleInput({
         presetId: 'echoflowai',
         name: 'EchoFlowAPI',
-        baseUrl: 'https://api.echoflow.cn',
+        baseUrl: 'https://api.echoflowai.cc',
         models: {
           main: 'claude-sonnet-4-6',
           haiku: 'claude-haiku-4-5',
@@ -834,7 +834,7 @@ describe('ProviderService', () => {
 
       const settings = await readSettings()
       const env = settings.env as Record<string, string>
-      expect(env.ANTHROPIC_BASE_URL).toBe('https://api.echoflow.cn')
+      expect(env.ANTHROPIC_BASE_URL).toBe('https://api.echoflowai.cc')
       expect(env.ANTHROPIC_AUTH_TOKEN).toBe('sk-test-key-123')
       expect(env.ANTHROPIC_MODEL).toBe('claude-sonnet-4-6')
       expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-haiku-4-5')
