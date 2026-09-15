@@ -544,29 +544,31 @@ export function ContextUsageIndicator({
         onClick={handleTriggerClick}
         title={t('contextIndicator.title')}
         data-testid="context-usage-indicator"
-        className={`flex shrink-0 items-center gap-[7px] rounded-full border border-[var(--color-border)] bg-transparent text-[var(--color-text-secondary)] transition-[background-color,color,border-color] duration-150 ease-out hover:border-[var(--color-outline)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface-container-lowest)] ${
-          isMobileBrowser ? 'h-11' : 'h-8'
-        } ${compact ? 'px-2' : 'px-3'} ${detailsOpen ? 'border-[var(--color-outline)] bg-[var(--color-surface-hover)] text-[var(--color-text-primary)]' : ''}`}
+        className={`group grid shrink-0 place-items-center rounded-full bg-transparent text-[var(--color-text-secondary)] transition-[background-color,color] duration-150 ease-out hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface-container-lowest)] ${
+          isMobileBrowser ? 'h-11 w-11' : 'h-8 w-8'
+        } ${detailsOpen ? 'bg-[var(--color-surface-hover)] text-[var(--color-text-primary)]' : ''}`}
       >
-        <span className="relative grid h-[18px] w-[18px] shrink-0 place-items-center rounded-full">
+        <span className={`relative grid shrink-0 place-items-center rounded-full ${isMobileBrowser ? 'h-[22px] w-[22px]' : 'h-5 w-5'}`}>
           {loading && !displayContext ? (
             <span className="absolute inset-[2px] rounded-full border-2 border-[var(--color-text-tertiary)] border-t-transparent motion-safe:animate-spin" />
           ) : (
             <span
-              className="relative grid h-[18px] w-[18px] place-items-center rounded-full"
+              className={`relative grid place-items-center rounded-full ${isMobileBrowser ? 'h-[22px] w-[22px]' : 'h-5 w-5'}`}
               style={ringStyle}
             >
-              <span className="absolute inset-[3px] rounded-full bg-[var(--color-surface-container-lowest)]" />
+              <span className={`absolute inset-[3.5px] rounded-full transition-colors duration-150 ${
+                detailsOpen
+                  ? 'bg-[var(--color-surface-hover)]'
+                  : 'bg-[var(--color-surface-container-lowest)] group-hover:bg-[var(--color-surface-hover)]'
+              }`} />
               <span
-                className="relative h-[5px] w-[5px] rounded-full"
+                className="relative h-1.5 w-1.5 rounded-full"
                 style={{ backgroundColor: displayContext ? strokeColor : 'var(--color-text-tertiary)' }}
               />
             </span>
           )}
         </span>
-        <span className="font-mono text-[11px] font-semibold tabular-nums">
-          {displayPercent}
-        </span>
+        <span className="sr-only">{displayPercent}</span>
       </button>
 
       {!preferSheet && detailsOpen && popoverPosition && createPortal(

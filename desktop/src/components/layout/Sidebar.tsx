@@ -1252,6 +1252,7 @@ export function Sidebar({
                   ? []
                   : getVisibleProjectSessions(project.sessions, sessionsExpanded, activeTabId)
                 const hiddenCount = project.sessions.length - visibleItems.length
+                const showSessionFoldControl = project.sessions.length > PROJECT_GROUP_VISIBLE_COUNT
                 const groupIds = project.sessions.map((session) => session.id)
                 const groupSelectedCount = groupIds.filter((id) => selectedSessionIds.has(id)).length
                 const history = projectHistory[project.key]
@@ -1460,7 +1461,7 @@ export function Sidebar({
                             </div>
                           ))}
                         </ProjectSessionList>
-                        {(hiddenCount > 0 || sessionsExpanded) && (
+                        {showSessionFoldControl && (
                           <div className="mt-2 flex justify-start px-2.5">
                             <button
                               type="button"

@@ -635,7 +635,7 @@ describe('ContextUsageIndicator touch target', () => {
     render(<ContextUsageIndicator sessionId="session-1" chatState="idle" messageCount={1} compact />)
 
     const trigger = screen.getByTestId('context-usage-indicator')
-    expect(trigger).toHaveClass('h-8')
+    expect(trigger).toHaveClass('h-8', 'w-8')
     expect(trigger).not.toHaveClass('h-11')
   })
 
@@ -646,7 +646,7 @@ describe('ContextUsageIndicator touch target', () => {
     render(<ContextUsageIndicator sessionId="session-1" chatState="idle" messageCount={1} compact />)
 
     const trigger = screen.getByTestId('context-usage-indicator')
-    expect(trigger).toHaveClass('h-11')
+    expect(trigger).toHaveClass('h-11', 'w-11')
     expect(trigger).not.toHaveClass('h-8')
   })
 
@@ -700,6 +700,9 @@ describe('ContextUsageIndicator presentation', () => {
     await waitFor(() => {
       expect(screen.getByTestId('context-usage-indicator')).toHaveTextContent('21%')
     })
+    const trigger = screen.getByTestId('context-usage-indicator')
+    expect(trigger).toHaveClass('h-8', 'w-8')
+    expect(trigger.querySelector('.font-mono')).not.toBeInTheDocument()
     expect(screen.queryByTestId('context-usage-popover')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('context-usage-indicator'))

@@ -588,6 +588,54 @@ describe('Sidebar', () => {
     expect(screen.getByRole('button', { name: 'Collapse display' })).toBeInTheDocument()
   })
 
+  it('does not show a fold control when a project is at or below the collapse threshold', () => {
+    const base = new Date('2026-05-15T10:00:00.000Z').getTime()
+    useSessionStore.setState({
+      sessions: [
+        ...Array.from({ length: 6 }, (_, index) => (
+          makeSession(
+            `alpha-${index + 1}`,
+            `Alpha ${index + 1}`,
+            '/workspace/alpha',
+            new Date(base - index * 1000).toISOString(),
+          )
+        )),
+        makeSession('beta-1', 'Beta only', '/workspace/beta', new Date(base - 7000).toISOString()),
+      ],
+    })
+
+    render(<Sidebar />)
+
+    expect(screen.getByRole('button', { name: /Alpha 1/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Alpha 6/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Beta only/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Expand display' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Collapse display' })).not.toBeInTheDocument()
+  })
+
+  it('does not show a fold control after a short project is auto-expanded for history', () => {
+    useSessionStore.setState({
+      sessions: [
+        makeSession('alpha-1', 'Alpha one', '/workspace/alpha', '2026-05-15T10:00:00.000Z'),
+        makeSession('alpha-2', 'Alpha two', '/workspace/alpha', '2026-05-14T10:00:00.000Z'),
+      ],
+    })
+
+    render(<Sidebar />)
+
+    const scroller = screen.getByTestId('sidebar-project-session-list-workspace-alpha')
+    Object.defineProperties(scroller, {
+      clientHeight: { configurable: true, value: 80 },
+      scrollHeight: { configurable: true, value: 80 },
+    })
+    fireEvent.wheel(scroller, { deltaY: 20 })
+
+    expect(screen.getByRole('button', { name: /Alpha one/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Alpha two/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Expand display' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Collapse display' })).not.toBeInTheDocument()
+  })
+
   it('lets a manual session refresh supersede a stuck automatic refresh', async () => {
     fetchSessions.mockReturnValue(new Promise(() => {}))
 
