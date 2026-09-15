@@ -1634,6 +1634,40 @@ describe('TabBar', () => {
     expect(frame).toContainElement(gutter)
   })
 
+  it('keeps the open workspace header as window chrome instead of a no-drag tab strip', async () => {
+    const { TabBar } = await import('./TabBar')
+    const { useTabStore } = await import('../../stores/tabStore')
+    const { useChatStore } = await import('../../stores/chatStore')
+    const { useWorkspaceStore } = await import('../../stores/workspaceStore')
+    const { WorkspaceHeaderProvider } = await import('./WorkspaceHeaderContext')
+    const sessionId = 'header-drag-session'
+
+    useTabStore.setState({
+      tabs: [{ sessionId, title: 'Header drag session', type: 'session', status: 'idle' }],
+      activeTabId: sessionId,
+    })
+    useChatStore.setState({
+      sessions: {},
+      disconnectSession: vi.fn(),
+    } as Partial<ReturnType<typeof useChatStore.getState>>)
+
+    await act(async () => {
+      render(<WorkspaceHeaderProvider><TabBar /></WorkspaceHeaderProvider>)
+    })
+    await act(async () => {
+      useWorkspaceStore.getState().toggleWorkspace(sessionId)
+    })
+
+    const slot = screen.getByTestId('workspace-header-slot')
+    const header = screen.getByTestId('workspace-window-header')
+    // `tab-bar-interactive` marks the node *and every descendant* as no-drag.
+    // The slot hosts the resource strip's leftover flex space, so that class
+    // would make the circled empty titlebar undraggable on every platform.
+    expect(slot).toHaveAttribute('data-desktop-drag-region')
+    expect(slot.className).not.toMatch(/\btab-bar-interactive\b/)
+    expect(header).toHaveAttribute('data-desktop-drag-region')
+  })
+
   it('lifts the active tab onto the paper ground without turning it into a pill', async () => {
     const { TabBar } = await import('./TabBar')
     const { useTabStore } = await import('../../stores/tabStore')
