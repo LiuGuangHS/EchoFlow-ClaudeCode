@@ -45,6 +45,34 @@ These are repository policies, not guarantees enforced by Git. Use them for ever
 8. After writing conflict resolutions, run `/ecc:code-review` and `/ecc:quality-gate` before asking the developer to stage or commit. If a build or type check fails, use `/ecc:build-fix`, rerun the narrow failed check, and run `bun run verify` before claiming the merge push-ready.
 9. Push `main` before or together with release tags, then verify the remote branch and tag targets.
 
+### Automated Release Tracking
+
+`.github/workflows/upstream-sync.yml` tracks upstream *releases* (`vX.Y.Z` tags), not
+upstream `main`, so a development tip never becomes a sync target. Each new release
+becomes a pull request against `main` titled `chore: sync upstream vX.Y.Z`.
+
+- The fork's own version comes from `desktop/package.json`. Upstream tags are read over
+  `git ls-remote` and fetched into `refs/remotes/upstream-release/`, never into the tag
+  namespace, because upstream and fork release tags share names.
+- The sync branch points at the upstream release commit, so the PR is a plain
+  `sync/upstream-vX.Y.Z -> main` and GitHub computes the merge when the PR opens.
+- A conflicting release still opens a PR, as a draft, with the conflicting files listed
+  in the body. Git refuses to commit an unresolved merge, so there is no conflicted
+  commit to push; the resolution belongs in the PR.
+- The workflow never resolves, stages, or commits a conflict. That stays with the
+  developer, per item 9 above.
+
+Local commands:
+
+| Command | Effect |
+| --- | --- |
+| `bun run upstream:check` | Read-only probe. Reports the verdict, changes nothing. |
+| `bun run upstream:resolve` | Fetches the sync branch and merges `main` into it locally, leaving conflicts in the tree. |
+| `bun run upstream:sync` | Pushes the sync branch so the PR can be opened. |
+
+The workflow refuses to overwrite a sync branch that holds different content, so a
+maintainer's resolution is never clobbered by the next scheduled run.
+
 ## Engineering Behavior Guardrails
 These rules are adapted from Karpathy-style coding-agent guidelines. They bias toward caution and simplicity, but do not override the autonomy rule for clear, reversible work.
 
