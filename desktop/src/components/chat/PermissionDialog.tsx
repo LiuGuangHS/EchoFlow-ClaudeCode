@@ -21,6 +21,7 @@ type Props = {
   toolName: string
   input: unknown
   description?: string
+  displayName?: string
 }
 
 /**
@@ -80,19 +81,27 @@ function extractToolDetails(toolName: string, input: unknown, t: (key: Translati
   }
 }
 
-function getPermissionTitle(toolName: string, input: unknown, t: (key: TranslationKey, params?: Record<string, string | number>) => string) {
+function getPermissionTitle(
+  toolName: string,
+  input: unknown,
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string,
+  displayName?: string,
+) {
   const obj = (input && typeof input === 'object') ? input as Record<string, unknown> : {}
   const filePath = typeof obj.file_path === 'string' ? obj.file_path : ''
   const fileName = filePath ? filePath.split('/').pop() || filePath : ''
+  const actor = displayName || 'Claude'
 
   switch (toolName) {
     case 'Edit':
     case 'Write':
-      return fileName ? t('permission.allowEditFile', { toolName, fileName }) : t('permission.allowEditFileGeneric', { toolName: toolName.toLowerCase() })
+      return fileName
+        ? t('permission.allowEditFile', { actor, toolName, fileName })
+        : t('permission.allowEditFileGeneric', { actor, toolName: toolName.toLowerCase() })
     case 'Bash':
-      return t('permission.allowBash')
+      return t('permission.allowBash', { actor })
     default:
-      return t('permission.allowTool', { toolName })
+      return t('permission.allowTool', { actor, toolName })
   }
 }
 
@@ -121,7 +130,7 @@ function renderPermissionPreview(toolName: string, input: unknown) {
   return null
 }
 
-export function PermissionDialog({ sessionId, requestId, toolName, input, description }: Props) {
+export function PermissionDialog({ sessionId, requestId, toolName, input, description, displayName }: Props) {
   const { respondToPermission } = useChatStore()
   const activeTabId = useTabStore((s) => s.activeTabId)
   const targetSessionId = sessionId ?? activeTabId
@@ -148,7 +157,7 @@ export function PermissionDialog({ sessionId, requestId, toolName, input, descri
   const details = extractToolDetails(toolName, input, t)
   const rawInput = typeof input === 'string' ? input : JSON.stringify(input, null, 2)
   const preview = renderPermissionPreview(toolName, input)
-  const title = getPermissionTitle(toolName, input, t)
+  const title = getPermissionTitle(toolName, input, t, displayName)
   const allowRawToggle = !preview
   const permissionContext = (details.primary || description || toolName).slice(0, 160)
 

@@ -357,6 +357,10 @@ import {
   markMessagesAsRead,
   isShutdownApproved,
 } from '../utils/teammateMailbox.js'
+import {
+  partitionLeadMailboxMessages,
+  resolveTeammatePermissionRequests,
+} from '../utils/swarm/printLeaderPermissionBridge.js'
 import { removeTeammateFromTeamFile } from '../utils/swarm/teamHelpers.js'
 import { unassignTeammateTasks } from '../utils/tasks.js'
 import { getRunningTasks } from '../utils/task/framework.js'
@@ -891,7 +895,11 @@ export async function runHeadless(
     getAppState,
     setAppState,
     agents,
-    options,
+    {
+      ...options,
+      hostPermissionPromptAvailable:
+        effectivePermissionPromptToolName === 'stdio',
+    },
     turnInterruptionState,
   )) {
     partialOutputTracker.observe(message)
@@ -1017,6 +1025,7 @@ function runHeadlessStreaming(
     verbose: boolean | undefined
     jsonSchema: Record<string, unknown> | undefined
     permissionPromptToolName: string | undefined
+    hostPermissionPromptAvailable?: boolean
     allowedTools: string[] | undefined
     thinkingConfig: ThinkingConfig | undefined
     maxTurns: number | undefined
@@ -2564,10 +2573,29 @@ function runHeadlessStreaming(
               refreshedState.teamContext?.teamName,
             )
 
+            const teamName = refreshedState.teamContext?.teamName
+            const partitioned = partitionLeadMailboxMessages(unread)
+
+            if (
+              partitioned.permissionRequests.length > 0 ||
+              partitioned.sandboxPermissionRequests.length > 0
+            ) {
+              logForDebugging(
+                `[print.ts] Routing ${partitioned.permissionRequests.length} teammate permission request(s) and ${partitioned.sandboxPermissionRequests.length} sandbox request(s) to the host`,
+              )
+              void resolveTeammatePermissionRequests({
+                host: structuredIO,
+                canPromptHost: options.hostPermissionPromptAvailable === true,
+                teamName,
+                permissionRequests: partitioned.permissionRequests,
+                sandboxPermissionRequests:
+                  partitioned.sandboxPermissionRequests,
+              })
+            }
+
             // Process shutdown_approved messages - remove teammates from team file
             // This mirrors what useInboxPoller does in interactive mode (lines 546-606)
-            const teamName = refreshedState.teamContext?.teamName
-            for (const m of unread) {
+            for (const m of partitioned.remaining) {
               const shutdownApproval = isShutdownApproved(m.text)
               if (shutdownApproval && teamName) {
                 const teammateToRemove = shutdownApproval.from
@@ -2618,8 +2646,13 @@ function runHeadlessStreaming(
               }
             }
 
-            // Format messages same as useInboxPoller
-            const formatted = unread
+            if (partitioned.remaining.length === 0) {
+              continue
+            }
+
+            // Format remaining teammate chat the same way as useInboxPoller.
+            // Permission requests stay out of the model context.
+            const formatted = partitioned.remaining
               .map(
                 (m: { from: string; text: string; color?: string }) =>
                   `<${TEAMMATE_MESSAGE_TAG} teammate_id="${m.from}"${m.color ? ` color="${m.color}"` : ''}>\n${m.text}\n</${TEAMMATE_MESSAGE_TAG}>`,

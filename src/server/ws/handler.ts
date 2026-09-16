@@ -3456,6 +3456,10 @@ export function translateCliMessage(cliMsg: any, sessionId: string): ServerMessa
               : undefined,
           input: cliMsg.request.input || {},
           description: cliMsg.request.description,
+          ...(typeof cliMsg.request.display_name === 'string' &&
+          cliMsg.request.display_name.trim()
+            ? { displayName: cliMsg.request.display_name.trim() }
+            : {}),
         }]
       }
       return []
@@ -3962,6 +3966,7 @@ function replayPendingPermissionRequests(
       ...(request.toolUseId ? { toolUseId: request.toolUseId } : {}),
       input: request.input,
       ...(request.description ? { description: request.description } : {}),
+      ...(request.displayName ? { displayName: request.displayName } : {}),
     })
   }
   return requests.map((request) => request.requestId)

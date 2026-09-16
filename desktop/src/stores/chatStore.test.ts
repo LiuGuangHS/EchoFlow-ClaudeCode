@@ -9437,6 +9437,33 @@ describe('chatStore history mapping', () => {
     expect(session?.chatState).toBe('tool_executing')
   })
 
+  it('keeps teammate displayName on the lead-session permission prompt', () => {
+    useChatStore.setState({
+      sessions: { [TEST_SESSION_ID]: makeSession() },
+    })
+
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'permission_request',
+      requestId: 'perm-teammate-1',
+      toolName: 'Bash',
+      toolUseId: 'tool-teammate-1',
+      input: { command: 'ls' },
+      description: 'list files',
+      displayName: 'researcher',
+    })
+
+    const session = useChatStore.getState().sessions[TEST_SESSION_ID]
+    expect(session?.pendingPermission).toEqual(expect.objectContaining({
+      requestId: 'perm-teammate-1',
+      displayName: 'researcher',
+    }))
+    expect(session?.messages).toContainEqual(expect.objectContaining({
+      type: 'permission_request',
+      requestId: 'perm-teammate-1',
+      displayName: 'researcher',
+    }))
+  })
+
   it('removes replayed or cancelled requests when the server resolves them', () => {
     useChatStore.setState({
       sessions: {

@@ -104,6 +104,7 @@ export type PendingPermission = {
   toolUseId?: string
   input: unknown
   description?: string
+  displayName?: string
 }
 
 type PendingPermissions = Record<string, PendingPermission>
@@ -4789,7 +4790,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           cooldownScope: 'permission-prompt',
           requestAttention: true,
           title: 'EchoFlow Code 需要你的确认',
-          body: msg.toolName
+          body: msg.displayName && msg.toolName
+            ? `${msg.displayName} 请求使用 ${msg.toolName}，正在等待允许。`
+            : msg.toolName
             ? `${msg.toolName} 请求执行，正在等待允许。`
             : '有一个工具请求正在等待允许。',
           target: { type: 'session', sessionId },
@@ -4801,6 +4804,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             toolUseId: msg.toolUseId,
             input: msg.input,
             description: msg.description,
+            ...(msg.displayName ? { displayName: msg.displayName } : {}),
           }
           const pendingPermissions = {
             ...getPendingPermissionRecord(s),
@@ -4841,6 +4845,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                     toolUseId: msg.toolUseId,
                     input: msg.input,
                     description: msg.description,
+                    ...(msg.displayName ? { displayName: msg.displayName } : {}),
                     timestamp: Date.now(),
                   }],
           }

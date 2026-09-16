@@ -83,6 +83,7 @@ export type ServerMessage =
       toolUseId?: string
       input: unknown
       description?: string
+      displayName?: string
     }
   | {
       type: 'computer_use_permission_request'

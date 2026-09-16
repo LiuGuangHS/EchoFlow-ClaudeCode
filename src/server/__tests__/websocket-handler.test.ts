@@ -121,6 +121,29 @@ describe('translateCliMessage usage mapping', () => {
       allowed: false,
     }])
   })
+
+  it('forwards teammate display_name onto the lead-session permission prompt', () => {
+    expect(translateCliMessage({
+      type: 'control_request',
+      request_id: 'teammate-perm-1',
+      request: {
+        subtype: 'can_use_tool',
+        tool_name: 'Bash',
+        tool_use_id: 'toolu_teammate',
+        input: { command: 'ls' },
+        description: 'list files',
+        display_name: 'researcher',
+      },
+    }, 'session-1')).toEqual([{
+      type: 'permission_request',
+      requestId: 'teammate-perm-1',
+      toolName: 'Bash',
+      toolUseId: 'toolu_teammate',
+      input: { command: 'ls' },
+      description: 'list files',
+      displayName: 'researcher',
+    }])
+  })
 })
 
 describe('WebSocket handler session title lifecycle', () => {

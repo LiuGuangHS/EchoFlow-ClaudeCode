@@ -256,6 +256,7 @@ type SessionProcess = {
       toolName: string
       toolUseId?: string
       description?: string
+      displayName?: string
       input: Record<string, unknown>
       permissionSuggestions?: unknown[]
     }
@@ -269,6 +270,7 @@ export type PendingPermissionRequest = {
   toolUseId?: string
   input: Record<string, unknown>
   description?: string
+  displayName?: string
 }
 
 type SessionStartOptions = {
@@ -1019,6 +1021,7 @@ export class ConversationService {
       ...(request.toolUseId ? { toolUseId: request.toolUseId } : {}),
       input: request.input,
       ...(request.description ? { description: request.description } : {}),
+      ...(request.displayName ? { displayName: request.displayName } : {}),
     }))
   }
 
@@ -1159,6 +1162,10 @@ export class ConversationService {
             description:
               typeof msg.request.description === 'string' && msg.request.description.trim()
                 ? msg.request.description
+                : undefined,
+            displayName:
+              typeof msg.request.display_name === 'string' && msg.request.display_name.trim()
+                ? msg.request.display_name.trim()
                 : undefined,
             permissionSuggestions: Array.isArray(msg.request.permission_suggestions)
               ? msg.request.permission_suggestions

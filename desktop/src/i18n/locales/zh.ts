@@ -2647,10 +2647,10 @@ export const zh: Record<TranslationKey, string> = {
   'streaming.working': '工作中',
 
   // ─── Permission Dialog ──────────────────────────────────────
-  'permission.allowEditFile': '允许 Claude {toolName} {fileName}？',
-  'permission.allowEditFileGeneric': '允许 Claude {toolName}此文件？',
-  'permission.allowBash': '允许 Claude 执行此命令？',
-  'permission.allowTool': '允许 Claude 使用 {toolName}？',
+  'permission.allowEditFile': '允许 {actor} {toolName} {fileName}？',
+  'permission.allowEditFileGeneric': '允许 {actor} {toolName}此文件？',
+  'permission.allowBash': '允许 {actor} 执行此命令？',
+  'permission.allowTool': '允许 {actor} 使用 {toolName}？',
   'permission.awaitingApproval': '等待审批',
   'permission.responded': '已响应',
   'permission.allow': '允许',

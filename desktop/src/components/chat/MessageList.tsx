@@ -3834,6 +3834,7 @@ export const MessageBlock = memo(function MessageBlock({
           toolName={message.toolName}
           input={message.input}
           description={message.description}
+          displayName={message.displayName}
         />
       )
     case 'error': {

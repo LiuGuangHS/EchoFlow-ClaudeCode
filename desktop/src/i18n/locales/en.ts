@@ -2646,10 +2646,10 @@ Row 9, all 8 cells: continuing from straight down, turning left through lower-le
   'streaming.working': 'Working',
 
   // ─── Permission Dialog ──────────────────────────────────────
-  'permission.allowEditFile': 'Allow Claude to {toolName} {fileName}?',
-  'permission.allowEditFileGeneric': 'Allow Claude to {toolName} this file?',
-  'permission.allowBash': 'Allow Claude to run this command?',
-  'permission.allowTool': 'Allow Claude to use {toolName}?',
+  'permission.allowEditFile': 'Allow {actor} to {toolName} {fileName}?',
+  'permission.allowEditFileGeneric': 'Allow {actor} to {toolName} this file?',
+  'permission.allowBash': 'Allow {actor} to run this command?',
+  'permission.allowTool': 'Allow {actor} to use {toolName}?',
   'permission.awaitingApproval': 'Awaiting approval',
   'permission.responded': 'Responded',
   'permission.allow': 'Allow',

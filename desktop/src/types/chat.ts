@@ -108,6 +108,7 @@ export type ServerMessage =
       toolUseId?: string
       input: unknown
       description?: string
+      displayName?: string
     }
   | {
       type: 'computer_use_permission_request'
@@ -406,6 +407,7 @@ export type UIMessage =
       toolUseId?: string
       input: unknown
       description?: string
+      displayName?: string
       timestamp: number
     }
   | { id: string; type: 'error'; message: string; code: string; businessErrorCode?: string; timestamp: number }

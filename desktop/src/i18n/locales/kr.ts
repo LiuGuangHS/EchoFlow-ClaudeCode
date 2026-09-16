@@ -2649,10 +2649,10 @@ export const kr: Record<TranslationKey, string> = {
   'streaming.working': '작업 중',
 
   // ─── Permission Dialog ──────────────────────────────────────
-  'permission.allowEditFile': 'Claude가 {fileName}을(를) {toolName}하도록 허용하시겠습니까?',
-  'permission.allowEditFileGeneric': 'Claude가 이 파일을 {toolName}하도록 허용하시겠습니까?',
-  'permission.allowBash': 'Claude가 이 명령을 실행하도록 허용하시겠습니까?',
-  'permission.allowTool': 'Claude가 {toolName}을(를) 사용하도록 허용하시겠습니까?',
+  'permission.allowEditFile': '{actor}가 {fileName}을(를) {toolName}하도록 허용하시겠습니까?',
+  'permission.allowEditFileGeneric': '{actor}가 이 파일을 {toolName}하도록 허용하시겠습니까?',
+  'permission.allowBash': '{actor}가 이 명령을 실행하도록 허용하시겠습니까?',
+  'permission.allowTool': '{actor}가 {toolName}을(를) 사용하도록 허용하시겠습니까?',
   'permission.awaitingApproval': '승인 대기 중',
   'permission.responded': '응답함',
   'permission.allow': '허용',
