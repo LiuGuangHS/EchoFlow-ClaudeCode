@@ -63,6 +63,7 @@ export interface SessionIndexReader {
     offset?: number
   }): SessionIndexPage
   findSessionFiles(sessionId: string): SessionFileMatch[]
+  getSession?(sessionId: string): IndexedSessionRow | null
   findSearchCandidates?(
     filters: SessionSearchCandidateFilters,
   ): IndexedSessionSearchCandidate[] | null
@@ -108,6 +109,7 @@ export type PersistedBackfillState = {
 }
 
 export interface SessionIndex extends SessionIndexReader, ActivityIndex {
+  getSession(sessionId: string): IndexedSessionRow | null
   getSource(path: string): SessionSourceRecord | null
   listSources(): SessionSourceRecord[]
   countSources(): number
@@ -312,6 +314,23 @@ export function createSessionIndex(database: LocalIndexDatabase): SessionIndex {
         filePath: row.transcript_path,
         projectDir: row.project_path,
       })))
+    },
+
+    getSession(sessionId): IndexedSessionRow | null {
+      return database.read(operation => {
+        const row = operation.get<SessionRow>(`
+          SELECT transcript_path, session_id, project_path, title, created_at,
+            modified_at, message_count, work_dir, permission_mode,
+            runtime_provider_id, runtime_provider_present,
+            runtime_model_id, effort_level,
+            repository_json, worktree_session_json
+          FROM sessions
+          WHERE session_id = ?
+          ORDER BY modified_at_ms DESC, transcript_path ASC
+          LIMIT 1
+        `, sessionId)
+        return row ? sessionFromRow(row) : null
+      })
     },
 
     findSearchCandidates(filters): IndexedSessionSearchCandidate[] {

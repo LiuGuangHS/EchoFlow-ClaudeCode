@@ -49,6 +49,7 @@ const desktopHost = getDesktopHost()
 const isDesktopRuntime = desktopHost.isDesktop
 const isWindows = typeof navigator !== 'undefined' && /Win/.test(navigator.platform)
 const SESSION_LIST_AUTO_REFRESH_MS = 30_000
+const SESSION_LIST_BUILDING_REFRESH_MS = 1_500
 const SESSION_LIST_FOCUS_REFRESH_MIN_MS = 5_000
 const PROJECT_ORDER_STORAGE_KEY = 'echoflow-code-sidebar-project-order'
 const PROJECT_PINNED_STORAGE_KEY = 'echoflow-code-sidebar-pinned-projects'
@@ -118,6 +119,7 @@ export function Sidebar({
   const isLoading = useSessionStore((s) => s.isLoading)
   const error = useSessionStore((s) => s.error)
   const indexStatus = useSessionStore((s) => s.indexStatus)
+  const indexBuilding = indexStatus?.mode === 'on' && indexStatus.state === 'building'
   const fetchSessions = useSessionStore((s) => s.fetchSessions)
   const deleteSession = useSessionStore((s) => s.deleteSession)
   const deleteSessions = useSessionStore((s) => s.deleteSessions)
@@ -181,7 +183,7 @@ export function Sidebar({
   } | null>(null)
   const sessionScrollAreaRef = useRef<HTMLDivElement>(null)
   const pendingSessionScrollAnchorRef = useRef<SessionScrollAnchor | null>(null)
-  const refreshSessionsNow = useSessionListAutoRefresh(fetchSessions)
+  const refreshSessionsNow = useSessionListAutoRefresh(fetchSessions, indexBuilding)
 
   useEffect(() => useSessionStore.subscribe((nextState, previousState) => {
     if (nextState.sessions === previousState.sessions) return
@@ -1708,15 +1710,21 @@ export function Sidebar({
   )
 }
 
-function useSessionListAutoRefresh(fetchSessions: () => Promise<void>): () => Promise<void> {
+function useSessionListAutoRefresh(
+  fetchSessions: () => Promise<void>,
+  indexBuilding = false,
+): () => Promise<void> {
   const inFlightRef = useRef<Promise<void> | null>(null)
   const lastStartedAtRef = useRef(0)
+  const minIntervalMs = indexBuilding
+    ? SESSION_LIST_BUILDING_REFRESH_MS
+    : SESSION_LIST_FOCUS_REFRESH_MIN_MS
 
   const refreshSessions = useCallback((force = false) => {
     if (inFlightRef.current && !force) return inFlightRef.current
 
     const now = Date.now()
-    if (!force && now - lastStartedAtRef.current < SESSION_LIST_FOCUS_REFRESH_MIN_MS) {
+    if (!force && now - lastStartedAtRef.current < minIntervalMs) {
       return Promise.resolve()
     }
 
@@ -1731,7 +1739,7 @@ function useSessionListAutoRefresh(fetchSessions: () => Promise<void>): () => Pr
       })
     inFlightRef.current = request
     return request
-  }, [fetchSessions])
+  }, [fetchSessions, minIntervalMs])
 
   useEffect(() => {
     void refreshSessions(true)
@@ -1746,14 +1754,14 @@ function useSessionListAutoRefresh(fetchSessions: () => Promise<void>): () => Pr
     const timer = window.setInterval(() => {
       if (!isDocumentVisible()) return
       void refreshSessions()
-    }, SESSION_LIST_AUTO_REFRESH_MS)
+    }, indexBuilding ? SESSION_LIST_BUILDING_REFRESH_MS : SESSION_LIST_AUTO_REFRESH_MS)
 
     return () => {
       window.removeEventListener('focus', refreshIfVisible)
       document.removeEventListener('visibilitychange', refreshIfVisible)
       window.clearInterval(timer)
     }
-  }, [refreshSessions])
+  }, [refreshSessions, indexBuilding])
 
   return useCallback(() => refreshSessions(true), [refreshSessions])
 }

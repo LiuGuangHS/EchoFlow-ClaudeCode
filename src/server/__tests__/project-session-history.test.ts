@@ -51,6 +51,7 @@ function gateway(rows: IndexedSessionRow[], mode: LocalIndexMode, state: LocalIn
     start: async () => {}, stop: async () => {}, rebuild: async () => status,
     listSessions: (options) => ({ sessions: rows.slice(options?.offset ?? 0, (options?.offset ?? 0) + (options?.limit ?? 50)), total: rows.length }),
     findSessionFiles: (id) => rows.filter(row => row.id === id).map(row => ({ filePath: row.transcriptPath, projectDir: row.projectPath })),
+    getSession: (id) => rows.find(row => row.id === id) ?? null,
   }
 }
 
@@ -115,15 +116,28 @@ describe('logical project session history', () => {
     } finally { validate.mockRestore() }
   })
 
-  it.each(['building', 'degraded'] as const)('uses complete file metadata while the on index is %s', async (state) => {
+  it('uses complete file metadata while the on index is degraded', async () => {
     const rows = await Promise.all([0, 1, 2].map(n => seed(n)))
-    const index = gateway(rows.slice(0, 1), 'on', state)
+    const index = gateway(rows.slice(0, 1), 'on', 'degraded')
     const readIndex = spyOn(index, 'listSessions')
     try {
       const page = await new SessionService(index).listProjectHistory({ projectRoot })
       expect(page.sessions.map(session => session.id)).toEqual(rows.map(row => row.id))
       expect(readIndex).not.toHaveBeenCalled()
     } finally { readIndex.mockRestore() }
+  })
+
+  it('keeps building project history on indexed rows instead of scanning every JSONL', async () => {
+    const rows = await Promise.all([0, 1, 2].map(n => seed(n)))
+    const index = gateway(rows.slice(0, 1), 'on', 'building')
+    const service = new SessionService(index)
+    const internals = service as unknown as { scanSessionListSummary: (...args: unknown[]) => Promise<unknown> }
+    const scan = spyOn(internals, 'scanSessionListSummary')
+    try {
+      const page = await service.listProjectHistory({ projectRoot })
+      expect(page.sessions.map(session => session.id)).toEqual([rows[0]!.id])
+      expect(scan).not.toHaveBeenCalled()
+    } finally { scan.mockRestore() }
   })
 
   it('discards a catalog built across a metadata mutation from another service', async () => {

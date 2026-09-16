@@ -902,7 +902,9 @@ export class SessionService {
 
     if (status.state === 'off' || status.state === 'degraded') return null
     try {
-      if (!this.localIndexGateway.isSessionScopeReady()) return null
+      if (status.state !== 'building' && !this.localIndexGateway.isSessionScopeReady()) {
+        return null
+      }
     } catch {
       this.markIndexReadFailure()
       return null
@@ -1323,6 +1325,16 @@ export class SessionService {
     workDir: string | null
     projectPath: string
   }> {
+    const sessionId = path.basename(filePath, '.jsonl')
+    const indexedMeta = this.getIndexedSessionMetaById(sessionId)
+    if (indexedMeta) {
+      return {
+        title: indexedMeta.title,
+        modifiedAt: indexedMeta.modifiedAt,
+        workDir: indexedMeta.workDir,
+        projectPath: indexedMeta.projectPath,
+      }
+    }
     const stat = await fs.stat(filePath)
     const projectPath = path.basename(path.dirname(filePath))
     const summary = await this.scanSessionListSummary(filePath, projectPath, stat)
@@ -1331,6 +1343,28 @@ export class SessionService {
       modifiedAt: summary.modifiedAt,
       workDir: summary.workDir ?? null,
       projectPath,
+    }
+  }
+
+  getIndexedSessionMetaById(sessionId: string): {
+    title: string
+    modifiedAt: string
+    projectPath: string
+    workDir: string | null
+  } | null {
+    if (this.getUsableIndexMode() !== 'on') return null
+    try {
+      const row = this.localIndexGateway.getSession?.(sessionId) ?? null
+      if (!row || !this.indexStatusRemainsUsable()) return null
+      return {
+        title: row.title,
+        modifiedAt: row.modifiedAt,
+        projectPath: row.projectPath,
+        workDir: row.workDir,
+      }
+    } catch {
+      this.markIndexReadFailure()
+      return null
     }
   }
 
@@ -3329,33 +3363,43 @@ export class SessionService {
     const indexed = this.getUsableIndexMode() === 'on'
     const status = indexed ? this.localIndexGateway.getPublicStatus() : null
     return JSON.stringify([scope, this.sessionListCacheGeneration,
-      indexed && status?.state === 'ready' ? status.lastUpdatedAt : 'files'])
+      indexed && (status?.state === 'ready' || status?.state === 'building')
+        ? status.lastUpdatedAt
+        : 'files'])
   }
 
   private async loadProjectHistoryRows(): Promise<ProjectHistoryRow[]> {
     const scope = this.getConfigDir()
     let indexedRows: IndexedSessionRow[] | null = null
-    if (this.getUsableIndexMode() === 'on' && this.localIndexGateway.getPublicStatus().state === 'ready') {
-      try {
-        indexedRows = []
-        // No await between index pages: a coordinator projection cannot shift
-        // the order while this synchronous metadata snapshot is collected.
-        for (let offset = 0; ; offset += 500) {
-          const page = this.localIndexGateway.listSessions({ limit: 500, offset })
-          if (!this.indexStatusRemainsUsable()) throw new Error('Index unavailable')
-          indexedRows.push(...page.sessions)
-          if (offset + page.sessions.length >= page.total) break
-          if (page.sessions.length === 0) throw new Error('Incomplete index page')
+    if (this.getUsableIndexMode() === 'on') {
+      const status = this.localIndexGateway.getPublicStatus()
+      if (status.state === 'ready' || status.state === 'building') {
+        try {
+          indexedRows = []
+          // No await between index pages: a coordinator projection cannot shift
+          // the order while this synchronous metadata snapshot is collected.
+          for (let offset = 0; ; offset += 500) {
+            const page = this.localIndexGateway.listSessions({ limit: 500, offset })
+            if (!this.indexStatusRemainsUsable()) throw new Error('Index unavailable')
+            indexedRows.push(...page.sessions)
+            if (offset + page.sessions.length >= page.total) break
+            if (page.sessions.length === 0) break
+          }
+        } catch {
+          this.markIndexReadFailure()
+          indexedRows = null
         }
-      } catch {
-        this.markIndexReadFailure()
-        indexedRows = null
       }
     }
     if (indexedRows === null) {
+      const indexMode = this.getUsableIndexMode()
+      if (indexMode === 'on') {
+        // Same rule as listSessions: never scan every JSONL just to fill history.
+        return []
+      }
       indexedRows = []
-      // Files remain authoritative in off/shadow/building mode. Summaries are
-      // streamed and shared with the existing list cache; messages never load.
+      // Files remain authoritative in off/shadow mode. Summaries are streamed
+      // and shared with the existing list cache; messages never load.
       for (const file of await this.discoverSessionFiles(undefined, scope)) {
         try {
           const stat = await fs.stat(file.filePath)
@@ -3499,29 +3543,39 @@ export class SessionService {
 
       const status = this.localIndexGateway.getPublicStatus()
       if (requireReady && status.state !== 'ready') return null
-      if (status.state === 'building' && indexedPage.sessions.length === 0) {
-        return null
+      if (indexedPage.sessions.length === 0) {
+        // Building must not fall through to a full JSONL scan. The sidebar
+        // already treats an empty building page as loading.
+        return status.state === 'building'
+          ? { sessions: [], total: indexedPage.total }
+          : null
       }
 
       const sessions: SessionListItem[] = []
       const pathExists = this.createCachedPathExists()
-      const projectsRoot = indexedPage.sessions.length > 0
-        ? await fs.realpath(this.getProjectsDir())
-        : null
+      const projectsRoot = await fs.realpath(this.getProjectsDir())
       for (const row of indexedPage.sessions) {
-        await this.validateIndexedTranscriptPath(
-          row.transcriptPath,
-          row.projectPath,
-          row.id,
-          projectsRoot!,
-        )
-        sessions.push(await this.hydrateIndexedSession(row, pathExists))
+        try {
+          await this.validateIndexedTranscriptPath(
+            row.transcriptPath,
+            row.projectPath,
+            row.id,
+            projectsRoot,
+          )
+          sessions.push(await this.hydrateIndexedSession(row, pathExists))
+        } catch {
+          // Drop a single stale/unreadable row instead of scanning every JSONL.
+        }
       }
-      if (sessions.length !== indexedPage.sessions.length) return null
       if (
         indexedMutationEpoch !== getSharedSessionMutationState(this.localIndexGateway).epoch
       ) {
         return null
+      }
+      if (sessions.length === 0) {
+        return status.state === 'building'
+          ? { sessions: [], total: indexedPage.total }
+          : null
       }
       return { sessions, total: indexedPage.total }
     } catch {

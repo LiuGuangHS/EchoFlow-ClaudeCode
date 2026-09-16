@@ -259,6 +259,11 @@ export function startServer(port = PORT, host = HOST) {
   publicAccessServers.add(publicAccess)
   let server: ReturnType<typeof Bun.serve<WebSocketData>>
 
+  // Open SQLite before the first REST request. Discovery still runs in the
+  // background; without this, getPublicStatus() reports `off` and the sidebar
+  // falls through to a full JSONL scan that can exceed the 120s client timeout.
+  void localIndexCoordinator.start().catch(() => undefined)
+
   try {
     server = Bun.serve<WebSocketData>({
       port,
@@ -284,6 +289,7 @@ export function startServer(port = PORT, host = HOST) {
           )
         }
 
+        await localIndexCoordinator.start().catch(() => undefined)
         await ensurePersistentStorageUpgraded()
         const origin = req.headers.get('Origin')
         const clientAddress = server.requestIP(req)?.address ?? null

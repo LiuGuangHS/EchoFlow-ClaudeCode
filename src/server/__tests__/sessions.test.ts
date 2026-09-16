@@ -2058,6 +2058,7 @@ describe('SessionService', () => {
       rebuild: async () => gateway.getPublicStatus(),
       listSessions: options => index.listSessions(options),
       findSessionFiles: id => index.findSessionFiles(id),
+      getSession: id => index.getSession(id),
       getSessionEntryLocators: (transcriptPath, entryTypes) => {
         locatorCalls += 1
         const page = index.getSessionEntryLocators(transcriptPath, entryTypes)

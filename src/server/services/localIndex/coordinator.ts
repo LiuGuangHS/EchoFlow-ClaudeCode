@@ -13,6 +13,7 @@ import {
 import {
   createSessionIndex,
   type LocalIndexGateway,
+  type IndexedSessionRow,
   type IndexedSessionSearchCandidate,
   type PersistedBackfillState,
   type SessionEntryLocatorPage,
@@ -1455,6 +1456,16 @@ export function createLocalIndexCoordinator(
       } catch (error) {
         markDegraded(error, 'LOCAL_INDEX_READ_FAILED')
         return []
+      }
+    },
+
+    getSession(sessionId: string): IndexedSessionRow | null {
+      if (!indexReadAllowed() || !index?.getSession) return null
+      try {
+        return index.getSession(sessionId)
+      } catch (error) {
+        markDegraded(error, 'LOCAL_INDEX_READ_FAILED')
+        return null
       }
     },
 
