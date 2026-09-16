@@ -14,8 +14,8 @@ name: Upstream Sync
 
 on:
   schedule:
-    # Daily at 01:20 UTC. Off the hour so it does not queue behind the crowds.
-    - cron: '20 1 * * *'
+    # Every three days at 01:20 UTC. GitHub cron's day-of-month schedule resets at month boundaries.
+    - cron: '20 1 */3 * *'
   workflow_dispatch:
     inputs:
       publish:
