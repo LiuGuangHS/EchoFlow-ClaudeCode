@@ -2096,11 +2096,11 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, browserMode
 
         {/* Test connection */}
         {!browserMode && <div className="flex items-center gap-3">
-          <Button variant="secondary" size="sm" onClick={handleTest} loading={isTesting} disabled={!baseUrl.trim() || !models.main.trim() || compatibilityInvalid}>
+          <Button variant="secondary" size="sm" className="shrink-0 whitespace-nowrap" onClick={handleTest} loading={isTesting} disabled={!baseUrl.trim() || !models.main.trim() || compatibilityInvalid}>
             {t('settings.providers.testConnection')}
           </Button>
           {testResult && (
-            <div className="flex flex-col gap-0.5">
+            <div className="flex min-w-0 flex-1 flex-col gap-0.5 break-words">
               <span className={`text-xs ${testResult.connectivity.success ? 'text-[var(--color-success)]' : 'text-[var(--color-error)]'}`}>
                 {testResult.connectivity.success
                   ? t('settings.providers.connectivityOk', { latency: String(testResult.connectivity.latencyMs) })
