@@ -75,7 +75,7 @@ jobs:
     steps:
       - name: Checkout policy sources
         if: needs.scope-plan.outputs.policy_checks == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
 
