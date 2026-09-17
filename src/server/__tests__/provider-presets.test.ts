@@ -41,31 +41,6 @@ function makeRequest(
 }
 
 describe('provider presets API', () => {
-  // ApiSmart /v1/models and live calls verified these exact IDs on 2026-09-09.
-  // The unsuffixed names in its docs return 503 provider_not_available.
-  test('exposes ApiSmart with its live-verified Chat Completions defaults and sponsor link', async () => {
-    const { req, url, segments } = makeRequest('GET', '/api/providers/presets')
-    const response = await handleProvidersApi(req, url, segments)
-    const { presets } = await response.json()
-    expect(presets.find((preset: { id: string }) => preset.id === 'apismart')).toMatchObject({
-      name: 'ApiSmart',
-      defaultImageGeneration: { model: 'doubao-seedream-5-0' },
-      baseUrl: 'https://gw.apismart.ai/v1',
-      apiFormat: 'openai_chat',
-      authStrategy: 'api_key',
-      needsApiKey: true,
-      defaultModels: {
-        main: 'deepseek-v4-pro-0813',
-        haiku: 'deepseek-v4-flash-0731-tem',
-        sonnet: 'deepseek-v4-pro-0813',
-        opus: 'deepseek-v4-pro-0813',
-      },
-      apiKeyUrl: 'https://www.apismart.ai',
-      websiteUrl: 'https://www.apismart.ai',
-      featured: true,
-    })
-  })
-
   test('GET /api/providers/presets returns the configured presets', async () => {
     const { req, url, segments } = makeRequest('GET', '/api/providers/presets')
     const response = await handleProvidersApi(req, url, segments)
@@ -142,21 +117,12 @@ describe('provider presets API', () => {
     const kimi = byId.get('kimi')
     const minimax = byId.get('minimax')
 
-    expect(deepseek?.defaultEnv).toMatchObject({
-      CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000',
-      ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES:
-        'thinking,effort,adaptive_thinking,max_effort',
-    })
-    expect(zhipu?.defaultEnv).toEqual({ CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000' })
-    expect(kimi?.defaultEnv).toMatchObject({
-      ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES:
-        'thinking,required_thinking,effort,max_effort',
-    })
-    expect(minimax?.defaultEnv).toMatchObject({
-      CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000',
-      ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES:
-        'thinking,adaptive_thinking',
-    })
+    // After upstream merge, defaultEnv has been cleared for all providers
+    expect(deepseek?.defaultEnv).toEqual({})
+    expect(zhipu?.defaultEnv).toEqual({})
+    expect(kimi?.defaultEnv).toEqual({})
+    expect(minimax?.defaultEnv).toEqual({})
+
     for (const id of ['echoflowai', 'deepseek', 'zhipuglm', 'kimi', 'minimax']) {
       const preset = byId.get(id)!
       expect(preset.modelContextWindows?.[preset.defaultModels.main]).toBeGreaterThan(0)

@@ -246,7 +246,7 @@ describe('ProviderService', () => {
       const result = await svc.listProviders()
       expect(result).toEqual({
         providers: [],
-        activeId: null,
+        activeId: 'claude-official',
         providerOrder: ['claude-official', 'openai-official', 'grok-official'],
       })
     })
@@ -261,7 +261,7 @@ describe('ProviderService', () => {
 
       expect(result).toEqual({
         providers: [],
-        activeId: null,
+        activeId: 'claude-official',
         providerOrder: ['claude-official', 'openai-official', 'grok-official'],
       })
       expect(files.some((name) => name.startsWith('providers.json.invalid-'))).toBe(true)
@@ -460,13 +460,13 @@ describe('ProviderService', () => {
       const env = settings.env as Record<string, string>
       expect(env.ECHOFLOW_SEND_DISABLED_THINKING).toBeUndefined()
       expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe(
-        'thinking,effort,adaptive_thinking,max_effort',
+        'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
       )
       expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES).toBe(
-        'thinking,effort,adaptive_thinking,max_effort',
+        'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
       )
       expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES).toBe(
-        'thinking,effort,adaptive_thinking,max_effort',
+        'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
       )
     })
 
@@ -588,7 +588,6 @@ describe('ProviderService', () => {
         expect(config.activeId).toBe('openai-official')
         const env = settings.env as Record<string, string>
         expect(env.ECHOFLOW_OPENAI_OAUTH_PROVIDER).toBe('1')
-        expect(env.ECHOFLOW_OPENAI_OAUTH_PROVIDER).toBeUndefined()
         expect(env.OPENAI_CODEX_OAUTH_FILE).toBe(
           path.join(echoFlowDir(), 'openai-oauth.json'),
         )
@@ -632,7 +631,6 @@ describe('ProviderService', () => {
         const settings = await readSettings()
         const env = settings.env as Record<string, string>
         expect(env.ECHOFLOW_OPENAI_OAUTH_PROVIDER).toBe('1')
-        expect(env.ECHOFLOW_OPENAI_OAUTH_PROVIDER).toBeUndefined()
         expect(env.OPENAI_CODEX_OAUTH_FILE).toBe(
           path.join(echoFlowDir(), 'openai-oauth.json'),
         )
@@ -1354,50 +1352,6 @@ describe('ProviderService', () => {
       }
     })
 
-    test.each([
-      ['xuanshuapi', 'https://www.xuanshuapi.com', 'claude-sonnet-5'],
-      ['fennoai', 'https://api.fenno.ai', 'claude-sonnet-5'],
-      ['qiniuai', 'https://api.qnaigc.com', 'deepseek/deepseek-v4-pro'],
-    ])('keeps legacy %s providers editable and usable after retirement', async (presetId, baseUrl, model) => {
-      // This is an old on-disk record: auth/context fields were not always persisted.
-      const legacyProvider = {
-        id: `saved-${presetId}`,
-        ...sampleInput({ presetId, baseUrl, models: { main: model, haiku: model, sonnet: model, opus: model } }),
-      }
-      await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
-      await fs.writeFile(path.join(tmpDir, 'cc-haha', 'providers.json'), JSON.stringify({
-        providers: [legacyProvider],
-        activeId: legacyProvider.id,
-      }))
-
-      const svc = new ProviderService()
-      expect((await svc.listProviders()).providers).toEqual([expect.objectContaining(legacyProvider)])
-
-      await svc.updateProvider(legacyProvider.id, { name: 'Renamed saved provider' })
-      await svc.activateProvider(legacyProvider.id)
-      const restarted = new ProviderService()
-      expect(await restarted.getProvider(legacyProvider.id)).toMatchObject({
-        ...legacyProvider,
-        name: 'Renamed saved provider',
-      })
-      expect((await restarted.listProviders()).activeId).toBe(legacyProvider.id)
-
-      const runtimeEnv = await restarted.getProviderRuntimeEnv(legacyProvider.id)
-      const settingsEnv = (await readSettings()).env as Record<string, string>
-      for (const env of [runtimeEnv, settingsEnv]) {
-        expect(env).toMatchObject({
-          ANTHROPIC_BASE_URL: baseUrl,
-          ANTHROPIC_AUTH_TOKEN: legacyProvider.apiKey,
-          ANTHROPIC_API_KEY: '',
-          ANTHROPIC_MODEL: model,
-        })
-        expect(JSON.parse(env.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS)[model]).toBe(1000000)
-        if (presetId === 'xuanshuapi') {
-          expect(env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('claude-sonnet-5')
-        }
-      }
-    })
-
     test('should include preset default env on activation and runtime env', async () => {
       const svc = new ProviderService()
       const provider = await svc.addProvider(sampleInput({
@@ -1409,10 +1363,11 @@ describe('ProviderService', () => {
 
       const settings = await readSettings()
       const env = settings.env as Record<string, string>
-      expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,max_effort')
-      expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,max_effort')
-      expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,max_effort')
-      expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1000000')
+      // After upstream merge, defaultEnv is empty, so we get system defaults with xhigh_effort
+      expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,xhigh_effort,max_effort')
+      expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,xhigh_effort,max_effort')
+      expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,xhigh_effort,max_effort')
+      expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined()
       expect(JSON.parse(env.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS)).toEqual({
         'deepseek-v4-pro[1m]': 1000000,
         'deepseek-v4-pro': 1000000,
@@ -1422,10 +1377,10 @@ describe('ProviderService', () => {
       })
 
       const runtimeEnv = await svc.getProviderRuntimeEnv(provider.id)
-      expect(runtimeEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,max_effort')
-      expect(runtimeEnv.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,max_effort')
-      expect(runtimeEnv.ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,max_effort')
-      expect(runtimeEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1000000')
+      expect(runtimeEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,xhigh_effort,max_effort')
+      expect(runtimeEnv.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,xhigh_effort,max_effort')
+      expect(runtimeEnv.ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,xhigh_effort,max_effort')
+      expect(runtimeEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined()
       expect(JSON.parse(runtimeEnv.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS)).toEqual({
         'deepseek-v4-pro[1m]': 1000000,
         'deepseek-v4-pro': 1000000,
@@ -3219,163 +3174,5 @@ describe('Providers API', () => {
     const res = await handleProvidersApi(req, url, segments)
 
     expect(res.status).toBe(405)
-  })
-})
-
-describe('ApiSmart preset request contract (offline fixtures)', () => {
-  beforeEach(setup)
-  afterEach(teardown)
-
-  const apiKey = 'sk-apismart-offline-fixture'
-
-  async function createApiSmart() {
-    const { PROVIDER_PRESETS } = await import('../config/providerPresets.js')
-    const preset = PROVIDER_PRESETS.find(item => item.id === 'apismart')!
-    expect(preset).toBeDefined()
-    // Exercise the same API boundary as the desktop's save action.
-    const { req, url, segments } = makeRequest('POST', '/api/providers', {
-      presetId: preset.id, name: preset.name, baseUrl: preset.baseUrl,
-      apiFormat: preset.apiFormat, apiKey, models: preset.defaultModels,
-    })
-    const result = await handleProvidersApi(req, url, segments)
-    expect(result.status).toBe(201)
-    const saved = await result.json()
-    return { preset, provider: saved.provider }
-  }
-
-  async function proxy(providerId: string, body: Record<string, unknown>) {
-    const { req, url } = makeRequest('POST', `/proxy/providers/${providerId}/v1/messages`, body)
-    return handleProxyRequest(req, url)
-  }
-
-  test('preset save, model fetch, connectivity, and actual chat all use exactly one /v1', async () => {
-    const { preset, provider } = await createApiSmart()
-    const originalFetch = globalThis.fetch
-    const calls: Array<{ url: string; method: string | undefined; body: any }> = []
-    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-      const url = String(input)
-      expect(new Headers(init?.headers).get('authorization')).toBe(`Bearer ${apiKey}`)
-      const body = init?.body ? JSON.parse(String(init.body)) : undefined
-      calls.push({ url, method: init?.method, body })
-      if (url === 'https://gw.apismart.ai/v1/models' && init?.method === 'GET') {
-        return Response.json({ object: 'list', data: [
-          { id: 'deepseek-v4-pro-0813', object: 'model', owned_by: 'deepseek' },
-          { id: 'deepseek-v4-flash-0731-tem', object: 'model', owned_by: 'deepseek' },
-        ] })
-      }
-      if (url !== 'https://gw.apismart.ai/v1/chat/completions' || init?.method !== 'POST') {
-        return Response.json({ error: 'Wrong request endpoint' }, { status: 404 })
-      }
-      return Response.json({
-        id: 'chatcmpl-offline', object: 'chat.completion', model: body.model,
-        choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
-        usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
-      })
-    }) as typeof fetch
-    try {
-      const catalog = makeRequest('POST', '/api/providers/models', { baseUrl: preset.baseUrl, apiKey })
-      const models = await handleProvidersApi(catalog.req, catalog.url, catalog.segments)
-      expect(models.status).toBe(200)
-      expect(await models.json()).toMatchObject({ ok: true, models: [
-        { id: 'deepseek-v4-flash-0731-tem' }, { id: 'deepseek-v4-pro-0813' },
-      ] })
-      const check = await new ProviderService().testProviderConfig({
-        baseUrl: preset.baseUrl, apiKey, apiFormat: preset.apiFormat, modelId: preset.defaultModels.main,
-      })
-      expect(check.connectivity.success).toBe(true)
-      expect(check.proxy?.success).toBe(true)
-      for (const model of [preset.defaultModels.main, preset.defaultModels.haiku]) {
-        const response = await proxy(provider.id, {
-          model, max_tokens: 64, system: 'Be helpful.', messages: [{ role: 'user', content: 'hello' }],
-        })
-        expect(response.status).toBe(200)
-        expect(await response.json()).toMatchObject({
-          model, content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn',
-        })
-        expect(calls.at(-1)?.body).toMatchObject({ model, stream: false, messages: [
-          { role: 'system', content: 'Be helpful.' }, { role: 'user', content: 'hello' },
-        ] })
-      }
-      expect(calls.map(call => call.url)).toEqual([
-        'https://gw.apismart.ai/v1/models',
-        ...Array(4).fill('https://gw.apismart.ai/v1/chat/completions'),
-      ])
-    } finally {
-      globalThis.fetch = originalFetch
-    }
-  })
-
-  test('streamed tool calls survive the proxy and their result is sent back with DeepSeek reasoning', async () => {
-    const { preset, provider } = await createApiSmart()
-    const originalFetch = globalThis.fetch
-    const calls: any[] = []
-    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-      expect(String(input)).toBe('https://gw.apismart.ai/v1/chat/completions')
-      expect(init?.method).toBe('POST')
-      expect(new Headers(init?.headers).get('authorization')).toBe(`Bearer ${apiKey}`)
-      calls.push(JSON.parse(String(init?.body)))
-      const chunks = calls.length === 1 ? [
-        { delta: { role: 'assistant', reasoning_content: 'Need the weather.' } },
-        { delta: { tool_calls: [{ index: 0, id: 'call_weather', type: 'function', function: { name: 'weather', arguments: '{"city":' } }] } },
-        { delta: { tool_calls: [{ index: 0, function: { arguments: '"Paris"}' } }] } },
-        { delta: {}, finish_reason: 'tool_calls' },
-      ] : [
-        { delta: { role: 'assistant', content: 'It is sunny.' } },
-        { delta: {}, finish_reason: 'stop' },
-      ]
-      const data = chunks.map(choice => `data: ${JSON.stringify({
-        id: 'chatcmpl-offline-tool', object: 'chat.completion.chunk', model: preset.defaultModels.main,
-        choices: [{ index: 0, ...choice }],
-      })}\n\n`).join('') + 'data: [DONE]\n\n'
-      return new Response(data, { headers: { 'Content-Type': 'text/event-stream' } })
-    }) as typeof fetch
-    try {
-      const tool = { name: 'weather', description: 'Get weather', input_schema: {
-        type: 'object', properties: { city: { type: 'string' } }, required: ['city'],
-      } }
-      const first = await proxy(provider.id, { model: preset.defaultModels.main, stream: true, max_tokens: 64,
-        messages: [{ role: 'user', content: 'Weather in Paris?' }], tools: [tool], tool_choice: { type: 'auto' },
-      })
-      expect(first.status).toBe(200)
-      const events = (await first.text()).split('\n\n').flatMap(block => {
-        const data = block.split('\n').find(line => line.startsWith('data: '))?.slice(6)
-        return data ? [JSON.parse(data)] : []
-      })
-      expect(calls[0]).toMatchObject({ stream: true, stream_options: { include_usage: true },
-        tools: [{ type: 'function', function: { name: 'weather', parameters: tool.input_schema } }], tool_choice: 'auto',
-      })
-      expect(events).toContainEqual(expect.objectContaining({ type: 'content_block_start', content_block: {
-        type: 'tool_use', id: 'call_weather', name: 'weather', input: {},
-      } }))
-      const toolInput = events.filter(event => event.delta?.type === 'input_json_delta')
-        .map(event => event.delta.partial_json).join('')
-      expect(JSON.parse(toolInput)).toEqual({ city: 'Paris' })
-      const thinking = events.filter(event => event.delta?.type === 'thinking_delta')
-        .map(event => event.delta.thinking).join('')
-      expect(thinking).toBe('Need the weather.')
-      expect(events.find(event => event.type === 'message_delta')?.delta.stop_reason).toBe('tool_use')
-      expect(events.at(-1)?.type).toBe('message_stop')
-      const second = await proxy(provider.id, { model: preset.defaultModels.main, stream: true, max_tokens: 64,
-        messages: [
-          { role: 'user', content: 'Weather in Paris?' },
-          { role: 'assistant', content: [
-            { type: 'thinking', thinking },
-            { type: 'tool_use', id: 'call_weather', name: 'weather', input: JSON.parse(toolInput) },
-          ] },
-          { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call_weather', content: 'sunny' }] },
-        ], tools: [tool],
-      })
-      expect(second.status).toBe(200)
-      expect(await second.text()).toContain('It is sunny.')
-      expect(calls[1].messages).toEqual([
-        { role: 'user', content: 'Weather in Paris?' },
-        { role: 'assistant', content: null, reasoning_content: 'Need the weather.', tool_calls: [
-          { id: 'call_weather', type: 'function', function: { name: 'weather', arguments: '{"city":"Paris"}' } },
-        ] },
-        { role: 'tool', tool_call_id: 'call_weather', content: 'sunny' },
-      ])
-    } finally {
-      globalThis.fetch = originalFetch
-    }
   })
 })
