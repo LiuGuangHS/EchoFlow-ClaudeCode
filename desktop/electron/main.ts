@@ -272,7 +272,10 @@ function getServerRuntime() {
 }
 
 function getDeepSeekHarnessRuntime() {
-  deepSeekHarnessRuntime ??= new DeepSeekHarnessRuntime({ userDataPath: app.getPath('userData') })
+  deepSeekHarnessRuntime ??= new DeepSeekHarnessRuntime({
+    userDataPath: app.getPath('userData'),
+    resourcesPath: process.resourcesPath,
+  })
   return deepSeekHarnessRuntime
 }
 

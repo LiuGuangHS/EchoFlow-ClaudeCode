@@ -34,6 +34,8 @@ export type EchoFlowTokenSummary = Omit<EchoFlowTokenOption, 'key'> & {
   keyPreview: string
 }
 
+export type EchoFlowEndpoint = 'main' | 'dedicated'
+
 export type EchoFlowAccount = {
   userId: string
   balance?: number
@@ -41,6 +43,7 @@ export type EchoFlowAccount = {
   username?: string
   tokens?: EchoFlowTokenSummary[]
   refreshedAt?: number
+  endpoint?: EchoFlowEndpoint
 }
 
 type StoredEchoFlowAccount = {
@@ -51,19 +54,38 @@ type StoredEchoFlowAccount = {
   username?: string
   tokens?: EchoFlowTokenOption[]
   refreshedAt?: number
+  endpoint?: EchoFlowEndpoint
+}
+
+const ENDPOINTS = {
+  main: 'https://api.echoflowai.cc',
+  dedicated: 'https://expapi.echoflowai.cc',
 }
 
 export class EchoFlowApiService {
-  constructor(private baseUrl = 'https://api.echoflow.cn') {}
+  constructor(private defaultBaseUrl = ENDPOINTS.main) {}
+
+  private getBaseUrl(endpoint?: EchoFlowEndpoint): string {
+    if (!endpoint) return this.defaultBaseUrl
+    return ENDPOINTS[endpoint] || this.defaultBaseUrl
+  }
 
   async getAccount(): Promise<EchoFlowAccount | null> {
     const account = await this.readAccount()
     return account ? toPublicAccount(account) : null
   }
 
-  async bindAccount(userId: string, managementToken: string): Promise<EchoFlowAccount> {
-    const account = await this.refreshWithCredentials(userId, managementToken)
-    const stored = { ...account, managementToken }
+  async bindAccount(userId: string, managementToken: string, endpoint: EchoFlowEndpoint = 'main'): Promise<EchoFlowAccount> {
+    const account = await this.refreshWithCredentials(userId, managementToken, endpoint)
+    const stored = { ...account, managementToken, endpoint }
+    await this.writeAccount(stored)
+    return toPublicAccount(stored)
+  }
+
+  async updateEndpoint(endpoint: EchoFlowEndpoint): Promise<EchoFlowAccount> {
+    const account = await this.readAccount()
+    if (!account) throw new EchoFlowApiError('token_invalid')
+    const stored = { ...account, endpoint }
     await this.writeAccount(stored)
     return toPublicAccount(stored)
   }
@@ -71,8 +93,8 @@ export class EchoFlowApiService {
   async refreshAccount(): Promise<EchoFlowAccount> {
     const account = await this.readAccount()
     if (!account) throw new EchoFlowApiError('token_invalid')
-    const refreshed = await this.refreshWithCredentials(account.userId, account.managementToken)
-    const stored = { ...refreshed, managementToken: account.managementToken }
+    const refreshed = await this.refreshWithCredentials(account.userId, account.managementToken, account.endpoint)
+    const stored = { ...refreshed, managementToken: account.managementToken, endpoint: account.endpoint }
     await this.writeAccount(stored)
     return toPublicAccount(stored)
   }
@@ -92,11 +114,12 @@ export class EchoFlowApiService {
     }
   }
 
-  async validateManagementToken(userId: string, token: string): Promise<EchoFlowUserInfo> {
+  async validateManagementToken(userId: string, token: string, endpoint: EchoFlowEndpoint = 'main'): Promise<EchoFlowUserInfo> {
     const data = await this.fetchManagementApi<{ success?: boolean; message?: string; data?: { quota?: number; group?: string; username?: string } }>(
       '/api/user/self',
       userId,
       token,
+      endpoint,
     )
 
     if (!data.success) {
@@ -111,11 +134,11 @@ export class EchoFlowApiService {
     }
   }
 
-  async listTokens(userId: string, token: string): Promise<EchoFlowTokenOption[]> {
+  async listTokens(userId: string, token: string, endpoint: EchoFlowEndpoint = 'main'): Promise<EchoFlowTokenOption[]> {
     const data = await this.fetchManagementApi<{
       success?: boolean
       data?: unknown[] | { items?: unknown[]; tokens?: unknown[]; records?: unknown[] }
-    }>('/api/token/?p=0&size=100', userId, token)
+    }>('/api/token/?p=0&size=100', userId, token, endpoint)
 
     if (!data.success) return []
     const rawList = Array.isArray(data.data)
@@ -131,23 +154,24 @@ export class EchoFlowApiService {
     return rawList.map(normalizeToken).filter((item): item is EchoFlowTokenOption => !!item)
   }
 
-  private async refreshWithCredentials(userId: string, managementToken: string): Promise<EchoFlowAccount> {
+  private async refreshWithCredentials(userId: string, managementToken: string, endpoint: EchoFlowEndpoint = 'main'): Promise<EchoFlowAccount> {
     const trimmedUserId = userId.trim()
     const trimmedToken = managementToken.trim()
     if (!trimmedUserId || !trimmedToken) throw new EchoFlowApiError('token_invalid')
 
-    const user = await this.validateManagementToken(trimmedUserId, trimmedToken)
-    const tokens = await this.listTokens(trimmedUserId, trimmedToken)
+    const user = await this.validateManagementToken(trimmedUserId, trimmedToken, endpoint)
+    const tokens = await this.listTokens(trimmedUserId, trimmedToken, endpoint)
     return {
       ...user,
       userId: trimmedUserId,
       tokens,
       refreshedAt: Date.now(),
+      endpoint,
     }
   }
 
   private getAccountPath(): string {
-    return path.join(getEchoFlowInternalDir(getEchoFlowConfigDir()), 'qingyun-account.json')
+    return path.join(getEchoFlowInternalDir(getEchoFlowConfigDir()), 'echoflow-account.json')
   }
 
   private async readAccount(): Promise<StoredEchoFlowAccount | null> {
@@ -173,8 +197,9 @@ export class EchoFlowApiService {
     }
   }
 
-  private async fetchManagementApi<T>(pathname: string, userId: string, token: string): Promise<T> {
-    const response = await fetch(`${this.baseUrl}${pathname}`, {
+  private async fetchManagementApi<T>(pathname: string, userId: string, token: string, endpoint: EchoFlowEndpoint = 'main'): Promise<T> {
+    const baseUrl = this.getBaseUrl(endpoint)
+    const response = await fetch(`${baseUrl}${pathname}`, {
       headers: {
         'content-type': 'application/json',
         'new-api-user': userId,
@@ -197,6 +222,7 @@ function toPublicAccount(account: StoredEchoFlowAccount): EchoFlowAccount {
     ...(account.username ? { username: account.username } : {}),
     ...(account.tokens ? { tokens: account.tokens.map(toTokenSummary) } : {}),
     ...(typeof account.refreshedAt === 'number' ? { refreshedAt: account.refreshedAt } : {}),
+    ...(account.endpoint ? { endpoint: account.endpoint } : { endpoint: 'main' as EchoFlowEndpoint }),
   }
 }
 

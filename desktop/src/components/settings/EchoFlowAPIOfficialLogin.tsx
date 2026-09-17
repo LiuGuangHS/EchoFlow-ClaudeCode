@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Eye, EyeOff, ExternalLink, Plus, RefreshCw, Settings, Trash2, Unlink } from 'lucide-react'
-import { echoflowApi, type EchoFlowAccount } from '../../api/echoflow'
+import { echoflowApi, type EchoFlowAccount, type EchoFlowEndpoint } from '../../api/echoflow'
 import { getDesktopHost } from '../../lib/desktopHost'
 import { useProviderStore } from '../../stores/providerStore'
 import type { SavedProvider } from '../../types/provider'
 
-const ECHOFLOW_BASE_URL = 'https://api.echoflow.cn'
-const ECHOFLOW_CONSOLE_URL = 'https://api.echoflow.cn/console/personal'
+const ECHOFLOW_BASE_URLS = {
+  main: 'https://api.echoflowai.cc',
+  dedicated: 'https://expapi.echoflowai.cc',
+}
+const ECHOFLOW_CONSOLE_URL = 'https://api.echoflowai.cc/console/personal'
 const ECHOFLOW_PRESET_ID = 'echoflowai'
 const DEFAULT_MODELS = {
   main: 'claude-sonnet-4-6',
@@ -27,13 +30,14 @@ function formatRefreshedAt(value: number): string {
 
 export function EchoFlowAPIOfficialLogin({ activeId, providers, onEdit }: Props) {
   const { createProvider, updateProvider, deleteProvider, activateProvider, fetchProviders } = useProviderStore()
-  const qingyunProviders = useMemo(
+  const echoflowProviders = useMemo(
     () => providers.filter((provider) => provider.presetId === ECHOFLOW_PRESET_ID),
     [providers],
   )
   const [account, setAccount] = useState<EchoFlowAccount | null>(null)
   const [userId, setUserId] = useState('')
   const [managementToken, setManagementToken] = useState('')
+  const [selectedEndpoint, setSelectedEndpoint] = useState<EchoFlowEndpoint>('main')
   const [showManagementToken, setShowManagementToken] = useState(false)
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({})
   const [keyValues, setKeyValues] = useState<Record<string, string>>({})
@@ -50,8 +54,9 @@ export function EchoFlowAPIOfficialLogin({ activeId, providers, onEdit }: Props)
       .then(({ account }) => {
         setAccount(account)
         setUserId(account?.userId ?? '')
+        setSelectedEndpoint(account?.endpoint ?? 'main')
       })
-      .catch(() => setError('无法读取清云账户信息。'))
+      .catch(() => setError('无法读取 EchoFlow 账户信息。'))
   }, [])
 
   const setKeyValue = (id: string, value: string) => {
@@ -65,7 +70,7 @@ export function EchoFlowAPIOfficialLogin({ activeId, providers, onEdit }: Props)
     setIsSavingAccount(true)
     setError(null)
     try {
-      const { account } = await echoflowApi.bindAccount(userId, managementToken)
+      const { account } = await echoflowApi.bindAccount(userId, managementToken, selectedEndpoint)
       setAccount(account)
       setManagementToken('')
     } catch {
@@ -80,13 +85,24 @@ export function EchoFlowAPIOfficialLogin({ activeId, providers, onEdit }: Props)
     setIsUpdatingAccount(true)
     setError(null)
     try {
-      const { account } = await echoflowApi.bindAccount(userId, managementToken)
+      const { account } = await echoflowApi.bindAccount(userId, managementToken, selectedEndpoint)
       setAccount(account)
       setManagementToken('')
     } catch {
       setError('更新系统访问令牌失败。')
     } finally {
       setIsUpdatingAccount(false)
+    }
+  }
+
+  const updateEndpoint = async (endpoint: EchoFlowEndpoint) => {
+    setError(null)
+    try {
+      const { account } = await echoflowApi.updateEndpoint(endpoint)
+      setAccount(account)
+      setSelectedEndpoint(endpoint)
+    } catch {
+      setError('切换线路失败。')
     }
   }
 
@@ -121,7 +137,7 @@ export function EchoFlowAPIOfficialLogin({ activeId, providers, onEdit }: Props)
       await activateProvider(provider.id)
       await fetchProviders()
     } catch {
-      setError('启用清云 API Key 失败。')
+      setError('启用 EchoFlow API Key 失败。')
     } finally {
       setIsSavingKey(null)
     }
@@ -146,10 +162,11 @@ export function EchoFlowAPIOfficialLogin({ activeId, providers, onEdit }: Props)
     if (!apiKey || isSavingKey) return
     setIsSavingKey(draftId)
     try {
+      const baseUrl = account?.endpoint ? ECHOFLOW_BASE_URLS[account.endpoint] : ECHOFLOW_BASE_URLS.main
       const provider = await createProvider({
         presetId: ECHOFLOW_PRESET_ID,
-        name: `清云 API #${qingyunProviders.length + 1}`,
-        baseUrl: ECHOFLOW_BASE_URL,
+        name: `EchoFlow API #${echoflowProviders.length + 1}`,
+        baseUrl,
         apiKey,
         apiFormat: 'anthropic',
         authStrategy: 'auth_token',
@@ -163,7 +180,7 @@ export function EchoFlowAPIOfficialLogin({ activeId, providers, onEdit }: Props)
       })
       await fetchProviders()
     } catch {
-      setError('保存清云 API Key 失败。')
+      setError('保存 EchoFlow API Key 失败。')
     } finally {
       setIsSavingKey(null)
     }
@@ -177,14 +194,14 @@ export function EchoFlowAPIOfficialLogin({ activeId, providers, onEdit }: Props)
 
   const removeProvider = async (provider: SavedProvider) => {
     if (provider.id === activeId) {
-      setError('请先启用其他服务商，再删除当前清云 API Key。')
+      setError('请先启用其他服务商，再删除当前 EchoFlow API Key。')
       return
     }
     try {
       await deleteProvider(provider.id)
       await fetchProviders()
     } catch {
-      setError('删除清云 API Key 失败。')
+      setError('删除 EchoFlow API Key 失败。')
     }
   }
 
@@ -193,7 +210,7 @@ export function EchoFlowAPIOfficialLogin({ activeId, providers, onEdit }: Props)
     setIsSavingKey(rowId)
     try {
       const { provider: selectedProvider } = await echoflowApi.selectToken(tokenId, provider?.id)
-      if (!provider && qingyunProviders.length === 0) await activateProvider(selectedProvider.id)
+      if (!provider && echoflowProviders.length === 0) await activateProvider(selectedProvider.id)
       if (!provider) setDraftKeys((current) => current.filter((id) => id !== rowId))
       await fetchProviders()
     } catch {
@@ -213,6 +230,7 @@ export function EchoFlowAPIOfficialLogin({ activeId, providers, onEdit }: Props)
 
   const inputBase = 'min-w-0 flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:border-[var(--color-brand)] focus:outline-none'
   const tokenOptions = account?.tokens ?? []
+  const currentEndpoint = account?.endpoint ?? 'main'
   const accountSummary = account?.balance === undefined
     ? '尚未同步'
     : `余额：¥${account.balance.toFixed(2)} · ${account.userGroup ?? 'default'} · ${account.refreshedAt ? formatRefreshedAt(account.refreshedAt) : '尚未同步'}`
@@ -224,7 +242,7 @@ export function EchoFlowAPIOfficialLogin({ activeId, providers, onEdit }: Props)
     return (
       <div key={id} className="flex flex-col gap-2 rounded-lg border border-[var(--color-border-separator)] bg-[var(--color-surface-container-low)] p-3">
         <div className="flex items-center justify-between gap-2 text-xs text-[var(--color-text-secondary)]">
-          <span className="font-medium text-[var(--color-text-primary)]">{provider?.name ?? '新的清云 API 配置'}</span>
+          <span className="font-medium text-[var(--color-text-primary)]">{provider?.name ?? '新的 EchoFlow API 配置'}</span>
           {isActive && <span className="text-[var(--color-success)]">● 当前使用</span>}
         </div>
         <div className="flex flex-wrap gap-2">
@@ -269,7 +287,7 @@ export function EchoFlowAPIOfficialLogin({ activeId, providers, onEdit }: Props)
               {!isActive && <button type="button" onClick={() => void removeProvider(provider)} className="rounded-md border border-[var(--color-border)] px-3 py-2 text-[var(--color-error)]"><Trash2 className="h-4 w-4" /></button>}
             </>
           ) : (
-            <button type="button" onClick={() => void saveDraft(id, qingyunProviders.length === 0)} disabled={isSaving || !key.trim()} className="rounded-md bg-[var(--color-brand)] px-3 py-2 text-sm font-medium text-white disabled:opacity-50">{qingyunProviders.length === 0 ? '保存并启用' : '保存'}</button>
+            <button type="button" onClick={() => void saveDraft(id, echoflowProviders.length === 0)} disabled={isSaving || !key.trim()} className="rounded-md bg-[var(--color-brand)] px-3 py-2 text-sm font-medium text-white disabled:opacity-50">{echoflowProviders.length === 0 ? '保存并启用' : '保存'}</button>
           )}
         </div>
       </div>
@@ -279,18 +297,18 @@ export function EchoFlowAPIOfficialLogin({ activeId, providers, onEdit }: Props)
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs text-[var(--color-text-secondary)]">在控制台生成并输入 API Key 后即可使用清云模型。</p>
-        <button type="button" onClick={() => void openConsole()} className="inline-flex items-center gap-1 text-xs text-[var(--color-brand)] hover:underline"><ExternalLink className="h-3.5 w-3.5" />前往清云 API</button>
+        <p className="text-xs text-[var(--color-text-secondary)]">在控制台生成并输入 API Key 后即可使用 EchoFlow 模型。</p>
+        <button type="button" onClick={() => void openConsole()} className="inline-flex items-center gap-1 text-xs text-[var(--color-brand)] hover:underline"><ExternalLink className="h-3.5 w-3.5" />前往 EchoFlow API</button>
       </div>
 
       <div className="flex flex-col gap-2">
-        {qingyunProviders.map((provider) => renderKeyRow(provider.id, provider))}
+        {echoflowProviders.map((provider) => renderKeyRow(provider.id, provider))}
         {draftKeys.map((id) => renderKeyRow(id))}
         <button type="button" onClick={addDraft} className="inline-flex w-fit items-center gap-1 rounded-md border border-dashed border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-text-secondary)]"><Plus className="h-4 w-4" />添加 API Key</button>
       </div>
 
       <div className="border-t border-[var(--color-border-separator)] pt-4">
-        <div className="mb-2 text-sm font-semibold text-[var(--color-text-primary)]">绑定清云账户，直接选择 API Key</div>
+        <div className="mb-2 text-sm font-semibold text-[var(--color-text-primary)]">绑定 EchoFlow 账户，直接选择 API Key</div>
         <p className="mb-3 text-xs text-[var(--color-text-secondary)]">绑定后可同步余额和已有 API Key；也可以继续手动粘贴 API Key。</p>
         {!account ? (
           <div className="flex flex-col gap-2">
@@ -301,11 +319,52 @@ export function EchoFlowAPIOfficialLogin({ activeId, providers, onEdit }: Props)
                 <button type="button" onClick={() => setShowManagementToken((current) => !current)} className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)]">{showManagementToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button>
               </div>
             </div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-[var(--color-text-secondary)]">接入线路：</span>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedEndpoint('main')}
+                  className={`rounded-md px-3 py-1.5 text-sm ${selectedEndpoint === 'main' ? 'bg-[var(--color-brand)] text-white' : 'border border-[var(--color-border)] text-[var(--color-text-secondary)]'}`}
+                >
+                  主站
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedEndpoint('dedicated')}
+                  className={`rounded-md px-3 py-1.5 text-sm ${selectedEndpoint === 'dedicated' ? 'bg-[var(--color-brand)] text-white' : 'border border-[var(--color-border)] text-[var(--color-text-secondary)]'}`}
+                >
+                  专线
+                </button>
+              </div>
+            </div>
             <button type="button" onClick={() => void saveAccount()} disabled={isSavingAccount || !userId.trim() || !managementToken.trim()} className="w-fit rounded-md bg-[var(--color-brand)] px-3 py-2 text-sm font-medium text-white disabled:opacity-50">{isSavingAccount ? '绑定中...' : '绑定账户'}</button>
           </div>
         ) : (
           <div className="flex flex-col gap-2 rounded-lg bg-[var(--color-surface-container-low)] p-3 text-sm">
             <div className="flex flex-wrap items-center justify-between gap-2"><span>账户：{account.userId}</span><span>{accountSummary}</span></div>
+            <div className="flex items-center gap-2 border-b border-[var(--color-border-separator)] pb-2">
+              <span className="text-[var(--color-text-secondary)]">接入线路：</span>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => void updateEndpoint('main')}
+                  className={`rounded-md px-3 py-1.5 text-sm ${currentEndpoint === 'main' ? 'bg-[var(--color-brand)] text-white' : 'border border-[var(--color-border)] text-[var(--color-text-secondary)]'}`}
+                >
+                  主站
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void updateEndpoint('dedicated')}
+                  className={`rounded-md px-3 py-1.5 text-sm ${currentEndpoint === 'dedicated' ? 'bg-[var(--color-brand)] text-white' : 'border border-[var(--color-border)] text-[var(--color-text-secondary)]'}`}
+                >
+                  专线
+                </button>
+              </div>
+              <span className="text-xs text-[var(--color-text-tertiary)]">
+                {currentEndpoint === 'main' ? ECHOFLOW_BASE_URLS.main : ECHOFLOW_BASE_URLS.dedicated}
+              </span>
+            </div>
             <div className="flex flex-col gap-2 sm:flex-row">
               <div className="relative flex-1">
                 <input type={showManagementToken ? 'text' : 'password'} value={managementToken} onChange={(event) => setManagementToken(event.target.value)} placeholder="更新系统访问令牌" className={`${inputBase} pr-9`} />

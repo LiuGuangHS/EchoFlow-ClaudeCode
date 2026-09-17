@@ -34,7 +34,7 @@ jobs:
       coverage_checks: ${{ steps.policy.outputs.coverage_checks }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -61,7 +61,7 @@ jobs:
     name: harness-audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - name: Audit tracked ECC and quality contracts
@@ -110,7 +110,7 @@ jobs:
     if: needs.scope-plan.outputs.desktop_checks == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
@@ -130,7 +130,7 @@ jobs:
     if: needs.scope-plan.outputs.server_checks == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
@@ -155,7 +155,7 @@ jobs:
     if: needs.scope-plan.outputs.provider_contract_checks == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
@@ -172,7 +172,7 @@ jobs:
     if: needs.scope-plan.outputs.chat_contract_checks == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
@@ -192,7 +192,7 @@ jobs:
     if: needs.scope-plan.outputs.agent_flow_checks == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
@@ -204,7 +204,7 @@ jobs:
         run: bun run check:agent-flow
       - name: Upload agent flow artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: agent-flow
           path: artifacts/agent-flow/
@@ -216,7 +216,7 @@ jobs:
     if: needs.scope-plan.outputs.adapter_checks == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
@@ -234,7 +234,7 @@ jobs:
     if: needs.scope-plan.outputs.desktop_native_checks == 'true'
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - name: Install Linux dependencies
@@ -264,7 +264,7 @@ jobs:
     if: needs.scope-plan.outputs.desktop_native_checks == 'true'
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
@@ -279,7 +279,7 @@ jobs:
     if: needs.scope-plan.outputs.persistence_checks == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
@@ -299,7 +299,7 @@ jobs:
     if: needs.scope-plan.outputs.docs_checks == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - uses: actions/setup-node@v7
@@ -316,7 +316,7 @@ jobs:
     if: needs.scope-plan.outputs.coverage_checks == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -346,7 +346,7 @@ jobs:
           fi
       - name: Upload coverage report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: coverage-report
           path: artifacts/coverage/

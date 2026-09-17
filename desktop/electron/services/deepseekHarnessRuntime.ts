@@ -6,7 +6,7 @@ import path from 'node:path'
 import { Readable } from 'node:stream'
 import { killSidecar, reserveLocalPort } from './sidecarManager'
 
-const DSH_VERSION = '0.1.1-rc.2'
+const DSH_VERSION = '0.1.5-rc.2'
 const DSH_PACKAGE = '@deepseek-ai/dsh'
 const DSH_EXECUTABLE_PATH = ['node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js']
 const DSH_MIN_NODE_VERSION = [22, 19, 0] as const
@@ -58,6 +58,7 @@ type DeepSeekHarnessRuntimeDeps = {
 
 type DeepSeekHarnessRuntimeOptions = {
   userDataPath: string
+  resourcesPath?: string
   deps?: Partial<DeepSeekHarnessRuntimeDeps>
 }
 
@@ -191,6 +192,7 @@ async function waitForUrl(url: string): Promise<void> {
 
 export class DeepSeekHarnessRuntime {
   private readonly root: string
+  private readonly resourcesPath?: string
   private readonly deps: DeepSeekHarnessRuntimeDeps
   private nodePath: string | null = null
   private currentStatus: DeepSeekHarnessStatus = status('not-installed')
@@ -201,16 +203,64 @@ export class DeepSeekHarnessRuntime {
 
   constructor(options: DeepSeekHarnessRuntimeOptions) {
     this.root = deepSeekHarnessRoot(options.userDataPath)
+    this.resourcesPath = options.resourcesPath
     this.deps = { ...defaultDeps, ...options.deps }
+  }
+
+  /**
+   * Resolve the best available dsh executable in priority order:
+   * 1. User-installed version (via "Install" button)
+   * 2. Bundled version (shipped with desktop app)
+   * 3. null (will prompt user to install or use npx)
+   */
+  private resolveBestExecutable(): string | null {
+    // Priority 1: User-installed version (check actual installed version, not hardcoded DSH_VERSION)
+    const runtimeBase = path.join(this.root, 'runtime', 'dsh')
+    try {
+      // Try to find any installed version in the runtime directory
+      const versions = this.deps.exists(runtimeBase)
+        ? require('fs').readdirSync(runtimeBase).filter((v: string) => {
+            const executable = path.join(runtimeBase, v, ...DSH_EXECUTABLE_PATH)
+            return this.deps.exists(executable)
+          })
+        : []
+
+      // If we have versions, prefer the one matching DSH_VERSION, otherwise use the first available
+      if (versions.length > 0) {
+        const preferredVersion = versions.includes(DSH_VERSION) ? DSH_VERSION : versions[0]
+        return path.join(runtimeBase, preferredVersion, ...DSH_EXECUTABLE_PATH)
+      }
+    } catch {
+      // If directory listing fails, fall back to checking the expected version
+    }
+
+    // Fallback: check the expected version directly
+    const userInstalled = harnessExecutable(this.root)
+    if (this.deps.exists(userInstalled)) return userInstalled
+
+    // Priority 2: Bundled version (in app resources)
+    if (this.resourcesPath) {
+      const bundled = path.join(this.resourcesPath, 'deepseek-harness', DSH_VERSION, ...DSH_EXECUTABLE_PATH)
+      if (this.deps.exists(bundled)) return bundled
+    }
+
+    // Priority 3: Not available (caller should handle npx or install prompt)
+    return null
   }
 
   async getStatus(): Promise<DeepSeekHarnessStatus> {
     if (this.currentStatus.state !== 'not-installed') return this.currentStatus
     if (!await this.resolveCompatibleNode()) return this.currentStatus
-    const stored = await this.readStoredState()
-    if (stored && this.deps.exists(harnessExecutable(this.root))) {
-      this.currentStatus = status('installed', stored.version)
+
+    // Check if any version is available (user-installed or bundled)
+    const executable = this.resolveBestExecutable()
+    if (executable) {
+      const stored = await this.readStoredState()
+      // Use stored version if available, otherwise assume bundled version
+      const version = stored?.version || DSH_VERSION
+      this.currentStatus = status('installed', version)
     }
+
     return this.currentStatus
   }
 
@@ -281,7 +331,8 @@ export class DeepSeekHarnessRuntime {
       }
       const message = error instanceof Error ? error.message : String(error)
       const existing = await this.readStoredState()
-      this.currentStatus = existing && this.deps.exists(harnessExecutable(this.root))
+      const executable = this.resolveBestExecutable()
+      this.currentStatus = existing && executable
         ? status('installed', existing.version, null, message)
         : status('error', null, null, message)
       throw error
@@ -294,12 +345,15 @@ export class DeepSeekHarnessRuntime {
     if (!current.version) throw new Error('Install DeepSeek Harness before starting it')
     const nodePath = await this.resolveCompatibleNode()
     if (!nodePath) throw new Error('Node.js 22.19.0 or later is required to start DeepSeek Harness')
-    const executable = harnessExecutable(this.root)
-    if (!this.deps.exists(executable)) throw new Error('DeepSeek Harness installation is incomplete')
+
+    // Resolve best available executable
+    const executable = this.resolveBestExecutable()
+    if (!executable) throw new Error('DeepSeek Harness installation is incomplete')
+
     const port = await this.deps.reservePort('127.0.0.1')
     const url = `http://127.0.0.1:${port}`
     const generation = ++this.generation
-    this.currentStatus = status('starting', DSH_VERSION, url)
+    this.currentStatus = status('starting', current.version, url)
     try {
       const child = this.deps.spawn(nodePath, [executable, 'web', '--no-open', '--host', '127.0.0.1', '--port', String(port)], {
         cwd: harnessDataRoot(this.root),
@@ -311,16 +365,16 @@ export class DeepSeekHarnessRuntime {
       child.once('exit', () => {
         if (generation !== this.generation || this.child !== child) return
         this.child = null
-        this.currentStatus = status('stopped', DSH_VERSION)
+        this.currentStatus = status('stopped', current.version)
       })
       child.once('error', error => {
         if (generation !== this.generation || this.child !== child) return
         this.child = null
-        this.currentStatus = status('error', DSH_VERSION, null, error.message)
+        this.currentStatus = status('error', current.version, null, error.message)
       })
       await this.deps.waitForUrl(url)
       if (generation !== this.generation || this.child !== child) throw new Error('DeepSeek Harness startup stopped')
-      this.currentStatus = status('running', DSH_VERSION, url)
+      this.currentStatus = status('running', current.version, url)
       return this.currentStatus
     } catch (error) {
       if (generation === this.generation) {
@@ -328,7 +382,7 @@ export class DeepSeekHarnessRuntime {
         this.child = null
         if (child) killSidecar(child)
         const message = error instanceof Error ? error.message : String(error)
-        this.currentStatus = status('error', DSH_VERSION, null, message)
+        this.currentStatus = status('error', current.version, null, message)
       }
       throw error
     }

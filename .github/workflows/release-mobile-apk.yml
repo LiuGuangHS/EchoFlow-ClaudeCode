@@ -29,7 +29,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
           ref: ${{ inputs.tag }}
@@ -126,7 +126,7 @@ jobs:
           echo "apk_name=$APK_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Upload release APK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: echoflow-code-mobile-release-apk
           path: mobile/${{ steps.artifact.outputs.apk_name }}

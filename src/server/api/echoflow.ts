@@ -7,9 +7,12 @@ import { errorResponse } from '../middleware/errorHandler.js'
 
 const service = new EchoFlowApiService()
 const providerService = new ProviderService()
-const QINGYUN_PRESET_ID = 'echoflowai'
-const QINGYUN_BASE_URL = 'https://api.echoflow.cn'
-const QINGYUN_DEFAULT_MODELS = {
+const ECHOFLOW_PRESET_ID = 'echoflowai'
+const ECHOFLOW_BASE_URLS = {
+  main: 'https://api.echoflowai.cc',
+  dedicated: 'https://expapi.echoflowai.cc',
+}
+const ECHOFLOW_DEFAULT_MODELS = {
   main: 'claude-sonnet-4-6',
   haiku: 'claude-haiku-4-5',
   sonnet: 'claude-sonnet-4-6',
@@ -19,6 +22,11 @@ const QINGYUN_DEFAULT_MODELS = {
 const BindAccountSchema = z.object({
   userId: z.string().trim().min(1),
   managementToken: z.string().trim().min(1),
+  endpoint: z.enum(['main', 'dedicated']).optional(),
+})
+
+const UpdateEndpointSchema = z.object({
+  endpoint: z.enum(['main', 'dedicated']),
 })
 
 const SelectTokenSchema = z.object({
@@ -41,7 +49,7 @@ export async function handleEchoFlowApi(req: Request, _url: URL, segments: strin
     if (action === 'account') {
       if (req.method === 'POST') {
         const input = BindAccountSchema.parse(await req.json())
-        return Response.json({ account: await service.bindAccount(input.userId, input.managementToken) })
+        return Response.json({ account: await service.bindAccount(input.userId, input.managementToken, input.endpoint) })
       }
       if (req.method === 'PUT') {
         return Response.json({ account: await service.refreshAccount() })
@@ -49,6 +57,10 @@ export async function handleEchoFlowApi(req: Request, _url: URL, segments: strin
       if (req.method === 'DELETE') {
         await service.disconnectAccount()
         return Response.json({ ok: true })
+      }
+      if (req.method === 'PATCH') {
+        const input = UpdateEndpointSchema.parse(await req.json())
+        return Response.json({ account: await service.updateEndpoint(input.endpoint) })
       }
     }
 
@@ -69,23 +81,25 @@ export async function handleEchoFlowApi(req: Request, _url: URL, segments: strin
     if (action === 'select-token' && req.method === 'POST') {
       const input = SelectTokenSchema.parse(await req.json())
       const token = await service.selectAccountToken(input.tokenId)
+      const account = await service.getAccount()
+      const baseUrl = account?.endpoint ? ECHOFLOW_BASE_URLS[account.endpoint] : ECHOFLOW_BASE_URLS.main
       if (input.providerId) {
         const provider = await providerService.getProvider(input.providerId)
-        if (provider.presetId !== QINGYUN_PRESET_ID) return Response.json({ error: 'invalid_provider' }, { status: 400 })
+        if (provider.presetId !== ECHOFLOW_PRESET_ID) return Response.json({ error: 'invalid_provider' }, { status: 400 })
         const updated = await providerService.updateProvider(input.providerId, { apiKey: token.key })
         return Response.json({ provider: { id: updated.id } })
       }
       const { providers } = await providerService.listProviders()
-      const existing = providers.find((provider) => provider.presetId === QINGYUN_PRESET_ID && provider.apiKey === token.key)
+      const existing = providers.find((provider) => provider.presetId === ECHOFLOW_PRESET_ID && provider.apiKey === token.key)
       if (existing) return Response.json({ provider: { id: existing.id } })
       const provider = await providerService.addProvider({
-        presetId: QINGYUN_PRESET_ID,
-        name: `清云 API #${providers.filter((item) => item.presetId === QINGYUN_PRESET_ID).length + 1}`,
-        baseUrl: QINGYUN_BASE_URL,
+        presetId: ECHOFLOW_PRESET_ID,
+        name: `EchoFlow API #${providers.filter((item) => item.presetId === ECHOFLOW_PRESET_ID).length + 1}`,
+        baseUrl,
         apiKey: token.key,
         apiFormat: 'anthropic',
         authStrategy: 'auth_token',
-        models: QINGYUN_DEFAULT_MODELS,
+        models: ECHOFLOW_DEFAULT_MODELS,
       })
       return Response.json({ provider: { id: provider.id } }, { status: 201 })
     }

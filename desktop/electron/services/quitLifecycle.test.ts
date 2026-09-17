@@ -40,6 +40,8 @@ function quitFixture(failingStep?: string, rejectServer = false, rejectPublicAcc
     previewService: { close: cleanup('preview') },
     petWindowController: { dispose: cleanup('pet') },
     workspaceBrowserService: null,
+    deepSeekHarnessWindow: null,
+    deepSeekHarnessRuntime: null,
     publicAccessManager: {
       dispose: () => {
         cleanup('publicAccess')()

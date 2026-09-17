@@ -55,6 +55,13 @@
       "package.json",
       "node_modules/@ngrok/**"
     ],
+    "extraResources": [
+      {
+        "from": "resources/deepseek-harness",
+        "to": "deepseek-harness",
+        "filter": ["**/*"]
+      }
+    ],
     "mac": {
       "category": "public.app-category.developer-tools",
       "target": [
@@ -102,7 +109,8 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "bun run build:preview-agent && node ./node_modules/typescript/bin/tsc -b && node ./node_modules/vite/bin/vite.js build",
+    "build": "bun run bundle-dsh && bun run build:preview-agent && node ./node_modules/typescript/bin/tsc -b && node ./node_modules/vite/bin/vite.js build",
+    "bundle-dsh": "bun run scripts/bundle-deepseek-harness.ts",
     "prepare:node-pty": "bun run ./scripts/prepare-node-pty.ts",
     "build:electron": "bun run prepare:node-pty && bun build ./electron/main.ts --outfile ./electron-dist/main.cjs --target node --format cjs --external electron --external electron-updater --external node-pty --external @ngrok/ngrok && bun build ./electron/preload.ts --outfile ./electron-dist/preload.cjs --target node --format cjs --external electron && bun build ./electron/pet-preload.ts --outfile ./electron-dist/pet-preload.cjs --target node --format cjs --external electron && bun build ./electron/preview-preload.ts --outfile ./electron-dist/preview-preload.cjs --target node --format cjs --external electron",
     "build:preview-agent": "bun run ./scripts/build-preview-agent.ts",

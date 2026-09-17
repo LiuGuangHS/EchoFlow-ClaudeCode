@@ -25,24 +25,27 @@ let waitForUrl: ReturnType<typeof vi.fn>
 
 type RuntimeDepsOverrides = NonNullable<ConstructorParameters<typeof DeepSeekHarnessRuntime>[0]['deps']>
 
-function createRuntime(overrides: RuntimeDepsOverrides = {}) {
+function createRuntime(overrides: RuntimeDepsOverrides = {}, resourcesPath?: string) {
   return new DeepSeekHarnessRuntime({
     userDataPath: root,
+    resourcesPath,
     deps: {
-      exists: (target) => target.endsWith(path.join('node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')),
-      mkdir: async () => undefined,
-      readFile: async () => {
-        throw Object.assign(new Error('missing'), { code: 'ENOENT' })
-      },
-      writeFile: async () => undefined,
-      rename: async () => undefined,
-      rm: async () => undefined,
+      exists: existsSync,
+      mkdir: fs.mkdir,
+      readFile: fs.readFile,
+      writeFile: fs.writeFile,
+      rename: fs.rename,
+      rm: fs.rm,
       spawn,
       reservePort,
       waitForUrl,
       resolveNode: () => '/usr/local/bin/node',
       nodeVersion: async () => [22, 19, 0],
-      installPackage: async () => undefined,
+      installPackage: async (_nodePath, directory) => {
+        const launcher = path.join(directory, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+        await fs.mkdir(path.dirname(launcher), { recursive: true })
+        await fs.writeFile(launcher, 'fake launcher')
+      },
       ...overrides,
     },
   })
@@ -120,7 +123,7 @@ describe('DeepSeekHarnessRuntime', () => {
     const [command, args, options] = spawn.mock.calls.at(-1)!
     expect(command).toBe('/usr/local/bin/node')
     expect(args).toEqual([
-      path.join(root, 'deepseek-harness', 'runtime', 'dsh', '0.1.1-rc.2', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
+      path.join(root, 'deepseek-harness', 'runtime', 'dsh', '0.1.5-rc.2', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
       'web',
       '--no-open',
       '--host',
@@ -198,12 +201,6 @@ describe('DeepSeekHarnessRuntime', () => {
   it('keeps the existing runtime when package installation fails', async () => {
     const runtimeRoot = await seedInstalledRuntime()
     const runtime = createRuntime({
-      exists: existsSync,
-      mkdir: fs.mkdir,
-      readFile: fs.readFile,
-      writeFile: fs.writeFile,
-      rename: fs.rename,
-      rm: fs.rm,
       installPackage: async () => {
         throw new Error('npm failed')
       },
@@ -219,18 +216,14 @@ describe('DeepSeekHarnessRuntime', () => {
     const originalRename = fs.rename
     let promotionAttempted = false
     const runtime = createRuntime({
-      exists: existsSync,
-      mkdir: fs.mkdir,
-      readFile: fs.readFile,
-      writeFile: fs.writeFile,
-      rm: fs.rm,
       installPackage: async (_nodePath, directory) => {
         const launcher = path.join(directory, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
         await fs.mkdir(path.dirname(launcher), { recursive: true })
         await fs.writeFile(launcher, 'new launcher')
       },
       rename: async (source, destination) => {
-        if (String(source).includes('.installing-') && destination === runtimeRoot && !promotionAttempted) {
+        const destPath = path.join(root, 'deepseek-harness', 'runtime', 'dsh', '0.1.5-rc.2')
+        if (String(source).includes('.installing-') && destination === destPath && !promotionAttempted) {
           promotionAttempted = true
           throw new Error('promotion failed')
         }
@@ -276,5 +269,71 @@ describe('DeepSeekHarnessRuntime', () => {
     children[0]?.emit('exit', 0, null)
 
     await expect(runtime.getStatus()).resolves.toMatchObject({ state: 'stopped' })
+  })
+
+  it('uses bundled version when no user installation exists', async () => {
+    const resourcesPath = path.join(root, 'fake-resources')
+    const bundledExecutable = path.join(resourcesPath, 'deepseek-harness', '0.1.5-rc.2', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+
+    // Create the bundled version
+    await fs.mkdir(path.dirname(bundledExecutable), { recursive: true })
+    await fs.writeFile(bundledExecutable, 'bundled launcher')
+
+    const runtime = createRuntime({}, resourcesPath)
+
+    const status = await runtime.getStatus()
+    expect(status.state).toBe('installed')
+    expect(status.version).toBe('0.1.5-rc.2')
+  })
+
+  it('prefers user-installed version over bundled version', async () => {
+    const resourcesPath = path.join(root, 'fake-resources')
+    const bundledExecutable = path.join(resourcesPath, 'deepseek-harness', '0.1.5-rc.2', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+
+    // Create both user-installed and bundled versions
+    await seedInstalledRuntime('0.1.5-rc.2')
+    await fs.mkdir(path.dirname(bundledExecutable), { recursive: true })
+    await fs.writeFile(bundledExecutable, 'bundled launcher')
+
+    const runtime = createRuntime({}, resourcesPath)
+
+    const status = await runtime.getStatus()
+    expect(status.state).toBe('installed')
+    expect(status.version).toBe('0.1.5-rc.2')
+
+    // Verify it starts with user-installed version
+    await runtime.start()
+    const userExecutable = path.join(root, 'deepseek-harness', 'runtime', 'dsh', '0.1.5-rc.2', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+    expect(spawn).toHaveBeenCalledWith(
+      '/usr/local/bin/node',
+      expect.arrayContaining([
+        userExecutable,
+        'web',
+        '--no-open',
+        '--host',
+        '127.0.0.1',
+        '--port',
+        '31415',
+      ]),
+      expect.any(Object),
+    )
+  })
+
+  it('falls back to bundled version when user installation is incomplete', async () => {
+    const resourcesPath = path.join(root, 'fake-resources')
+    const bundledExecutable = path.join(resourcesPath, 'deepseek-harness', '0.1.5-rc.2', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+
+    // Create only the bundled version
+    await fs.mkdir(path.dirname(bundledExecutable), { recursive: true })
+    await fs.writeFile(bundledExecutable, 'bundled launcher')
+
+    const runtime = createRuntime({}, resourcesPath)
+
+    await runtime.start()
+    expect(spawn).toHaveBeenCalledWith(
+      '/usr/local/bin/node',
+      expect.arrayContaining([bundledExecutable]),
+      expect.any(Object),
+    )
   })
 })
