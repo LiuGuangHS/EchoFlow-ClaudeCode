@@ -15,14 +15,14 @@
     "check": "npm run check:docs && npm test"
   },
   "dependencies": {
-    "dompurify": "^3.3.0",
-    "highlight.js": "^11.11.1",
-    "marked": "^17.0.5",
-    "mermaid": "^11.14.0",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4"
+    "dompurify": "^3.4.15",
+    "highlight.js": "^11.12.0",
+    "marked": "^18.0.13",
+    "mermaid": "^12.0.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
   },
   "devDependencies": {
-    "vite": "^8.0.10"
+    "vite": "^8.3.0"
   }
 }
