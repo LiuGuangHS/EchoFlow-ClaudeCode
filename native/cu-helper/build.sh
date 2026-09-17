@@ -238,7 +238,16 @@ resolve_identity() {
     return 0
   fi
 
-  # f) nothing usable -> instructions + fail. NEVER ad-hoc.
+  # f) CI fallback: allow ad-hoc signing ONLY when explicitly requested via
+  #    CU_HELPER_ALLOW_ADHOC=1 (for unsigned CI test builds).
+  if [ "${CU_HELPER_ALLOW_ADHOC:-}" = "1" ]; then
+    SIGN_IDENTITY="-"
+    log "identity: ad-hoc (CU_HELPER_ALLOW_ADHOC=1, CI test build only)"
+    log "warning: ad-hoc signature will NOT preserve TCC grants across rebuilds"
+    return 0
+  fi
+
+  # g) nothing usable -> instructions + fail.
   print_self_signed_instructions
   die "no stable code-signing identity available (refusing to ad-hoc sign)."
 }

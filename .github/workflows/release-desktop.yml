@@ -263,6 +263,7 @@ jobs:
         env:
           BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-install-cache
           SIDECAR_TARGET_TRIPLE: ${{ matrix.target_triple }}
+          CU_HELPER_ALLOW_ADHOC: ${{ matrix.smoke_platform == 'macos' && needs.signing-preflight.outputs.macos_signed != 'true' && '1' || '' }}
         run: bun run build:sidecars
 
       - name: Verify compiled Windows sidecar startup
