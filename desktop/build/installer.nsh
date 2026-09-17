@@ -293,11 +293,11 @@ FunctionEnd
       DetailPrint "$echoFlowProcessDiagnostic"
     ${EndIf}
   ${Else}
-    Delete "$PLUGINSDIR\cc-haha-processes.csv"
+    Delete "$PLUGINSDIR\echoflow-code-processes.csv"
     !ifdef INSTALL_MODE_PER_ALL_USERS
-      nsExec::Exec '"$CmdPath" /D /C tasklist /FO CSV /NH > "$PLUGINSDIR\cc-haha-processes.csv"'
+      nsExec::Exec '"$CmdPath" /D /C tasklist /FO CSV /NH > "$PLUGINSDIR\echoflow-code-processes.csv"'
     !else
-      nsExec::Exec '"$CmdPath" /D /C tasklist /FI "USERNAME eq %USERNAME%" /FO CSV /NH > "$PLUGINSDIR\cc-haha-processes.csv"'
+      nsExec::Exec '"$CmdPath" /D /C tasklist /FI "USERNAME eq %USERNAME%" /FO CSV /NH > "$PLUGINSDIR\echoflow-code-processes.csv"'
     !endif
     Pop ${_RETURN}
     ${If} ${_RETURN} != 0
