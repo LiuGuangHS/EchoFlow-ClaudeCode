@@ -15,7 +15,7 @@
     "check": "npm run check:docs && npm test"
   },
   "dependencies": {
-    "dompurify": "^3.3.0",
+    "dompurify": "^3.4.15",
     "highlight.js": "^11.11.1",
     "marked": "^17.0.5",
     "mermaid": "^11.14.0",
