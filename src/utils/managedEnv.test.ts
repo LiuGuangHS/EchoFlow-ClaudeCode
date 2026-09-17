@@ -42,8 +42,8 @@ describe('managed environment', () => {
     process.env.NODE_ENV = 'test'
     process.env.CLAUDE_CONFIG_DIR = tempDir
     delete process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST
-    delete process.env.CC_HAHA_AGENT_TEAMS_ENABLED
-    delete process.env.CC_HAHA_AGENT_TEAMS_DEFAULT
+    delete process.env.ECHOFLOW_AGENT_TEAMS_ENABLED
+    delete process.env.ECHOFLOW_AGENT_TEAMS_DEFAULT
     process.env.CLAUDE_CODE_ENTRYPOINT = 'sdk-cli'
     delete process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
     delete process.env.ANTHROPIC_BASE_URL
@@ -76,21 +76,21 @@ describe('managed environment', () => {
   test.each(['0', '1', undefined])('protects the General team preference %j through settings application', async (enabled) => {
     await writeJson(join(getEchoFlowInternalDir(tempDir), 'settings.json'), {
       env: {
-        CC_HAHA_AGENT_TEAMS_ENABLED: enabled === '1' ? '0' : '1',
-        CC_HAHA_AGENT_TEAMS_DEFAULT: '0',
+        ECHOFLOW_AGENT_TEAMS_ENABLED: enabled === '1' ? '0' : '1',
+        ECHOFLOW_AGENT_TEAMS_DEFAULT: '0',
       },
     })
-    if (enabled !== undefined) process.env.CC_HAHA_AGENT_TEAMS_ENABLED = enabled
-    process.env.CC_HAHA_AGENT_TEAMS_DEFAULT = '1'
+    if (enabled !== undefined) process.env.ECHOFLOW_AGENT_TEAMS_ENABLED = enabled
+    process.env.ECHOFLOW_AGENT_TEAMS_DEFAULT = '1'
 
     // OAuth and cron sessions can use sdk-cli without host-owned provider routing.
     // Both the pre-trust and post-trust settings paths must preserve the choice.
     applySafeConfigEnvironmentVariables()
-    expect(process.env.CC_HAHA_AGENT_TEAMS_ENABLED).toBe(enabled)
-    expect(process.env.CC_HAHA_AGENT_TEAMS_DEFAULT).toBe('1')
+    expect(process.env.ECHOFLOW_AGENT_TEAMS_ENABLED).toBe(enabled)
+    expect(process.env.ECHOFLOW_AGENT_TEAMS_DEFAULT).toBe('1')
     applyConfigEnvironmentVariables()
-    expect(process.env.CC_HAHA_AGENT_TEAMS_ENABLED).toBe(enabled)
-    expect(process.env.CC_HAHA_AGENT_TEAMS_DEFAULT).toBe('1')
+    expect(process.env.ECHOFLOW_AGENT_TEAMS_ENABLED).toBe(enabled)
+    expect(process.env.ECHOFLOW_AGENT_TEAMS_DEFAULT).toBe('1')
   })
 
   it('starts a standalone provider proxy for CLI-only OpenAI-compatible providers', async () => {

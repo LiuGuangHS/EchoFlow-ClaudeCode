@@ -155,7 +155,7 @@ verify_relocated_cursor_resources
   return {
     exitCode: result.exitCode,
     stderr: result.stderr.toString(),
-    leftovers: readdirSync(directory).filter(name => name.startsWith('cc-haha-cursor-probe.')),
+    leftovers: readdirSync(directory).filter(name => name.startsWith('echoflow-cursor-probe.')),
   }
 }
 

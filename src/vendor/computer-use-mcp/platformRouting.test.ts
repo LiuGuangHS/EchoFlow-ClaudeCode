@@ -788,7 +788,7 @@ describe('Computer Use platform routing', () => {
     ['powershell.exe', 'PowerShell'],
     ['spotify.exe', 'Spotify'],
     ['tradingview.exe', 'TradingView'],
-    ['com.example.host', 'Claude Code Haha'],
+    ['com.example.host', 'EchoFlow Code'],
     ['dev.cchaha.cu-helper', 'Computer Use Helper'],
   ])('win32 global consent permits input, launch, and clipboard for %s', async (bundleId, displayName) => {
     const calls: string[] = []

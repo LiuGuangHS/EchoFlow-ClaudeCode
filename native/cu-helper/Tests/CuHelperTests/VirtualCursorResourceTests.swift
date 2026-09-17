@@ -10,7 +10,7 @@ final class VirtualCursorResourceTests: XCTestCase {
     func testPackagedApplicationLoadsFramesFromContentsResourcesInNaturalOrder() throws {
         let fixture = try ResourceFixture()
         defer { fixture.remove() }
-        let sequence = try fixture.sequence(at: "Contents/Resources/cu-helper_cc-haha-computer-use.bundle")
+        let sequence = try fixture.sequence(at: "Contents/Resources/cu-helper_echoflow-computer-use.bundle")
         try fixture.png(width: 10, to: sequence.appendingPathComponent("frame_10.png"))
         try fixture.png(width: 2, to: sequence.appendingPathComponent("frame_2.png"))
 
@@ -35,7 +35,7 @@ final class VirtualCursorResourceTests: XCTestCase {
     func testReadmeOnlySequenceFallsBackToProceduralRipple() throws {
         let fixture = try ResourceFixture()
         defer { fixture.remove() }
-        let sequence = try fixture.sequence(at: "Contents/Resources/cu-helper_cc-haha-computer-use.bundle")
+        let sequence = try fixture.sequence(at: "Contents/Resources/cu-helper_echoflow-computer-use.bundle")
         try Data("Optional animation frames are not installed.".utf8)
             .write(to: sequence.appendingPathComponent("README.md"))
 
@@ -48,7 +48,7 @@ final class VirtualCursorResourceTests: XCTestCase {
     func testInvalidFramesDoNotHideLaterValidFrames() throws {
         let fixture = try ResourceFixture()
         defer { fixture.remove() }
-        let sequence = try fixture.sequence(at: "Contents/Resources/cu-helper_cc-haha-computer-use.bundle")
+        let sequence = try fixture.sequence(at: "Contents/Resources/cu-helper_echoflow-computer-use.bundle")
         try Data("not a PNG".utf8).write(to: sequence.appendingPathComponent("frame_1.png"))
         try fixture.png(width: 4, to: sequence.appendingPathComponent("frame_2.PNG"))
 
@@ -61,7 +61,7 @@ final class VirtualCursorResourceTests: XCTestCase {
     func testExecutableSiblingModuleBundleRemainsSupported() throws {
         let fixture = try ResourceFixture()
         defer { fixture.remove() }
-        let sequence = try fixture.sequence(at: "Contents/MacOS/cu-helper_cc-haha-computer-use.bundle")
+        let sequence = try fixture.sequence(at: "Contents/MacOS/cu-helper_echoflow-computer-use.bundle")
         try fixture.png(width: 3, to: sequence.appendingPathComponent("frame_1.png"))
 
         let resources = VirtualCursor.loadLensSequence(from: fixture.bundle)
@@ -88,7 +88,7 @@ final class VirtualCursorResourceTests: XCTestCase {
     func testAllInvalidFramesFallBackToProceduralRipple() throws {
         let fixture = try ResourceFixture()
         defer { fixture.remove() }
-        let sequence = try fixture.sequence(at: "Contents/Resources/cu-helper_cc-haha-computer-use.bundle")
+        let sequence = try fixture.sequence(at: "Contents/Resources/cu-helper_echoflow-computer-use.bundle")
         try Data("not a PNG".utf8).write(to: sequence.appendingPathComponent("frame_1.png"))
 
         let resources = VirtualCursor.loadLensSequence(from: fixture.bundle)
@@ -102,7 +102,7 @@ final class VirtualCursorResourceTests: XCTestCase {
         let fixture = try ResourceFixture()
         defer { fixture.remove() }
         try Data("not a directory".utf8).write(to: fixture.application
-            .appendingPathComponent("Contents/Resources/cu-helper_cc-haha-computer-use.bundle"))
+            .appendingPathComponent("Contents/Resources/cu-helper_echoflow-computer-use.bundle"))
 
         let resources = VirtualCursor.loadLensSequence(from: fixture.bundle)
 

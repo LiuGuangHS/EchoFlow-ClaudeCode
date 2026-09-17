@@ -1,6 +1,6 @@
 name: Upstream Sync
 
-# Tracks NanmiCoder/cc-haha releases and turns each new one into a reviewable PR,
+# Tracks upstream releases and turns each new one into a reviewable PR,
 # instead of letting the fork drift 170 commits behind and merging it by hand.
 #
 # The merge is never *resolved* here. The sync branch points at the upstream release

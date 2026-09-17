@@ -7,7 +7,7 @@
 // "responsible process" — which, for a binary launched via posix_spawn /
 // fork+exec by a GUI app (here: the Electron sidecar), is the PARENT app, not
 // this binary. So granting cu-helper its own row in the Privacy lists is
-// ignored: the check resolves to the parent app (Claude Code Haha), which is a
+// ignored: the check resolves to the parent app (EchoFlow Code), which is a
 // different (ad-hoc) identity and usually not granted.
 //
 // The fix: at the very top of main, call this. If we have NOT yet disclaimed

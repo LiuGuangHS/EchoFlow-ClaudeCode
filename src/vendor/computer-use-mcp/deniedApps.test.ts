@@ -21,7 +21,7 @@ test.each([
   ['com.apple.Terminal', 'Terminal'],
   ['com.spotify.client', 'Spotify'],
   ['com.webull.desktop.v1', 'Webull'],
-  ['com.claude-code-haha.desktop', 'Claude Code Haha'],
+  ['com.echoflow.code.desktop', 'EchoFlow Code'],
   ['dev.cchaha.cu-helper', 'Computer Use Helper'],
   ['org.example.new-app', 'New App'],
 ])('legacy lookup for %s grants the same access with or without a bundle ID', (bundleId, displayName) => {

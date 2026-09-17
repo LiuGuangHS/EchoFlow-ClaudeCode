@@ -1005,7 +1005,7 @@ describe('handleToolCall — gates', () => {
 
   test.each([
     ['com.google.Chrome', 'Google Chrome'],
-    ['com.claude-code-haha.desktop', 'Claude Code Haha'],
+    ['com.echoflow.code.desktop', 'EchoFlow Code'],
     ['dev.cchaha.cu-helper', 'Computer Use Helper'],
     ['com.test.host', 'Custom Host'],
     ['com.googlecode.iterm2', 'iTerm2'],

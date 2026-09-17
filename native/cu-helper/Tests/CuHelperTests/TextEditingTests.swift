@@ -185,8 +185,8 @@ final class TextEditingTests: XCTestCase {
     @MainActor
     func testClipboardLeaseRestoresAllItemsAndTypeData() throws {
         let pasteboard = NSPasteboard.withUniqueName()
-        let customType = NSPasteboard.PasteboardType("com.cc-haha.test.binary")
-        let secondType = NSPasteboard.PasteboardType("com.cc-haha.test.second")
+        let customType = NSPasteboard.PasteboardType("com.echoflow.test.binary")
+        let secondType = NSPasteboard.PasteboardType("com.echoflow.test.second")
         let binary = Data([0x00, 0x7f, 0xff])
         let secondData = Data([0x01, 0x02])
         let first = NSPasteboardItem()

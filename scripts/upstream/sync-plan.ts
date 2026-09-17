@@ -1,7 +1,7 @@
 /**
  * Upstream sync planner.
  *
- * Turns "the fork is N commits behind cc-haha" into one deterministic decision:
+ * Turns "the fork is N commits behind upstream" into one deterministic decision:
  * which release to sync to, on which branch, and whether the merge is clean
  * enough to open a PR without a human writing conflict resolutions.
  *

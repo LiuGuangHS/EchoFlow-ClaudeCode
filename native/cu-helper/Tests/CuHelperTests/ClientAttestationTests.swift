@@ -6,7 +6,7 @@ import Testing
 struct ClientAttestationTests {
     private let team = "TEAM123456"
     private let leaf = Data([0xCA, 0xFE])
-    private let appRoot = "/Applications/Claude Code Haha.app"
+    private let appRoot = "/Applications/EchoFlow Code.app"
 
     private var sidecarPath: String {
         appRoot
@@ -38,8 +38,8 @@ struct ClientAttestationTests {
         process(
             pid: 900,
             parentPID: 1,
-            path: "/Users/test/Library/Application Support/Claude Code Haha/"
-                + "cc-haha-computer-use.app/Contents/MacOS/cc-haha-computer-use",
+            path: "/Users/test/Library/Application Support/EchoFlow Code/"
+                + "echoflow-code-computer-use.app/Contents/MacOS/echoflow-code-computer-use",
             identifier: HelperClientPolicy.helperIdentifier
         )
     }
@@ -48,7 +48,7 @@ struct ClientAttestationTests {
         process(
             pid: 300,
             parentPID: 1,
-            path: appRoot + "/Contents/MacOS/Claude Code Haha",
+            path: appRoot + "/Contents/MacOS/EchoFlow Code",
             identifier: HelperClientPolicy.desktopIdentifier
         )
     }
@@ -240,7 +240,7 @@ struct ClientAttestationTests {
         )
 
         var wrongPath = helper
-        wrongPath.executablePath = "/tmp/cc-haha-computer-use"
+        wrongPath.executablePath = "/tmp/echoflow-code-computer-use"
         #expect(
             HelperClientPolicy.authorizeDaemonPeer(
                 peer: wrongPath,
