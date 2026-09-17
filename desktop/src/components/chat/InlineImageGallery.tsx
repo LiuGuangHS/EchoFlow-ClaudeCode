@@ -197,8 +197,3 @@ export function InlineImageGallery({ text, sessionId, workDir, changedFiles, sup
     </>
   )
 }
-
-function isManagedGeneratedImagePath(imagePath: string): boolean {
-  const normalizedPath = imagePath.replaceAll('\\', '/')
-  return normalizedPath.includes('/.claude/echoflow-code/generated-images/')
-}
