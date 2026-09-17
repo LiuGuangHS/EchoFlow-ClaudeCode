@@ -20,7 +20,7 @@ import { createHash } from 'node:crypto'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { promisify } from 'node:util'
-import { getCcHahaDir } from '../../utils/envUtils.js'
+import { getEchoFlowCodeDir } from '../../utils/envUtils.js'
 import { parseStatus, type WorkspaceFileStatus } from './workspaceService.js'
 import {
   isSameOrInsidePathForPlatform,
@@ -1913,7 +1913,7 @@ export class ReviewService {
   // -- revert backups -------------------------------------------------------
 
   private buildBackupDir(sessionId: string): string {
-    const root = this.backupRoot ?? path.join(getCcHahaDir(), 'review-backups')
+    const root = this.backupRoot ?? path.join(getEchoFlowCodeDir(), 'review-backups')
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
     const suffix = Math.random().toString(36).slice(2, 8)
     return path.join(root, sanitizeBackupSegment(sessionId), `${stamp}-${suffix}`)
