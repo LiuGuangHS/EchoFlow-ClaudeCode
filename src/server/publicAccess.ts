@@ -301,7 +301,7 @@ export class PublicAccessServer {
           return json({
             hasAuth: status.hasAuth === true,
             source: typeof status.source === 'string' && sources.includes(status.source) ? status.source : 'none',
-            ...(typeof status.activeProvider === 'string' ? { activeProvider: status.activeProvider } : ),
+            ...(typeof status.activeProvider === 'string' ? { activeProvider: status.activeProvider } : {}),
           })
         }
         if (route === 'api/settings/user' && request.method === 'GET' && response.ok) {
