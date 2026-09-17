@@ -105,7 +105,7 @@
     "react": "^19.2.4",
     "react-reconciler": "^0.33.0",
     "semver": "^7.7.4",
-    "sharp": "0.34.5",
+    "sharp": "0.35.4",
     "shell-quote": "^1.8.3",
     "signal-exit": "^4.1.0",
     "stack-utils": "^2.0.6",
@@ -114,7 +114,7 @@
     "tree-kill": "^1.2.2",
     "turndown": "^7.2.4",
     "type-fest": "^5.5.0",
-    "undici": "^7.24.6",
+    "undici": "^8.10.2",
     "usehooks-ts": "^3.1.1",
     "vscode-jsonrpc": "^8.2.1",
     "vscode-languageserver-types": "^3.17.5",
@@ -128,6 +128,6 @@
     "follow-redirects": "^1.16.0"
   },
   "devDependencies": {
-    "mermaid": "^11.14.0"
+    "mermaid": "^12.0.0"
   }
 }
