@@ -28,11 +28,11 @@
     "@tencent-connect/qqbot-connector": "1.2.0",
     "@tencent-connect/qqbot-nodejs": "1.0.4",
     "@wecom/aibot-node-sdk": "1.0.7",
-    "@whiskeysockets/baileys": "7.0.0-rc.9",
-    "dingtalk-stream": "2.1.4",
+    "@whiskeysockets/baileys": "7.0.0-rc14",
+    "dingtalk-stream": "2.1.5",
     "grammy": "^1.42.0",
-    "pino": "^9.6.0",
-    "undici": "^7.24.6",
+    "pino": "^10.3.1",
+    "undici": "^8.10.2",
     "ws": "^8.18.0"
   },
   "overrides": {
