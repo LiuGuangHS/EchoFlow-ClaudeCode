@@ -912,7 +912,7 @@ jobs:
           fi
 
       - name: Publish complete GitHub release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.version.outputs.value }}
           name: EchoFlow Code v${{ steps.version.outputs.value }}
@@ -921,13 +921,13 @@ jobs:
           prerelease: false
           fail_on_unmatched_files: true
           files: |
-            artifacts/release-assets/**/*.dmg
-            artifacts/release-assets/**/*.zip
-            artifacts/release-assets/**/*.exe
-            artifacts/release-assets/**/*.AppImage
-            artifacts/release-assets/**/*.deb
-            artifacts/release-assets/**/*.rpm
-            artifacts/release-assets/**/*.blockmap
+            artifacts/release-assets/*.dmg
+            artifacts/release-assets/*.zip
+            artifacts/release-assets/*.exe
+            artifacts/release-assets/*.AppImage
+            artifacts/release-assets/*.deb
+            artifacts/release-assets/*.rpm
+            artifacts/release-assets/*.blockmap
             artifacts/update-metadata-standard/*.yml
             desktop/scripts/install-macos-unsigned.sh
 
