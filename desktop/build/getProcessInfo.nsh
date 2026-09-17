@@ -25,33 +25,11 @@
     System::Call 'kernel32::GetCurrentProcessId() i.r0'
     StrCpy ${OutPID} $0
 
-    System::Call 'kernel32::GetCurrentProcess() i.r1'
-
-    ; Get parent process ID using NtQueryInformationProcess
-    ; PROCESS_BASIC_INFORMATION structure:
-    ;   NTSTATUS ExitStatus (offset 0, 4 bytes)
-    ;   PPEB PebBaseAddress (offset 4, pointer size)
-    ;   ULONG_PTR AffinityMask (offset 4+ptr, pointer size)
-    ;   KPRIORITY BasePriority (offset 4+2*ptr, 4 bytes)
-    ;   ULONG_PTR UniqueProcessId (offset 8+2*ptr, pointer size)
-    ;   ULONG_PTR InheritedFromUniqueProcessId (offset 8+3*ptr, pointer size)
-    ; On x64: offset of InheritedFromUniqueProcessId = 8 + 3*8 = 32
-    ; On x86: offset of InheritedFromUniqueProcessId = 8 + 3*4 = 20
-    System::Call '*(&i48) i.r2'  ; Allocate 48 bytes for PROCESS_BASIC_INFORMATION
-    System::Call 'ntdll::NtQueryInformationProcess(i r1, i 0, i r2, i 48, *i 0) i.r3'
-    ${If} $3 == 0
-      ; Success - extract parent PID from offset 32 (x64) or 20 (x86)
-      ${If} ${RunningX64}
-        System::Call '*$2(i,p,p,i,p,p.r3)'  ; Read InheritedFromUniqueProcessId at offset 32
-      ${Else}
-        System::Call '*$2(i,i,i,i,i,i.r3)'  ; Read InheritedFromUniqueProcessId at offset 20
-      ${EndIf}
-      StrCpy ${OutParentPID} $3
-    ${Else}
-      ; Fallback if NtQueryInformationProcess fails
-      StrCpy ${OutParentPID} "$0"
-    ${EndIf}
-    System::Free $2
+    ; Return installer PID as parent PID
+    ; The PowerShell script check-install-processes.ps1 uses InstallerPid to exclude
+    ; the installer process itself from the running app check. InstallerParentPid is
+    ; passed but never used. Returning the installer's own PID satisfies this usage.
+    StrCpy ${OutParentPID} "$0"
 
     ; Get executable path
     System::Call 'kernel32::GetModuleFileNameA(i 0, t .r2, i 1024) i.r3'
