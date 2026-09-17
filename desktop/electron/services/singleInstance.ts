@@ -6,7 +6,7 @@ export function acquireSingleInstanceLock(
   getMainWindow: () => BrowserWindow | null,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  if (env.CC_HAHA_ELECTRON_DISABLE_SINGLE_INSTANCE_LOCK === '1') {
+  if (env.ECHOFLOW_ELECTRON_DISABLE_SINGLE_INSTANCE_LOCK === '1') {
     return true
   }
 

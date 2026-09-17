@@ -18,7 +18,7 @@ import { asAgentId, type SessionId } from '../../types/ids.js'
 import type { CustomTitleMessage } from '../../types/logs.js'
 
 const originalConfigDir = process.env.CLAUDE_CONFIG_DIR
-const originalTranscriptEntrypoint = process.env.CC_HAHA_TRANSCRIPT_ENTRYPOINT
+const originalTranscriptEntrypoint = process.env.ECHOFLOW_TRANSCRIPT_ENTRYPOINT
 const originalEntrypoint = process.env.CLAUDE_CODE_ENTRYPOINT
 const originalTestPersistence = process.env.TEST_ENABLE_SESSION_PERSISTENCE
 const originalUserType = process.env.USER_TYPE
@@ -51,9 +51,9 @@ describe('sessionStorage flush', () => {
       process.env.CLAUDE_CONFIG_DIR = originalConfigDir
     }
     if (originalTranscriptEntrypoint === undefined) {
-      delete process.env.CC_HAHA_TRANSCRIPT_ENTRYPOINT
+      delete process.env.ECHOFLOW_TRANSCRIPT_ENTRYPOINT
     } else {
-      process.env.CC_HAHA_TRANSCRIPT_ENTRYPOINT = originalTranscriptEntrypoint
+      process.env.ECHOFLOW_TRANSCRIPT_ENTRYPOINT = originalTranscriptEntrypoint
     }
     if (originalEntrypoint === undefined) {
       delete process.env.CLAUDE_CODE_ENTRYPOINT
@@ -95,7 +95,7 @@ describe('sessionStorage flush', () => {
     const sessionId = '22222222-2222-4222-8222-222222222222'
     switchSession(sessionId as SessionId)
     process.env.CLAUDE_CODE_ENTRYPOINT = 'sdk-cli'
-    process.env.CC_HAHA_TRANSCRIPT_ENTRYPOINT = 'claude-desktop'
+    process.env.ECHOFLOW_TRANSCRIPT_ENTRYPOINT = 'claude-desktop'
     resetProjectForTesting()
 
     await recordTranscript([{
@@ -121,7 +121,7 @@ describe('sessionStorage flush', () => {
     const attachmentUuid = '55555555-5555-4555-8555-555555555555'
     switchSession(sessionId as SessionId)
     process.env.CLAUDE_CODE_ENTRYPOINT = 'sdk-cli'
-    process.env.CC_HAHA_TRANSCRIPT_ENTRYPOINT = 'claude-desktop'
+    process.env.ECHOFLOW_TRANSCRIPT_ENTRYPOINT = 'claude-desktop'
     resetProjectForTesting()
 
     await recordTranscript([
@@ -174,7 +174,7 @@ describe('sessionStorage flush', () => {
   it('keeps desktop internal attachments and sdk-cli file attachments out of external transcripts', async () => {
     const desktopSessionId = '66666666-6666-4666-8666-666666666666'
     switchSession(desktopSessionId as SessionId)
-    process.env.CC_HAHA_TRANSCRIPT_ENTRYPOINT = 'claude-desktop'
+    process.env.ECHOFLOW_TRANSCRIPT_ENTRYPOINT = 'claude-desktop'
     resetProjectForTesting()
 
     await recordTranscript([
@@ -204,7 +204,7 @@ describe('sessionStorage flush', () => {
 
     const cliSessionId = '88888888-8888-4888-8888-888888888888'
     switchSession(cliSessionId as SessionId)
-    process.env.CC_HAHA_TRANSCRIPT_ENTRYPOINT = 'sdk-cli'
+    process.env.ECHOFLOW_TRANSCRIPT_ENTRYPOINT = 'sdk-cli'
     resetProjectForTesting()
 
     await recordTranscript([

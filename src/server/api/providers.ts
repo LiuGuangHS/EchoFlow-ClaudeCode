@@ -4,12 +4,12 @@
  * GET    /api/providers                  — list all saved providers + activeId
  * GET    /api/providers/presets           — list available presets
  * GET    /api/providers/auth-status       — check whether any usable auth exists
- * GET    /api/providers/settings          — read cc-haha managed settings.json
+ * GET    /api/providers/settings          — read EchoFlow managed settings.json
  * GET    /api/providers/cc-switch/scan    — scan a local cc-switch install
  * POST   /api/providers                  — add a provider
  * POST   /api/providers/cc-switch/import  — import scanned cc-switch providers
  * POST   /api/providers/models            — list upstream models for a config
- * PUT    /api/providers/settings          — update cc-haha managed settings.json
+ * PUT    /api/providers/settings          — update EchoFlow managed settings.json
  * PUT    /api/providers/:id              — update a provider
  * DELETE /api/providers/:id              — delete a provider
  * POST   /api/providers/:id/activate     — activate a saved provider
@@ -125,8 +125,8 @@ export async function handleProvidersApi(
     // /api/providers (no ID)
     if (!id) {
       if (req.method === 'GET') {
-        const { providers, activeId } = await providerService.listProviders()
-        return Response.json({ providers, activeId })
+        const { providers, activeId, providerOrder } = await providerService.listProviders()
+        return Response.json({ providers, activeId, providerOrder })
       }
       if (req.method === 'POST') {
         return await handleCreate(req)

@@ -11,16 +11,16 @@ order: 1
 
 ## 挑对安装包
 
-所有安装包都在 [GitHub Releases](https://github.com/NanmiCoder/cc-haha/releases/latest)，按系统和 CPU 架构选一个：
+所有安装包都在 [GitHub Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest)，按系统和 CPU 架构选一个：
 
 | 你的系统 | 下载 |
 |---|---|
-| macOS，M 系列芯片 | `Claude-Code-Haha-<版本>-mac-arm64.dmg` |
-| macOS，Intel 芯片 | `Claude-Code-Haha-<版本>-mac-x64.dmg` |
-| Windows x64 | `Claude-Code-Haha-<版本>-win-x64.exe` |
-| Windows ARM64 | `Claude-Code-Haha-<版本>-win-arm64.exe` |
-| Linux x64 | `Claude-Code-Haha-<版本>-linux-x86_64.AppImage` 或 `-linux-amd64.deb` |
-| Linux ARM64 | `Claude-Code-Haha-<版本>-linux-arm64.AppImage` 或 `-linux-arm64.deb` |
+| macOS，M 系列芯片 | `EchoFlow-Code-<版本>-mac-arm64.dmg` |
+| macOS，Intel 芯片 | `EchoFlow-Code-<版本>-mac-x64.dmg` |
+| Windows x64 | `EchoFlow-Code-<版本>-win-x64.exe` |
+| Windows ARM64 | `EchoFlow-Code-<版本>-win-arm64.exe` |
+| Linux x64 | `EchoFlow-Code-<版本>-linux-x86_64.AppImage` 或 `-linux-amd64.deb` |
+| Linux ARM64 | `EchoFlow-Code-<版本>-linux-arm64.AppImage` 或 `-linux-arm64.deb` |
 
 不确定自己是哪种架构：macOS 看「关于本机」里的芯片型号，Windows 看「设置 → 系统 → 系统信息」里的系统类型。别只凭机器牌子猜。
 
@@ -29,7 +29,7 @@ order: 1
 ## macOS
 
 1. 双击 DMG。
-2. 把 Claude Code Haha 拖进「应用程序」。
+2. 把 EchoFlow Code 拖进「应用程序」。
 3. 从「应用程序」打开。
 
 ### 如果提示「已损坏，无法打开」
@@ -52,7 +52,7 @@ bash install-macos-unsigned.sh
 已经把应用拖进「应用程序」了，就直接执行：
 
 ```bash
-xattr -dr com.apple.quarantine "/Applications/Claude Code Haha.app"
+xattr -dr com.apple.quarantine "/Applications/EchoFlow Code.app"
 ```
 
 只对你确认来自本仓库 Release 的安装包这么做。来路不明的应用不要绕过 Gatekeeper。
@@ -72,8 +72,8 @@ xattr -dr com.apple.quarantine "/Applications/Claude Code Haha.app"
 **AppImage**（免安装，下载即用）：
 
 ```bash
-chmod +x Claude-Code-Haha-<版本>-linux-x86_64.AppImage
-./Claude-Code-Haha-<版本>-linux-x86_64.AppImage
+chmod +x EchoFlow-Code-<版本>-linux-x86_64.AppImage
+./EchoFlow-Code-<版本>-linux-x86_64.AppImage
 ```
 
 启动失败并提示 FUSE 相关错误时，装一下运行库：Ubuntu 22.04 及更早用 `sudo apt install libfuse2`，24.04 及以后用 `libfuse2t64`。
@@ -81,7 +81,7 @@ chmod +x Claude-Code-Haha-<版本>-linux-x86_64.AppImage
 **deb**（装进系统菜单）：
 
 ```bash
-sudo apt install ./Claude-Code-Haha-<版本>-linux-amd64.deb
+sudo apt install ./EchoFlow-Code-<版本>-linux-amd64.deb
 ```
 
 ARM64 机器换成对应的 `linux-arm64` 文件。
@@ -91,11 +91,11 @@ ARM64 机器换成对应的 `linux-arm64` 文件。
 想改代码、调试内核，或者只想在终端里用 CLI，可以从源码起：
 
 ```bash
-git clone https://github.com/NanmiCoder/cc-haha.git
-cd cc-haha
+git clone https://github.com/LiuGuangHS/EchoFlow-ClaudeCode.git echoflow-code
+cd echoflow-code
 bun install
 cp .env.example .env
-./bin/claude-haha
+./bin/echoflow-code
 ```
 
 需要 [Bun](https://bun.sh) 和 Git。这条路只跑 CLI，桌面端的构建方式和本地服务参数见 [命令行](../cli/index.md)。

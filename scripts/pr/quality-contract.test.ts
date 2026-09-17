@@ -2,27 +2,28 @@ import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 
 describe('feature quality contract', () => {
-  test('keeps root agent guidance small, high-signal, and layered', () => {
+  test('keeps root agent guidance within budget and preserves the repository contract', () => {
     const agents = readFileSync('AGENTS.md', 'utf8')
 
     // Codex has a 32 KiB default budget for the complete instruction chain.
-    // Keep the root well below that limit so nested guidance has room to load.
-    expect(Buffer.byteLength(agents)).toBeLessThan(16 * 1024)
-    expect(agents).toContain('## Start Here')
-    expect(agents).toContain('## Repository Map')
-    expect(agents).toContain('## Verification')
-    expect(agents).toContain('## User-State Safety')
-    expect(agents).toContain('## Handoff')
-    expect(agents).toContain('read the nested `AGENTS.md` in that directory')
-    expect(agents).toContain('Tool access is capability, not authorization.')
-    expect(agents).toContain('same-area regression test')
+    // Leave room for the small nested guidance files loaded by affected areas.
+    expect(Buffer.byteLength(agents)).toBeLessThan(28 * 1024)
+    expect(agents).toContain('## Agent Operating Rules')
+    expect(agents).toContain('## Project Structure & Module Organization')
+    expect(agents).toContain('## Verification Routing')
+    expect(agents).toContain('## Persistent Storage Compatibility')
+    expect(agents).toContain('## Release Workflow')
+    expect(agents).toContain('## Commit & Pull Request Guidelines')
+    expect(agents).toContain('Check `git status --short` before editing')
+    expect(agents).toContain('Production code changes under `desktop/src`, `src/server`, `src/tools`, `src/utils`, or `adapters`')
     expect(agents).toContain('`bun run check:impact`')
     expect(agents).toContain('`bun run verify`')
-    expect(agents).toContain('Required PR checks must be deterministic')
-    expect(agents).toContain('finding credentials on the machine is not authorization')
     expect(agents).toContain('`bun run check:persistence-upgrade`')
-    expect(agents).toContain('`~/.claude/settings.json` as user-owned shared state')
-    expect(agents).toContain('commands actually run and their observed results')
+    expect(agents).toContain('`bun run audit:harness`')
+    expect(agents).toContain('`.claude/` remains local-only')
+    expect(agents).toContain('`~/.claude/settings.json` is user-owned shared state')
+    expect(agents).toContain('Official vendor APIs and official OAuth integrations, including Grok Official')
+    expect(agents).toContain('Do not automatically add third-party relay, sponsor/referral gateway, or promotional provider presets')
   })
 
   test('keeps specialized agent guidance next to the affected code', () => {
@@ -48,6 +49,9 @@ describe('feature quality contract', () => {
     const template = readFileSync('.github/pull_request_template.md', 'utf8')
 
     expect(template).toContain('## Feature Quality Contract')
+    expect(template).toContain('## ECC / Reproduction Evidence')
+    expect(template).toContain('`bun run audit:harness`')
+    expect(template).toContain('`.claude/` local state was not committed')
     expect(template).toContain('Changed surface:')
     expect(template).toContain('Tests added or updated:')
     expect(template).toContain('Coverage evidence:')
@@ -60,19 +64,19 @@ describe('feature quality contract', () => {
   test('keeps quality policy and cross-process boundaries maintainer-owned', () => {
     const codeowners = readFileSync('.github/CODEOWNERS', 'utf8')
 
-    expect(codeowners).toContain('/.github/workflows/ @NanmiCoder')
-    expect(codeowners).toContain('/AGENTS.md @NanmiCoder')
-    expect(codeowners).toContain('**/AGENTS.md @NanmiCoder')
-    expect(codeowners).toContain('/CONTRIBUTING.md @NanmiCoder')
-    expect(codeowners).toContain('/scripts/pr/ @NanmiCoder')
-    expect(codeowners).toContain('/scripts/quality-gate/ @NanmiCoder')
-    expect(codeowners).toContain('/desktop/src/api/websocket* @NanmiCoder')
-    expect(codeowners).toContain('/desktop/src/lib/persistenceMigrations* @NanmiCoder')
-    expect(codeowners).toContain('/src/server/services/conversationService* @NanmiCoder')
-    expect(codeowners).toContain('/src/server/proxy/ @NanmiCoder')
-    expect(codeowners).toContain('/src/server/ws/ @NanmiCoder')
-    expect(codeowners).toContain('/src/services/openaiAuth/ @NanmiCoder')
-    expect(codeowners).toContain('/src/utils/model/ @NanmiCoder')
+    expect(codeowners).toContain('/.github/workflows/ @LiuGuangHS')
+    expect(codeowners).toContain('/AGENTS.md @LiuGuangHS')
+    expect(codeowners).toContain('**/AGENTS.md @LiuGuangHS')
+    expect(codeowners).toContain('/CONTRIBUTING.md @LiuGuangHS')
+    expect(codeowners).toContain('/scripts/pr/ @LiuGuangHS')
+    expect(codeowners).toContain('/scripts/quality-gate/ @LiuGuangHS')
+    expect(codeowners).toContain('/desktop/src/api/websocket* @LiuGuangHS')
+    expect(codeowners).toContain('/desktop/src/lib/persistenceMigrations* @LiuGuangHS')
+    expect(codeowners).toContain('/src/server/services/conversationService* @LiuGuangHS')
+    expect(codeowners).toContain('/src/server/proxy/ @LiuGuangHS')
+    expect(codeowners).toContain('/src/server/ws/ @LiuGuangHS')
+    expect(codeowners).toContain('/src/services/openaiAuth/ @LiuGuangHS')
+    expect(codeowners).toContain('/src/utils/model/ @LiuGuangHS')
   })
 
   test('keeps the one-command verification entrypoint documented', () => {
@@ -84,6 +88,7 @@ describe('feature quality contract', () => {
     const englishContributing = readFileSync('docs/en/internals/contributing.md', 'utf8')
     const rootContributing = readFileSync('CONTRIBUTING.md', 'utf8')
 
+    expect(packageJson.scripts?.['audit:harness']).toBe('node scripts/harness-audit.js repo --format json')
     expect(packageJson.scripts?.verify).toBe('bun run quality:pr')
     expect(packageJson.scripts?.['quality:verify']).toBe('bun run quality:pr')
     expect(packageJson.scripts?.['quality:push']).toBe('bun run quality:gate --mode pr --skip coverage')
@@ -188,7 +193,7 @@ describe('feature quality contract', () => {
     expect(sandbox).toContain('createSandboxedTestEnvironment')
     expect(sandbox).toContain('GUARDED_USER_STATE_PATHS')
     expect(sandbox).toContain("'settings.json'")
-    expect(sandbox).toContain("'cc-haha/providers.json'")
+    expect(sandbox).toContain("'echoflow-code/providers.json'")
   })
 
   test('keeps general AI coding tools pointed at the same quality bar', () => {

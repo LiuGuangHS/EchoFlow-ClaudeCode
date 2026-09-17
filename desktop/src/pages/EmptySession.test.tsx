@@ -295,7 +295,7 @@ describe('EmptySession', () => {
     mocks.resetTaskList.mockResolvedValue(undefined)
     mocks.getProviderAuthStatus.mockResolvedValue({
       hasAuth: true,
-      source: 'cc-haha-provider',
+      source: 'echoflow-code-provider',
     })
   })
 
@@ -963,7 +963,7 @@ describe('EmptySession', () => {
 
   it('pastes copied desktop files into a new-session draft as path attachments', async () => {
     mocks.isTauriRuntime = true
-    const copiedFile = new File(['{\"name\":\"cc-haha\"}'], 'ignored-name.json', {
+    const copiedFile = new File(['{\"name\":\"echoflow-code\"}'], 'ignored-name.json', {
       type: 'application/json',
     })
     Object.defineProperty(copiedFile, 'path', {

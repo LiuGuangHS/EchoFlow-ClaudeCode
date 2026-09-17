@@ -34,7 +34,7 @@ import {
   GROK_OFFICIAL_PROVIDER_NAME,
   isGrokOfficialProviderId,
 } from '../services/grokOfficialProvider.js'
-import { hahaGrokOAuthService } from '../services/hahaGrokOAuthService.js'
+import { echoFlowGrokOAuthService } from '../services/echoFlowGrokOAuthService.js'
 import { resolveClaudeOfficialRuntimeModel } from '../services/claudeOfficialRuntime.js'
 import {
   getPresetDefaultEnv,
@@ -208,7 +208,7 @@ function buildGrokModelList(catalog: GrokModelCatalogEntry[]): ApiModelInfo[] {
 }
 
 async function getGrokModelList(): Promise<ApiModelInfo[]> {
-  const tokens = await hahaGrokOAuthService.ensureFreshTokens()
+  const tokens = await echoFlowGrokOAuthService.ensureFreshTokens()
   return buildGrokModelList(await getGrokModelCatalog({
     ...(tokens?.accessToken ? { accessToken: tokens.accessToken } : {}),
     accountKey: tokens?.email ?? (tokens ? 'authenticated-default' : 'logged-out'),
@@ -373,7 +373,7 @@ async function handleCurrentModel(req: Request): Promise<Response> {
       currentModelId = explicitModel || env.ANTHROPIC_MODEL || GROK_DEFAULT_MAIN_MODEL
       currentModelName = currentModelId
     } else if (activeProvider) {
-      // Provider is active — only use the provider-managed cc-haha settings.
+      // Provider is active — only use the provider-managed EchoFlow settings.
       // This avoids leaking global ~/.claude/settings.json model choices into
       // the active provider flow.
       const providerEnvModel = env.ANTHROPIC_MODEL

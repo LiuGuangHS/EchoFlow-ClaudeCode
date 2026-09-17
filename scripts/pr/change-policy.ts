@@ -173,11 +173,13 @@ const policyExactPaths = new Set([
   'docs/en/internals/contributing.md',
   'docs/internals/contributing.md',
   'package.json',
+  'scripts/harness-audit.js',
+  'scripts/harness-audit.test.ts',
 ])
 
 const docsExactPaths = new Set([
   'README.md',
-  'README.en.md',
+  'README.zh-CN.md',
   'package.json',
   'package-lock.json',
   '.github/workflows/deploy-docs.yml',

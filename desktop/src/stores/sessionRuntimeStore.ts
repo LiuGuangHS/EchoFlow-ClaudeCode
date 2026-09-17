@@ -8,7 +8,7 @@ import {
 } from '../constants/grokOfficialProvider'
 import { normalizeRuntimeSelection } from '../lib/runtimeSelection'
 
-const STORAGE_KEY = 'cc-haha-session-runtime'
+const STORAGE_KEY = 'echoflow-code-session-runtime'
 const RETIRED_GROK_MODEL_IDS = new Set([
   'grok-build',
   'grok-build-0.1',
@@ -19,11 +19,17 @@ const RETIRED_GROK_MODEL_IDS = new Set([
 
 export const DRAFT_RUNTIME_SELECTION_KEY = '__draft__'
 
+export type RuntimeRequestStatus = 'pending' | 'unconfirmed' | 'failed'
+
 type SessionRuntimeStore = {
   selections: Record<string, RuntimeSelection>
+  runtimeRequestStatusBySessionId: Record<string, RuntimeRequestStatus>
   setSelection: (key: string, selection: RuntimeSelection) => void
   clearSelection: (key: string) => void
   moveSelection: (fromKey: string, toKey: string) => void
+  markRequestPending: (sessionId: string) => void
+  markRequestUnconfirmed: (sessionId: string) => void
+  markRequestFailed: (sessionId: string) => void
   syncFromSessions: (sessions: SessionListItem[]) => void
 }
 
@@ -100,6 +106,7 @@ function persistSelections(selections: Record<string, RuntimeSelection>) {
 
 export const useSessionRuntimeStore = create<SessionRuntimeStore>((set) => ({
   selections: loadSelections(),
+  runtimeRequestStatusBySessionId: {},
 
   setSelection: (key, selection) =>
     set((state) => {
@@ -113,23 +120,65 @@ export const useSessionRuntimeStore = create<SessionRuntimeStore>((set) => ({
 
   clearSelection: (key) =>
     set((state) => {
-      if (!(key in state.selections)) return state
-      const { [key]: _removed, ...rest } = state.selections
-      persistSelections(rest)
-      return { selections: rest }
+      const hasSelection = key in state.selections
+      const hasRequestStatus = key in state.runtimeRequestStatusBySessionId
+      if (!hasSelection && !hasRequestStatus) return state
+
+      const { [key]: _removedSelection, ...selections } = state.selections
+      const { [key]: _removedRequestStatus, ...runtimeRequestStatusBySessionId } =
+        state.runtimeRequestStatusBySessionId
+      if (hasSelection) persistSelections(selections)
+      return { selections, runtimeRequestStatusBySessionId }
     }),
 
   moveSelection: (fromKey, toKey) =>
     set((state) => {
       const selection = state.selections[fromKey]
-      if (!selection) return state
-      const { [fromKey]: _removed, ...rest } = state.selections
+      const hasRequestStatus = fromKey in state.runtimeRequestStatusBySessionId
+      const { [fromKey]: _removedRequestStatus, ...runtimeRequestStatusBySessionId } =
+        state.runtimeRequestStatusBySessionId
+      if (!selection) {
+        if (!hasRequestStatus) return state
+        return { runtimeRequestStatusBySessionId }
+      }
+      const { [fromKey]: _removedSelection, ...rest } = state.selections
       const selections = {
         ...rest,
         [toKey]: selection,
       }
       persistSelections(selections)
-      return { selections }
+      return { selections, runtimeRequestStatusBySessionId }
+    }),
+
+  markRequestPending: (sessionId) =>
+    set((state) => ({
+      runtimeRequestStatusBySessionId: {
+        ...state.runtimeRequestStatusBySessionId,
+        [sessionId]: 'pending',
+      },
+    })),
+
+  markRequestUnconfirmed: (sessionId) =>
+    set((state) => {
+      if (state.runtimeRequestStatusBySessionId[sessionId] !== 'pending') return state
+      return {
+        runtimeRequestStatusBySessionId: {
+          ...state.runtimeRequestStatusBySessionId,
+          [sessionId]: 'unconfirmed',
+        },
+      }
+    }),
+
+  markRequestFailed: (sessionId) =>
+    set((state) => {
+      const currentStatus = state.runtimeRequestStatusBySessionId[sessionId]
+      if (currentStatus !== 'pending' && currentStatus !== 'unconfirmed') return state
+      return {
+        runtimeRequestStatusBySessionId: {
+          ...state.runtimeRequestStatusBySessionId,
+          [sessionId]: 'failed',
+        },
+      }
     }),
 
   syncFromSessions: (sessions) =>

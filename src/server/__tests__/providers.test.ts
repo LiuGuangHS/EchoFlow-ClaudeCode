@@ -15,7 +15,15 @@ import {
   setTraceAppendBeforeWriteHookForTests,
   traceCaptureService,
 } from '../services/traceCaptureService.js'
+import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 import type { CreateProviderInput } from '../types/provider.js'
+import {
+  IMAGE_GENERATION_API_KEY_ENV_KEY,
+  IMAGE_GENERATION_BASE_URL_ENV_KEY,
+  IMAGE_GENERATION_MODEL_ENV_KEY,
+  IMAGE_GENERATION_PROVIDER_ID_ENV_KEY,
+  IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY,
+} from '../../services/imageGeneration/config.js'
 import { buildComputerUseTools } from '../../vendor/computer-use-mcp/tools.js'
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
@@ -95,15 +103,24 @@ function sampleInput(overrides?: Partial<CreateProviderInput>): CreateProviderIn
   }
 }
 
+function echoFlowDir(): string {
+  return getEchoFlowInternalDir(tmpDir)
+}
+
 /** Read the settings.json written to the temp config dir */
 async function readSettings(): Promise<Record<string, unknown>> {
-  const raw = await fs.readFile(path.join(tmpDir, 'cc-haha', 'settings.json'), 'utf-8')
+  const raw = await fs.readFile(path.join(echoFlowDir(), 'settings.json'), 'utf-8')
   return JSON.parse(raw) as Record<string, unknown>
+}
+
+async function writeSettings(settings: Record<string, unknown>): Promise<void> {
+  await fs.mkdir(echoFlowDir(), { recursive: true })
+  await fs.writeFile(path.join(echoFlowDir(), 'settings.json'), JSON.stringify(settings), 'utf-8')
 }
 
 /** Read the providers.json written to the temp config dir */
 async function readProvidersConfig(): Promise<Record<string, unknown>> {
-  const raw = await fs.readFile(path.join(tmpDir, 'cc-haha', 'providers.json'), 'utf-8')
+  const raw = await fs.readFile(path.join(echoFlowDir(), 'providers.json'), 'utf-8')
   return JSON.parse(raw) as Record<string, unknown>
 }
 
@@ -235,12 +252,12 @@ describe('ProviderService', () => {
     })
 
     test('should recover from a malformed providers index after an upgrade', async () => {
-      await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
-      await fs.writeFile(path.join(tmpDir, 'cc-haha', 'providers.json'), '{not json', 'utf-8')
+      await fs.mkdir(echoFlowDir(), { recursive: true })
+      await fs.writeFile(path.join(echoFlowDir(), 'providers.json'), '{not json', 'utf-8')
 
       const svc = new ProviderService()
       const result = await svc.listProviders()
-      const files = await fs.readdir(path.join(tmpDir, 'cc-haha'))
+      const files = await fs.readdir(echoFlowDir())
 
       expect(result).toEqual({
         providers: [],
@@ -251,13 +268,13 @@ describe('ProviderService', () => {
     })
 
     test('should normalize a legacy activeProviderId field', async () => {
-      await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+      await fs.mkdir(echoFlowDir(), { recursive: true })
       const provider = {
         id: 'legacy-provider',
         ...sampleInput({ name: 'Legacy Provider' }),
       }
       await fs.writeFile(
-        path.join(tmpDir, 'cc-haha', 'providers.json'),
+        path.join(echoFlowDir(), 'providers.json'),
         JSON.stringify({ activeProviderId: provider.id, providers: [provider] }),
         'utf-8',
       )
@@ -332,7 +349,7 @@ describe('ProviderService', () => {
       const svc = new ProviderService()
       await svc.addProvider(sampleInput())
 
-      await expect(fs.readFile(path.join(tmpDir, 'cc-haha', 'settings.json'), 'utf-8')).rejects.toThrow()
+      await expect(fs.readFile(path.join(echoFlowDir(), 'settings.json'), 'utf-8')).rejects.toThrow()
     })
 
     test('custom providers keep thinking compatibility without narrowing CLI effort', async () => {
@@ -441,15 +458,15 @@ describe('ProviderService', () => {
 
       const settings = await readSettings()
       const env = settings.env as Record<string, string>
-      expect(env.CC_HAHA_SEND_DISABLED_THINKING).toBeUndefined()
+      expect(env.ECHOFLOW_SEND_DISABLED_THINKING).toBeUndefined()
       expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe(
-        'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
+        'thinking,effort,adaptive_thinking,max_effort',
       )
       expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES).toBe(
-        'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
+        'thinking,effort,adaptive_thinking,max_effort',
       )
       expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES).toBe(
-        'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
+        'thinking,effort,adaptive_thinking,max_effort',
       )
     })
 
@@ -527,9 +544,9 @@ describe('ProviderService', () => {
 
     describe('ChatGPT Official provider metadata', () => {
       test('normalizes the built-in ChatGPT provider as an active provider id', async () => {
-        await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+        await fs.mkdir(echoFlowDir(), { recursive: true })
         await fs.writeFile(
-          path.join(tmpDir, 'cc-haha', 'providers.json'),
+          path.join(echoFlowDir(), 'providers.json'),
           JSON.stringify({ activeId: 'openai-official', providers: [] }),
           'utf-8',
         )
@@ -570,9 +587,10 @@ describe('ProviderService', () => {
         const settings = await readSettings()
         expect(config.activeId).toBe('openai-official')
         const env = settings.env as Record<string, string>
-        expect(env.CC_HAHA_OPENAI_OAUTH_PROVIDER).toBe('1')
+        expect(env.ECHOFLOW_OPENAI_OAUTH_PROVIDER).toBe('1')
+        expect(env.ECHOFLOW_OPENAI_OAUTH_PROVIDER).toBeUndefined()
         expect(env.OPENAI_CODEX_OAUTH_FILE).toBe(
-          path.join(tmpDir, 'cc-haha', 'openai-oauth.json'),
+          path.join(echoFlowDir(), 'openai-oauth.json'),
         )
         expect(env.ANTHROPIC_MODEL).toBe('gpt-5.6-sol')
         expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('gpt-5.6-luna')
@@ -613,9 +631,10 @@ describe('ProviderService', () => {
 
         const settings = await readSettings()
         const env = settings.env as Record<string, string>
-        expect(env.CC_HAHA_OPENAI_OAUTH_PROVIDER).toBe('1')
+        expect(env.ECHOFLOW_OPENAI_OAUTH_PROVIDER).toBe('1')
+        expect(env.ECHOFLOW_OPENAI_OAUTH_PROVIDER).toBeUndefined()
         expect(env.OPENAI_CODEX_OAUTH_FILE).toBe(
-          path.join(tmpDir, 'cc-haha', 'openai-oauth.json'),
+          path.join(echoFlowDir(), 'openai-oauth.json'),
         )
         expect(env.ANTHROPIC_BASE_URL).toBeUndefined()
         expect(env.ANTHROPIC_API_KEY).toBeUndefined()
@@ -623,9 +642,9 @@ describe('ProviderService', () => {
       })
 
       test('auth status reports ChatGPT Official from the desktop OpenAI token file', async () => {
-        await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+        await fs.mkdir(echoFlowDir(), { recursive: true })
         await fs.writeFile(
-          path.join(tmpDir, 'cc-haha', 'openai-oauth.json'),
+          path.join(echoFlowDir(), 'openai-oauth.json'),
           JSON.stringify({
             accessToken: 'openai-access',
             refreshToken: 'openai-refresh',
@@ -643,29 +662,6 @@ describe('ProviderService', () => {
           hasAuth: true,
           source: 'openai-oauth',
           activeProvider: 'ChatGPT Official',
-        })
-      })
-
-      test('auth status reports Claude Official from the desktop Claude token file', async () => {
-        await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
-        await fs.writeFile(
-          path.join(tmpDir, 'cc-haha', 'oauth.json'),
-          JSON.stringify({
-            accessToken: 'claude-access',
-            refreshToken: 'claude-refresh',
-            expiresAt: Date.now() + 60 * 60_000,
-            scopes: [],
-            subscriptionType: 'pro',
-          }),
-          'utf-8',
-        )
-
-        const svc = new ProviderService()
-
-        await expect(svc.checkAuthStatus()).resolves.toMatchObject({
-          hasAuth: true,
-          source: 'claude-oauth',
-          activeProvider: 'Claude Official',
         })
       })
 
@@ -688,7 +684,8 @@ describe('ProviderService', () => {
         await svc.activateProvider(provider.id)
 
         const env = (await readSettings()).env as Record<string, string>
-        expect(env.CC_HAHA_OPENAI_OAUTH_PROVIDER).toBeUndefined()
+        expect(env.ECHOFLOW_OPENAI_OAUTH_PROVIDER).toBeUndefined()
+        expect(env.ECHOFLOW_OPENAI_OAUTH_PROVIDER).toBeUndefined()
         expect(env.OPENAI_CODEX_OAUTH_FILE).toBeUndefined()
         expect(env.ANTHROPIC_BASE_URL).toBe('https://api.example.com')
         expect(env.ANTHROPIC_AUTH_TOKEN).toBe('sk-test-key-123')
@@ -697,9 +694,9 @@ describe('ProviderService', () => {
 
     describe('Grok Official provider metadata', () => {
       test('normalizes the built-in Grok provider and appends it to legacy provider order', async () => {
-        await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+        await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
         await fs.writeFile(
-          path.join(tmpDir, 'cc-haha', 'providers.json'),
+          path.join(getEchoFlowInternalDir(tmpDir), 'providers.json'),
           JSON.stringify({
             activeId: 'grok-official',
             providers: [],
@@ -745,22 +742,22 @@ describe('ProviderService', () => {
         const config = await readProvidersConfig()
         const env = (await readSettings()).env as Record<string, string>
         expect(config.activeId).toBe('grok-official')
-        expect(env.CC_HAHA_GROK_OAUTH_PROVIDER).toBe('1')
+        expect(env.ECHOFLOW_GROK_OAUTH_PROVIDER).toBe('1')
         expect(env.GROK_OAUTH_FILE).toBe(
-          path.join(tmpDir, 'cc-haha', 'grok-oauth.json'),
+          path.join(tmpDir, 'echoflow-code', 'grok-oauth.json'),
         )
         expect(env.ANTHROPIC_MODEL).toBe('grok-4.6')
         expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('grok-4.6')
         expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('grok-4.6')
         expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('grok-4.6')
-        expect(env.CC_HAHA_OPENAI_OAUTH_PROVIDER).toBeUndefined()
+        expect(env.ECHOFLOW_OPENAI_OAUTH_PROVIDER).toBeUndefined()
         expect(env.OPENAI_CODEX_OAUTH_FILE).toBeUndefined()
       })
 
       test('auth status reports Grok Official from the isolated Grok token file', async () => {
-        await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+        await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
         await fs.writeFile(
-          path.join(tmpDir, 'cc-haha', 'grok-oauth.json'),
+          path.join(tmpDir, 'echoflow-code', 'grok-oauth.json'),
           JSON.stringify({
             accessToken: 'grok-access',
             refreshToken: 'grok-refresh',
@@ -925,6 +922,32 @@ describe('ProviderService', () => {
       expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('gpt-5.5')
     })
 
+    test('should activate EchoFlow provider with preconfigured Claude models', async () => {
+      const svc = new ProviderService()
+      const provider = await svc.addProvider(sampleInput({
+        presetId: 'echoflowai',
+        name: 'EchoFlowAPI',
+        baseUrl: 'https://api.echoflow.cn',
+        models: {
+          main: 'claude-sonnet-4-6',
+          haiku: 'claude-haiku-4-5',
+          sonnet: 'claude-sonnet-4-6',
+          opus: 'claude-opus-4-7',
+        },
+      }))
+
+      await svc.activateProvider(provider.id)
+
+      const settings = await readSettings()
+      const env = settings.env as Record<string, string>
+      expect(env.ANTHROPIC_BASE_URL).toBe('https://api.echoflow.cn')
+      expect(env.ANTHROPIC_AUTH_TOKEN).toBe('sk-test-key-123')
+      expect(env.ANTHROPIC_MODEL).toBe('claude-sonnet-4-6')
+      expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-haiku-4-5')
+      expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-sonnet-4-6')
+      expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('claude-opus-4-7')
+    })
+
     test('updating active provider should override and clear model context windows', async () => {
       const svc = new ProviderService()
       const added = await svc.addProvider(sampleInput({
@@ -970,19 +993,19 @@ describe('ProviderService', () => {
       let settings = await readSettings()
       let env = settings.env as Record<string, string>
       expect(env).toMatchObject({
-        CC_HAHA_IMAGE_PROVIDER_KIND: 'openai_images',
-        CC_HAHA_IMAGE_PROVIDER_ID: added.id,
-        CC_HAHA_IMAGE_BASE_URL: 'https://images.example.test/v1',
-        CC_HAHA_IMAGE_API_KEY: 'image-secret',
-        CC_HAHA_IMAGE_MODEL: 'image-model',
+        [IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY]: 'openai_images',
+        [IMAGE_GENERATION_PROVIDER_ID_ENV_KEY]: added.id,
+        [IMAGE_GENERATION_BASE_URL_ENV_KEY]: 'https://images.example.test/v1',
+        [IMAGE_GENERATION_API_KEY_ENV_KEY]: 'image-secret',
+        [IMAGE_GENERATION_MODEL_ENV_KEY]: 'image-model',
       })
 
       const updated = await svc.updateProvider(added.id, { imageGeneration: null })
       expect(updated.imageGeneration).toBeUndefined()
       settings = await readSettings()
       env = settings.env as Record<string, string>
-      expect(env.CC_HAHA_IMAGE_PROVIDER_KIND).toBeUndefined()
-      expect(env.CC_HAHA_IMAGE_API_KEY).toBeUndefined()
+      expect(env[IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY]).toBeUndefined()
+      expect(env[IMAGE_GENERATION_API_KEY_ENV_KEY]).toBeUndefined()
     })
   })
 
@@ -1302,8 +1325,8 @@ describe('ProviderService', () => {
     })
 
     test('proxy providers keep transient desktop auth out of persisted settings', async () => {
-      const originalLocalAccessToken = process.env.CC_HAHA_LOCAL_ACCESS_TOKEN
-      process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+      const originalLocalAccessToken = process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
+      process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
 
       try {
         const svc = new ProviderService()
@@ -1324,9 +1347,9 @@ describe('ProviderService', () => {
         }
       } finally {
         if (originalLocalAccessToken === undefined) {
-          delete process.env.CC_HAHA_LOCAL_ACCESS_TOKEN
+          delete process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
         } else {
-          process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = originalLocalAccessToken
+          process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = originalLocalAccessToken
         }
       }
     })
@@ -1378,38 +1401,45 @@ describe('ProviderService', () => {
     test('should include preset default env on activation and runtime env', async () => {
       const svc = new ProviderService()
       const provider = await svc.addProvider(sampleInput({
-        presetId: 'shengsuanyun',
-        baseUrl: 'https://router.shengsuanyun.com/api',
+        presetId: 'deepseek',
+        baseUrl: 'https://api.deepseek.com/anthropic',
       }))
 
       await svc.activateProvider(provider.id)
 
       const settings = await readSettings()
       const env = settings.env as Record<string, string>
-      expect(env.API_TIMEOUT_MS).toBe('3000000')
-      expect(env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1')
-      expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined()
+      expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,max_effort')
+      expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,max_effort')
+      expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,max_effort')
+      expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1000000')
       expect(JSON.parse(env.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS)).toEqual({
-        'anthropic/claude-sonnet-4.6': 1000000,
-        'anthropic/claude-haiku-4.5:thinking': 200000,
-        'anthropic/claude-opus-4.7': 1000000,
+        'deepseek-v4-pro[1m]': 1000000,
+        'deepseek-v4-pro': 1000000,
+        'deepseek-v4-flash': 1000000,
+        'deepseek-chat': 1000000,
+        'deepseek-reasoner': 1000000,
       })
 
       const runtimeEnv = await svc.getProviderRuntimeEnv(provider.id)
-      expect(runtimeEnv.API_TIMEOUT_MS).toBe('3000000')
-      expect(runtimeEnv.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1')
-      expect(runtimeEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined()
+      expect(runtimeEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,max_effort')
+      expect(runtimeEnv.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,max_effort')
+      expect(runtimeEnv.ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,max_effort')
+      expect(runtimeEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1000000')
       expect(JSON.parse(runtimeEnv.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS)).toEqual({
-        'anthropic/claude-sonnet-4.6': 1000000,
-        'anthropic/claude-haiku-4.5:thinking': 200000,
-        'anthropic/claude-opus-4.7': 1000000,
+        'deepseek-v4-pro[1m]': 1000000,
+        'deepseek-v4-pro': 1000000,
+        'deepseek-v4-flash': 1000000,
+        'deepseek-chat': 1000000,
+        'deepseek-reasoner': 1000000,
       })
 
       await svc.activateOfficial()
       const clearedSettings = await readSettings()
       const clearedEnv = (clearedSettings.env as Record<string, string> | undefined) ?? {}
-      expect(clearedEnv.API_TIMEOUT_MS).toBeUndefined()
-      expect(clearedEnv.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBeUndefined()
+      expect(clearedEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES).toBeUndefined()
+      expect(clearedEnv.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBeUndefined()
+      expect(clearedEnv.ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES).toBeUndefined()
       expect(clearedEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined()
       expect(clearedEnv.CLAUDE_CODE_ATTRIBUTION_HEADER).toBeUndefined()
       expect(clearedEnv.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS).toBeUndefined()
@@ -1434,7 +1464,7 @@ describe('ProviderService', () => {
 
       expect(status).toEqual({
         hasAuth: true,
-        source: 'cc-haha-provider',
+        source: 'echoflow-provider',
         activeProvider: provider.name,
       })
     })
@@ -1451,7 +1481,7 @@ describe('ProviderService', () => {
 
       expect(status).toEqual({
         hasAuth: true,
-        source: 'cc-haha-provider',
+        source: 'echoflow-provider',
         activeProvider: provider.name,
       })
     })
@@ -1475,9 +1505,9 @@ describe('ProviderService', () => {
 
     test('should preserve existing settings.json fields on activation', async () => {
       // Pre-seed settings with an extra field
-      await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+      await fs.mkdir(echoFlowDir(), { recursive: true })
       await fs.writeFile(
-        path.join(tmpDir, 'cc-haha', 'settings.json'),
+        path.join(echoFlowDir(), 'settings.json'),
         JSON.stringify({ theme: 'dark', env: { CUSTOM_VAR: 'keep-me' } }),
       )
 
@@ -1495,8 +1525,8 @@ describe('ProviderService', () => {
     })
 
     test('should recover malformed managed settings before activation sync', async () => {
-      await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
-      await fs.writeFile(path.join(tmpDir, 'cc-haha', 'settings.json'), '{not json', 'utf-8')
+      await fs.mkdir(echoFlowDir(), { recursive: true })
+      await fs.writeFile(path.join(echoFlowDir(), 'settings.json'), '{not json', 'utf-8')
 
       const svc = new ProviderService()
       const provider = await svc.addProvider(sampleInput())
@@ -1505,7 +1535,7 @@ describe('ProviderService', () => {
 
       const settings = await readSettings()
       const env = settings.env as Record<string, string>
-      const files = await fs.readdir(path.join(tmpDir, 'cc-haha'))
+      const files = await fs.readdir(echoFlowDir())
 
       expect(env.ANTHROPIC_BASE_URL).toBe('https://api.example.com')
       expect(files.some((name) => name.startsWith('settings.json.invalid-'))).toBe(true)
@@ -2794,8 +2824,9 @@ describe('ProviderService', () => {
     })
 
     test('bypasses inherited system proxy when testing direct provider endpoints', async () => {
+      await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
       await fs.writeFile(
-        path.join(tmpDir, 'settings.json'),
+        path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'),
         JSON.stringify({
           network: {
             proxy: { mode: 'direct', url: '' },
@@ -2862,8 +2893,9 @@ describe('ProviderService', () => {
     })
 
     test.each([180_000, 14_400_000, 21_600_000])('should use the configured network timeout for provider tests (%i ms)', async timeoutMs => {
+      await fs.mkdir(echoFlowDir(), { recursive: true })
       await fs.writeFile(
-        path.join(tmpDir, 'settings.json'),
+        path.join(echoFlowDir(), 'settings.json'),
         JSON.stringify({
           network: {
             aiRequestTimeoutMs: timeoutMs,

@@ -8,7 +8,7 @@ import { createElectronDevEnv, DEFAULT_RENDERER_URL, mergeNoProxy, resolveElectr
 // 但 bun 默认不执行 electron 的 postinstall 下载,dist 在本机/CI 经常缺席。
 // 测试用自带夹具 desktopRoot,不依赖环境安装状态。
 function createDesktopRootFixture(withExecutables = true) {
-  const root = mkdtempSync(path.join(tmpdir(), 'cc-haha-dev-launcher-'))
+  const root = mkdtempSync(path.join(tmpdir(), 'echoflow-code-dev-launcher-'))
   if (!withExecutables) return root
   const dist = path.join(root, 'node_modules', 'electron', 'dist')
   mkdirSync(path.join(dist, 'Electron.app', 'Contents', 'MacOS'), { recursive: true })

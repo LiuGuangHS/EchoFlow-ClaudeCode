@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { getCcHahaDir } from '../../../utils/envUtils.js'
+import { getEchoFlowCodeDir } from '../../../utils/envUtils.js'
 import type { LocalIndexMode } from './types.js'
 
 export const LOCAL_INDEX_INVALID_MODE = 'LOCAL_INDEX_INVALID_MODE' as const
@@ -10,7 +10,7 @@ export type LocalIndexModeResolution = {
 }
 
 export function resolveLocalIndexMode(
-  value = process.env.CC_HAHA_LOCAL_INDEX,
+  value = process.env.ECHOFLOW_LOCAL_INDEX,
 ): LocalIndexModeResolution {
   // SQLite is the normal product read path. Explicit modes remain available
   // only for deterministic parity/fallback tests and emergency diagnosis.
@@ -27,5 +27,5 @@ export function resolveLocalIndexMode(
 }
 
 export function getLocalIndexDatabasePath(): string {
-  return join(getCcHahaDir(), 'db', 'index-v1.sqlite')
+  return join(getEchoFlowCodeDir(), 'db', 'index-v1.sqlite')
 }

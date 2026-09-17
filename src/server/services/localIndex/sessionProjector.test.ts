@@ -27,7 +27,7 @@ const tempDirs: string[] = []
 const exactFileTime = new Date(1_700_000_000_000)
 
 async function createTempDir(label: string): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), `cc-haha-${label}-`))
+  const directory = await mkdtemp(join(tmpdir(), `echoflow-code-${label}-`))
   tempDirs.push(directory)
   return directory
 }
@@ -454,6 +454,7 @@ describe('session projector', () => {
         content: line({
           type: 'session-meta',
           runtimeProviderId: 'provider-a',
+          cliRuntimeId: 'installed',
           timestamp: '2026-01-01T00:02:00.000Z',
         }),
       }),
@@ -467,6 +468,7 @@ describe('session projector', () => {
       expect(Object.hasOwn(byId.get('explicit-null')!, 'runtimeProviderId')).toBe(true)
       expect(byId.get('explicit-null')!.runtimeProviderId).toBeNull()
       expect(byId.get('string')!.runtimeProviderId).toBe('provider-a')
+      expect(Object.hasOwn(byId.get('string')!, 'cliRuntimeId')).toBe(false)
     } finally {
       database.close()
     }

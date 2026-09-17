@@ -8,7 +8,7 @@ import {
   parseDarwinApplicationListOutput,
 } from '../services/openTargetService.js'
 
-async function makeDir(prefix = 'cc-haha-open-target-') {
+async function makeDir(prefix = 'echoflow-code-open-target-') {
   return mkdtemp(join(tmpdir(), prefix))
 }
 
@@ -278,7 +278,7 @@ describe('openTargetService', () => {
       nativeApplications: {
         defaultApplicationPath: '/Applications/Word.app',
         applications: [
-          { appPath: '/Applications/Chat Haha.app', bundleId: 'com.claude-code-haha.desktop', displayName: 'Chat Haha', isDefault: false },
+          { appPath: '/Applications/EchoFlow Code.app', bundleId: 'com.echoflow.code.desktop', displayName: 'EchoFlow Code', isDefault: false },
           { appPath: '/Applications/Visual Studio Code.app', bundleId: 'com.microsoft.VSCode', displayName: 'Visual Studio Code', isDefault: false },
           { appPath: '/Applications/Word.app', bundleId: 'com.microsoft.Word', displayName: 'Word', isDefault: false },
         ],
@@ -694,7 +694,7 @@ describe('openTargetService', () => {
   })
 
   it('launches command-first targets with argument arrays and the path as one argument', async () => {
-    const dir = await makeDir('cc-haha open-target-')
+    const dir = await makeDir('echoflow-code open-target-')
     const { service, launched } = createService('linux', {
       commands: { code: true },
     })
@@ -819,7 +819,7 @@ describe('openTargetService', () => {
 
   it('reports missing tilde paths with the expanded home path', async () => {
     const { service } = createService('darwin')
-    const missing = `~/cc-haha-missing-${Date.now()}/report.html`
+    const missing = `~/echoflow-code-missing-${Date.now()}/report.html`
 
     const rejection = expect(service.openTarget({ targetId: 'finder', path: missing })).rejects
     await rejection.toMatchObject({ code: 'OPEN_TARGET_PATH_MISSING' })
@@ -828,7 +828,7 @@ describe('openTargetService', () => {
 
   it('expands Windows backslash tilde paths on win32', async () => {
     const { service } = createService('win32')
-    const missing = `~\\cc-haha-missing-${Date.now()}\\report.html`
+    const missing = `~\\echoflow-code-missing-${Date.now()}\\report.html`
 
     const rejection = expect(service.openTarget({ targetId: 'explorer', path: missing })).rejects
     await rejection.toMatchObject({ code: 'OPEN_TARGET_PATH_MISSING' })

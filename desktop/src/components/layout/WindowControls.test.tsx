@@ -43,7 +43,7 @@ describe('WindowControls', () => {
     // The control labels are translated; assertions below spell the English strings.
     // Seeded through localStorage rather than `setState` because `vi.resetModules()`
     // below makes the test import a fresh settings store that re-reads storage.
-    window.localStorage.setItem('cc-haha-locale', 'en')
+    window.localStorage.setItem('echoflow-code-locale', 'en')
 
     Reflect.deleteProperty(window, '__TAURI_INTERNALS__')
     window.desktopHost = {
@@ -80,7 +80,7 @@ describe('WindowControls', () => {
   })
 
   afterEach(() => {
-    window.localStorage.removeItem('cc-haha-locale')
+    window.localStorage.removeItem('echoflow-code-locale')
     Reflect.deleteProperty(window, '__TAURI_INTERNALS__')
     Reflect.deleteProperty(window, 'desktopHost')
     Object.defineProperty(navigator, 'platform', {

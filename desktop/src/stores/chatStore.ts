@@ -7,6 +7,7 @@ import { useSessionStore } from './sessionStore'
 import { useCLITaskStore } from './cliTaskStore'
 import { useWorkflowStore } from './workflowStore'
 import { useSessionRuntimeStore } from './sessionRuntimeStore'
+import { useSessionCliRuntimeStore } from './sessionCliRuntimeStore'
 import { useProviderStore } from './providerStore'
 import { resolveActiveProviderRuntimeSelection, resolveProviderRuntimeModelId } from '../lib/runtimeSelection'
 import { useTabStore } from './tabStore'
@@ -357,6 +358,7 @@ type ChatStore = {
     response: ComputerUsePermissionResponse,
   ) => void
   setSessionRuntime: (sessionId: string, selection: RuntimeSelection) => void
+  setSessionCliRuntime: (sessionId: string, runtimeId: 'bundled' | 'installed') => void
   setSessionPermissionMode: (sessionId: string, mode: PermissionMode) => void
   stopGeneration: (sessionId: string) => void
   stopBackgroundTask: (sessionId: string, taskId: string) => void
@@ -1984,7 +1986,7 @@ function buildAgentCompletionNotification(
   const lastAssistant = [...messages].reverse().find((message) => message.type === 'assistant_text')
   const suffix = preview.length > AGENT_COMPLETION_NOTIFICATION_PREVIEW_CHARS ? '...' : ''
   return {
-    title: 'Claude Code Haha 已完成回复',
+    title: 'EchoFlow Code 已完成回复',
     body: preview.slice(0, AGENT_COMPLETION_NOTIFICATION_PREVIEW_CHARS) + suffix,
     dedupeKey: `agent-completion:${sessionId}:${lastAssistant?.id ?? Date.now()}`,
   }
@@ -3078,6 +3080,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       type: 'set_runtime_config',
       ...reconciled,
     })
+    useSessionRuntimeStore.getState().markRequestPending(sessionId)
+  },
+
+  setSessionCliRuntime: (sessionId, runtimeId) => {
+    wsManager.send(sessionId, { type: 'set_cli_runtime', cliRuntimeId: runtimeId })
+    useSessionCliRuntimeStore.getState().request(sessionId, runtimeId)
   },
 
   setSessionPermissionMode: (sessionId, mode) => {
@@ -4363,6 +4371,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         if (msg.state !== 'idle') ensureElapsedTimer()
         if (msg.state === 'idle') {
           clearElapsedTimer()
+          useSessionRuntimeStore.getState().markRequestUnconfirmed(sessionId)
         }
         // Sync tab status
         useTabStore.getState().updateTabStatus(
@@ -4371,6 +4380,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             ? 'idle'
             : 'running',
         )
+        break
+
+      case 'cli_runtime_applied':
+        useSessionCliRuntimeStore.getState().apply(sessionId, msg.cliRuntimeId)
         break
 
       case 'runtime_config_applied': {
@@ -4775,7 +4788,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           dedupeKey: `permission:${msg.requestId}`,
           cooldownScope: 'permission-prompt',
           requestAttention: true,
-          title: 'Claude Code Haha 需要你的确认',
+          title: 'EchoFlow Code 需要你的确认',
           body: msg.toolName
             ? `${msg.toolName} 请求执行，正在等待允许。`
             : '有一个工具请求正在等待允许。',
@@ -4839,7 +4852,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           dedupeKey: `computer-use-permission:${msg.requestId}`,
           cooldownScope: 'permission-prompt',
           requestAttention: true,
-          title: 'Claude Code Haha 需要你的确认',
+          title: 'EchoFlow Code 需要你的确认',
           body: msg.request.reason || 'Computer Use 正在等待允许。',
           target: { type: 'session', sessionId },
         })
@@ -5069,9 +5082,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           ...(msg.businessErrorCode ? { businessErrorCode: msg.businessErrorCode } : {}),
           timestamp: Date.now(),
         }
+        if (msg.code === 'CLI_RUNTIME_INVALID' || msg.code === 'CLI_RUNTIME_PERSIST_FAILED' || msg.code === 'CLI_RUNTIME_RESTART_FAILED') {
+          useSessionCliRuntimeStore.getState().fail(sessionId)
+        }
         if (msg.code === 'RUNTIME_CONFIG_INVALID') {
           // Validation rejects the selection before changing the runtime. It
           // neither ends the active turn nor invalidates an in-flight history load.
+          useSessionRuntimeStore.getState().markRequestFailed(sessionId)
           update((s) => ({ messages: [...s.messages, errorMessage] }))
           break
         }

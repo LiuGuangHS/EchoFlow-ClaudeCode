@@ -452,7 +452,7 @@ maxTurns: 10
 
 ### 同名 Agent 的来源优先级
 
-当多个来源定义了同名 Agent 时，cc-haha 按以下优先级选择实际生效的定义（从高到低）：
+当多个来源定义了同名 Agent 时，echoflow-code 按以下优先级选择实际生效的定义（从高到低）：
 
 1. **策略 Agent**（policy）— 组织托管策略
 2. **CLI 参数 Agent**（flag）— 通过 `--agents` 注册

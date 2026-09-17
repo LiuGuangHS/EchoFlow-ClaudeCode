@@ -9,15 +9,21 @@ import {
   drainTraceCaptureForTests,
   traceCaptureService,
 } from '../services/traceCaptureService.js'
+import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 import { resetSettingsCache } from '../../utils/settings/settingsCache.js'
 
 let tmpDir: string
 let originalConfigDir: string | undefined
 
+function settingsPath(): string {
+  return path.join(getEchoFlowInternalDir(tmpDir), 'settings.json')
+}
+
 async function setup() {
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'proxy-network-test-'))
   originalConfigDir = process.env.CLAUDE_CONFIG_DIR
   process.env.CLAUDE_CONFIG_DIR = tmpDir
+  await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
   resetSettingsCache()
   clearTraceCaptureStateForTests()
 }
@@ -83,7 +89,7 @@ describe('proxy network settings', () => {
 
   test('uses configured AI request timeout for non-stream upstream requests', async () => {
     await fs.writeFile(
-      path.join(tmpDir, 'settings.json'),
+      settingsPath(),
       JSON.stringify({
         network: {
           aiRequestTimeoutMs: 45_000,
@@ -159,7 +165,7 @@ describe('proxy network settings', () => {
 
   test('uses configured AI request timeout for non-stream Responses upstream requests', async () => {
     await fs.writeFile(
-      path.join(tmpDir, 'settings.json'),
+      settingsPath(),
       JSON.stringify({
         network: {
           aiRequestTimeoutMs: 45_000,
@@ -233,7 +239,7 @@ describe('proxy network settings', () => {
 
   test('bypasses inherited system proxy for direct OpenAI-compatible upstream requests', async () => {
     await fs.writeFile(
-      path.join(tmpDir, 'settings.json'),
+      settingsPath(),
       JSON.stringify({
         network: {
           proxy: { mode: 'direct', url: '' },
@@ -323,7 +329,7 @@ describe('proxy network settings', () => {
 
   test('bypasses manual proxy for loopback OpenAI-compatible upstream requests', async () => {
     await fs.writeFile(
-      path.join(tmpDir, 'settings.json'),
+      settingsPath(),
       JSON.stringify({
         network: {
           proxy: { mode: 'manual', url: 'http://127.0.0.1:1181' },
@@ -461,7 +467,7 @@ describe('proxy network settings', () => {
 
   test('uses configured AI request timeout while opening and reading streaming upstream requests', async () => {
     await fs.writeFile(
-      path.join(tmpDir, 'settings.json'),
+      settingsPath(),
       JSON.stringify({
         network: {
           aiRequestTimeoutMs: 180_000,

@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import cc_haha_computer_use
+@testable import echoflow_code_computer_use
 
 @Suite("Computer Use client attestation policy")
 struct ClientAttestationTests {

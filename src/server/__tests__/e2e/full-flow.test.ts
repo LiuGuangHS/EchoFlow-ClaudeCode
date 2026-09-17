@@ -15,7 +15,7 @@ let baseUrl: string
 let tmpDir: string
 const originalConfigDir = process.env.CLAUDE_CONFIG_DIR
 const originalCliPath = process.env.CLAUDE_CLI_PATH
-const originalDisableTerminalShellEnv = process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV
+const originalDisableTerminalShellEnv = process.env.ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV
 const mockSdkCliPath = fileURLToPath(new URL('../fixtures/mock-sdk-cli.ts', import.meta.url))
 
 // The models API derives its model list from these env vars (see
@@ -48,9 +48,9 @@ function restoreEnv() {
     delete process.env.CLAUDE_CLI_PATH
   }
   if (originalDisableTerminalShellEnv !== undefined) {
-    process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV = originalDisableTerminalShellEnv
+    process.env.ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV = originalDisableTerminalShellEnv
   } else {
-    delete process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV
+    delete process.env.ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV
   }
 }
 
@@ -63,7 +63,7 @@ async function startTestServer() {
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'claude-e2e-'))
   process.env.CLAUDE_CONFIG_DIR = tmpDir
   process.env.CLAUDE_CLI_PATH = mockSdkCliPath
-  process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV = '1'
+  process.env.ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV = '1'
   for (const key of MODEL_ENV_KEYS) delete process.env[key]
 
   // Create required directories

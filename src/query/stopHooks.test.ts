@@ -11,7 +11,7 @@ describe('stop hook goal continuation', () => {
         preventContinuation: true,
         blockingError: {
           blockingError: 'Prompt hook condition was not met: keep working',
-          command: '<cc-haha-goal-hook>\nship the feature',
+          command: '<echoflow-code-goal-hook>\nship the feature',
         },
       }),
     ).toBe(true)
@@ -33,7 +33,7 @@ describe('stop hook goal continuation', () => {
         preventContinuation: false,
         blockingError: {
           blockingError: 'Prompt hook condition was not met: keep working',
-          command: '<cc-haha-goal-hook>\nship the feature',
+          command: '<echoflow-code-goal-hook>\nship the feature',
         },
       }),
     ).toBe(false)

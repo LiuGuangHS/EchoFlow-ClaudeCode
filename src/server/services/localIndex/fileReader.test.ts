@@ -12,7 +12,7 @@ import {
 const tempDirs: string[] = []
 
 async function tempFile(contents: string | Buffer): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), 'cc-haha-file-reader-'))
+  const root = await mkdtemp(join(tmpdir(), 'echoflow-code-file-reader-'))
   tempDirs.push(root)
   const path = join(root, 'session.jsonl')
   await writeFile(path, contents)

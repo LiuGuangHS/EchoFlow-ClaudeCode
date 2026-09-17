@@ -2,7 +2,7 @@ import Foundation
 import os
 import XCTest
 
-@testable import cc_haha_computer_use
+@testable import echoflow_code_computer_use
 
 final class FocusEventMonitorTests: XCTestCase {
     private final class FakeStream: FocusEventMonitor.Stream, @unchecked Sendable {

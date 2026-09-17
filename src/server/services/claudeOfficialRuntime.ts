@@ -1,5 +1,5 @@
 import type { SubscriptionType } from '../../services/oauth/types.js'
-import { hahaOAuthService } from './hahaOAuthService.js'
+import { echoFlowOAuthService } from './echoFlowOAuthService.js'
 
 export const CLAUDE_OFFICIAL_OPUS_MODEL_ID = 'claude-opus-4-8'
 export const CLAUDE_OFFICIAL_SONNET_MODEL_ID = 'claude-sonnet-5'
@@ -48,7 +48,7 @@ function normalizeExplicitClaudeOfficialModelId(modelId: string): string | null 
 export async function resolveClaudeOfficialRuntimeModel(
   configuredModel?: unknown,
 ): Promise<string | null> {
-  const tokens = await hahaOAuthService.ensureFreshTokens()
+  const tokens = await echoFlowOAuthService.ensureFreshTokens()
   if (!tokens?.accessToken) return null
 
   const defaultModel = getClaudeOfficialDefaultModelId(tokens.subscriptionType)

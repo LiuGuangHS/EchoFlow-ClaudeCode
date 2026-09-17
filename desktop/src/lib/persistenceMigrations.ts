@@ -5,13 +5,11 @@ import {
 } from './workspace/storageKey'
 import {
   APP_ZOOM_STORAGE_KEY,
-  LEGACY_UI_ZOOM_STORAGE_KEY,
   isValidStoredAppZoomLevel,
-  normalizeAppZoomLevel,
 } from './appZoom'
 
 export const CURRENT_DESKTOP_PERSISTENCE_SCHEMA_VERSION = 4
-export const DESKTOP_PERSISTENCE_VERSION_KEY = 'cc-haha.persistence.schemaVersion'
+export const DESKTOP_PERSISTENCE_VERSION_KEY = 'echoflow-code.persistence.schemaVersion'
 
 type DesktopMigrationReport = {
   migratedKeys: string[]
@@ -19,13 +17,23 @@ type DesktopMigrationReport = {
 
 type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 
-const TAB_STORAGE_KEY = 'cc-haha-open-tabs'
-const SESSION_RUNTIME_STORAGE_KEY = 'cc-haha-session-runtime'
-const THEME_STORAGE_KEY = 'cc-haha-theme'
-const FOLLOW_SYSTEM_THEME_STORAGE_KEY = 'cc-haha-follow-system-theme'
-const LIGHT_THEME_STORAGE_KEY = 'cc-haha-light-theme'
-const DARK_THEME_STORAGE_KEY = 'cc-haha-dark-theme'
-const LOCALE_STORAGE_KEY = 'cc-haha-locale'
+const TAB_STORAGE_KEY = 'echoflow-code-open-tabs'
+const SESSION_RUNTIME_STORAGE_KEY = 'echoflow-code-session-runtime'
+const THEME_STORAGE_KEY = 'echoflow-code-theme'
+const FOLLOW_SYSTEM_THEME_STORAGE_KEY = 'echoflow-code-follow-system-theme'
+const LIGHT_THEME_STORAGE_KEY = 'echoflow-code-light-theme'
+const DARK_THEME_STORAGE_KEY = 'echoflow-code-dark-theme'
+const LOCALE_STORAGE_KEY = 'echoflow-code-locale'
+// Historical cc-haha keys remain read-only migration sources so upgrades preserve user data.
+const LEGACY_STORAGE_RULES = [
+  { targetKey: TAB_STORAGE_KEY, sourceKeys: ['cc-haha-open-tabs'] },
+  { targetKey: SESSION_RUNTIME_STORAGE_KEY, sourceKeys: ['cc-haha-session-runtime'] },
+  { targetKey: THEME_STORAGE_KEY, sourceKeys: ['cc-haha-theme'] },
+  { targetKey: LOCALE_STORAGE_KEY, sourceKeys: ['cc-haha-locale'] },
+  { targetKey: APP_ZOOM_STORAGE_KEY, sourceKeys: ['cc-haha-app-zoom', 'cc-haha-ui-zoom', 'echoflow-code-ui-zoom'] },
+  { targetKey: 'echoflow-code-dismissed-update-version', sourceKeys: ['cc-haha-dismissed-update-version'] },
+  { targetKey: WORKSPACE_STORAGE_KEY, sourceKeys: ['cc-haha.workspace'] },
+] as const
 const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max']
 const PERSISTED_SPECIAL_TAB_TYPES = ['settings', 'scheduled', 'market', 'connectors', 'traces'] as const
 const PERSISTED_SPECIAL_TAB_IDS: Record<(typeof PERSISTED_SPECIAL_TAB_TYPES)[number], string> = {
@@ -35,7 +43,7 @@ const PERSISTED_SPECIAL_TAB_IDS: Record<(typeof PERSISTED_SPECIAL_TAB_TYPES)[num
   connectors: '__connectors__',
   traces: '__traces__',
 }
-const SUPPORTED_LOCALES = ['en', 'zh', 'zh-TW', 'jp', 'kr']
+const VALID_LOCALES = ['en', 'zh', 'zh-TW', 'jp', 'kr']
 const WORKSPACE_PERSISTED_TAB_KINDS = ['file', 'browser', 'review', 'terminal']
 
 function readJson(storage: StorageLike, key: string): unknown {
@@ -63,6 +71,18 @@ function getPersistedSpecialTabType(tab: Record<string, unknown>): (typeof PERSI
 
 function writeJson(storage: StorageLike, key: string, value: unknown): void {
   storage.setItem(key, JSON.stringify(value))
+}
+
+function copyLegacyStorage(storage: StorageLike, report: DesktopMigrationReport): void {
+  for (const rule of LEGACY_STORAGE_RULES) {
+    if (storage.getItem(rule.targetKey) !== null) continue
+    const sourceKey = rule.sourceKeys.find(key => storage.getItem(key) !== null)
+    if (!sourceKey) continue
+    const value = storage.getItem(sourceKey)
+    if (value === null) continue
+    storage.setItem(rule.targetKey, value)
+    report.migratedKeys.push(rule.targetKey)
+  }
 }
 
 function migrateTabs(storage: StorageLike, report: DesktopMigrationReport): void {
@@ -126,6 +146,7 @@ function migrateSessionRuntime(storage: StorageLike, report: DesktopMigrationRep
       Object.entries(parsed).filter(([, selection]) => (
         isRecord(selection) &&
         typeof selection.modelId === 'string' &&
+        selection.modelId.trim().length > 0 &&
         (selection.providerId === null || typeof selection.providerId === 'string') &&
         (
           selection.effortLevel === undefined ||
@@ -274,17 +295,6 @@ function normalizeAppZoomKey(storage: StorageLike, report: DesktopMigrationRepor
     storage.removeItem(APP_ZOOM_STORAGE_KEY)
     report.migratedKeys.push(APP_ZOOM_STORAGE_KEY)
   }
-
-  const currentValue = storage.getItem(APP_ZOOM_STORAGE_KEY)
-  const legacyValue = storage.getItem(LEGACY_UI_ZOOM_STORAGE_KEY)
-  if (currentValue === null && legacyValue !== null && isValidStoredAppZoomLevel(legacyValue)) {
-    storage.setItem(APP_ZOOM_STORAGE_KEY, String(normalizeAppZoomLevel(legacyValue)))
-    report.migratedKeys.push(APP_ZOOM_STORAGE_KEY)
-  }
-  if (legacyValue !== null) {
-    storage.removeItem(LEGACY_UI_ZOOM_STORAGE_KEY)
-    report.migratedKeys.push(LEGACY_UI_ZOOM_STORAGE_KEY)
-  }
 }
 
 function runMigrationStep(
@@ -311,6 +321,7 @@ export function runDesktopPersistenceMigrations(storage: StorageLike | null = ge
   const report: DesktopMigrationReport = { migratedKeys: [] }
   if (!storage) return report
 
+  runMigrationStep(report, TAB_STORAGE_KEY, () => copyLegacyStorage(storage, report))
   runMigrationStep(report, TAB_STORAGE_KEY, () => migrateTabs(storage, report))
   runMigrationStep(report, SESSION_RUNTIME_STORAGE_KEY, () => migrateSessionRuntime(storage, report))
   runMigrationStep(report, THEME_STORAGE_KEY, () =>
@@ -323,7 +334,7 @@ export function runDesktopPersistenceMigrations(storage: StorageLike | null = ge
     migrateThemeKey(storage, LIGHT_THEME_STORAGE_KEY, LIGHT_THEME_MODES, report))
   runMigrationStep(report, DARK_THEME_STORAGE_KEY, () =>
     migrateThemeKey(storage, DARK_THEME_STORAGE_KEY, DARK_THEME_MODES, report))
-  runMigrationStep(report, LOCALE_STORAGE_KEY, () => normalizeEnumKey(storage, LOCALE_STORAGE_KEY, SUPPORTED_LOCALES, report))
+  runMigrationStep(report, LOCALE_STORAGE_KEY, () => normalizeEnumKey(storage, LOCALE_STORAGE_KEY, VALID_LOCALES, report))
   runMigrationStep(report, APP_ZOOM_STORAGE_KEY, () => normalizeAppZoomKey(storage, report))
   runMigrationStep(report, WORKSPACE_STORAGE_KEY, () => migrateWorkspaceState(storage, report))
   try {

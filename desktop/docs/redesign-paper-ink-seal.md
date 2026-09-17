@@ -60,7 +60,7 @@
 - `Button` — `primary` 已是墨色实心 + hover 转陶土 + 上浮 1px + `active:scale(.97)`；禁用态是不透明的 `--s1`/`--t3`。
 - `Card` — 新增 `shadow`（`none`/`card`/`composer`）与 `lift`（hover 抬起 2px）两个 prop，以及 `radius="2xl"`。**`lift` 与 `shadow` 不要同时传**，两个 `shadow-[…]` 不会叠加。
 - `IconButton` / `Badge` / `Modal`（圆角已是 24）/ `SegmentedControl` / `Switch` / `Progress` — 都已走 token，跟随主题。
-- `composite/BrandSeal` — 品牌标记 cc-haha（原 app-icon 的矢量重建），`sm`24 / `md`32 / `lg`38 / `xl`80，随尺寸减件（星芒只在 `xl`，光标到 `sm` 去掉）。
+- `composite/BrandSeal` — 品牌标记 echoflow-code（原 app-icon 的矢量重建），`sm`24 / `md`32 / `lg`38 / `xl`80，随尺寸减件（星芒只在 `xl`，光标到 `sm` 去掉）。
 
 焦点态统一：`focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]`。
 
@@ -94,4 +94,4 @@
 
 ## 参考原型
 
-`/Users/nanmi/Downloads/design_handoff_cc_haha_redesign/` 下的 `CC Haha.dc.html` 是高保真交互原型，README.md 是像素级规格。原型用浏览器直接打开可交互。
+`/Users/nanmi/Downloads/design_handoff_echoflow_redesign/` 下的 `CC Haha.dc.html` 是高保真交互原型，README.md 是像素级规格。原型用浏览器直接打开可交互。

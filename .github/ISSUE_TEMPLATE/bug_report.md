@@ -11,9 +11,9 @@ assignees: ''
 ## 提交前确认
 <!-- 请在提交 issue 前确认以下事项 -->
 
-- [ ] 我已经阅读了 [README 常见问题](https://github.com/NanmiCoder/cc-haha#常见问题)
+- [ ] 我已经阅读了 [README 常见问题](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode#常见问题)
 - [ ] 我已经升级到最新版本后复现过这个问题
-- [ ] 我已经搜索过[现有 issues](https://github.com/NanmiCoder/cc-haha/issues)，确认没有重复问题
+- [ ] 我已经搜索过[现有 issues](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/issues)，确认没有重复问题
 - [ ] 我已经隐藏截图和日志中的 API Key、Token、Cookie 等敏感信息
 - [ ] 我已在分享前检查自动生成的诊断报告或诊断包，确认其中没有不应公开的私密元数据
 
@@ -27,7 +27,7 @@ assignees: ''
 - 使用方式: 桌面端 / CLI / 其他:
 - 操作系统: Windows / macOS / Linux:
 - 系统版本: 例如 Windows 11 23H2 / macOS 15.4:
-- 桌面端版本: 例如 v0.1.8（设置页 -> 关于 中可查看）:
+- 桌面端版本: 设置 → 关于 中显示的版本:
 - 安装来源: GitHub Release / 源码本地构建 / 其他:
 - Bun 版本（CLI 问题填写，`bun --version`）:
 - Node 版本（CLI 问题填写，`node --version`）:

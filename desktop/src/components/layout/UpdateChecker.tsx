@@ -3,7 +3,17 @@ import { Button } from '@/components/ui/Button'
 import { useTranslation } from '../../i18n'
 import { MarkdownRenderer } from '../markdown/MarkdownRenderer'
 import { isDesktopRuntime } from '../../lib/desktopRuntime'
-import { useUpdateStore } from '../../stores/updateStore'
+import { useUpdateStore, type UpdateErrorCode } from '../../stores/updateStore'
+
+const UPDATE_ERROR_KEYS = {
+  network: 'update.error.network',
+  metadata: 'update.error.metadata',
+  proxy: 'update.error.proxy',
+  download: 'update.error.download',
+  install: 'update.error.install',
+  restart: 'update.error.restart',
+  unknown: 'update.error.unknown',
+} as const satisfies Record<UpdateErrorCode, 'update.error.network' | 'update.error.metadata' | 'update.error.proxy' | 'update.error.download' | 'update.error.install' | 'update.error.restart' | 'update.error.unknown'>
 
 export function UpdateChecker() {
   const t = useTranslation()
@@ -11,6 +21,7 @@ export function UpdateChecker() {
   const availableVersion = useUpdateStore((s) => s.availableVersion)
   const releaseNotes = useUpdateStore((s) => s.releaseNotes)
   const error = useUpdateStore((s) => s.error)
+  const errorCode = useUpdateStore((s) => s.errorCode)
   const shouldPrompt = useUpdateStore((s) => s.shouldPrompt)
   const initialize = useUpdateStore((s) => s.initialize)
   const installUpdate = useUpdateStore((s) => s.installUpdate)
@@ -47,9 +58,11 @@ export function UpdateChecker() {
           </div>
         )}
 
-        {error && (
+        {(error || errorCode) && (
           <p className="mt-2 text-[12.5px] text-[var(--color-error)]" role="alert">
-            {t('update.failed', { error })}
+            {error
+              ? t('update.failed', { error })
+              : t(UPDATE_ERROR_KEYS[errorCode ?? 'unknown'])}
           </p>
         )}
 

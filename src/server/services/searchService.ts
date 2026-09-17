@@ -9,15 +9,12 @@ import { spawn } from 'child_process'
 import { createReadStream } from 'fs'
 import * as fs from 'fs/promises'
 import * as path from 'path'
-import * as os from 'os'
 import { createInterface } from 'readline'
 import { StringDecoder } from 'string_decoder'
 import { ApiError } from '../middleware/errorHandler.js'
 import { ripgrepCommand } from '../../utils/ripgrep.js'
-import {
-  sessionService,
-  type IndexedSessionSearchMetadata,
-} from './sessionService.js'
+import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
+import { sessionService, type IndexedSessionSearchMetadata } from './sessionService.js'
 import {
   SEARCH_CONTENT_MAX_JSONL_LINE_BYTES,
   extractSearchableSegments,
@@ -326,8 +323,7 @@ export class SearchService {
     const matchesPerSession =
       options?.matchesPerSession ?? SESSION_SEARCH_DEFAULT_MATCHES_PER_SESSION
 
-    const configDir =
-      process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
+    const configDir = getClaudeConfigHomeDir()
     const projectsDir = path.join(configDir, 'projects')
     if (options?.project !== undefined && !isDirectProjectName(options.project)) {
       throw ApiError.badRequest('Invalid project filter')

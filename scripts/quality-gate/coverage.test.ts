@@ -339,7 +339,7 @@ describe('coverage gate helpers', () => {
   })
 
   test('collects non-quarantined server tests when review windows have expired', () => {
-    const root = mkdtempSync(join(tmpdir(), 'cc-haha-coverage-'))
+    const root = mkdtempSync(join(tmpdir(), 'echoflow-code-coverage-'))
     try {
       mkdirSync(join(root, 'src/server/__tests__'), { recursive: true })
       mkdirSync(join(root, 'src/services'), { recursive: true })
@@ -408,7 +408,7 @@ describe('coverage gate helpers', () => {
 
 describe('coverage subprocess output', () => {
   test('preserves output when the reporter replaces its destination directory', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'cc-haha-coverage-cleanup-'))
+    const root = mkdtempSync(join(tmpdir(), 'echoflow-code-coverage-cleanup-'))
     const script = join(root, 'reporter.ts')
     const logPath = join(root, 'reports', 'coverage.log')
     try {
@@ -433,7 +433,7 @@ describe('coverage subprocess output', () => {
   })
 
   test('captures large synchronous reports to regular files without losing artifacts or exit status', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'cc-haha-coverage-output-'))
+    const root = mkdtempSync(join(tmpdir(), 'echoflow-code-coverage-output-'))
     const script = join(root, 'reporter.ts')
     const logPath = join(root, 'logs', 'coverage.log')
     const summary = '\nRan 1 test across 1 file. [1.00ms]\n'

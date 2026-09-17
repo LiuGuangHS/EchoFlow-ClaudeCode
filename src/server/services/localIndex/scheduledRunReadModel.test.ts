@@ -16,15 +16,15 @@ import { CronScheduler } from '../cronScheduler.js'
 
 let tmpDir: string | undefined
 const originalConfigDir = process.env.CLAUDE_CONFIG_DIR
-const originalLocalIndexMode = process.env.CC_HAHA_LOCAL_INDEX
+const originalLocalIndexMode = process.env.ECHOFLOW_LOCAL_INDEX
 const exactFileTime = new Date(1_700_000_000_000)
 
 afterEach(async () => {
   await resetScheduledRunReadModelForTests()
   if (originalConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR
   else process.env.CLAUDE_CONFIG_DIR = originalConfigDir
-  if (originalLocalIndexMode === undefined) delete process.env.CC_HAHA_LOCAL_INDEX
-  else process.env.CC_HAHA_LOCAL_INDEX = originalLocalIndexMode
+  if (originalLocalIndexMode === undefined) delete process.env.ECHOFLOW_LOCAL_INDEX
+  else process.env.ECHOFLOW_LOCAL_INDEX = originalLocalIndexMode
   if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true })
   tmpDir = undefined
 })
@@ -76,7 +76,7 @@ describe('scheduled run read model', () => {
   test('falls back to the canonical file when the independent database cannot open', async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'scheduled-run-read-model-'))
     process.env.CLAUDE_CONFIG_DIR = tmpDir
-    process.env.CC_HAHA_LOCAL_INDEX = 'on'
+    process.env.ECHOFLOW_LOCAL_INDEX = 'on'
     const sourcePath = path.join(tmpDir, 'scheduled_tasks_log.json')
     const canonical = { runs: [{
       id: 'canonical-run',
@@ -88,9 +88,9 @@ describe('scheduled run read model', () => {
       output: 'canonical output',
     }] }
     await fs.writeFile(sourcePath, JSON.stringify(canonical))
-    const dbPath = path.join(tmpDir, 'cc-haha', 'db', 'scheduled-runs-v1.sqlite')
+    const dbPath = path.join(tmpDir, 'echoflow-code', 'db', 'scheduled-runs-v1.sqlite')
     await fs.mkdir(dbPath, { recursive: true })
-    const unrelated = path.join(tmpDir, 'cc-haha', 'db', 'trace-index-v1.sqlite')
+    const unrelated = path.join(tmpDir, 'echoflow-code', 'db', 'trace-index-v1.sqlite')
     await fs.writeFile(unrelated, 'trace-owned-data')
 
     const scheduler = new CronScheduler()
@@ -102,7 +102,7 @@ describe('scheduled run read model', () => {
   test('falls back within the foreground budget on first busy and stays near-immediate during cooldown', async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'scheduled-run-read-model-'))
     process.env.CLAUDE_CONFIG_DIR = tmpDir
-    process.env.CC_HAHA_LOCAL_INDEX = 'on'
+    process.env.ECHOFLOW_LOCAL_INDEX = 'on'
     const sourcePath = path.join(tmpDir, 'scheduled_tasks_log.json')
     const serialize = (id: string) => JSON.stringify({ runs: [{
       id,
@@ -140,7 +140,7 @@ describe('scheduled run read model', () => {
   test('does not create or read the scheduled-run database while the rollout mode is off', async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'scheduled-run-read-model-'))
     process.env.CLAUDE_CONFIG_DIR = tmpDir
-    process.env.CC_HAHA_LOCAL_INDEX = 'off'
+    process.env.ECHOFLOW_LOCAL_INDEX = 'off'
     const sourcePath = path.join(tmpDir, 'scheduled_tasks_log.json')
     const canonical = { runs: [{
       id: 'canonical-off',
@@ -160,7 +160,7 @@ describe('scheduled run read model', () => {
   test('drops a queued projection when rollout switches off before commit', async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'scheduled-run-read-model-'))
     process.env.CLAUDE_CONFIG_DIR = tmpDir
-    process.env.CC_HAHA_LOCAL_INDEX = 'on'
+    process.env.ECHOFLOW_LOCAL_INDEX = 'on'
     const sourcePath = path.join(tmpDir, 'scheduled_tasks_log.json')
     const runs = [{
       id: 'queued-before-off',
@@ -192,7 +192,7 @@ describe('scheduled run read model', () => {
       runs,
     )
     await projectionReachedCommit
-    process.env.CC_HAHA_LOCAL_INDEX = 'off'
+    process.env.ECHOFLOW_LOCAL_INDEX = 'off'
     releaseProjection()
     await projection
 
@@ -205,7 +205,7 @@ describe('scheduled run read model', () => {
     const scopeA = path.join(tmpDir, 'scope-a')
     const scopeB = path.join(tmpDir, 'scope-b')
     process.env.CLAUDE_CONFIG_DIR = scopeA
-    process.env.CC_HAHA_LOCAL_INDEX = 'on'
+    process.env.ECHOFLOW_LOCAL_INDEX = 'on'
     const sourcePath = path.join(scopeA, 'scheduled_tasks_log.json')
     const runs = [{
       id: 'scope-a-run',
@@ -246,13 +246,13 @@ describe('scheduled run read model', () => {
 
     const databaseAPath = path.join(
       scopeA,
-      'cc-haha',
+      'echoflow-code',
       'db',
       'scheduled-runs-v1.sqlite',
     )
     const databaseBPath = path.join(
       scopeB,
-      'cc-haha',
+      'echoflow-code',
       'db',
       'scheduled-runs-v1.sqlite',
     )
@@ -286,7 +286,7 @@ describe('scheduled run read model', () => {
     await fs.writeFile(sourceA, serialize('scope-a-run'))
     await fs.writeFile(sourceB, serialize('scope-b-run'))
     process.env.CLAUDE_CONFIG_DIR = scopeA
-    process.env.CC_HAHA_LOCAL_INDEX = 'on'
+    process.env.ECHOFLOW_LOCAL_INDEX = 'on'
     const scheduler = new CronScheduler()
     expect((await scheduler.getRunsPage({ summaryOnly: true })).runs.map(run => run.id))
       .toEqual(['scope-a-run'])
@@ -304,7 +304,7 @@ describe('scheduled run read model', () => {
   test('returns canonical pages in shadow mode when the projection differs', async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'scheduled-run-read-model-'))
     process.env.CLAUDE_CONFIG_DIR = tmpDir
-    process.env.CC_HAHA_LOCAL_INDEX = 'shadow'
+    process.env.ECHOFLOW_LOCAL_INDEX = 'shadow'
     const sourcePath = path.join(tmpDir, 'scheduled_tasks_log.json')
     const canonical = { runs: [{
       id: 'canonical-shadow',
@@ -329,7 +329,7 @@ describe('scheduled run read model', () => {
     })])
     const diagnosticsPath = path.join(
       tmpDir,
-      'cc-haha',
+      'echoflow-code',
       'diagnostics',
       'diagnostics.jsonl',
     )
@@ -446,7 +446,7 @@ describe('scheduled run read model', () => {
   test('drops an older queued projection when a newer canonical write supersedes it', async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'scheduled-run-read-model-'))
     process.env.CLAUDE_CONFIG_DIR = tmpDir
-    process.env.CC_HAHA_LOCAL_INDEX = 'on'
+    process.env.ECHOFLOW_LOCAL_INDEX = 'on'
     const sourcePath = path.join(tmpDir, 'scheduled_tasks_log.json')
     const run = (id: string) => ({
       id,
@@ -500,7 +500,7 @@ describe('scheduled run read model', () => {
   test('keeps full list and detail reads canonical while SQLite contains metadata only', async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'scheduled-run-read-model-'))
     process.env.CLAUDE_CONFIG_DIR = tmpDir
-    process.env.CC_HAHA_LOCAL_INDEX = 'on'
+    process.env.ECHOFLOW_LOCAL_INDEX = 'on'
     const sourcePath = path.join(tmpDir, 'scheduled_tasks_log.json')
     const canonical = { runs: [{
       id: 'canonical-body-run',

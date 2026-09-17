@@ -69,7 +69,7 @@ describe('beginFeishuRegistration', () => {
 
     const begun = await beginFeishuRegistration({
       fetchImpl: impl,
-      appName: 'Claude Code Haha',
+      appName: 'EchoFlow Code',
       appDescription: 'desc',
     })
 
@@ -77,7 +77,8 @@ describe('beginFeishuRegistration', () => {
     // createOnly is the guard that stops this flow from silently rewriting the
     // configuration of a bot the user already runs.
     expect(url.searchParams.get('createOnly')).toBe('true')
-    expect(url.searchParams.get('name')).toBe('Claude Code Haha')
+    expect(url.searchParams.get('source')).toBe('echoflow-code')
+    expect(url.searchParams.get('name')).toBe('EchoFlow Code')
     expect(url.searchParams.get('desc')).toBe('desc')
     expect(url.searchParams.has('clientID')).toBe(false)
 

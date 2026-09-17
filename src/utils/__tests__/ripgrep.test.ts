@@ -3,7 +3,7 @@ import { rm, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import {
-  CC_HAHA_RIPGREP_PATH_ENV,
+  ECHOFLOW_RIPGREP_PATH_ENV,
   getBundledRipgrepPath,
   getRipgrepStatus,
   isUsableBuiltinRipgrepPath,
@@ -12,14 +12,14 @@ import {
 } from '../ripgrep.js'
 
 const tempFiles: string[] = []
-const originalExplicitPath = process.env[CC_HAHA_RIPGREP_PATH_ENV]
+const originalExplicitPath = process.env[ECHOFLOW_RIPGREP_PATH_ENV]
 
 afterEach(async () => {
   await Promise.all(tempFiles.splice(0).map(path => rm(path, { force: true })))
   if (originalExplicitPath === undefined) {
-    delete process.env[CC_HAHA_RIPGREP_PATH_ENV]
+    delete process.env[ECHOFLOW_RIPGREP_PATH_ENV]
   } else {
-    process.env[CC_HAHA_RIPGREP_PATH_ENV] = originalExplicitPath
+    process.env[ECHOFLOW_RIPGREP_PATH_ENV] = originalExplicitPath
   }
   resetRipgrepStateForTests()
 })
@@ -36,12 +36,12 @@ describe('isUsableBuiltinRipgrepPath', () => {
 
   test('rejects missing paths', () => {
     expect(
-      isUsableBuiltinRipgrepPath(join(tmpdir(), 'missing-cc-haha-rg')),
+      isUsableBuiltinRipgrepPath(join(tmpdir(), 'missing-echoflow-code-rg')),
     ).toBe(false)
   })
 
   test('accepts real filesystem paths', async () => {
-    const filePath = join(tmpdir(), `cc-haha-rg-${Date.now()}`)
+    const filePath = join(tmpdir(), `echoflow-code-rg-${Date.now()}`)
     await writeFile(filePath, '')
     tempFiles.push(filePath)
 
@@ -84,10 +84,10 @@ describe('packaged ripgrep resolution', () => {
   })
 
   test('prefers an explicit packaged executable over PATH lookup', async () => {
-    const filePath = join(tmpdir(), `cc-haha-explicit-rg-${Date.now()}`)
+    const filePath = join(tmpdir(), `echoflow-code-explicit-rg-${Date.now()}`)
     await writeFile(filePath, '')
     tempFiles.push(filePath)
-    process.env[CC_HAHA_RIPGREP_PATH_ENV] = filePath
+    process.env[ECHOFLOW_RIPGREP_PATH_ENV] = filePath
     resetRipgrepStateForTests()
 
     expect(getRipgrepStatus()).toMatchObject({

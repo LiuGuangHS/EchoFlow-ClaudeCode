@@ -15,7 +15,7 @@ import type {
   TokenUsage,
   TurnTiming,
 } from './events.js'
-import { RUNTIME_CONFIG_APPLIED_EVENT } from './events.js'
+import { CLI_RUNTIME_APPLIED_EVENT, RUNTIME_CONFIG_APPLIED_EVENT } from './events.js'
 import * as os from 'node:os'
 import {
   ConversationStartupError,
@@ -41,7 +41,7 @@ import {
 } from '../../services/openaiAuth/models.js'
 import { GROK_DEFAULT_MAIN_MODEL } from '../../services/grokAuth/models.js'
 import { getGrokModelCatalog } from '../../services/grokAuth/modelCatalog.js'
-import { hahaGrokOAuthService } from '../services/hahaGrokOAuthService.js'
+import { echoFlowGrokOAuthService } from '../services/echoFlowGrokOAuthService.js'
 import { resolveClaudeOfficialRuntimeModel } from '../services/claudeOfficialRuntime.js'
 import {
   getModelReasoningCapabilityOverride,
@@ -59,9 +59,14 @@ import {
   type TitleConversationTurn,
 } from '../services/titleService.js'
 import { parseSlashCommand } from '../../utils/slashCommandParsing.js'
+import { isContextOverflowErrorText } from '../../services/api/errors.js'
 import { archiveRemoteSession } from '../../utils/teleport/api.js'
 import { shouldCreateWorktreeForSessionLaunch } from '../services/repositoryLaunchService.js'
 import { getDisconnectGraceMs } from './disconnectGraceConfig.js'
+import {
+  resolveClaudeCodeRuntimePath,
+  type ClaudeCodeRuntimeId,
+} from '../services/claudeCodeRuntimeService.js'
 import {
   isPetClientMessageAllowed,
   toPetServerMessage,
@@ -208,6 +213,12 @@ const pendingInterruptedTurnResults = new Map<string, number>()
 const interruptedTurnResultMessages = new WeakMap<object, string>()
 const sessionClearInProgress = new Set<string>()
 const deferredRuntimeRestarts = new Map<string, RuntimeOverride>()
+const cliRuntimeOverrides = new Map<string, ClaudeCodeRuntimeId>()
+type DeferredCliRuntimeRestart = {
+  cliRuntimeId: ClaudeCodeRuntimeId
+  previousRuntimeId?: ClaudeCodeRuntimeId
+}
+const deferredCliRuntimeRestarts = new Map<string, DeferredCliRuntimeRestart>()
 const deferredPermissionModes = new Map<string, PermissionMode>()
 
 export type SessionChatActivityState =
@@ -697,6 +708,10 @@ export const handleWebSocket = {
           void handleSetRuntimeConfig(ws, message)
           break
 
+        case 'set_cli_runtime':
+          void handleSetCliRuntime(ws, message)
+          break
+
         case 'prewarm_session':
           void handlePrewarmSession(ws)
           break
@@ -1145,6 +1160,7 @@ function bindActiveUserTurnCompletion(
     clearPrewarmState(sessionId)
     applyDeferredPermissionModeAfterActiveTurn(ws, sessionId)
     applyDeferredRuntimeRestartAfterActiveTurn(ws, sessionId)
+    applyDeferredCliRuntimeRestartAfterActiveTurn(ws, sessionId)
   }
 
   conversationService.onOutput(sessionId, callback)
@@ -1166,6 +1182,27 @@ function applyDeferredPermissionModeAfterActiveTurn(
   void enqueueRuntimeTransition(sessionId, async () => {
     if (!conversationService.hasSession(sessionId)) return
     await applyPermissionModeToActiveSession(ws, sessionId, deferredMode)
+  })
+}
+
+function applyDeferredCliRuntimeRestartAfterActiveTurn(
+  ws: ServerWebSocket<WebSocketData>,
+  sessionId: string,
+): void {
+  const deferred = deferredCliRuntimeRestarts.get(sessionId)
+  if (!deferred) return
+
+  deferredCliRuntimeRestarts.delete(sessionId)
+  void enqueueRuntimeTransition(sessionId, async () => {
+    if (cliRuntimeOverrides.get(sessionId) !== deferred.cliRuntimeId || !conversationService.hasSession(sessionId)) {
+      return
+    }
+    await restartSessionWithCliRuntime(
+      ws,
+      sessionId,
+      deferred.cliRuntimeId,
+      deferred.previousRuntimeId,
+    )
   })
 }
 
@@ -1427,7 +1464,7 @@ const BYPASS_CAPABILITY_UNAVAILABLE =
 /**
  * Sessions launched by this desktop build can switch into bypass in-process.
  * A session that was already running before an app update may lack that launch
- * capability, so retain the old restart path only for that exact CLI error.
+ * capability, so retain the restart path only for that exact CLI error.
  */
 export function shouldFallbackToPermissionRestart(
   mode: PermissionMode,
@@ -1473,6 +1510,95 @@ async function applyPermissionModeToActiveSession(
       code: 'PERMISSION_MODE_CHANGE_FAILED',
     })
   }
+}
+
+function isClaudeCodeRuntimeId(value: unknown): value is ClaudeCodeRuntimeId {
+  return value === 'bundled' || value === 'installed'
+}
+
+async function handleSetCliRuntime(
+  ws: ServerWebSocket<WebSocketData>,
+  message: Extract<ClientMessage, { type: 'set_cli_runtime' }>,
+): Promise<void> {
+  const { sessionId } = ws.data
+  if (!isClaudeCodeRuntimeId(message.cliRuntimeId)) {
+    sendMessage(ws, {
+      type: 'error',
+      message: 'CLI runtime selection is invalid.',
+      code: 'CLI_RUNTIME_INVALID',
+    })
+    return
+  }
+
+  await enqueueRuntimeTransition(sessionId, async () => {
+    try {
+      resolveClaudeCodeRuntimePath(message.cliRuntimeId)
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error)
+      console.warn(`[WS] Invalid CLI runtime selection for ${sessionId}: ${errMsg}`)
+      sendMessage(ws, {
+        type: 'error',
+        message: 'Unable to select the requested CLI runtime.',
+        code: 'CLI_RUNTIME_INVALID',
+      })
+      return
+    }
+
+    const previous = cliRuntimeOverrides.get(sessionId)
+    const launchInfo = await sessionService.getSessionLaunchInfo(sessionId).catch(() => null)
+    const previousEffective = previous ?? conversationService.getSessionCliRuntimeId(sessionId) ??
+      launchInfo?.cliRuntimeId
+    if (previousEffective === message.cliRuntimeId) {
+      sendToSession(sessionId, {
+        type: CLI_RUNTIME_APPLIED_EVENT,
+        cliRuntimeId: message.cliRuntimeId,
+      })
+      return
+    }
+
+    cliRuntimeOverrides.set(sessionId, message.cliRuntimeId)
+    if (shouldDeferRuntimeRestartForActiveTurn(sessionId)) {
+      const existingDeferred = deferredCliRuntimeRestarts.get(sessionId)
+      deferredCliRuntimeRestarts.set(sessionId, {
+        cliRuntimeId: message.cliRuntimeId,
+        previousRuntimeId: existingDeferred?.previousRuntimeId ?? previousEffective,
+      })
+      return
+    }
+
+    if (conversationService.hasSession(sessionId)) {
+      await restartSessionWithCliRuntime(ws, sessionId, message.cliRuntimeId, previousEffective)
+      return
+    }
+
+    const pendingStartup = sessionStartupPromises.get(sessionId)
+    if (pendingStartup) {
+      await pendingStartup.catch(() => undefined)
+      if (conversationService.hasSession(sessionId)) {
+        await restartSessionWithCliRuntime(ws, sessionId, message.cliRuntimeId, previousEffective)
+        return
+      }
+    }
+
+    try {
+      await commitCliRuntime(sessionId, message.cliRuntimeId)
+    } catch (error) {
+      if (previous) cliRuntimeOverrides.set(sessionId, previous)
+      else cliRuntimeOverrides.delete(sessionId)
+      const errMsg = error instanceof Error ? error.message : String(error)
+      console.warn(`[WS] Failed to persist CLI runtime for ${sessionId}: ${errMsg}`)
+      sendMessage(ws, {
+        type: 'error',
+        message: 'Unable to save the CLI runtime selection.',
+        code: 'CLI_RUNTIME_PERSIST_FAILED',
+      })
+      return
+    }
+    sendToSession(sessionId, {
+      type: CLI_RUNTIME_APPLIED_EVENT,
+      cliRuntimeId: message.cliRuntimeId,
+    })
+  })
 }
 
 async function handleSetRuntimeConfig(
@@ -1585,7 +1711,7 @@ async function restartSessionWithPermissionMode(
     const workDir = conversationService.getSessionWorkDir(sessionId)
     markActiveAgentsStopping(sessionId)
     runtimeExitStoppedSessions.add(sessionId)
-    conversationService.stopSession(sessionId)
+    await conversationService.stopSessionAndWait(sessionId)
     await emitAuthoritativeStoppedForActiveAgents(sessionId)
     await emitStoppedForNonAgentTasksAfterRuntimeExit(sessionId)
 
@@ -1697,6 +1823,104 @@ async function resolveRuntimeRestartWorkDir(sessionId: string): Promise<string> 
   throw new Error(`Unable to resolve working directory for session: ${sessionId}`)
 }
 
+async function commitCliRuntime(
+  sessionId: string,
+  cliRuntimeId: ClaudeCodeRuntimeId,
+  knownWorkDir?: string | null,
+): Promise<void> {
+  const workDir = knownWorkDir || conversationService.getSessionWorkDir(sessionId) ||
+    await sessionService.getSessionWorkDir(sessionId).catch(() => null)
+  if (!workDir) throw new Error(`Unable to resolve working directory for session: ${sessionId}`)
+  await sessionService.appendSessionMetadata(sessionId, { workDir, cliRuntimeId })
+}
+
+async function restartSessionWithCliRuntime(
+  ws: ServerWebSocket<WebSocketData>,
+  sessionId: string,
+  cliRuntimeId: ClaudeCodeRuntimeId,
+  previousRuntimeId?: ClaudeCodeRuntimeId,
+): Promise<void> {
+  let replacementStarted = false
+  let sessionStopped = false
+  let workDir: string | null = null
+  try {
+    workDir = await resolveRuntimeRestartWorkDir(sessionId)
+    resolveClaudeCodeRuntimePath(cliRuntimeId)
+    markActiveAgentsStopping(sessionId)
+    runtimeExitStoppedSessions.add(sessionId)
+    await conversationService.stopSessionAndWait(sessionId)
+    sessionStopped = true
+    await emitAuthoritativeStoppedForActiveAgents(sessionId)
+    await emitStoppedForNonAgentTasksAfterRuntimeExit(sessionId)
+
+    const runtimeSettings = {
+      ...await getRuntimeSettings(sessionId),
+      cliRuntimeId,
+      persistCliRuntimeId: false,
+    }
+    await conversationService.startSession(sessionId, workDir, buildSdkWebSocketUrl(ws, sessionId), runtimeSettings)
+    replacementStarted = true
+    await commitCliRuntime(sessionId, cliRuntimeId, workDir)
+    runtimeExitStoppedSessions.delete(sessionId)
+    sendToSession(sessionId, { type: CLI_RUNTIME_APPLIED_EVENT, cliRuntimeId })
+    sendToSession(sessionId, { type: 'status', state: 'idle' })
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error)
+    void diagnosticsService.recordEvent({
+      type: 'cli_runtime_restart_failed',
+      severity: 'error',
+      sessionId,
+      summary: errMsg,
+      details: { cliRuntimeId, error },
+    })
+    if (replacementStarted && conversationService.hasSession(sessionId)) {
+      await conversationService.stopSessionAndWait(sessionId)
+    }
+
+    let rollbackSucceeded = !sessionStopped
+    if (!rollbackSucceeded && workDir) {
+      try {
+        if (previousRuntimeId) cliRuntimeOverrides.set(sessionId, previousRuntimeId)
+        else cliRuntimeOverrides.delete(sessionId)
+        await conversationService.startSession(
+          sessionId,
+          workDir,
+          buildSdkWebSocketUrl(ws, sessionId),
+          previousRuntimeId
+            ? {
+                ...await getRuntimeSettings(sessionId),
+                cliRuntimeId: previousRuntimeId,
+                persistCliRuntimeId: false,
+              }
+            : { ...await getRuntimeSettings(sessionId), persistCliRuntimeId: false },
+        )
+        rollbackSucceeded = true
+      } catch (rollbackError) {
+        rollbackSucceeded = false
+        console.error(`[WS] Failed to restore CLI runtime for ${sessionId}: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`)
+      }
+    }
+
+    if (rollbackSucceeded) {
+      runtimeExitStoppedSessions.delete(sessionId)
+      if (previousRuntimeId) cliRuntimeOverrides.set(sessionId, previousRuntimeId)
+      else cliRuntimeOverrides.delete(sessionId)
+      sendToSession(sessionId, {
+        type: CLI_RUNTIME_APPLIED_EVENT,
+        cliRuntimeId: previousRuntimeId ?? 'bundled',
+      })
+      sendToSession(sessionId, { type: 'status', state: 'idle' })
+    }
+    sendMessage(ws, {
+      type: 'error',
+      message: rollbackSucceeded
+        ? 'Failed to switch the CLI runtime; the previous runtime was restored.'
+        : 'Failed to switch the CLI runtime and restore the previous runtime.',
+      code: 'CLI_RUNTIME_RESTART_FAILED',
+    })
+  }
+}
+
 async function restartSessionWithRuntimeConfig(
   ws: ServerWebSocket<WebSocketData>,
   sessionId: string,
@@ -1705,7 +1929,7 @@ async function restartSessionWithRuntimeConfig(
     const workDir = await resolveRuntimeRestartWorkDir(sessionId)
     markActiveAgentsStopping(sessionId)
     runtimeExitStoppedSessions.add(sessionId)
-    conversationService.stopSession(sessionId)
+    await conversationService.stopSessionAndWait(sessionId)
     await emitAuthoritativeStoppedForActiveAgents(sessionId)
     await emitStoppedForNonAgentTasksAfterRuntimeExit(sessionId)
 
@@ -2683,6 +2907,8 @@ function cleanupSessionRuntimeState(
   legacyQueuedSessionChats.delete(sessionId)
   interruptedSessionChats.delete(sessionId)
   deferredRuntimeRestarts.delete(sessionId)
+  cliRuntimeOverrides.delete(sessionId)
+  deferredCliRuntimeRestarts.delete(sessionId)
   deferredPermissionModes.delete(sessionId)
   runtimeTransitionPromises.delete(sessionId)
   sessionStartupPromises.delete(sessionId)
@@ -2692,7 +2918,7 @@ function cleanupSessionRuntimeState(
 }
 
 function getPrewarmIdleTimeoutMs(): number {
-  const raw = process.env.CC_HAHA_PREWARM_IDLE_TIMEOUT_MS
+  const raw = process.env.ECHOFLOW_PREWARM_IDLE_TIMEOUT_MS
   if (!raw) return DEFAULT_PREWARM_IDLE_TIMEOUT_MS
   const parsed = Number.parseInt(raw, 10)
   return Number.isFinite(parsed) && parsed >= 0
@@ -2911,14 +3137,18 @@ export function translateCliMessage(cliMsg: any, sessionId: string): ServerMessa
         const message = extractAssistantText(cliMsg) || cliMsg.error || 'Unknown API error'
         const fallbackCode = typeof cliMsg.error === 'string' ? cliMsg.error : 'API_ERROR'
         const code = classifyRuntimeErrorCode(message, fallbackCode)
+        const businessErrorCode =
+          typeof cliMsg.businessErrorCode === 'string'
+            ? cliMsg.businessErrorCode
+            : isContextOverflowErrorText(message)
+              ? 'prompt_too_long'
+              : undefined
         streamState.lastApiError = { message, code }
         return [{
           type: 'error',
           message,
           code,
-          ...(typeof cliMsg.businessErrorCode === 'string'
-            ? { businessErrorCode: cliMsg.businessErrorCode }
-            : {}),
+          ...(businessErrorCode ? { businessErrorCode } : {}),
         }]
       }
 
@@ -3294,6 +3524,9 @@ export function translateCliMessage(cliMsg: any, sessionId: string): ServerMessa
             type: 'error',
             message: resultMessage,
             code: classifyRuntimeErrorCode(resultMessage, 'CLI_ERROR'),
+            ...(isContextOverflowErrorText(resultMessage)
+              ? { businessErrorCode: 'prompt_too_long' }
+              : {}),
           },
           { type: 'message_complete', usage, ...(timing ? { timing } : {}) },
         ]
@@ -4133,6 +4366,7 @@ type RuntimeSettings = {
   effort?: string
   thinking?: 'disabled'
   providerId?: string | null
+  cliRuntimeId?: 'bundled' | 'installed'
 }
 
 async function getDefaultOpenAIReasoningEffort(modelId: string): Promise<string> {
@@ -4145,7 +4379,7 @@ async function getGrokReasoningEfforts(modelId: string): Promise<{
   defaultEffort?: string
   supportedEfforts: string[]
 }> {
-  const tokens = await hahaGrokOAuthService.ensureFreshTokens()
+  const tokens = await echoFlowGrokOAuthService.ensureFreshTokens()
   const catalog = await getGrokModelCatalog({
     ...(tokens?.accessToken ? { accessToken: tokens.accessToken } : {}),
     accountKey: tokens?.email ?? (tokens ? 'authenticated-default' : 'logged-out'),
@@ -4323,6 +4557,9 @@ async function getRuntimeSettings(sessionId?: string): Promise<RuntimeSettings> 
       effort,
       thinking,
       providerId: runtimeOverride.providerId,
+      ...(cliRuntimeOverrides.get(sessionId!) ?? launchInfo?.cliRuntimeId
+        ? { cliRuntimeId: cliRuntimeOverrides.get(sessionId!) ?? launchInfo?.cliRuntimeId }
+        : {}),
     }
   }
 
@@ -4331,6 +4568,9 @@ async function getRuntimeSettings(sessionId?: string): Promise<RuntimeSettings> 
     ...defaults,
     permissionMode: sessionPermissionMode ?? defaults.permissionMode,
     effort: launchInfo?.effortLevel ?? defaults.effort,
+    ...(cliRuntimeOverrides.get(sessionId!) ?? launchInfo?.cliRuntimeId
+      ? { cliRuntimeId: cliRuntimeOverrides.get(sessionId!) ?? launchInfo?.cliRuntimeId }
+      : {}),
   }
 }
 
@@ -4366,7 +4606,7 @@ async function getDefaultRuntimeSettings(): Promise<RuntimeSettings> {
 
   let model: string | undefined
   if (resolvedActiveId) {
-    // Provider is active — only consult provider-managed cc-haha settings.
+    // Provider is active — only consult provider-managed EchoFlow settings.
     // Global ~/.claude/settings.json model values must not bleed into provider mode.
     const baseModel =
       typeof modelSettings.model === 'string' && modelSettings.model.trim()
@@ -4646,6 +4886,8 @@ export function __resetWebSocketHandlerStateForTests(): void {
   interruptedSessionChats.clear()
   runtimeTransitionPromises.clear()
   sessionStartupPromises.clear()
+  cliRuntimeOverrides.clear()
+  deferredCliRuntimeRestarts.clear()
 }
 
 export function __markPrewarmPendingForTests(sessionId: string): void {

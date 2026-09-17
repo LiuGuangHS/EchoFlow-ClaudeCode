@@ -10,6 +10,7 @@ const noPayload: Validator = value => value === undefined
 const optionalRecord: Validator = value => value === undefined || isRecord(value)
 const stringPayload: Validator = value => typeof value === 'string'
 const booleanPayload: Validator = value => typeof value === 'boolean'
+const claudeCodeRuntimeId: Validator = value => value === 'bundled' || value === 'installed'
 const hasOnlyKeys = (value: Record<string, unknown>, allowedKeys: string[]) =>
   Object.keys(value).every(key => allowedKeys.includes(key))
 
@@ -298,10 +299,30 @@ const appliedAppearance: Validator = value =>
   && typeof value.lightBackground === 'string'
   && HEX_COLOR.test(value.lightBackground)
 
+const MAX_UPDATE_PROXY_URL_LENGTH = 2_048
+
+function isValidUpdateProxyUrl(value: unknown): value is string {
+  if (typeof value !== 'string') return false
+  const trimmed = value.trim()
+  if (!trimmed || trimmed.length > MAX_UPDATE_PROXY_URL_LENGTH) return false
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(trimmed)) return false
+
+  try {
+    const url = new URL(trimmed)
+    return (url.protocol === 'http:' || url.protocol === 'https:')
+      && !!url.hostname
+      && !url.username
+      && !url.password
+      && (url.port === '' || Number(url.port) >= 1 && Number(url.port) <= 65_535)
+  } catch {
+    return false
+  }
+}
+
 const updateCheckOptions: Validator = value => {
   if (value === undefined) return true
   if (!isRecord(value) || !hasOnlyKeys(value, ['proxy'])) return false
-  return value.proxy === undefined || (typeof value.proxy === 'string' && value.proxy.trim().length > 0)
+  return value.proxy === undefined || isValidUpdateProxyUrl(value.proxy)
 }
 
 const localePreference: Validator = value =>
@@ -327,6 +348,9 @@ export const ELECTRON_IPC_VALIDATORS = {
   [ELECTRON_IPC_CHANNELS.runtimeGetServerUrl]: noPayload,
   [ELECTRON_IPC_CHANNELS.runtimeGetLocalAccessToken]: noPayload,
   [ELECTRON_IPC_CHANNELS.runtimeGetPetAccessToken]: noPayload,
+  [ELECTRON_IPC_CHANNELS.runtimeGetClaudeCode]: noPayload,
+  [ELECTRON_IPC_CHANNELS.runtimeChooseClaudeCode]: noPayload,
+  [ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode]: claudeCodeRuntimeId,
   [ELECTRON_IPC_CHANNELS.commandInvoke]: commandInvoke,
   [ELECTRON_IPC_CHANNELS.clipboardReadText]: noPayload,
   [ELECTRON_IPC_CHANNELS.clipboardWriteText]: stringPayload,
@@ -401,6 +425,12 @@ export const ELECTRON_IPC_VALIDATORS = {
   [ELECTRON_IPC_CHANNELS.appModePrepareRestart]: noPayload,
   [ELECTRON_IPC_CHANNELS.appModeRestart]: noPayload,
   [ELECTRON_IPC_CHANNELS.adaptersRestartSidecar]: noPayload,
+  [ELECTRON_IPC_CHANNELS.deepSeekHarnessGetStatus]: noPayload,
+  [ELECTRON_IPC_CHANNELS.deepSeekHarnessInstall]: noPayload,
+  [ELECTRON_IPC_CHANNELS.deepSeekHarnessStart]: noPayload,
+  [ELECTRON_IPC_CHANNELS.deepSeekHarnessStop]: noPayload,
+  [ELECTRON_IPC_CHANNELS.deepSeekHarnessRestart]: noPayload,
+  [ELECTRON_IPC_CHANNELS.deepSeekHarnessOpen]: noPayload,
   [ELECTRON_IPC_CHANNELS.zoomSet]: zoomPayload,
   [ELECTRON_IPC_CHANNELS.appearanceSetApplied]: appliedAppearance,
 } satisfies Record<ElectronIpcChannel, Validator>

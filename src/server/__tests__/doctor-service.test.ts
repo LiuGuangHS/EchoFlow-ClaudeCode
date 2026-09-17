@@ -5,6 +5,7 @@ import * as path from 'node:path'
 import { handleDoctorApi } from '../api/doctor.js'
 import { handleApiRequest } from '../router.js'
 import { DoctorService } from '../services/doctorService.js'
+import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 
 let tmpDir: string
 let homeDir: string
@@ -22,7 +23,7 @@ beforeEach(async () => {
 
   await fs.mkdir(path.join(configDir, 'projects', 'demo-project'), { recursive: true })
   await fs.mkdir(path.join(configDir, 'skills', 'alpha-skill'), { recursive: true })
-  await fs.mkdir(path.join(configDir, 'cc-haha'), { recursive: true })
+  await fs.mkdir(getEchoFlowInternalDir(configDir), { recursive: true })
   await fs.mkdir(path.join(projectRoot, '.claude', 'skills', 'beta-skill'), { recursive: true })
 
   await fs.writeFile(path.join(configDir, 'settings.json'), '{"defaultMode":', 'utf-8')
@@ -33,7 +34,7 @@ beforeEach(async () => {
     'utf-8',
   )
   await fs.writeFile(
-    path.join(configDir, 'cc-haha', 'providers.json'),
+    path.join(getEchoFlowInternalDir(configDir), 'providers.json'),
     JSON.stringify({ activeId: null, providers: [{ id: 'provider-1' }] }),
     'utf-8',
   )
@@ -151,16 +152,16 @@ describe('DoctorService', () => {
 
   test('reports schema-invalid managed providers without exposing parsed contents', async () => {
     const schemaConfigDir = path.join(homeDir, '.schema-test-claude')
-    await fs.mkdir(path.join(schemaConfigDir, 'cc-haha'), { recursive: true })
+    await fs.mkdir(getEchoFlowInternalDir(schemaConfigDir), { recursive: true })
     await fs.writeFile(
-      path.join(schemaConfigDir, 'cc-haha', 'providers.json'),
+      path.join(getEchoFlowInternalDir(schemaConfigDir), 'providers.json'),
       JSON.stringify({ activeId: null, providers: [{ id: 'provider-1' }] }),
       'utf-8',
     )
     const service = new DoctorService({ configDir: schemaConfigDir, homeDir })
 
     const report = await service.getReport()
-    const providers = report.items.find((item) => item.id === 'cc-haha-providers')
+    const providers = report.items.find((item) => item.id === 'echoflow-providers')
 
     expect(providers?.status).toBe('invalid_schema')
     expect(providers?.error).toContain('providers.0.presetId')

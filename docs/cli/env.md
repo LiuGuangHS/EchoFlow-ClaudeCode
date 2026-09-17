@@ -7,7 +7,7 @@ order: 2
 
 # 环境变量
 
-Claude Code Haha 有两条配置路径：
+EchoFlow Code 有两条配置路径：
 
 - 桌面端用户优先在 **设置 → 服务商** 中选择、测试并激活提供商。应用会管理对应的认证、模型映射和协议代理。
 - 从源码运行 CLI 时，可以使用 `.env`、Shell 环境变量或 Claude Code 的 `settings.json`。
@@ -73,16 +73,16 @@ AZURE_OPENAI_CODEX_DEPLOYMENT=your_codex_deployment
 桌面端把 Provider 索引保存到：
 
 ```text
-~/.claude/cc-haha/providers.json
+~/.claude/echoflow-code/providers.json
 ```
 
-应用管理的 Provider 环境写入隔离的 Haha 配置，不需要手工复制到 `~/.claude/settings.json`。当 CLI 读取到已激活的 Provider 时，会复用其认证、模型和协议设置；`openai_chat` 与 `openai_responses` Provider 会自动使用本机回环代理。
+应用管理的 Provider 环境写入隔离的 EchoFlow 配置，不需要手工复制到 `~/.claude/settings.json`。当 CLI 读取到已激活的 Provider 时，会复用其认证、模型和协议设置；`openai_chat` 与 `openai_responses` Provider 会自动使用本机回环代理。
 
 详细流程见 [第三方模型](../start/models.md)。
 
 ### `.env` 文件
 
-源码仓库中的 `bin/claude-haha` 会在项目根目录存在 `.env` 时加载它：
+源码仓库中的 `bin/echoflow-code` 会在项目根目录存在 `.env` 时加载它：
 
 ```bash
 cp .env.example .env
@@ -121,9 +121,9 @@ ANTHROPIC_DEFAULT_OPUS_MODEL=provider-model
 
 这里不存在可靠的“Shell > `.env` > settings”三段式规则：
 
-1. `bin/claude-haha` 先让 Bun 加载仓库 `.env`。
+1. `bin/echoflow-code` 先让 Bun 加载仓库 `.env`。
 2. CLI 初始化时合并已启用的用户、项目、本地、命令行和受管设置来源。
-3. 已激活的 Haha Provider 会覆盖普通 Claude 设置中的 Provider 路由变量，防止两个客户端互相污染。
+3. 已激活的 EchoFlow Provider 会覆盖普通 Claude 设置中的 Provider 路由变量，防止两个客户端互相污染。
 4. 桌面端 host 注入的运行时变量受到保护，不能被 `settings.json` 中的同名字段替换。
 5. 企业受管策略和 `--setting-sources` 也会影响最终结果。
 

@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from 'bun:test'
+import { afterAll, beforeEach, describe, expect, it } from 'bun:test'
 import {
   mkdirSync,
   mkdtempSync,
@@ -7,22 +7,25 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs'
-import { homedir } from 'node:os'
+import { tmpdir } from 'node:os'
 import * as path from 'node:path'
 import { handleLocalFile, reconstructAbsolutePath } from '../localFile'
 import { isAllowedFilesystemPath } from '../filesystem'
+import { clearFilesystemAccessRootsForTests } from '../../services/filesystemAccessRoots'
 
 // Deterministic 256-byte payload (bytes 0..255) so range slices are checkable.
 const VIDEO_BYTES = Uint8Array.from({ length: 256 }, (_, i) => i)
 
-// Build the work area under $HOME so it is inside isAllowedFilesystemPath's
-// allow-list (HOME / tmp / registered roots). tmpdir() on macOS resolves to
-// /private/tmp via realpath which is also allowed, but $HOME is the most
-// portable choice across platforms for an "inside the sandbox" fixture.
-const SANDBOX_ROOTS = mkdtempSync(path.join(homedir(), '.lf-test-'))
+// Build the work area under tmpdir() so the fixture is writable in restricted
+// test sandboxes while staying inside isAllowedFilesystemPath's allow-list.
+const SANDBOX_ROOTS = mkdtempSync(path.join(tmpdir(), 'lf-test-'))
 
 afterAll(() => {
   rmSync(SANDBOX_ROOTS, { recursive: true, force: true })
+})
+
+beforeEach(() => {
+  clearFilesystemAccessRootsForTests()
 })
 
 function setupFiles() {

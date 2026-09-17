@@ -25,6 +25,11 @@ e2e-*.png
 
 # Local/generated artifacts
 artifacts/
+.android-sdk/
+.gradle-user-home/
+docs/.vitepress/cache/
+docs/.vitepress/dist/
+desktop-vitest-latest.log
 
 # Desktop build output
 desktop/dist/
@@ -73,7 +78,7 @@ runtime/__pycache__
 .codex-logs/
 
 # Local AI assistant artifacts (graph, notes)
-CLAUDE.md
+.claude.local.md
 .mavis/
 .opencode/
 graphify-out/

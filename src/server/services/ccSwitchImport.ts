@@ -65,7 +65,7 @@ export type CcSwitchUnavailableReason =
   /**
    * The store is a *known* format from before our support window (config v1,
    * cc-switch <= v3.0.x). Distinct from `schema-unsupported` because the advice
-   * is the opposite: upgrade cc-switch, not cc-haha.
+   * is the opposite: upgrade cc-switch, not echoflow-code.
    */
   | 'version-too-old'
 export type CcSwitchSkipReason =
@@ -123,7 +123,7 @@ export type CcSwitchScan = {
 }
 
 export type CcSwitchScanOptions = {
-  /** Saved cc-haha providers, used for duplicate detection. */
+  /** Saved echoflow-code providers, used for duplicate detection. */
   existingProviders?: SavedProvider[]
 }
 
@@ -657,7 +657,7 @@ function readModelContextWindows(env: Record<string, unknown>): Record<string, n
 /**
  * cc-switch's `meta.isFullUrl` means the stored base URL is already a complete
  * endpoint (e.g. `https://gw/v1/chat/completions`) that must not have a path
- * appended. cc-haha always appends (`${base}/v1/messages` and friends), so such
+ * appended. echoflow-code always appends (`${base}/v1/messages` and friends), so such
  * a provider would import cleanly and then 404 on every request. Refuse it
  * rather than hand the user a silently broken entry.
  */
@@ -857,7 +857,7 @@ function importFingerprint(entry: CcSwitchEntry): string {
  * same upstream under both `claude` and `claude-desktop`. Importing both would
  * create indistinguishable same-name pairs, so drop the `claude-desktop` copy
  * when an identical `claude` (Claude Code) one exists — that is the app
- * cc-haha corresponds to.
+ * echoflow-code corresponds to.
  *
  * Collapsing is strictly cross-app: two rows inside the *same* app are two
  * things the user deliberately created, and are always both kept even when

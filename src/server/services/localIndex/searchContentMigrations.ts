@@ -212,7 +212,7 @@ export function assertSearchContentSchemaHealthy(database: Database): void {
       LIMIT 1
     `)
     try {
-      ftsProbe.get('"cc-haha-search-health-probe"')
+      ftsProbe.get('"echoflow-code-search-health-probe"')
     } finally {
       ftsProbe.finalize()
     }

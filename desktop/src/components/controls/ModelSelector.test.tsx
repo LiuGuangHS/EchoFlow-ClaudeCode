@@ -17,9 +17,9 @@ vi.mock('../../lib/desktopRuntime', async (importOriginal) => {
 
 import { ModelSelector } from './ModelSelector'
 import { useChatStore } from '../../stores/chatStore'
-import { useHahaOAuthStore } from '../../stores/hahaOAuthStore'
-import { useHahaOpenAIOAuthStore } from '../../stores/hahaOpenAIOAuthStore'
-import { useHahaGrokOAuthStore } from '../../stores/hahaGrokOAuthStore'
+import { useEchoFlowOAuthStore } from '../../stores/echoFlowOAuthStore'
+import { useEchoFlowOpenAIOAuthStore } from '../../stores/echoFlowOpenAIOAuthStore'
+import { useEchoFlowGrokOAuthStore } from '../../stores/echoFlowGrokOAuthStore'
 import { useProviderStore } from '../../stores/providerStore'
 import { useSessionRuntimeStore } from '../../stores/sessionRuntimeStore'
 import { useSettingsStore } from '../../stores/settingsStore'
@@ -49,17 +49,18 @@ afterEach(() => {
   useSessionRuntimeStore.setState(useSessionRuntimeStore.getInitialState(), true)
   useSessionStore.setState(useSessionStore.getInitialState(), true)
   useChatStore.setState(useChatStore.getInitialState(), true)
-  useHahaOAuthStore.setState(useHahaOAuthStore.getInitialState(), true)
-  useHahaOpenAIOAuthStore.setState(useHahaOpenAIOAuthStore.getInitialState(), true)
-  useHahaGrokOAuthStore.setState(useHahaGrokOAuthStore.getInitialState(), true)
+  useEchoFlowOAuthStore.setState(useEchoFlowOAuthStore.getInitialState(), true)
+  useEchoFlowOpenAIOAuthStore.setState(useEchoFlowOpenAIOAuthStore.getInitialState(), true)
+  useEchoFlowGrokOAuthStore.setState(useEchoFlowGrokOAuthStore.getInitialState(), true)
   useTabStore.setState(useTabStore.getInitialState(), true)
   useUIStore.setState(useUIStore.getInitialState(), true)
 })
 
 beforeEach(() => {
-  useHahaOAuthStore.setState({ fetchStatus: async () => {} })
-  useHahaOpenAIOAuthStore.setState({ fetchStatus: async () => {} })
-  useHahaGrokOAuthStore.setState({ fetchStatus: async () => {} })
+  useProviderStore.setState({ isLoading: true })
+  useEchoFlowOAuthStore.setState({ fetchStatus: async () => {} })
+  useEchoFlowOpenAIOAuthStore.setState({ fetchStatus: async () => {} })
+  useEchoFlowGrokOAuthStore.setState({ fetchStatus: async () => {} })
 })
 
 describe('ModelSelector', () => {
@@ -136,7 +137,7 @@ describe('ModelSelector', () => {
       { id: 'claude-sonnet-4-6', name: 'Sonnet 4.6', description: 'Legacy Sonnet', context: '200k' },
       { id: 'claude-haiku-4-5', name: 'Haiku 4.5', description: 'Legacy Haiku', context: '200k' },
     ]
-    useHahaOAuthStore.setState({
+    useEchoFlowOAuthStore.setState({
       status: {
         loggedIn: true,
         expiresAt: null,
@@ -171,8 +172,8 @@ describe('ModelSelector', () => {
   it('does not query official OAuth status when mounted', () => {
     const fetchClaudeStatus = vi.fn(async () => {})
     const fetchOpenAIStatus = vi.fn(async () => {})
-    useHahaOAuthStore.setState({ fetchStatus: fetchClaudeStatus })
-    useHahaOpenAIOAuthStore.setState({ fetchStatus: fetchOpenAIStatus })
+    useEchoFlowOAuthStore.setState({ fetchStatus: fetchClaudeStatus })
+    useEchoFlowOpenAIOAuthStore.setState({ fetchStatus: fetchOpenAIStatus })
     useSettingsStore.setState({
       locale: 'en',
       availableModels: MODELS,
@@ -195,8 +196,8 @@ describe('ModelSelector', () => {
   it('queries official OAuth status once when the runtime dropdown is opened', async () => {
     const fetchClaudeStatus = vi.fn(async () => {})
     const fetchOpenAIStatus = vi.fn(async () => {})
-    useHahaOAuthStore.setState({ fetchStatus: fetchClaudeStatus })
-    useHahaOpenAIOAuthStore.setState({ fetchStatus: fetchOpenAIStatus })
+    useEchoFlowOAuthStore.setState({ fetchStatus: fetchClaudeStatus })
+    useEchoFlowOpenAIOAuthStore.setState({ fetchStatus: fetchOpenAIStatus })
     useSettingsStore.setState({
       locale: 'en',
       availableModels: MODELS,
@@ -239,8 +240,8 @@ describe('ModelSelector', () => {
   it('does not query official OAuth status for plain model dropdowns', async () => {
     const fetchClaudeStatus = vi.fn(async () => {})
     const fetchOpenAIStatus = vi.fn(async () => {})
-    useHahaOAuthStore.setState({ fetchStatus: fetchClaudeStatus })
-    useHahaOpenAIOAuthStore.setState({ fetchStatus: fetchOpenAIStatus })
+    useEchoFlowOAuthStore.setState({ fetchStatus: fetchClaudeStatus })
+    useEchoFlowOpenAIOAuthStore.setState({ fetchStatus: fetchOpenAIStatus })
     useSettingsStore.setState({
       locale: 'en',
       availableModels: MODELS,
@@ -257,17 +258,17 @@ describe('ModelSelector', () => {
 
   it('routes an unconfigured runtime to provider settings instead of showing a fallback model', async () => {
     const fetchClaudeStatus = vi.fn(async () => {
-      useHahaOAuthStore.setState({ status: { loggedIn: false } })
+      useEchoFlowOAuthStore.setState({ status: { loggedIn: false } })
     })
     const fetchOpenAIStatus = vi.fn(async () => {
-      useHahaOpenAIOAuthStore.setState({ status: { loggedIn: false } })
+      useEchoFlowOpenAIOAuthStore.setState({ status: { loggedIn: false } })
     })
     const fetchGrokStatus = vi.fn(async () => {
-      useHahaGrokOAuthStore.setState({ status: { loggedIn: false } })
+      useEchoFlowGrokOAuthStore.setState({ status: { loggedIn: false } })
     })
-    useHahaOAuthStore.setState({ fetchStatus: fetchClaudeStatus })
-    useHahaOpenAIOAuthStore.setState({ fetchStatus: fetchOpenAIStatus })
-    useHahaGrokOAuthStore.setState({ fetchStatus: fetchGrokStatus })
+    useEchoFlowOAuthStore.setState({ fetchStatus: fetchClaudeStatus })
+    useEchoFlowOpenAIOAuthStore.setState({ fetchStatus: fetchOpenAIStatus })
+    useEchoFlowGrokOAuthStore.setState({ fetchStatus: fetchGrokStatus })
     useSettingsStore.setState({
       locale: 'en',
       availableModels: MODELS,
@@ -308,9 +309,9 @@ describe('ModelSelector', () => {
     const fetchClaudeStatus = vi.fn(async () => {})
     const fetchOpenAIStatus = vi.fn(async () => {})
     const fetchGrokStatus = vi.fn(async () => {})
-    useHahaOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: fetchClaudeStatus })
-    useHahaOpenAIOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: fetchOpenAIStatus })
-    useHahaGrokOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: fetchGrokStatus })
+    useEchoFlowOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: fetchClaudeStatus })
+    useEchoFlowOpenAIOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: fetchOpenAIStatus })
+    useEchoFlowGrokOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: fetchGrokStatus })
     useSettingsStore.setState({
       locale: 'en',
       currentModel: {
@@ -339,11 +340,11 @@ describe('ModelSelector', () => {
 
   it('opens Claude Official models when the configuration check finds a login', async () => {
     const fetchClaudeStatus = vi.fn(async () => {
-      useHahaOAuthStore.setState({
+      useEchoFlowOAuthStore.setState({
         status: { loggedIn: true, expiresAt: null, scopes: [], subscriptionType: 'pro' },
       })
     })
-    useHahaOAuthStore.setState({ fetchStatus: fetchClaudeStatus })
+    useEchoFlowOAuthStore.setState({ fetchStatus: fetchClaudeStatus })
     useSettingsStore.setState({
       locale: 'en',
       availableModels: MODELS,
@@ -392,9 +393,9 @@ describe('ModelSelector', () => {
         isLoading: false,
       })
     })
-    useHahaOAuthStore.setState({ status: { loggedIn: false } })
-    useHahaOpenAIOAuthStore.setState({ status: { loggedIn: false } })
-    useHahaGrokOAuthStore.setState({ status: { loggedIn: false } })
+    useEchoFlowOAuthStore.setState({ status: { loggedIn: false } })
+    useEchoFlowOpenAIOAuthStore.setState({ status: { loggedIn: false } })
+    useEchoFlowGrokOAuthStore.setState({ status: { loggedIn: false } })
     useSettingsStore.setState({ locale: 'en', activeProviderName: null })
     useProviderStore.setState({
       providers: [],
@@ -481,6 +482,27 @@ describe('ModelSelector', () => {
     expect(setModel).toHaveBeenCalledWith('beta')
   })
 
+  it.each([
+    ['pending', 'Restarting runtime…'],
+    ['unconfirmed', 'Runtime change requested; active runtime could not be confirmed.'],
+    ['failed', 'Runtime configuration was rejected. Check the provider, model, and reasoning setting.'],
+  ] as const)('shows truthful runtime request status for %s', (status, message) => {
+    useSettingsStore.setState({
+      locale: 'en',
+      availableModels: MODELS,
+      currentModel: MODELS[0],
+      activeProviderName: 'Provider A',
+    })
+    useSessionRuntimeStore.setState({
+      runtimeRequestStatusBySessionId: { 'session-status': status },
+    })
+
+    render(<ModelSelector runtimeKey="session-status" />)
+
+    expect(screen.getByRole('status')).toHaveTextContent(message)
+    expect(screen.queryByText(/applied/i)).not.toBeInTheDocument()
+  })
+
   it('filters models by name or description and shows a clearable empty state', async () => {
     const onChange = vi.fn()
     useSettingsStore.setState({
@@ -496,9 +518,6 @@ describe('ModelSelector', () => {
     const search = within(dropdown).getByRole('searchbox', { name: 'Search models' })
 
     expect(search).toHaveFocus()
-    // The header lives outside the scroll region: a sticky header inside
-    // `overflow-y-auto` lets scrolled items paint through it on the desktop
-    // shell, so the contract is a hard clip below the header instead.
     expect(search.closest('.overflow-y-auto')).toBeNull()
     expect(dropdown).toHaveClass('overflow-hidden')
 
@@ -596,6 +615,131 @@ describe('ModelSelector', () => {
     })
   })
 
+  it.each(['failed', 'unconfirmed'] as const)(
+    'does not resend a matching %s runtime selection',
+    async (status) => {
+      const setSessionRuntime = vi.fn()
+      const onRuntimeSelectionChange = vi.fn()
+      const selection = {
+        providerId: 'provider-a',
+        modelId: 'provider-main',
+        effortLevel: 'max' as const,
+      }
+      useSettingsStore.setState({
+        locale: 'en',
+        availableModels: MODELS,
+        currentModel: MODELS[0],
+        activeProviderName: 'Provider A',
+      })
+      useProviderStore.setState({
+        providers: [{
+          id: 'provider-a',
+          presetId: 'custom',
+          name: 'Provider A',
+          apiKey: '***',
+          baseUrl: 'https://api.example.com',
+          apiFormat: 'anthropic',
+          models: {
+            main: 'provider-main',
+            haiku: 'provider-fast',
+            sonnet: 'provider-main',
+            opus: '',
+          },
+        }],
+        activeId: 'provider-a',
+        hasLoadedProviders: true,
+        isLoading: true,
+      })
+      useSessionRuntimeStore.setState({
+        selections: { 'session-noop': selection },
+        runtimeRequestStatusBySessionId: { 'session-noop': status },
+      })
+      useChatStore.setState({
+        setSessionRuntime,
+      } as Partial<ReturnType<typeof useChatStore.getState>>)
+
+      render(
+        <ModelSelector
+          runtimeKey="session-noop"
+          onRuntimeSelectionChange={onRuntimeSelectionChange}
+        />,
+      )
+
+      await clickByRole(/provider-main, provider a/i)
+      await clickByRole(/^provider-main main model/i)
+
+      expect(setSessionRuntime).not.toHaveBeenCalled()
+      expect(onRuntimeSelectionChange).not.toHaveBeenCalled()
+      expect(useSessionRuntimeStore.getState().selections['session-noop']).toEqual(selection)
+      expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
+        'session-noop': status,
+      })
+    },
+  )
+
+  it('does not allow a pending runtime request to be replaced by another selection', async () => {
+    const setSessionRuntime = vi.fn((sessionId: string) => {
+      useSessionRuntimeStore.getState().markRequestPending(sessionId)
+    })
+    useSettingsStore.setState({
+      locale: 'en',
+      availableModels: MODELS,
+      currentModel: MODELS[0],
+      activeProviderName: 'Provider A',
+    })
+    useProviderStore.setState({
+      providers: [{
+        id: 'provider-a',
+        presetId: 'custom',
+        name: 'Provider A',
+        apiKey: '***',
+        baseUrl: 'https://api.example.com',
+        apiFormat: 'anthropic',
+        models: {
+          main: 'provider-main',
+          haiku: 'provider-fast',
+          sonnet: 'provider-main',
+          opus: '',
+        },
+      }],
+      activeId: 'provider-a',
+      hasLoadedProviders: true,
+      isLoading: true,
+    })
+    useSessionRuntimeStore.getState().setSelection('session-pending', {
+      providerId: 'provider-a',
+      modelId: 'provider-main',
+      effortLevel: 'max',
+    })
+    useChatStore.setState({
+      setSessionRuntime,
+    } as Partial<ReturnType<typeof useChatStore.getState>>)
+
+    render(<ModelSelector runtimeKey="session-pending" />)
+
+    await clickByRole(/provider-main, provider a/i)
+    await clickByRole(/^provider-fast haiku model/i)
+    await clickByRole(/provider-fast, provider a/i)
+
+    const providerMainOption = screen.getByRole('button', { name: /^provider-main main model/i })
+    expect(providerMainOption).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Effort: Max' })).toBeDisabled()
+    await act(async () => {
+      fireEvent.click(providerMainOption)
+      await Promise.resolve()
+    })
+
+    expect(setSessionRuntime).toHaveBeenCalledTimes(1)
+    expect(useSessionRuntimeStore.getState().selections['session-pending']).toEqual({
+      providerId: 'provider-a',
+      modelId: 'provider-fast',
+      effortLevel: 'max',
+    })
+    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
+      'session-pending': 'pending',
+    })
+  })
+
   it('defaults blank provider-scoped runtime selections to the active provider main model', async () => {
     useSettingsStore.setState({
       locale: 'en',
@@ -642,7 +786,7 @@ describe('ModelSelector', () => {
   })
 
   it('closes the focus ring on both halves of the segmented control', () => {
-    useHahaOAuthStore.setState({
+    useEchoFlowOAuthStore.setState({
       status: { loggedIn: true, expiresAt: null, scopes: [], subscriptionType: 'pro' },
       fetchStatus: async () => {},
     })
@@ -972,7 +1116,7 @@ describe('ModelSelector', () => {
       },
     ]
     const setSessionRuntime = vi.fn()
-    useHahaOpenAIOAuthStore.setState({
+    useEchoFlowOpenAIOAuthStore.setState({
       status: { loggedIn: true, expiresAt: null, email: null, accountId: null },
       fetchStatus: async () => {},
     })
@@ -1031,7 +1175,7 @@ describe('ModelSelector', () => {
         supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
       },
     ]
-    useHahaOpenAIOAuthStore.setState({
+    useEchoFlowOpenAIOAuthStore.setState({
       status: { loggedIn: true, expiresAt: null, email: null, accountId: null },
       fetchStatus: async () => {},
     })
@@ -1075,12 +1219,18 @@ describe('ModelSelector', () => {
       modelId: 'gpt-5.5',
       effortLevel: 'medium',
     })
+    await act(async () => {
+      useSessionRuntimeStore.getState().markRequestPending('session-openai-effort')
+      useSessionRuntimeStore.getState().markRequestUnconfirmed('session-openai-effort')
+      await Promise.resolve()
+    })
 
     expect(screen.getByRole('button', { name: 'Effort: Medium' })).toBeInTheDocument()
     await clickByRole('Effort: Medium')
     expect(screen.getByRole('slider', { name: 'Effort' })).toHaveAttribute('aria-valuemax', '3')
     fireEvent.keyDown(screen.getByRole('slider', { name: 'Effort' }), { key: 'End' })
-    expect(screen.getByRole('slider', { name: 'Effort' })).toHaveAttribute('aria-valuetext', 'X-High')
+    expect(screen.queryByRole('slider', { name: 'Effort' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Effort: X-High' })).toBeInTheDocument()
 
     expect(useSessionRuntimeStore.getState().selections['session-openai-effort']).toEqual({
       providerId: OPENAI_OFFICIAL_PROVIDER_ID,
@@ -1099,7 +1249,7 @@ describe('ModelSelector', () => {
       supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
     }
     const setSessionRuntime = vi.fn()
-    useHahaOpenAIOAuthStore.setState({
+    useEchoFlowOpenAIOAuthStore.setState({
       status: { loggedIn: true, expiresAt: null, email: null, accountId: null },
       fetchStatus: async () => {},
     })
@@ -1201,7 +1351,7 @@ describe('ModelSelector', () => {
       context: '',
       supportedReasoningEfforts: [],
     }]
-    useHahaGrokOAuthStore.setState({
+    useEchoFlowGrokOAuthStore.setState({
       status: { loggedIn: true, expiresAt: null, email: 'grok@example.com' },
       fetchStatus: async () => {},
     })
@@ -1241,7 +1391,7 @@ describe('ModelSelector', () => {
       defaultReasoningEffort: 'high',
       supportedReasoningEfforts: ['xhigh', 'high', 'medium', 'low'],
     }]
-    useHahaGrokOAuthStore.setState({
+    useEchoFlowGrokOAuthStore.setState({
       status: { loggedIn: true, expiresAt: null, email: 'grok@example.com' },
       fetchStatus: async () => {},
     })
@@ -1277,9 +1427,9 @@ describe('ModelSelector', () => {
   })
 
   it('hides official provider sections when OAuth is not logged in', async () => {
-    useHahaOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
-    useHahaOpenAIOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
-    useHahaGrokOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
+    useEchoFlowOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
+    useEchoFlowOpenAIOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
+    useEchoFlowGrokOAuthStore.setState({ status: { loggedIn: false }, fetchStatus: async () => {} })
     useSettingsStore.setState({
       locale: 'en',
       availableModels: MODELS,

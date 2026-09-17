@@ -101,13 +101,30 @@ export type DesktopUpdateDownloadEvent =
 export type DesktopUpdate = {
   version: string
   body?: string | null
+  feedUrl?: string | null
+  feedAttempts?: DesktopUpdateFeedAttempt[]
   download(onEvent?: (event: DesktopUpdateDownloadEvent) => void): Promise<void>
   install(): Promise<void>
   close(): Promise<void>
 }
 
+export type DesktopUpdateFeedAttempt = {
+  feedUrl: string | null
+  result: 'selected' | 'no-update' | 'missing-metadata' | 'error'
+  error?: string
+}
+
 export type DesktopUpdateCheckOptions = {
   proxy?: string
+}
+
+export type DeepSeekHarnessState = 'unavailable' | 'not-installed' | 'installed' | 'starting' | 'running' | 'stopped' | 'error'
+
+export type DeepSeekHarnessStatus = {
+  state: DeepSeekHarnessState
+  version: string | null
+  url: string | null
+  error: string | null
 }
 
 export type TerminalSpawnOptions = {
@@ -370,6 +387,13 @@ export type AppModeSetInput = {
   portableDir: string | null
 }
 
+export type ClaudeCodeRuntimeId = 'bundled' | 'installed'
+
+export type ClaudeCodeRuntimeStatus = {
+  defaultRuntimeId: ClaudeCodeRuntimeId
+  hasInstalledRuntime: boolean
+}
+
 export type DesktopPublicAccessStatus = {
   state: 'unconfigured' | 'disabled' | 'connecting' | 'online' | 'reconnecting' | 'failed'
   hasCredential: boolean
@@ -394,6 +418,9 @@ export type DesktopHost = {
   runtime: {
     getServerUrl(): Promise<string>
     getLocalAccessToken(): Promise<string | null>
+    getClaudeCode(): Promise<ClaudeCodeRuntimeStatus>
+    chooseClaudeCode(): Promise<ClaudeCodeRuntimeStatus | null>
+    setClaudeCode(runtimeId: ClaudeCodeRuntimeId): Promise<ClaudeCodeRuntimeStatus>
   }
   app: {
     getVersion(): Promise<string>
@@ -532,6 +559,14 @@ export type DesktopHost = {
   }
   adapters: {
     restartSidecar(): Promise<void>
+  }
+  deepSeekHarness: {
+    getStatus(): Promise<DeepSeekHarnessStatus>
+    install(): Promise<DeepSeekHarnessStatus>
+    start(): Promise<DeepSeekHarnessStatus>
+    stop(): Promise<DeepSeekHarnessStatus>
+    restart(): Promise<DeepSeekHarnessStatus>
+    open(): Promise<void>
   }
   zoom: {
     set(level: number): Promise<void>

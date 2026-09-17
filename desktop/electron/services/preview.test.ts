@@ -88,7 +88,7 @@ class FakeView implements PreviewViewLike {
 const tempDirs: string[] = []
 
 function previewScript() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-haha-preview-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'echoflow-code-preview-'))
   tempDirs.push(dir)
   const file = path.join(dir, 'preview-agent.js')
   fs.writeFileSync(file, 'window.__previewInjected = true')
@@ -141,7 +141,7 @@ describe('Electron preview service', () => {
   })
 
   it('falls back from app.asar to app.asar.unpacked for the preview agent script', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-haha-preview-asar-'))
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'echoflow-code-preview-asar-'))
     tempDirs.push(dir)
     const unpackedFile = path.join(dir, 'app.asar.unpacked', 'src-tauri', 'resources', 'preview-agent.js')
     fs.mkdirSync(path.dirname(unpackedFile), { recursive: true })

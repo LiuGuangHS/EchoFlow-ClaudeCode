@@ -106,9 +106,9 @@ describe('applyMarkdown bare-URL hyperlinks', () => {
   })
 
   test('still linkifies owner/repo#123 references', () => {
-    const rendered = applyMarkdown('见 NanmiCoder/cc-haha#1145 的讨论', 'dark')
+    const rendered = applyMarkdown('见 LiuGuangHS/EchoFlow-ClaudeCode#1145 的讨论', 'dark')
     expect(hyperlinkTargets(rendered)).toEqual([
-      'https://github.com/NanmiCoder/cc-haha/issues/1145',
+      'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/issues/1145',
     ])
   })
 })

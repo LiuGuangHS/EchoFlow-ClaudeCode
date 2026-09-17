@@ -1,13 +1,13 @@
 ---
 title: 隐私与联网说明
 nav_title: 隐私与联网
-description: Claude Code Haha 在本机保存什么、何时访问网络，以及如何清理数据。
+description: EchoFlow Code 在本机保存什么、何时访问网络，以及如何清理数据。
 order: 6
 ---
 
 # 隐私与联网说明
 
-Claude Code Haha 是本地优先的开源开发工具，项目本身不运营用于接收会话内容的云端后端。应用并非完全离线：当你选择模型服务、MCP、IM 或更新功能时，相关数据会发送到你选择或配置的第三方服务。
+EchoFlow Code 是本地优先的开源开发工具，项目本身不运营用于接收会话内容的云端后端。应用并非完全离线：当你选择模型服务、MCP、IM 或更新功能时，相关数据会发送到你选择或配置的第三方服务。
 
 ## 本地保存的数据
 
@@ -32,10 +32,10 @@ Claude Code Haha 是本地优先的开源开发工具，项目本身不运营用
 
 ## 删除数据
 
-卸载应用不会自动删除 `~/.claude` 中的会话与配置。需要彻底清理时，请先备份要保留的内容，再手动删除 `~/.claude` 以及操作系统应用数据目录中的 Claude Code Haha 数据。删除已发送给第三方服务的数据，需要按该服务商提供的流程操作。
+卸载应用不会自动删除 `~/.claude` 中的会话与配置。需要彻底清理时，请先备份要保留的内容，再手动删除 `~/.claude` 以及操作系统应用数据目录中的 EchoFlow Code 数据。删除已发送给第三方服务的数据，需要按该服务商提供的流程操作。
 
 ## 联系方式
 
-隐私或安全问题可以通过 [GitHub 私密安全报告](https://github.com/NanmiCoder/cc-haha/security/advisories/new) 或 [relakkes@gmail.com](mailto:relakkes@gmail.com) 联系维护者。
+隐私或安全问题可以通过 [GitHub 私密安全报告](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/security/advisories/new) 或 [relakkes@gmail.com](mailto:relakkes@gmail.com) 联系维护者。
 
 本说明最近更新于 2026 年 8 月 5 日。

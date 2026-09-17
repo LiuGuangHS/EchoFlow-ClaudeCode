@@ -5,6 +5,26 @@ import { createElectronHost } from './electronHost'
 import { PUBLIC_ACCESS_CONSENT_VERSION, type WorkspaceBrowserMenuOptions } from './types'
 
 describe('electron desktop host', () => {
+  it('routes Claude Code runtime settings through narrow runtime IPC boundaries', async () => {
+    const status = { defaultRuntimeId: 'bundled' as const, hasInstalledRuntime: false }
+    const invoke = vi.fn()
+      .mockResolvedValueOnce(status)
+      .mockResolvedValueOnce({ defaultRuntimeId: 'installed', hasInstalledRuntime: true })
+      .mockResolvedValueOnce(status)
+    const host = createElectronHost({ invoke, subscribe: vi.fn() })
+
+    await expect(host.runtime.getClaudeCode()).resolves.toEqual(status)
+    await expect(host.runtime.chooseClaudeCode()).resolves.toEqual({
+      defaultRuntimeId: 'installed',
+      hasInstalledRuntime: true,
+    })
+    await expect(host.runtime.setClaudeCode('bundled')).resolves.toEqual(status)
+
+    expect(invoke).toHaveBeenNthCalledWith(1, ELECTRON_IPC_CHANNELS.runtimeGetClaudeCode, undefined)
+    expect(invoke).toHaveBeenNthCalledWith(2, ELECTRON_IPC_CHANNELS.runtimeChooseClaudeCode, undefined)
+    expect(invoke).toHaveBeenNthCalledWith(3, ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode, 'bundled')
+  })
+
   it('routes public access through validated local IPC without exposing management in browsers', async () => {
     const invoke = vi.fn().mockResolvedValue({ hasCredential: true })
     const host = createElectronHost({ invoke, subscribe: vi.fn() })

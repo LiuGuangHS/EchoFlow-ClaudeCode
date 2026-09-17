@@ -8,6 +8,10 @@ import {
 import { MODEL_CONTEXT_WINDOWS_ENV_KEY } from '../../utils/model/modelContextWindows.js'
 import { PROVIDER_MAX_OUTPUT_TOKENS_ENV_KEY } from '../../utils/managedEnvConstants.js'
 import {
+  ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
+  LEGACY_ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
+} from '../../utils/thinking.js'
+import {
   IMAGE_GENERATION_API_KEY_ENV_KEY,
   IMAGE_GENERATION_BASE_URL_ENV_KEY,
   IMAGE_GENERATION_MODEL_ENV_KEY,
@@ -29,6 +33,7 @@ import {
   ATTRIBUTION_HEADER_ENV_KEY,
   attributionHeaderEnvForModel,
 } from './attributionHeaderPolicy.js'
+import { getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 import {
   OPENAI_CODEX_OAUTH_FILE_ENV_KEY,
   OPENAI_OAUTH_PROVIDER_ENV_KEY,
@@ -41,6 +46,14 @@ import {
   buildGrokOfficialRuntimeEnv,
   isGrokOfficialProviderId,
 } from './grokOfficialProvider.js'
+
+const RETIRED_IMAGE_GENERATION_ENV_KEYS = [
+  'ECHOFLOW_IMAGE_PROVIDER_KIND',
+  'ECHOFLOW_IMAGE_PROVIDER_ID',
+  'ECHOFLOW_IMAGE_BASE_URL',
+  'ECHOFLOW_IMAGE_API_KEY',
+  'ECHOFLOW_IMAGE_MODEL',
+] as const
 
 export const MANAGED_PROVIDER_ENV_KEYS = [
   'ANTHROPIC_BASE_URL',
@@ -60,8 +73,12 @@ export const MANAGED_PROVIDER_ENV_KEYS = [
   'ANTHROPIC_DEFAULT_OPUS_MODEL',
   'ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES',
   'CLAUDE_CODE_AUTO_COMPACT_WINDOW',
+  'API_TIMEOUT_MS',
+  'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
   ATTRIBUTION_HEADER_ENV_KEY,
   MODEL_CONTEXT_WINDOWS_ENV_KEY,
+  ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
+  LEGACY_ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
   PROVIDER_MAX_OUTPUT_TOKENS_ENV_KEY,
   OPENAI_OAUTH_PROVIDER_ENV_KEY,
   OPENAI_CODEX_OAUTH_FILE_ENV_KEY,
@@ -72,6 +89,7 @@ export const MANAGED_PROVIDER_ENV_KEYS = [
   IMAGE_GENERATION_BASE_URL_ENV_KEY,
   IMAGE_GENERATION_API_KEY_ENV_KEY,
   IMAGE_GENERATION_MODEL_ENV_KEY,
+  ...RETIRED_IMAGE_GENERATION_ENV_KEYS,
 ] as const
 
 const AUTH_ENV_KEYS = new Set(['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'])
@@ -432,10 +450,10 @@ export function buildProviderManagedEnv(
   provider: SavedProvider,
   options?: { proxyPath?: string; serverPort?: number },
 ): Record<string, string> {
-  if (provider.runtimeKind === 'openai_oauth') {
+  if (isOpenAIOfficialProviderId(provider.id) && provider.runtimeKind === 'openai_oauth') {
     return buildOpenAIOfficialRuntimeEnv()
   }
-  if (provider.runtimeKind === 'grok_oauth') {
+  if (isGrokOfficialProviderId(provider.id) && provider.runtimeKind === 'grok_oauth') {
     return buildGrokOfficialRuntimeEnv()
   }
 
@@ -498,7 +516,7 @@ export function readActiveProviderManagedEnv(
   options?: { serverPort?: number },
 ): Record<string, string> | null {
   try {
-    const raw = fs.readFileSync(path.join(configDir, 'cc-haha', 'providers.json'), 'utf-8')
+    const raw = fs.readFileSync(path.join(getEchoFlowInternalDir(configDir), 'providers.json'), 'utf-8')
     const index = normalizeProvidersIndex(JSON.parse(raw))
     if (!index?.activeId) return null
 
@@ -522,7 +540,7 @@ export function readActiveProviderManagedEnv(
 
 export function activeProviderNeedsProxy(configDir: string): boolean {
   try {
-    const raw = fs.readFileSync(path.join(configDir, 'cc-haha', 'providers.json'), 'utf-8')
+    const raw = fs.readFileSync(path.join(getEchoFlowInternalDir(configDir), 'providers.json'), 'utf-8')
     const index = normalizeProvidersIndex(JSON.parse(raw))
     if (
       !index?.activeId ||

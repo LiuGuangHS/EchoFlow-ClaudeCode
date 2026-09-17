@@ -1,6 +1,6 @@
 import XCTest
 
-@testable import cc_haha_computer_use
+@testable import echoflow_code_computer_use
 
 /// A locked screen swallows synthesized input silently: the window server takes
 /// it, no app sees it, and the action reports success having changed nothing.

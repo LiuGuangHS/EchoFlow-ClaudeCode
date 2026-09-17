@@ -864,7 +864,7 @@ public final class VirtualCursor {
         // signed app instead puts resources in Contents/Resources. Never invoke
         // that accessor for optional visuals: discover only runtime-relative
         // locations, including the sibling bundle of a bare SwiftPM executable.
-        let moduleName = "cu-helper_cc-haha-computer-use.bundle"
+        let moduleName = "cu-helper_echoflow-code-computer-use.bundle"
         var candidates = [bundle.resourceURL, bundle.bundleURL, bundle.executableURL?.deletingLastPathComponent()]
             .compactMap { $0 }
             .map { $0.appendingPathComponent(moduleName, isDirectory: true)

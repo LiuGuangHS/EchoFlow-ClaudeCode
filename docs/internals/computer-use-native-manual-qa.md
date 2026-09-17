@@ -27,22 +27,22 @@
    codesign -dv --verbose=4 "<built 路径>" 2>&1 | grep -E "Identifier|Authority"
    cat native/cu-helper/.build/.cu-helper.signid
    ```
-   `Identifier` 必须是 `dev.cchaha.cu-helper`。
+   `Identifier` 必须是 `dev.echoflow.cu-helper`。
 
 5. **三者同证书 —— 打包版最容易踩的坑，先查这个再查别的。**
 
-   helper 的客户端核验（`ClientAttestation.swift`）要求调用链能被密码学地认定为本应用：**host、sidecar、helper 必须签在同一张证书上**（同 team、同 leaf），且 sidecar 的 identifier 必须精确等于 `com.claude-code-haha.desktop.sidecar`。任何一环对不上，helper 对**所有**命令返回 `unauthorized_client`，表现是设置页权限一直"检测中…"、授权卡片点了没反应。
+   helper 的客户端核验（`ClientAttestation.swift`）要求调用链能被密码学地认定为本应用：**host、sidecar、helper 必须签在同一张证书上**（同 team、同 leaf），且 sidecar 的 identifier 必须精确等于 `com.echoflow.code.desktop.sidecar`。任何一环对不上，helper 对**所有**命令返回 `unauthorized_client`，表现是设置页权限一直"检测中…"、授权卡片点了没反应。
 
    ```bash
-   APP="desktop/build-artifacts/macos-arm64/Claude Code Haha.app"
+   APP="desktop/build-artifacts/macos-arm64/EchoFlow Code.app"
    B="$APP/Contents/Resources/app.asar.unpacked/src-tauri/binaries"
-   for P in "$APP" "$B/claude-sidecar-aarch64-apple-darwin" "$B/cc-haha-computer-use.app"; do
+   for P in "$APP" "$B/claude-sidecar-aarch64-apple-darwin" "$B/echoflow-code-computer-use.app"; do
      codesign -dv "$P" 2>&1 | grep -E "^(Identifier|TeamIdentifier)="
    done
    ```
 
    期望：三个 `TeamIdentifier` 完全相同，且 identifier 分别是
-   `com.claude-code-haha.desktop` / `com.claude-code-haha.desktop.sidecar` / `dev.cchaha.cu-helper`。
+   `com.echoflow.code.desktop` / `com.echoflow.code.desktop.sidecar` / `dev.echoflow.cu-helper`。
 
    ad-hoc 构建（`SIGN_BUILD=0`，或机器上没有签名证书）**没有证书可言，Computer Use 在其上必然不可用** —— 这不是 bug，是 attestation 的固有前提。要测 Computer Use 就必须用签名构建（默认即是）。
 
@@ -143,7 +143,7 @@
 
 | # | 步骤 | 期望 |
 |---|---|---|
-| 5.1 | 让 agent 操控 **Claude Code Haha 自己** | 拒绝：`Computer Use is not allowed to use the app '…' for safety reasons.` |
+| 5.1 | 让 agent 操控 **EchoFlow Code 自己** | 拒绝：`Computer Use is not allowed to use the app '…' for safety reasons.` |
 | 5.2 | 操控 Terminal / iTerm / Chrome | 同样拒绝 |
 | 5.3 | 未开 systemKeyCombos 时按 `cmd+q` | 拒绝，提示 `Enable system key combinations in Computer Use settings, then retry.` |
 | 5.4 | 开了之后再按 | 放行 |
@@ -174,6 +174,6 @@ bun run check:native      # 含 swift test + build:sidecars + 打包 + smoke
 
 打完包后确认：
 ```bash
-codesign -dv --verbose=4 "<app>/Contents/Resources/**/cc-haha-computer-use.app" 2>&1 | grep Identifier
+codesign -dv --verbose=4 "<app>/Contents/Resources/**/echoflow-code-computer-use.app" 2>&1 | grep Identifier
 ```
-必须仍是 `dev.cchaha.cu-helper` —— 如果变了，说明 electron-builder 重签了它，用户的两项授权会全掉。
+必须仍是 `dev.echoflow.cu-helper` —— 如果变了，说明 electron-builder 重签了它，用户的两项授权会全掉。

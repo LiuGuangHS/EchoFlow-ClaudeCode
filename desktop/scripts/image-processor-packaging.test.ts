@@ -28,7 +28,7 @@ async function run(command: string, args: string[], cwd: string, env: NodeJS.Pro
 }
 
 it.each([false, true])('creates and resizes packaged images from a user project (embedded assets: %s)', async embeddedAssets => {
-  const root = await mkdtemp(path.join(tmpdir(), 'cc-haha-packaged-images-'))
+  const root = await mkdtemp(path.join(tmpdir(), 'echoflow-code-packaged-images-'))
   try {
     const appDirectory = path.join(root, 'app')
     const resources = path.join(root, '中文 安装目录', 'resources')

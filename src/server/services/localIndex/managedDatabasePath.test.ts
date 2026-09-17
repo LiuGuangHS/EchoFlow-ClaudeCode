@@ -31,10 +31,10 @@ describe('managed SQLite database paths', () => {
       const root = await tempRoot(filename)
       const scope = path.join(root, 'config')
       const outside = path.join(root, 'outside')
-      await fs.mkdir(path.join(scope, 'cc-haha'), { recursive: true })
+      await fs.mkdir(path.join(scope, 'echoflow-code'), { recursive: true })
       await fs.mkdir(outside)
-      await fs.symlink(outside, path.join(scope, 'cc-haha', 'db'))
-      const databasePath = path.join(scope, 'cc-haha', 'db', filename)
+      await fs.symlink(outside, path.join(scope, 'echoflow-code', 'db'))
+      const databasePath = path.join(scope, 'echoflow-code', 'db', filename)
 
       expect(() => openDatabase({ path: databasePath, scope })).toThrow(
         expect.objectContaining({ code: 'LOCAL_INDEX_UNSAFE_PATH' }),
@@ -51,7 +51,7 @@ describe('managed SQLite database paths', () => {
     const scope = path.join(root, 'config-link')
     await fs.mkdir(realScope)
     await fs.symlink(realScope, scope)
-    const databasePath = path.join(scope, 'cc-haha', 'db', 'index-v1.sqlite')
+    const databasePath = path.join(scope, 'echoflow-code', 'db', 'index-v1.sqlite')
 
     const database = openLocalIndexDatabase({ path: databasePath, scope })
     database.close()
@@ -62,7 +62,7 @@ describe('managed SQLite database paths', () => {
   test('rejects an existing database-file symlink', async () => {
     const root = await tempRoot('file-symlink')
     const scope = path.join(root, 'config')
-    const databaseDir = path.join(scope, 'cc-haha', 'db')
+    const databaseDir = path.join(scope, 'echoflow-code', 'db')
     const outside = path.join(root, 'outside.sqlite')
     await fs.mkdir(databaseDir, { recursive: true })
     await fs.writeFile(outside, '')
@@ -77,7 +77,7 @@ describe('managed SQLite database paths', () => {
   test('rejects an existing database-file hardlink to an outside inode', async () => {
     const root = await tempRoot('file-hardlink')
     const scope = path.join(root, 'config')
-    const databaseDir = path.join(scope, 'cc-haha', 'db')
+    const databaseDir = path.join(scope, 'echoflow-code', 'db')
     const outside = path.join(root, 'outside.sqlite')
     await fs.mkdir(databaseDir, { recursive: true })
     await fs.writeFile(outside, 'outside-owned')

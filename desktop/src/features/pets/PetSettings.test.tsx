@@ -89,7 +89,7 @@ function preferencesResponse(pet: DesktopPetPreferences) {
         projectSortBy: 'updatedAt' as const,
       },
       profile: {
-        displayName: 'cc-haha',
+        displayName: 'echoflow-code',
         subtitle: '',
         avatarFile: null,
         avatarUpdatedAt: null,
@@ -153,7 +153,7 @@ describe('PetSettings', () => {
     expect(screen.getByText('补补 Bubu')).toBeInTheDocument()
     expect(screen.getByText('回回 Huihui')).toBeInTheDocument()
     expect(screen.getByText('Moon Cat')).toBeInTheDocument()
-    expect(screen.getByText((content) => content.includes('${CLAUDE_CONFIG_DIR:-~/.claude}/cc-haha/pets'))).toBeInTheDocument()
+    expect(screen.getByText((content) => content.includes('${CLAUDE_CONFIG_DIR:-~/.claude}/echoflow-code/pets'))).toBeInTheDocument()
     expect(screen.getByText('1 custom pet folders were skipped because they are invalid.')).toBeInTheDocument()
   })
 

@@ -37,7 +37,40 @@ describe('selectableProviderPresets', () => {
 })
 
 describe('bundled provider presets', () => {
-  it('defaults MiniMax to the China endpoint while retaining the global endpoint', () => {
+  it('contains only approved official, local, EchoFlow, and custom entries', () => {
+    const bundledIds = BUNDLED_PROVIDER_PRESETS.map((preset) => preset.id)
+    const selectableIds = selectableProviderPresets(BUNDLED_PROVIDER_PRESETS)
+      .map((preset) => preset.id)
+
+    expect(bundledIds).toEqual([
+      'official',
+      'echoflowai',
+      'deepseek',
+      'zhipuglm',
+      'kimi',
+      'minimax',
+      'lmstudio',
+      'ollama',
+      'custom',
+    ])
+    expect(selectableIds).toEqual(bundledIds)
+  })
+
+  it('excludes promotional gateway presets and referral metadata', () => {
+    const forbiddenPresetIds = ['jiekouai', 'shengsuanyun', 'teamorouter', 'xuanshuapi']
+    const bundledIds = BUNDLED_PROVIDER_PRESETS.map((preset) => preset.id)
+
+    for (const presetId of forbiddenPresetIds) {
+      expect(bundledIds).not.toContain(presetId)
+    }
+    for (const preset of BUNDLED_PROVIDER_PRESETS) {
+      expect(`${preset.websiteUrl} ${preset.apiKeyUrl ?? ''} ${preset.promoText ?? ''}`).not.toMatch(
+        /teamorouter|jiekou|shengsuanyun|xuanshuapi|fennoai|qiniuai|atlas|[?&](?:ref|referral|invite|source|utm_[^=]+)=/i,
+      )
+    }
+  })
+
+  it('defaults MiniMax to China while retaining the official global endpoint', () => {
     const minimax = BUNDLED_PROVIDER_PRESETS.find((preset) => preset.id === 'minimax')
 
     expect(minimax?.baseUrl).toBe('https://api.minimaxi.com/anthropic')
@@ -45,16 +78,10 @@ describe('bundled provider presets', () => {
       { region: 'cn_zh', baseUrl: 'https://api.minimaxi.com/anthropic' },
       { region: 'global_en', baseUrl: 'https://api.minimax.io/anthropic' },
     ])
-  })
-
-  it('matches the MiniMax preset for either regional endpoint', () => {
-    const minimax = BUNDLED_PROVIDER_PRESETS.find((preset) => preset.id === 'minimax')
-
     expect(minimax && presetMatchesBaseUrl(minimax, 'https://api.minimax.io/anthropic')).toBe(true)
-    expect(minimax && presetMatchesBaseUrl(minimax, 'https://api.minimaxi.com/anthropic')).toBe(true)
   })
 
-  it('defaults Zhipu GLM to China while retaining its official global endpoint', () => {
+  it('defaults Zhipu GLM to China while retaining the official global endpoint', () => {
     const zhipu = BUNDLED_PROVIDER_PRESETS.find((preset) => preset.id === 'zhipuglm')
 
     expect(zhipu?.baseUrl).toBe('https://open.bigmodel.cn/api/anthropic')
@@ -79,71 +106,5 @@ describe('bundled provider presets', () => {
 
     expect(kimi?.baseUrl).toBe('https://api.kimi.com/coding/')
     expect(kimi?.regionalEndpoints).toBeUndefined()
-  })
-
-  // Retiring a preset must not break providers already configured against it: the
-  // bundle keeps the entry so the edit form can still resolve its presetId, while
-  // the "add provider" chips are built from selectableProviderPresets.
-  it('keeps the retired 胜算云 preset resolvable but not selectable', () => {
-    const shengsuanyun = BUNDLED_PROVIDER_PRESETS.find((preset) => preset.id === 'shengsuanyun')
-
-    expect(shengsuanyun?.deprecated).toBe(true)
-    expect(shengsuanyun?.baseUrl).toBe('https://router.shengsuanyun.com/api')
-    expect(shengsuanyun?.authStrategy).toBe('auth_token')
-    // No referral link or promo copy left to render while editing.
-    expect(shengsuanyun?.apiKeyUrl).toBeUndefined()
-    expect(shengsuanyun?.promoText).toBeUndefined()
-    expect(shengsuanyun?.featured).toBeUndefined()
-    const selectableIds = selectableProviderPresets(BUNDLED_PROVIDER_PRESETS).map((p) => p.id)
-    expect(selectableIds).not.toContain('shengsuanyun')
-    expect(selectableIds).toContain('atlascloud')
-    expect(selectableIds).toContain('custom')
-  })
-
-  // Both gateways mount the Anthropic protocol on the bare host; a /v1 or
-  // /anthropic suffix here would double up with the path Claude Code appends.
-  it('keeps the retired gateways at their Anthropic-compatible roots', () => {
-    const fennoai = BUNDLED_PROVIDER_PRESETS.find((preset) => preset.id === 'fennoai')
-    const qiniuai = BUNDLED_PROVIDER_PRESETS.find((preset) => preset.id === 'qiniuai')
-
-    expect(fennoai?.baseUrl).toBe('https://api.fenno.ai')
-    expect(fennoai && presetMatchesBaseUrl(fennoai, ' HTTPS://API.Fenno.AI/ ')).toBe(true)
-    expect(qiniuai?.baseUrl).toBe('https://api.qnaigc.com')
-    expect(qiniuai && presetMatchesBaseUrl(qiniuai, ' HTTPS://API.QNAIGC.COM/ ')).toBe(true)
-  })
-
-  it.each(['xuanshuapi', 'fennoai', 'qiniuai'])('retires %s without removing saved-provider metadata', (id) => {
-    const preset = BUNDLED_PROVIDER_PRESETS.find((candidate) => candidate.id === id)
-
-    expect(preset?.deprecated).toBe(true)
-    expect(preset?.apiKeyUrl).toBeUndefined()
-    expect(preset?.promoText).toBeUndefined()
-    expect(preset?.featured).toBeUndefined()
-    expect(preset?.authStrategy).toBe('auth_token')
-    expect(preset?.defaultEnv).toBeDefined()
-    expect(preset?.modelContextWindows).toBeDefined()
-    expect(selectableProviderPresets(BUNDLED_PROVIDER_PRESETS).map((candidate) => candidate.id))
-      .not.toContain(id)
-  })
-
-  it('keeps active sponsors selectable and ordered like the README', () => {
-    expect(selectableProviderPresets(BUNDLED_PROVIDER_PRESETS).filter((preset) => preset.featured).map((preset) => preset.id))
-      .toEqual(['atlascloud', 'apismart'])
-  })
-
-  it('keeps the retired 接口AI preset resolvable but not selectable', () => {
-    const jiekouai = BUNDLED_PROVIDER_PRESETS.find((preset) => preset.id === 'jiekouai')
-
-    expect(jiekouai?.deprecated).toBe(true)
-    expect(jiekouai?.apiKeyUrl).toBeUndefined()
-    expect(jiekouai?.promoText).toBeUndefined()
-    expect(jiekouai?.featured).toBeUndefined()
-
-    expect(selectableProviderPresets(BUNDLED_PROVIDER_PRESETS).map((p) => p.id))
-      .not.toContain('jiekouai')
-  })
-
-  it('does not bundle the removed TeamoRouter preset', () => {
-    expect(BUNDLED_PROVIDER_PRESETS.some((preset) => preset.id === 'teamorouter')).toBe(false)
   })
 })

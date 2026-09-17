@@ -20,7 +20,7 @@ const REQUEST_TIMEOUT_MS = 10_000
 const QR_TTL_MS = 5 * 60_000
 export const WECOM_POLL_INTERVAL_MS = 3_000
 
-const DEFAULT_SOURCE = 'claude-code-haha'
+const DEFAULT_SOURCE = 'echoflow-code'
 
 type WecomLoginSession = {
   sessionKey: string

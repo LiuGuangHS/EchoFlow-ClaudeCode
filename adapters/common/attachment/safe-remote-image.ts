@@ -198,7 +198,7 @@ export async function requestPinnedRemoteImageHop(
       path: `${url.pathname}${url.search}`,
       headers: {
         Accept: IMAGE_MIME_WHITELIST.join(', '),
-        'User-Agent': 'claude-code-haha-im-adapter',
+        'User-Agent': 'echoflow-code-im-adapter',
       },
       signal: abortController.signal,
     })

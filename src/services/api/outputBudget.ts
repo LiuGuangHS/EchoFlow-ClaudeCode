@@ -1,4 +1,4 @@
-export const OUTPUT_BUDGET_SOURCE_HEADER = 'x-cc-haha-output-budget-source'
+export const OUTPUT_BUDGET_SOURCE_HEADER = 'x-echoflow-output-budget-source'
 export type OutputBudgetSource = 'default' | 'explicit'
 
 // Request-local metadata must never leak into the provider's JSON body or

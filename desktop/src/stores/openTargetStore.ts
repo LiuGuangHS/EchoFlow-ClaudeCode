@@ -5,7 +5,7 @@ export type { OpenTarget } from '../api/openTargets'
 
 const CLIENT_CACHE_TTL_MS = 60_000
 
-const OPEN_TARGET_PREFERENCES_STORAGE_KEY = 'cc-haha-open-target-preferences'
+const OPEN_TARGET_PREFERENCES_STORAGE_KEY = 'echoflow-code-open-target-preferences'
 
 /**
  * Stored as an object from the first version even though it holds one field.

@@ -243,11 +243,16 @@ import {
 import type { SessionListItem } from '../../types/session'
 import type { PerSessionState } from '../../stores/chatStore'
 
-const PROJECT_ORDER_STORAGE_KEY = 'cc-haha-sidebar-project-order'
-const PROJECT_PINNED_STORAGE_KEY = 'cc-haha-sidebar-pinned-projects'
-const PROJECT_HIDDEN_STORAGE_KEY = 'cc-haha-sidebar-hidden-projects'
-const PROJECT_ORGANIZATION_STORAGE_KEY = 'cc-haha-sidebar-project-organization'
-const PROJECT_SORT_STORAGE_KEY = 'cc-haha-sidebar-project-sort'
+const PROJECT_ORDER_STORAGE_KEY = 'echoflow-code-sidebar-project-order'
+const PROJECT_PINNED_STORAGE_KEY = 'echoflow-code-sidebar-pinned-projects'
+const PROJECT_HIDDEN_STORAGE_KEY = 'echoflow-code-sidebar-hidden-projects'
+const PROJECT_ORGANIZATION_STORAGE_KEY = 'echoflow-code-sidebar-project-organization'
+const PROJECT_SORT_STORAGE_KEY = 'echoflow-code-sidebar-project-sort'
+const LEGACY_PROJECT_ORDER_STORAGE_KEY = 'echoflow-code-sidebar-project-order'
+const LEGACY_PROJECT_PINNED_STORAGE_KEY = 'echoflow-code-sidebar-pinned-projects'
+const LEGACY_PROJECT_HIDDEN_STORAGE_KEY = 'echoflow-code-sidebar-hidden-projects'
+const LEGACY_PROJECT_ORGANIZATION_STORAGE_KEY = 'echoflow-code-sidebar-project-organization'
+const LEGACY_PROJECT_SORT_STORAGE_KEY = 'echoflow-code-sidebar-project-sort'
 const realCreateSession = useSessionStore.getInitialState().createSession
 const realFetchSessions = useSessionStore.getInitialState().fetchSessions
 
@@ -329,8 +334,8 @@ function makeDesktopUiPreferencesResponse({
       sidebar,
       projectDisplayNames,
       profile: {
-        displayName: 'cc-haha',
-        subtitle: 'github.com/NanmiCoder/cc-haha',
+        displayName: 'EchoFlow Code',
+        subtitle: 'github.com/LiuGuangHS/EchoFlow-ClaudeCode',
         avatarFile: null,
         avatarUpdatedAt: null,
       },
@@ -459,6 +464,11 @@ describe('Sidebar', () => {
     window.localStorage.removeItem(PROJECT_HIDDEN_STORAGE_KEY)
     window.localStorage.removeItem(PROJECT_ORGANIZATION_STORAGE_KEY)
     window.localStorage.removeItem(PROJECT_SORT_STORAGE_KEY)
+    window.localStorage.removeItem(LEGACY_PROJECT_ORDER_STORAGE_KEY)
+    window.localStorage.removeItem(LEGACY_PROJECT_PINNED_STORAGE_KEY)
+    window.localStorage.removeItem(LEGACY_PROJECT_HIDDEN_STORAGE_KEY)
+    window.localStorage.removeItem(LEGACY_PROJECT_ORGANIZATION_STORAGE_KEY)
+    window.localStorage.removeItem(LEGACY_PROJECT_SORT_STORAGE_KEY)
 
     useTabStore.setState({ tabs: [], activeTabId: null })
     useSessionStore.setState({
@@ -500,6 +510,11 @@ describe('Sidebar', () => {
     window.localStorage.removeItem(PROJECT_HIDDEN_STORAGE_KEY)
     window.localStorage.removeItem(PROJECT_ORGANIZATION_STORAGE_KEY)
     window.localStorage.removeItem(PROJECT_SORT_STORAGE_KEY)
+    window.localStorage.removeItem(LEGACY_PROJECT_ORDER_STORAGE_KEY)
+    window.localStorage.removeItem(LEGACY_PROJECT_PINNED_STORAGE_KEY)
+    window.localStorage.removeItem(LEGACY_PROJECT_HIDDEN_STORAGE_KEY)
+    window.localStorage.removeItem(LEGACY_PROJECT_ORGANIZATION_STORAGE_KEY)
+    window.localStorage.removeItem(LEGACY_PROJECT_SORT_STORAGE_KEY)
   })
 
   it('opens a new tab when creating a session from the sidebar', async () => {
@@ -524,7 +539,7 @@ describe('Sidebar', () => {
     expect(screen.getByTestId('sidebar-title-region')).toHaveAttribute('data-desktop-drag-region')
   })
 
-  // The header used to render both "Claude Code Haha" and "cc-haha" and hide
+  // The header used to render both "EchoFlow Code" and "echoflow-code" and hide
   // one with a container query, so the app answered to two names depending on
   // how far the sidebar had been dragged. Only the short one ships now — and
   // the long one must not linger in the DOM, since a display-hidden copy still
@@ -534,8 +549,9 @@ describe('Sidebar', () => {
 
     const region = screen.getByTestId('sidebar-title-region')
 
-    expect(region).toHaveTextContent('cc-haha')
+    expect(region).toHaveTextContent('EchoFlow Code')
     expect(region).not.toHaveTextContent('Claude Code')
+    expect(region.querySelector('img[src="/app-icon.png"]')).not.toBeNull()
   })
 
   it('groups sessions by project and expands overflow rows', () => {
@@ -683,6 +699,41 @@ describe('Sidebar', () => {
     render(<Sidebar />)
 
     expect(projectGroupNames().slice(0, 3)).toEqual(['beta', 'alpha', 'gamma'])
+  })
+
+  it('does not auto-read or migrate legacy echoflow-code sidebar storage', () => {
+    window.localStorage.setItem(LEGACY_PROJECT_ORDER_STORAGE_KEY, JSON.stringify([
+      '/workspace/beta',
+      '/workspace/alpha',
+    ]))
+    window.localStorage.setItem(LEGACY_PROJECT_PINNED_STORAGE_KEY, JSON.stringify(['/workspace/beta']))
+    window.localStorage.setItem(LEGACY_PROJECT_HIDDEN_STORAGE_KEY, JSON.stringify(['/workspace/beta']))
+    window.localStorage.setItem(LEGACY_PROJECT_ORGANIZATION_STORAGE_KEY, 'project')
+    window.localStorage.setItem(LEGACY_PROJECT_SORT_STORAGE_KEY, 'createdAt')
+    const base = new Date('2026-05-15T10:00:00.000Z').getTime()
+    useSessionStore.setState({
+      sessions: [
+        {
+          ...makeSession('alpha-1', 'Alpha Session', '/workspace/alpha', new Date(base).toISOString()),
+          createdAt: new Date(base - 20_000).toISOString(),
+        },
+        {
+          ...makeSession('beta-1', 'Beta Session', '/workspace/beta', new Date(base - 10_000).toISOString()),
+          createdAt: new Date(base + 20_000).toISOString(),
+        },
+      ],
+    })
+
+    render(<Sidebar />)
+
+    expect(projectGroupNames().slice(0, 2)).toEqual(['alpha', 'beta'])
+    expect(screen.getByText('beta')).toBeInTheDocument()
+    expect(window.localStorage.getItem(PROJECT_ORDER_STORAGE_KEY)).toBeNull()
+    expect(window.localStorage.getItem(PROJECT_PINNED_STORAGE_KEY)).toBeNull()
+    expect(window.localStorage.getItem(PROJECT_HIDDEN_STORAGE_KEY)).toBeNull()
+    expect(window.localStorage.getItem(PROJECT_ORGANIZATION_STORAGE_KEY)).toBeNull()
+    expect(window.localStorage.getItem(PROJECT_SORT_STORAGE_KEY)).toBeNull()
+    expect(window.localStorage.getItem(LEGACY_PROJECT_HIDDEN_STORAGE_KEY)).toBe(JSON.stringify(['/workspace/beta']))
   })
 
   it('collapses a project group without removing the project header', () => {
@@ -1725,7 +1776,7 @@ describe('Sidebar', () => {
     const now = new Date().toISOString()
     useSessionStore.setState({
       sessions: [
-        makeSession('child-1', 'Child Session', 'D:\\workspace\\code\\cc-haha', now),
+        makeSession('child-1', 'Child Session', 'D:\\workspace\\code\\echoflow-code', now),
       ],
     })
     useTabStore.setState({
@@ -1740,7 +1791,7 @@ describe('Sidebar', () => {
     })
 
     await waitFor(() => {
-      expect(createSession).toHaveBeenCalledWith('D:\\workspace\\code\\cc-haha')
+      expect(createSession).toHaveBeenCalledWith('D:\\workspace\\code\\echoflow-code')
     })
     expect(JSON.parse(window.localStorage.getItem(PROJECT_HIDDEN_STORAGE_KEY) ?? '[]')).toEqual(['D:\\'])
     expect(desktopUiPreferencesApiMock.updateSidebarPreferences).not.toHaveBeenCalled()
@@ -2015,7 +2066,7 @@ describe('Sidebar', () => {
 
     // Scope to the wordmark's own row — the GitHub link in the same header is
     // also an svg and would answer a looser query.
-    const brandRow = () => screen.getByText('haha').closest('div')
+    const brandRow = () => screen.getByText('EchoFlow').closest('div')
 
     // Expanded, the name carries the brand and the mark beside it is clutter.
     expect(brandRow()?.querySelector('svg')).toBeNull()
@@ -2026,7 +2077,7 @@ describe('Sidebar', () => {
 
     // Collapsed, the copy is width-clamped to zero, so the mark is the only
     // thing left to identify the app.
-    expect(brandRow()?.querySelector('svg')).not.toBeNull()
+    expect(screen.getByTestId('sidebar-title-region').querySelector('svg')).not.toBeNull()
   })
 
   it('renders search controls without the removed embedded project filter', () => {

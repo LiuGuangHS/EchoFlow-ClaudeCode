@@ -14,7 +14,7 @@ let scope: string
 let previousConfigDir: string | undefined
 
 beforeEach(async () => {
-  scope = await mkdtemp(join(tmpdir(), 'cc-haha-search-service-content-index-'))
+  scope = await mkdtemp(join(tmpdir(), 'echoflow-code-search-service-content-index-'))
   previousConfigDir = process.env.CLAUDE_CONFIG_DIR
   process.env.CLAUDE_CONFIG_DIR = scope
   await mkdir(join(scope, 'projects', '-repo'), { recursive: true })

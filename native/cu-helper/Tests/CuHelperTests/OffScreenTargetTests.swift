@@ -1,7 +1,7 @@
 import CoreGraphics
 import XCTest
 
-@testable import cc_haha_computer_use
+@testable import echoflow_code_computer_use
 
 /// A minimized app produced a real screenshot, a real accessibility tree, and
 /// "Action completed" for every click and keystroke of an entire session, while

@@ -8,8 +8,8 @@ const envKeys = [
   'CLAUDE_CONFIG_DIR',
   'USER_TYPE',
   'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS',
-  'CC_HAHA_AGENT_TEAMS_DEFAULT',
-  'CC_HAHA_AGENT_TEAMS_ENABLED',
+  'ECHOFLOW_AGENT_TEAMS_DEFAULT',
+  'ECHOFLOW_AGENT_TEAMS_ENABLED',
 ] as const
 
 describe('Agent Teams runtime opt-in', () => {
@@ -34,8 +34,8 @@ describe('Agent Teams runtime opt-in', () => {
   beforeEach(() => {
     delete process.env.USER_TYPE
     delete process.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
-    delete process.env.CC_HAHA_AGENT_TEAMS_DEFAULT
-    delete process.env.CC_HAHA_AGENT_TEAMS_ENABLED
+    delete process.env.ECHOFLOW_AGENT_TEAMS_DEFAULT
+    delete process.env.ECHOFLOW_AGENT_TEAMS_ENABLED
     process.argv = originalArgv.filter(arg => arg !== '--agent-teams')
     gate = spyOn(growthbook, 'getFeatureValue_CACHED_MAY_BE_STALE').mockReturnValue(true)
   })
@@ -55,13 +55,13 @@ describe('Agent Teams runtime opt-in', () => {
   })
 
   test('enables a cc-haha managed session without an upstream opt-in', () => {
-    process.env.CC_HAHA_AGENT_TEAMS_DEFAULT = '1'
+    process.env.ECHOFLOW_AGENT_TEAMS_DEFAULT = '1'
     expect(isAgentSwarmsEnabled()).toBe(true)
     expect(gate).toHaveBeenCalledWith('tengu_amber_flint', true)
   })
 
   test.each(['0', 'false', ''])('preserves the explicit user opt-out %j over the host default', value => {
-    process.env.CC_HAHA_AGENT_TEAMS_DEFAULT = '1'
+    process.env.ECHOFLOW_AGENT_TEAMS_DEFAULT = '1'
     process.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = value
     expect(isAgentSwarmsEnabled()).toBe(false)
     expect(gate).not.toHaveBeenCalled()
@@ -74,15 +74,15 @@ describe('Agent Teams runtime opt-in', () => {
   })
 
   test.each([true, false])('uses the explicit General preference %j over legacy env', enabled => {
-    process.env.CC_HAHA_AGENT_TEAMS_DEFAULT = '1'
-    process.env.CC_HAHA_AGENT_TEAMS_ENABLED = enabled ? '1' : '0'
+    process.env.ECHOFLOW_AGENT_TEAMS_DEFAULT = '1'
+    process.env.ECHOFLOW_AGENT_TEAMS_ENABLED = enabled ? '1' : '0'
     process.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = enabled ? '0' : '1'
     expect(isAgentSwarmsEnabled()).toBe(enabled)
   })
 
   test.each([undefined, 'ant'])('honors General opt-out with a forced launch (%j)', userType => {
     if (userType) process.env.USER_TYPE = userType
-    process.env.CC_HAHA_AGENT_TEAMS_ENABLED = '0'
+    process.env.ECHOFLOW_AGENT_TEAMS_ENABLED = '0'
     process.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = '1'
     process.argv.push('--agent-teams')
     expect(isAgentSwarmsEnabled()).toBe(false)
@@ -96,12 +96,12 @@ describe('Agent Teams runtime opt-in', () => {
   })
 
   test.each(['0', 'false', ''])('does not enable an inactive host default %j', value => {
-    process.env.CC_HAHA_AGENT_TEAMS_DEFAULT = value
+    process.env.ECHOFLOW_AGENT_TEAMS_DEFAULT = value
     expect(isAgentSwarmsEnabled()).toBe(false)
   })
 
   test('continues to respect the external killswitch with a host default', () => {
-    process.env.CC_HAHA_AGENT_TEAMS_DEFAULT = '1'
+    process.env.ECHOFLOW_AGENT_TEAMS_DEFAULT = '1'
     gate.mockReturnValue(false)
     expect(isAgentSwarmsEnabled()).toBe(false)
     expect(gate).toHaveBeenCalledWith('tengu_amber_flint', true)

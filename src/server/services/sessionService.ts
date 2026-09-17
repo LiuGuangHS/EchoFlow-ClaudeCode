@@ -45,8 +45,8 @@ import {
   roughTokenCountEstimationForMessage,
 } from '../../services/tokenEstimation.js'
 import { ProviderService } from './providerService.js'
-import { shouldHideCommandMetadataContent } from '../../utils/commandMetadata.js'
 import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
+import { shouldHideCommandMetadataContent } from '../../utils/commandMetadata.js'
 import { getSettings_DEPRECATED } from '../../utils/settings/settings.js'
 import {
   extractGoalCreationTitle,
@@ -187,6 +187,7 @@ export type SessionLaunchInfo = {
   runtimeProviderId?: string | null
   runtimeModelId?: string
   effortLevel?: string
+  cliRuntimeId?: 'bundled' | 'installed'
 }
 
 type ProviderContextWindowHint = Pick<SessionLaunchInfo, 'runtimeProviderId' | 'runtimeModelId'>
@@ -565,7 +566,11 @@ const USER_INTERRUPTION_TEXTS = new Set([
 const NO_RESPONSE_REQUESTED_TEXT = 'No response requested.'
 const TASK_NOTIFICATION_RE = /^<task-notification>\s*[\s\S]*<\/task-notification>$/i
 const TASK_NOTIFICATION_BLOCK_RE = /<task-notification>\s*[\s\S]*?<\/task-notification>/i
-const PERSISTED_TASK_NOTIFICATION_ENTRY_TYPE = 'cc-haha-task-notification'
+const PERSISTED_TASK_NOTIFICATION_ENTRY_TYPES = new Set([
+  'echoflow-code-task-notification',
+  'echoflow-code-task-notification',
+])
+const PERSISTED_TASK_NOTIFICATION_ENTRY_TYPE = 'echoflow-code-task-notification'
 const PROVIDER_MODEL_ALIAS_SEPARATORS = ['-', '_', ':', '/', '.', ' ']
 
 function normalizeProviderModelAlias(model: string): string {
@@ -944,6 +949,7 @@ export class SessionService {
       runtimeProviderId?: string | null
       runtimeModelId?: string
       effortLevel?: string
+      cliRuntimeId?: 'bundled' | 'installed'
     },
   ): boolean {
     if (!launchInfo) return false
@@ -976,6 +982,12 @@ export class SessionService {
       metadata.effortLevel &&
       VALID_SESSION_EFFORT_LEVELS.has(metadata.effortLevel) &&
       launchInfo.effortLevel !== metadata.effortLevel
+    ) {
+      return false
+    }
+    if (
+      metadata.cliRuntimeId !== undefined &&
+      launchInfo.cliRuntimeId !== metadata.cliRuntimeId
     ) {
       return false
     }
@@ -3057,6 +3069,7 @@ export class SessionService {
     let runtimeProviderId: string | null | undefined
     let runtimeModelId: string | undefined
     let effortLevel: string | undefined
+    let cliRuntimeId: 'bundled' | 'installed' | undefined
     let customTitle: string | null = null
     let transcriptMessageCount = 0
     const metadata: TranscriptMetadataSnapshot = {}
@@ -3109,6 +3122,9 @@ export class SessionService {
           VALID_SESSION_EFFORT_LEVELS.has(record.effortLevel)
         ) {
           effortLevel = record.effortLevel
+        }
+        if (record.cliRuntimeId === 'bundled' || record.cliRuntimeId === 'installed') {
+          cliRuntimeId = record.cliRuntimeId
         }
       }
 
@@ -3240,6 +3256,7 @@ export class SessionService {
       ...(runtimeProviderId !== undefined ? { runtimeProviderId } : {}),
       ...(runtimeModelId ? { runtimeModelId } : {}),
       ...(effortLevel ? { effortLevel } : {}),
+      ...(cliRuntimeId ? { cliRuntimeId } : {}),
     }
 
     for (const modelUsage of models.values()) {
@@ -4315,6 +4332,7 @@ export class SessionService {
     let runtimeProviderId: string | null | undefined
     let runtimeModelId: string | undefined
     let effortLevel: string | undefined
+    let cliRuntimeId: 'bundled' | 'installed' | undefined
 
     for (const entry of entries) {
       if (entry.type === 'custom-title' && typeof entry.customTitle === 'string') {
@@ -4334,6 +4352,9 @@ export class SessionService {
         ) {
           effortLevel = record.effortLevel
         }
+        if (record.cliRuntimeId === 'bundled' || record.cliRuntimeId === 'installed') {
+          cliRuntimeId = record.cliRuntimeId
+        }
       }
     }
     const transcriptMessageCount = this.countTranscriptMessages(entries)
@@ -4349,6 +4370,7 @@ export class SessionService {
       ...(runtimeProviderId !== undefined ? { runtimeProviderId } : {}),
       ...(runtimeModelId ? { runtimeModelId } : {}),
       ...(effortLevel ? { effortLevel } : {}),
+      ...(cliRuntimeId ? { cliRuntimeId } : {}),
       ...memory,
       transcriptMessageCount,
     }
@@ -4417,6 +4439,24 @@ export class SessionService {
       )
         ? preservedPermissionMode
         : this.resolvePermissionModeFromEntries(entries)
+      let runtimeProviderId: string | null | undefined
+      let runtimeModelId: string | undefined
+      let effortLevel: string | undefined
+      let cliRuntimeId: 'bundled' | 'installed' | undefined
+      for (const entry of entries) {
+        if (entry.type !== 'session-meta') continue
+        const record = entry as Record<string, unknown>
+        if (record.runtimeProviderId === null || typeof record.runtimeProviderId === 'string') {
+          runtimeProviderId = record.runtimeProviderId as string | null
+        }
+        if (typeof record.runtimeModelId === 'string') runtimeModelId = record.runtimeModelId
+        if (typeof record.effortLevel === 'string' && VALID_SESSION_EFFORT_LEVELS.has(record.effortLevel)) {
+          effortLevel = record.effortLevel
+        }
+        if (record.cliRuntimeId === 'bundled' || record.cliRuntimeId === 'installed') {
+          cliRuntimeId = record.cliRuntimeId
+        }
+      }
       const now = new Date().toISOString()
 
       const initialEntry = {
@@ -4436,6 +4476,10 @@ export class SessionService {
         workDir,
         repository,
         ...(permissionMode ? { permissionMode } : {}),
+        ...(runtimeProviderId !== undefined ? { runtimeProviderId } : {}),
+        ...(runtimeModelId ? { runtimeModelId } : {}),
+        ...(effortLevel ? { effortLevel } : {}),
+        ...(cliRuntimeId ? { cliRuntimeId } : {}),
         timestamp: now,
       }
 
@@ -4475,6 +4519,7 @@ export class SessionService {
       runtimeProviderId?: string | null
       runtimeModelId?: string
       effortLevel?: string
+      cliRuntimeId?: 'bundled' | 'installed'
     }
   ): Promise<void> {
     const persist = this.shouldPersistSession()
@@ -4551,6 +4596,9 @@ export class SessionService {
       ...(metadata.runtimeModelId ? { runtimeModelId: metadata.runtimeModelId } : {}),
       ...(metadata.effortLevel && VALID_SESSION_EFFORT_LEVELS.has(metadata.effortLevel)
         ? { effortLevel: metadata.effortLevel }
+        : {}),
+      ...(metadata.cliRuntimeId === 'bundled' || metadata.cliRuntimeId === 'installed'
+        ? { cliRuntimeId: metadata.cliRuntimeId }
         : {}),
       timestamp: new Date().toISOString(),
     })
@@ -4778,7 +4826,7 @@ export class SessionService {
 
     const entries = await this.readTargetedJsonlEntries(
       found,
-      ['user', PERSISTED_TASK_NOTIFICATION_ENTRY_TYPE],
+      ['user', ...PERSISTED_TASK_NOTIFICATION_ENTRY_TYPES],
     ) ?? await this.readJsonlFile(found.filePath)
     return this.taskNotificationsFromEntries(entries)
   }
@@ -4788,7 +4836,7 @@ export class SessionService {
   ): SessionTaskNotification[] {
     const notifications = new Map<string, SessionTaskNotification>()
     for (const entry of entries) {
-      const notification = entry.type === PERSISTED_TASK_NOTIFICATION_ENTRY_TYPE
+      const notification = PERSISTED_TASK_NOTIFICATION_ENTRY_TYPES.has(entry.type)
         ? this.parsePersistedTaskNotification(entry.taskNotification, entry.timestamp)
         : entry.message?.role === 'user'
           ? this.parseTaskNotificationContent(entry.message.content, entry.timestamp)

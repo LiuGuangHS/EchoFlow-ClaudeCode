@@ -11,7 +11,7 @@ order: 6
 
 ## 服务商
 
-管理模型接入。支持 Claude 官方、ChatGPT 官方、Grok 官方三种账号登录（不需要 API 密钥），也支持填 API 密钥接入任意 Anthropic / OpenAI 兼容的服务商。
+管理共享的模型服务商配置。支持 Claude 官方、ChatGPT 官方、Grok 官方三种账号登录（不需要 API 密钥），也支持填 API 密钥接入任意 Anthropic / OpenAI 兼容的服务商。这里保存的是服务商凭据、接口地址和模型映射，不是某条会话的执行运行时。会话内选择服务商、模型或推理强度时，只生成该会话的配置覆盖，不会替换这套共享配置。
 
 第一次用必须来这里，之后基本不用动。详细步骤见[连接模型服务](../start/models.md)。
 
@@ -47,7 +47,7 @@ order: 6
 
 ## 终端
 
-内嵌一个真实的宿主机 Shell，用来装插件、技能、MCP 这类需要命令行的东西。桌面端已经内置 `claude-haha` 命令，文档里写 `claude <参数>` 的地方都可以换成 `claude-haha <参数>`。
+内嵌一个真实的宿主机 Shell，用来装插件、技能、MCP 这类需要命令行的东西。桌面端已经内置 `echoflow-code` 命令，文档里写 `claude <参数>` 的地方都可以换成 `echoflow-code <参数>`。
 
 Windows 用户可以在这里指定启动 Shell（系统默认 / PowerShell 7 / Windows PowerShell / 命令提示符 / 自定义可执行文件），以及一个 Bash 路径——工具调用 `grep`、`sed` 这类 Unix 命令时会用到，通常指向 Git Bash。
 

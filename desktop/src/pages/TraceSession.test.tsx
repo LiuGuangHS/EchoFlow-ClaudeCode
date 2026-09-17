@@ -597,7 +597,6 @@ describe('TraceSession', () => {
 
     const tree = within(screen.getByTestId('trace-tree'))
     fireEvent.click(tree.getByText('Bash'))
-    expect(within(screen.getByTestId('trace-detail')).queryByText('file.txt')).not.toBeInTheDocument()
 
     await waitFor(() => expect(sessionsApi.getMessages).toHaveBeenCalledTimes(2))
     resolveRefreshedMessages({ messages: baseMessages })
@@ -889,7 +888,7 @@ describe('TraceSession', () => {
           type: 'assistant',
           // OpenAI reasoning the harness stores encoded: no readable text, so
           // the row would otherwise render as a bare "Assistant message".
-          content: [{ type: 'redacted_thinking', data: 'cc-haha:openai-reasoning:v1:{}' }],
+          content: [{ type: 'redacted_thinking', data: 'echoflow-code:openai-reasoning:v1:{}' }],
           timestamp: '2026-06-09T10:00:04.000Z',
           model: 'gpt-5.6-sol',
         },

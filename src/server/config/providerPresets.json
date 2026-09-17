@@ -14,6 +14,29 @@
     "websiteUrl": "https://www.anthropic.com/claude-code"
   },
   {
+    "id": "echoflowai",
+    "name": "清云 API",
+    "baseUrl": "https://api.echoflow.cn",
+    "apiFormat": "anthropic",
+    "defaultModels": {
+      "main": "claude-sonnet-4-6",
+      "haiku": "claude-haiku-4-5",
+      "sonnet": "claude-sonnet-4-6",
+      "opus": "claude-opus-4-7"
+    },
+    "needsApiKey": true,
+    "websiteUrl": "https://api.echoflow.cn/",
+    "apiKeyUrl": "https://api.echoflow.cn/register",
+    "promoText": "一站式接入 500+ 模型，支持 Claude / OpenAI 协议，访问高速稳定。新用户注册赠送试用。",
+    "featured": true,
+    "authStrategy": "auth_token",
+    "modelContextWindows": {
+      "claude-sonnet-4-6": 1000000,
+      "claude-haiku-4-5": 200000,
+      "claude-opus-4-7": 1000000
+    }
+  },
+  {
     "id": "deepseek",
     "name": "DeepSeek",
     "baseUrl": "https://api.deepseek.com/anthropic",
@@ -28,7 +51,12 @@
     "websiteUrl": "https://platform.deepseek.com",
     "apiKeyUrl": "https://platform.deepseek.com/api_keys",
     "authStrategy": "auth_token",
-    "defaultEnv": {},
+    "defaultEnv": {
+      "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1000000",
+      "ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES": "thinking,effort,adaptive_thinking,max_effort",
+      "ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES": "thinking,effort,adaptive_thinking,max_effort",
+      "ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES": "thinking,effort,adaptive_thinking,max_effort"
+    },
     "modelContextWindows": {
       "deepseek-v4-pro[1m]": 1000000,
       "deepseek-v4-pro": 1000000,
@@ -61,10 +89,10 @@
     },
     "needsApiKey": true,
     "websiteUrl": "https://open.bigmodel.cn",
-    "apiKeyUrl": "https://www.bigmodel.cn/invite?icode=d41B2qi8Z5xNwTGLNPPF3OZLO2QH3C0EBTSr%2BArzMw4%3D",
-    "promoText": "智谱 GLM 为 cc-haha 用户准备了专属邀请福利，使用此链接注册后可领取新用户权益。",
     "authStrategy": "auth_token",
-    "defaultEnv": {},
+    "defaultEnv": {
+      "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1000000"
+    },
     "modelContextWindows": {
       "glm-5.3[1m]": 1000000,
       "glm-5.3": 1000000,
@@ -93,7 +121,11 @@
     "websiteUrl": "https://www.kimi.com/code",
     "apiKeyUrl": "https://www.kimi.com/code/console",
     "authStrategy": "api_key",
-    "defaultEnv": {},
+    "defaultEnv": {
+      "ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES": "thinking,required_thinking,effort,max_effort",
+      "ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES": "thinking,required_thinking,effort,max_effort",
+      "ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES": "thinking,required_thinking,effort,max_effort"
+    },
     "modelContextWindows": {
       "k3": 262144,
       "kimi-for-coding": 262144,
@@ -127,182 +159,18 @@
     },
     "needsApiKey": true,
     "websiteUrl": "https://platform.minimaxi.com",
-    "apiKeyUrl": "https://platform.minimaxi.com/subscribe/token-plan?code=1TG2Cseab2&source=link",
     "authStrategy": "auth_token",
-    "defaultEnv": {},
+    "defaultEnv": {
+      "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1000000",
+      "ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES": "thinking,adaptive_thinking",
+      "ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES": "thinking,adaptive_thinking",
+      "ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES": "thinking,adaptive_thinking"
+    },
     "modelContextWindows": {
       "MiniMax-M3[1m]": 1000000,
       "MiniMax-M3": 1000000,
       "MiniMax-M2.7": 204800,
       "MiniMax-M2.7-highspeed": 204800
-    }
-  },
-  {
-    "id": "jiekouai",
-    "name": "接口AI",
-    "baseUrl": "https://api.jiekou.ai/anthropic",
-    "apiFormat": "anthropic",
-    "defaultModels": {
-      "main": "claude-sonnet-4-6",
-      "haiku": "claude-haiku-4-5-20251001",
-      "sonnet": "claude-sonnet-4-6",
-      "opus": "claude-opus-4-7"
-    },
-    "needsApiKey": true,
-    "websiteUrl": "https://jiekou.ai",
-    "deprecated": true,
-    "authStrategy": "auth_token",
-    "defaultEnv": {},
-    "modelContextWindows": {
-      "claude-sonnet-4-6": 1000000,
-      "claude-haiku-4-5-20251001": 200000,
-      "claude-haiku-4-5": 200000,
-      "claude-opus-4-7": 1000000
-    }
-  },
-  {
-    "id": "shengsuanyun",
-    "name": "胜算云",
-    "baseUrl": "https://router.shengsuanyun.com/api",
-    "apiFormat": "anthropic",
-    "defaultModels": {
-      "main": "anthropic/claude-sonnet-4.6",
-      "haiku": "anthropic/claude-haiku-4.5:thinking",
-      "sonnet": "anthropic/claude-sonnet-4.6",
-      "opus": "anthropic/claude-opus-4.7"
-    },
-    "needsApiKey": true,
-    "websiteUrl": "https://www.shengsuanyun.com",
-    "deprecated": true,
-    "authStrategy": "auth_token",
-    "defaultEnv": {
-      "API_TIMEOUT_MS": "3000000",
-      "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
-    },
-    "modelContextWindows": {
-      "anthropic/claude-sonnet-4.6": 1000000,
-      "anthropic/claude-haiku-4.5:thinking": 200000,
-      "anthropic/claude-opus-4.7": 1000000
-    }
-  },
-  {
-    "id": "xuanshuapi",
-    "name": "玄枢API",
-    "baseUrl": "https://www.xuanshuapi.com",
-    "apiFormat": "anthropic",
-    "defaultModels": {
-      "main": "claude-opus-5",
-      "haiku": "claude-haiku-4-5",
-      "sonnet": "claude-sonnet-5",
-      "opus": "claude-opus-5"
-    },
-    "needsApiKey": true,
-    "websiteUrl": "https://www.xuanshuapi.com",
-    "deprecated": true,
-    "authStrategy": "auth_token",
-    "defaultEnv": {
-      "CLAUDE_CODE_SUBAGENT_MODEL": "claude-sonnet-5"
-    },
-    "modelContextWindows": {
-      "claude-opus-5": 1000000,
-      "claude-fable-5": 1000000,
-      "claude-opus-4-8": 1000000,
-      "claude-sonnet-5": 1000000,
-      "claude-haiku-4-5": 200000,
-      "claude-haiku-4-5-20251001": 200000
-    }
-  },
-  {
-    "id": "fennoai",
-    "name": "FennoAI",
-    "baseUrl": "https://api.fenno.ai",
-    "apiFormat": "anthropic",
-    "defaultModels": {
-      "main": "",
-      "haiku": "",
-      "sonnet": "",
-      "opus": ""
-    },
-    "needsApiKey": true,
-    "websiteUrl": "https://api.fenno.ai",
-    "deprecated": true,
-    "authStrategy": "auth_token",
-    "defaultEnv": {},
-    "modelContextWindows": {
-      "claude-opus-5": 1000000,
-      "claude-opus-4-8": 1000000,
-      "claude-sonnet-5": 1000000,
-      "claude-sonnet-4-6": 200000,
-      "claude-haiku-4-5": 200000,
-      "claude-haiku-4-5-20251001": 200000
-    }
-  },
-  {
-    "id": "qiniuai",
-    "name": "七牛云 AI",
-    "baseUrl": "https://api.qnaigc.com",
-    "apiFormat": "anthropic",
-    "defaultModels": {
-      "main": "",
-      "haiku": "",
-      "sonnet": "",
-      "opus": ""
-    },
-    "needsApiKey": true,
-    "websiteUrl": "https://www.qiniu.com/ai/models",
-    "deprecated": true,
-    "authStrategy": "auth_token",
-    "defaultEnv": {},
-    "modelContextWindows": {
-      "deepseek/deepseek-v4-pro": 1000000,
-      "deepseek/deepseek-v4-flash": 1000000,
-      "z-ai/glm-5.2": 1000000,
-      "z-ai/glm-5.1": 200000,
-      "moonshotai/kimi-k3": 262144,
-      "moonshotai/kimi-k2.7-code": 262144,
-      "minimax/minimax-m3": 1000000
-    }
-  },
-  {
-    "id": "atlascloud",
-    "name": "Atlas Cloud",
-    "baseUrl": "https://api.atlascloud.ai",
-    "apiFormat": "openai_chat",
-    "defaultModels": {
-      "main": "deepseek-ai/deepseek-v4-pro",
-      "haiku": "deepseek-ai/deepseek-v4-pro",
-      "sonnet": "deepseek-ai/deepseek-v4-pro",
-      "opus": "deepseek-ai/deepseek-v4-pro"
-    },
-    "needsApiKey": true,
-    "websiteUrl": "https://www.atlascloud.ai",
-    "apiKeyUrl": "https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=cc-haha",
-    "featured": true,
-    "authStrategy": "api_key",
-    "modelContextWindows": {
-      "deepseek-ai/deepseek-v4-pro": 1000000
-    }
-  },
-  {
-    "id": "apismart",
-    "name": "ApiSmart",
-    "defaultImageGeneration": { "model": "doubao-seedream-5-0" },
-    "baseUrl": "https://gw.apismart.ai/v1",
-    "apiFormat": "openai_chat",
-    "defaultModels": {
-      "main": "deepseek-v4-pro-0813",
-      "haiku": "deepseek-v4-flash-0731-tem",
-      "sonnet": "deepseek-v4-pro-0813",
-      "opus": "deepseek-v4-pro-0813"
-    },
-    "needsApiKey": true,
-    "websiteUrl": "https://www.apismart.ai",
-    "apiKeyUrl": "https://www.apismart.ai",
-    "featured": true,
-    "authStrategy": "api_key",
-    "modelContextWindows": {
-      "deepseek-v4-pro-0813": 1000000,
-      "deepseek-v4-flash-0731-tem": 1000000
     }
   },
   {

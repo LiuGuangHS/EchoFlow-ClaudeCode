@@ -116,7 +116,7 @@ const okRepositoryContext = {
   state: 'ok' as const,
   workDir: '/repo',
   repoRoot: '/repo',
-  repoName: 'cc-haha',
+  repoName: 'echoflow-code',
   currentBranch: 'main',
   defaultBranch: 'main',
   headCommit: HEAD_COMMIT,
@@ -226,7 +226,7 @@ function ControlledHarness({
 
 /** Opens the pill's root menu. */
 async function openPill() {
-  const pill = await screen.findByRole('button', { name: 'Location: cc-haha / main' })
+  const pill = await screen.findByRole('button', { name: 'Location: echoflow-code / main' })
   fireEvent.click(pill)
   return pill
 }
@@ -273,9 +273,9 @@ describe('RepositoryLaunchControls', () => {
   it('collapses directory, branch and worktree into a single pill', async () => {
     renderControls()
 
-    const pill = await screen.findByRole('button', { name: 'Location: cc-haha / main' })
+    const pill = await screen.findByRole('button', { name: 'Location: echoflow-code / main' })
     expect(pill).toHaveAttribute('aria-haspopup', 'menu')
-    expect(within(pill).getByText('cc-haha')).toBeInTheDocument()
+    expect(within(pill).getByText('echoflow-code')).toBeInTheDocument()
     expect(within(pill).getByText('main')).toBeInTheDocument()
 
     // The three separate triggers are gone — that was the point of the change.
@@ -291,7 +291,7 @@ describe('RepositoryLaunchControls', () => {
       repoRoot: '/repo',
     })
     renderControls({ workDir })
-    await screen.findByRole('button', { name: 'Location: cc-haha / main' })
+    await screen.findByRole('button', { name: 'Location: echoflow-code / main' })
 
     act(() => {
       hydrateProjectDisplayNames(
@@ -308,7 +308,7 @@ describe('RepositoryLaunchControls', () => {
   it('truncates the branch from the start so its tail survives', async () => {
     renderControls()
 
-    const pill = await screen.findByRole('button', { name: 'Location: cc-haha / main' })
+    const pill = await screen.findByRole('button', { name: 'Location: echoflow-code / main' })
     // `dir="rtl"` is what moves the ellipsis to the front; without it a long
     // `feature/...` name would truncate down to its meaningless prefix.
     expect(within(pill).getByText('main').closest('[dir="rtl"]')).not.toBeNull()
@@ -317,7 +317,7 @@ describe('RepositoryLaunchControls', () => {
   it('marks the isolated worktree on the pill itself', async () => {
     renderControls({ useWorktree: true })
 
-    const pill = await screen.findByRole('button', { name: 'Location: cc-haha / main' })
+    const pill = await screen.findByRole('button', { name: 'Location: echoflow-code / main' })
     expect(within(pill).getByText('Isolated')).toBeInTheDocument()
   })
 
@@ -420,7 +420,7 @@ describe('RepositoryLaunchControls', () => {
   it('sizes the pill for the toolbar row when placed there', async () => {
     renderControls({ placement: 'toolbar' })
 
-    const pill = await screen.findByRole('button', { name: 'Location: cc-haha / main' })
+    const pill = await screen.findByRole('button', { name: 'Location: echoflow-code / main' })
     // 36px matches the other controls in the composer's toolbar; the standalone
     // line uses 40px for touch.
     expect(pill).toHaveClass('h-9')
@@ -430,7 +430,7 @@ describe('RepositoryLaunchControls', () => {
   it('sizes the pill for touch when it stands on its own line', async () => {
     renderControls({ placement: 'outside' })
 
-    const pill = await screen.findByRole('button', { name: 'Location: cc-haha / main' })
+    const pill = await screen.findByRole('button', { name: 'Location: echoflow-code / main' })
     expect(pill).toHaveClass('h-10')
   })
 
@@ -597,7 +597,7 @@ describe('RepositoryLaunchControls', () => {
       // Success closes the menu so the selected branch is immediately visible
       // on the pill instead of leaving the user inside an apparently unchanged
       // menu. The returned list is adopted without a second request.
-      const pill = await screen.findByRole('button', { name: 'Location: cc-haha / feature/new' })
+      const pill = await screen.findByRole('button', { name: 'Location: echoflow-code / feature/new' })
       expect(screen.queryByRole('menu', { name: 'Location' })).not.toBeInTheDocument()
       expect(apiMocks.getRepositoryContext).toHaveBeenCalledTimes(1)
       expect(uiMocks.addToast).toHaveBeenCalledWith({
@@ -696,7 +696,7 @@ describe('RepositoryLaunchControls', () => {
       try {
         root.render(<ExternalLaunchHarness />)
         const pill = await eventually(() => (
-          screen.getByRole('button', { name: 'Location: cc-haha / main' })
+          screen.getByRole('button', { name: 'Location: echoflow-code / main' })
         ))
         pill.click()
         const branchEntry = await eventually(() => screen.getByRole('menuitem', { name: /Branch/ }))
@@ -716,7 +716,7 @@ describe('RepositoryLaunchControls', () => {
         createButton.click()
 
         await eventually(() => (
-          screen.getByRole('button', { name: 'Location: cc-haha / qa/launch-picker' })
+          screen.getByRole('button', { name: 'Location: echoflow-code / qa/launch-picker' })
         ))
         await eventually(() => {
           if (screen.queryByRole('menu', { name: 'Location' })) {
@@ -732,7 +732,7 @@ describe('RepositoryLaunchControls', () => {
           repository: { branch: 'qa/launch-picker', worktree: false },
         })
         expect(useLaunchTarget.getState().branch).toBe('qa/launch-picker')
-        expect(screen.getByRole('button', { name: 'Location: cc-haha / qa/launch-picker' }))
+        expect(screen.getByRole('button', { name: 'Location: echoflow-code / qa/launch-picker' }))
           .toBeInTheDocument()
         expect(screen.queryByRole('menu', { name: 'Location' })).not.toBeInTheDocument()
       } finally {
@@ -755,7 +755,7 @@ describe('RepositoryLaunchControls', () => {
           message: 'Created and selected “feature/new”. An isolated worktree will be created from it when the session starts.',
         })
       })
-      expect(await screen.findByRole('button', { name: 'Location: cc-haha / feature/new' }))
+      expect(await screen.findByRole('button', { name: 'Location: echoflow-code / feature/new' }))
         .toBeInTheDocument()
       expect(screen.getByText('Isolated')).toBeInTheDocument()
     })
@@ -990,7 +990,7 @@ describe('RepositoryLaunchControls', () => {
       fireEvent.change(input, { target: { value: 'feature/new' } })
       fireEvent.click(screen.getByRole('button', { name: 'Create' }))
 
-      await screen.findByRole('button', { name: 'Location: cc-haha / feature/new' })
+      await screen.findByRole('button', { name: 'Location: echoflow-code / feature/new' })
       expect(screen.queryByRole('status', { name: 'Dirty worktree' })).not.toBeInTheDocument()
     })
 
@@ -1002,7 +1002,7 @@ describe('RepositoryLaunchControls', () => {
 
       renderControls({ branch: 'feature/new' })
 
-      await screen.findByRole('button', { name: 'Location: cc-haha / feature/new' })
+      await screen.findByRole('button', { name: 'Location: echoflow-code / feature/new' })
       expect(screen.queryByRole('status', { name: 'Dirty worktree' })).not.toBeInTheDocument()
     })
 

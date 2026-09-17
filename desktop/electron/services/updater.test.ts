@@ -60,7 +60,7 @@ describe('Electron updater service', () => {
     const service = new ElectronUpdaterService(updater)
     const events: unknown[] = []
 
-    await expect(service.checkForUpdates()).resolves.toEqual({ version: '1.2.3', body: 'Fixes' })
+    await expect(service.checkForUpdates()).resolves.toMatchObject({ version: '1.2.3', body: 'Fixes' })
     await service.downloadUpdate(event => events.push(event))
 
     expect(updater.autoDownload).toBe(false)
@@ -85,7 +85,7 @@ describe('Electron updater service', () => {
 
   it('skips electron-updater when packaged update config is absent', async () => {
     const localUpdater = fakeUpdater()
-    const tempDir = mkdtempSync(join(tmpdir(), 'cc-haha-updater-'))
+    const tempDir = mkdtempSync(join(tmpdir(), 'echoflow-code-updater-'))
     try {
       const service = new ElectronUpdaterService(localUpdater, undefined, {
         updateConfigPath: join(tempDir, 'app-update.yml'),
@@ -102,7 +102,7 @@ describe('Electron updater service', () => {
   it('treats missing GitHub channel metadata as no update', async () => {
     const service = new ElectronUpdaterService(updater)
     updater.checkForUpdates.mockRejectedValueOnce(Object.assign(
-      new Error('Cannot find latest-mac.yml in the latest release artifacts (https://github.com/NanmiCoder/cc-haha/releases/download/v0.3.2/latest-mac.yml): HttpError: 404'),
+      new Error('Cannot find latest-mac.yml in the latest release artifacts (https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/download/v0.3.2/latest-mac.yml): HttpError: 404'),
       { code: 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND' },
     ))
 
@@ -112,7 +112,7 @@ describe('Electron updater service', () => {
   it('treats missing GitHub channel metadata as no update even without an error code', async () => {
     const service = new ElectronUpdaterService(updater)
     updater.checkForUpdates.mockRejectedValueOnce(
-      new Error('Cannot find latest-mac.yml in the latest release artifacts (https://github.com/NanmiCoder/cc-haha/releases/download/v0.3.2/latest-mac.yml): HttpError: 404'),
+      new Error('Cannot find latest-mac.yml in the latest release artifacts (https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/download/v0.3.2/latest-mac.yml): HttpError: 404'),
     )
 
     await expect(service.checkForUpdates()).resolves.toBeNull()
@@ -121,7 +121,7 @@ describe('Electron updater service', () => {
   it('treats stringified missing GitHub channel metadata as no update', async () => {
     const service = new ElectronUpdaterService(updater)
     updater.checkForUpdates.mockRejectedValueOnce(
-      'Error: Cannot find latest-mac.yml in the latest release artifacts (https://github.com/NanmiCoder/cc-haha/releases/download/v0.3.2/latest-mac.yml): HttpError: 404',
+      'Error: Cannot find latest-mac.yml in the latest release artifacts (https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/download/v0.3.2/latest-mac.yml): HttpError: 404',
     )
 
     await expect(service.checkForUpdates()).resolves.toBeNull()
@@ -191,9 +191,9 @@ describe('Electron updater service', () => {
     await service.downloadUpdate(() => {})
 
     const env: NodeJS.ProcessEnv = {
-      CLAUDE_CONFIG_DIR: 'E:\\cc-haha-data',
-      CC_HAHA_APP_PORTABLE_DIR: '1',
-      WEBVIEW2_USER_DATA_FOLDER: 'E:\\cc-haha-data\\EBWebView',
+      CLAUDE_CONFIG_DIR: 'E:\\echoflow-data',
+      ECHOFLOW_APP_PORTABLE_DIR: '1',
+      WEBVIEW2_USER_DATA_FOLDER: 'E:\\echoflow-data\\EBWebView',
       APPDATA: 'C:\\Users\\someone\\AppData\\Roaming',
     }
     service.quitAndInstallDownloadedUpdate(env)

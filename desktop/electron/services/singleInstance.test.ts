@@ -10,7 +10,7 @@ describe('Electron single-instance service', () => {
     }
 
     expect(acquireSingleInstanceLock(app as never, () => null, {
-      CC_HAHA_ELECTRON_DISABLE_SINGLE_INSTANCE_LOCK: '1',
+      ECHOFLOW_ELECTRON_DISABLE_SINGLE_INSTANCE_LOCK: '1',
     })).toBe(true)
     expect(app.requestSingleInstanceLock).not.toHaveBeenCalled()
     expect(app.quit).not.toHaveBeenCalled()

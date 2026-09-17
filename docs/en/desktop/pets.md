@@ -109,9 +109,9 @@ The most common failure is a **white background**. A white-backed image becomes 
 
 ## Where they live, and deleting one
 
-Custom pet packages live in `${CLAUDE_CONFIG_DIR:-~/.claude}/cc-haha/pets`, and there's an **Open folder** button at the bottom of the settings page. Each pet gets its own subdirectory containing `pet.json` and its images.
+Custom pet packages live in `${CLAUDE_CONFIG_DIR:-~/.claude}/echoflow-code/pets`, and there's an **Open folder** button at the bottom of the settings page. Each pet gets its own subdirectory containing `pet.json` and its images.
 
-There's no delete button in the UI yet. To remove one: select a built-in pet first, click **Open folder**, delete only that pet's subdirectory, then click **Refresh** back in settings. Don't delete the whole `pets` or `cc-haha` directory.
+There's no delete button in the UI yet. To remove one: select a built-in pet first, click **Open folder**, delete only that pet's subdirectory, then click **Refresh** back in settings. Don't delete the whole `pets` or `echoflow-code` directory.
 
 A hand-edited `pet.json` or a swapped image may fail validation; invalid packages are skipped and reported in the settings page.
 

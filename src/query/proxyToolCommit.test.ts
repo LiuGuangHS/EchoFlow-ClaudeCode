@@ -10,7 +10,7 @@ import type { QueryParams } from '../query.js'
 const scenarios = ['chat-eof', 'chat-length', 'chat-error', 'chat-completed', 'responses-incomplete', 'responses-failed', 'responses-done-only'] as const
 type Scenario = typeof scenarios[number]
 const resultPrefix = 'PROXY_TOOL_COMMIT_RESULT:'
-const childScenario = process.env.CC_HAHA_PROXY_TOOL_COMMIT_SCENARIO
+const childScenario = process.env.ECHOFLOW_PROXY_TOOL_COMMIT_SCENARIO
 
 // Loading the real query graph in a shared Bun test process can cache runtime
 // modules before later mock.module tests install their fixtures. Keep every
@@ -139,7 +139,7 @@ for (const scenario of scenarios) {
     const child = Bun.spawn([process.execPath, '--no-env-file', 'test', fileURLToPath(import.meta.url)], {
       cwd: root,
       env: createSandboxedTestEnvironment(root, {
-        CC_HAHA_PROXY_TOOL_COMMIT_SCENARIO: scenario,
+        ECHOFLOW_PROXY_TOOL_COMMIT_SCENARIO: scenario,
         NODE_ENV: 'production',
         CLAUDE_CODE_SIMPLE: '1',
         CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',

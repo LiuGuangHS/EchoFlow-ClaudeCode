@@ -228,7 +228,7 @@ function isLocalTrustedRequest(
   // traffic can never carry that token — the OAuth success page the system
   // browser opens, `/preview-fs` links, a `curl` against the local API. Gating
   // loopback behind the token turned all of those into 401/403 (issue: "Missing
-  // H5 access token" on /api/haha-grok-oauth/success). Loopback stays trusted
+  // H5 access token" on /api/echoflow-grok-oauth/success). Loopback stays trusted
   // on its own; the Host, proxy-trace and Origin checks below are what keep a
   // remote client from claiming it.
   const clientAddress = context.clientAddress

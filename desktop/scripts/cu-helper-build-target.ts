@@ -28,8 +28,8 @@ export function createCuHelperBuildEnv(
   }
   // A helper-only override left in the developer's shell must never split the
   // helper from the host/sidecar certificate selected for this build.
-  if (env.CC_HAHA_SIGN_IDENTITY) {
-    env.CU_HELPER_IDENTITY = env.CC_HAHA_SIGN_IDENTITY
+  if (env.ECHOFLOW_SIGN_IDENTITY) {
+    env.CU_HELPER_IDENTITY = env.ECHOFLOW_SIGN_IDENTITY
   } else {
     delete env.CU_HELPER_IDENTITY
   }

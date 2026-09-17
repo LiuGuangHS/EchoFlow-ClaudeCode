@@ -9,7 +9,7 @@ order: 4
 
 Find your symptom below. Each entry is "what you see → why → what to do".
 
-First, one check: make sure you're on the latest stable build from [GitHub Releases](https://github.com/NanmiCoder/cc-haha/releases/latest). A lot of problems on older versions are already fixed.
+First, one check: make sure you're on the latest stable build from [GitHub Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest). A lot of problems on older versions are already fixed.
 
 ## Won't install
 
@@ -17,7 +17,7 @@ First, one check: make sure you're on the latest stable build from [GitHub Relea
 
 **Why** — The file isn't damaged. macOS quarantines downloads and refuses to launch anything without an Apple signature, but words the error as "damaged", which sends everyone down the wrong path.
 
-**What to do** — Download `install-macos-unsigned.sh` from the same Release, put it in the same folder as the DMG, and run `bash install-macos-unsigned.sh`. Or, if the app is already in Applications, run `xattr -dr com.apple.quarantine "/Applications/Claude Code Haha.app"`. Full details in [Download and install](./install.md).
+**What to do** — Download `install-macos-unsigned.sh` from the same Release, put it in the same folder as the DMG, and run `bash install-macos-unsigned.sh`. Or, if the app is already in Applications, run `xattr -dr com.apple.quarantine "/Applications/EchoFlow Code.app"`. Full details in [Download and install](./install.md).
 
 ### Windows shows a SmartScreen warning
 
@@ -33,7 +33,7 @@ First, one check: make sure you're on the latest stable build from [GitHub Relea
 
 1. Quit the main window, and quit the tray icon too.
 2. Give background processes a few seconds to exit.
-3. Still stuck? End any remaining Claude Code Haha processes in Task Manager.
+3. Still stuck? End any remaining EchoFlow Code processes in Task Manager.
 4. Run the installer again. **Don't** use "Run as administrator", and **don't** manually delete data from the old install directory.
 
 ### The Linux AppImage does nothing when I run it
@@ -58,7 +58,7 @@ First, one check: make sure you're on the latest stable build from [GitHub Relea
 
 1. Fully quit the app (not just close the window) and reopen it.
 2. Still blank? Reinstall the same version over the top. Sessions and configuration live under `~/.claude`, not in the application directory, so nothing is lost.
-3. Still blank after that, it's failing during startup. File an issue at [GitHub Issues](https://github.com/NanmiCoder/cc-haha/issues) with your OS version, CPU architecture, and installer filename.
+3. Still blank after that, it's failing during startup. File an issue at [GitHub Issues](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/issues) with your OS version, CPU architecture, and installer filename.
 
 :::warning
 Never delete `~/.claude` while troubleshooting. Your sessions, provider configuration, skills, agents, and memory are all in there, and they don't come back.
@@ -191,7 +191,7 @@ Scanning only binds the platform account; it doesn't authorize everyone who can 
 2. Did the Python 3 check pass? If not, install it, or point "Python Interpreter Path" at one you already have — conda and pyenv both work.
 3. Are the virtual environment and dependencies ready and installed? If not, click "Install Environment".
 4. On macOS, both "Accessibility Permission" and "Screen Recording Permission" must show as granted. Grant them under System Settings → Privacy & Security.
-5. **Restart Claude Code Haha after granting them.** System permissions don't apply to an already-running process.
+5. **Restart EchoFlow Code after granting them.** System permissions don't apply to an already-running process.
 6. Is the app you want to control listed under "Authorized Apps"?
 
 Full details in [Computer Use](../desktop/computer-use.md).
@@ -201,7 +201,7 @@ Full details in [Computer Use](../desktop/computer-use.md).
 Go to Settings → Diagnostics:
 
 1. Click "Copy issue report" for a structured snapshot of the current state.
-2. Search [GitHub Issues](https://github.com/NanmiCoder/cc-haha/issues) for the same problem before opening a new one.
+2. Search [GitHub Issues](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/issues) for the same problem before opening a new one.
 3. If the report alone isn't enough to diagnose it, click "Export Bundle" and attach that too.
 
 Including these makes a fix much faster: app version, OS and CPU architecture, installer filename, which kind of provider you're using (**never paste an API key**), the shortest reproduction steps, the full error text, and whether the problem is in the desktop app, on the phone, or in the CLI.

@@ -259,18 +259,29 @@ async function checkLocaleRedirect() {
   }
 
   // 少了这道判断，/en/start 这类地址也会被卷进分流。
-  if (!shellSource.includes("window.location.pathname.replace(/\\/+$/, '') !== ''")) {
+  if (!shellSource.includes("window.location.pathname.replace(/\\/+$/, '') !== base")) {
     problems.push('index.html: 内联语言脚本缺少「只在根路径生效」的判断')
   }
 
   return problems
 }
 
+async function checkCustomDomainBuildBase() {
+  const cnamePath = path.join(paths.docsDir, 'public', 'CNAME')
+  if (!await exists(cnamePath)) return []
+
+  const workflowPath = path.join(paths.repoDir, '.github', 'workflows', 'deploy-docs.yml')
+  const workflow = await fs.readFile(workflowPath, 'utf8')
+  return /DOCS_BASE:\s*\/\s*(?:\r?\n|$)/.test(workflow)
+    ? []
+    : ['.github/workflows/deploy-docs.yml: custom-domain deployment must set DOCS_BASE: /']
+}
+
 async function main() {
   const { records } = await generateDocsManifest()
   const readmes = await Promise.all([
-    { locale: 'en', sourcePath: 'README.en.md' },
-    { locale: 'zh', sourcePath: 'README.md' }
+    { locale: 'en', sourcePath: 'README.md' },
+    { locale: 'zh', sourcePath: 'README.zh-CN.md' }
   ].map(async (readme) => {
     const absolutePath = path.join(paths.repoDir, readme.sourcePath)
     return {
@@ -286,7 +297,10 @@ async function main() {
     '/en/docs',
     ...records.map((record) => record.path),
   ])
-  const problems = [...await checkLocaleRedirect()]
+  const problems = [
+    ...await checkLocaleRedirect(),
+    ...await checkCustomDomainBuildBase(),
+  ]
   problems.push(...await checkReadmeImages(readmes))
   problems.push(...checkAppScreenshotReferences([
     ...readmes,

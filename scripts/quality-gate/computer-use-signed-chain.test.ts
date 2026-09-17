@@ -9,9 +9,9 @@ test('default signing plans use only the explicitly scoped private keychain', ()
   expect(plan.mode).toBe('temporary')
   expect(plan.requiresPackagedInstall).toBe(false)
   expect(plan.setupCommands('password').every(command => command.args.includes(keychain))).toBe(true)
-  expect(plan.signCommand('/tmp/fixture/helper.app', 'dev.cchaha.cu-helper')).toEqual({
+  expect(plan.signCommand('/tmp/fixture/helper.app', 'dev.echoflow.cu-helper')).toEqual({
     command: path.join(directory, 'private-signer'),
-    args: [keychain, '/tmp/fixture/helper.app', 'dev.cchaha.cu-helper'],
+    args: [keychain, '/tmp/fixture/helper.app', 'dev.echoflow.cu-helper'],
   })
   expect(() => planFixtureSigning({ directory: 'relative' })).toThrow()
 })
@@ -46,7 +46,7 @@ test('an authorized signing keychain is explicit even when the test HOME is isol
   expect(parseSignedChainArgs(['--signing-identity', signingIdentity, '--signing-keychain', signingKeychain, 'report.json']))
     .toEqual({ signingIdentity, signingKeychain, output: 'report.json' })
   const plan = planFixtureSigning({ directory: '/tmp/fixture', signingIdentity, signingKeychain })
-  const command = plan.signCommand('/tmp/fixture/helper.app', 'dev.cchaha.cu-helper')
+  const command = plan.signCommand('/tmp/fixture/helper.app', 'dev.echoflow.cu-helper')
   expect(command.args).toContain('--keychain')
   expect(command.args[command.args.indexOf('--keychain') + 1]).toBe(signingKeychain)
   expect(plan.setupCommands('unused')).toEqual([])

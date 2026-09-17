@@ -371,7 +371,7 @@ export function buildRootCoverageCommand(outputDir: string, serverFiles: string[
     '--coverage-reporter=lcov',
     '--coverage-reporter=text',
     '--coverage-dir',
-    join(outputDir, 'root-server'),
+    join(outputDir, 'root-server').replace(/\\/g, '/'),
     ...serverFiles.map(rootBunTestFilter),
   ]
 }
@@ -450,7 +450,7 @@ export function hasUsableCoverageSummary(summary: CoverageSummary) {
 
 export async function runCommand(command: string[], cwd: string, logPath: string) {
   const started = Date.now()
-  const sandboxHome = mkdtempSync(join(tmpdir(), 'cc-haha-coverage-test-'))
+  const sandboxHome = mkdtempSync(join(tmpdir(), 'echoflow-code-coverage-test-'))
   const header = `$ ${command.join(' ')}\n`
   const capturePath = join(sandboxHome, 'coverage-output.log')
   let logFd: number | undefined

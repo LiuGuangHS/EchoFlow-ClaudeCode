@@ -21,7 +21,7 @@ afterEach(async () => {
 
 describe('plugin skill display names', () => {
   test('keeps the plugin prefix when frontmatter overrides the skill name', async () => {
-    pluginDir = await mkdtemp(join(tmpdir(), 'cc-haha-plugin-skill-'))
+    pluginDir = await mkdtemp(join(tmpdir(), 'echoflow-code-plugin-skill-'))
     await mkdir(join(pluginDir, '.claude-plugin'), { recursive: true })
     await mkdir(join(pluginDir, 'skills', 'review'), { recursive: true })
     await writeFile(
@@ -56,7 +56,7 @@ describe('plugin skill display names', () => {
   })
 
   test('keeps the complete prefix when the plugin name contains a colon', async () => {
-    pluginDir = await mkdtemp(join(tmpdir(), 'cc-haha-plugin-skill-'))
+    pluginDir = await mkdtemp(join(tmpdir(), 'echoflow-code-plugin-skill-'))
     await mkdir(join(pluginDir, '.claude-plugin'), { recursive: true })
     await mkdir(join(pluginDir, 'skills', 'review'), { recursive: true })
     await writeFile(

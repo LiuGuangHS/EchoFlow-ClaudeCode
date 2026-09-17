@@ -3,7 +3,7 @@ import ImageIO
 import UniformTypeIdentifiers
 import XCTest
 
-@testable import cc_haha_computer_use
+@testable import echoflow_code_computer_use
 
 final class VirtualCursorResourceTests: XCTestCase {
     @MainActor

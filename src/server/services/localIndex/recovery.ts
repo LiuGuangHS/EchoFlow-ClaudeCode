@@ -85,7 +85,7 @@ export function isConfirmedLocalIndexCorruption(error: unknown): boolean {
 }
 
 function assertManagedDatabasePath(scope: string, databasePath: string): void {
-  const expected = resolve(scope, 'cc-haha', 'db', 'index-v1.sqlite')
+  const expected = resolve(scope, 'echoflow-code', 'db', 'index-v1.sqlite')
   if (resolve(databasePath) !== expected) {
     throw new LocalIndexRecoveryError(LOCAL_INDEX_UNSAFE_PATH)
   }
@@ -109,8 +109,8 @@ async function prepareManagedBackupsRoot(
 ): Promise<string> {
   const normalizedScope = resolve(scope)
   await mkdir(normalizedScope, { recursive: true })
-  const ccHahaDir = join(normalizedScope, 'cc-haha')
-  const databaseDir = join(ccHahaDir, 'db')
+  const echoFlowDir = join(normalizedScope, 'echoflow-code')
+  const databaseDir = join(echoFlowDir, 'db')
   const backupsRoot = join(databaseDir, 'backups')
   if (dirname(resolve(databasePath)) !== databaseDir) {
     throw new LocalIndexRecoveryError(LOCAL_INDEX_UNSAFE_PATH)
@@ -118,7 +118,7 @@ async function prepareManagedBackupsRoot(
   // The configured scope is the trust boundary. Managed descendants must be
   // real directories so a rebuild can never follow a redirected database or
   // backup ancestor outside that boundary.
-  await ensureManagedDirectory(ccHahaDir)
+  await ensureManagedDirectory(echoFlowDir)
   await ensureManagedDirectory(databaseDir)
   await ensureManagedDirectory(backupsRoot)
   return backupsRoot

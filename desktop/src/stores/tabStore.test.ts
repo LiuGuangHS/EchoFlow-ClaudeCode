@@ -35,11 +35,11 @@ function historicalSummary(id = 'historical-session') {
 
 describe('tabStore', () => {
   it('migrates an untyped connector tab identity and restores it without a server session', async () => {
-    localStorage.setItem('cc-haha-open-tabs', JSON.stringify({ openTabs: [{ sessionId: CONNECTORS_TAB_ID, title: 'Connectors' }], activeTabId: CONNECTORS_TAB_ID }))
+    localStorage.setItem('echoflow-code-open-tabs', JSON.stringify({ openTabs: [{ sessionId: CONNECTORS_TAB_ID, title: 'Connectors' }], activeTabId: CONNECTORS_TAB_ID }))
     await useTabStore.getState().restoreTabs()
     expect(useTabStore.getState().tabs[0]).toMatchObject({ sessionId: MARKET_TAB_ID, type: 'market' })
     useTabStore.getState().saveTabs()
-    expect(JSON.parse(localStorage.getItem('cc-haha-open-tabs')!).openTabs[0].type).toBe('market')
+    expect(JSON.parse(localStorage.getItem('echoflow-code-open-tabs')!).openTabs[0].type).toBe('market')
   })
 
   beforeEach(() => {
@@ -156,7 +156,6 @@ describe('tabStore', () => {
   })
 
 
-
   it('keeps legacy workbench descriptors ephemeral and restores their active source', () => {
     useTabStore.setState({
       tabs: [
@@ -166,7 +165,7 @@ describe('tabStore', () => {
       activeTabId: '__workbench__session-a',
     })
     useTabStore.getState().saveTabs()
-    expect(JSON.parse(localStorage.getItem('cc-haha-open-tabs')!)).toEqual({
+    expect(JSON.parse(localStorage.getItem('echoflow-code-open-tabs')!)).toEqual({
       openTabs: [{ sessionId: 'session-a', title: 'Task A', type: 'session' }], activeTabId: 'session-a',
     })
   })
@@ -189,7 +188,7 @@ describe('tabStore', () => {
       },
     ])
     expect(useTabStore.getState().activeTabId).toBe('__subagent__session-1__tool-1')
-    expect(localStorage.getItem('cc-haha-open-tabs')).toBe(JSON.stringify({
+    expect(localStorage.getItem('echoflow-code-open-tabs')).toBe(JSON.stringify({
       openTabs: [],
       activeTabId: null,
     }))
@@ -212,7 +211,7 @@ describe('tabStore', () => {
       teamMemberAgentId: 'reviewer@review-team',
       returnTabId: workbenchTabId,
     })
-    expect(localStorage.getItem('cc-haha-open-tabs')).toBe(JSON.stringify({
+    expect(localStorage.getItem('echoflow-code-open-tabs')).toBe(JSON.stringify({
       openTabs: [{ sessionId: 'session-1', title: 'Lead session', type: 'session' }],
       activeTabId: 'session-1',
     }))
@@ -251,7 +250,7 @@ describe('tabStore', () => {
     vi.mocked(sessionsApi.list).mockReturnValueOnce(new Promise((resolve) => {
       resolveSessions = resolve
     }) as never)
-    localStorage.setItem('cc-haha-open-tabs', JSON.stringify({
+    localStorage.setItem('echoflow-code-open-tabs', JSON.stringify({
       openTabs: [{ sessionId: 'session-1', title: 'Old Session', type: 'session' }],
       activeTabId: 'session-1',
     }))
@@ -273,7 +272,7 @@ describe('tabStore', () => {
   })
 
   it('restores the market tab without requiring a server session', async () => {
-    localStorage.setItem('cc-haha-open-tabs', JSON.stringify({
+    localStorage.setItem('echoflow-code-open-tabs', JSON.stringify({
       openTabs: [{ sessionId: MARKET_TAB_ID, title: 'Market', type: 'market' }],
       activeTabId: MARKET_TAB_ID,
     }))
@@ -294,7 +293,7 @@ describe('tabStore', () => {
   it('restores historical session and trace tabs by id with metadata ready before activation', async () => {
     const historical = historicalSummary()
     const traceId = `__trace__${historical.id}`
-    localStorage.setItem('cc-haha-open-tabs', JSON.stringify({
+    localStorage.setItem('echoflow-code-open-tabs', JSON.stringify({
       openTabs: [
         { sessionId: historical.id, title: 'Saved old title', type: 'session' },
         { sessionId: traceId, title: 'Saved trace title', type: 'trace', traceSessionId: historical.id },
@@ -340,7 +339,7 @@ describe('tabStore', () => {
 
   it('drops only tabs whose individual historical summary returns 404', async () => {
     const available = historicalSummary('history-available')
-    localStorage.setItem('cc-haha-open-tabs', JSON.stringify({
+    localStorage.setItem('echoflow-code-open-tabs', JSON.stringify({
       openTabs: [
         { sessionId: 'history-missing', title: 'Deleted session', type: 'session' },
         { sessionId: available.id, title: 'Available session', type: 'session' },
@@ -363,12 +362,12 @@ describe('tabStore', () => {
       openTabs: [{ sessionId: 'history-offline', title: 'Saved session', type: 'session' }],
       activeTabId: 'history-offline',
     })
-    localStorage.setItem('cc-haha-open-tabs', persisted)
+    localStorage.setItem('echoflow-code-open-tabs', persisted)
     vi.mocked(sessionsApi.getSummary).mockRejectedValueOnce(new ApiError(503, 'Server unavailable'))
 
     await useTabStore.getState().restoreTabs()
 
-    expect(localStorage.getItem('cc-haha-open-tabs')).toBe(persisted)
+    expect(localStorage.getItem('echoflow-code-open-tabs')).toBe(persisted)
     expect(useSessionStore.getState().sessions).toEqual([])
   })
 
@@ -378,7 +377,7 @@ describe('tabStore', () => {
     vi.mocked(sessionsApi.getSummary).mockReturnValueOnce(new Promise((resolve) => {
       resolveSummary = resolve
     }))
-    localStorage.setItem('cc-haha-open-tabs', JSON.stringify({
+    localStorage.setItem('echoflow-code-open-tabs', JSON.stringify({
       openTabs: [{ sessionId: historical.id, title: 'Saved session', type: 'session' }],
       activeTabId: historical.id,
     }))
@@ -396,7 +395,7 @@ describe('tabStore', () => {
 
   it('bounds simultaneous historical summary lookups while restoring several tabs', async () => {
     const ids = ['history-a', 'history-b', 'history-c']
-    localStorage.setItem('cc-haha-open-tabs', JSON.stringify({
+    localStorage.setItem('echoflow-code-open-tabs', JSON.stringify({
       openTabs: ids.map((sessionId) => ({ sessionId, title: sessionId, type: 'session' })),
       activeTabId: ids[0],
     }))
@@ -437,7 +436,7 @@ describe('tabStore', () => {
         runtimeProviderId: 'provider-after',
         runtimeModelId: 'model-after',
       }
-      localStorage.setItem('cc-haha-open-tabs', JSON.stringify({
+      localStorage.setItem('echoflow-code-open-tabs', JSON.stringify({
         openTabs: [
           { sessionId: savedRecent.id, title: savedRecent.title, type: 'session' },
           { sessionId: historical.id, title: historical.title, type: 'session' },
@@ -478,7 +477,7 @@ describe('tabStore', () => {
       modelId: 'gpt-5.4',
       effortLevel: 'max',
     })
-    localStorage.setItem('cc-haha-open-tabs', JSON.stringify({
+    localStorage.setItem('echoflow-code-open-tabs', JSON.stringify({
       openTabs: [{ sessionId: 'session-1', title: 'Runtime session', type: 'session' }],
       activeTabId: 'session-1',
     }))
@@ -503,7 +502,7 @@ describe('tabStore', () => {
   })
 
   it('canonicalizes mismatched persisted special tab ids and types during restore', async () => {
-    localStorage.setItem('cc-haha-open-tabs', JSON.stringify({
+    localStorage.setItem('echoflow-code-open-tabs', JSON.stringify({
       openTabs: [
         { sessionId: SETTINGS_TAB_ID, title: 'Settings', type: 'market' },
         { sessionId: MARKET_TAB_ID, title: 'Market', type: 'settings' },
@@ -543,7 +542,7 @@ it('maps both legacy market entry points to one canonical tab', () => {
 it('restores duplicate legacy markets as one tab and retains their active selection', async () => {
   useTabStore.setState({ tabs: [], activeTabId: null })
   vi.mocked(sessionsApi.list).mockResolvedValue({ sessions: [] } as never)
-  localStorage.setItem('cc-haha-open-tabs', JSON.stringify({ openTabs: [
+  localStorage.setItem('echoflow-code-open-tabs', JSON.stringify({ openTabs: [
     { sessionId: SETTINGS_TAB_ID, title: 'Settings', type: 'settings' },
     { sessionId: MARKET_TAB_ID, title: 'Skills', type: 'market' },
     { sessionId: CONNECTORS_TAB_ID, title: 'Connectors', type: 'connectors' },

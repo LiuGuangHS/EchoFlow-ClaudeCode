@@ -106,14 +106,14 @@ const TEAMMATE_ENV_VARS = [
   // any nested subagents it launches.
   'CLAUDE_CODE_SUBAGENT_MODEL',
   'CLAUDE_CODE_EFFORT_LEVEL',
-  'CC_HAHA_OPENAI_REASONING_EFFORT',
+  'ECHOFLOW_OPENAI_REASONING_EFFORT',
   // Request capability/toggle env is consulted dynamically by the API layer.
   // Forward it so a tmux teammate behaves like an in-process teammate.
   'CLAUDE_CODE_ALWAYS_ENABLE_EFFORT',
   'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS',
   'CLAUDE_CODE_DISABLE_THINKING',
   'CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING',
-  'CC_HAHA_SEND_DISABLED_THINKING',
+  'ECHOFLOW_SEND_DISABLED_THINKING',
   'DISABLE_INTERLEAVED_THINKING',
   // Provider role mappings and their declared capabilities are needed when a
   // selected Agent uses a family alias in a separate tmux process.

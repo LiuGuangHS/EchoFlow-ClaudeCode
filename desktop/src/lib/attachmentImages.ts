@@ -18,7 +18,7 @@ export function isInlineImagePath(pathOrName: string | undefined): boolean {
 
 /** Host-managed ImageGen results already render through their dedicated result card. */
 export function isManagedGeneratedImagePath(filePath: string): boolean {
-  return filePath.replaceAll('\\', '/').includes('/.claude/cc-haha/generated-images/')
+  return filePath.replaceAll('\\', '/').includes('/.claude/echoflow-code/generated-images/')
 }
 
 /** Serves a local absolute image path through the local server. */

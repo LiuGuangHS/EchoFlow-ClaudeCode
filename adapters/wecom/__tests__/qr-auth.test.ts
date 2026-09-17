@@ -37,7 +37,7 @@ describe('startWecomQrLogin', () => {
     const started = await startWecomQrLogin({ fetchImpl: impl, sessionKey: 'k1' })
 
     expect(calls[0]!.url.pathname).toBe('/ai/qc/generate')
-    expect(calls[0]!.url.searchParams.get('source')).toBe('claude-code-haha')
+    expect(calls[0]!.url.searchParams.get('source')).toBe('echoflow-code')
     expect(['1', '2', '3']).toContain(calls[0]!.url.searchParams.get('plat'))
     expect(started.verificationUrl).toBe(GENERATED.data.auth_url)
     expect(started.expiresAt).toBeGreaterThan(Date.now())

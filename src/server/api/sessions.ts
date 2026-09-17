@@ -1207,7 +1207,7 @@ function sameResolvedPath(left: string | null | undefined, right: string | null 
 }
 
 function getGitInfoCommandTimeoutMs(): number {
-  const raw = process.env.CC_HAHA_GIT_INFO_TIMEOUT_MS
+  const raw = process.env.ECHOFLOW_GIT_INFO_TIMEOUT_MS
   if (!raw) return DEFAULT_GIT_INFO_COMMAND_TIMEOUT_MS
   const parsed = Number(raw)
   return Number.isFinite(parsed) && parsed > 0

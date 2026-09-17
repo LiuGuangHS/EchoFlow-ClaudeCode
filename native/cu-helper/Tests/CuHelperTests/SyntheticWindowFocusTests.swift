@@ -2,7 +2,7 @@ import AppKit
 import CoreGraphics
 import XCTest
 
-@testable import cc_haha_computer_use
+@testable import echoflow_code_computer_use
 
 /// Construct real events without posting them. Delivery and foreground
 /// preservation remain real-machine acceptance requirements.

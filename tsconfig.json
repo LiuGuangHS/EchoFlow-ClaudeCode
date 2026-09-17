@@ -1,4 +1,12 @@
 {
+  "exclude": [
+    "adapters",
+    "artifacts",
+    "desktop",
+    "mobile",
+    "site",
+    "node_modules"
+  ],
   "compilerOptions": {
     "target": "ESNext",
     "module": "ESNext",

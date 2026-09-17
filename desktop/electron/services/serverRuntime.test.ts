@@ -47,6 +47,8 @@ class FakeSidecarChild extends EventEmitter {
 
 function createRuntime(options: {
   appRoot?: string
+  appVersion?: string
+  claudeCodeRuntimeConfigPath?: string
   diagnosticsFile?: string
   env?: NodeJS.ProcessEnv
   now?: () => number
@@ -57,6 +59,8 @@ function createRuntime(options: {
   return new ElectronServerRuntime({
     desktopRoot: '/isolated/desktop',
     appRoot: options.appRoot,
+    appVersion: options.appVersion,
+    claudeCodeRuntimeConfigPath: options.claudeCodeRuntimeConfigPath,
     diagnosticsFile: options.diagnosticsFile,
     env: { CLAUDE_CONFIG_DIR: isolatedConfigDir, ...options.env },
     resolveSystemProxy: options.resolveSystemProxy,
@@ -92,7 +96,7 @@ async function waitForMockCalls(mock: ReturnType<typeof vi.fn>, count: number): 
 
 describe('ElectronServerRuntime', () => {
   beforeEach(() => {
-    isolatedConfigDir = mkdtempSync(path.join(tmpdir(), 'cc-haha-electron-runtime-'))
+    isolatedConfigDir = mkdtempSync(path.join(tmpdir(), 'echoflow-code-electron-runtime-'))
     sidecarMocks.nextPort = 49321
     sidecarMocks.spawnError = null
     sidecarMocks.serverChildren.length = 0
@@ -146,11 +150,35 @@ describe('ElectronServerRuntime', () => {
 
     await runtime.startServer()
 
-    expect(sidecarMocks.serverPlans[0]!.env.CC_HAHA_ELECTRON_DIAGNOSTICS_FILE)
+    expect(sidecarMocks.serverPlans[0]!.env.ECHOFLOW_ELECTRON_DIAGNOSTICS_FILE)
       .toBe('/isolated/user-data/diagnostics/electron-host.log')
     expect(sidecarMocks.serverPlans[0]!.env.CLAUDE_CONFIG_DIR).toBe(isolatedConfigDir)
     expect(sidecarMocks.serverPlans[0]!.env.CLAUDE_CONFIG_DIR)
       .not.toBe(path.join(homedir(), '.claude'))
+  })
+
+  it('passes the desktop application version to the server sidecar', async () => {
+    const runtime = createRuntime({ appVersion: '0.5.2' })
+
+    await runtime.startServer()
+
+    expect(sidecarMocks.serverPlans[0]!.env.APP_VERSION).toBe('0.5.2')
+  })
+
+  it('passes the private Claude Code runtime config only to the server sidecar', async () => {
+    const runtime = createRuntime({
+      claudeCodeRuntimeConfigPath: '/isolated/user-data/claude-code-runtime.json',
+    })
+
+    await runtime.startServer()
+
+    expect(sidecarMocks.serverPlans[0]!.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG)
+      .toBe('/isolated/user-data/claude-code-runtime.json')
+    for (const plan of sidecarMocks.spawnSidecar.mock.calls
+      .map(([plan]) => plan)
+      .filter(plan => plan.args[0] === 'adapters')) {
+      expect(plan.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG).toBeUndefined()
+    }
   })
 
   it('keeps the pet capability independent and exposes it only to the server sidecar', async () => {
@@ -163,13 +191,13 @@ describe('ElectronServerRuntime', () => {
     expect(localToken.length).toBeGreaterThanOrEqual(32)
     expect(petToken.length).toBeGreaterThanOrEqual(32)
     expect(petToken).not.toBe(localToken)
-    expect(sidecarMocks.serverPlans[0]!.env.CC_HAHA_LOCAL_ACCESS_TOKEN).toBe(localToken)
-    expect(sidecarMocks.serverPlans[0]!.env.CC_HAHA_PET_ACCESS_TOKEN).toBe(petToken)
+    expect(sidecarMocks.serverPlans[0]!.env.ECHOFLOW_LOCAL_ACCESS_TOKEN).toBe(localToken)
+    expect(sidecarMocks.serverPlans[0]!.env.ECHOFLOW_PET_ACCESS_TOKEN).toBe(petToken)
     for (const adapter of sidecarMocks.spawnSidecar.mock.calls
       .map(([plan]) => plan)
       .filter(plan => plan.args[0] === 'adapters')) {
-      expect(adapter.env.CC_HAHA_LOCAL_ACCESS_TOKEN).toBe(localToken)
-      expect(adapter.env.CC_HAHA_PET_ACCESS_TOKEN).toBeUndefined()
+      expect(adapter.env.ECHOFLOW_LOCAL_ACCESS_TOKEN).toBe(localToken)
+      expect(adapter.env.ECHOFLOW_PET_ACCESS_TOKEN).toBeUndefined()
     }
   })
 
@@ -192,7 +220,7 @@ describe('ElectronServerRuntime', () => {
     await runtime.startServer()
 
     const serverEnv = sidecarMocks.serverPlans[0]!.env
-    expect(serverEnv.CC_HAHA_SYSTEM_PROXY_URL).toBe('http://127.0.0.1:49123')
+    expect(serverEnv.ECHOFLOW_SYSTEM_PROXY_URL).toBe('http://127.0.0.1:49123')
     expect(serverEnv.HTTP_PROXY).toBeUndefined()
     expect(serverEnv.HTTPS_PROXY).toBeUndefined()
     expect(serverEnv.ALL_PROXY).toBeUndefined()
@@ -237,7 +265,7 @@ describe('ElectronServerRuntime', () => {
   })
 
   it('waits for real server shutdown cleanup before the first restart attempt', async () => {
-    const root = mkdtempSync(path.join(tmpdir(), 'cc-haha-electron-restart-'))
+    const root = mkdtempSync(path.join(tmpdir(), 'echoflow-code-electron-restart-'))
     const activeTurn = path.join(root, 'active-turn')
     const children: ChildProcess[] = []
     const readyFiles: string[] = []
@@ -336,7 +364,7 @@ describe('ElectronServerRuntime', () => {
     expect(serverEnv.HTTP_PROXY).toBeUndefined()
     expect(serverEnv.HTTPS_PROXY).toBeUndefined()
     expect(serverEnv.ALL_PROXY).toBeUndefined()
-    expect(serverEnv.CC_HAHA_SYSTEM_PROXY_URL).toBeUndefined()
+    expect(serverEnv.ECHOFLOW_SYSTEM_PROXY_URL).toBeUndefined()
     expect(serverEnv[SYSTEM_PROXY_ERROR_ENV]).toContain('System proxy bridge unavailable: failed via')
     expect(serverEnv[SYSTEM_PROXY_ERROR_ENV]).not.toContain('password')
     expect(serverEnv[SYSTEM_PROXY_ERROR_ENV]).not.toContain('sk-secret')

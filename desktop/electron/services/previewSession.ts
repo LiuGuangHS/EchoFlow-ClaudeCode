@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Session } from 'electron'
 
-const PREVIEW_SESSION_PARTITION_PREFIX = 'cc-haha-preview-'
+const PREVIEW_SESSION_PARTITION_PREFIX = 'echoflow-code-preview-'
 
 export function createPreviewSessionPartition(): string {
   return `${PREVIEW_SESSION_PARTITION_PREFIX}${randomUUID()}`

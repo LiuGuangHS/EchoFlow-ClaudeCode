@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Release script for Claude Code Haha Desktop
+ * Release script for EchoFlow Code Desktop
  *
  * Usage:
  *   bun run scripts/release.ts patch       # 0.1.0 → 0.1.1
@@ -20,6 +20,18 @@ const VERSION_FILES = [
     path: path.join(root, 'desktop/package.json'),
     update(content: string, version: string) {
       return content.replace(/"version":\s*"[^"]*"/, `"version": "${version}"`)
+    },
+  },
+  {
+    path: path.join(root, 'mobile/package.json'),
+    update(content: string, version: string) {
+      return content.replace(/"version":\s*"[^"]*"/, `"version": "${version}"`)
+    },
+  },
+  {
+    path: path.join(root, 'mobile/app.json'),
+    update(content: string, version: string) {
+      return content.replace(/("expo"\s*:\s*\{[\s\S]*?"version":\s*)"[^"]*"/, `$1"${version}"`)
     },
   },
 ]
@@ -67,6 +79,19 @@ async function run(cmd: string[], cwd = root) {
   return stdout.trim()
 }
 
+function updateVersionFiles(next: string): string[] {
+  const changed: string[] = []
+  for (const file of VERSION_FILES) {
+    const content = readFileSync(file.path, 'utf-8')
+    const updated = file.update(content, next)
+    if (updated === content) continue
+    writeFileSync(file.path, updated)
+    changed.push(file.path)
+    console.log(`  Updated: ${path.relative(root, file.path)}`)
+  }
+  return changed
+}
+
 // ── Main ──────────────────────────────────────────────
 
 const args = process.argv.slice(2)
@@ -102,23 +127,21 @@ if (!existsSync(releaseNotesPath)) {
   process.exit(1)
 }
 
-// Update version in all files
-for (const file of VERSION_FILES) {
-  const content = readFileSync(file.path, 'utf-8')
-  const updated = file.update(content, next)
-  writeFileSync(file.path, updated)
-  console.log(`  Updated: ${path.relative(root, file.path)}`)
+const changedVersionFiles = updateVersionFiles(next)
+
+if (changedVersionFiles.length > 0) {
+  console.log('  Creating git commit...')
+  await run([
+    'git',
+    'add',
+    ...changedVersionFiles.map(file => path.relative(root, file)),
+    path.relative(root, releaseNotesPath),
+  ])
+  await run(['git', 'commit', '-m', `release: v${next}`])
+} else {
+  console.log('  Version files already match; creating tag from current HEAD.')
 }
 
-// Git commit + tag
-console.log('  Creating git commit...')
-await run([
-  'git',
-  'add',
-  'desktop/package.json',
-  path.relative(root, releaseNotesPath),
-])
-await run(['git', 'commit', '-m', `release: v${next}`])
 await run(['git', 'tag', '-a', `v${next}`, '-m', `Release v${next}`])
 
 console.log(`\n  Done! Created commit and tag v${next}`)

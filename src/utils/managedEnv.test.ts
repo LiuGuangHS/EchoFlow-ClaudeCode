@@ -1,84 +1,80 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import * as fs from 'fs/promises'
-import * as os from 'os'
-import * as path from 'path'
+import { afterEach, beforeEach, describe, expect, it, test } from 'bun:test'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
 
-import { applyConfigEnvironmentVariables, applySafeConfigEnvironmentVariables } from './managedEnv.js'
+import { getAllowedSettingSources, setAllowedSettingSources } from '../bootstrap/state.js'
+import { getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
+import {
+  applyConfigEnvironmentVariables,
+  applySafeConfigEnvironmentVariables,
+} from './managedEnv.js'
+import { resetSettingsCache } from './settings/settingsCache.js'
+import {
+  IMAGE_GENERATION_MODEL_ENV_KEY,
+  IMAGE_GENERATION_PROVIDER_ID_ENV_KEY,
+  IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY,
+} from '../services/imageGeneration/config.js'
 
-let tmpDir: string
-const originalEnv = {
-  CC_HAHA_AGENT_TEAMS_ENABLED: process.env.CC_HAHA_AGENT_TEAMS_ENABLED,
-  CC_HAHA_AGENT_TEAMS_DEFAULT: process.env.CC_HAHA_AGENT_TEAMS_DEFAULT,
-  CLAUDE_CODE_ENTRYPOINT: process.env.CLAUDE_CODE_ENTRYPOINT,
-  CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR,
-  CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST,
-  CC_HAHA_LOCAL_ACCESS_TOKEN: process.env.CC_HAHA_LOCAL_ACCESS_TOKEN,
-  ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL,
-  ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
-  ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN,
-  ANTHROPIC_MODEL: process.env.ANTHROPIC_MODEL,
-  CC_HAHA_IMAGE_PROVIDER_KIND: process.env.CC_HAHA_IMAGE_PROVIDER_KIND,
-  CC_HAHA_IMAGE_PROVIDER_ID: process.env.CC_HAHA_IMAGE_PROVIDER_ID,
-  CC_HAHA_IMAGE_MODEL: process.env.CC_HAHA_IMAGE_MODEL,
-  CLAUDE_CODE_PROVIDER_MAX_OUTPUT_TOKENS: process.env.CLAUDE_CODE_PROVIDER_MAX_OUTPUT_TOKENS,
+let tempDir = ''
+let originalEnv: NodeJS.ProcessEnv
+let originalSettingSources: ReturnType<typeof getAllowedSettingSources>
+
+async function writeJson(filePath: string, value: unknown) {
+  await mkdir(dirname(filePath), { recursive: true })
+  await writeFile(filePath, JSON.stringify(value, null, 2) + '\n', 'utf8')
 }
 
-function restoreEnv(key: keyof typeof originalEnv): void {
-  const value = originalEnv[key]
-  if (value === undefined) {
-    delete process.env[key]
-  } else {
-    process.env[key] = value
+function restoreEnv() {
+  for (const key of Object.keys(process.env)) {
+    if (!(key in originalEnv)) {
+      delete process.env[key]
+    }
   }
+  Object.assign(process.env, originalEnv)
 }
 
-async function writeJson(filePath: string, value: unknown): Promise<void> {
-  await fs.mkdir(path.dirname(filePath), { recursive: true })
-  await fs.writeFile(filePath, JSON.stringify(value, null, 2), 'utf-8')
-}
-
-describe('managedEnv', () => {
+describe('managed environment', () => {
   beforeEach(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'managed-env-'))
-    process.env.CLAUDE_CONFIG_DIR = tmpDir
+    tempDir = await mkdtemp(join(tmpdir(), 'managed-env-test-'))
+    originalEnv = { ...process.env }
+    originalSettingSources = [...getAllowedSettingSources()]
+    process.env.NODE_ENV = 'test'
+    process.env.CLAUDE_CONFIG_DIR = tempDir
     delete process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST
     delete process.env.CC_HAHA_AGENT_TEAMS_ENABLED
     delete process.env.CC_HAHA_AGENT_TEAMS_DEFAULT
     process.env.CLAUDE_CODE_ENTRYPOINT = 'sdk-cli'
-    delete process.env.CC_HAHA_LOCAL_ACCESS_TOKEN
+    delete process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
     delete process.env.ANTHROPIC_BASE_URL
-    delete process.env.ANTHROPIC_API_KEY
     delete process.env.ANTHROPIC_AUTH_TOKEN
     delete process.env.ANTHROPIC_MODEL
-    delete process.env.CC_HAHA_IMAGE_PROVIDER_KIND
-    delete process.env.CC_HAHA_IMAGE_PROVIDER_ID
-    delete process.env.CC_HAHA_IMAGE_MODEL
+    delete process.env.ECHOFLOW_ONLY
+    delete process.env.ECHOFLOW_KEEP
+    delete process.env.ROOT_ONLY
+    delete process.env[IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY]
+    delete process.env[IMAGE_GENERATION_PROVIDER_ID_ENV_KEY]
+    delete process.env[IMAGE_GENERATION_MODEL_ENV_KEY]
+    delete process.env.ECHOFLOW_IMAGE_PROVIDER_KIND
+    delete process.env.ECHOFLOW_IMAGE_PROVIDER_ID
+    delete process.env.ECHOFLOW_IMAGE_MODEL
     delete process.env.CLAUDE_CODE_PROVIDER_MAX_OUTPUT_TOKENS
+    setAllowedSettingSources(['userSettings'])
+    resetSettingsCache()
   })
 
   afterEach(async () => {
     await import('../server/proxy/standaloneProviderProxy.js')
       .then((mod) => mod.stopStandaloneProviderProxyForTests?.())
       .catch(() => {})
-    await fs.rm(tmpDir, { recursive: true, force: true })
-    restoreEnv('CLAUDE_CONFIG_DIR')
-    restoreEnv('CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST')
-    restoreEnv('CC_HAHA_LOCAL_ACCESS_TOKEN')
-    restoreEnv('CC_HAHA_AGENT_TEAMS_ENABLED')
-    restoreEnv('CC_HAHA_AGENT_TEAMS_DEFAULT')
-    restoreEnv('CLAUDE_CODE_ENTRYPOINT')
-    restoreEnv('ANTHROPIC_BASE_URL')
-    restoreEnv('ANTHROPIC_API_KEY')
-    restoreEnv('ANTHROPIC_AUTH_TOKEN')
-    restoreEnv('ANTHROPIC_MODEL')
-    restoreEnv('CC_HAHA_IMAGE_PROVIDER_KIND')
-    restoreEnv('CC_HAHA_IMAGE_PROVIDER_ID')
-    restoreEnv('CC_HAHA_IMAGE_MODEL')
-    restoreEnv('CLAUDE_CODE_PROVIDER_MAX_OUTPUT_TOKENS')
+    resetSettingsCache()
+    setAllowedSettingSources(originalSettingSources)
+    restoreEnv()
+    await rm(tempDir, { recursive: true, force: true })
   })
 
   test.each(['0', '1', undefined])('protects the General team preference %j through settings application', async (enabled) => {
-    await writeJson(path.join(tmpDir, 'cc-haha', 'settings.json'), {
+    await writeJson(join(getEchoFlowInternalDir(tempDir), 'settings.json'), {
       env: {
         CC_HAHA_AGENT_TEAMS_ENABLED: enabled === '1' ? '0' : '1',
         CC_HAHA_AGENT_TEAMS_DEFAULT: '0',
@@ -97,8 +93,8 @@ describe('managedEnv', () => {
     expect(process.env.CC_HAHA_AGENT_TEAMS_DEFAULT).toBe('1')
   })
 
-  test('starts a standalone provider proxy for CLI-only OpenAI-compatible providers', async () => {
-    await writeJson(path.join(tmpDir, 'cc-haha', 'providers.json'), {
+  it('starts a standalone provider proxy for CLI-only OpenAI-compatible providers', async () => {
+    await writeJson(join(getEchoFlowInternalDir(tempDir), 'providers.json'), {
       activeId: 'agnes-provider',
       providers: [
         {
@@ -130,31 +126,89 @@ describe('managedEnv', () => {
     expect(health.status).toBe(200)
   })
 
-  test('does not let settings replace host-owned provider routing credentials', async () => {
-    await writeJson(path.join(tmpDir, 'cc-haha', 'settings.json'), {
+  it('applies EchoFlow internal provider env after root user settings', async () => {
+    await writeJson(join(tempDir, 'settings.json'), {
+      env: {
+        ANTHROPIC_BASE_URL: 'https://root.example.invalid',
+        ANTHROPIC_AUTH_TOKEN: 'root-token',
+        ROOT_ONLY: '1',
+      },
+    })
+    await writeJson(join(getEchoFlowInternalDir(tempDir), 'settings.json'), {
+      env: {
+        ANTHROPIC_BASE_URL: 'https://echoflow.example.invalid',
+        ANTHROPIC_AUTH_TOKEN: 'echoflow-token',
+        ECHOFLOW_ONLY: '1',
+      },
+    })
+    resetSettingsCache()
+
+    applySafeConfigEnvironmentVariables()
+
+    expect(process.env.ANTHROPIC_BASE_URL).toBe('https://echoflow.example.invalid')
+    expect(process.env.ANTHROPIC_AUTH_TOKEN).toBe('echoflow-token')
+    expect(process.env.ROOT_ONLY).toBe('1')
+    expect(process.env.ECHOFLOW_ONLY).toBe('1')
+  })
+
+  it('does not read legacy echoflow-code managed settings implicitly', async () => {
+    await writeJson(join(tempDir, 'legacy-echoflow-code', 'settings.json'), {
+      env: {
+        ANTHROPIC_BASE_URL: 'https://legacy.example.invalid',
+        ANTHROPIC_AUTH_TOKEN: 'legacy-token',
+      },
+    })
+    resetSettingsCache()
+
+    applyConfigEnvironmentVariables()
+
+    expect(process.env.ANTHROPIC_BASE_URL).toBeUndefined()
+    expect(process.env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
+  })
+
+  it('filters provider routing env when the host manages the provider', async () => {
+    await writeJson(join(getEchoFlowInternalDir(tempDir), 'settings.json'), {
+      env: {
+        ANTHROPIC_BASE_URL: 'https://echoflow.example.invalid',
+        ANTHROPIC_MODEL: 'echoflow-model',
+        ECHOFLOW_KEEP: '1',
+      },
+    })
+    process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST = '1'
+    resetSettingsCache()
+
+    applyConfigEnvironmentVariables()
+
+    expect(process.env.ANTHROPIC_BASE_URL).toBeUndefined()
+    expect(process.env.ANTHROPIC_MODEL).toBeUndefined()
+    expect(process.env.ECHOFLOW_KEEP).toBe('1')
+  })
+
+  it('does not let settings replace host-owned provider routing credentials', async () => {
+    await writeJson(join(getEchoFlowInternalDir(tempDir), 'settings.json'), {
       env: {
         CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: '0',
-        CC_HAHA_LOCAL_ACCESS_TOKEN: 'stale-settings-token',
-        CC_HAHA_IMAGE_PROVIDER_KIND: 'openai_oauth',
-        CC_HAHA_IMAGE_PROVIDER_ID: 'openai-official',
-        CC_HAHA_IMAGE_MODEL: 'gpt-image-2',
+        ECHOFLOW_LOCAL_ACCESS_TOKEN: 'stale-settings-token',
+        [IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY]: 'openai_oauth',
+        [IMAGE_GENERATION_PROVIDER_ID_ENV_KEY]: 'openai-official',
+        [IMAGE_GENERATION_MODEL_ENV_KEY]: 'gpt-image-2',
         CLAUDE_CODE_PROVIDER_MAX_OUTPUT_TOKENS: '32000',
       },
     })
     process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST = '1'
-    process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
-    process.env.CC_HAHA_IMAGE_PROVIDER_KIND = 'grok_oauth'
-    process.env.CC_HAHA_IMAGE_PROVIDER_ID = 'grok-official'
-    process.env.CC_HAHA_IMAGE_MODEL = 'grok-imagine-image-quality'
+    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+    process.env[IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY] = 'grok_oauth'
+    process.env[IMAGE_GENERATION_PROVIDER_ID_ENV_KEY] = 'grok-official'
+    process.env[IMAGE_GENERATION_MODEL_ENV_KEY] = 'grok-imagine-image-quality'
     process.env.CLAUDE_CODE_PROVIDER_MAX_OUTPUT_TOKENS = '96000'
 
     applySafeConfigEnvironmentVariables()
 
     expect(process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST).toBe('1')
-    expect(process.env.CC_HAHA_LOCAL_ACCESS_TOKEN).toBe('desktop-local-secret')
-    expect(process.env.CC_HAHA_IMAGE_PROVIDER_KIND).toBe('grok_oauth')
-    expect(process.env.CC_HAHA_IMAGE_PROVIDER_ID).toBe('grok-official')
-    expect(process.env.CC_HAHA_IMAGE_MODEL).toBe('grok-imagine-image-quality')
+    expect(process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN).toBe('desktop-local-secret')
+    expect(process.env[IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY]).toBe('grok_oauth')
+    expect(process.env[IMAGE_GENERATION_PROVIDER_ID_ENV_KEY]).toBe('grok-official')
+    expect(process.env[IMAGE_GENERATION_MODEL_ENV_KEY]).toBe('grok-imagine-image-quality')
     expect(process.env.CLAUDE_CODE_PROVIDER_MAX_OUTPUT_TOKENS).toBe('96000')
   })
 })

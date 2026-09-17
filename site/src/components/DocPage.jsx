@@ -83,7 +83,7 @@ export function DocPage({ onNavigate = defaultNavigate, onNotFound, path, pathna
       description: doc.description,
       lang: doc.locale === 'en' ? 'en' : 'zh-CN',
       alternate: alternate === doc.path ? null : alternate,
-      title: `${doc.title} · Claude Code Haha`
+      title: `${doc.title} · EchoFlow Code`
     })
   }, [doc])
 

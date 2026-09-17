@@ -1,7 +1,7 @@
 import { statSync } from 'node:fs'
 import { join } from 'node:path'
 import { Database } from 'bun:sqlite'
-import { getCcHahaDir, getClaudeConfigHomeDir } from '../../../utils/envUtils.js'
+import { getEchoFlowCodeDir, getClaudeConfigHomeDir } from '../../../utils/envUtils.js'
 import {
   LOCAL_INDEX_BUSY_TIMEOUT_MS,
   prepareManagedDatabasePath,
@@ -68,7 +68,7 @@ const NESTED_TRANSACTION_ERROR =
   'Search content transactions cannot be nested'
 
 export function getSearchContentDatabasePath(): string {
-  return join(getCcHahaDir(), 'db', 'search-index-v1.sqlite')
+  return join(getEchoFlowCodeDir(), 'db', 'search-index-v1.sqlite')
 }
 
 function fileSize(path: string): number {

@@ -27,7 +27,7 @@ import {
 } from './sidebarTaskGroups'
 import { sessionsApi } from '../../api/sessions'
 import type { SessionListItem } from '../../types/session'
-import { useTabStore, SETTINGS_TAB_ID, SCHEDULED_TAB_ID, MARKET_TAB_ID, CONNECTORS_TAB_ID } from '../../stores/tabStore'
+import { useTabStore, SETTINGS_TAB_ID, SCHEDULED_TAB_ID, MARKET_TAB_ID, CONNECTORS_TAB_ID, DEEPSEEK_HARNESS_TAB_ID } from '../../stores/tabStore'
 import { useChatStore } from '../../stores/chatStore'
 import { useOpenTargetStore } from '../../stores/openTargetStore'
 import {
@@ -50,11 +50,11 @@ const isDesktopRuntime = desktopHost.isDesktop
 const isWindows = typeof navigator !== 'undefined' && /Win/.test(navigator.platform)
 const SESSION_LIST_AUTO_REFRESH_MS = 30_000
 const SESSION_LIST_FOCUS_REFRESH_MIN_MS = 5_000
-const PROJECT_ORDER_STORAGE_KEY = 'cc-haha-sidebar-project-order'
-const PROJECT_PINNED_STORAGE_KEY = 'cc-haha-sidebar-pinned-projects'
-const PROJECT_HIDDEN_STORAGE_KEY = 'cc-haha-sidebar-hidden-projects'
-const PROJECT_ORGANIZATION_STORAGE_KEY = 'cc-haha-sidebar-project-organization'
-const PROJECT_SORT_STORAGE_KEY = 'cc-haha-sidebar-project-sort'
+const PROJECT_ORDER_STORAGE_KEY = 'echoflow-code-sidebar-project-order'
+const PROJECT_PINNED_STORAGE_KEY = 'echoflow-code-sidebar-pinned-projects'
+const PROJECT_HIDDEN_STORAGE_KEY = 'echoflow-code-sidebar-hidden-projects'
+const PROJECT_ORGANIZATION_STORAGE_KEY = 'echoflow-code-sidebar-project-organization'
+const PROJECT_SORT_STORAGE_KEY = 'echoflow-code-sidebar-project-sort'
 const PROJECT_GROUP_VISIBLE_COUNT = 6
 
 type SidebarProjectOrganization = 'project' | 'recentProject' | 'time'
@@ -936,7 +936,7 @@ export function Sidebar({
       <div
         data-testid="sidebar-title-region"
         data-desktop-drag-region
-        className={`px-3 pb-2 ${isDesktopRuntime && !isWindows ? 'pt-[44px]' : 'pt-3'}`}
+        className={`sidebar-title-region px-3 pb-2 ${isDesktopRuntime && !isWindows ? 'pt-[44px]' : 'pt-3'}`}
       >
         <div className={`flex ${expanded ? 'items-center justify-between gap-3' : 'flex-col items-center gap-2'}`}>
           {/* The mark only stands in for the wordmark on the rail. Expanded,
@@ -949,16 +949,16 @@ export function Sidebar({
               the section's own `px-3` alone left it sticking out on its own.
               Collapsed, the mark is centered on the rail instead. */}
           <div className={`flex min-w-0 items-center ${expanded ? 'gap-2.5 pl-3' : 'justify-center'}`}>
-            {!expanded ? <BrandSeal size="sm" /> : null}
+            <BrandSeal size="sm" className="sidebar-brand-mark" />
             {/* One form, at every width. The header used to carry "Claude Code
-                Haha" and swap to this below ~230px of title region, which meant
+                EchoFlow Code" and swap to this below ~230px of title region, which meant
                 the app answered to two names depending on how the sidebar was
                 dragged. It goes by the short one. */}
             <span
               className={`sidebar-copy ${expanded ? 'sidebar-copy--visible' : 'sidebar-copy--hidden'} text-base font-bold tracking-tight text-[var(--color-text-primary)]`}
               style={{ fontFamily: 'var(--font-headline)' }}
             >
-              cc-<span className="text-[var(--color-brand)]">haha</span>
+              EchoFlow <span className="text-[var(--color-primary-container)]">Code</span>
             </span>
           </div>
           <div className={`flex items-center ${expanded ? 'gap-1.5' : 'flex-col gap-2'}`}>
@@ -984,7 +984,7 @@ export function Sidebar({
               />
             </span>
             <a
-              href="https://github.com/NanmiCoder/cc-haha"
+              href="https://github.com/LiuGuangHS/EchoFlow-ClaudeCode"
               target="_blank"
               rel="noopener noreferrer"
               className={`sidebar-copy ${expanded ? 'sidebar-copy--visible' : 'sidebar-copy--hidden'} inline-flex items-center justify-center rounded-[var(--radius-sm)] p-1 text-[var(--color-text-tertiary)] transition-colors hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-hover)]`}
@@ -1067,7 +1067,21 @@ export function Sidebar({
             {t('sidebar.extensions')}
           </NavItem>
         )}
-
+        {!isMobile && isDesktopRuntime && (
+          <NavItem
+            active={activeTabId === DEEPSEEK_HARNESS_TAB_ID}
+            collapsed={!expanded}
+            label="DeepSeek Harness"
+            touchFriendly={isMobile}
+            onClick={() => {
+              useTabStore.getState().openTab(DEEPSEEK_HARNESS_TAB_ID, 'DeepSeek Harness', 'deepseek-harness')
+              closeMobileDrawer()
+            }}
+            icon={<span className="material-symbols-outlined text-[20px]" aria-hidden="true">deployed_code</span>}
+          >
+            DeepSeek Harness
+          </NavItem>
+        )}
       </div>
 
       {expanded ? (

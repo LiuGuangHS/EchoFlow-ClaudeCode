@@ -12,8 +12,8 @@ import { handleSettingsApi } from '../api/settings.js'
 import { handleModelsApi } from '../api/models.js'
 import { handleStatusApi, resetUsage, addUsage } from '../api/status.js'
 import { ProviderService } from '../services/providerService.js'
-import { hahaOAuthService } from '../services/hahaOAuthService.js'
-import { hahaOpenAIOAuthService } from '../services/hahaOpenAIOAuthService.js'
+import { echoFlowOAuthService } from '../services/echoFlowOAuthService.js'
+import { echoFlowOpenAIOAuthService } from '../services/echoFlowOpenAIOAuthService.js'
 import {
   clearOpenAICodexModelCatalogCache,
 } from '../../services/openaiAuth/modelCatalog.js'
@@ -44,6 +44,7 @@ import {
 import { resetSettingsCache } from '../../utils/settings/settingsCache.js'
 import { clearAllOutputStylesCache } from '../../constants/outputStyles.js'
 import { clearOutputStyleCaches } from '../../outputStyles/loadOutputStylesDir.js'
+import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 import * as terminalShellEnvironment from '../../utils/terminalShellEnvironment.js'
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
@@ -89,7 +90,6 @@ async function setup() {
   process.env.HOME = tmpDir
   process.env.USERPROFILE = tmpDir
   process.env.SHELL = '/bin/zsh'
-  process.env.PATH = ''
   delete process.env.ANTHROPIC_API_KEY
   delete process.env.ANTHROPIC_BASE_URL
   delete process.env.ANTHROPIC_MODEL
@@ -210,6 +210,20 @@ function saveTestOpenAIOAuthTokens(tokens: OpenAIOAuthTokens) {
   clearOpenAIOAuthTokenCache()
 }
 
+function echoFlowSettingsPath(configDir = tmpDir): string {
+  return path.join(getEchoFlowInternalDir(configDir), 'settings.json')
+}
+
+async function writeEchoFlowSettings(settings: Record<string, unknown> | string): Promise<void> {
+  const filePath = echoFlowSettingsPath()
+  await fs.mkdir(path.dirname(filePath), { recursive: true })
+  await fs.writeFile(
+    filePath,
+    typeof settings === 'string' ? settings : JSON.stringify(settings),
+    'utf-8',
+  )
+}
+
 /** 创建一个模拟 Request */
 function makeRequest(
   method: string,
@@ -255,11 +269,11 @@ describe('SettingsService', () => {
   })
 
   it('should recover from malformed user settings after an upgrade', async () => {
-    await fs.writeFile(path.join(tmpDir, 'settings.json'), '{not json', 'utf-8')
+    await writeEchoFlowSettings('{not json')
 
     const svc = new SettingsService()
     const settings = await svc.getUserSettings()
-    const files = await fs.readdir(tmpDir)
+    const files = await fs.readdir(getEchoFlowInternalDir(tmpDir))
 
     expect(settings).toEqual({})
     expect(files.some((name) => name.startsWith('settings.json.invalid-'))).toBe(true)
@@ -293,8 +307,9 @@ describe('SettingsService', () => {
   })
 
   it('should preserve unknown desktop terminal fields from older or future settings', async () => {
+    await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
     await fs.writeFile(
-      path.join(tmpDir, 'settings.json'),
+      echoFlowSettingsPath(),
       JSON.stringify({
         desktopTerminal: {
           startupShell: 'system',
@@ -331,6 +346,17 @@ describe('SettingsService', () => {
   })
 
   it('should not let cached CLI settings overwrite desktop settings updates', async () => {
+    await fs.writeFile(
+      path.join(tmpDir, 'settings.json'),
+      JSON.stringify({
+        enabledPlugins: {
+          'demo@test-market': true,
+        },
+      }),
+      'utf-8',
+    )
+    resetSettingsCache()
+
     const svc = new SettingsService()
     await svc.updateUserSettings({
       enabledPlugins: {
@@ -338,7 +364,7 @@ describe('SettingsService', () => {
       },
     })
 
-    expect(getSettingsForSource('userSettings')?.enabledPlugins?.['demo@test-market']).toBe(false)
+    expect(getSettingsForSource('userSettings')?.enabledPlugins?.['demo@test-market']).toBe(true)
 
     await svc.updateUserSettings({
       language: 'chinese',
@@ -358,7 +384,7 @@ describe('SettingsService', () => {
     expect(settings.language).toBe('chinese')
     expect(settings.desktopNotificationsEnabled).toBe(true)
     expect(settings.alwaysThinkingEnabled).toBe(false)
-    expect((settings.enabledPlugins as Record<string, unknown>)['demo@test-market']).toBe(true)
+    expect((settings.enabledPlugins as Record<string, unknown>)['demo@test-market']).toBe(false)
   })
 
   it('should read and write project settings', async () => {
@@ -412,11 +438,7 @@ describe('SettingsService', () => {
   })
 
   it('should ignore stale invalid permission modes from older installs', async () => {
-    await fs.writeFile(
-      path.join(tmpDir, 'settings.json'),
-      JSON.stringify({ defaultMode: 'legacy-yolo' }),
-      'utf-8',
-    )
+    await writeEchoFlowSettings({ defaultMode: 'legacy-yolo' })
 
     const svc = new SettingsService()
     const mode = await svc.getPermissionMode()
@@ -485,8 +507,7 @@ describe('Settings API', () => {
 
   it('GET /api/settings should return merged settings', async () => {
     // Seed some user settings
-    const settingsPath = path.join(tmpDir, 'settings.json')
-    await fs.writeFile(settingsPath, JSON.stringify({ theme: 'dark' }))
+    await writeEchoFlowSettings({ theme: 'dark' })
 
     const { req, url, segments } = makeRequest('GET', '/api/settings')
     const res = await handleSettingsApi(req, url, segments)
@@ -683,7 +704,7 @@ describe('Settings API', () => {
 
     expect(res.status).toBe(200)
     const body = await res.json()
-    expect(body.command).toBe('claude-haha')
+    expect(body.command).toBe('echoflow-code')
     expect(body.installed).toBe(true)
     expect(body.availableInNewTerminals).toBe(true)
   })
@@ -996,7 +1017,7 @@ describe('Models API', () => {
       name: 'k3',
       description: 'Main model',
       context: '',
-      supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      supportedReasoningEfforts: ['low', 'medium', 'high', 'max'],
     }])
   })
 
@@ -1165,7 +1186,7 @@ describe('Models API', () => {
   })
 
   it('GET /api/models/current should replace the legacy opus[1m] default with the Claude OAuth Pro default', async () => {
-    await hahaOAuthService.saveTokens({
+    await echoFlowOAuthService.saveTokens({
       accessToken: 'claude-pro-access',
       refreshToken: 'claude-pro-refresh',
       expiresAt: Date.now() + 60 * 60_000,
@@ -1205,7 +1226,7 @@ describe('Models API', () => {
   })
 
   it('GET /api/models/current should use Opus for a Claude OAuth Max account without a full model selection', async () => {
-    await hahaOAuthService.saveTokens({
+    await echoFlowOAuthService.saveTokens({
       accessToken: 'claude-max-access',
       refreshToken: 'claude-max-refresh',
       expiresAt: Date.now() + 60 * 60_000,
@@ -1225,7 +1246,7 @@ describe('Models API', () => {
   })
 
   it('GET /api/models/current should preserve an explicit full Claude model selection across subscription defaults', async () => {
-    await hahaOAuthService.saveTokens({
+    await echoFlowOAuthService.saveTokens({
       accessToken: 'claude-pro-explicit-access',
       refreshToken: 'claude-pro-explicit-refresh',
       expiresAt: Date.now() + 60 * 60_000,
@@ -1279,8 +1300,8 @@ describe('Models API', () => {
     expect(res.status).toBe(400)
   })
 
-  it('GET /api/models/current should prefer cc-haha managed model over global user model when provider is active', async () => {
-    await hahaOAuthService.saveTokens({
+  it('GET /api/models/current should prefer the active provider model in EchoFlow settings', async () => {
+    await echoFlowOAuthService.saveTokens({
       accessToken: 'unrelated-claude-access',
       refreshToken: 'unrelated-claude-refresh',
       expiresAt: Date.now() + 60 * 60_000,
@@ -1315,8 +1336,7 @@ describe('Models API', () => {
     expect(body.model.id).toBe('glm-5-turbo')
   })
 
-  it('PUT /api/models/current should persist to cc-haha managed settings when provider is active', async () => {
-    const settingsSvc = new SettingsService()
+  it('PUT /api/models/current should persist to EchoFlow settings when provider is active', async () => {
     const providerSvc = new ProviderService()
     const provider = await providerSvc.addProvider({
       presetId: 'zhipuglm',
@@ -1343,8 +1363,7 @@ describe('Models API', () => {
     expect(managedSettings.model).toBe('glm-5-turbo')
     expect((managedSettings.env as Record<string, string>).CLAUDE_CODE_ATTRIBUTION_HEADER).toBe('0')
 
-    const globalSettings = await settingsSvc.getUserSettings()
-    expect(globalSettings.model).toBeUndefined()
+    await expect(fs.readFile(path.join(tmpDir, 'settings.json'), 'utf-8')).rejects.toThrow()
   })
 
   it('GET /api/models should return the OpenAI model catalog when ChatGPT Official is active', async () => {
@@ -1383,7 +1402,7 @@ describe('Models API', () => {
   it('GET /api/models discovers models using the desktop ChatGPT account', async () => {
     const providerSvc = new ProviderService()
     await providerSvc.activateProvider('openai-official')
-    await hahaOpenAIOAuthService.saveTokens({
+    await echoFlowOpenAIOAuthService.saveTokens({
       accessToken: 'desktop-catalog-token',
       refreshToken: null,
       expiresAt: null,
@@ -1429,7 +1448,7 @@ describe('Models API', () => {
     }
   })
 
-  it('PUT /api/models/current should persist GPT model to managed settings when ChatGPT Official is active', async () => {
+  it('PUT /api/models/current should persist GPT model to EchoFlow settings when ChatGPT Official is active', async () => {
     const settingsSvc = new SettingsService()
     const providerSvc = new ProviderService()
     await settingsSvc.updateUserSettings({ model: 'claude-haiku-4-5' })
@@ -1444,8 +1463,8 @@ describe('Models API', () => {
     const managedSettings = await providerSvc.getManagedSettings()
     expect(managedSettings.model).toBe('gpt-5.5')
 
-    const globalSettings = await settingsSvc.getUserSettings()
-    expect(globalSettings.model).toBe('claude-haiku-4-5')
+    const echoFlowSettings = await settingsSvc.getUserSettings()
+    expect(echoFlowSettings.model).toBe('gpt-5.5')
   })
 
   it('GET /api/models/current should read current GPT model from managed settings when ChatGPT Official is active', async () => {

@@ -13,6 +13,12 @@
 - Known risk / rollback:
   - <!-- remaining risk and how to revert safely -->
 
+## ECC / Reproduction Evidence
+
+- ECC workflow or review used: <!-- e.g. /ecc:plan, @code-reviewer, /ecc:quality-gate; write N/A with a reason if unavailable -->
+- `bun run audit:harness`: <!-- result, or N/A with a reason -->
+- `.claude/` local state was not committed or used as a CI dependency.
+
 ## Verification
 
 - [ ] I ran the relevant local checks, or explained why they do not apply.

@@ -1,7 +1,7 @@
 import CoreGraphics
 import XCTest
 
-@testable import cc_haha_computer_use
+@testable import echoflow_code_computer_use
 
 /// The arrow's contract is geometric, and one property carries the whole point
 /// of having a pointer at all: the TIP must sit exactly at the origin, because

@@ -164,7 +164,7 @@ function makeTaskNotificationEntry(
   } = {},
 ): Record<string, unknown> {
   return {
-    type: 'cc-haha-task-notification',
+    type: 'echoflow-code-task-notification',
     isMeta: true,
     taskNotification: {
       taskId,

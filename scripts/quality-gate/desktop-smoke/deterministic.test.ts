@@ -15,11 +15,11 @@ describe('deterministic desktop UI smoke setup', () => {
   test('pins the locale so the approval button label is stable for every contributor', () => {
     const bootstrap = buildDesktopUiSmokeBootstrap('session-1')
 
-    expect(bootstrap).toContain(`localStorage.setItem('cc-haha-locale', "${DESKTOP_UI_SMOKE_LOCALE}")`)
-    expect(bootstrap).toContain('cc-haha-open-tabs')
+    expect(bootstrap).toContain(`localStorage.setItem('echoflow-code-locale', "${DESKTOP_UI_SMOKE_LOCALE}")`)
+    expect(bootstrap).toContain('echoflow-code-open-tabs')
     expect(bootstrap).toContain('session-1')
     // No per-session runtime is pinned: the lane uses its isolated active provider.
-    expect(bootstrap).toContain("localStorage.removeItem('cc-haha-session-runtime')")
+    expect(bootstrap).toContain("localStorage.removeItem('echoflow-code-session-runtime')")
   })
 
   test('matches the approval button the desktop actually renders', () => {
@@ -46,10 +46,10 @@ describe('deterministic desktop UI smoke setup', () => {
   })
 
   test('seeds only a fake provider inside the sandbox', () => {
-    const configDir = mkdtempSync(join(tmpdir(), 'cc-haha-ui-smoke-provider-'))
+    const configDir = mkdtempSync(join(tmpdir(), 'echoflow-code-ui-smoke-provider-'))
     try {
       seedDesktopUiSmokeProvider(configDir)
-      const index = JSON.parse(readFileSync(join(configDir, 'cc-haha', 'providers.json'), 'utf8'))
+      const index = JSON.parse(readFileSync(join(configDir, 'echoflow-code', 'providers.json'), 'utf8'))
       expect(index.activeId).toBe('desktop-ui-smoke-provider')
       expect(index.providers).toHaveLength(1)
       expect(index.providers[0]).toMatchObject({
@@ -62,7 +62,7 @@ describe('deterministic desktop UI smoke setup', () => {
   })
 
   test('skips with an actionable reason instead of failing when prerequisites are missing', () => {
-    const empty = mkdtempSync(join(tmpdir(), 'cc-haha-ui-smoke-prereq-'))
+    const empty = mkdtempSync(join(tmpdir(), 'echoflow-code-ui-smoke-prereq-'))
     try {
       expect(describeDesktopUiSmokePrerequisites(empty)).toContain('desktop dependencies')
     } finally {

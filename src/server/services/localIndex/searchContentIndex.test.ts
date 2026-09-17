@@ -18,7 +18,7 @@ afterEach(async () => {
 })
 
 async function setup() {
-  const root = await mkdtemp(join(tmpdir(), 'cc-haha-search-index-'))
+  const root = await mkdtemp(join(tmpdir(), 'echoflow-code-search-index-'))
   tempDirs.push(root)
   const database = openSearchContentDatabase({ path: join(root, 'search.sqlite') })
   const index = createSearchContentIndex(database, { scope: join(root, 'projects') })

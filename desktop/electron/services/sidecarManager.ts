@@ -30,8 +30,8 @@ export const SERVER_STARTUP_TIMEOUT_MS = 30_000
 export const SERVER_STARTUP_LOG_LIMIT = 80
 export const HOST_DIAGNOSTICS_LINE_LIMIT = 80
 export const HOST_DIAGNOSTICS_BYTE_LIMIT = 256 * 1024
-export const ELECTRON_DIAGNOSTICS_FILE_ENV = 'CC_HAHA_ELECTRON_DIAGNOSTICS_FILE'
-export const RIPGREP_PATH_ENV = 'CC_HAHA_RIPGREP_PATH'
+export const ELECTRON_DIAGNOSTICS_FILE_ENV = 'ECHOFLOW_ELECTRON_DIAGNOSTICS_FILE'
+export const RIPGREP_PATH_ENV = 'ECHOFLOW_RIPGREP_PATH'
 const HOST_DIAGNOSTICS_LINE_BYTE_LIMIT = 4096
 // Shared with the Tauri shell (src-tauri/src/lib.rs) so both desktop builds
 // reuse the same sticky port across restarts (issue #767).
@@ -62,8 +62,8 @@ const PROXY_ENV_KEYS = [
   'ALL_PROXY',
   'all_proxy',
 ] as const
-export const SYSTEM_PROXY_BRIDGE_ENV = 'CC_HAHA_SYSTEM_PROXY_URL'
-export const SYSTEM_PROXY_ERROR_ENV = 'CC_HAHA_SYSTEM_PROXY_ERROR'
+export const SYSTEM_PROXY_BRIDGE_ENV = 'ECHOFLOW_SYSTEM_PROXY_URL'
+export const SYSTEM_PROXY_ERROR_ENV = 'ECHOFLOW_SYSTEM_PROXY_ERROR'
 const LOOPBACK_NO_PROXY_ENTRIES = ['localhost', '127.0.0.1', '::1'] as const
 
 export function resolveHostTriple(platform = process.platform, arch = process.arch): string {
@@ -194,19 +194,26 @@ export async function reserveServerPort(
 
 export function claudeConfigDir(
   env: NodeJS.ProcessEnv = process.env,
+  homeDir: string = os.homedir(),
+): string {
+  return env.CLAUDE_CONFIG_DIR?.trim() || path.join(homeDir, '.claude')
+}
+
+function echoFlowInternalDir(
+  env: NodeJS.ProcessEnv = process.env,
   homeDir = os.homedir(),
 ): string {
-  return env.CLAUDE_CONFIG_DIR || path.join(homeDir, '.claude')
+  return path.join(claudeConfigDir(env, homeDir), 'echoflow-code')
 }
 
 export function electronHostDiagnosticsFile(
   env: NodeJS.ProcessEnv = process.env,
   homeDir = os.homedir(),
 ): string {
-  return path.join(claudeConfigDir(env, homeDir), 'cc-haha', 'diagnostics', 'electron-host.log')
+  return path.join(echoFlowInternalDir(env, homeDir), 'diagnostics', 'electron-host.log')
 }
 
-/** Parse h5Access.fixedPort out of cc-haha/settings.json contents. */
+/** Parse h5Access.fixedPort out of echoflow-code/settings.json contents. */
 export function parseH5FixedPort(contents: string): number | null {
   let value: unknown
   try {
@@ -224,7 +231,7 @@ export function parseH5FixedPort(contents: string): number | null {
 
 export function readH5FixedPort(env: NodeJS.ProcessEnv = process.env): number | null {
   try {
-    const settingsPath = path.join(claudeConfigDir(env), 'cc-haha', 'settings.json')
+    const settingsPath = path.join(echoFlowInternalDir(env), 'settings.json')
     return parseH5FixedPort(readFileSync(settingsPath, 'utf-8'))
   } catch {
     return null
@@ -400,7 +407,7 @@ export function appendHostDiagnostic(
 function ensurePrivateHostDiagnosticsDirectory(directory: string): void {
   const parent = path.dirname(directory)
   const rootBoundary = path.basename(directory) === 'diagnostics' &&
-      path.basename(parent) === 'cc-haha'
+      path.basename(parent) === 'echoflow-code'
     ? path.dirname(parent)
     : parent
   mkdirSync(rootBoundary, { recursive: true, mode: 0o700 })

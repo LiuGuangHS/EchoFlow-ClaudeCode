@@ -41,7 +41,7 @@ afterEach(async () => {
   globalThis.fetch = originalFetch
   if (originalClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR
   else process.env.CLAUDE_CONFIG_DIR = originalClaudeConfigDir
-  delete process.env.HAHA_MARKET_DISABLE_PROVIDERS
+  delete process.env.ECHOFLOW_MARKET_DISABLE_PROVIDERS
   await fs.rm(tmpHome, { recursive: true, force: true })
 })
 
@@ -76,7 +76,7 @@ describe('GET /api/market/skills', () => {
   })
 
   it('reports failed status when a provider is disabled via env', async () => {
-    process.env.HAHA_MARKET_DISABLE_PROVIDERS = 'skillhub'
+    process.env.ECHOFLOW_MARKET_DISABLE_PROVIDERS = 'skillhub'
     const clawhubBody = await fixture('clawhub-list.json')
     stubUpstreams((url) => (url.includes('clawhub.ai') ? { body: clawhubBody } : undefined))
 
@@ -147,7 +147,7 @@ describe('POST /api/market/install & uninstall', () => {
   })
 
   it('propagates typed install errors', async () => {
-    process.env.HAHA_MARKET_DISABLE_PROVIDERS = 'clawhub,skillhub'
+    process.env.ECHOFLOW_MARKET_DISABLE_PROVIDERS = 'clawhub,skillhub'
 
     const { status, body } = await call('/api/market/install', {
       method: 'POST',

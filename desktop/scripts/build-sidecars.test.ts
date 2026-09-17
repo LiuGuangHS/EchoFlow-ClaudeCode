@@ -21,7 +21,7 @@ function readBuildScript() {
 
 function readCliLauncher() {
   return readFileSync(
-    path.resolve(import.meta.dirname, '../../bin/claude-haha'),
+    path.resolve(import.meta.dirname, '../../bin/echoflow-code'),
     'utf8',
   )
 }
@@ -36,6 +36,22 @@ function extractWindowsX64BunTarget(source: string) {
   const match = source.match(/case 'x86_64-pc-windows-msvc':[\s\S]*?return '([^']+)'/)
   return match?.[1] ?? null
 }
+
+describe('sidecar build configuration', () => {
+  it('builds the host sidecar before starting Electron development', () => {
+    const packageJson = readJson(path.resolve(import.meta.dirname, '../package.json'))
+    expect(packageJson.scripts?.['electron:dev']).toBe(
+      'bun run build:sidecars && bun run build:electron && bun run ./scripts/electron-dev.ts',
+    )
+  })
+
+  it('checks that the compiler actually wrote the sidecar executable', () => {
+    expect(readBuildScript()).toContain(
+      'Compiler reported success but did not produce',
+    )
+    expect(readBuildScript()).toContain('await Bun.file(outputPath).exists()')
+  })
+})
 
 type SidecarProcess = {
   child: ChildProcessWithoutNullStreams
@@ -68,7 +84,7 @@ function controlledSidecarEnvironment(
     ...env,
     HOME: homeDir,
     CLAUDE_CONFIG_DIR: configDir,
-    CC_HAHA_LOCAL_ACCESS_TOKEN: localAccessToken,
+    ECHOFLOW_LOCAL_ACCESS_TOKEN: localAccessToken,
     NODE_ENV: 'test',
     NO_PROXY: '127.0.0.1,localhost,::1',
     no_proxy: '127.0.0.1,localhost,::1',
@@ -379,7 +395,7 @@ describe('build-sidecars Windows x64 target mapping', () => {
     const rootPackage = readJson(path.resolve(import.meta.dirname, '../../package.json'))
 
     expect(desktopPackage.scripts?.['test:compiled-sidecar-smoke']).toContain(
-      'CC_HAHA_RUN_COMPILED_SIDECAR_SMOKE=1',
+      'ECHOFLOW_RUN_COMPILED_SIDECAR_SMOKE=1',
     )
     expect(desktopPackage.scripts?.['test:compiled-sidecar-smoke']).toContain(
       'scripts/image-processor-packaging.test.ts',
@@ -467,10 +483,10 @@ describe('build-sidecars Windows x64 target mapping', () => {
     const originalEnvironment = {
       HOME: process.env.HOME,
       CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR,
-      CC_HAHA_LOCAL_INDEX: process.env.CC_HAHA_LOCAL_INDEX,
-      CC_HAHA_LOCAL_ACCESS_TOKEN: process.env.CC_HAHA_LOCAL_ACCESS_TOKEN,
+      ECHOFLOW_LOCAL_INDEX: process.env.ECHOFLOW_LOCAL_INDEX,
+      ECHOFLOW_LOCAL_ACCESS_TOKEN: process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN,
     }
-    const rootDir = await mkdtemp(joinPath(tmpdir(), 'cc-haha-hung-sidecar-smoke-'))
+    const rootDir = await mkdtemp(joinPath(tmpdir(), 'echoflow-code-hung-sidecar-smoke-'))
     const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
       stdio: ['pipe', 'pipe', 'pipe'],
     })
@@ -539,17 +555,17 @@ describe('build-sidecars Windows x64 target mapping', () => {
     expect(await stat(rootDir).then(() => true, () => false)).toBe(false)
     expect(process.env.HOME).toBe(originalEnvironment.HOME)
     expect(process.env.CLAUDE_CONFIG_DIR).toBe(originalEnvironment.CLAUDE_CONFIG_DIR)
-    expect(process.env.CC_HAHA_LOCAL_INDEX).toBe(originalEnvironment.CC_HAHA_LOCAL_INDEX)
-    expect(process.env.CC_HAHA_LOCAL_ACCESS_TOKEN).toBe(
-      originalEnvironment.CC_HAHA_LOCAL_ACCESS_TOKEN,
+    expect(process.env.ECHOFLOW_LOCAL_INDEX).toBe(originalEnvironment.ECHOFLOW_LOCAL_INDEX)
+    expect(process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN).toBe(
+      originalEnvironment.ECHOFLOW_LOCAL_ACCESS_TOKEN,
     )
   })
 })
 
 const compiledSidecarSmokeEnabled =
-  process.env.CC_HAHA_RUN_COMPILED_SIDECAR_SMOKE === '1'
+  process.env.ECHOFLOW_RUN_COMPILED_SIDECAR_SMOKE === '1'
 const configuredCompiledSidecarStarts = Number.parseInt(
-  process.env.CC_HAHA_COMPILED_SIDECAR_SMOKE_STARTS ?? '',
+  process.env.ECHOFLOW_COMPILED_SIDECAR_SMOKE_STARTS ?? '',
   10,
 )
 const compiledSidecarSmokeStarts = Number.isInteger(configuredCompiledSidecarStarts)
@@ -568,7 +584,7 @@ describe.skipIf(!compiledSidecarSmokeEnabled)('compiled sidecar local-index smok
     )
     await stat(builtExecutable)
 
-    const rootDir = await mkdtemp(joinPath(tmpdir(), 'cc-haha-compiled-sidecar-smoke-'))
+    const rootDir = await mkdtemp(joinPath(tmpdir(), 'echoflow-code-compiled-sidecar-smoke-'))
     const unicodeInstallDir = joinPath(rootDir, '中文 安装目录')
     const executable = process.platform === 'win32'
       ? joinPath(unicodeInstallDir, path.basename(builtExecutable))
@@ -582,7 +598,7 @@ describe.skipIf(!compiledSidecarSmokeEnabled)('compiled sidecar local-index smok
     const authenticationProofs: CompiledSidecarAuthProof[] = []
     const databasePath = joinPath(
       configDir,
-      'cc-haha',
+      'echoflow-code',
       'db',
       'index-v1.sqlite',
     )
@@ -693,8 +709,8 @@ describe('build-sidecars cu-helper macOS gating', () => {
 describe.skipIf(!compiledSidecarSmokeEnabled || process.platform !== 'darwin')('staged cu-helper resource smoke', () => {
   it('loads optional cursor resources from a relocated staged app instead of the build tree', async context => {
     const exec = promisify(execFile)
-    const sourceApp = path.resolve(import.meta.dirname, '../src-tauri/binaries/cc-haha-computer-use.app')
-    const inner = path.join('Contents', 'MacOS', 'cc-haha-computer-use')
+    const sourceApp = path.resolve(import.meta.dirname, '../src-tauri/binaries/echoflow-code-computer-use.app')
+    const inner = path.join('Contents', 'MacOS', 'echoflow-code-computer-use')
     const { stdout: architectures } = await exec('/usr/bin/lipo', ['-archs', path.join(sourceApp, inner)])
     const hostArch = process.arch === 'arm64' ? 'arm64' : 'x86_64'
     if (!architectures.trim().split(/\s+/).includes(hostArch)) {
@@ -704,7 +720,7 @@ describe.skipIf(!compiledSidecarSmokeEnabled || process.platform !== 'darwin')('
     }
     const fixtureRoot = await mkdtemp(path.join(tmpdir(), 'cu-helper-staged-resources-'))
     try {
-      const app = path.join(fixtureRoot, 'cc-haha-computer-use.app')
+      const app = path.join(fixtureRoot, 'echoflow-code-computer-use.app')
       await cp(sourceApp, app, { recursive: true, verbatimSymlinks: true })
       const home = path.join(fixtureRoot, 'home')
       const config = path.join(fixtureRoot, 'config')
@@ -726,7 +742,7 @@ describe.skipIf(!compiledSidecarSmokeEnabled || process.platform !== 'darwin')('
       }
       expect(report.resourceDirectory).not.toBeNull()
       expect(await realpath(report.resourceDirectory!)).toBe(await realpath(path.join(
-        app, 'Contents', 'Resources', 'cu-helper_cc-haha-computer-use.bundle', 'LensSequence',
+        app, 'Contents', 'Resources', 'cu-helper_echoflow-code-computer-use.bundle', 'LensSequence',
       )))
       expect(Number.isInteger(report.frameCount)).toBe(true)
       expect(report.frameCount).toBeGreaterThanOrEqual(0)
@@ -753,7 +769,7 @@ describe.skipIf(!compiledSidecarSmokeEnabled)('compiled sidecar adapters mode', 
 
     // An isolated HOME/CLAUDE_CONFIG_DIR: the launcher reads adapters.json, and
     // this must never see the developer's real credentials.
-    const rootDir = await mkdtemp(joinPath(tmpdir(), 'cc-haha-adapters-smoke-'))
+    const rootDir = await mkdtemp(joinPath(tmpdir(), 'echoflow-code-adapters-smoke-'))
     try {
       const child = spawn(executable, ['adapters', '--app-root', repoRoot, ...args], {
         env: {

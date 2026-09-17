@@ -13,8 +13,8 @@ export const getClaudeConfigHomeDir = memoize(
   () => process.env.CLAUDE_CONFIG_DIR,
 )
 
-export function getCcHahaDir(): string {
-  return join(getClaudeConfigHomeDir(), 'cc-haha')
+export function getEchoFlowCodeDir(): string {
+  return join(getClaudeConfigHomeDir(), 'echoflow-code')
 }
 
 export function getTeamsDir(): string {

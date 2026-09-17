@@ -3,12 +3,12 @@ import { buildInheritedEnvVars } from './spawnUtils.js'
 
 const originalSubagentModel = process.env.CLAUDE_CODE_SUBAGENT_MODEL
 const originalEffort = process.env.CLAUDE_CODE_EFFORT_LEVEL
-const originalOpenAIEffort = process.env.CC_HAHA_OPENAI_REASONING_EFFORT
+const originalOpenAIEffort = process.env.ECHOFLOW_OPENAI_REASONING_EFFORT
 const forwardedRuntimeKeys = [
   'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS',
   'CLAUDE_CODE_DISABLE_THINKING',
   'CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING',
-  'CC_HAHA_SEND_DISABLED_THINKING',
+  'ECHOFLOW_SEND_DISABLED_THINKING',
   'DISABLE_INTERLEAVED_THINKING',
   'ANTHROPIC_DEFAULT_FABLE_MODEL',
   'ANTHROPIC_DEFAULT_FABLE_MODEL_SUPPORTED_CAPABILITIES',
@@ -22,7 +22,7 @@ const originalForwardedRuntimeEnv = new Map(
 afterEach(() => {
   restoreEnv('CLAUDE_CODE_SUBAGENT_MODEL', originalSubagentModel)
   restoreEnv('CLAUDE_CODE_EFFORT_LEVEL', originalEffort)
-  restoreEnv('CC_HAHA_OPENAI_REASONING_EFFORT', originalOpenAIEffort)
+  restoreEnv('ECHOFLOW_OPENAI_REASONING_EFFORT', originalOpenAIEffort)
   for (const key of forwardedRuntimeKeys) {
     restoreEnv(key, originalForwardedRuntimeEnv.get(key))
   }
@@ -52,10 +52,10 @@ describe('buildInheritedEnvVars', () => {
   })
 
   test('forwards the Desktop OpenAI session effort to tmux teammates', () => {
-    process.env.CC_HAHA_OPENAI_REASONING_EFFORT = 'max'
+    process.env.ECHOFLOW_OPENAI_REASONING_EFFORT = 'max'
 
     expect(buildInheritedEnvVars()).toContain(
-      'CC_HAHA_OPENAI_REASONING_EFFORT=max',
+      'ECHOFLOW_OPENAI_REASONING_EFFORT=max',
     )
   })
 
@@ -63,7 +63,7 @@ describe('buildInheritedEnvVars', () => {
     process.env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = '1'
     process.env.CLAUDE_CODE_DISABLE_THINKING = '1'
     process.env.CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING = '1'
-    process.env.CC_HAHA_SEND_DISABLED_THINKING = '1'
+    process.env.ECHOFLOW_SEND_DISABLED_THINKING = '1'
     process.env.DISABLE_INTERLEAVED_THINKING = '1'
     process.env.ANTHROPIC_DEFAULT_FABLE_MODEL = 'provider-fable'
     process.env.ANTHROPIC_DEFAULT_FABLE_MODEL_SUPPORTED_CAPABILITIES =

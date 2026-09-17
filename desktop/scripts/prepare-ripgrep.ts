@@ -95,7 +95,7 @@ export async function stageRipgrepLicenses(binariesDir: string): Promise<string>
 
 export async function prepareRipgrep({
   targetTriple,
-  archivePath = process.env.CC_HAHA_RIPGREP_ARCHIVE,
+  archivePath = process.env.ECHOFLOW_RIPGREP_ARCHIVE,
 }: {
   targetTriple: string
   archivePath?: string
@@ -103,7 +103,7 @@ export async function prepareRipgrep({
   const asset = getRipgrepAsset(targetTriple)
   const desktopRoot = path.resolve(scriptDirectory, '..')
   const binariesDir = path.join(desktopRoot, 'src-tauri', 'binaries')
-  const temporaryDir = await mkdtemp(path.join(tmpdir(), 'cc-haha-ripgrep-'))
+  const temporaryDir = await mkdtemp(path.join(tmpdir(), 'echoflow-code-ripgrep-'))
 
   try {
     const downloadedArchive = path.join(temporaryDir, asset.archiveName)
@@ -132,7 +132,10 @@ export async function prepareRipgrep({
 
     const extractDir = path.join(temporaryDir, 'extracted')
     await mkdir(extractDir, { recursive: true })
-    const extract = Bun.spawn(['tar', '-xf', downloadedArchive, '-C', extractDir], {
+    const extractCommand = asset.archiveName.endsWith('.zip')
+      ? ['unzip', '-q', downloadedArchive, '-d', extractDir]
+      : ['tar', '-xf', downloadedArchive, '-C', extractDir]
+    const extract = Bun.spawn(extractCommand, {
       stdout: 'inherit',
       stderr: 'inherit',
     })

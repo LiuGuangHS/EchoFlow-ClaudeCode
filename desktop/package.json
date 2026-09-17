@@ -2,17 +2,17 @@
   "name": "claude-code-desktop",
   "private": true,
   "version": "0.6.3",
-  "description": "Desktop coding agent workbench for Claude Code Haha.",
-  "homepage": "https://github.com/NanmiCoder/cc-haha",
+  "description": "Desktop coding agent workbench for EchoFlow Code.",
+  "homepage": "https://github.com/LiuGuangHS/EchoFlow-ClaudeCode",
   "author": {
-    "name": "NanmiCoder",
-    "email": "relakkes@gmail.com"
+    "name": "LiuGuangHS",
+    "email": "zhijun2003@users.noreply.github.com"
   },
   "type": "module",
   "main": "electron-dist/main.cjs",
   "build": {
-    "appId": "com.claude-code-haha.desktop",
-    "productName": "Claude Code Haha",
+    "appId": "com.echoflow.code.desktop",
+    "productName": "EchoFlow Code",
     "asar": true,
     "asarUnpack": [
       "dist/**",
@@ -24,7 +24,7 @@
       "src-tauri/binaries/**",
       "node_modules/@ngrok/**"
     ],
-    "artifactName": "Claude-Code-Haha-${version}-${os}-${arch}.${ext}",
+    "artifactName": "EchoFlow-Code-${version}-${os}-${arch}.${ext}",
     "npmRebuild": false,
     "directories": {
       "output": "build-artifacts/electron"
@@ -32,7 +32,23 @@
     "files": [
       "dist/**",
       "electron-dist/**",
+      "node_modules/argparse/**",
+      "node_modules/builder-util-runtime/**",
+      "node_modules/debug/**",
+      "node_modules/electron-updater/**",
+      "node_modules/fs-extra/**",
+      "node_modules/graceful-fs/**",
+      "node_modules/js-yaml/**",
+      "node_modules/jsonfile/**",
+      "node_modules/lazy-val/**",
+      "node_modules/lodash.escaperegexp/**",
+      "node_modules/lodash.isequal/**",
+      "node_modules/ms/**",
       "node_modules/node-pty/**",
+      "node_modules/sax/**",
+      "node_modules/semver/**",
+      "node_modules/tiny-typed-emitter/**",
+      "node_modules/universalify/**",
       "src-tauri/binaries/**",
       "src-tauri/icons/**",
       "src-tauri/resources/preview-agent.js",
@@ -53,7 +69,7 @@
       "signIgnore": [
         "/Contents/Frameworks/.+\\.(?:pak|bin|dat|nib)$",
         "/Contents/Resources/.+\\.(?:asar|pak|bin|dat|icns|png|jpg|jpeg|gif|svg|ttf|woff|woff2)$",
-        "cc-haha-computer-use\\.app",
+        "echoflow-code-computer-use\\.app",
         "claude-sidecar-[^/]+$"
       ],
       "notarize": true
@@ -74,13 +90,13 @@
       ],
       "icon": "src-tauri/icons",
       "category": "Development",
-      "maintainer": "NanmiCoder <relakkes@gmail.com>"
+      "maintainer": "LiuGuangHS <zhijun2003@users.noreply.github.com>"
     },
     "publish": [
       {
         "provider": "github",
-        "owner": "NanmiCoder",
-        "repo": "cc-haha"
+        "owner": "LiuGuangHS",
+        "repo": "EchoFlow-ClaudeCode"
       }
     ]
   },
@@ -88,18 +104,18 @@
     "dev": "vite",
     "build": "bun run build:preview-agent && node ./node_modules/typescript/bin/tsc -b && node ./node_modules/vite/bin/vite.js build",
     "prepare:node-pty": "bun run ./scripts/prepare-node-pty.ts",
-    "build:electron": "bun run prepare:node-pty && bun build ./electron/main.ts --outfile ./electron-dist/main.cjs --target node --format cjs --external electron --external node-pty --external @ngrok/ngrok && bun build ./electron/preload.ts --outfile ./electron-dist/preload.cjs --target node --format cjs --external electron && bun build ./electron/pet-preload.ts --outfile ./electron-dist/pet-preload.cjs --target node --format cjs --external electron && bun build ./electron/preview-preload.ts --outfile ./electron-dist/preview-preload.cjs --target node --format cjs --external electron",
+    "build:electron": "bun run prepare:node-pty && bun build ./electron/main.ts --outfile ./electron-dist/main.cjs --target node --format cjs --external electron --external electron-updater --external node-pty --external @ngrok/ngrok && bun build ./electron/preload.ts --outfile ./electron-dist/preload.cjs --target node --format cjs --external electron && bun build ./electron/pet-preload.ts --outfile ./electron-dist/pet-preload.cjs --target node --format cjs --external electron && bun build ./electron/preview-preload.ts --outfile ./electron-dist/preview-preload.cjs --target node --format cjs --external electron",
     "build:preview-agent": "bun run ./scripts/build-preview-agent.ts",
     "prepare:ripgrep": "bun run ./scripts/prepare-ripgrep.ts",
     "build:sidecars": "bun run ./scripts/build-sidecars.ts",
-    "test:compiled-sidecar-smoke": "CC_HAHA_RUN_COMPILED_SIDECAR_SMOKE=1 bun run test -- --run scripts/build-sidecars.test.ts scripts/image-processor-packaging.test.ts",
+    "test:compiled-sidecar-smoke": "ECHOFLOW_RUN_COMPILED_SIDECAR_SMOKE=1 bun run test -- --run scripts/build-sidecars.test.ts scripts/image-processor-packaging.test.ts",
     "clean:electron-output": "bun run ./scripts/clean-electron-output.ts",
     "build:macos-arm64": "bash ./scripts/build-macos-arm64.sh",
     "build:windows-x64": "powershell -ExecutionPolicy Bypass -File ./scripts/build-windows-x64.ps1",
     "test:windows-storage-recovery": "powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./build/recover-legacy-install-data.ps1 -SelfTest",
     "build:linux-x64": "bash ./scripts/build-linux.sh",
     "build:linux-arm64": "LINUX_ARCH=arm64 bash ./scripts/build-linux.sh",
-    "electron:dev": "bun run build:electron && bun run ./scripts/electron-dev.ts",
+    "electron:dev": "bun run build:sidecars && bun run build:electron && bun run ./scripts/electron-dev.ts",
     "electron:build": "bun run build:sidecars && bun run build && bun run build:electron",
     "electron:package": "bun run clean:electron-output && bun run electron:build && node ./node_modules/electron-builder/out/cli/cli.js --publish never",
     "electron:package:dir": "bun run clean:electron-output && bun run electron:build && node ./node_modules/electron-builder/out/cli/cli.js --dir --publish never",

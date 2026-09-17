@@ -30,13 +30,13 @@ import type {
 } from './reconciliationWatcher.js'
 import { aggregateActivityStatsForMode } from '../../api/activityStats.js'
 
-type EnvironmentName = 'HOME' | 'CLAUDE_CONFIG_DIR' | 'CC_HAHA_LOCAL_INDEX'
+type EnvironmentName = 'HOME' | 'CLAUDE_CONFIG_DIR' | 'ECHOFLOW_LOCAL_INDEX'
 
 const tempDirs: string[] = []
 const originalEnvironment: Partial<Record<EnvironmentName, string>> = {}
 
 async function createTempDir(label: string): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), `cc-haha-${label}-`))
+  const directory = await mkdtemp(join(tmpdir(), `echoflow-code-${label}-`))
   tempDirs.push(directory)
   return directory
 }
@@ -48,7 +48,7 @@ function restoreEnvironment(name: EnvironmentName): void {
 }
 
 afterEach(async () => {
-  for (const name of ['HOME', 'CLAUDE_CONFIG_DIR', 'CC_HAHA_LOCAL_INDEX'] as const) {
+  for (const name of ['HOME', 'CLAUDE_CONFIG_DIR', 'ECHOFLOW_LOCAL_INDEX'] as const) {
     restoreEnvironment(name)
   }
   await Promise.all(tempDirs.splice(0).map(directory =>
@@ -57,7 +57,7 @@ afterEach(async () => {
 })
 
 function rememberEnvironment(): void {
-  for (const name of ['HOME', 'CLAUDE_CONFIG_DIR', 'CC_HAHA_LOCAL_INDEX'] as const) {
+  for (const name of ['HOME', 'CLAUDE_CONFIG_DIR', 'ECHOFLOW_LOCAL_INDEX'] as const) {
     originalEnvironment[name] = process.env[name]
   }
 }
@@ -217,7 +217,7 @@ describe('local index coordinator', () => {
     const coordinator = createLocalIndexCoordinator({
       resolveMode: () => ({ mode: 'on', warningCode: null }),
       resolveScope: () => '/tmp/config',
-      resolveDatabasePath: () => '/tmp/config/cc-haha/db/index-v1.sqlite',
+      resolveDatabasePath: () => '/tmp/config/echoflow-code/db/index-v1.sqlite',
       openDatabase: () => fakeDatabase(() => {}),
       createIndex: () => index,
       discoverSources: async () => [],
@@ -258,7 +258,7 @@ describe('local index coordinator', () => {
     const coordinator = createLocalIndexCoordinator({
       resolveMode: () => ({ mode: 'on', warningCode: null }),
       resolveScope: () => '/tmp/config',
-      resolveDatabasePath: () => '/tmp/config/cc-haha/db/index-v1.sqlite',
+      resolveDatabasePath: () => '/tmp/config/echoflow-code/db/index-v1.sqlite',
       openDatabase: () => database,
       createIndex: () => createFakeIndex(),
       discoverSources: async () => [],
@@ -282,7 +282,7 @@ describe('local index coordinator', () => {
     const coordinator = createLocalIndexCoordinator({
       resolveMode: () => ({ mode: currentMode, warningCode: null }),
       resolveScope: () => '/tmp/config',
-      resolveDatabasePath: () => '/tmp/config/cc-haha/db/index-v1.sqlite',
+      resolveDatabasePath: () => '/tmp/config/echoflow-code/db/index-v1.sqlite',
       openDatabase: () => fakeDatabase(() => { closes += 1 }),
       createIndex: () => createFakeIndex([candidate(1)]),
       discoverSources: async () => [],
@@ -302,12 +302,12 @@ describe('local index coordinator', () => {
 
   it('stops serving scope A before reopening the runtime index for scope B', async () => {
     let activeScope = '/tmp/config-a'
-    let activePath = '/tmp/config-a/cc-haha/db/index-v1.sqlite'
+    let activePath = '/tmp/config-a/echoflow-code/db/index-v1.sqlite'
     let opens = 0
     let closes = 0
     const indexes = new Map([
       [activePath, createFakeIndex([candidate(1, activeScope)])],
-      ['/tmp/config-b/cc-haha/db/index-v1.sqlite', createFakeIndex([
+      ['/tmp/config-b/echoflow-code/db/index-v1.sqlite', createFakeIndex([
         candidate(2, '/tmp/config-b'),
       ])],
     ])
@@ -329,7 +329,7 @@ describe('local index coordinator', () => {
     expect(coordinator.listSessions().sessions.map(row => row.id)).toEqual(['session-1'])
 
     activeScope = '/tmp/config-b'
-    activePath = '/tmp/config-b/cc-haha/db/index-v1.sqlite'
+    activePath = '/tmp/config-b/echoflow-code/db/index-v1.sqlite'
 
     expect(coordinator.getPublicStatus().state).toBe('building')
     expect(coordinator.listSessions()).toEqual({ sessions: [], total: 0 })
@@ -342,7 +342,7 @@ describe('local index coordinator', () => {
   it('converges external append, create, and delete events through the serial writer pump', async () => {
     const root = await createTempDir('coordinator-watch-convergence')
     const configDir = join(root, 'config')
-    const databasePath = join(configDir, 'cc-haha', 'db', 'index-v1.sqlite')
+    const databasePath = join(configDir, 'echoflow-code', 'db', 'index-v1.sqlite')
     const first = await createRealTranscript(configDir, '-repo', 'first', 'First')
     let watcherOptions!: ReconciliationWatcherOptions
     let watcherStops = 0
@@ -449,7 +449,7 @@ describe('local index coordinator', () => {
     const coordinator = createLocalIndexCoordinator({
       resolveMode: () => ({ mode: 'on', warningCode: null }),
       resolveScope: () => configDir,
-      resolveDatabasePath: () => join(configDir, 'cc-haha', 'db', 'index-v1.sqlite'),
+      resolveDatabasePath: () => join(configDir, 'echoflow-code', 'db', 'index-v1.sqlite'),
       openDatabase: () => fakeDatabase(() => {}),
       createIndex: () => index,
       createProjector: () => projector,
@@ -513,7 +513,7 @@ describe('local index coordinator', () => {
   it('withholds activity readiness while main-source or full-sweep failures can leave stale rows', async () => {
     const root = await createTempDir('coordinator-activity-stale-gate')
     const configDir = join(root, 'config')
-    const databasePath = join(configDir, 'cc-haha', 'db', 'index-v1.sqlite')
+    const databasePath = join(configDir, 'echoflow-code', 'db', 'index-v1.sqlite')
     const source = await createRealTranscript(
       configDir,
       '-repo',
@@ -613,7 +613,7 @@ describe('local index coordinator', () => {
   it('withholds persisted activity totals while a parser upgrade is waiting to rebuild', async () => {
     const root = await createTempDir('coordinator-activity-parser-upgrade')
     const configDir = join(root, 'config')
-    const databasePath = join(configDir, 'cc-haha', 'db', 'index-v1.sqlite')
+    const databasePath = join(configDir, 'echoflow-code', 'db', 'index-v1.sqlite')
     const source = await createRealTranscript(
       configDir,
       '-repo',
@@ -779,7 +779,7 @@ describe('local index coordinator', () => {
       const coordinator = createLocalIndexCoordinator({
         resolveMode: () => ({ mode: 'on', warningCode: null }),
         resolveScope: () => '/tmp/config',
-        resolveDatabasePath: () => '/tmp/config/cc-haha/db/index-v1.sqlite',
+        resolveDatabasePath: () => '/tmp/config/echoflow-code/db/index-v1.sqlite',
         openDatabase: () => {
           opens += 1
           if (!shouldBackup || opens === 1) {
@@ -845,7 +845,7 @@ describe('local index coordinator', () => {
     const coordinator = createLocalIndexCoordinator({
       resolveMode: () => ({ mode: 'on', warningCode: null }),
       resolveScope: () => '/tmp/config',
-      resolveDatabasePath: () => '/tmp/config/cc-haha/db/index-v1.sqlite',
+      resolveDatabasePath: () => '/tmp/config/echoflow-code/db/index-v1.sqlite',
       openDatabase: () => database,
       createIndex: () => createFakeIndex(),
       createProjector: () => ({
@@ -894,7 +894,7 @@ describe('local index coordinator', () => {
   it('auto-recovers a corrupt header once and requires explicit rebuild for a future schema', async () => {
     const root = await createTempDir('coordinator-real-recovery')
     const configDir = join(root, 'config')
-    const databasePath = join(configDir, 'cc-haha', 'db', 'index-v1.sqlite')
+    const databasePath = join(configDir, 'echoflow-code', 'db', 'index-v1.sqlite')
     const source = await createRealTranscript(configDir, '-repo', 'source', 'Canonical')
     const sourceBefore = await Bun.file(source.path).text()
     await mkdir(dirname(databasePath), { recursive: true })
@@ -918,7 +918,7 @@ describe('local index coordinator', () => {
     await waitFor(() => recovered.getPublicStatus().state === 'ready')
     await recovered.stop()
     expect(await Bun.file(source.path).text()).toBe(sourceBefore)
-    expect((await readdir(join(configDir, 'cc-haha', 'db', 'backups'))).length).toBe(1)
+    expect((await readdir(join(configDir, 'echoflow-code', 'db', 'backups'))).length).toBe(1)
 
     const { Database } = await import('bun:sqlite')
     const future = new Database(databasePath)
@@ -930,11 +930,11 @@ describe('local index coordinator', () => {
       state: 'degraded',
       lastErrorCode: 'SCHEMA_UNSUPPORTED',
     })
-    expect((await readdir(join(configDir, 'cc-haha', 'db', 'backups'))).length).toBe(1)
+    expect((await readdir(join(configDir, 'echoflow-code', 'db', 'backups'))).length).toBe(1)
 
     await unsupported.rebuild()
     await waitFor(() => unsupported.getPublicStatus().state === 'ready')
-    expect((await readdir(join(configDir, 'cc-haha', 'db', 'backups'))).length).toBe(2)
+    expect((await readdir(join(configDir, 'echoflow-code', 'db', 'backups'))).length).toBe(2)
     expect(await Bun.file(source.path).text()).toBe(sourceBefore)
     await unsupported.stop()
   })
@@ -1145,7 +1145,7 @@ describe('local index coordinator', () => {
     const secondRoot = await createTempDir('coordinator-scope-b')
     process.env.HOME = join(firstRoot, 'home')
     process.env.CLAUDE_CONFIG_DIR = join(firstRoot, 'config')
-    process.env.CC_HAHA_LOCAL_INDEX = 'on'
+    process.env.ECHOFLOW_LOCAL_INDEX = 'on'
     const firstCandidate = await createRealTranscript(
       process.env.CLAUDE_CONFIG_DIR,
       '-repo-a',
@@ -1182,7 +1182,7 @@ describe('local index coordinator', () => {
   it('resumes a killed backfill from committed source progress', async () => {
     const root = await createTempDir('coordinator-resume')
     const configDir = join(root, 'config')
-    const databasePath = join(configDir, 'cc-haha', 'db', 'index-v1.sqlite')
+    const databasePath = join(configDir, 'echoflow-code', 'db', 'index-v1.sqlite')
     const candidates: SessionSourceCandidate[] = []
     for (let index = 0; index < 30; index += 1) {
       candidates.push(await createRealTranscript(
@@ -1456,7 +1456,7 @@ describe('local index coordinator', () => {
     const coordinator = createLocalIndexCoordinator({
       resolveMode: () => ({ mode: 'on', warningCode: null }),
       resolveScope: () => '/tmp/config',
-      resolveDatabasePath: () => '/tmp/config/cc-haha/db/index-v1.sqlite',
+      resolveDatabasePath: () => '/tmp/config/echoflow-code/db/index-v1.sqlite',
       openDatabase: () => {
         opens += 1
         if (opens === 1) {
@@ -1517,7 +1517,7 @@ describe('local index coordinator', () => {
     const coordinator = createLocalIndexCoordinator({
       resolveMode: () => ({ mode: 'on', warningCode: null }),
       resolveScope: () => '/tmp/config',
-      resolveDatabasePath: () => '/tmp/config/cc-haha/db/index-v1.sqlite',
+      resolveDatabasePath: () => '/tmp/config/echoflow-code/db/index-v1.sqlite',
       openDatabase: () => {
         opens += 1
         if (opens === 1) {
@@ -1578,7 +1578,7 @@ describe('local index coordinator', () => {
     const coordinator = createLocalIndexCoordinator({
       resolveMode: () => ({ mode: 'on', warningCode: null }),
       resolveScope: () => '/tmp/config',
-      resolveDatabasePath: () => '/tmp/config/cc-haha/db/index-v1.sqlite',
+      resolveDatabasePath: () => '/tmp/config/echoflow-code/db/index-v1.sqlite',
       openDatabase: () => {
         opens += 1
         if (opens === 1) {
@@ -1735,8 +1735,8 @@ describe('local index coordinator', () => {
     const root = await createTempDir('coordinator-rebuild-scope')
     const firstScope = join(root, 'scope-a')
     const secondScope = join(root, 'scope-b')
-    const firstPath = join(firstScope, 'cc-haha', 'db', 'index-v1.sqlite')
-    const secondPath = join(secondScope, 'cc-haha', 'db', 'index-v1.sqlite')
+    const firstPath = join(firstScope, 'echoflow-code', 'db', 'index-v1.sqlite')
+    const secondPath = join(secondScope, 'echoflow-code', 'db', 'index-v1.sqlite')
     let currentScope = firstScope
     let currentPath = firstPath
     const coordinator = createLocalIndexCoordinator({
@@ -1829,7 +1829,7 @@ describe('local index coordinator', () => {
     'sanitizes an actual read-only database create failure as a disk write failure',
     async () => {
       const configDir = await createTempDir('readonly-create')
-      const databaseDir = join(configDir, 'cc-haha', 'db')
+      const databaseDir = join(configDir, 'echoflow-code', 'db')
       await mkdir(databaseDir, { recursive: true })
       await chmod(databaseDir, 0o500)
       const coordinator = createLocalIndexCoordinator({

@@ -41,17 +41,36 @@ import type {
 // ============================================================================
 
 let tmpDir: string
+let tmpHomeDir: string
 let service: SessionService
+let originalHomeEnv: string | undefined
+let originalUserProfileEnv: string | undefined
 
 /** Create a temporary config dir and configure the service to use it. */
 async function setupTmpConfigDir(): Promise<string> {
   tmpDir = path.join(os.tmpdir(), `claude-test-${Date.now()}-${Math.random().toString(36).slice(2)}`)
   await fs.mkdir(path.join(tmpDir, 'projects'), { recursive: true })
+  tmpHomeDir = path.join(tmpDir, 'home')
+  await fs.mkdir(tmpHomeDir, { recursive: true })
+  originalHomeEnv = process.env.HOME
+  originalUserProfileEnv = process.env.USERPROFILE
+  process.env.HOME = tmpHomeDir
+  process.env.USERPROFILE = tmpHomeDir
   process.env.CLAUDE_CONFIG_DIR = tmpDir
   return tmpDir
 }
 
 async function cleanupTmpDir(): Promise<void> {
+  if (originalHomeEnv === undefined) {
+    delete process.env.HOME
+  } else {
+    process.env.HOME = originalHomeEnv
+  }
+  if (originalUserProfileEnv === undefined) {
+    delete process.env.USERPROFILE
+  } else {
+    process.env.USERPROFILE = originalUserProfileEnv
+  }
   if (tmpDir) {
     await fs.rm(tmpDir, { recursive: true, force: true })
   }
@@ -2370,6 +2389,34 @@ describe('SessionService', () => {
     })
   })
 
+  it('should preserve CLI runtime metadata for launch recovery without exposing it in session lists', async () => {
+    const workDir = '/tmp/cli-runtime-metadata'
+    const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const filePath = await writeSessionFile(sanitizePath(workDir), sessionId, [
+      makeSnapshotEntry(),
+      {
+        ...makeSessionMetaEntry(workDir),
+        cliRuntimeId: 'invalid',
+      },
+      makeUserEntry('CLI runtime metadata'),
+    ])
+
+    await service.appendSessionMetadata(sessionId, {
+      workDir,
+      cliRuntimeId: 'installed',
+    })
+
+    expect((await service.getSessionLaunchInfo(sessionId))?.cliRuntimeId).toBe('installed')
+    const listed = (await service.listSessions()).sessions.find(session => session.id === sessionId)
+    expect(Object.hasOwn(listed!, 'cliRuntimeId')).toBe(false)
+    const persisted = await fs.readFile(filePath, 'utf-8')
+    await service.appendSessionMetadata(sessionId, { workDir, cliRuntimeId: 'installed' })
+    expect(await fs.readFile(filePath, 'utf-8')).toBe(persisted)
+
+    await service.clearSessionTranscript(sessionId, workDir)
+    expect((await service.getSessionLaunchInfo(sessionId))?.cliRuntimeId).toBe('installed')
+  })
+
   it('should not append duplicate runtime metadata when it already matches', async () => {
     const workDir = '/tmp/runtime-idempotent'
     const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
@@ -2930,7 +2977,7 @@ describe('SessionService', () => {
   })
 
   it('should throw when workDir does not exist', async () => {
-    expect(service.createSession('/tmp/definitely-missing-claude-code-haha')).rejects.toThrow(
+    expect(service.createSession('/tmp/definitely-missing-echoflow-code')).rejects.toThrow(
       'Working directory does not exist'
     )
   })
@@ -3912,7 +3959,7 @@ describe('Sessions API', () => {
     await writeSessionFile('-tmp-api-owned-terminal', sessionId, [
       makeSnapshotEntry(),
       {
-        type: 'cc-haha-task-notification',
+        type: 'echoflow-code-task-notification',
         isMeta: true,
         taskNotification: {
           taskId: 'nested-workflow-task',
@@ -4438,8 +4485,8 @@ describe('Sessions API', () => {
     git(workDir, 'config', 'core.fsmonitor', fsmonitorPath)
 
     const { sessionId } = await sessionService.createSession(workDir)
-    const oldTimeout = process.env.CC_HAHA_GIT_INFO_TIMEOUT_MS
-    process.env.CC_HAHA_GIT_INFO_TIMEOUT_MS = '80'
+    const oldTimeout = process.env.ECHOFLOW_GIT_INFO_TIMEOUT_MS
+    process.env.ECHOFLOW_GIT_INFO_TIMEOUT_MS = '80'
 
     try {
       const startedAt = Date.now()
@@ -4462,9 +4509,9 @@ describe('Sessions API', () => {
       expect(body.changedFiles).toBe(0)
     } finally {
       if (oldTimeout === undefined) {
-        delete process.env.CC_HAHA_GIT_INFO_TIMEOUT_MS
+        delete process.env.ECHOFLOW_GIT_INFO_TIMEOUT_MS
       } else {
-        process.env.CC_HAHA_GIT_INFO_TIMEOUT_MS = oldTimeout
+        process.env.ECHOFLOW_GIT_INFO_TIMEOUT_MS = oldTimeout
       }
     }
   })

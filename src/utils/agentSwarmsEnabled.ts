@@ -16,17 +16,17 @@ function isAgentTeamsFlagSet(): boolean {
  * This is the single gate that should be checked everywhere teammates
  * are referenced (prompts, code, tools isEnabled, UI, etc.).
  *
- * A cc-haha General opt-out takes priority over all opt-ins.
+ * An EchoFlow General opt-out takes priority over all opt-ins.
  * Ant builds: enabled unless the host explicitly opts out.
  * External builds require both:
- * 1. Opt-in via the cc-haha host preference, legacy env, or --agent-teams
+ * 1. Opt-in via the EchoFlow host preference, legacy env, or --agent-teams
  * 2. GrowthBook gate 'tengu_amber_flint' enabled (killswitch)
  */
 export function isAgentSwarmsEnabled(): boolean {
   // A saved General opt-out is authoritative even for forced/team child launches.
   if (
-    process.env.CC_HAHA_AGENT_TEAMS_ENABLED !== undefined &&
-    !isEnvTruthy(process.env.CC_HAHA_AGENT_TEAMS_ENABLED)
+    process.env.ECHOFLOW_AGENT_TEAMS_ENABLED !== undefined &&
+    !isEnvTruthy(process.env.ECHOFLOW_AGENT_TEAMS_ENABLED)
   ) {
     return false
   }
@@ -38,9 +38,9 @@ export function isAgentSwarmsEnabled(): boolean {
 
   // The host resolves General and legacy settings before launching. Standalone
   // CLI sessions retain their upstream opt-in behavior.
-  const optIn = process.env.CC_HAHA_AGENT_TEAMS_ENABLED ??
+  const optIn = process.env.ECHOFLOW_AGENT_TEAMS_ENABLED ??
     process.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS ??
-    process.env.CC_HAHA_AGENT_TEAMS_DEFAULT
+    process.env.ECHOFLOW_AGENT_TEAMS_DEFAULT
 
   // External: require opt-in via env var, host default, or --agent-teams flag
   if (

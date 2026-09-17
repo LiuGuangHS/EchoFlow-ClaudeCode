@@ -22,7 +22,7 @@ function line(value: Record<string, unknown> | string): string {
 }
 
 async function setup() {
-  const root = await mkdtemp(join(tmpdir(), 'cc-haha-search-projector-'))
+  const root = await mkdtemp(join(tmpdir(), 'echoflow-code-search-projector-'))
   tempDirs.push(root)
   const sourcePath = join(root, 'projects', '-repo', 'session', 'subagents', 'agent-a.jsonl')
   await mkdir(dirname(sourcePath), { recursive: true })
@@ -207,7 +207,7 @@ describe('search content projector', () => {
   })
 
   it('bounds a JSONL line without a newline and degrades at the last safe boundary', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'cc-haha-search-projector-bounded-'))
+    const root = await mkdtemp(join(tmpdir(), 'echoflow-code-search-projector-bounded-'))
     tempDirs.push(root)
     const sourcePath = join(root, 'projects', '-repo', 'oversized.jsonl')
     await mkdir(dirname(sourcePath), { recursive: true })

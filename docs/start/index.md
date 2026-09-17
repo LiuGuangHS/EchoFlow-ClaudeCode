@@ -1,11 +1,11 @@
 ---
-title: Claude Code Haha 是什么
+title: EchoFlow Code 是什么
 nav_title: 这是什么
 description: 跑在你自己电脑上的 AI 编程工作台：模型自己接，改动你审阅。
 order: 0
 ---
 
-# Claude Code Haha 是什么
+# EchoFlow Code 是什么
 
 它是一个装在你电脑上的应用。你把一个项目文件夹交给它，用大白话说出你想要什么，它去读代码、改文件、跑命令——每一处改动都摆在你眼前，等你点头才算数。
 
@@ -15,7 +15,7 @@ order: 0
 
 ## 和 Claude Code CLI 是什么关系
 
-Claude Code 是 Anthropic 出的命令行编程 Agent，跑在终端里。Claude Code Haha 的内核就是从 Claude Code 源码修复而来的一份 CLI（仓库里叫 `claude-haha`），桌面端是包在它外面的图形界面。
+Claude Code 是 Anthropic 出的命令行编程 Agent，跑在终端里。EchoFlow Code 的内核就是从 Claude Code 源码修复而来的一份 CLI（仓库里叫 `echoflow-code`），桌面端是包在它外面的图形界面。
 
 对你来说，这意味着两件事：
 

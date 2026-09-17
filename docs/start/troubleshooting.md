@@ -9,7 +9,7 @@ order: 4
 
 按你看到的现象往下找。每条都是「现象 → 为什么 → 怎么办」。
 
-先确认一件事：你用的是 [GitHub Releases](https://github.com/NanmiCoder/cc-haha/releases/latest) 上的最新正式版。旧版本上的问题很多已经修掉了。
+先确认一件事：你用的是 [GitHub Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest) 上的最新正式版。旧版本上的问题很多已经修掉了。
 
 ## 装不上
 
@@ -17,7 +17,7 @@ order: 4
 
 **为什么** — 文件没坏。macOS 会给从网上下载的包打一个隔离标记，遇到没有 Apple 签名的应用就拒绝启动，而报错文案写成了「已损坏」，非常有误导性。
 
-**怎么办** — 从同一个 Release 下载 `install-macos-unsigned.sh`，放到和 DMG 同一个文件夹，执行 `bash install-macos-unsigned.sh`；或者应用已经在「应用程序」里的话，直接执行 `xattr -dr com.apple.quarantine "/Applications/Claude Code Haha.app"`。完整说明见 [下载与安装](./install.md)。
+**怎么办** — 从同一个 Release 下载 `install-macos-unsigned.sh`，放到和 DMG 同一个文件夹，执行 `bash install-macos-unsigned.sh`；或者应用已经在「应用程序」里的话，直接执行 `xattr -dr com.apple.quarantine "/Applications/EchoFlow Code.app"`。完整说明见 [下载与安装](./install.md)。
 
 ### Windows 弹出 SmartScreen 蓝屏
 
@@ -33,7 +33,7 @@ order: 4
 
 1. 退出主窗口，检查系统托盘里的图标也一并退出。
 2. 等几秒让后台进程结束。
-3. 还不行就去任务管理器里找 Claude Code Haha 相关进程手动结束。
+3. 还不行就去任务管理器里找 EchoFlow Code 相关进程手动结束。
 4. 重新双击安装器。**不要**选「以管理员身份运行」，也**不要**先手动删掉旧安装目录里的数据。
 
 ### Linux AppImage 双击没反应
@@ -58,7 +58,7 @@ order: 4
 
 1. 完全退出应用（不是关窗口），重新打开。
 2. 还白就重装同一个版本的安装包覆盖一次。会话和配置存在 `~/.claude` 下，不在应用目录里，覆盖安装不会丢。
-3. 仍然白屏，说明卡在启动阶段。带上系统版本、CPU 架构、安装包文件名去 [GitHub Issues](https://github.com/NanmiCoder/cc-haha/issues) 提一条。
+3. 仍然白屏，说明卡在启动阶段。带上系统版本、CPU 架构、安装包文件名去 [GitHub Issues](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/issues) 提一条。
 
 :::warning
 任何情况下都不要为了排错去删 `~/.claude`。你的会话、服务商配置、技能、Agent、记忆全在那里，删了找不回来。
@@ -191,7 +191,7 @@ order: 4
 2. Python 3 检测通过了没有。没装就先装，或者在「Python 解释器路径」里指定一个已有的（conda、pyenv 都行）。
 3. 虚拟环境和依赖包是不是「已就绪 / 已安装」，没有就点「安装环境」。
 4. macOS 上还要「辅助功能权限」和「屏幕录制权限」两项都显示「已授权」——去「系统设置 → 隐私与安全性」里开。
-5. **授权之后必须重启 Claude Code Haha**，系统权限对已经在跑的进程不生效。
+5. **授权之后必须重启 EchoFlow Code**，系统权限对已经在跑的进程不生效。
 6. 要控制的目标应用有没有在「已授权应用」列表里。
 
 完整说明见 [Computer Use](../desktop/computer-use.md)。
@@ -201,7 +201,7 @@ order: 4
 去「设置 → 诊断」：
 
 1. 点「复制 Issue 报告」，先拿到一份结构化的现场信息。
-2. 到 [GitHub Issues](https://github.com/NanmiCoder/cc-haha/issues) 搜一下有没有人报过同样的问题，没有再新建。
+2. 到 [GitHub Issues](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/issues) 搜一下有没有人报过同样的问题，没有再新建。
 3. 光靠报告定位不了的话，再点「导出诊断包」附上。
 
 一并提供这些能大幅提高解决速度：应用版本、操作系统和 CPU 架构、安装包文件名、用的哪类服务商（**不要贴 API 密钥**）、最短复现步骤、完整错误文字、问题出在桌面端还是手机端还是 CLI。

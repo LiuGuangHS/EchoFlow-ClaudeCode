@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { normalizeStoredLocale, prefersChinese, resolveRootRedirect } from './locale.js'
+import { normalizeSitePath, normalizeStoredLocale, prefersChinese, resolveRootRedirect } from './locale.js'
 
 describe('prefersChinese', () => {
   it('认所有中文变体', () => {
@@ -36,6 +36,19 @@ describe('normalizeStoredLocale', () => {
     assert.equal(normalizeStoredLocale('fr'), null)
     assert.equal(normalizeStoredLocale(''), null)
     assert.equal(normalizeStoredLocale(null), null)
+  })
+})
+
+describe('normalizeSitePath', () => {
+  it('removes the GitHub Pages project base before routing', () => {
+    assert.equal(normalizeSitePath('/EchoFlow-ClaudeCode/', '/EchoFlow-ClaudeCode/'), '/')
+    assert.equal(normalizeSitePath('/EchoFlow-ClaudeCode/en/', '/EchoFlow-ClaudeCode/'), '/en')
+  })
+
+  it('preserves root deployments and unrelated paths', () => {
+    assert.equal(normalizeSitePath('/', '/'), '/')
+    assert.equal(normalizeSitePath('/start/', '/'), '/start')
+    assert.equal(normalizeSitePath('/elsewhere/', '/EchoFlow-ClaudeCode/'), '/elsewhere')
   })
 })
 

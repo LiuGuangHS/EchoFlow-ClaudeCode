@@ -91,7 +91,7 @@ describe('SIDECAR_SIGNING_IDENTIFIER', () => {
     // enforce it: ClientAttestation.swift:26 and cuHelperInstall.ts:46 both
     // hard-code this exact string, and the helper rejects every Computer Use
     // call when the sidecar's real identifier differs.
-    expect(SIDECAR_SIGNING_IDENTIFIER).toBe('com.claude-code-haha.desktop.sidecar')
+    expect(SIDECAR_SIGNING_IDENTIFIER).toBe('com.echoflow.code.desktop.sidecar')
   })
 })
 

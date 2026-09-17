@@ -33,6 +33,7 @@ describe('provider-aware thinking support', () => {
   let originalBedrock: string | undefined
   let originalVertex: string | undefined
   let originalFoundry: string | undefined
+  let originalEchoFlowExplicitDisabledThinking: string | undefined
   let originalExplicitDisabledThinking: string | undefined
 
   beforeEach(() => {
@@ -45,12 +46,15 @@ describe('provider-aware thinking support', () => {
     originalBedrock = process.env.CLAUDE_CODE_USE_BEDROCK
     originalVertex = process.env.CLAUDE_CODE_USE_VERTEX
     originalFoundry = process.env.CLAUDE_CODE_USE_FOUNDRY
-    originalExplicitDisabledThinking = process.env.CC_HAHA_SEND_DISABLED_THINKING
+    originalEchoFlowExplicitDisabledThinking = process.env.ECHOFLOW_SEND_DISABLED_THINKING
+    originalExplicitDisabledThinking = process.env.ECHOFLOW_SEND_DISABLED_THINKING
 
     delete process.env.ANTHROPIC_API_KEY
     delete process.env.CLAUDE_CODE_USE_BEDROCK
     delete process.env.CLAUDE_CODE_USE_VERTEX
     delete process.env.CLAUDE_CODE_USE_FOUNDRY
+    delete process.env.ECHOFLOW_SEND_DISABLED_THINKING
+    delete process.env.ECHOFLOW_SEND_DISABLED_THINKING
   })
 
   afterEach(() => {
@@ -63,14 +67,15 @@ describe('provider-aware thinking support', () => {
     restoreEnv('CLAUDE_CODE_USE_BEDROCK', originalBedrock)
     restoreEnv('CLAUDE_CODE_USE_VERTEX', originalVertex)
     restoreEnv('CLAUDE_CODE_USE_FOUNDRY', originalFoundry)
-    restoreEnv('CC_HAHA_SEND_DISABLED_THINKING', originalExplicitDisabledThinking)
+    restoreEnv('ECHOFLOW_SEND_DISABLED_THINKING', originalEchoFlowExplicitDisabledThinking)
+    restoreEnv('ECHOFLOW_SEND_DISABLED_THINKING', originalExplicitDisabledThinking)
     clearCapabilityCache()
     clearBetaCache()
   })
 
   test('does not assume adaptive thinking for Anthropic-compatible third-party base URLs', () => {
     process.env.ANTHROPIC_API_KEY = 'third-party-key'
-    process.env.ANTHROPIC_BASE_URL = 'https://api.jiekou.ai/anthropic'
+    process.env.ANTHROPIC_BASE_URL = 'https://api.echoflow.cn'
     delete process.env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES
     clearCapabilityCache()
 
@@ -79,7 +84,7 @@ describe('provider-aware thinking support', () => {
 
   test('honors explicit provider capability overrides with no supported capabilities', () => {
     process.env.ANTHROPIC_API_KEY = 'third-party-key'
-    process.env.ANTHROPIC_BASE_URL = 'https://api.jiekou.ai/anthropic'
+    process.env.ANTHROPIC_BASE_URL = 'https://api.echoflow.cn'
     process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = 'claude-sonnet-4-6'
     process.env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES = 'none'
     clearCapabilityCache()
@@ -141,10 +146,17 @@ describe('provider-aware thinking support', () => {
   })
 
   test('only sends explicit disabled thinking when the provider opts in', () => {
-    delete process.env.CC_HAHA_SEND_DISABLED_THINKING
     expect(shouldSendExplicitDisabledThinking()).toBe(false)
 
-    process.env.CC_HAHA_SEND_DISABLED_THINKING = '1'
+    process.env.ECHOFLOW_SEND_DISABLED_THINKING = '1'
+    expect(shouldSendExplicitDisabledThinking()).toBe(true)
+  })
+
+  test('continues to honor the legacy echoflow-code disabled thinking opt-in', () => {
+    delete process.env.ECHOFLOW_SEND_DISABLED_THINKING
+    expect(shouldSendExplicitDisabledThinking()).toBe(false)
+
+    process.env.ECHOFLOW_SEND_DISABLED_THINKING = '1'
     expect(shouldSendExplicitDisabledThinking()).toBe(true)
   })
 
@@ -154,7 +166,7 @@ describe('provider-aware thinking support', () => {
     process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = 'deepseek-v4-pro[1m]'
     process.env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES =
       'thinking,effort,adaptive_thinking,xhigh_effort,max_effort'
-    delete process.env.CC_HAHA_SEND_DISABLED_THINKING
+    delete process.env.ECHOFLOW_SEND_DISABLED_THINKING
     clearCapabilityCache()
 
     expect(modelSupportsThinking('deepseek-v4-pro')).toBe(true)
@@ -233,10 +245,9 @@ describe('provider-aware thinking support', () => {
   })
 
   test('side queries inherit explicit disabled thinking for opted-in providers', () => {
-    delete process.env.CC_HAHA_SEND_DISABLED_THINKING
     expect(resolveSideQueryThinkingConfig(undefined, 1024)).toBeUndefined()
 
-    process.env.CC_HAHA_SEND_DISABLED_THINKING = '1'
+    process.env.ECHOFLOW_SEND_DISABLED_THINKING = '1'
     expect(resolveSideQueryThinkingConfig(undefined, 1024)).toEqual({ type: 'disabled' })
     expect(resolveSideQueryThinkingConfig(false, 1024)).toEqual({ type: 'disabled' })
     expect(resolveSideQueryThinkingConfig(256, 1024)).toEqual({ type: 'enabled', budget_tokens: 256 })

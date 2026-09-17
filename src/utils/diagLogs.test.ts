@@ -9,7 +9,7 @@ let tmpDir: string
 let originalPath: string | undefined
 
 beforeEach(async () => {
-  tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'cc-haha-diag-writer-'))
+  tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'echoflow-code-diag-writer-'))
   originalPath = process.env.CLAUDE_CODE_DIAGNOSTICS_FILE
   process.env.CLAUDE_CODE_DIAGNOSTICS_FILE = path.join(tmpDir, 'cli-diagnostics.jsonl')
 })

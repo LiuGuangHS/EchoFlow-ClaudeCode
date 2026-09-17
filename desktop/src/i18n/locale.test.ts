@@ -50,7 +50,7 @@ describe('locale detection', () => {
   })
 
   it('migrates a stored main-window choice without consulting the system again', async () => {
-    window.localStorage.setItem('cc-haha-locale', 'zh-TW')
+    window.localStorage.setItem('echoflow-code-locale', 'zh-TW')
     const host = {
       getLocalePreference: vi.fn().mockResolvedValue(null),
       getPreferredSystemLanguages: vi.fn().mockResolvedValue(['en-US']),

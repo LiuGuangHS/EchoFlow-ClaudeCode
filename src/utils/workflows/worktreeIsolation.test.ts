@@ -172,7 +172,7 @@ describe('workflow agent worktree isolation', () => {
     savedConfigDir = process.env.CLAUDE_CONFIG_DIR
     spawnedWorktreePaths.length = 0
 
-    tempDir = mkdtempSync(join(tmpdir(), 'cc-haha-wf-isolation-'))
+    tempDir = mkdtempSync(join(tmpdir(), 'echoflow-code-wf-isolation-'))
     // A real ~/.claude carrying a WorktreeCreate hook would make isolation
     // "available" everywhere and quietly invert the non-git expectations.
     process.env.CLAUDE_CONFIG_DIR = join(tempDir, 'claude-config')

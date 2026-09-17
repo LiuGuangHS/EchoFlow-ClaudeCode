@@ -7,7 +7,7 @@ order: 2
 
 # Connect a model
 
-Claude Code Haha ships without a model. It's the shell that does the work; you have to give it a brain first.
+EchoFlow Code ships without a model. It's the shell that does the work; you have to give it a brain first.
 
 Click "Settings" at the bottom of the sidebar, then pick the first tab, "Providers". From there you have three routes:
 
@@ -15,7 +15,7 @@ Click "Settings" at the bottom of the sidebar, then pick the first tab, "Provide
 - **You have a third-party API key** — DeepSeek, Kimi, Zhipu GLM and others come as presets. Paste the key and you're done.
 - **You want it free** — run LM Studio or Ollama on your own machine. The model runs on your GPU, costs nothing, and works offline.
 
-You can configure all three and switch between them in the provider list.
+You can configure all three and switch between them in the provider list. This switches the shared provider configuration, not the execution backend of a session. Each session can also override its provider, model, and effort independently; those choices do not create or replace a runtime-specific provider configuration.
 
 ## Sign in with an official account
 
@@ -31,7 +31,7 @@ Click the sign-in button on the card ("Sign in to Claude" / "Sign in with ChatGP
 
 Three things to watch for:
 
-- Leave Claude Code Haha running for the whole flow — the callback has to land in the running app.
+- Leave EchoFlow Code running for the whole flow — the callback has to land in the running app.
 - If the browser doesn't open by itself, click "Copy authorization link" and paste it in manually.
 - Proxies and blocking browser extensions can intercept either the authorization page or the local callback. Turn them off before retrying.
 
@@ -43,13 +43,10 @@ With an API key in hand, this is the fastest route. Click "Add Provider", pick s
 
 The built-in presets, as they appear in the dialog:
 
-- **DeepSeek** · **Zhipu GLM** · **Kimi** · **MiniMax** — major Chinese model vendors; the base URLs point at each one's Anthropic-compatible endpoint.
-- **XuanShu API** · **FennoAI** — routing services that give you access to official Claude models through their own gateways.
-- **Qiniu Cloud AI** — an aggregator MaaS platform: one key for DeepSeek, GLM, Kimi, Qwen, and more.
-- **LM Studio** · **Ollama** — local models; see the next section.
+- **EchoFlow API** — the EchoFlow-owned service entry point.
+- **DeepSeek** · **Zhipu GLM** · **Kimi** · **MiniMax** — official model-vendor APIs; the base URLs point at each one's Anthropic-compatible endpoint.
+- **LM Studio** · **Ollama** — official local-model integrations; see the next section.
 - **Custom** — anything not listed above.
-
-Which models FennoAI and Qiniu Cloud AI give you depends on the plan you bought, so those two presets fill in the base URL only and pin no models: paste your key, hit "Fetch models", and pick one from the live list.
 
 When a preset has a signup page for API keys, a "Get API Key" button appears under the key field.
 
@@ -116,7 +113,7 @@ Back in the provider list, on the entry you just created:
 2. Click "Set default" so new sessions use it.
 3. Multiple providers can be dragged to reorder. Order only affects how the list is displayed.
 
-Then start a new session and **pick the specific model from the model selector at the bottom right of the composer** — that list reflects what the active provider actually offers. The control next to it sets reasoning effort; leave it at the default if you're unsure.
+Then start a new session and **pick the provider and specific model from the session configuration controls in the composer** — the model list reflects what the selected provider actually offers. The adjacent control sets reasoning effort; leave it at the default if you're unsure. These controls change the current session's provider, model, and reasoning parameters; they are not a CLI execution-runtime selector, and the desktop app does not yet provide a separate CLI runtime switcher.
 
 :::tip
 A passing test isn't a guarantee. It proves the endpoint is reachable and the credentials work — not that the model can sustain tool calls and long context. The real check is asking for a task that edits a file, and seeing whether it actually does.

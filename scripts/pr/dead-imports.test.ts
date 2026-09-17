@@ -313,7 +313,7 @@ describe('dead imports in owned source', () => {
         `planted a dead import into ${file} and the check did not report it`,
       ).toContain('plantedDeadImport')
     }
-  }, 20_000)
+  }, 10_000)
 
   it('has no import that nothing references', () => {
     const reported = dead

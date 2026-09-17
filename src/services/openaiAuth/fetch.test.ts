@@ -645,7 +645,7 @@ describe('buildOpenAICodexFetch', () => {
     })
     const body = await response.text()
 
-    expect(response.headers.get('x-cc-haha-openai-codex-stream')).toBe('1')
+    expect(response.headers.get('x-echoflow-code-openai-codex-stream')).toBe('1')
     expect(upstreamBodies[0].include).toEqual(['reasoning.encrypted_content'])
     expect(body).toContain('redacted_thinking')
     expect(body).toContain('opaque')

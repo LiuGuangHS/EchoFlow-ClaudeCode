@@ -106,8 +106,8 @@ describe('createAdapterClient', () => {
   // Narrowing the roots must not brick /new: the client rejects a workDir outside
   // the boundary, and every adapter passes defaultWorkDir straight to createSession.
   it('always yields a default work dir inside the allowed roots', async () => {
-    const allowed = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-haha-allowed-'))
-    const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-haha-elsewhere-'))
+    const allowed = fs.mkdtempSync(path.join(os.tmpdir(), 'echoflow-code-allowed-'))
+    const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'echoflow-code-elsewhere-'))
     try {
       process.chdir('/')
       delete process.env.PWD
@@ -128,8 +128,8 @@ describe('createAdapterClient', () => {
   })
 
   it('honours an explicitly narrowed boundary', async () => {
-    const allowed = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-haha-allowed-'))
-    const denied = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-haha-denied-'))
+    const allowed = fs.mkdtempSync(path.join(os.tmpdir(), 'echoflow-code-allowed-'))
+    const denied = fs.mkdtempSync(path.join(os.tmpdir(), 'echoflow-code-denied-'))
     try {
       const config = bootConfig({ allowedProjectRoots: [allowed] })
       const { httpClient } = createAdapterClient(config, config.feishu)

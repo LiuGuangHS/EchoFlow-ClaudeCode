@@ -403,8 +403,8 @@ function restoreEnvironment(
   name:
     | 'HOME'
     | 'CLAUDE_CONFIG_DIR'
-    | 'CC_HAHA_LOCAL_INDEX'
-    | 'CC_HAHA_LOCAL_ACCESS_TOKEN',
+    | 'ECHOFLOW_LOCAL_INDEX'
+    | 'ECHOFLOW_LOCAL_ACCESS_TOKEN',
   value: string | undefined,
 ): void {
   if (value === undefined) {
@@ -1225,20 +1225,20 @@ async function runAppendScenario(options: BenchmarkOptions, context: {
 export async function runDeterministicAcceptance(
   options: DeterministicAcceptanceOptions,
 ): Promise<DeterministicAcceptanceReport> {
-  const rootDir = await mkdtemp(join(tmpdir(), 'cc-haha-local-index-acceptance-'))
+  const rootDir = await mkdtemp(join(tmpdir(), 'echoflow-code-local-index-acceptance-'))
   const homeDir = join(rootDir, 'home')
   const configDir = join(homeDir, '.claude')
-  const databasePath = join(configDir, 'cc-haha', 'db', 'index-v1.sqlite')
+  const databasePath = join(configDir, 'echoflow-code', 'db', 'index-v1.sqlite')
   const originalHome = process.env.HOME
   const originalConfigDir = process.env.CLAUDE_CONFIG_DIR
-  const originalLocalIndexMode = process.env.CC_HAHA_LOCAL_INDEX
+  const originalLocalIndexMode = process.env.ECHOFLOW_LOCAL_INDEX
   let coordinator: LocalIndexCoordinator | undefined
 
   try {
     await mkdir(homeDir, { recursive: true })
     process.env.HOME = homeDir
     process.env.CLAUDE_CONFIG_DIR = configDir
-    process.env.CC_HAHA_LOCAL_INDEX = 'shadow'
+    process.env.ECHOFLOW_LOCAL_INDEX = 'shadow'
 
     const corpus = await createLocalIndexCorpus({
       rootDir,
@@ -1615,7 +1615,7 @@ export async function runDeterministicAcceptance(
     }
     restoreEnvironment('HOME', originalHome)
     restoreEnvironment('CLAUDE_CONFIG_DIR', originalConfigDir)
-    restoreEnvironment('CC_HAHA_LOCAL_INDEX', originalLocalIndexMode)
+    restoreEnvironment('ECHOFLOW_LOCAL_INDEX', originalLocalIndexMode)
     if (cleanupError) throw cleanupError
   }
 }
@@ -1633,14 +1633,14 @@ export async function runBenchmark(
     )
   }
 
-  const rootDir = await mkdtemp(join(tmpdir(), 'cc-haha-local-index-benchmark-'))
+  const rootDir = await mkdtemp(join(tmpdir(), 'echoflow-code-local-index-benchmark-'))
   const homeDir = join(rootDir, 'home')
   const configDir = join(homeDir, '.claude')
-  const databasePath = join(configDir, 'cc-haha', 'db', 'index-v1.sqlite')
+  const databasePath = join(configDir, 'echoflow-code', 'db', 'index-v1.sqlite')
   const originalHome = process.env.HOME
   const originalConfigDir = process.env.CLAUDE_CONFIG_DIR
-  const originalLocalIndexMode = process.env.CC_HAHA_LOCAL_INDEX
-  const originalLocalAccessToken = process.env.CC_HAHA_LOCAL_ACCESS_TOKEN
+  const originalLocalIndexMode = process.env.ECHOFLOW_LOCAL_INDEX
+  const originalLocalAccessToken = process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
   let coordinator: LocalIndexCoordinator | undefined
   let report: Record<string, unknown> | undefined
 
@@ -1648,7 +1648,7 @@ export async function runBenchmark(
     await mkdir(homeDir, { recursive: true })
     process.env.HOME = homeDir
     process.env.CLAUDE_CONFIG_DIR = configDir
-    process.env.CC_HAHA_LOCAL_INDEX = options.mode === 'file'
+    process.env.ECHOFLOW_LOCAL_INDEX = options.mode === 'file'
       ? 'off'
       : options.mode === 'shadow'
         ? 'shadow'
@@ -1656,7 +1656,7 @@ export async function runBenchmark(
     const localAccessToken = createHash('sha256')
       .update(`${rootDir}\0${options.seed}\0local-access`)
       .digest('base64url')
-    process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = localAccessToken
+    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = localAccessToken
 
     const corpus = await createLocalIndexCorpus({
       rootDir,
@@ -1904,8 +1904,8 @@ export async function runBenchmark(
     }
     restoreEnvironment('HOME', originalHome)
     restoreEnvironment('CLAUDE_CONFIG_DIR', originalConfigDir)
-    restoreEnvironment('CC_HAHA_LOCAL_INDEX', originalLocalIndexMode)
-    restoreEnvironment('CC_HAHA_LOCAL_ACCESS_TOKEN', originalLocalAccessToken)
+    restoreEnvironment('ECHOFLOW_LOCAL_INDEX', originalLocalIndexMode)
+    restoreEnvironment('ECHOFLOW_LOCAL_ACCESS_TOKEN', originalLocalAccessToken)
     if (cleanupError) throw cleanupError
   }
 

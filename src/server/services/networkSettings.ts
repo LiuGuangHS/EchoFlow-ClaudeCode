@@ -45,8 +45,8 @@ export function resolveStreamMaxDurationMs(
 ): number {
   return Math.max(MIN_STREAM_MAX_DURATION_MS, Number(apiTimeoutMs) || 0)
 }
-export const SYSTEM_PROXY_URL_ENV = 'CC_HAHA_SYSTEM_PROXY_URL'
-export const SYSTEM_PROXY_ERROR_ENV = 'CC_HAHA_SYSTEM_PROXY_ERROR'
+export const SYSTEM_PROXY_URL_ENV = 'ECHOFLOW_SYSTEM_PROXY_URL'
+export const SYSTEM_PROXY_ERROR_ENV = 'ECHOFLOW_SYSTEM_PROXY_ERROR'
 
 const DEFAULT_NETWORK_SETTINGS: NetworkSettings = {
   aiRequestTimeoutMs: DEFAULT_AI_REQUEST_TIMEOUT_MS,

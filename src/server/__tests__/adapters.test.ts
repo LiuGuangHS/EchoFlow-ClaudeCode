@@ -261,7 +261,7 @@ describe('Adapters API', () => {
   })
 
   it('never recursively deletes a legacy WhatsApp auth directory outside the managed root', async () => {
-    const externalDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cc-haha-whatsapp-sentinel-'))
+    const externalDir = await fs.mkdtemp(path.join(os.tmpdir(), 'echoflow-code-whatsapp-sentinel-'))
     const sentinel = path.join(externalDir, 'keep.txt')
     await fs.writeFile(sentinel, 'keep')
     try {

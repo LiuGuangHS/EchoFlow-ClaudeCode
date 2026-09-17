@@ -28,7 +28,7 @@ async function run(command: string, args: string[], cwd: string, env: NodeJS.Pro
 
 describe.skipIf(process.platform !== 'darwin')('compiled desktop Computer Use worker routing', () => {
   it('boots the real merged entrypoint inside the production sandbox without preload and retains native App bindings', async () => {
-    const directory = await realpath(await mkdtemp(path.join(tmpdir(), 'cc-haha-sidecar-cu-worker-')))
+    const directory = await realpath(await mkdtemp(path.join(tmpdir(), 'echoflow-code-sidecar-cu-worker-')))
     const executable = path.join(directory, 'claude-sidecar-aarch64-apple-darwin')
     const env: NodeJS.ProcessEnv = {
       PATH: process.env.PATH,

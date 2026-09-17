@@ -9,6 +9,13 @@ import {
   validateElectronIpcPayload,
 } from './ipc/capabilities'
 import { ElectronServerRuntime } from './services/serverRuntime'
+import {
+  claudeCodeRuntimeConfigPath,
+  getClaudeCodeRuntimeConfig,
+  setClaudeCodeRuntimeConfig,
+  type ClaudeCodeRuntimeConfig,
+} from './services/claudeCodeRuntime'
+import { DeepSeekHarnessRuntime } from './services/deepseekHarnessRuntime'
 import { appendHostDiagnostic, electronHostDiagnosticsFile, sanitizeHostDiagnostic } from './services/sidecarManager'
 import { openDialog, saveDialog } from './services/dialogs'
 import { openExternalUrl, openSystemPath, openSystemSettingsUrl } from './services/shell'
@@ -24,6 +31,7 @@ import type { WorkspaceBrowserMenuOptions } from '../src/lib/desktopHost/types'
 import { acquireSingleInstanceLock } from './services/singleInstance'
 import { installTray, shouldInstallTray, type TrayController } from './services/tray'
 import { ElectronUpdaterService, updaterSessionProxyConfig } from './services/updater'
+import { resolveUpdateFeedConfig } from './services/updateFeed'
 import { createUpdateSmokeUpdaterFromEnv } from './services/updateSmoke'
 import { ElectronTerminalService, type TerminalSpawnInput } from './services/terminal'
 import { ElectronPreviewService, type PreviewBounds } from './services/preview'
@@ -50,7 +58,7 @@ import {
 import { installMacOsChromiumKeychainPromptGuard } from './services/keychain'
 import { installStdioWriteFailureGuards } from './services/stdioGuards'
 import { applyWindowsAppUserModelId } from './services/appIdentity'
-import { installMainWindowNavigationGuards, installPreviewNavigationGuards } from './services/navigationGuards'
+import { installMainWindowNavigationGuards, installPreviewNavigationGuards, isHttpUrl } from './services/navigationGuards'
 import { installPreviewCleanupOnRendererNavigation } from './services/previewLifecycle'
 import { logNotificationSmokeRendererAck, scheduleNotificationSmoke } from './services/notificationSmoke'
 import { normalizeZoomFactor } from './services/zoom'
@@ -63,6 +71,7 @@ import {
 } from './services/nativeAppearance'
 import { resolveRendererEntry } from './services/rendererEntry'
 import { installRendererLifecycle } from './services/rendererLifecycle'
+import { applyDefaultEchoFlowDataRoot } from './services/echoFlowDataRoot'
 import { writeWindowSmokeSnapshot } from './services/windowSmoke'
 import { loadAndRevealMainWindow } from './services/windowStartup'
 import {
@@ -101,6 +110,8 @@ import {
 
 let mainWindow: BrowserWindow | null = null
 let serverRuntime: ElectronServerRuntime | null = null
+let deepSeekHarnessRuntime: DeepSeekHarnessRuntime | null = null
+let deepSeekHarnessWindow: BrowserWindow | null = null
 let publicAccessManager: PublicAccessManager | null = null
 let updaterService: ElectronUpdaterService | null = null
 let terminalService: ElectronTerminalService | null = null
@@ -117,6 +128,9 @@ let trayController: TrayController | null = null
 // stdio, and an unguarded write failure there surfaces as a crash dialog.
 installStdioWriteFailureGuards()
 installMacOsChromiumKeychainPromptGuard(app)
+
+const echoFlowDataRoot = applyDefaultEchoFlowDataRoot(process.env)
+app.setPath('userData', echoFlowDataRoot)
 
 function appRoot() {
   return app.isPackaged ? app.getAppPath() : process.cwd()
@@ -249,18 +263,69 @@ function getServerRuntime() {
     onServerReady: () => { void publicAccessManager?.serverChanged() },
     desktopRoot: unpackedRoot(),
     appRoot: appRoot(),
+    appVersion: app.getVersion(),
+    claudeCodeRuntimeConfigPath: claudeCodeRuntimeConfigPath(app.getPath('userData')),
     h5DistDir: path.join(unpackedRoot(), 'dist'),
-    diagnosticsFile: electronHostDiagnosticsFile(process.env),
     resolveSystemProxy: (url) => session.defaultSession.resolveProxy(url),
   })
   return serverRuntime
+}
+
+function getDeepSeekHarnessRuntime() {
+  deepSeekHarnessRuntime ??= new DeepSeekHarnessRuntime({ userDataPath: app.getPath('userData') })
+  return deepSeekHarnessRuntime
+}
+
+async function openDeepSeekHarnessWindow() {
+  const status = await getDeepSeekHarnessRuntime().getStatus()
+  if (status.state !== 'running' || !status.url) {
+    throw new Error('Start DeepSeek Harness before opening it')
+  }
+  if (deepSeekHarnessWindow && !deepSeekHarnessWindow.isDestroyed()) {
+    deepSeekHarnessWindow.focus()
+    return
+  }
+
+  const targetUrl = status.url
+  const window = new BrowserWindow({
+    title: 'DeepSeek Harness',
+    width: 1280,
+    height: 860,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      partition: 'persist:deepseek-harness',
+    },
+  })
+  deepSeekHarnessWindow = window
+  window.on('closed', () => {
+    if (deepSeekHarnessWindow === window) deepSeekHarnessWindow = null
+  })
+  configurePreviewSessionPermissions(window.webContents.session)
+  const isHarnessUrl = (url: string) => url === targetUrl || url.startsWith(`${targetUrl}/`)
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (isHttpUrl(url)) openExternalUrl(url)
+    return { action: 'deny' }
+  })
+  window.webContents.on('will-navigate', (event, url) => {
+    if (isHarnessUrl(url)) return
+    event.preventDefault()
+    if (isHttpUrl(url)) openExternalUrl(url)
+  })
+  window.webContents.on('will-redirect', (event, url) => {
+    if (isHarnessUrl(url)) return
+    event.preventDefault()
+    if (isHttpUrl(url)) openExternalUrl(url)
+  })
+  await window.loadURL(targetUrl)
 }
 
 function getPublicAccessManager() {
   if (publicAccessManager) return publicAccessManager
   let queue: Promise<unknown> = Promise.resolve()
   publicAccessManager = new PublicAccessManager({
-    directory: path.join(getAppMode(app).activeConfigDir ?? app.getPath('userData'), 'cc-haha', 'public-access'),
+    directory: path.join(getAppMode(app).activeConfigDir ?? app.getPath('userData'), 'echoflow-code', 'public-access'),
     backend: {
       request<T>(route: string, method: string, body?: unknown): Promise<T> {
         const operation = queue.catch(() => {}).then(async () => {
@@ -305,12 +370,19 @@ function getUpdaterService() {
   const smokeUpdater = createUpdateSmokeUpdaterFromEnv(process.env)
   updaterService ??= new ElectronUpdaterService(smokeUpdater ?? autoUpdater, {
     async apply(proxy) {
-      // Update traffic runs on electron-updater's own session partition;
-      // configuring app/defaultSession proxies never reaches it.
       await autoUpdater.netSession.setProxy(updaterSessionProxyConfig(proxy))
     },
   }, {
     updateConfigPath: !smokeUpdater && app.isPackaged ? path.join(process.resourcesPath, 'app-update.yml') : undefined,
+    ...(smokeUpdater
+      ? { feedUrls: [] }
+      : (() => {
+          const feedConfig = resolveUpdateFeedConfig(process.env)
+          return {
+            metadataFeedUrl: feedConfig.metadataUrl,
+            downloadFeedUrls: feedConfig.downloadFeedUrls,
+          }
+        })()),
   })
   return updaterService
 }
@@ -461,6 +533,12 @@ function currentWindow(event: Electron.IpcMainInvokeEvent) {
   return window
 }
 
+function requireMainWindow(event: Electron.IpcMainInvokeEvent) {
+  if (currentWindow(event) !== mainWindow) {
+    throw new Error('Update IPC is only available to the main window')
+  }
+}
+
 function registerHandler<T>(
   channel: ElectronIpcChannel,
   handler: (event: Electron.IpcMainInvokeEvent, payload: unknown) => T | Promise<T>,
@@ -485,6 +563,28 @@ function registerHandler<T>(
 
 function unsupported(name: string): never {
   throw new Error(`${name} is not implemented in the Electron host yet`)
+}
+
+function getClaudeCodeRuntimeStatus() {
+  const config = getClaudeCodeRuntimeConfig(app.getPath('userData'))
+  return {
+    defaultRuntimeId: config.defaultRuntimeId,
+    hasInstalledRuntime: config.installedPath !== null,
+  }
+}
+
+function setClaudeCodeRuntime(runtimeId: ClaudeCodeRuntimeConfig['defaultRuntimeId']) {
+  const next = setClaudeCodeRuntimeConfig(
+    app.getPath('userData'),
+    {
+      ...getClaudeCodeRuntimeConfig(app.getPath('userData')),
+      defaultRuntimeId: runtimeId,
+    },
+  )
+  return {
+    defaultRuntimeId: next.defaultRuntimeId,
+    hasInstalledRuntime: next.installedPath !== null,
+  }
 }
 
 function emitNotificationAction(payload: unknown) {
@@ -564,6 +664,32 @@ function registerIpcHandlers() {
     ELECTRON_IPC_CHANNELS.runtimeGetPetAccessToken,
     () => getServerRuntime().getPetAccessToken(),
   )
+  registerHandler(ELECTRON_IPC_CHANNELS.runtimeGetClaudeCode, (event) => {
+    requireMainWindow(event)
+    return getClaudeCodeRuntimeStatus()
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.runtimeChooseClaudeCode, async (event) => {
+    requireMainWindow(event)
+    const selectedPath = await openDialog(currentWindow(event), {
+      title: 'Choose Claude Code executable',
+      multiple: false,
+    })
+    if (typeof selectedPath !== 'string') return null
+    const current = getClaudeCodeRuntimeConfig(app.getPath('userData'))
+    const next = setClaudeCodeRuntimeConfig(app.getPath('userData'), {
+      ...current,
+      defaultRuntimeId: 'installed',
+      installedPath: selectedPath,
+    })
+    return {
+      defaultRuntimeId: next.defaultRuntimeId,
+      hasInstalledRuntime: next.installedPath !== null,
+    }
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode, (event, payload) => {
+    requireMainWindow(event)
+    return setClaudeCodeRuntime(payload as ClaudeCodeRuntimeConfig['defaultRuntimeId'])
+  })
   registerHandler(ELECTRON_IPC_CHANNELS.commandInvoke, (_event, payload) => handleCommandInvoke(payload))
   registerHandler(ELECTRON_IPC_CHANNELS.clipboardReadText, () => clipboard.readText())
   registerHandler(ELECTRON_IPC_CHANNELS.clipboardWriteText, (_event, payload) => clipboard.writeText(String(payload)))
@@ -717,22 +843,37 @@ function registerIpcHandlers() {
     openDialog(currentWindow(event), payload as Parameters<typeof openDialog>[1]))
   registerHandler(ELECTRON_IPC_CHANNELS.dialogSave, (event, payload) =>
     saveDialog(currentWindow(event), payload as Parameters<typeof saveDialog>[1]))
-  registerHandler(ELECTRON_IPC_CHANNELS.updateCheck, (_event, payload) =>
-    getUpdaterService().checkForUpdates(payload as Parameters<ElectronUpdaterService['checkForUpdates']>[0]))
-  registerHandler(ELECTRON_IPC_CHANNELS.updateDownload, () => getUpdaterService().downloadUpdate(event => {
-    mainWindow?.webContents.send(ELECTRON_EVENT_CHANNELS.updateDownloadEvent, event)
-  }))
-  registerHandler(ELECTRON_IPC_CHANNELS.updateInstall, () => getUpdaterService().stageDownloadedUpdate())
-  registerHandler(ELECTRON_IPC_CHANNELS.updatePrepareInstall, async () => { await publicAccessManager?.stop(); getServerRuntime().stopAll() })
-  registerHandler(ELECTRON_IPC_CHANNELS.updateCancelInstall, () => getUpdaterService().cancelInstall())
-  registerHandler(ELECTRON_IPC_CHANNELS.updateRelaunch, () => {
-    if (getUpdaterService().hasDownloadedUpdate()) {
-      isQuitting = true
-      getUpdaterService().quitAndInstallDownloadedUpdate()
-      return
+  registerHandler(ELECTRON_IPC_CHANNELS.updateCheck, (event, payload) => {
+    requireMainWindow(event)
+    return getUpdaterService().checkForUpdates(payload as Parameters<ElectronUpdaterService['checkForUpdates']>[0])
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.updateDownload, (event) => {
+    requireMainWindow(event)
+    return getUpdaterService().downloadUpdate(progress => {
+      mainWindow?.webContents.send(ELECTRON_EVENT_CHANNELS.updateDownloadEvent, progress)
+    })
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.updateInstall, (event) => {
+    requireMainWindow(event)
+    return getUpdaterService().stageDownloadedUpdate()
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.updatePrepareInstall, async (event) => {
+    requireMainWindow(event)
+    await publicAccessManager?.stop()
+    getServerRuntime().stopAll()
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.updateCancelInstall, (event) => {
+    requireMainWindow(event)
+    return getUpdaterService().cancelInstall()
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.updateRelaunch, (event) => {
+    requireMainWindow(event)
+    if (!getUpdaterService().hasDownloadedUpdate()) {
+      throw new Error('No downloaded update is ready to relaunch')
     }
-    app.relaunch()
-    app.quit()
+    }
+    isQuitting = true
+    getUpdaterService().quitAndInstallDownloadedUpdate()
   })
   registerHandler(ELECTRON_IPC_CHANNELS.notificationPermissionState, () => notificationPermissionState(Notification))
   registerHandler(ELECTRON_IPC_CHANNELS.notificationRequestPermission, () => requestNotificationPermission(Notification))
@@ -860,6 +1001,30 @@ function registerIpcHandlers() {
     app.quit()
   })
   registerHandler(ELECTRON_IPC_CHANNELS.adaptersRestartSidecar, () => getServerRuntime().restartAdaptersSidecars())
+  registerHandler(ELECTRON_IPC_CHANNELS.deepSeekHarnessGetStatus, event => {
+    requireMainWindow(event)
+    return getDeepSeekHarnessRuntime().getStatus()
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.deepSeekHarnessInstall, event => {
+    requireMainWindow(event)
+    return getDeepSeekHarnessRuntime().install()
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.deepSeekHarnessStart, event => {
+    requireMainWindow(event)
+    return getDeepSeekHarnessRuntime().start()
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.deepSeekHarnessStop, event => {
+    requireMainWindow(event)
+    return getDeepSeekHarnessRuntime().stop()
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.deepSeekHarnessRestart, event => {
+    requireMainWindow(event)
+    return getDeepSeekHarnessRuntime().restart()
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.deepSeekHarnessOpen, async event => {
+    requireMainWindow(event)
+    await openDeepSeekHarnessWindow()
+  })
   registerHandler(ELECTRON_IPC_CHANNELS.zoomSet, (event, payload) => currentWindow(event).webContents.setZoomFactor(normalizeZoomFactor(payload)))
   registerHandler(ELECTRON_IPC_CHANNELS.appearanceSetApplied, (_event, payload) => {
     if (!isAppliedAppearance(payload)) return
@@ -1042,6 +1207,9 @@ app.on('before-quit', event => {
   }
   trayController = null
   petWindowController = null
+  deepSeekHarnessWindow?.close()
+  deepSeekHarnessWindow = null
+  void deepSeekHarnessRuntime?.stop(true)
   // Keep Electron (and the server's stdout/stderr pipes) alive until the server
   // has waited for its CLI children to finish their graceful cleanup. The CLI
   // owns the launchd-reparented Computer Use helper, so exiting the host first

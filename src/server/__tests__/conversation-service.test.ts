@@ -8,6 +8,7 @@ import {
   DESKTOP_CLI_GRACEFUL_SHUTDOWN_TIMEOUT_MS,
 } from '../services/conversationService.js'
 import { ProviderService } from '../services/providerService.js'
+import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 import { updateTraceCaptureSettings } from '../services/traceCaptureService.js'
 import { resetTerminalShellEnvironmentCacheForTests } from '../../utils/terminalShellEnvironment.js'
 import { createSandboxedTestEnvironment } from '../../../scripts/pr/test-environment.js'
@@ -38,7 +39,8 @@ describe('ConversationService', () => {
   let originalDisableTerminalShellEnv: string | undefined
 
   beforeEach(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cc-haha-conversation-service-'))
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'echoflow-code-conversation-service-'))
+    await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
     originalConfigDir = process.env.CLAUDE_CONFIG_DIR
     originalApiKey = process.env.ANTHROPIC_API_KEY
     originalAuthToken = process.env.ANTHROPIC_AUTH_TOKEN
@@ -47,20 +49,20 @@ describe('ConversationService', () => {
     originalEntrypoint = process.env.CLAUDE_CODE_ENTRYPOINT
     originalOAuthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN
     originalProviderManagedByHost = process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST
-    originalLocalAccessToken = process.env.CC_HAHA_LOCAL_ACCESS_TOKEN
+    originalLocalAccessToken = process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
     originalDiagnosticsFile = process.env.CLAUDE_CODE_DIAGNOSTICS_FILE
     originalAttributionHeader = process.env.CLAUDE_CODE_ATTRIBUTION_HEADER
     originalDisableExperimentalBetas = process.env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS
     originalResumeInterruptedTurn = process.env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN
-    originalTraceApiCalls = process.env.CC_HAHA_TRACE_API_CALLS
-    originalTraceProviderId = process.env.CC_HAHA_TRACE_PROVIDER_ID
-    originalTraceProviderName = process.env.CC_HAHA_TRACE_PROVIDER_NAME
-    originalTraceProviderFormat = process.env.CC_HAHA_TRACE_PROVIDER_FORMAT
+    originalTraceApiCalls = process.env.ECHOFLOW_TRACE_API_CALLS
+    originalTraceProviderId = process.env.ECHOFLOW_TRACE_PROVIDER_ID
+    originalTraceProviderName = process.env.ECHOFLOW_TRACE_PROVIDER_NAME
+    originalTraceProviderFormat = process.env.ECHOFLOW_TRACE_PROVIDER_FORMAT
     originalHome = process.env.HOME
     originalPath = process.env.PATH
     originalShell = process.env.SHELL
     originalZdotdir = process.env.ZDOTDIR
-    originalDisableTerminalShellEnv = process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV
+    originalDisableTerminalShellEnv = process.env.ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV
 
     process.env.CLAUDE_CONFIG_DIR = tmpDir
     process.env.ANTHROPIC_API_KEY = 'stale-parent-api-key'
@@ -72,16 +74,16 @@ describe('ConversationService', () => {
     // buildChildEnv injects it or not without interference from the shell env.
     delete process.env.CLAUDE_CODE_ENTRYPOINT
     delete process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST
-    delete process.env.CC_HAHA_LOCAL_ACCESS_TOKEN
+    delete process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
     delete process.env.CLAUDE_CODE_DIAGNOSTICS_FILE
     delete process.env.CLAUDE_CODE_ATTRIBUTION_HEADER
     delete process.env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS
     delete process.env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN
-    delete process.env.CC_HAHA_TRACE_API_CALLS
-    delete process.env.CC_HAHA_TRACE_PROVIDER_ID
-    delete process.env.CC_HAHA_TRACE_PROVIDER_NAME
-    delete process.env.CC_HAHA_TRACE_PROVIDER_FORMAT
-    process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV = '1'
+    delete process.env.ECHOFLOW_TRACE_API_CALLS
+    delete process.env.ECHOFLOW_TRACE_PROVIDER_ID
+    delete process.env.ECHOFLOW_TRACE_PROVIDER_NAME
+    delete process.env.ECHOFLOW_TRACE_PROVIDER_FORMAT
+    process.env.ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV = '1'
     resetTerminalShellEnvironmentCacheForTests()
   })
 
@@ -110,8 +112,8 @@ describe('ConversationService', () => {
     if (originalProviderManagedByHost === undefined) delete process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST
     else process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST = originalProviderManagedByHost
 
-    if (originalLocalAccessToken === undefined) delete process.env.CC_HAHA_LOCAL_ACCESS_TOKEN
-    else process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = originalLocalAccessToken
+    if (originalLocalAccessToken === undefined) delete process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
+    else process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = originalLocalAccessToken
 
     if (originalDiagnosticsFile === undefined) delete process.env.CLAUDE_CODE_DIAGNOSTICS_FILE
     else process.env.CLAUDE_CODE_DIAGNOSTICS_FILE = originalDiagnosticsFile
@@ -125,17 +127,17 @@ describe('ConversationService', () => {
     if (originalResumeInterruptedTurn === undefined) delete process.env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN
     else process.env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN = originalResumeInterruptedTurn
 
-    if (originalTraceApiCalls === undefined) delete process.env.CC_HAHA_TRACE_API_CALLS
-    else process.env.CC_HAHA_TRACE_API_CALLS = originalTraceApiCalls
+    if (originalTraceApiCalls === undefined) delete process.env.ECHOFLOW_TRACE_API_CALLS
+    else process.env.ECHOFLOW_TRACE_API_CALLS = originalTraceApiCalls
 
-    if (originalTraceProviderId === undefined) delete process.env.CC_HAHA_TRACE_PROVIDER_ID
-    else process.env.CC_HAHA_TRACE_PROVIDER_ID = originalTraceProviderId
+    if (originalTraceProviderId === undefined) delete process.env.ECHOFLOW_TRACE_PROVIDER_ID
+    else process.env.ECHOFLOW_TRACE_PROVIDER_ID = originalTraceProviderId
 
-    if (originalTraceProviderName === undefined) delete process.env.CC_HAHA_TRACE_PROVIDER_NAME
-    else process.env.CC_HAHA_TRACE_PROVIDER_NAME = originalTraceProviderName
+    if (originalTraceProviderName === undefined) delete process.env.ECHOFLOW_TRACE_PROVIDER_NAME
+    else process.env.ECHOFLOW_TRACE_PROVIDER_NAME = originalTraceProviderName
 
-    if (originalTraceProviderFormat === undefined) delete process.env.CC_HAHA_TRACE_PROVIDER_FORMAT
-    else process.env.CC_HAHA_TRACE_PROVIDER_FORMAT = originalTraceProviderFormat
+    if (originalTraceProviderFormat === undefined) delete process.env.ECHOFLOW_TRACE_PROVIDER_FORMAT
+    else process.env.ECHOFLOW_TRACE_PROVIDER_FORMAT = originalTraceProviderFormat
 
     if (originalHome === undefined) delete process.env.HOME
     else process.env.HOME = originalHome
@@ -149,8 +151,8 @@ describe('ConversationService', () => {
     if (originalZdotdir === undefined) delete process.env.ZDOTDIR
     else process.env.ZDOTDIR = originalZdotdir
 
-    if (originalDisableTerminalShellEnv === undefined) delete process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV
-    else process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV = originalDisableTerminalShellEnv
+    if (originalDisableTerminalShellEnv === undefined) delete process.env.ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV
+    else process.env.ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV = originalDisableTerminalShellEnv
 
     resetTerminalShellEnvironmentCacheForTests()
     await fs.rm(tmpDir, { recursive: true, force: true })
@@ -208,15 +210,17 @@ describe('ConversationService', () => {
 
   test('keeps inherited provider env when no desktop provider config exists', async () => {
     const service = new ConversationService() as any
-    const env = (await service.buildChildEnv('D:\\workspace\\code\\myself_code\\cc-haha')) as Record<string, string>
+    const env = (await service.buildChildEnv('D:\\workspace\\code\\myself_code\\echoflow-code')) as Record<string, string>
 
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe('test-token')
     expect(env.ANTHROPIC_BASE_URL).toBe('https://example.invalid/anthropic')
     expect(env.ANTHROPIC_MODEL).toBe('test-model')
     expect(env.CLAUDE_CODE_ATTRIBUTION_HEADER).toBe('0')
-    expect(env.CLAUDE_CODE_DIAGNOSTICS_FILE).toBe(path.join(tmpDir, 'cc-haha', 'diagnostics', 'cli-diagnostics.jsonl'))
+    expect(env.CLAUDE_CODE_DIAGNOSTICS_FILE).toBe(
+      path.join(getEchoFlowInternalDir(tmpDir), 'diagnostics', 'cli-diagnostics.jsonl'),
+    )
     expect(env.CLAUDE_COWORK_MEMORY_PATH_OVERRIDE).toBe(
-      `${path.join(tmpDir, 'projects', 'D--workspace-code-myself-code-cc-haha', 'memory')}${path.sep}`,
+      `${path.join(tmpDir, 'projects', 'D--workspace-code-myself-code-echoflow-code', 'memory')}${path.sep}`,
     )
     const diagnosticsDirectory = await fs.stat(path.dirname(env.CLAUDE_CODE_DIAGNOSTICS_FILE))
     expect(diagnosticsDirectory).toBeTruthy()
@@ -230,9 +234,9 @@ describe('ConversationService', () => {
     const unrelatedDir = path.join(tmpDir, 'unrelated-cli-diagnostics')
     const unrelatedDiagnosticsDir = path.join(unrelatedDir, 'diagnostics')
     await fs.mkdir(unrelatedDiagnosticsDir, { recursive: true, mode: 0o755 })
-    await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
-    await fs.rm(path.join(tmpDir, 'cc-haha'), { recursive: true, force: true })
-    await fs.symlink(unrelatedDir, path.join(tmpDir, 'cc-haha'), 'dir')
+    await fs.mkdir(path.join(tmpDir, 'echoflow-code'), { recursive: true })
+    await fs.rm(path.join(tmpDir, 'echoflow-code'), { recursive: true, force: true })
+    await fs.symlink(unrelatedDir, path.join(tmpDir, 'echoflow-code'), 'dir')
 
     const service = new ConversationService() as any
     const env = (await service.buildChildEnv('/tmp')) as Record<string, string>
@@ -334,7 +338,7 @@ describe('ConversationService', () => {
 
   test('buildChildEnv pins desktop memory to the current sanitized project directory', async () => {
     const service = new ConversationService() as any
-    const workDir = path.join(tmpDir, 'workspace', 'myself_code', 'claude-code-haha')
+    const workDir = path.join(tmpDir, 'workspace', 'myself_code', 'echoflow-code')
     await fs.mkdir(workDir, { recursive: true })
 
     const env = (await service.buildChildEnv(workDir)) as Record<string, string>
@@ -364,7 +368,7 @@ describe('ConversationService', () => {
         ].join('\n'),
       )
 
-      delete process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV
+      delete process.env.ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV
       process.env.HOME = tmpDir
       process.env.SHELL = shellPath
       process.env.PATH = '/usr/bin:/bin'
@@ -381,16 +385,16 @@ describe('ConversationService', () => {
   )
 
   test('strips inherited provider env when desktop provider config exists', async () => {
-    const ccHahaDir = path.join(tmpDir, 'cc-haha')
-    await fs.mkdir(ccHahaDir, { recursive: true })
+    const echoFlowDir = getEchoFlowInternalDir(tmpDir)
+    await fs.mkdir(echoFlowDir, { recursive: true })
     await fs.writeFile(
-      path.join(ccHahaDir, 'providers.json'),
+      path.join(echoFlowDir, 'providers.json'),
       JSON.stringify({ activeId: null, providers: [] }),
       'utf-8',
     )
 
     const service = new ConversationService() as any
-    const env = (await service.buildChildEnv('D:\\workspace\\code\\myself_code\\cc-haha')) as Record<string, string>
+    const env = (await service.buildChildEnv('D:\\workspace\\code\\myself_code\\echoflow-code')) as Record<string, string>
 
     expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined()
@@ -401,8 +405,8 @@ describe('ConversationService', () => {
     for (const { settingsFile, setting, preference } of [
       { settingsFile: 'settings.json', setting: undefined, preference: undefined },
       { settingsFile: 'settings.json', setting: '0', preference: undefined },
-      { settingsFile: 'cc-haha/settings.json', setting: 'false', preference: undefined },
-      { settingsFile: 'cc-haha/settings.json', setting: 'false', preference: true },
+      { settingsFile: 'echoflow/settings.json', setting: 'false', preference: undefined },
+      { settingsFile: 'echoflow/settings.json', setting: 'false', preference: true },
       { settingsFile: 'settings.json', setting: '1', preference: false },
     ]) {
       test(`desktop team tools survive child startup (${entrypoint}, ${settingsFile}=${setting ?? 'unset'}, preference=${preference ?? 'unset'})`, async () => {
@@ -432,7 +436,7 @@ describe('ConversationService', () => {
         })
         // Pass the host's real team defaults across a fresh process boundary,
         // without inheriting provider credentials or any user configuration.
-        for (const key of ['CC_HAHA_AGENT_TEAMS_DEFAULT', 'CC_HAHA_AGENT_TEAMS_ENABLED', 'CLAUDE_CODE_ENABLE_TASKS']) {
+        for (const key of ['ECHOFLOW_AGENT_TEAMS_DEFAULT', 'ECHOFLOW_AGENT_TEAMS_ENABLED', 'CLAUDE_CODE_ENABLE_TASKS']) {
           if (childEnv[key] !== undefined) probeEnv[key] = childEnv[key]
         }
         if (setting !== undefined) {
@@ -474,7 +478,7 @@ describe('ConversationService', () => {
 
   test('buildChildEnv injects General network timeout and manual proxy for CLI requests', async () => {
     await fs.writeFile(
-      path.join(tmpDir, 'settings.json'),
+      path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'),
       JSON.stringify({
         network: {
           aiRequestTimeoutMs: 180_000,
@@ -500,10 +504,10 @@ describe('ConversationService', () => {
   })
 
   test('buildChildEnv routes system mode through the host-managed dynamic bridge', async () => {
-    const originalBridgeUrl = process.env.CC_HAHA_SYSTEM_PROXY_URL
-    process.env.CC_HAHA_SYSTEM_PROXY_URL = 'http://127.0.0.1:17890'
+    const originalBridgeUrl = process.env.ECHOFLOW_SYSTEM_PROXY_URL
+    process.env.ECHOFLOW_SYSTEM_PROXY_URL = 'http://127.0.0.1:17890'
     await fs.writeFile(
-      path.join(tmpDir, 'settings.json'),
+      path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'),
       JSON.stringify({
         network: {
           proxy: { mode: 'system', url: '' },
@@ -521,8 +525,8 @@ describe('ConversationService', () => {
       expect(env.ALL_PROXY).toBe('http://127.0.0.1:17890')
       expect(env.all_proxy).toBe('http://127.0.0.1:17890')
     } finally {
-      if (originalBridgeUrl === undefined) delete process.env.CC_HAHA_SYSTEM_PROXY_URL
-      else process.env.CC_HAHA_SYSTEM_PROXY_URL = originalBridgeUrl
+      if (originalBridgeUrl === undefined) delete process.env.ECHOFLOW_SYSTEM_PROXY_URL
+      else process.env.ECHOFLOW_SYSTEM_PROXY_URL = originalBridgeUrl
     }
   })
 
@@ -530,7 +534,7 @@ describe('ConversationService', () => {
     const prev = process.env.CLAUDE_STREAM_FIRST_TOKEN_TIMEOUT_MS
     delete process.env.CLAUDE_STREAM_FIRST_TOKEN_TIMEOUT_MS
     await fs.writeFile(
-      path.join(tmpDir, 'settings.json'),
+      path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'),
       JSON.stringify({ network: { aiRequestTimeoutMs: 600_000 } }),
       'utf-8',
     )
@@ -612,16 +616,16 @@ describe('ConversationService', () => {
   })
 
   test('buildChildEnv injects CLAUDE_CODE_OAUTH_TOKEN when official mode + haha oauth token exists', async () => {
-    const ccHahaDir = path.join(tmpDir, 'cc-haha')
-    await fs.mkdir(ccHahaDir, { recursive: true })
+    const echoFlowDir = getEchoFlowInternalDir(tmpDir)
+    await fs.mkdir(echoFlowDir, { recursive: true })
     await fs.writeFile(
-      path.join(ccHahaDir, 'settings.json'),
+      path.join(echoFlowDir, 'settings.json'),
       JSON.stringify({ env: {} }),
       'utf-8',
     )
 
-    const { hahaOAuthService } = await import('../services/hahaOAuthService.js')
-    await hahaOAuthService.saveTokens({
+    const { echoFlowOAuthService } = await import('../services/echoFlowOAuthService.js')
+    await echoFlowOAuthService.saveTokens({
       accessToken: 'haha-fresh-token',
       refreshToken: 'haha-refresh-xxx',
       expiresAt: Date.now() + 30 * 60_000,
@@ -637,8 +641,8 @@ describe('ConversationService', () => {
   })
 
   test('sendMessage updates a running official OAuth CLI token before the user turn', async () => {
-    const { hahaOAuthService } = await import('../services/hahaOAuthService.js')
-    await hahaOAuthService.saveTokens({
+    const { echoFlowOAuthService } = await import('../services/echoFlowOAuthService.js')
+    await echoFlowOAuthService.saveTokens({
       accessToken: 'fresh-after-wake-token',
       refreshToken: 'refresh-xxx',
       expiresAt: Date.now() + 30 * 60_000,
@@ -682,15 +686,15 @@ describe('ConversationService', () => {
   })
 
   test('recovers a running official OAuth CLI token after the provider rejects it with 401', async () => {
-    const { hahaOAuthService } = await import('../services/hahaOAuthService.js')
-    await hahaOAuthService.saveTokens({
+    const { echoFlowOAuthService } = await import('../services/echoFlowOAuthService.js')
+    await echoFlowOAuthService.saveTokens({
       accessToken: 'rejected-running-token',
       refreshToken: 'refresh-running-token',
       expiresAt: Date.now() + 30 * 60_000,
       scopes: ['user:inference'],
       subscriptionType: 'pro',
     })
-    hahaOAuthService.setRefreshFn(async () => ({
+    echoFlowOAuthService.setRefreshFn(async () => ({
       accessToken: 'recovered-running-token',
       refreshToken: 'refresh-running-next',
       expiresAt: Date.now() + 60 * 60_000,
@@ -734,9 +738,9 @@ describe('ConversationService', () => {
   })
 
   test('does not run Claude OAuth recovery for a third-party provider 401', async () => {
-    const { hahaOAuthService } = await import('../services/hahaOAuthService.js')
+    const { echoFlowOAuthService } = await import('../services/echoFlowOAuthService.js')
     let refreshCalls = 0
-    hahaOAuthService.setRefreshFn(async () => {
+    echoFlowOAuthService.setRefreshFn(async () => {
       refreshCalls += 1
       throw new Error('Claude refresh must stay isolated')
     })
@@ -822,11 +826,11 @@ describe('ConversationService', () => {
   })
 
   test('sendMessage hot-applies direct to system routing before the next user turn', async () => {
-    const originalBridgeUrl = process.env.CC_HAHA_SYSTEM_PROXY_URL
-    process.env.CC_HAHA_SYSTEM_PROXY_URL = 'http://127.0.0.1:17890'
+    const originalBridgeUrl = process.env.ECHOFLOW_SYSTEM_PROXY_URL
+    process.env.ECHOFLOW_SYSTEM_PROXY_URL = 'http://127.0.0.1:17890'
     try {
       await fs.writeFile(
-        path.join(tmpDir, 'settings.json'),
+        path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'),
         JSON.stringify({ network: { proxy: { mode: 'direct', url: '' } } }),
         'utf-8',
       )
@@ -836,7 +840,7 @@ describe('ConversationService', () => {
       await service.refreshNetworkEnvironmentBeforeTurn('direct-to-system', session)
 
       await fs.writeFile(
-        path.join(tmpDir, 'settings.json'),
+        path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'),
         JSON.stringify({ network: { proxy: { mode: 'system', url: '' } } }),
         'utf-8',
       )
@@ -859,14 +863,14 @@ describe('ConversationService', () => {
       expect(update.variables.no_proxy).toContain('localhost')
       expect(JSON.parse(sent[1]!).type).toBe('user')
     } finally {
-      if (originalBridgeUrl === undefined) delete process.env.CC_HAHA_SYSTEM_PROXY_URL
-      else process.env.CC_HAHA_SYSTEM_PROXY_URL = originalBridgeUrl
+      if (originalBridgeUrl === undefined) delete process.env.ECHOFLOW_SYSTEM_PROXY_URL
+      else process.env.ECHOFLOW_SYSTEM_PROXY_URL = originalBridgeUrl
     }
   })
 
   test('sendMessage hot-applies manual proxy and timeout changes before the next user turn', async () => {
     await fs.writeFile(
-      path.join(tmpDir, 'settings.json'),
+      path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'),
       JSON.stringify({
         network: {
           aiRequestTimeoutMs: 600_000,
@@ -881,7 +885,7 @@ describe('ConversationService', () => {
     await service.refreshNetworkEnvironmentBeforeTurn('manual-change', session)
 
     await fs.writeFile(
-      path.join(tmpDir, 'settings.json'),
+      path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'),
       JSON.stringify({
         network: {
           aiRequestTimeoutMs: 180_000,
@@ -950,11 +954,11 @@ describe('ConversationService', () => {
   })
 
   test('sendMessage does not resend network env when the system bridge fingerprint is unchanged', async () => {
-    const originalBridgeUrl = process.env.CC_HAHA_SYSTEM_PROXY_URL
-    process.env.CC_HAHA_SYSTEM_PROXY_URL = 'http://127.0.0.1:17893'
+    const originalBridgeUrl = process.env.ECHOFLOW_SYSTEM_PROXY_URL
+    process.env.ECHOFLOW_SYSTEM_PROXY_URL = 'http://127.0.0.1:17893'
     try {
       await fs.writeFile(
-        path.join(tmpDir, 'settings.json'),
+        path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'),
         JSON.stringify({ network: { proxy: { mode: 'system', url: '' } } }),
         'utf-8',
       )
@@ -970,22 +974,22 @@ describe('ConversationService', () => {
       expect(sent).toHaveLength(1)
       expect(JSON.parse(sent[0]!).type).toBe('user')
     } finally {
-      if (originalBridgeUrl === undefined) delete process.env.CC_HAHA_SYSTEM_PROXY_URL
-      else process.env.CC_HAHA_SYSTEM_PROXY_URL = originalBridgeUrl
+      if (originalBridgeUrl === undefined) delete process.env.ECHOFLOW_SYSTEM_PROXY_URL
+      else process.env.ECHOFLOW_SYSTEM_PROXY_URL = originalBridgeUrl
     }
   })
 
   test('buildChildEnv does NOT inject CLAUDE_CODE_OAUTH_TOKEN when not official mode', async () => {
-    const ccHahaDir = path.join(tmpDir, 'cc-haha')
-    await fs.mkdir(ccHahaDir, { recursive: true })
+    const echoFlowDir = getEchoFlowInternalDir(tmpDir)
+    await fs.mkdir(echoFlowDir, { recursive: true })
     await fs.writeFile(
-      path.join(ccHahaDir, 'settings.json'),
+      path.join(echoFlowDir, 'settings.json'),
       JSON.stringify({ env: { ANTHROPIC_AUTH_TOKEN: 'custom-provider-token' } }),
       'utf-8',
     )
 
-    const { hahaOAuthService } = await import('../services/hahaOAuthService.js')
-    await hahaOAuthService.saveTokens({
+    const { echoFlowOAuthService } = await import('../services/echoFlowOAuthService.js')
+    await echoFlowOAuthService.saveTokens({
       accessToken: 'haha-token-should-not-be-used',
       refreshToken: null,
       expiresAt: null,
@@ -1001,7 +1005,7 @@ describe('ConversationService', () => {
   })
 
   test('buildChildEnv injects explicit provider runtime env for session-scoped providers', async () => {
-    process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
     const providerService = new ProviderService()
     const provider = await providerService.addProvider({
       presetId: 'custom',
@@ -1029,13 +1033,38 @@ describe('ConversationService', () => {
     expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('kimi-k2.6')
     expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('kimi-k2.6')
     expect(env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST).toBe('1')
-    expect(env.CC_HAHA_LOCAL_ACCESS_TOKEN).toBe('desktop-local-secret')
+    expect(env.ECHOFLOW_LOCAL_ACCESS_TOKEN).toBeUndefined()
     expect(env.CLAUDE_CODE_ATTRIBUTION_HEADER).toBe('0')
-    expect(env.CC_HAHA_TRANSCRIPT_ENTRYPOINT).toBe('claude-desktop')
+    expect(env.ECHOFLOW_TRANSCRIPT_ENTRYPOINT).toBe('claude-desktop')
     expect(env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined()
-    expect(env.CC_HAHA_TRACE_PROVIDER_ID).toBeUndefined()
-    expect(env.CC_HAHA_TRACE_PROVIDER_NAME).toBeUndefined()
-    expect(env.CC_HAHA_TRACE_PROVIDER_FORMAT).toBeUndefined()
+    expect(env.ECHOFLOW_TRACE_PROVIDER_ID).toBeUndefined()
+    expect(env.ECHOFLOW_TRACE_PROVIDER_NAME).toBeUndefined()
+    expect(env.ECHOFLOW_TRACE_PROVIDER_FORMAT).toBeUndefined()
+  })
+
+  test('buildChildEnv strips server credentials and runtime config from CLI children', async () => {
+    const previousLocalAccessToken = process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
+    const previousPetAccessToken = process.env.ECHOFLOW_PET_ACCESS_TOKEN
+    const previousRuntimeConfig = process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG
+    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+    process.env.ECHOFLOW_PET_ACCESS_TOKEN = 'pet-capability-secret'
+    process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG = path.join(tmpDir, 'runtime.json')
+
+    try {
+      const service = new ConversationService() as any
+      const env = (await service.buildChildEnv('/tmp')) as Record<string, string>
+
+      expect(env.ECHOFLOW_LOCAL_ACCESS_TOKEN).toBeUndefined()
+      expect(env.ECHOFLOW_PET_ACCESS_TOKEN).toBeUndefined()
+      expect(env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG).toBeUndefined()
+    } finally {
+      if (previousLocalAccessToken === undefined) delete process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
+      else process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = previousLocalAccessToken
+      if (previousPetAccessToken === undefined) delete process.env.ECHOFLOW_PET_ACCESS_TOKEN
+      else process.env.ECHOFLOW_PET_ACCESS_TOKEN = previousPetAccessToken
+      if (previousRuntimeConfig === undefined) delete process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG
+      else process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG = previousRuntimeConfig
+    }
   })
 
   test('buildChildEnv isolates experimental beta kill switch for session-scoped providers', async () => {
@@ -1093,10 +1122,10 @@ describe('ConversationService', () => {
       { providerId: provider.id },
     )) as Record<string, string>
 
-    expect(env.CC_HAHA_TRACE_API_CALLS).toBe('1')
-    expect(env.CC_HAHA_TRACE_PROVIDER_ID).toBe(provider.id)
-    expect(env.CC_HAHA_TRACE_PROVIDER_NAME).toBe('Traceable Provider')
-    expect(env.CC_HAHA_TRACE_PROVIDER_FORMAT).toBe('anthropic')
+    expect(env.ECHOFLOW_TRACE_API_CALLS).toBe('1')
+    expect(env.ECHOFLOW_TRACE_PROVIDER_ID).toBe(provider.id)
+    expect(env.ECHOFLOW_TRACE_PROVIDER_NAME).toBe('Traceable Provider')
+    expect(env.ECHOFLOW_TRACE_PROVIDER_FORMAT).toBe('anthropic')
   })
 
   test('buildChildEnv does not inject trace env when managed trace capture is disabled', async () => {
@@ -1123,10 +1152,10 @@ describe('ConversationService', () => {
       { providerId: provider.id },
     )) as Record<string, string>
 
-    expect(env.CC_HAHA_TRACE_API_CALLS).toBeUndefined()
-    expect(env.CC_HAHA_TRACE_PROVIDER_ID).toBeUndefined()
-    expect(env.CC_HAHA_TRACE_PROVIDER_NAME).toBeUndefined()
-    expect(env.CC_HAHA_TRACE_PROVIDER_FORMAT).toBeUndefined()
+    expect(env.ECHOFLOW_TRACE_API_CALLS).toBeUndefined()
+    expect(env.ECHOFLOW_TRACE_PROVIDER_ID).toBeUndefined()
+    expect(env.ECHOFLOW_TRACE_PROVIDER_NAME).toBeUndefined()
+    expect(env.ECHOFLOW_TRACE_PROVIDER_FORMAT).toBeUndefined()
   })
 
   test('buildChildEnv uses the session-selected model for session-scoped providers', async () => {
@@ -1159,14 +1188,14 @@ describe('ConversationService', () => {
   test('buildChildEnv clears stale api key for bearer-token providers', async () => {
     const providerService = new ProviderService()
     const provider = await providerService.addProvider({
-      presetId: 'shengsuanyun',
-      name: 'ShengSuanYun',
+      presetId: 'echoflowai',
+      name: 'EchoFlow API',
       apiKey: 'provider-key',
-      baseUrl: 'https://router.shengsuanyun.com/api',
+      baseUrl: 'https://api.echoflow.cn',
       apiFormat: 'anthropic',
       models: {
         main: 'claude-sonnet-4-6',
-        haiku: 'claude-haiku-4-5-20251001',
+        haiku: 'claude-haiku-4-5',
         sonnet: 'claude-sonnet-4-6',
         opus: 'claude-opus-4-7',
       },
@@ -1178,10 +1207,11 @@ describe('ConversationService', () => {
       model: 'claude-sonnet-4-6',
     })) as Record<string, string>
 
-    expect(env.ANTHROPIC_BASE_URL).toBe('https://router.shengsuanyun.com/api')
+    expect(env.ANTHROPIC_BASE_URL).toBe('https://api.echoflow.cn')
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe('provider-key')
     expect(env.ANTHROPIC_API_KEY).toBe('')
     expect(env.ANTHROPIC_MODEL).toBe('claude-sonnet-4-6')
+    expect(env.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS).toContain('claude-sonnet-4-6')
     expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe(
       'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
     )
@@ -1190,7 +1220,7 @@ describe('ConversationService', () => {
 
   test('buildChildEnv lets General network timeout override provider preset timeouts', async () => {
     await fs.writeFile(
-      path.join(tmpDir, 'settings.json'),
+      path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'),
       JSON.stringify({
         network: {
           aiRequestTimeoutMs: 180_000,
@@ -1202,41 +1232,41 @@ describe('ConversationService', () => {
 
     const providerService = new ProviderService()
     const provider = await providerService.addProvider({
-      presetId: 'shengsuanyun',
-      name: 'Shengsuanyun',
+      presetId: 'custom',
+      name: 'Custom Gateway',
       apiKey: 'provider-key',
-      baseUrl: 'https://router.shengsuanyun.com/api',
+      baseUrl: 'https://gateway.example/api',
       apiFormat: 'anthropic',
       models: {
-        main: 'anthropic/claude-sonnet-4.6',
-        haiku: 'anthropic/claude-haiku-4.5:thinking',
-        sonnet: 'anthropic/claude-sonnet-4.6',
-        opus: 'anthropic/claude-opus-4.7',
+        main: 'custom-main-model',
+        haiku: 'custom-haiku-model',
+        sonnet: 'custom-sonnet-model',
+        opus: 'custom-opus-model',
       },
     })
 
     const service = new ConversationService() as any
     const env = (await service.buildChildEnv('/tmp', undefined, {
       providerId: provider.id,
-      model: 'anthropic/claude-sonnet-4.6',
+      model: 'custom-sonnet-model',
     })) as Record<string, string>
 
-    expect(env.ANTHROPIC_BASE_URL).toBe('https://router.shengsuanyun.com/api')
+    expect(env.ANTHROPIC_BASE_URL).toBe('https://gateway.example/api')
     expect(env.API_TIMEOUT_MS).toBe('180000')
-    expect(env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1')
+    expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe('thinking,effort,adaptive_thinking,xhigh_effort,max_effort')
   })
 
   test('buildChildEnv can force official auth even when a custom default provider exists', async () => {
-    const ccHahaDir = path.join(tmpDir, 'cc-haha')
-    await fs.mkdir(ccHahaDir, { recursive: true })
+    const echoFlowDir = getEchoFlowInternalDir(tmpDir)
+    await fs.mkdir(echoFlowDir, { recursive: true })
     await fs.writeFile(
-      path.join(ccHahaDir, 'settings.json'),
+      path.join(echoFlowDir, 'settings.json'),
       JSON.stringify({ env: { ANTHROPIC_AUTH_TOKEN: 'custom-provider-token' } }),
       'utf-8',
     )
 
-    const { hahaOAuthService } = await import('../services/hahaOAuthService.js')
-    await hahaOAuthService.saveTokens({
+    const { echoFlowOAuthService } = await import('../services/echoFlowOAuthService.js')
+    await echoFlowOAuthService.saveTokens({
       accessToken: 'forced-official-token',
       refreshToken: 'forced-official-refresh',
       expiresAt: Date.now() + 30 * 60_000,
@@ -1258,8 +1288,8 @@ describe('ConversationService', () => {
     const providerService = new ProviderService()
     await providerService.activateProvider('openai-official')
 
-    const { hahaOAuthService } = await import('../services/hahaOAuthService.js')
-    await hahaOAuthService.saveTokens({
+    const { echoFlowOAuthService } = await import('../services/echoFlowOAuthService.js')
+    await echoFlowOAuthService.saveTokens({
       accessToken: 'claude-oauth-token-that-must-not-be-used',
       refreshToken: 'claude-refresh-token',
       expiresAt: Date.now() + 30 * 60_000,
@@ -1283,9 +1313,9 @@ describe('ConversationService', () => {
       providerId: 'openai-official',
     })) as Record<string, string>
 
-    expect(env.CC_HAHA_OPENAI_OAUTH_PROVIDER).toBe('1')
+    expect(env.ECHOFLOW_OPENAI_OAUTH_PROVIDER).toBe('1')
     expect(env.OPENAI_CODEX_OAUTH_FILE).toBe(
-      path.join(tmpDir, 'cc-haha', 'openai-oauth.json'),
+      path.join(getEchoFlowInternalDir(tmpDir), 'openai-oauth.json'),
     )
     expect(env.ANTHROPIC_MODEL).toBe('gpt-5.6-sol')
     expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.6-terra')
@@ -1304,12 +1334,12 @@ describe('ConversationService', () => {
       model: 'grok-4.5',
     })) as Record<string, string>
 
-    expect(env.CC_HAHA_GROK_OAUTH_PROVIDER).toBe('1')
-    expect(env.GROK_OAUTH_FILE).toBe(path.join(tmpDir, 'cc-haha', 'grok-oauth.json'))
+    expect(env.ECHOFLOW_GROK_OAUTH_PROVIDER).toBe('1')
+    expect(env.GROK_OAUTH_FILE).toBe(path.join(tmpDir, 'echoflow-code', 'grok-oauth.json'))
     expect(env.ANTHROPIC_MODEL).toBe('grok-4.5')
     expect(env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST).toBe('1')
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined()
-    expect(env.CC_HAHA_OPENAI_OAUTH_PROVIDER).toBeUndefined()
+    expect(env.ECHOFLOW_OPENAI_OAUTH_PROVIDER).toBeUndefined()
     expect(env.OPENAI_CODEX_OAUTH_FILE).toBeUndefined()
     expect(env.ANTHROPIC_API_KEY).toBeUndefined()
     expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
@@ -1317,8 +1347,8 @@ describe('ConversationService', () => {
   })
 
   test('buildChildEnv passes OpenAI-native effort without leaking Claude effort state', async () => {
-    const originalEffort = process.env.CC_HAHA_OPENAI_REASONING_EFFORT
-    process.env.CC_HAHA_OPENAI_REASONING_EFFORT = 'stale-parent-effort'
+    const originalEffort = process.env.ECHOFLOW_OPENAI_REASONING_EFFORT
+    process.env.ECHOFLOW_OPENAI_REASONING_EFFORT = 'stale-parent-effort'
     try {
       const service = new ConversationService() as any
       const env = (await service.buildChildEnv('/tmp', undefined, {
@@ -1328,18 +1358,18 @@ describe('ConversationService', () => {
       })) as Record<string, string>
 
       expect(env.ANTHROPIC_MODEL).toBe('gpt-5.6-sol')
-      expect(env.CC_HAHA_OPENAI_REASONING_EFFORT).toBe('xhigh')
+      expect(env.ECHOFLOW_OPENAI_REASONING_EFFORT).toBe('xhigh')
     } finally {
-      if (originalEffort === undefined) delete process.env.CC_HAHA_OPENAI_REASONING_EFFORT
-      else process.env.CC_HAHA_OPENAI_REASONING_EFFORT = originalEffort
+      if (originalEffort === undefined) delete process.env.ECHOFLOW_OPENAI_REASONING_EFFORT
+      else process.env.ECHOFLOW_OPENAI_REASONING_EFFORT = originalEffort
     }
   })
 
   test('buildChildEnv does not leak inherited CLAUDE_CODE_OAUTH_TOKEN when official token is unavailable', async () => {
-    const ccHahaDir = path.join(tmpDir, 'cc-haha')
-    await fs.mkdir(ccHahaDir, { recursive: true })
+    const echoFlowDir = getEchoFlowInternalDir(tmpDir)
+    await fs.mkdir(echoFlowDir, { recursive: true })
     await fs.writeFile(
-      path.join(ccHahaDir, 'settings.json'),
+      path.join(echoFlowDir, 'settings.json'),
       JSON.stringify({ env: {} }),
       'utf-8',
     )
@@ -1358,11 +1388,11 @@ describe('ConversationService', () => {
       'ws://127.0.0.1:3456/sdk/test-session?token=test-token',
     )) as Record<string, string>
 
-    expect(env.CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID).toBe(
-      'com.claude-code-haha.desktop',
+    expect(env.ECHOFLOW_COMPUTER_USE_HOST_BUNDLE_ID).toBe(
+      'com.echoflow.code.desktop',
     )
-    expect(env.CC_HAHA_DESKTOP_SERVER_URL).toBe('http://127.0.0.1:3456')
-    expect(env.CC_HAHA_TRACE_API_CALLS).toBe('1')
+    expect(env.ECHOFLOW_DESKTOP_SERVER_URL).toBe('http://127.0.0.1:3456')
+    expect(env.ECHOFLOW_TRACE_API_CALLS).toBe('1')
     expect(env.CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING).toBe('1')
   })
 
@@ -1376,7 +1406,57 @@ describe('ConversationService', () => {
       expect(args[2]).toContain('preload.ts')
       expect(args[3]).toContain(path.join('src', 'entrypoints', 'cli.tsx'))
     } else {
-      expect(args[0]).toContain(path.join('bin', 'claude-haha'))
+      expect(args[0]).toContain(path.join('bin', 'echoflow-code'))
+    }
+  })
+
+  test('bundled runtime ignores the CLAUDE_CLI_PATH override', () => {
+    const previousCliPath = process.env.CLAUDE_CLI_PATH
+    process.env.CLAUDE_CLI_PATH = path.join(tmpDir, 'untrusted-cli')
+
+    try {
+      const service = new ConversationService() as any
+      const args = service.resolveCliArgs(['--print'], 'bundled') as string[]
+
+      expect(args).not.toContain(process.env.CLAUDE_CLI_PATH)
+      if (process.platform === 'win32') {
+        expect(args[0]).toBe(process.execPath)
+        expect(args[1]).toBe('--preload')
+      } else {
+        expect(args[0]).toContain(path.join('bin', 'echoflow-code'))
+      }
+    } finally {
+      if (previousCliPath === undefined) delete process.env.CLAUDE_CLI_PATH
+      else process.env.CLAUDE_CLI_PATH = previousCliPath
+    }
+  })
+
+  test('buildSessionCliArgs uses the installed runtime from the trusted Electron config', async () => {
+    const executablePath = path.join(tmpDir, 'claude')
+    const runtimeConfigPath = path.join(tmpDir, 'claude-code-runtime.json')
+    await fs.writeFile(executablePath, '')
+    await fs.chmod(executablePath, 0o755)
+    await fs.writeFile(runtimeConfigPath, JSON.stringify({
+      schemaVersion: 1,
+      defaultRuntimeId: 'installed',
+      installedPath: executablePath,
+    }))
+    const previousRuntimeConfig = process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG
+    process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG = runtimeConfigPath
+
+    try {
+      const service = new ConversationService() as any
+      const args = service.buildSessionCliArgs(
+        '123e4567-e89b-12d3-a456-426614174000',
+        'ws://127.0.0.1:3456/sdk/test-session?token=test-token',
+        false,
+        { cliRuntimeId: 'installed' },
+      ) as string[]
+
+      expect(args[0]).toBe(await fs.realpath(executablePath))
+    } finally {
+      if (previousRuntimeConfig === undefined) delete process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG
+      else process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG = previousRuntimeConfig
     }
   })
 
@@ -1401,8 +1481,8 @@ describe('ConversationService', () => {
       'ws://127.0.0.1:3456/sdk/test-session?token=test-token',
     )) as Record<string, string>
 
-    expect(env.CC_HAHA_DESKTOP_AWAIT_MCP).toBe('1')
-    expect(env.CC_HAHA_DESKTOP_AWAIT_MCP_TIMEOUT_MS).toBe('5000')
+    expect(env.ECHOFLOW_DESKTOP_AWAIT_MCP).toBe('1')
+    expect(env.ECHOFLOW_DESKTOP_AWAIT_MCP_TIMEOUT_MS).toBe('5000')
   })
 
   test('buildChildEnv disables inherited interrupted-turn resume for prewarm launches', async () => {

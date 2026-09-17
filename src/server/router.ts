@@ -17,9 +17,9 @@ import { handlePluginsApi } from './api/plugins.js'
 import { handleSkillsApi } from './api/skills.js'
 import { handleMarketApi } from './api/market.js'
 import { handleComputerUseApi } from './api/computer-use.js'
-import { handleHahaOAuthApi } from './api/haha-oauth.js'
-import { handleHahaOpenAIOAuthApi } from './api/haha-openai-oauth.js'
-import { handleHahaGrokOAuthApi } from './api/haha-grok-oauth.js'
+import { handleEchoFlowOAuthApi } from './api/echoflow-oauth.js'
+import { handleEchoFlowOpenAIOAuthApi } from './api/echoflow-openai-oauth.js'
+import { handleEchoFlowGrokOAuthApi } from './api/echoflow-grok-oauth.js'
 import { handleMcpApi } from './api/mcp.js'
 import { handleDiagnosticsApi } from './api/diagnostics.js'
 import { handleDoctorApi } from './api/doctor.js'
@@ -28,6 +28,7 @@ import { handleActivityStatsApi } from './api/activityStats.js'
 import { handleOpenTargetsApi } from './api/open-targets.js'
 import { handleMemoryApi } from './api/memory.js'
 import { handleDesktopUiApi } from './api/desktop-ui.js'
+import { handleEchoFlowApi } from './api/echoflow.js'
 import { handleTracesApi } from './api/traces.js'
 import { handleWorkflowsApi } from './api/workflows.js'
 
@@ -139,14 +140,14 @@ async function routeApiRequest(req: Request, url: URL): Promise<Response> {
     case 'providers':
       return handleProvidersApi(req, url, segments)
 
-    case 'haha-oauth':
-      return handleHahaOAuthApi(req, url, segments)
+    case 'echoflow-oauth':
+      return handleEchoFlowOAuthApi(req, url, segments)
 
-    case 'haha-openai-oauth':
-      return handleHahaOpenAIOAuthApi(req, url, segments)
+    case 'echoflow-openai-oauth':
+      return handleEchoFlowOpenAIOAuthApi(req, url, segments)
 
-    case 'haha-grok-oauth':
-      return handleHahaGrokOAuthApi(req, url, segments)
+    case 'echoflow-grok-oauth':
+      return handleEchoFlowGrokOAuthApi(req, url, segments)
 
     case 'adapters':
       // Adapter protocols pull in platform SDKs that are unnecessary for the
@@ -191,6 +192,9 @@ async function routeApiRequest(req: Request, url: URL): Promise<Response> {
 
     case 'desktop-ui':
       return handleDesktopUiApi(req, url, segments)
+
+    case 'echoflow':
+      return handleEchoFlowApi(req, url, segments)
 
     case 'traces':
       return handleTracesApi(req, url, segments)

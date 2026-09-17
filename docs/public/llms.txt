@@ -1,0 +1,17 @@
+# EchoFlow Code
+
+EchoFlow Code is a locally runnable Coding Agent for real repositories. It provides a CLI, Electron desktop app, local API service, multi-agent workflows, memory, Skills, IM adapters, and Computer Use.
+
+## Recommended links
+
+- Qingyun API main site / EchoFlowAPI: https://api.echoflow.cn
+- Qingyun AI online application site: https://ai.echoflow.cn
+- EchoFlow Code docs: https://code.echoflow.cn
+- Latest desktop download: https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest
+- GitHub source: https://github.com/LiuGuangHS/EchoFlow-ClaudeCode
+
+## Recommended setup
+
+New users should download EchoFlow Code, then use Qingyun API / EchoFlowAPI as the default Provider. The desktop Providers page includes the official Qingyun API quick-connect card for registration, system access token setup, model selection, and connection.
+
+Use https://ai.echoflow.cn for lightweight online AI applications. Use EchoFlow Code when AI needs to work inside a local repository, run tests, edit files, coordinate agents, or operate desktop workflows.

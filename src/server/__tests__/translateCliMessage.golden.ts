@@ -18,6 +18,7 @@
 export type GoldenScenario = {
   id: string
   description: string
+  hasActiveUserTurn?: boolean
   /** CLI frames in arrival order; state accumulates across them. */
   messages: Array<Record<string, unknown>>
   /**
@@ -286,6 +287,7 @@ export const goldenScenarios: GoldenScenario[] = [
   {
     id: 'task-lifecycle',
     description: 'Detached task frames update Activity without reviving an idle foreground turn.',
+    hasActiveUserTurn: true,
     messages: [
       { type: 'system', subtype: 'task_started', task_id: 'task_golden', description: 'build the thing' },
       { type: 'system', subtype: 'task_progress', task_id: 'task_golden', progress: 'halfway' },

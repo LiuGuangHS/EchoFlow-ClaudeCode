@@ -6,7 +6,7 @@ import path from 'node:path'
 const buildScript = path.resolve(import.meta.dirname, 'build.sh')
 const productIcon = path.resolve(import.meta.dirname, '../../desktop/src-tauri/icons/icon.icns')
 const fixtureDirectories: string[] = []
-const resourceBundleName = 'cu-helper_cc-haha-computer-use.bundle'
+const resourceBundleName = 'cu-helper_echoflow-code-computer-use.bundle'
 
 function runFixtureCommand(command: string[], options: { cwd?: string, env?: Record<string, string | undefined> } = {}) {
   // File-backed output also works on Bun versions where test subprocesses
@@ -81,9 +81,9 @@ source "$1"
 TEST_BUNDLE_DIR="$2"
 BUILD_DIR="$TEST_BUNDLE_DIR/build"
 BIN_PATH="$TEST_BUNDLE_DIR/fixture-binary"
-RESOURCE_BUNDLE_PATH="$TEST_BUNDLE_DIR/cu-helper_cc-haha-computer-use.bundle"
-APP_PATH="$TEST_BUNDLE_DIR/cc-haha-computer-use.app"
-BUNDLE_ID="dev.cchaha.cu-helper"
+RESOURCE_BUNDLE_PATH="$TEST_BUNDLE_DIR/cu-helper_echoflow-code-computer-use.bundle"
+APP_PATH="$TEST_BUNDLE_DIR/echoflow-code-computer-use.app"
+BUNDLE_ID="dev.echoflow.cu-helper"
 SIGN_IDENTITY="fixture-only"
 RESOLVED_TIMESTAMP_MODE="none"
 if [ "$3" = "missing" ]; then
@@ -105,7 +105,7 @@ wrap_app
 
   return {
     directory,
-    contents: path.join(directory, 'cc-haha-computer-use.app', 'Contents'),
+    contents: path.join(directory, 'echoflow-code-computer-use.app', 'Contents'),
     exitCode: result.exitCode,
     stderr: result.stderr.toString(),
   }
@@ -115,7 +115,7 @@ function probeFixtureApp(mode: 'packaged' | 'build-path' | 'external-symlink' | 
   const directory = mkdtempSync(path.join(tmpdir(), 'cu-helper-resource-probe-'))
   fixtureDirectories.push(directory)
   const app = path.join(directory, 'source.app')
-  const binary = path.join(app, 'Contents', 'MacOS', 'cc-haha-computer-use')
+  const binary = path.join(app, 'Contents', 'MacOS', 'echoflow-code-computer-use')
   mkdirSync(path.dirname(binary), { recursive: true })
   mkdirSync(path.join(app, 'Contents', 'Resources', resourceBundleName, 'LensSequence'), { recursive: true })
   writeFileSync(path.join(app, 'Contents', 'Resources', resourceBundleName, 'LensSequence', 'README.md'), 'optional frames fixture')
@@ -240,9 +240,9 @@ describe('cu-helper architecture-specific build output', () => {
       expect(result.exitCode).toBe(0)
       expect(result.lines).toEqual([
         result.binDir,
-        path.join(result.binDir, 'cc-haha-computer-use'),
-        path.join(result.binDir, 'cc-haha-computer-use.app'),
-        path.join(result.binDir, 'cu-helper_cc-haha-computer-use.bundle'),
+        path.join(result.binDir, 'echoflow-code-computer-use'),
+        path.join(result.binDir, 'echoflow-code-computer-use.app'),
+        path.join(result.binDir, 'cu-helper_echoflow-code-computer-use.bundle'),
       ])
     },
   )
@@ -266,8 +266,8 @@ describe.skipIf(process.platform !== 'darwin')('cu-helper permission-list app ic
     ])
     expect(plist.exitCode).toBe(0)
     const info = JSON.parse(plist.stdout.toString())
-    expect(info.CFBundleIdentifier).toBe('dev.cchaha.cu-helper')
-    expect(info.CFBundleExecutable).toBe('cc-haha-computer-use')
+    expect(info.CFBundleIdentifier).toBe('dev.echoflow.cu-helper')
+    expect(info.CFBundleExecutable).toBe('echoflow-code-computer-use')
     expect(info.CFBundleIconFile).toBe('icon.icns')
 
     const expectedIcon = readFileSync(productIcon)

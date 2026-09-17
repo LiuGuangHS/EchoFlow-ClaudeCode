@@ -29,10 +29,9 @@ let tmpDir: string
 
 /** Write the user settings file the resolver reads, then clear the caches. */
 function writeUserSettings(settings: unknown): void {
-  fs.writeFileSync(
-    path.join(tmpDir, 'settings.json'),
-    JSON.stringify(settings ?? {}),
-  )
+  const settingsPath = path.join(tmpDir, 'echoflow-code', 'settings.json')
+  fs.mkdirSync(path.dirname(settingsPath), { recursive: true })
+  fs.writeFileSync(settingsPath, JSON.stringify(settings ?? {}))
   resetSettingsCache()
 }
 

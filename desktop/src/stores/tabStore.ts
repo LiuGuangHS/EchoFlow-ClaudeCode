@@ -7,12 +7,13 @@ import { useSessionRuntimeStore } from './sessionRuntimeStore'
 import { teamMemberSessionId } from '../types/team'
 import type { SessionListItem } from '../types/session'
 
-const TAB_STORAGE_KEY = 'cc-haha-open-tabs'
+const TAB_STORAGE_KEY = 'echoflow-code-open-tabs'
 
 export const SETTINGS_TAB_ID = '__settings__'
 export const SCHEDULED_TAB_ID = '__scheduled__'
 export const CONNECTORS_TAB_ID = '__connectors__'
 export const MARKET_TAB_ID = '__market__'
+export const DEEPSEEK_HARNESS_TAB_ID = '__deepseek-harness__'
 export const TRACE_LIST_TAB_ID = '__traces__'
 export const TERMINAL_TAB_PREFIX = '__terminal__'
 export const TRACE_TAB_PREFIX = '__trace__'
@@ -21,8 +22,8 @@ export const SUBAGENT_TAB_PREFIX = '__subagent__'
 export const TEAM_TAB_PREFIX = '__team__'
 export const TEAM_MEMBER_TAB_PREFIX = 'team-member:'
 
-export type TabType = 'session' | 'settings' | 'scheduled' | 'connectors' | 'market' | 'terminal' | 'trace' | 'traces' | 'workbench' | 'subagent' | 'team' | 'team-member'
-type PersistentSpecialTabType = 'settings' | 'scheduled' | 'connectors' | 'market' | 'traces'
+export type TabType = 'session' | 'settings' | 'scheduled' | 'connectors' | 'market' | 'deepseek-harness' | 'terminal' | 'trace' | 'traces' | 'workbench' | 'subagent' | 'team' | 'team-member'
+type PersistentSpecialTabType = 'settings' | 'scheduled' | 'connectors' | 'market' | 'deepseek-harness' | 'traces'
 
 export type Tab = {
   sessionId: string
@@ -91,6 +92,7 @@ const PERSISTENT_SPECIAL_TAB_IDS: Record<PersistentSpecialTabType, string> = {
   scheduled: SCHEDULED_TAB_ID,
   market: MARKET_TAB_ID,
   connectors: CONNECTORS_TAB_ID,
+  'deepseek-harness': DEEPSEEK_HARNESS_TAB_ID,
   traces: TRACE_LIST_TAB_ID,
 }
 
@@ -99,9 +101,11 @@ function getPersistentSpecialTabType(tab: Pick<Tab, 'sessionId'> & { type?: TabT
   if (tab.sessionId === SCHEDULED_TAB_ID) return 'scheduled'
   if (tab.sessionId === CONNECTORS_TAB_ID) return 'market'
   if (tab.sessionId === MARKET_TAB_ID) return 'market'
+  if (tab.sessionId === DEEPSEEK_HARNESS_TAB_ID) return 'deepseek-harness'
   if (tab.sessionId === TRACE_LIST_TAB_ID) return 'traces'
-  if (tab.type === 'connectors' || tab.type === 'settings' || tab.type === 'scheduled' || tab.type === 'market' || tab.type === 'traces') {
-    return tab.type === 'connectors' ? 'market' : tab.type
+  if (tab.type === 'connectors') return 'market'
+  if (tab.type === 'settings' || tab.type === 'scheduled' || tab.type === 'market' || tab.type === 'deepseek-harness' || tab.type === 'traces') {
+    return tab.type
   }
   return null
 }

@@ -23,6 +23,7 @@ import { apply1mSupportToContextInput, apply1mSupportToContextInputs, getAutoCom
 import type { ProviderPreset } from '../../types/providerPreset'
 import { normalizeProviderBaseUrl, presetMatchesBaseUrl, selectableProviderPresets } from '../../config/providerPresets'
 import { ClaudeOfficialLogin } from '../../components/settings/ClaudeOfficialLogin'
+import { EchoFlowAPIOfficialLogin } from '../../components/settings/EchoFlowAPIOfficialLogin'
 import { ChatGPTOfficialLogin } from '../../components/settings/ChatGPTOfficialLogin'
 import { GrokOfficialLogin } from '../../components/settings/GrokOfficialLogin'
 import { CcSwitchImportModal } from '../../components/settings/CcSwitchImportModal'
@@ -93,10 +94,12 @@ function buildProviderListItems(
   providerOrder: string[] | undefined,
 ): ProviderListItem[] {
   const savedItems = new Map(
-    providers.map((provider) => [
-      provider.id,
-      { id: provider.id, kind: 'saved', provider } satisfies ProviderListItem,
-    ]),
+    providers
+      .filter((provider) => provider.presetId !== 'echoflowai')
+      .map((provider) => [
+        provider.id,
+        { id: provider.id, kind: 'saved', provider } satisfies ProviderListItem,
+      ]),
   )
   const items = new Map<string, ProviderListItem>([
     [CLAUDE_OFFICIAL_PROVIDER_ID, { id: CLAUDE_OFFICIAL_PROVIDER_ID, kind: 'claude-official' }],
@@ -216,12 +219,20 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
     const { active, over } = event
     if (!over || active.id === over.id) return
 
-    const ids = providerItems.map((item) => item.id)
-    const oldIndex = ids.indexOf(String(active.id))
-    const newIndex = ids.indexOf(String(over.id))
+    const visibleIds = providerItems.map((item) => item.id)
+    const oldIndex = visibleIds.indexOf(String(active.id))
+    const newIndex = visibleIds.indexOf(String(over.id))
     if (oldIndex === -1 || newIndex === -1) return
 
-    void reorderProviders(arrayMove(ids, oldIndex, newIndex))
+    const reorderedVisibleIds = arrayMove(visibleIds, oldIndex, newIndex)
+    const visibleIdSet = new Set(visibleIds)
+    let reorderedIndex = 0
+    const fullOrder = normalizeProviderOrder(providerOrder, providers).flatMap((id) => {
+      if (!visibleIdSet.has(id)) return [id]
+      const reorderedId = reorderedVisibleIds[reorderedIndex++]
+      return reorderedId ? [reorderedId] : []
+    })
+    void reorderProviders(fullOrder)
   }
 
   const isClaudeOfficialActive = hasLoadedProviders && activeId === null
@@ -256,6 +267,26 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
       />
 
       {(actionFailed || (browserMode && providerLoadError)) && <p role="alert" className="mb-3 text-sm text-[var(--color-error)]">{t('publicAccess.genericError')}</p>}
+
+      <div
+        data-testid="echoflow-api-official-provider"
+        className="relative mb-2 flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)]"
+      >
+        <div className="flex items-center gap-4 px-4 py-3.5">
+          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${activeId && providers.some((provider) => provider.id === activeId && provider.presetId === 'echoflowai') ? 'bg-[var(--color-success)]' : 'bg-[var(--color-text-tertiary)]'}`} />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold text-[var(--color-text-primary)]">清云 API 官方</div>
+            <div className="mt-0.5 text-xs text-[var(--color-text-tertiary)]">https://api.echoflow.cn · Claude / OpenAI 兼容协议</div>
+          </div>
+        </div>
+        <div className="border-t border-[var(--color-border-separator)] px-4 pb-4 pt-3">
+          <EchoFlowAPIOfficialLogin
+            activeId={activeId}
+            providers={providers}
+            onEdit={setEditingProvider}
+          />
+        </div>
+      </div>
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
@@ -1524,7 +1555,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, browserMode
     setSaveFailed(false)
     setCredentialRequired(false)
     try {
-      // Write the edited cc-haha settings.json first so provider-specific model
+      // Write the edited echoflow-code settings.json first so provider-specific model
       // settings never conflict with the user's global ~/.claude/settings.json.
       if (!browserMode && settingsJson.trim()) {
         try {

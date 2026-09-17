@@ -12,7 +12,7 @@ The repository contains the CLI/TUI, local Server, Electron desktop app, IM adap
 ```text
 .
 ├── bin/
-│   └── claude-haha                 # CLI launcher
+│   └── echoflow-code                 # CLI launcher
 ├── preload.ts                      # Bun preload and build compatibility entry
 ├── package.json                    # Root scripts and dependencies
 ├── src/

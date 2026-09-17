@@ -29,7 +29,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -43,6 +43,8 @@ jobs:
 
       - name: Build React site
         run: npm --prefix site run build
+        env:
+          DOCS_BASE: /
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

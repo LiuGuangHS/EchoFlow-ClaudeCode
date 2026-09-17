@@ -47,7 +47,7 @@ test('stops spawned process trees before removing the Windows fixture directory'
 
 describe('desktop smoke Vite executable resolution', () => {
   test('uses Bun\'s Windows executable shim when vite.cmd is absent', () => {
-    const rootDir = mkdtempSync(join(tmpdir(), 'cc-haha-vite-shim-'))
+    const rootDir = mkdtempSync(join(tmpdir(), 'echoflow-code-vite-shim-'))
     const binDir = join(rootDir, 'desktop', 'node_modules', '.bin')
     mkdirSync(binDir, { recursive: true })
     const executable = join(binDir, 'vite.exe')
@@ -61,7 +61,7 @@ describe('desktop smoke Vite executable resolution', () => {
   })
 
   test('falls back to npm\'s Windows command shim', () => {
-    const rootDir = mkdtempSync(join(tmpdir(), 'cc-haha-vite-shim-'))
+    const rootDir = mkdtempSync(join(tmpdir(), 'echoflow-code-vite-shim-'))
     const binDir = join(rootDir, 'desktop', 'node_modules', '.bin')
     mkdirSync(binDir, { recursive: true })
     const executable = join(binDir, 'vite.cmd')
@@ -77,7 +77,7 @@ describe('desktop smoke Vite executable resolution', () => {
 
 describe('desktop smoke agent-browser executable resolution', () => {
   test('unwraps the npm command shim to the native Windows executable', () => {
-    const npmDir = mkdtempSync(join(tmpdir(), 'cc-haha-agent-browser-'))
+    const npmDir = mkdtempSync(join(tmpdir(), 'echoflow-code-agent-browser-'))
     const commandShim = join(npmDir, 'agent-browser.cmd')
     const executable = join(
       npmDir,

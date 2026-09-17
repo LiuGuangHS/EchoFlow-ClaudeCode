@@ -452,7 +452,7 @@ Subagents normally inherit the primary session's extended-thinking setting, but 
 
 ### Same-Name Source Priority
 
-When several sources define an Agent with the same name, cc-haha selects the active definition in this order, from highest to lowest:
+When several sources define an Agent with the same name, echoflow-code selects the active definition in this order, from highest to lowest:
 
 1. **Policy Agents** (policy) — Organization-managed policy
 2. **CLI argument Agents** (flag) — Registered with `--agents`

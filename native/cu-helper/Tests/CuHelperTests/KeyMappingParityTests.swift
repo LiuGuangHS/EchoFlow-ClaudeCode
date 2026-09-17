@@ -1,7 +1,7 @@
 import Carbon.HIToolbox
 import CoreGraphics
 import XCTest
-@testable import cc_haha_computer_use
+@testable import echoflow_code_computer_use
 
 /// Expectations come from events received by a disposable AppKit app using
 /// the installed official macOS App.pressKey implementation, not X11 docs.

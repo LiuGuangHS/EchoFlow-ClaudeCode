@@ -74,7 +74,7 @@ const tempDirs: string[] = []
 const itOnDarwin = process.platform === 'darwin' ? it : it.skip
 
 function tempDir() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-haha-terminal-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'echoflow-code-terminal-'))
   tempDirs.push(dir)
   return dir
 }
@@ -94,7 +94,7 @@ describe('Electron terminal service', () => {
     vi.spyOn(pty, 'onData').mockImplementation(handler => { handler('early prompt') })
     vi.spyOn(pty, 'onExit').mockImplementation(handler => { handler({ exitCode: 0 }) })
     const service = new ElectronTerminalService({
-      env: { HOME: dir, CLAUDE_CONFIG_DIR: dir, SHELL: '/bin/sh', CC_HAHA_DISABLE_TERMINAL_SHELL_ENV: '1' },
+      env: { HOME: dir, CLAUDE_CONFIG_DIR: dir, SHELL: '/bin/sh', ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV: '1' },
       cwd: () => dir,
       ptyFactory: { spawn: () => pty },
     })
@@ -256,7 +256,7 @@ describe('Electron terminal service', () => {
       expect(fs.statSync(cache).mode & 0o077).toBe(0)
       expect(fs.statSync(path.join(cache, 'prebuilds', 'darwin-arm64', 'spawn-helper')).mode & 0o777).toBe(0o500)
     }
-    expect(fs.existsSync(path.join(cache, '.cc-haha-node-pty-manifest.json'))).toBe(true)
+    expect(fs.existsSync(path.join(cache, '.echoflow-code-node-pty-manifest.json'))).toBe(true)
   })
 
   it('rebuilds the packaged node-pty runtime cache when cached files are tampered', () => {
@@ -282,7 +282,7 @@ describe('Electron terminal service', () => {
     prepareNodePtyRuntime(source, cache)
 
     const cachedEntry = path.join(cache, 'index.js')
-    execFileSync('/usr/bin/xattr', ['-w', 'com.apple.quarantine', '0381;00000000;Chrome;CC-HAHA-TEST', cachedEntry])
+    execFileSync('/usr/bin/xattr', ['-w', 'com.apple.quarantine', '0381;00000000;Chrome;ECHOFLOW-TEST', cachedEntry])
     execFileSync('/usr/bin/xattr', ['-p', 'com.apple.quarantine', cachedEntry], { stdio: 'ignore' })
     fs.chmodSync(cachedEntry, 0o500)
 

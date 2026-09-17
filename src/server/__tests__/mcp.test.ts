@@ -159,6 +159,9 @@ describe('MCP API', () => {
         await fs.readFile(path.join(tmpDir, '.claude.json'), 'utf8'),
       )
 
+      const projectAKey = normalizePathForConfigKey(projectA)
+      const projectBKey = normalizePathForConfigKey(projectB)
+
       expect(rawConfig.projects?.[projectAKey]?.mcpServers?.['scoped-server']).toBeUndefined()
       expect(rawConfig.projects?.[projectAKey]?.disabledMcpServers ?? []).not.toContain('scoped-server')
       expect(rawConfig.projects?.[projectBKey]?.mcpServers?.['scoped-server']).toMatchObject({

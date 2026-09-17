@@ -7,7 +7,7 @@ order: 2
 
 # Environment Variables
 
-Claude Code Haha has two configuration paths:
+EchoFlow Code has two configuration paths:
 
 - Desktop users should select, test, and activate a provider under **Settings → Providers**. The app manages authentication, model mappings, and protocol translation.
 - When running the CLI from source, use a repository `.env`, shell variables, or Claude Code `settings.json`.
@@ -73,7 +73,7 @@ See [Local Server](../internals/server.md) for `SERVER_HOST`, `SERVER_PORT`, `SE
 Desktop stores the provider index at:
 
 ```text
-~/.claude/cc-haha/providers.json
+~/.claude/echoflow-code/providers.json
 ```
 
 Provider-managed environment data is written to an isolated Haha configuration. You do not need to copy it into `~/.claude/settings.json`. When the CLI finds an active provider, it reuses its credentials, models, and protocol settings. Providers using `openai_chat` or `openai_responses` automatically use a loopback proxy.
@@ -82,7 +82,7 @@ See [Third-Party Models](../start/models.md) for the setup flow.
 
 ### Repository `.env`
 
-The source `bin/claude-haha` launcher loads a `.env` file from the repository root when it exists:
+The source `bin/echoflow-code` launcher loads a `.env` file from the repository root when it exists:
 
 ```bash
 cp .env.example .env
@@ -121,7 +121,7 @@ A project can also contain `.claude/settings.json` or `.claude/settings.local.js
 
 There is no reliable three-step rule such as “shell > `.env` > settings”:
 
-1. `bin/claude-haha` first lets Bun load the repository `.env`.
+1. `bin/echoflow-code` first lets Bun load the repository `.env`.
 2. CLI initialization merges enabled user, project, local, command-line, and managed setting sources.
 3. An active Haha provider overrides provider-routing values from ordinary Claude settings so the two clients do not contaminate each other.
 4. Runtime values injected by the Desktop host are protected from same-name fields in `settings.json`.

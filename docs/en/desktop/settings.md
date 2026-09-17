@@ -11,7 +11,7 @@ Click **Settings** at the bottom of the sidebar. Sixteen tabs on the left, in a 
 
 ## Providers
 
-Model access. Sign in to Claude, ChatGPT, or Grok with an account (no API key required), or add any Anthropic- or OpenAI-compatible service with an API key.
+Shared model-provider configuration. Sign in to Claude, ChatGPT, or Grok with an account (no API key required), or add any Anthropic- or OpenAI-compatible service with an API key. This is where provider credentials, endpoints, and model mappings live; it is not the execution runtime for a session. Choosing a provider, model, or effort inside a session creates a session-level override without replacing this shared configuration.
 
 You'll come here once during setup and rarely again. Full steps in [Connecting a model](../start/models.md).
 
@@ -47,7 +47,7 @@ Talk to Claude from WeChat, DingTalk, WhatsApp, Telegram, or Feishu, and manage 
 
 ## Terminal
 
-A real host shell embedded in the app, for installing plugins, skills, MCP servers, and anything else that needs a command line. The desktop app bundles `claude-haha`, so anywhere the docs say `claude <args>` you can run `claude-haha <args>`.
+A real host shell embedded in the app, for installing plugins, skills, MCP servers, and anything else that needs a command line. The desktop app bundles `echoflow-code`, so anywhere the docs say `claude <args>` you can run `echoflow-code <args>`.
 
 On Windows you can also choose the startup shell (system default, PowerShell 7, Windows PowerShell, Command Prompt, or a custom executable) and set a Bash path — used when a tool calls Unix commands like `grep` or `sed`, usually pointing at Git Bash.
 

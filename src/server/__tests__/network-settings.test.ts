@@ -17,6 +17,7 @@ import {
 } from '../services/networkSettings.js'
 import { SettingsService } from '../services/settingsService.js'
 import { resetSettingsCache } from '../../utils/settings/settingsCache.js'
+import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 
 let tmpDir: string
 let originalConfigDir: string | undefined
@@ -59,6 +60,12 @@ async function teardown() {
   }
   resetSettingsCache()
   await fs.rm(tmpDir, { recursive: true, force: true })
+}
+
+async function writeEchoFlowSettings(settings: Record<string, unknown>): Promise<void> {
+  const settingsPath = path.join(getEchoFlowInternalDir(tmpDir), 'settings.json')
+  await fs.mkdir(path.dirname(settingsPath), { recursive: true })
+  await fs.writeFile(settingsPath, JSON.stringify(settings), 'utf-8')
 }
 
 describe('network settings', () => {
@@ -231,19 +238,15 @@ describe('network settings', () => {
   })
 
   it('loads persisted user network settings for provider requests', async () => {
-    await fs.writeFile(
-      path.join(tmpDir, 'settings.json'),
-      JSON.stringify({
-        network: {
-          aiRequestTimeoutMs: 180_000,
-          proxy: {
-            mode: 'manual',
-            url: ' http://127.0.0.1:7890 ',
-          },
+    await writeEchoFlowSettings({
+      network: {
+        aiRequestTimeoutMs: 180_000,
+        proxy: {
+          mode: 'manual',
+          url: ' http://127.0.0.1:7890 ',
         },
-      }),
-      'utf-8',
-    )
+      },
+    })
 
     const settings = await loadNetworkSettings()
 

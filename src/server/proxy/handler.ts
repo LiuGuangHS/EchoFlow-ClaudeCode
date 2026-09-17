@@ -57,7 +57,7 @@ type ProxyTraceContext = {
   protocolTrace?: ProtocolTraceObserver
 }
 
-const TRACE_RECORDED_ERROR_MARKER = Symbol('cc-haha-trace-recorded-error')
+const TRACE_RECORDED_ERROR_MARKER = Symbol('echoflow-code-trace-recorded-error')
 
 // Per-context dedup for failures that rethrow a value that cannot carry a
 // marker (stream errors may be any value, e.g. a string from

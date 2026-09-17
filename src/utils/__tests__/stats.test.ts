@@ -102,7 +102,7 @@ function totalForDate(
 describe('activity stats token accounting', () => {
   beforeEach(async () => {
     originalConfigDir = process.env.CLAUDE_CONFIG_DIR
-    tmpConfigDir = await mkdtemp(join(tmpdir(), 'cc-haha-stats-'))
+    tmpConfigDir = await mkdtemp(join(tmpdir(), 'echoflow-code-stats-'))
     process.env.CLAUDE_CONFIG_DIR = tmpConfigDir
   })
 

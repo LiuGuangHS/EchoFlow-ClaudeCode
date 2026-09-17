@@ -57,6 +57,16 @@ jobs:
         id: policy
         run: bun run scripts/pr/change-policy.ts --files changed-files.txt --labels-file labels.txt --plan-only
 
+  harness-audit:
+    name: harness-audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Audit tracked ECC and quality contracts
+        run: node scripts/harness-audit.js repo --format json
+
   policy-enforcement:
     name: policy-enforcement
     needs: scope-plan
@@ -292,7 +302,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -346,6 +356,7 @@ jobs:
     name: pr-quality-gate
     needs:
       - scope-plan
+      - harness-audit
       - policy-enforcement
       - desktop-checks
       - server-checks
@@ -391,6 +402,7 @@ jobs:
           }
 
           require_success "scope-plan" "${{ needs.scope-plan.result }}"
+          require_success "harness-audit" "${{ needs.harness-audit.result }}"
           require_success "policy-enforcement" "${{ needs.policy-enforcement.result }}"
           require_selected "desktop-checks" "${{ needs.scope-plan.outputs.desktop_checks }}" "${{ needs.desktop-checks.result }}"
           require_selected "server-checks" "${{ needs.scope-plan.outputs.server_checks }}" "${{ needs.server-checks.result }}"

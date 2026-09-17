@@ -129,7 +129,11 @@ describe('Electron IPC capabilities', () => {
       extra: true,
     })).toBe(false)
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.updateCheck, { proxy: 'http://127.0.0.1:7890' })).toBe(true)
+    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.updateCheck, { proxy: 'https://proxy.example.com:8443' })).toBe(true)
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.updateCheck, { proxy: '' })).toBe(false)
+    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.updateCheck, { proxy: 'http://user:password@127.0.0.1:7890' })).toBe(false)
+    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.updateCheck, { proxy: 'socks5://127.0.0.1:7890' })).toBe(false)
+    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.updateCheck, { proxy: 'http://127.0.0.1:70000' })).toBe(false)
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.updateCheck, { proxy: 'http://127.0.0.1:7890', extra: true })).toBe(false)
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.appSetLocalePreference, 'zh-TW')).toBe(true)
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.appSetLocalePreference, 'fr')).toBe(false)
@@ -214,6 +218,32 @@ describe('Electron IPC capabilities', () => {
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.petsFocusMainWindow, {})).toBe(false)
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.petsFocusSession, 'session-123')).toBe(true)
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.petsFocusSession, '../escape')).toBe(false)
+  })
+
+  it('validates Claude Code runtime IPC without accepting executable paths', () => {
+    expect(validateElectronIpcPayload(
+      ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode,
+      'bundled',
+    )).toBe(true)
+    expect(validateElectronIpcPayload(
+      ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode,
+      'installed',
+    )).toBe(true)
+    expect(validateElectronIpcPayload(
+      ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode,
+      '/tmp/claude',
+    )).toBe(false)
+    expect(validateElectronIpcPayload(
+      ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode,
+      { runtimeId: 'installed' },
+    )).toBe(false)
+    expect(validateElectronIpcPayload(
+      ELECTRON_IPC_CHANNELS.runtimeChooseClaudeCode,
+      undefined,
+    )).toBe(true)
+    expect(isElectronIpcChannelAllowedForPetWindow(
+      ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode,
+    )).toBe(false)
   })
 
   it('pins the reported appearance colors to literal 6-digit hex', () => {

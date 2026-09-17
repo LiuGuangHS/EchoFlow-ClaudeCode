@@ -590,7 +590,7 @@ function addMacosCursorResourceCheck(
   helperApp: string,
   options: InspectOptions,
 ) {
-  const sequenceRelative = 'Contents/Resources/cu-helper_cc-haha-computer-use.bundle/LensSequence'
+  const sequenceRelative = 'Contents/Resources/cu-helper_echoflow-code-computer-use.bundle/LensSequence'
   const sourceDirectory = join(helperApp, sequenceRelative)
   const structureLabel = 'macOS cu-helper cursor resource directory'
   const executionLabel = 'macOS relocated cu-helper cursor resource execution'
@@ -617,14 +617,14 @@ function addMacosCursorResourceCheck(
     return
   }
   try {
-    const inner = 'Contents/MacOS/cc-haha-computer-use'
+    const inner = 'Contents/MacOS/echoflow-code-computer-use'
     const architectures = parseMachOArchitectures(readFileSync(join(helperApp, inner)))
     if (!architectures.includes(hostMachOArch as MachOArch)) {
       if (architectures.length === 0) throw new Error('helper has no recognized Mach-O architecture')
       report.notes.push(`SKIPPED: ${executionLabel}; binary ${architectures.join(',')}, host ${hostMachOArch}. Only package structure was checked.`)
       return
     }
-    probeRoot = mkdtempSync(join(tmpdir(), 'cc-haha-packaged-cursor-'))
+    probeRoot = mkdtempSync(join(tmpdir(), 'echoflow-code-packaged-cursor-'))
     const app = join(probeRoot, 'Relocated Helper.app')
     cpSync(helperApp, app, { recursive: true, verbatimSymlinks: true })
     assertCursorResourcesContained(app, join(app, sequenceRelative))
@@ -737,9 +737,9 @@ function addMacosComputerUseAttestationCheck(
   }
 
   const targets = [
-    { name: 'host', path: appBundle, identifier: 'com.claude-code-haha.desktop', deep: true },
-    { name: 'sidecar', path: sidecar, identifier: 'com.claude-code-haha.desktop.sidecar', deep: false },
-    { name: 'helper', path: helperApp, identifier: 'dev.cchaha.cu-helper', deep: true },
+    { name: 'host', path: appBundle, identifier: 'com.echoflow.code.desktop', deep: true },
+    { name: 'sidecar', path: sidecar, identifier: 'com.echoflow.code.desktop.sidecar', deep: false },
+    { name: 'helper', path: helperApp, identifier: 'dev.echoflow.cu-helper', deep: true },
   ] as const
   const metadata: CodesignMetadata[] = []
   for (const target of targets) {
@@ -925,9 +925,9 @@ function inspectMacosArtifacts(rootDir: string, report: PackageSmokeReport, opti
   const nodePtyDir = join(unpackedDir, 'node_modules', 'node-pty')
   const prebuildsDir = join(nodePtyDir, 'prebuilds')
   const sidecarDir = join(unpackedDir, 'src-tauri', 'binaries')
-  const helperApp = join(sidecarDir, 'cc-haha-computer-use.app')
+  const helperApp = join(sidecarDir, 'echoflow-code-computer-use.app')
   const helperInfoPlist = join(helperApp, 'Contents', 'Info.plist')
-  const helperExecutable = join(helperApp, 'Contents', 'MacOS', 'cc-haha-computer-use')
+  const helperExecutable = join(helperApp, 'Contents', 'MacOS', 'echoflow-code-computer-use')
   const hostExecutable = join(contentsDir, 'MacOS', report.productName)
 
   addPresenceCheck(report, rootDir, 'macOS Info.plist', join(contentsDir, 'Info.plist'))

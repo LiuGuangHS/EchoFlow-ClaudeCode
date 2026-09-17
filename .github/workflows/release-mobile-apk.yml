@@ -1,0 +1,143 @@
+name: Release Mobile APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Mobile release tag, for example v0.4.3"
+        required: true
+        type: string
+      upload:
+        description: "Upload the APK to the shared GitHub Release"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-mobile-apk-${{ inputs.tag || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.tag }}
+
+      - name: Validate mobile release tag
+        id: release
+        shell: bash
+        run: |
+          TAG="${{ inputs.tag }}"
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          APP_VERSION=$(node -p "require('./app.json').expo.version")
+          EXPECTED_TAG="v${PACKAGE_VERSION}"
+          if [ "$PACKAGE_VERSION" != "$APP_VERSION" ]; then
+            echo "::error::mobile/package.json ($PACKAGE_VERSION) and mobile/app.json ($APP_VERSION) must match."
+            exit 1
+          fi
+          if [ "$TAG" != "$EXPECTED_TAG" ]; then
+            echo "::error::Tag $TAG does not match the shared release tag $EXPECTED_TAG."
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$PACKAGE_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: temurin
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install mobile dependencies
+        run: bun install
+
+      - name: Run mobile checks
+        run: bun run check
+
+      - name: Decode Android signing config
+        shell: bash
+        env:
+          ANDROID_SIGNING_CONFIG_JSON: ${{ secrets.ANDROID_SIGNING_CONFIG_JSON }}
+        run: |
+          if [ -z "$ANDROID_SIGNING_CONFIG_JSON" ]; then
+            echo "::error::Missing ANDROID_SIGNING_CONFIG_JSON. Configure it before publishing a mobile release APK."
+            exit 1
+          fi
+
+          node <<'NODE'
+          const fs = require('fs')
+          const path = require('path')
+          const config = JSON.parse(process.env.ANDROID_SIGNING_CONFIG_JSON || '{}')
+          const required = ['keystoreBase64', 'storePassword', 'keyAlias', 'keyPassword']
+          const missing = required.filter((key) => !config[key])
+          if (missing.length) {
+            console.error(`::error::ANDROID_SIGNING_CONFIG_JSON is missing: ${missing.join(', ')}`)
+            process.exit(1)
+          }
+          const keystorePath = path.resolve('android/app/release.keystore')
+          fs.writeFileSync(keystorePath, Buffer.from(config.keystoreBase64, 'base64'))
+          for (const key of ['storePassword', 'keyAlias', 'keyPassword']) {
+            console.log(`::add-mask::${config[key]}`)
+          }
+          fs.appendFileSync('android/gradle.properties', [
+            '',
+            `android.injected.signing.store.file=${keystorePath}`,
+            `android.injected.signing.store.password=${config.storePassword}`,
+            `android.injected.signing.key.alias=${config.keyAlias}`,
+            `android.injected.signing.key.password=${config.keyPassword}`,
+            '',
+          ].join('\n'))
+          NODE
+
+      - name: Make Gradle executable
+        run: chmod +x android/gradlew
+
+      - name: Build signed arm64 release APK
+        run: |
+          cd android
+          ./gradlew assembleRelease \
+            --console=plain \
+            --no-daemon \
+            "-Pandroid.enableSeparateBuildPerCPUArchitecture=true" \
+            "-PreactNativeArchitectures=arm64-v8a"
+
+      - name: Rename APK
+        id: artifact
+        shell: bash
+        run: |
+          APK_NAME="EchoFlow-Code-mobile-android-arm64-v${{ steps.release.outputs.version }}.apk"
+          cp android/app/build/outputs/apk/release/app-arm64-v8a-release.apk "$APK_NAME"
+          echo "apk_name=$APK_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Upload release APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: echoflow-code-mobile-release-apk
+          path: mobile/${{ steps.artifact.outputs.apk_name }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload APK to shared GitHub Release
+        if: ${{ inputs.upload }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.release.outputs.tag }}
+          APK_NAME: ${{ steps.artifact.outputs.apk_name }}
+        run: gh release upload "$TAG" "$APK_NAME" --clobber

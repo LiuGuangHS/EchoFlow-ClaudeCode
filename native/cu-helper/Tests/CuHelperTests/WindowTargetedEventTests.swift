@@ -2,7 +2,7 @@ import AppKit
 import CoreGraphics
 import XCTest
 
-@testable import cc_haha_computer_use
+@testable import echoflow_code_computer_use
 
 /// These guard the fix for the defect that made Computer Use useless on every
 /// Electron/CEF app: a bare `CGEvent` carries no window identity, and

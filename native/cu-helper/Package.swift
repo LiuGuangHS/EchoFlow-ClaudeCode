@@ -1,7 +1,7 @@
 // swift-tools-version: 6.0
 //
 // SwiftPM manifest for `cu-helper` — the native macOS Computer Use helper for
-// claude-code-haha.
+// echoflow-code.
 //
 // One dual-mode executable target:
 //   • `cu-helper <command> --payload '<json>'`  — one-shot CLI used by the
@@ -36,7 +36,7 @@ let package = Package(
       // Privacy lists (Accessibility / Screen Recording) and that the user drags
       // in, so it carries the brand. The source dir stays `Sources/cu-helper`
       // (via `path`) to avoid churning the whole tree.
-      name: "cc-haha-computer-use",
+      name: "echoflow-code-computer-use",
       dependencies: ["CDisclaim"],
       path: "Sources/cu-helper",
       // Optional click-ripple frames. The directory always exists in the repo
@@ -63,7 +63,7 @@ let package = Package(
     ),
     .testTarget(
       name: "CuHelperTests",
-      dependencies: [.target(name: "cc-haha-computer-use")],
+      dependencies: [.target(name: "echoflow-code-computer-use")],
       path: "Tests/CuHelperTests",
       swiftSettings: [.swiftLanguageMode(.v6)]
     )

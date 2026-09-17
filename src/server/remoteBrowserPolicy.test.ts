@@ -21,7 +21,7 @@ test('LAN and public provider CRUD redact and preserve keys; General edits isola
   const home = mkdtempSync(path.join(os.tmpdir(), 'remote-settings-integration-'))
   try {
     const child = Bun.spawn([process.execPath, '--no-env-file', path.join(import.meta.dir, '__fixtures__/remoteBrowserSettingsSmoke.ts')], {
-      env: createSandboxedTestEnvironment(home, { CC_HAHA_LOCAL_ACCESS_TOKEN: 'fixture-process-credential' }), stdout: 'pipe', stderr: 'pipe',
+      env: createSandboxedTestEnvironment(home, { ECHOFLOW_LOCAL_ACCESS_TOKEN: 'fixture-process-credential' }), stdout: 'pipe', stderr: 'pipe',
     })
     const timeout = setTimeout(() => child.kill(), 15_000)
     try {

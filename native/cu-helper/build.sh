@@ -6,12 +6,12 @@
 #
 # Env overrides:
 #   CU_HELPER_IDENTITY   (default: auto -> 'Apple Development: ...' if found, else 'cu-helper-dev')
-#   CU_HELPER_BUNDLE_ID  (default: dev.cchaha.cu-helper)  # constant => stable TCC row
+#   CU_HELPER_BUNDLE_ID  (default: dev.echoflow.cu-helper)  # constant => stable TCC row
 #   CU_HELPER_ARCH       (default: current machine arch; arm64 or x86_64)
 #   CU_HELPER_TIMESTAMP_MODE
 #                        (default: auto; secure for Developer ID, none for local development)
 #
-# Output: prints "built: <arch-specific abs path>/cc-haha-computer-use.app"
+# Output: prints "built: <arch-specific abs path>/echoflow-code-computer-use.app"
 #
 # Stable-identity contract: same cert + same --identifier on every build,
 # --options runtime, a secure timestamp for Developer ID distribution, no ad-hoc.
@@ -49,7 +49,7 @@ BUILD_DIR="$PKG_DIR/.build"
 # Reuse the desktop brand asset so both Privacy lists show the product logo.
 APP_ICON_PATH="$PKG_DIR/../../desktop/src-tauri/icons/icon.icns"
 
-BUNDLE_ID="${CU_HELPER_BUNDLE_ID:-dev.cchaha.cu-helper}"
+BUNDLE_ID="${CU_HELPER_BUNDLE_ID:-dev.echoflow.cu-helper}"
 ARCH="${CU_HELPER_ARCH:-$(uname -m)}"
 SWIFT_SCRATCH_PATH="$BUILD_DIR/$ARCH"
 BIN_DIR=""
@@ -97,7 +97,7 @@ preflight() {
 # 2. Resolve a STABLE signing identity.
 #
 #    Priority:
-#      a) $CC_HAHA_SIGN_IDENTITY (shared host/sidecar/helper build identity)
+#      a) $ECHOFLOW_SIGN_IDENTITY (shared host/sidecar/helper build identity)
 #      b) $CU_HELPER_IDENTITY (legacy helper-only override for direct builds)
 #      c) the first 'Developer ID Application: ...' identity (release/CI)
 #      d) the first real 'Apple Development: ...' identity in the keychain
@@ -182,12 +182,12 @@ resolve_identity() {
   #     every call (see desktop/scripts/sign-identity.ts). It deliberately wins
   #     over the legacy helper-only variable so stale shell state cannot split a
   #     signed app across two certificates.
-  if [ -n "${CC_HAHA_SIGN_IDENTITY:-}" ]; then
-    SIGN_IDENTITY="$CC_HAHA_SIGN_IDENTITY"
+  if [ -n "${ECHOFLOW_SIGN_IDENTITY:-}" ]; then
+    SIGN_IDENTITY="$ECHOFLOW_SIGN_IDENTITY"
     if [ "$SIGN_IDENTITY" = "-" ]; then
-      die "CC_HAHA_SIGN_IDENTITY='-' (ad-hoc) is refused. Ad-hoc signing rotates the TCC identity every build. Use a stable cert."
+      die "ECHOFLOW_SIGN_IDENTITY='-' (ad-hoc) is refused. Ad-hoc signing rotates the TCC identity every build. Use a stable cert."
     fi
-    log "identity: $SIGN_IDENTITY (from CC_HAHA_SIGN_IDENTITY)"
+    log "identity: $SIGN_IDENTITY (from ECHOFLOW_SIGN_IDENTITY)"
     return 0
   fi
 
@@ -310,9 +310,9 @@ resolve_build_paths() {
     --scratch-path "$SWIFT_SCRATCH_PATH" \
     --show-bin-path)"
   [ -n "$BIN_DIR" ] || die "swift build --show-bin-path returned an empty path for $ARCH"
-  BIN_PATH="$BIN_DIR/cc-haha-computer-use"
-  APP_PATH="$BIN_DIR/cc-haha-computer-use.app"
-  RESOURCE_BUNDLE_PATH="$BIN_DIR/cu-helper_cc-haha-computer-use.bundle"
+  BIN_PATH="$BIN_DIR/echoflow-code-computer-use"
+  APP_PATH="$BIN_DIR/echoflow-code-computer-use.app"
+  RESOURCE_BUNDLE_PATH="$BIN_DIR/cu-helper_echoflow-code-computer-use.bundle"
 }
 
 build() {
@@ -442,7 +442,7 @@ wrap_app() {
   rm -rf "$APP_PATH"
   mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources"
 
-  cp "$BIN_PATH" "$APP_PATH/Contents/MacOS/cc-haha-computer-use"
+  cp "$BIN_PATH" "$APP_PATH/Contents/MacOS/echoflow-code-computer-use"
 
   [ -f "$PKG_DIR/Info.plist" ] || die "Info.plist not found at $PKG_DIR/Info.plist (needed for the .app bundle)."
   cp "$PKG_DIR/Info.plist" "$APP_PATH/Contents/Info.plist"
@@ -453,7 +453,7 @@ wrap_app() {
   # NOT also put it in MacOS/ — a nested .bundle there breaks codesign with an
   # "In subcomponent" error. The optional sequence may contain only its README;
   # missing PNGs are supported, a missing declared build resource is not.
-  local res_bundle="${RESOURCE_BUNDLE_PATH:-$BUILD_DIR/$BUILD_CONFIG/cu-helper_cc-haha-computer-use.bundle}"
+  local res_bundle="${RESOURCE_BUNDLE_PATH:-$BUILD_DIR/$BUILD_CONFIG/cu-helper_echoflow-code-computer-use.bundle}"
   copy_cursor_resources "$res_bundle" "$APP_PATH"
 
   # Sign the WHOLE bundle with the SAME stable identity + hardened runtime.
@@ -495,7 +495,7 @@ verify_relocated_cursor_resources() (
   # before an EXIT trap after die(), so it must remain available for cleanup.
   probe_root="$(mktemp -d "${TMPDIR:-/tmp}/cc-haha-cursor-probe.XXXXXX")"
   trap 'rm -rf "$probe_root"' EXIT
-  local probe_app="$probe_root/cc-haha-computer-use.app"
+  local probe_app="$probe_root/echoflow-code-computer-use.app"
   local report="$probe_root/resources.json"
   cp -R "$APP_PATH" "$probe_app"
   mkdir -p "$probe_root/home" "$probe_root/config" "$probe_root/tmp"
@@ -505,7 +505,7 @@ verify_relocated_cursor_resources() (
     CFFIXED_USER_HOME="$probe_root/home" \
     CLAUDE_CONFIG_DIR="$probe_root/config" \
     TMPDIR="$probe_root/tmp/" \
-    "$probe_app/Contents/MacOS/cc-haha-computer-use" --probe-cursor-resources >"$report"; then
+    "$probe_app/Contents/MacOS/echoflow-code-computer-use" --probe-cursor-resources >"$report"; then
     die "Cursor resource probe failed for relocated helper $probe_app"
   fi
 
@@ -514,7 +514,7 @@ verify_relocated_cursor_resources() (
     || die "Cursor resource probe did not report a resourceDirectory"
   resource_directory="$(cd "$resource_directory" 2>/dev/null && pwd -P)" \
     || die "Cursor resource probe reported an unreadable resourceDirectory"
-  local expected_directory="$probe_app/Contents/Resources/cu-helper_cc-haha-computer-use.bundle/LensSequence"
+  local expected_directory="$probe_app/Contents/Resources/cu-helper_echoflow-code-computer-use.bundle/LensSequence"
   [ -d "$expected_directory" ] || die "Cursor resource probe package is missing $expected_directory"
   expected_directory="$(cd "$expected_directory" && pwd -P)"
   local canonical_app
@@ -542,7 +542,7 @@ main() {
 
   # The ONE machine-readable line on STDOUT — the .app BUNDLE path. The caller
   # (build-sidecars.ts) copies the whole .app; the runtime resolver
-  # (cuHelperBridge.ts) targets <app>/Contents/MacOS/cc-haha-computer-use.
+  # (cuHelperBridge.ts) targets <app>/Contents/MacOS/echoflow-code-computer-use.
   printf 'built: %s\n' "$APP_PATH"
 }
 

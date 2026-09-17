@@ -40,7 +40,7 @@ The page has **Open accessibility settings** and **Open screen recording setting
 After granting either one you must **fully quit and reopen the app**. macOS reads these permissions once at process start, so without a restart the page will keep reporting them as not granted.
 :::
 
-Make sure you're granting the permission to the app that actually launches Claude Code Haha. Screen Recording detection is occasionally unreliable — if the system settings clearly show it granted but the page still says otherwise, it generally works anyway.
+Make sure you're granting the permission to the app that actually launches EchoFlow Code. Screen Recording detection is occasionally unreliable — if the system settings clearly show it granted but the page still says otherwise, it generally works anyway.
 
 ## Pre-authorized apps
 
@@ -81,7 +81,7 @@ Only one session can drive the mouse and keyboard at a time. If you see that ano
 ## Troubleshooting
 
 **The page keeps saying permissions are missing**
-Confirm you granted them to the app that actually launches Claude Code Haha, fully quit and reopen, then click **Re-check**.
+Confirm you granted them to the app that actually launches EchoFlow Code, fully quit and reopen, then click **Re-check**.
 
 **The environment won't install**
 Pick an explicit Python 3 under **Python interpreter path**, confirm it supports `venv`, and click **Install Environment** again. If it still fails, check the install log in **Settings → Diagnostics**.

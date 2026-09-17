@@ -33,10 +33,10 @@ export type SystemAppearance = 'dark' | 'light'
 
 export const DARK_SCHEME_QUERY = '(prefers-color-scheme: dark)'
 
-export const THEME_STORAGE_KEY = 'cc-haha-theme'
-export const FOLLOW_SYSTEM_THEME_STORAGE_KEY = 'cc-haha-follow-system-theme'
-export const LIGHT_THEME_STORAGE_KEY = 'cc-haha-light-theme'
-export const DARK_THEME_STORAGE_KEY = 'cc-haha-dark-theme'
+export const THEME_STORAGE_KEY = 'echoflow-code-theme'
+export const FOLLOW_SYSTEM_THEME_STORAGE_KEY = 'echoflow-code-follow-system-theme'
+export const LIGHT_THEME_STORAGE_KEY = 'echoflow-code-light-theme'
+export const DARK_THEME_STORAGE_KEY = 'echoflow-code-dark-theme'
 
 export const DEFAULT_THEME: ThemeMode = 'white'
 export const DEFAULT_LIGHT_THEME: LightThemeMode = 'white'

@@ -1,6 +1,6 @@
 import XCTest
 
-@testable import cc_haha_computer_use
+@testable import echoflow_code_computer_use
 
 /// Guards the signal that tells the model to stop clicking element handles and
 /// start using screenshot coordinates.

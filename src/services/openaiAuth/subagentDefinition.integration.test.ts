@@ -24,7 +24,7 @@ const ENV_KEYS = [
   'CLAUDE_CODE_SUBAGENT_MODEL',
   'CLAUDE_CODE_USE_NATIVE_FILE_SEARCH',
   'CLAUDE_CONFIG_DIR',
-  'CC_HAHA_OPENAI_REASONING_EFFORT',
+  'ECHOFLOW_OPENAI_REASONING_EFFORT',
   'OPENAI_CODEX_HAIKU_MODEL',
   'OPENAI_CODEX_MODEL',
   'OPENAI_CODEX_OAUTH_FILE',
@@ -58,7 +58,7 @@ describe('Markdown subagent to OpenAI request integration', () => {
     delete process.env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS
     delete process.env.CLAUDE_CODE_SUBAGENT_MODEL
     delete process.env.CLAUDE_CODE_EFFORT_LEVEL
-    delete process.env.CC_HAHA_OPENAI_REASONING_EFFORT
+    delete process.env.ECHOFLOW_OPENAI_REASONING_EFFORT
     delete process.env.OPENAI_CODEX_HAIKU_MODEL
     delete process.env.OPENAI_CODEX_MODEL
 

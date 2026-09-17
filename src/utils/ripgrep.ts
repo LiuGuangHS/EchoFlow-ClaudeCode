@@ -31,7 +31,7 @@ type RipgrepConfig = {
   argv0?: string
 }
 
-export const CC_HAHA_RIPGREP_PATH_ENV = 'CC_HAHA_RIPGREP_PATH'
+export const ECHOFLOW_RIPGREP_PATH_ENV = 'ECHOFLOW_RIPGREP_PATH'
 
 function isBunVirtualPath(candidatePath: string): boolean {
   const normalized = candidatePath.replace(/\\/g, '/')
@@ -147,7 +147,7 @@ export function getBundledRipgrepPath({
 }
 
 function packagedRipgrepConfig(): RipgrepConfig | null {
-  const explicitPath = process.env[CC_HAHA_RIPGREP_PATH_ENV]?.trim()
+  const explicitPath = process.env[ECHOFLOW_RIPGREP_PATH_ENV]?.trim()
   if (explicitPath && isUsableBuiltinRipgrepPath(explicitPath)) {
     return { mode: 'builtin', command: explicitPath, args: ['--no-config'] }
   }

@@ -71,7 +71,7 @@ public final class Daemon {
     /// Serial queue that owns the accept loop. Connections each get their own
     /// serial IO queue (see `Connection`), so the main actor is never blocked
     /// by socket IO.
-    private let acceptQueue = DispatchQueue(label: "dev.cchaha.cu-helper.accept")
+    private let acceptQueue = DispatchQueue(label: "dev.echoflow.cu-helper.accept")
 
     /// The currently-served client. v1 serves a single session at a time (the
     /// file lock upstream guarantees one Node session owns CU). A new connection
@@ -622,7 +622,7 @@ public final class Daemon {
     /// get_app_state actually resolved (`Injection.lastResolvedTargetPid`). We
     /// deliberately do NOT fall back to the frontmost app — at turn start,
     /// before any real target is resolved, the frontmost app is the HOST
-    /// (Claude Code Haha), so the fallback made the cursor glide onto our own
+    /// (EchoFlow Code), so the fallback made the cursor glide onto our own
     /// sidebar. nil here => follow nothing until a real target lands;
     /// `retargetCursorIfNeeded()` re-aims the moment one resolves.
     private func resolvedInjectionOverlayTarget() -> ProvenProcessTarget? {
@@ -799,7 +799,7 @@ private final class Connection: @unchecked Sendable {
 
     init(fd: Int32) {
         self.fd = fd
-        self.ioQueue = DispatchQueue(label: "dev.cchaha.cu-helper.conn.\(fd)")
+        self.ioQueue = DispatchQueue(label: "dev.echoflow.cu-helper.conn.\(fd)")
 
         // Non-blocking so a slow/partial peer never wedges the read source.
         let flags = fcntl(fd, F_GETFL, 0)

@@ -26,6 +26,8 @@ order: 0
 ## 让它替你干更多活
 
 - [子 Agent 与任务拆分](./agents.md) — 什么时候该派 Agent，内置 Agent 有哪些，怎么捏一个自己的。
+- [Agent Teams 协作工作台](./agent-teams.md) — 在一个面板里看成员、共享任务、通信和依赖关系。
+- [Dynamic Workflow](./dynamic-workflow.md) — 用并发或流水线编排多个 Agent，并观察、停止和恢复运行。
 - [技能与技能市场](./skills.md) — 技能是什么、和 Agent 有什么区别、从市场装技能前要看什么。
 - [定时任务](./schedule.md) — 让 Claude 每天早上自动跑一遍代码审查。
 - [Computer Use](./computer-use.md) — 让它读屏幕、点鼠标、敲键盘，替你操作别的应用。
@@ -38,6 +40,7 @@ order: 0
 ## 让它顺眼一点
 
 - [桌面宠物](./pets.md) — 一只悬浮在桌面上的小机器人，用动作告诉你任务跑到哪了。默认关闭。
+- [发布与 Windows 打包](./release-windows.md) — 维护者统一版本、管理 fork 标签、构建和验证 Windows NSIS 安装包的流程。
 
 ## 想知道它是怎么实现的
 

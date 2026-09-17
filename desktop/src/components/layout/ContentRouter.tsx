@@ -3,6 +3,7 @@ import { useTabStore } from '../../stores/tabStore'
 import { EmptySession } from '../../pages/EmptySession'
 import { ActiveSession } from '../../pages/ActiveSession'
 import { ScheduledTasks } from '../../pages/ScheduledTasks'
+import { DeepSeekHarness } from '../../pages/DeepSeekHarness'
 import { ExtensionMarket } from '@/pages/ExtensionMarket'
 import { Settings } from '../../pages/Settings'
 import { TerminalSettings } from '../../pages/TerminalSettings'
@@ -38,6 +39,8 @@ export function ContentRouter() {
     page = <ScheduledTasks />
   } else if (activeTabType === 'connectors' || activeTabType === 'market') {
     page = <ExtensionMarket />
+  } else if (activeTabType === 'deepseek-harness') {
+    page = <DeepSeekHarness />
   } else if (activeTabType === 'trace') {
     const traceTabId = activeTabId
     const traceSessionId = tabs.find((t) => t.sessionId === traceTabId)?.traceSessionId

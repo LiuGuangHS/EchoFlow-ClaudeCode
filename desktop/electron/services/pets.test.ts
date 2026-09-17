@@ -21,7 +21,7 @@ import {
 const tempDirs: string[] = []
 
 function makeTempDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-haha-pets-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'echoflow-code-pets-'))
   tempDirs.push(dir)
   return dir
 }
@@ -185,19 +185,19 @@ describe('custom pet root', () => {
         CODEX_HOME: '/tmp/forbidden-codex-home',
       },
       homeDir: '/Users/test',
-    })).toBe(path.resolve('/tmp/claude-config/cc-haha/pets'))
+    })).toBe(path.resolve('/tmp/claude-config/echoflow-code/pets'))
 
     expect(resolveCustomPetsRoot({
       env: { CODEX_HOME: '/tmp/forbidden-codex-home' },
       homeDir: '/Users/test',
-    })).toBe(path.resolve('/Users/test/.claude/cc-haha/pets'))
+    })).toBe(path.resolve('/Users/test/.claude/echoflow-code/pets'))
   })
 
   it('creates and returns the isolated custom-pets directory using only filesystem APIs', async () => {
     const homeDir = makeTempDir()
     const root = await ensureCustomPetsRoot({ env: {}, homeDir })
 
-    expect(root).toBe(path.join(homeDir, '.claude', 'cc-haha', 'pets'))
+    expect(root).toBe(path.join(homeDir, '.claude', 'echoflow-code', 'pets'))
     expect(fs.statSync(root).isDirectory()).toBe(true)
   })
 })
@@ -305,7 +305,7 @@ describe('createCustomPetFromAtlas', () => {
       inspectImageSize: validSizeInspector,
     })
 
-    const root = path.join(homeDir, '.claude', 'cc-haha', 'pets')
+    const root = path.join(homeDir, '.claude', 'echoflow-code', 'pets')
     expect(pet.id).toBe('custom:tiny-orbit')
     expect(fs.existsSync(path.join(homeDir, 'forbidden-codex-home'))).toBe(false)
     expect(JSON.parse(fs.readFileSync(path.join(root, 'tiny-orbit', 'pet.json'), 'utf-8'))).toEqual({
@@ -369,7 +369,7 @@ describe('createCustomPetFromImage', () => {
       inspectImageSize: async () => ({ width: 512, height: 640 }),
     })
 
-    const root = path.join(homeDir, '.claude', 'cc-haha', 'pets')
+    const root = path.join(homeDir, '.claude', 'echoflow-code', 'pets')
     expect(pet).toMatchObject({
       id: 'custom:spring-orbit',
       manifestVersion: 1,

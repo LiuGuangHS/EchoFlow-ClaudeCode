@@ -809,7 +809,7 @@ SM_CYVIRTUALSCREEN = 79
 # The TypeScript parent shares one tag with the virtual-cursor process so that
 # it follows our SendInput stream, not injected input from unrelated software.
 try:
-    _INPUT_TAG = int(os.environ["CC_HAHA_COMPUTER_USE_INPUT_TAG"]) & 0xFFFFFFFF
+    _INPUT_TAG = int(os.environ["ECHOFLOW_COMPUTER_USE_INPUT_TAG"]) & 0xFFFFFFFF
 except (KeyError, TypeError, ValueError):
     _INPUT_TAG = int.from_bytes(os.urandom(4), "little") or 0x43434841
 

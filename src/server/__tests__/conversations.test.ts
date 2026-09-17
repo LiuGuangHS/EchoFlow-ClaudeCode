@@ -31,10 +31,12 @@ import {
 import { SessionService, sessionService } from '../services/sessionService.js'
 import { createRepositoryBranch } from '../services/repositoryLaunchService.js'
 import { ProviderService } from '../services/providerService.js'
+import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 import { SettingsService } from '../services/settingsService.js'
-import { hahaOAuthService } from '../services/hahaOAuthService.js'
+import { echoFlowOAuthService } from '../services/echoFlowOAuthService.js'
 import { resetTerminalShellEnvironmentCacheForTests } from '../../utils/terminalShellEnvironment.js'
 import * as openAIModelCatalog from '../../services/openaiAuth/modelCatalog.js'
+import { IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY } from '../../services/imageGeneration/config.js'
 
 async function rmWithRetry(targetPath: string): Promise<void> {
   const attempts = process.platform === 'win32' ? 5 : 1
@@ -1267,7 +1269,7 @@ describe('ConversationService', () => {
       expect(found).not.toBeNull()
 
       const encryptedReasoning =
-        `cc-haha:openai-reasoning:v1:${JSON.stringify({
+        `echoflow-code:openai-reasoning:v1:${JSON.stringify({
           summary: [],
           encrypted_content: 'x'.repeat(400_000),
         })}`
@@ -2145,6 +2147,24 @@ describe('WebSocket Chat Integration', () => {
     }
     throw new Error(`Timed out waiting for ${label}`)
   }
+
+  async function configureInstalledCliRuntime(): Promise<string> {
+    const installedPath = path.join(tmpDir, 'installed-claude-runtime.ts')
+    const configPath = path.join(tmpDir, 'claude-code-runtime.json')
+    await fs.copyFile(
+      fileURLToPath(new URL('./fixtures/mock-sdk-cli.ts', import.meta.url)),
+      installedPath,
+    )
+    await fs.chmod(installedPath, 0o755)
+    await fs.writeFile(configPath, JSON.stringify({
+      schemaVersion: 1,
+      defaultRuntimeId: 'installed',
+      installedPath,
+    }))
+    process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG = configPath
+    return configPath
+  }
+
   const originalCliPath = process.env.CLAUDE_CLI_PATH
   const originalConfigDir = process.env.CLAUDE_CONFIG_DIR
 
@@ -2405,7 +2425,7 @@ describe('WebSocket Chat Integration', () => {
   })
 
   it('refreshes the first-turn AI title from the completed assistant transcript', async () => {
-    const providerConfigPath = path.join(tmpDir, 'cc-haha', 'providers.json')
+    const providerConfigPath = path.join(getEchoFlowInternalDir(tmpDir), 'providers.json')
     const originalProviderConfig = await fs.readFile(providerConfigPath, 'utf-8').catch(() => null)
     const upstreamInputs: string[] = []
     const titleModelServer = Bun.serve({
@@ -2560,7 +2580,7 @@ describe('WebSocket Chat Integration', () => {
 
     try {
       await fs.writeFile(
-        path.join(tmpDir, 'settings.json'),
+        path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'),
         JSON.stringify({ alwaysThinkingEnabled: false }, null, 2),
         'utf-8',
       )
@@ -2572,7 +2592,7 @@ describe('WebSocket Chat Integration', () => {
     } finally {
       conversationService.startSession = originalStartSession as typeof conversationService.startSession
       conversationService.stopSession(sessionId)
-      await fs.writeFile(path.join(tmpDir, 'settings.json'), '{}\n', 'utf-8')
+      await fs.writeFile(path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'), '{}\n', 'utf-8')
     }
   })
 
@@ -2621,7 +2641,7 @@ describe('WebSocket Chat Integration', () => {
       const disabledSessionId = `ds-think-off-${crypto.randomUUID()}`
       sessionIds.push(disabledSessionId)
       await fs.writeFile(
-        path.join(tmpDir, 'settings.json'),
+        path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'),
         JSON.stringify({ alwaysThinkingEnabled: false }, null, 2),
         'utf-8',
       )
@@ -2631,7 +2651,7 @@ describe('WebSocket Chat Integration', () => {
       const enabledSessionId = `ds-think-on-${crypto.randomUUID()}`
       sessionIds.push(enabledSessionId)
       await fs.writeFile(
-        path.join(tmpDir, 'settings.json'),
+        path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'),
         JSON.stringify({ alwaysThinkingEnabled: true }, null, 2),
         'utf-8',
       )
@@ -2657,7 +2677,7 @@ describe('WebSocket Chat Integration', () => {
       }
       await providerService.activateOfficial()
       await providerService.deleteProvider(provider.id)
-      await fs.writeFile(path.join(tmpDir, 'settings.json'), '{}\n', 'utf-8')
+      await fs.writeFile(path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'), '{}\n', 'utf-8')
     }
   }, 20_000)
 
@@ -2993,7 +3013,7 @@ describe('WebSocket Chat Integration', () => {
   })
 
   it('should keep a long desktop session alive in a /tmp project across engineering turns', async () => {
-    const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cc-haha-issue247-project-'))
+    const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'echoflow-code-issue247-project-'))
     let sessionId: string | undefined
 
     try {
@@ -3372,7 +3392,7 @@ describe('WebSocket Chat Integration', () => {
   it('should migrate a persisted opus[1m] Claude OAuth Pro session before starting the CLI', async () => {
     const providerService = new ProviderService()
     await providerService.activateOfficial()
-    await hahaOAuthService.saveTokens({
+    await echoFlowOAuthService.saveTokens({
       accessToken: 'persisted-pro-access',
       refreshToken: 'persisted-pro-refresh',
       expiresAt: Date.now() + 60 * 60_000,
@@ -3429,7 +3449,7 @@ describe('WebSocket Chat Integration', () => {
     } finally {
       conversationService.startSession = originalStartSession
       conversationService.stopSession(sessionId)
-      await hahaOAuthService.deleteTokens()
+      await echoFlowOAuthService.deleteTokens()
       await fs.writeFile(
         path.join(tmpDir, 'settings.json'),
         JSON.stringify(previousSettings, null, 2),
@@ -3441,10 +3461,10 @@ describe('WebSocket Chat Integration', () => {
   it('should pass the active provider id into default desktop sessions', async () => {
     const providerService = new ProviderService()
     const provider = await providerService.addProvider({
-      presetId: 'shengsuanyun',
+      presetId: 'custom',
       name: 'Active Default Provider',
       apiKey: 'key-active-default',
-      baseUrl: 'https://router.shengsuanyun.com/api',
+      baseUrl: 'https://api.example.com/anthropic',
       apiFormat: 'anthropic',
       models: {
         main: 'active-main',
@@ -4005,7 +4025,7 @@ describe('WebSocket Chat Integration', () => {
       startCalls.push({
         providerId: options?.providerId,
         model: options?.model,
-        imageProviderKind: env.CC_HAHA_IMAGE_PROVIDER_KIND,
+        imageProviderKind: env[IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY],
       })
       return originalStartSession(sid, workDir, sdkUrl, options)
     }) as typeof conversationService.startSession
@@ -4137,6 +4157,182 @@ describe('WebSocket Chat Integration', () => {
       await providerService.activateOfficial()
       await providerService.deleteProvider(customProvider.id)
     }
+  }, 20_000)
+
+  it('rejects an unavailable installed CLI runtime before stopping or persisting', async () => {
+    const createRes = await fetch(`${baseUrl}/api/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workDir: process.cwd() }),
+    })
+    expect(createRes.status).toBe(201)
+    const { sessionId } = await createRes.json() as { sessionId: string }
+
+    await runTurn(sessionId, 'establish the existing CLI session')
+    const originalConfig = process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG
+    process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG = path.join(tmpDir, 'missing-runtime.json')
+    const originalStopSessionAndWait = conversationService.stopSessionAndWait.bind(conversationService)
+    const stopCalls: string[] = []
+    conversationService.stopSessionAndWait = (async (targetSessionId: string) => {
+      stopCalls.push(targetSessionId)
+      return originalStopSessionAndWait(targetSessionId)
+    }) as typeof conversationService.stopSessionAndWait
+
+    try {
+      const messages: any[] = []
+      const ws = new WebSocket(`${wsUrl}/ws/${sessionId}`)
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Timed out waiting for CLI runtime validation')), 5000)
+        ws.onmessage = (event) => {
+          const message = JSON.parse(event.data as string)
+          messages.push(message)
+          if (message.type === 'connected') {
+            ws.send(JSON.stringify({ type: 'set_cli_runtime', cliRuntimeId: 'installed' }))
+          } else if (message.type === 'error') {
+            clearTimeout(timeout)
+            ws.close()
+            resolve()
+          }
+        }
+        ws.onerror = () => {
+          clearTimeout(timeout)
+          reject(new Error('WebSocket failed during CLI runtime validation'))
+        }
+      })
+
+      expect(messages.at(-1)).toMatchObject({
+        type: 'error',
+        code: 'CLI_RUNTIME_INVALID',
+      })
+      expect(stopCalls).toEqual([])
+      expect(conversationService.hasSession(sessionId)).toBe(true)
+      expect((await sessionService.getSessionLaunchInfo(sessionId))?.cliRuntimeId).toBeUndefined()
+    } finally {
+      conversationService.stopSessionAndWait = originalStopSessionAndWait
+      if (originalConfig === undefined) delete process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG
+      else process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG = originalConfig
+    }
+  }, 20_000)
+
+  it('restarts an idle session with the installed CLI runtime and persists after startup', async () => {
+    const createRes = await fetch(`${baseUrl}/api/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workDir: process.cwd() }),
+    })
+    const { sessionId } = await createRes.json() as { sessionId: string }
+    await runTurn(sessionId, 'establish a resumable CLI runtime session')
+    const originalConfig = process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG
+    await configureInstalledCliRuntime()
+    const originalStartSession = conversationService.startSession.bind(conversationService)
+    const originalStopSessionAndWait = conversationService.stopSessionAndWait.bind(conversationService)
+    const startCalls: Array<{ options?: { cliRuntimeId?: string } }> = []
+    const stopCalls: string[] = []
+    conversationService.startSession = (async (sid, workDir, sdkUrl, options) => {
+      startCalls.push({ options })
+      return originalStartSession(sid, workDir, sdkUrl, options)
+    }) as typeof conversationService.startSession
+    conversationService.stopSessionAndWait = (async (sid) => {
+      stopCalls.push(sid)
+      return originalStopSessionAndWait(sid)
+    }) as typeof conversationService.stopSessionAndWait
+
+    try {
+      const messages: any[] = []
+      const ws = new WebSocket(`${wsUrl}/ws/${sessionId}`)
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Timed out waiting for installed CLI runtime restart')), 10000)
+        ws.onmessage = (event) => {
+          const message = JSON.parse(event.data as string)
+          messages.push(message)
+          if (message.type === 'connected') {
+            ws.send(JSON.stringify({ type: 'set_cli_runtime', cliRuntimeId: 'installed' }))
+          } else if (message.type === 'cli_runtime_applied') {
+            clearTimeout(timeout)
+            ws.close()
+            resolve()
+          } else if (message.type === 'error') {
+            clearTimeout(timeout)
+            ws.close()
+            reject(new Error(message.message))
+          }
+        }
+        ws.onerror = () => reject(new Error('WebSocket failed during installed CLI runtime restart'))
+      })
+
+      expect(stopCalls).toEqual([sessionId])
+      expect(startCalls.at(-1)?.options).toMatchObject({ cliRuntimeId: 'installed' })
+      expect(messages).toContainEqual({ type: 'cli_runtime_applied', cliRuntimeId: 'installed' })
+      expect((await sessionService.getSessionLaunchInfo(sessionId))?.cliRuntimeId).toBe('installed')
+    } finally {
+      conversationService.startSession = originalStartSession
+      conversationService.stopSessionAndWait = originalStopSessionAndWait
+      conversationService.stopSession(sessionId)
+      if (originalConfig === undefined) delete process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG
+      else process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG = originalConfig
+    }
+  }, 20_000)
+
+  it('defers CLI runtime switching until the active turn completes', async () => {
+    await withMockStreamDelay(350, async () => {
+      const sessionId = `cli-runtime-deferred-${crypto.randomUUID()}`
+      const originalConfig = process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG
+      delete process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG
+      const originalStartSession = conversationService.startSession.bind(conversationService)
+      const originalStopSessionAndWait = conversationService.stopSessionAndWait.bind(conversationService)
+      let startCount = 0
+      let stopCount = 0
+      conversationService.startSession = (async (sid, workDir, sdkUrl, options) => {
+        startCount += 1
+        return originalStartSession(sid, workDir, sdkUrl, options)
+      }) as typeof conversationService.startSession
+      conversationService.stopSessionAndWait = (async (sid) => {
+        stopCount += 1
+        return originalStopSessionAndWait(sid)
+      }) as typeof conversationService.stopSessionAndWait
+
+      try {
+        const messages: any[] = []
+        const ws = new WebSocket(`${wsUrl}/ws/${sessionId}`)
+        await new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error('Timed out waiting for deferred CLI runtime switch')), 15000)
+          let requested = false
+          ws.onmessage = (event) => {
+            const message = JSON.parse(event.data as string)
+            messages.push(message)
+            if (message.type === 'connected') {
+              ws.send(JSON.stringify({ type: 'user_message', content: 'defer this CLI runtime switch' }))
+            } else if (message.type === 'content_delta' && !requested) {
+              requested = true
+              void configureInstalledCliRuntime().then(() => {
+                ws.send(JSON.stringify({ type: 'set_cli_runtime', cliRuntimeId: 'installed' }))
+              })
+              expect(stopCount).toBe(0)
+              expect(startCount).toBe(1)
+            } else if (message.type === 'cli_runtime_applied') {
+              clearTimeout(timeout)
+              ws.close()
+              resolve()
+            } else if (message.type === 'error') {
+              clearTimeout(timeout)
+              ws.close()
+              reject(new Error(message.message))
+            }
+          }
+          ws.onerror = () => reject(new Error('WebSocket failed during deferred CLI runtime switch'))
+        })
+
+        expect(stopCount).toBe(1)
+        expect(startCount).toBe(2)
+        expect(messages).toContainEqual({ type: 'cli_runtime_applied', cliRuntimeId: 'installed' })
+      } finally {
+        conversationService.startSession = originalStartSession
+        conversationService.stopSessionAndWait = originalStopSessionAndWait
+        conversationService.stopSession(sessionId)
+        if (originalConfig === undefined) delete process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG
+        else process.env.ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG = originalConfig
+      }
+    })
   }, 20_000)
 
   it('should keep the session idle in the UI while applying a runtime-only model switch', async () => {
@@ -5702,7 +5898,7 @@ describe('WebSocket Chat Integration', () => {
     }
   }, 20_000)
 
-  it('should pass an inherited xhigh effort to a K3 provider without remapping it', async () => {
+  it('should omit unsupported xhigh effort for a K3 provider', async () => {
     const providerService = new ProviderService()
     const provider = await providerService.addProvider({
       presetId: 'kimi',
@@ -5767,8 +5963,8 @@ describe('WebSocket Chat Integration', () => {
       expect(startCalls.find((call) => call.options?.providerId === provider.id)?.options).toMatchObject({
         providerId: provider.id,
         model: 'k3',
-        effort: 'xhigh',
       })
+      expect(startCalls.find((call) => call.options?.providerId === provider.id)?.options?.effort).toBeUndefined()
     } finally {
       conversationService.startSession = originalStartSession
       conversationService.stopSession(sessionId)
@@ -5779,11 +5975,11 @@ describe('WebSocket Chat Integration', () => {
   it('should preserve xhigh for an unlisted Claude model on a compatible provider', async () => {
     const providerService = new ProviderService()
     const provider = await providerService.addProvider({
-      presetId: 'xuanshuapi',
-      name: `XuanShu Claude ${crypto.randomUUID()}`,
-      apiKey: 'test-xuanshu-key',
+      presetId: 'custom',
+      name: `Custom Claude ${crypto.randomUUID()}`,
+      apiKey: 'test-custom-claude-key',
       authStrategy: 'auth_token',
-      baseUrl: 'https://www.xuanshuapi.com',
+      baseUrl: 'https://custom-claude.example.test',
       apiFormat: 'anthropic',
       models: {
         main: 'claude-opus-5',
@@ -6354,17 +6550,33 @@ describe('WebSocket Chat Integration', () => {
     const { sessionId } = await createRes.json() as { sessionId: string }
 
     const originalStartSession = conversationService.startSession.bind(conversationService)
+    const originalStopSessionAndWait = conversationService.stopSessionAndWait.bind(conversationService)
+    const stopSessionAndWaitCalls: string[] = []
+    let releaseRuntimeShutdown!: () => void
+    let runtimeShutdownReleased = false
+    let replacementStartedBeforeShutdown = false
+    const runtimeShutdownGate = new Promise<void>((resolve) => {
+      releaseRuntimeShutdown = resolve
+    })
     const startCalls: Array<{
       sessionId: string
       options: { permissionMode?: string; model?: string; effort?: string; providerId?: string | null } | undefined
     }> = []
 
+    conversationService.stopSessionAndWait = async (targetSessionId: string) => {
+      stopSessionAndWaitCalls.push(targetSessionId)
+      await runtimeShutdownGate
+      await originalStopSessionAndWait(targetSessionId)
+    }
     conversationService.startSession = (async function patchedStartSession(
       sid: string,
       workDir: string,
       sdkUrl: string,
       options?: { permissionMode?: string; model?: string; effort?: string; thinking?: 'enabled' | 'adaptive' | 'disabled'; providerId?: string | null },
     ) {
+      if (sid === sessionId && startCalls.length > 0 && !runtimeShutdownReleased) {
+        replacementStartedBeforeShutdown = true
+      }
       startCalls.push({ sessionId: sid, options })
       return originalStartSession(sid, workDir, sdkUrl, options)
     }) as typeof conversationService.startSession
@@ -6407,6 +6619,10 @@ describe('WebSocket Chat Integration', () => {
               modelId: 'restart-b-opus',
             }))
             ws.send(JSON.stringify({ type: 'user_message', content: 'second turn immediately after switch' }))
+            setTimeout(() => {
+              runtimeShutdownReleased = true
+              releaseRuntimeShutdown()
+            }, 50)
             phase = 'turn2'
             return
           }
@@ -6430,6 +6646,8 @@ describe('WebSocket Chat Integration', () => {
         }
       })
 
+      expect(stopSessionAndWaitCalls).toEqual([sessionId])
+      expect(replacementStartedBeforeShutdown).toBe(false)
       expect(startCalls).toHaveLength(2)
       expect(startCalls[0]).toMatchObject({
         sessionId,
@@ -6446,6 +6664,7 @@ describe('WebSocket Chat Integration', () => {
         },
       })
     } finally {
+      conversationService.stopSessionAndWait = originalStopSessionAndWait
       conversationService.startSession = originalStartSession
       conversationService.stopSession(sessionId)
     }

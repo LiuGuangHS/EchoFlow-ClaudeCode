@@ -5,8 +5,8 @@ import { rememberLocale } from '../lib/locale'
 import { useTheme } from '../lib/theme'
 import SearchDialog from './SearchDialog'
 
-export const GITHUB_URL = 'https://github.com/NanmiCoder/cc-haha'
-export const DOWNLOAD_URL = 'https://github.com/NanmiCoder/cc-haha/releases/latest'
+export const GITHUB_URL = 'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode'
+export const DOWNLOAD_URL = 'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest'
 
 const copy = {
   zh: {
@@ -15,6 +15,9 @@ const copy = {
     entries: [
       ['/start', '开始使用'],
       ['/desktop', '桌面端功能'],
+      ['/mobile', '移动端'],
+      ['/im', 'IM 接入'],
+      ['/cli', '命令行'],
       ['/internals', '深入原理']
     ],
     menu: '打开导航',
@@ -30,6 +33,9 @@ const copy = {
     entries: [
       ['/en/start', 'Get started'],
       ['/en/desktop', 'Desktop app'],
+      ['/en/mobile', 'Mobile'],
+      ['/en/im', 'Messaging'],
+      ['/en/cli', 'Command line'],
       ['/en/internals', 'Internals']
     ],
     menu: 'Open navigation',
@@ -70,7 +76,7 @@ export default function SiteHeader({ activeSection, locale = 'zh', localeHref })
         <div className="site-header__inner">
           <a className="brand" href={toSiteHref(home)}>
             <img alt="" src={toSiteHref('/images/app-icon.png')} width="26" height="26" />
-            <span>Claude Code <b>Haha</b></span>
+            <span>EchoFlow Code</span>
           </a>
 
           <nav aria-label={c.nav} className="site-nav" data-open={open} id="site-nav">

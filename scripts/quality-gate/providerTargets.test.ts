@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { getEchoFlowInternalDir } from '../../src/server/services/echoFlowConfigRoot'
 import {
   formatProviderTargets,
   loadProviderIndex,
@@ -10,8 +11,9 @@ import {
 
 function withProviderIndex(index: unknown, fn: (configDir: string) => void) {
   const configDir = join(tmpdir(), `quality-provider-targets-${crypto.randomUUID()}`)
-  mkdirSync(join(configDir, 'cc-haha'), { recursive: true })
-  writeFileSync(join(configDir, 'cc-haha', 'providers.json'), JSON.stringify(index, null, 2))
+  const echoFlowDir = getEchoFlowInternalDir(configDir)
+  mkdirSync(echoFlowDir, { recursive: true })
+  writeFileSync(join(echoFlowDir, 'providers.json'), JSON.stringify(index, null, 2))
 
   try {
     fn(configDir)

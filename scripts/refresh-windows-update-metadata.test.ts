@@ -7,13 +7,13 @@ import { parse } from 'yaml'
 import { refreshWindowsUpdateMetadata } from './refresh-windows-update-metadata'
 
 function tempDir() {
-  return mkdtempSync(join(tmpdir(), 'cc-haha-signed-windows-metadata-'))
+  return mkdtempSync(join(tmpdir(), 'echoflow-code-signed-windows-metadata-'))
 }
 
 describe('signed Windows update metadata refresh', () => {
   test('replaces the unsigned installer checksum and size while preserving release metadata', async () => {
     const dir = tempDir()
-    const installerName = 'Claude-Code-Haha-0.5.5-win-x64.exe'
+    const installerName = 'EchoFlow-Code-0.5.5-win-x64.exe'
     const installerPath = join(dir, installerName)
     const metadataPath = join(dir, 'latest.yml')
     const installer = Buffer.from('signed installer bytes')
@@ -57,7 +57,7 @@ releaseDate: '2026-08-23T00:00:00.000Z'
 
   test('rejects metadata that does not point at the signed installer', async () => {
     const dir = tempDir()
-    const installerPath = join(dir, 'Claude-Code-Haha-0.5.5-win-arm64.exe')
+    const installerPath = join(dir, 'EchoFlow-Code-0.5.5-win-arm64.exe')
     const metadataPath = join(dir, 'latest.yml')
     writeFileSync(installerPath, 'signed')
     writeFileSync(metadataPath, `

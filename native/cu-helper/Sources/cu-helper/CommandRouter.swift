@@ -668,7 +668,7 @@ public final class CommandRouter {
         try requireAXTrusted()
         // Resolve a RUNNING match first; if an app was named but isn't running,
         // LAUNCH it (Codex parity) rather than silently falling back to the
-        // frontmost app — which is the host (Claude Code Haha) and was the cause of
+        // frontmost app — which is the host (EchoFlow Code) and was the cause of
         // "get_app_state read / the glow framed our own window, and the model had to
         // shell out to `open -a`". Missing targets fail before TCC or launch.
         let resolved: ResolvedAppTarget
@@ -1621,7 +1621,7 @@ public final class CommandRouter {
         guard AXIsProcessTrusted() else {
             throw CUError(
                 "not_trusted",
-                "Accessibility permission is required. Grant cc-haha-computer-use in System Settings ▸ Privacy & Security ▸ Accessibility."
+                "Accessibility permission is required. Grant echoflow-code-computer-use in System Settings ▸ Privacy & Security ▸ Accessibility."
             )
         }
     }

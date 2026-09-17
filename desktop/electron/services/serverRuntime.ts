@@ -36,6 +36,8 @@ type ServerRuntimeOptions = {
   onServerReady?: () => void
   desktopRoot: string
   appRoot?: string
+  appVersion?: string
+  claudeCodeRuntimeConfigPath?: string
   h5DistDir?: string
   diagnosticsFile?: string
   env?: NodeJS.ProcessEnv
@@ -117,6 +119,8 @@ export class ElectronServerRuntime {
   private readonly onServerReady?: () => void
   private readonly desktopRoot: string
   private readonly appRoot: string
+  private readonly appVersion?: string
+  private readonly claudeCodeRuntimeConfigPath?: string
   private readonly h5DistDir: string
   private readonly diagnosticsFile?: string
   private readonly baseEnv: NodeJS.ProcessEnv
@@ -143,6 +147,8 @@ export class ElectronServerRuntime {
     this.onServerReady = options.onServerReady
     this.desktopRoot = options.desktopRoot
     this.appRoot = options.appRoot ?? options.desktopRoot
+    this.appVersion = options.appVersion
+    this.claudeCodeRuntimeConfigPath = options.claudeCodeRuntimeConfigPath
     this.h5DistDir = options.h5DistDir ?? path.join(options.desktopRoot, 'dist')
     this.diagnosticsFile = options.diagnosticsFile
     this.baseEnv = options.env ?? process.env
@@ -268,7 +274,13 @@ export class ElectronServerRuntime {
     const url = `http://${SERVER_CONTROL_HOST}:${port}`
     const logs: string[] = []
     let startState: ServerStartState | null = null
-    const env = this.withServerAccessTokens(await this.resolveSidecarBaseEnv())
+    const env = this.withServerAccessTokens({
+      ...(await this.resolveSidecarBaseEnv()),
+      ...(this.appVersion ? { APP_VERSION: this.appVersion } : {}),
+      ...(this.claudeCodeRuntimeConfigPath
+        ? { ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG: this.claudeCodeRuntimeConfigPath }
+        : {}),
+    })
     this.assertCurrentGeneration(generation)
     const plan = createServerPlan({
       desktopRoot: this.desktopRoot,
@@ -342,7 +354,7 @@ export class ElectronServerRuntime {
     activeServer?: ActiveServer,
   ): Promise<void> {
     const baseEnv = this.withLocalAccessToken(await this.resolveSidecarBaseEnv())
-    const bridgeUrl = baseEnv.CC_HAHA_SYSTEM_PROXY_URL
+    const bridgeUrl = baseEnv.ECHOFLOW_SYSTEM_PROXY_URL
     const env = bridgeUrl
       ? withAdapterProxyBridgeEnv(baseEnv, bridgeUrl)
       : baseEnv
@@ -399,14 +411,14 @@ export class ElectronServerRuntime {
   private withLocalAccessToken(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     return {
       ...env,
-      CC_HAHA_LOCAL_ACCESS_TOKEN: this.localAccessToken,
+      ECHOFLOW_LOCAL_ACCESS_TOKEN: this.localAccessToken,
     }
   }
 
   private withServerAccessTokens(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     return {
       ...this.withLocalAccessToken(env),
-      CC_HAHA_PET_ACCESS_TOKEN: this.petAccessToken,
+      ECHOFLOW_PET_ACCESS_TOKEN: this.petAccessToken,
     }
   }
 

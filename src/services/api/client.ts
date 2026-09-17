@@ -43,6 +43,9 @@ import {
   isEnvTruthy,
 } from '../../utils/envUtils.js'
 
+export const ECHOFLOW_OPENAI_OAUTH_PROVIDER_ENV_KEY = 'ECHOFLOW_OPENAI_OAUTH_PROVIDER'
+const LEGACY_OPENAI_OAUTH_PROVIDER_ENV_KEY = 'ECHOFLOW_OPENAI_OAUTH_PROVIDER'
+
 /**
  * Environment variables for different client types:
  *
@@ -121,7 +124,7 @@ export function resolveManagedProviderProxyAccessToken({
   providerManagedByHost = process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST,
   apiKey = process.env.ANTHROPIC_API_KEY,
   baseUrl = process.env.ANTHROPIC_BASE_URL,
-  localAccessToken = process.env.CC_HAHA_LOCAL_ACCESS_TOKEN,
+  localAccessToken = process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN,
   requestUrl = baseUrl,
 }: {
   providerManagedByHost?: string
@@ -199,6 +202,13 @@ export function shouldUseOpenAICodexTransport({
   )
 }
 
+export function shouldForceOpenAICodexProvider(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return isEnvTruthy(env[ECHOFLOW_OPENAI_OAUTH_PROVIDER_ENV_KEY])
+    || isEnvTruthy(env[LEGACY_OPENAI_OAUTH_PROVIDER_ENV_KEY])
+}
+
 export async function getAnthropicClient({
   apiKey,
   maxRetries,
@@ -251,8 +261,9 @@ export async function getAnthropicClient({
   logForDebugging('[API:auth] OAuth token check complete')
 
   const isOpenAIModel = model ? isOpenAIResponsesModel(model) : false
-  const forceOpenAICodex = isEnvTruthy(process.env.CC_HAHA_OPENAI_OAUTH_PROVIDER)
-  const forceGrok = isEnvTruthy(process.env.CC_HAHA_GROK_OAUTH_PROVIDER)
+  const forceOpenAICodex = shouldForceOpenAICodexProvider(process.env)
+    || isEnvTruthy(process.env.ECHOFLOW_OPENAI_OAUTH_PROVIDER)
+  const forceGrok = isEnvTruthy(process.env.ECHOFLOW_GROK_OAUTH_PROVIDER)
   const isClaudeSubscriber = forceGrok ? false : isClaudeAISubscriber()
   const hasOpenAIAuth = shouldUseOpenAICodexAuth()
   const usingGrok = forceGrok && shouldUseGrokAuth()

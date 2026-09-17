@@ -103,7 +103,7 @@ async function requestGrokTokens(
     headers: {
       Accept: 'application/json',
       'Content-Type': 'application/x-www-form-urlencoded',
-      'User-Agent': 'cc-haha-grok-oauth/1.0',
+      'User-Agent': 'echoflow-code-grok-oauth/1.0',
     },
     body: body.toString(),
     ...(options.timeoutMs

@@ -40,11 +40,11 @@ const TARGET_EXECUTABLE_RELATIVE = path.join(
   'MacOS',
   'TextEdit',
 )
-const HELPER_IDENTIFIER = 'dev.cchaha.cu-helper'
-const RUN_DIRECTORY_PREFIX = '/tmp/cc-haha-cu-live-smoke-'
+const HELPER_IDENTIFIER = 'dev.echoflow.cu-helper'
+const RUN_DIRECTORY_PREFIX = '/tmp/echoflow-code-cu-live-smoke-'
 const FIXTURE_BASENAME = 'computer-use-smoke-fixture.txt'
-const STABLE_TOKEN = 'CC_HAHA_SMOKE_STABLE_TOKEN'
-const MUTATED_TOKEN = 'CC_HAHA_SMOKE_MUTATED_VALUE'
+const STABLE_TOKEN = 'ECHOFLOW_SMOKE_STABLE_TOKEN'
+const MUTATED_TOKEN = 'ECHOFLOW_SMOKE_MUTATED_VALUE'
 const INITIAL_FIXTURE = `${STABLE_TOKEN}\ninitial-value\n`
 const MUTATED_FIXTURE = `${STABLE_TOKEN}\n${MUTATED_TOKEN}\n`
 const EXACT_NO_CHANGE_PREFIX =
@@ -310,7 +310,7 @@ export async function acquireLiveSmokeLock(
 export function assertSafeRunDirectory(runDirectory: string): void {
   const resolved = path.resolve(runDirectory)
   const basename = path.basename(resolved)
-  const exactGeneratedName = /^cc-haha-cu-live-smoke-[A-Za-z0-9]{6}$/
+  const exactGeneratedName = /^echoflow-code-cu-live-smoke-[A-Za-z0-9]{6}$/
   if (
     path.dirname(resolved) !== '/tmp'
     || !exactGeneratedName.test(basename)
@@ -681,7 +681,7 @@ function requireSignedHelper(): InstalledHelper {
   if (
     relativeBinary.startsWith('..')
     || path.isAbsolute(relativeBinary)
-    || relativeBinary !== path.join('Contents', 'MacOS', 'cc-haha-computer-use')
+    || relativeBinary !== path.join('Contents', 'MacOS', 'echoflow-code-computer-use')
   ) {
     throw new Error('Installed helper executable is not inside the expected app bundle')
   }
@@ -747,10 +747,10 @@ func processIdentity(_ app: NSRunningApplication) -> [String: Any]? {
 }
 
 func matchesExpected(_ app: NSRunningApplication) -> Bool {
-    guard let expectedPID = env["CC_HAHA_SMOKE_PID"].flatMap(Int32.init),
-          let expectedBundle = env["CC_HAHA_SMOKE_BUNDLE"],
-          let expectedExecutable = env["CC_HAHA_SMOKE_EXECUTABLE"],
-          let expectedLaunch = env["CC_HAHA_SMOKE_LAUNCH_TIME"].flatMap(Double.init),
+    guard let expectedPID = env["ECHOFLOW_SMOKE_PID"].flatMap(Int32.init),
+          let expectedBundle = env["ECHOFLOW_SMOKE_BUNDLE"],
+          let expectedExecutable = env["ECHOFLOW_SMOKE_EXECUTABLE"],
+          let expectedLaunch = env["ECHOFLOW_SMOKE_LAUNCH_TIME"].flatMap(Double.init),
           let identity = processIdentity(app),
           let pid = identity["pid"] as? Int,
           let bundle = identity["bundleId"] as? String,
@@ -763,7 +763,7 @@ func matchesExpected(_ app: NSRunningApplication) -> Bool {
         && abs(launch - expectedLaunch) < 0.000001
 }
 
-switch env["CC_HAHA_SMOKE_MODE"] {
+switch env["ECHOFLOW_SMOKE_MODE"] {
 case "state":
     guard let app = NSWorkspace.shared.frontmostApplication,
           let identity = processIdentity(app),
@@ -785,9 +785,9 @@ case "state":
     ])
 
 case "launch":
-    guard let fixture = env["CC_HAHA_SMOKE_FIXTURE"],
-          let appPath = env["CC_HAHA_SMOKE_APP"],
-          let identityPath = env["CC_HAHA_SMOKE_IDENTITY_FILE"]
+    guard let fixture = env["ECHOFLOW_SMOKE_FIXTURE"],
+          let appPath = env["ECHOFLOW_SMOKE_APP"],
+          let identityPath = env["ECHOFLOW_SMOKE_IDENTITY_FILE"]
     else { fail("launch probe paths are missing") }
     let existing = Set(
         NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.TextEdit")
@@ -830,7 +830,7 @@ case "launch":
     fail("TextEdit launch run loop exited unexpectedly")
 
 case "terminate":
-    guard let pid = env["CC_HAHA_SMOKE_PID"].flatMap(Int32.init) else {
+    guard let pid = env["ECHOFLOW_SMOKE_PID"].flatMap(Int32.init) else {
         fail("termination PID is missing")
     }
     guard let app = NSRunningApplication(processIdentifier: pid) else {
@@ -861,9 +861,9 @@ import Darwin
 import Foundation
 
 let env = ProcessInfo.processInfo.environment
-guard let initialX = env["CC_HAHA_SMOKE_POINTER_X"].flatMap(Double.init),
-      let initialY = env["CC_HAHA_SMOKE_POINTER_Y"].flatMap(Double.init),
-      let stopPath = env["CC_HAHA_SMOKE_POINTER_STOP"]
+guard let initialX = env["ECHOFLOW_SMOKE_POINTER_X"].flatMap(Double.init),
+      let initialY = env["ECHOFLOW_SMOKE_POINTER_Y"].flatMap(Double.init),
+      let stopPath = env["ECHOFLOW_SMOKE_POINTER_STOP"]
 else { exit(2) }
 
 func emit(_ value: [String: Any]) {
@@ -895,9 +895,9 @@ async function startPointerMonitor(
   const child = spawn('/usr/bin/swift', ['-e', SWIFT_POINTER_MONITOR], {
     env: {
       ...process.env,
-      CC_HAHA_SMOKE_POINTER_X: String(initial.x),
-      CC_HAHA_SMOKE_POINTER_Y: String(initial.y),
-      CC_HAHA_SMOKE_POINTER_STOP: stopPath,
+      ECHOFLOW_SMOKE_POINTER_X: String(initial.x),
+      ECHOFLOW_SMOKE_POINTER_Y: String(initial.y),
+      ECHOFLOW_SMOKE_POINTER_STOP: stopPath,
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   })
@@ -997,7 +997,7 @@ function runSystemProbe(
     env: {
       ...process.env,
       ...extraEnv,
-      CC_HAHA_SMOKE_MODE: mode,
+      ECHOFLOW_SMOKE_MODE: mode,
     },
     timeoutMs: mode === 'launch' ? 30_000 : 20_000,
   })
@@ -1027,9 +1027,9 @@ function launchDedicatedTextEdit(
   let raw: unknown
   try {
     raw = runSystemProbe('launch', {
-      CC_HAHA_SMOKE_FIXTURE: fixturePath,
-      CC_HAHA_SMOKE_APP: appPath,
-      CC_HAHA_SMOKE_IDENTITY_FILE: identityPath,
+      ECHOFLOW_SMOKE_FIXTURE: fixturePath,
+      ECHOFLOW_SMOKE_APP: appPath,
+      ECHOFLOW_SMOKE_IDENTITY_FILE: identityPath,
     })
   } catch (error) {
     const launched = readPersistedTargetIdentity(identityPath)
@@ -1074,10 +1074,10 @@ function readPersistedTargetIdentity(
 
 function terminateDedicatedTextEdit(identity: ProcessIdentity): void {
   const raw = runSystemProbe('terminate', {
-    CC_HAHA_SMOKE_PID: String(identity.pid),
-    CC_HAHA_SMOKE_BUNDLE: identity.bundleId,
-    CC_HAHA_SMOKE_EXECUTABLE: identity.executablePath,
-    CC_HAHA_SMOKE_LAUNCH_TIME: String(identity.launchTime),
+    ECHOFLOW_SMOKE_PID: String(identity.pid),
+    ECHOFLOW_SMOKE_BUNDLE: identity.bundleId,
+    ECHOFLOW_SMOKE_EXECUTABLE: identity.executablePath,
+    ECHOFLOW_SMOKE_LAUNCH_TIME: String(identity.launchTime),
   })
   if (!isObject(raw) || raw.terminated !== true) {
     throw new Error('Dedicated TextEdit cleanup did not complete')
@@ -1107,7 +1107,7 @@ function removeRunDirectory(runDirectory: string): void {
   const realRun = realpathSync(runDirectory)
   if (
     path.dirname(realRun) !== realTmp
-    || !/^cc-haha-cu-live-smoke-[A-Za-z0-9]{6}$/.test(path.basename(realRun))
+    || !/^echoflow-code-cu-live-smoke-[A-Za-z0-9]{6}$/.test(path.basename(realRun))
   ) {
     throw new Error(`Refusing cleanup after run directory escaped /tmp: ${realRun}`)
   }

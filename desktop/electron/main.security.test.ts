@@ -46,7 +46,7 @@ describe('Electron preview security boundary', () => {
     const firstPartition = createPreviewSessionPartition()
     const secondPartition = createPreviewSessionPartition()
 
-    expect(firstPartition.startsWith('cc-haha-preview-')).toBe(true)
+    expect(firstPartition.startsWith('echoflow-code-preview-')).toBe(true)
     expect(firstPartition.startsWith('persist:')).toBe(false)
     expect(secondPartition).not.toBe(firstPartition)
     expect(mainSource).toContain('partition: createPreviewSessionPartition()')

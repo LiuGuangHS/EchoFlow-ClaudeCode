@@ -50,7 +50,7 @@ describe('resolveStoredComputerUseConfig', () => {
   })
 
   test('fails closed when the stored config file is missing', async () => {
-    const configDir = await mkdtemp(join(tmpdir(), 'cc-haha-cu-config-'))
+    const configDir = await mkdtemp(join(tmpdir(), 'echoflow-code-cu-config-'))
     const originalConfigDir = process.env.CLAUDE_CONFIG_DIR
     process.env.CLAUDE_CONFIG_DIR = configDir
 

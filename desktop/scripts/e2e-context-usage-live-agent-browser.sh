@@ -16,8 +16,8 @@ BASE_URL="http://127.0.0.1:${API_PORT}"
 WEB_URL="http://127.0.0.1:${WEB_PORT}/?serverUrl=${BASE_URL}"
 
 RUN_ID="$(date +%s)-$RANDOM"
-SESSION_NAME="cc-haha-context-live-${RUN_ID}"
-ARTIFACT_DIR="${ARTIFACT_DIR:-$(mktemp -d "/tmp/cc-haha-context-live-${RUN_ID}-XXXX")}"
+SESSION_NAME="echoflow-code-context-live-${RUN_ID}"
+ARTIFACT_DIR="${ARTIFACT_DIR:-$(mktemp -d "/tmp/echoflow-code-context-live-${RUN_ID}-XXXX")}"
 PROJECT_DIR="${ARTIFACT_DIR}/project"
 SERVER_LOG="${ARTIFACT_DIR}/server.log"
 WEB_LOG="${ARTIFACT_DIR}/web.log"
@@ -207,7 +207,7 @@ TAB_STATE="{\"openTabs\":[{\"sessionId\":\"${SESSION_ID}\",\"title\":\"${UNIQUE_
 
 "${AB[@]}" open "${WEB_URL}" >>"${BROWSER_LOG}" 2>&1
 "${AB[@]}" wait 1200 >>"${BROWSER_LOG}" 2>&1
-"${AB[@]}" eval "localStorage.setItem('cc-haha-locale', 'en'); localStorage.setItem('cc-haha-open-tabs', '${TAB_STATE}'); location.reload();" >>"${BROWSER_LOG}" 2>&1
+"${AB[@]}" eval "localStorage.setItem('echoflow-code-locale', 'en'); localStorage.setItem('echoflow-code-open-tabs', '${TAB_STATE}'); location.reload();" >>"${BROWSER_LOG}" 2>&1
 "${AB[@]}" wait 1800 >>"${BROWSER_LOG}" 2>&1
 
 "${AB[@]}" fill '#sidebar-search' "${UNIQUE_TITLE}" >>"${BROWSER_LOG}" 2>&1

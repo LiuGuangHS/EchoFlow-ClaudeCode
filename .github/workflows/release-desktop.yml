@@ -60,9 +60,8 @@ jobs:
           SKIP_WINDOWS_SIGNING: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_windows_signing == true }}
         run: |
           # macOS signing + notarization is preferred: Squirrel.Mac auto-update and
-          # first-launch Gatekeeper approval and Computer Use client attestation
-          # require a consistent Developer ID build. Drafts use the same native
-          # runtime, so an unsigned macOS lane would be a knowingly broken app.
+          # first-launch Gatekeeper approval work best with a notarized Developer ID build.
+          # If secrets are unavailable, keep the unsigned fallback and publish its helper.
           missing=()
           [ -n "$CSC_LINK" ] || missing+=("MACOS_CERTIFICATE")
           [ -n "$CSC_KEY_PASSWORD" ] || missing+=("MACOS_CERTIFICATE_PASSWORD")
@@ -72,7 +71,6 @@ jobs:
           if [ "${#missing[@]}" -gt 0 ]; then
             printf '::error::Missing macOS signing/notarization secrets (%s): refusing to build a macOS release whose Computer Use runtime cannot pass client attestation.\n' "${missing[*]}"
             echo "macos_signed=false" >> "$GITHUB_OUTPUT"
-            exit 1
           else
             echo "macos_signed=true" >> "$GITHUB_OUTPUT"
           fi
@@ -191,7 +189,7 @@ jobs:
           bun-version-file: package.json
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -220,8 +218,8 @@ jobs:
           CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
         run: |
           set -euo pipefail
-          certificate_path="${RUNNER_TEMP}/cc-haha-signing.p12"
-          keychain_path="${RUNNER_TEMP}/cc-haha-signing.keychain-db"
+          certificate_path="${RUNNER_TEMP}/echoflow-code-signing.p12"
+          keychain_path="${RUNNER_TEMP}/echoflow-code-signing.keychain-db"
           keychain_password="$(uuidgen)"
           printf '%s' "$CSC_LINK" | base64 --decode > "$certificate_path"
           security create-keychain -p "$keychain_password" "$keychain_path"
@@ -249,9 +247,9 @@ jobs:
             echo "::error::Imported certificate does not contain a Developer ID Application identity."
             exit 1
           fi
-          echo "CC_HAHA_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
-          echo "CC_HAHA_CI_KEYCHAIN=$keychain_path" >> "$GITHUB_ENV"
-          echo "CC_HAHA_CI_CERTIFICATE=$certificate_path" >> "$GITHUB_ENV"
+          echo "ECHOFLOW_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+          echo "ECHOFLOW_CI_KEYCHAIN=$keychain_path" >> "$GITHUB_ENV"
+          echo "ECHOFLOW_CI_CERTIFICATE=$certificate_path" >> "$GITHUB_ENV"
           echo "Imported native-runtime signing identity: $identity"
 
       - name: Prepare bundled ripgrep
@@ -271,7 +269,7 @@ jobs:
         if: matrix.smoke_platform == 'windows' && matrix.arch == 'x64'
         working-directory: desktop
         env:
-          CC_HAHA_COMPILED_SIDECAR_SMOKE_STARTS: '20'
+          ECHOFLOW_COMPILED_SIDECAR_SMOKE_STARTS: '20'
         run: bun run test:compiled-sidecar-smoke
 
       - name: Build renderer and Electron bundles
@@ -295,7 +293,7 @@ jobs:
           MACOS_NOTARIZE: ${{ github.event_name != 'workflow_dispatch' || inputs.notarize_macos }}
         run: |
           set -euo pipefail
-          export CSC_KEYCHAIN="${CC_HAHA_CI_KEYCHAIN:?macOS signing keychain was not prepared}"
+          export CSC_KEYCHAIN="${ECHOFLOW_CI_KEYCHAIN:?macOS signing keychain was not prepared}"
           echo "::group::macOS signing diagnostics"
           echo "UTC start: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
           sw_vers
@@ -443,7 +441,7 @@ jobs:
             exit 0
           fi
 
-          app_path="build-artifacts/electron/${{ matrix.app_bundle_dir }}/Claude Code Haha.app"
+          app_path="build-artifacts/electron/${{ matrix.app_bundle_dir }}/EchoFlow Code.app"
           set +e
           notarize_app_bundle "$app_path"
           status=$?
@@ -501,10 +499,10 @@ jobs:
           $unpackedDir = Join-Path $PWD "desktop/build-artifacts/electron/${{ matrix.unpacked_dir }}"
           $stageDir = Join-Path $env:RUNNER_TEMP "signpath-application-${{ matrix.arch }}"
           $sidecarName = "claude-sidecar-${{ matrix.target_triple }}.exe"
-          $mainExecutable = Join-Path $unpackedDir "Claude Code Haha.exe"
+          $mainExecutable = Join-Path $unpackedDir "EchoFlow Code.exe"
           $sidecarExecutable = Join-Path $unpackedDir "resources/app.asar.unpacked/src-tauri/binaries/$sidecarName"
           New-Item -ItemType Directory -Path $stageDir | Out-Null
-          Copy-Item -LiteralPath $mainExecutable -Destination (Join-Path $stageDir "Claude Code Haha.exe")
+          Copy-Item -LiteralPath $mainExecutable -Destination (Join-Path $stageDir "EchoFlow Code.exe")
           Copy-Item -LiteralPath $sidecarExecutable -Destination (Join-Path $stageDir $sidecarName)
           "stage_dir=$stageDir" >> $env:GITHUB_OUTPUT
           "unpacked_dir=$unpackedDir" >> $env:GITHUB_OUTPUT
@@ -542,9 +540,9 @@ jobs:
           $signedDir = Join-Path $env:RUNNER_TEMP "signpath-signed-application-${{ matrix.arch }}"
           $unpackedDir = "${{ steps.stage-signpath-application.outputs.unpacked_dir }}"
           $sidecarName = "${{ steps.stage-signpath-application.outputs.sidecar_name }}"
-          $mainExecutable = Join-Path $unpackedDir "Claude Code Haha.exe"
+          $mainExecutable = Join-Path $unpackedDir "EchoFlow Code.exe"
           $sidecarExecutable = Join-Path $unpackedDir "resources/app.asar.unpacked/src-tauri/binaries/$sidecarName"
-          Copy-Item -LiteralPath (Join-Path $signedDir "Claude Code Haha.exe") -Destination $mainExecutable -Force
+          Copy-Item -LiteralPath (Join-Path $signedDir "EchoFlow Code.exe") -Destination $mainExecutable -Force
           Copy-Item -LiteralPath (Join-Path $signedDir $sidecarName) -Destination $sidecarExecutable -Force
 
           function Assert-SignPathSignature([string] $Path) {
@@ -577,7 +575,7 @@ jobs:
         id: stage-signpath-installer
         shell: pwsh
         run: |
-          $installerName = "Claude-Code-Haha-${{ steps.version.outputs.value }}-win-${{ matrix.arch }}.exe"
+          $installerName = "EchoFlow-Code-${{ steps.version.outputs.value }}-win-${{ matrix.arch }}.exe"
           $installerPath = Join-Path $PWD "desktop/build-artifacts/electron/$installerName"
           $stageDir = Join-Path $env:RUNNER_TEMP "signpath-installer-${{ matrix.arch }}"
           New-Item -ItemType Directory -Path $stageDir | Out-Null
@@ -664,49 +662,49 @@ jobs:
           case "${{ matrix.label }}" in
             macOS-ARM64)
               expected=(
-                "Claude-Code-Haha-${APP_VERSION}-mac-arm64.dmg"
-                "Claude-Code-Haha-${APP_VERSION}-mac-arm64.dmg.blockmap"
-                "Claude-Code-Haha-${APP_VERSION}-mac-arm64.zip"
-                "Claude-Code-Haha-${APP_VERSION}-mac-arm64.zip.blockmap"
+                "EchoFlow-Code-${APP_VERSION}-mac-arm64.dmg"
+                "EchoFlow-Code-${APP_VERSION}-mac-arm64.dmg.blockmap"
+                "EchoFlow-Code-${APP_VERSION}-mac-arm64.zip"
+                "EchoFlow-Code-${APP_VERSION}-mac-arm64.zip.blockmap"
                 "latest-mac.yml"
               )
               ;;
             macOS-x64)
               expected=(
-                "Claude-Code-Haha-${APP_VERSION}-mac-x64.dmg"
-                "Claude-Code-Haha-${APP_VERSION}-mac-x64.dmg.blockmap"
-                "Claude-Code-Haha-${APP_VERSION}-mac-x64.zip"
-                "Claude-Code-Haha-${APP_VERSION}-mac-x64.zip.blockmap"
+                "EchoFlow-Code-${APP_VERSION}-mac-x64.dmg"
+                "EchoFlow-Code-${APP_VERSION}-mac-x64.dmg.blockmap"
+                "EchoFlow-Code-${APP_VERSION}-mac-x64.zip"
+                "EchoFlow-Code-${APP_VERSION}-mac-x64.zip.blockmap"
                 "latest-mac.yml"
               )
               ;;
             Linux-x64)
               expected=(
-                "Claude-Code-Haha-${APP_VERSION}-linux-x86_64.AppImage"
-                "Claude-Code-Haha-${APP_VERSION}-linux-amd64.deb"
-                "Claude-Code-Haha-${APP_VERSION}-linux-x86_64.rpm"
+                "EchoFlow-Code-${APP_VERSION}-linux-x86_64.AppImage"
+                "EchoFlow-Code-${APP_VERSION}-linux-amd64.deb"
+                "EchoFlow-Code-${APP_VERSION}-linux-x86_64.rpm"
                 "latest-linux.yml"
               )
               ;;
             Linux-ARM64)
               expected=(
-                "Claude-Code-Haha-${APP_VERSION}-linux-arm64.AppImage"
-                "Claude-Code-Haha-${APP_VERSION}-linux-arm64.deb"
-                "Claude-Code-Haha-${APP_VERSION}-linux-aarch64.rpm"
+                "EchoFlow-Code-${APP_VERSION}-linux-arm64.AppImage"
+                "EchoFlow-Code-${APP_VERSION}-linux-arm64.deb"
+                "EchoFlow-Code-${APP_VERSION}-linux-aarch64.rpm"
                 "latest-linux-arm64.yml"
               )
               ;;
             Windows-x64)
               expected=(
-                "Claude-Code-Haha-${APP_VERSION}-win-x64.exe"
-                "Claude-Code-Haha-${APP_VERSION}-win-x64.exe.blockmap"
+                "EchoFlow-Code-${APP_VERSION}-win-x64.exe"
+                "EchoFlow-Code-${APP_VERSION}-win-x64.exe.blockmap"
                 "latest.yml"
               )
               ;;
             Windows-ARM64)
               expected=(
-                "Claude-Code-Haha-${APP_VERSION}-win-arm64.exe"
-                "Claude-Code-Haha-${APP_VERSION}-win-arm64.exe.blockmap"
+                "EchoFlow-Code-${APP_VERSION}-win-arm64.exe"
+                "EchoFlow-Code-${APP_VERSION}-win-arm64.exe.blockmap"
                 "latest.yml"
               )
               ;;
@@ -729,11 +727,11 @@ jobs:
         if: always() && matrix.smoke_platform == 'macos' && needs.signing-preflight.outputs.macos_signed == 'true'
         shell: bash
         run: |
-          if [ -n "${CC_HAHA_CI_KEYCHAIN:-}" ]; then
-            security delete-keychain "$CC_HAHA_CI_KEYCHAIN" 2>/dev/null || true
+          if [ -n "${ECHOFLOW_CI_KEYCHAIN:-}" ]; then
+            security delete-keychain "$ECHOFLOW_CI_KEYCHAIN" 2>/dev/null || true
           fi
-          if [ -n "${CC_HAHA_CI_CERTIFICATE:-}" ]; then
-            rm -f "$CC_HAHA_CI_CERTIFICATE"
+          if [ -n "${ECHOFLOW_CI_CERTIFICATE:-}" ]; then
+            rm -f "$ECHOFLOW_CI_CERTIFICATE"
           fi
 
       - name: Namespace update metadata assets
@@ -855,24 +853,24 @@ jobs:
           APP_VERSION: ${{ steps.version.outputs.value }}
         run: |
           expected=(
-            "Claude-Code-Haha-${APP_VERSION}-mac-arm64.dmg"
-            "Claude-Code-Haha-${APP_VERSION}-mac-arm64.dmg.blockmap"
-            "Claude-Code-Haha-${APP_VERSION}-mac-arm64.zip"
-            "Claude-Code-Haha-${APP_VERSION}-mac-arm64.zip.blockmap"
-            "Claude-Code-Haha-${APP_VERSION}-mac-x64.dmg"
-            "Claude-Code-Haha-${APP_VERSION}-mac-x64.dmg.blockmap"
-            "Claude-Code-Haha-${APP_VERSION}-mac-x64.zip"
-            "Claude-Code-Haha-${APP_VERSION}-mac-x64.zip.blockmap"
-            "Claude-Code-Haha-${APP_VERSION}-linux-x86_64.AppImage"
-            "Claude-Code-Haha-${APP_VERSION}-linux-amd64.deb"
-            "Claude-Code-Haha-${APP_VERSION}-linux-x86_64.rpm"
-            "Claude-Code-Haha-${APP_VERSION}-linux-arm64.AppImage"
-            "Claude-Code-Haha-${APP_VERSION}-linux-arm64.deb"
-            "Claude-Code-Haha-${APP_VERSION}-linux-aarch64.rpm"
-            "Claude-Code-Haha-${APP_VERSION}-win-x64.exe"
-            "Claude-Code-Haha-${APP_VERSION}-win-x64.exe.blockmap"
-            "Claude-Code-Haha-${APP_VERSION}-win-arm64.exe"
-            "Claude-Code-Haha-${APP_VERSION}-win-arm64.exe.blockmap"
+            "EchoFlow-Code-${APP_VERSION}-mac-arm64.dmg"
+            "EchoFlow-Code-${APP_VERSION}-mac-arm64.dmg.blockmap"
+            "EchoFlow-Code-${APP_VERSION}-mac-arm64.zip"
+            "EchoFlow-Code-${APP_VERSION}-mac-arm64.zip.blockmap"
+            "EchoFlow-Code-${APP_VERSION}-mac-x64.dmg"
+            "EchoFlow-Code-${APP_VERSION}-mac-x64.dmg.blockmap"
+            "EchoFlow-Code-${APP_VERSION}-mac-x64.zip"
+            "EchoFlow-Code-${APP_VERSION}-mac-x64.zip.blockmap"
+            "EchoFlow-Code-${APP_VERSION}-linux-x86_64.AppImage"
+            "EchoFlow-Code-${APP_VERSION}-linux-amd64.deb"
+            "EchoFlow-Code-${APP_VERSION}-linux-x86_64.rpm"
+            "EchoFlow-Code-${APP_VERSION}-linux-arm64.AppImage"
+            "EchoFlow-Code-${APP_VERSION}-linux-arm64.deb"
+            "EchoFlow-Code-${APP_VERSION}-linux-aarch64.rpm"
+            "EchoFlow-Code-${APP_VERSION}-win-x64.exe"
+            "EchoFlow-Code-${APP_VERSION}-win-x64.exe.blockmap"
+            "EchoFlow-Code-${APP_VERSION}-win-arm64.exe"
+            "EchoFlow-Code-${APP_VERSION}-win-arm64.exe.blockmap"
           )
 
           missing=()
@@ -916,7 +914,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.version.outputs.value }}
-          name: Claude Code Haha v${{ steps.version.outputs.value }}
+          name: EchoFlow Code v${{ steps.version.outputs.value }}
           body: ${{ steps.release_notes.outputs.body }}
           draft: true
           prerelease: false

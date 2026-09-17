@@ -5,9 +5,9 @@
  * ---------------
  * The native Computer Use helper refuses commands unless its caller chain is
  * cryptographically the desktop app: `ClientAttestation.swift` requires the
- * host (`com.claude-code-haha.desktop`), the sidecar
- * (`com.claude-code-haha.desktop.sidecar`) and the helper
- * (`dev.cchaha.cu-helper`) to share one signing certificate — same team, same
+ * host (`com.echoflow.code.desktop`), the sidecar
+ * (`com.echoflow.code.desktop.sidecar`) and the helper
+ * (`dev.echoflow.cu-helper`) to share one signing certificate — same team, same
  * leaf. If any link is ad-hoc or signed by a different cert, every helper call
  * returns `unauthorized_client` and Computer Use is dead in the water.
  *
@@ -16,7 +16,7 @@
  * answer to "which certificate?". That answer lives here.
  *
  * Preference order — Developer ID FIRST, deliberately:
- *   1. `CC_HAHA_SIGN_IDENTITY` — explicit override, trusted verbatim.
+ *   1. `ECHOFLOW_SIGN_IDENTITY` — explicit override, trusted verbatim.
  *   2. `Developer ID Application: …` — long-lived, notarizable, distributable.
  *      TCC grants are keyed to the signing identity, so a cert that does not
  *      expire yearly is what keeps the user's Accessibility + Screen Recording
@@ -38,14 +38,14 @@ export function codesignTimestampArgument(identity: SigningIdentity | null): '--
 }
 
 /** The fixed code-signing identifier the helper's attestation policy expects. */
-export const SIDECAR_SIGNING_IDENTIFIER = 'com.claude-code-haha.desktop.sidecar'
+export const SIDECAR_SIGNING_IDENTIFIER = 'com.echoflow.code.desktop.sidecar'
 
 /**
  * Pick a stable signing identity out of `security find-identity -v -p codesigning`
  * output. Pure so the preference order is unit-testable without a keychain.
  *
  * @param securityOutput raw stdout of `security find-identity -v -p codesigning`
- * @param override value of `CC_HAHA_SIGN_IDENTITY`, if set
+ * @param override value of `ECHOFLOW_SIGN_IDENTITY`, if set
  * @returns the identity's common name, or null when nothing stable is available
  */
 export function resolveStableSigningIdentity(
@@ -98,7 +98,7 @@ export async function detectStableSigningIdentity(): Promise<SigningIdentity | n
     await proc.exited
     return resolveStableSigningIdentity(
       stdout,
-      process.env.CC_HAHA_SIGN_IDENTITY,
+      process.env.ECHOFLOW_SIGN_IDENTITY,
     )
   } catch {
     return null

@@ -1060,7 +1060,7 @@ export class ReviewService {
       }
     }
 
-    const patchDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cc-haha-review-patch-'))
+    const patchDir = await fs.mkdtemp(path.join(os.tmpdir(), 'echoflow-review-patch-'))
     const patchFile = path.join(patchDir, 'hunk.patch')
     let results: ReviewPathResult[]
     try {

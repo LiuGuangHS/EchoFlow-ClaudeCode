@@ -4,6 +4,7 @@ import * as path from 'node:path'
 import { clawhubProvider, resetClawhubOwnerCacheForTests } from '../services/market/clawhubProvider.js'
 import { skillhubProvider } from '../services/market/skillhubProvider.js'
 import { resetMarketCacheForTests } from '../services/market/cache.js'
+import { getProviderBase } from '../services/market/providerFetch.js'
 import { MarketUpstreamError } from '../services/market/types.js'
 
 const FIXTURES = path.join(import.meta.dir, 'fixtures', 'market')
@@ -15,6 +16,7 @@ async function fixture(name: string): Promise<string> {
 type FetchStub = (url: string) => { status?: number; body: string; contentType?: string } | undefined
 
 let requestedUrls: string[] = []
+let originalEchoFlowDisableProvidersEnv: string | undefined
 let originalDisableProvidersEnv: string | undefined
 const originalFetch = globalThis.fetch
 
@@ -35,18 +37,28 @@ beforeEach(() => {
   requestedUrls = []
   resetMarketCacheForTests()
   resetClawhubOwnerCacheForTests()
+  originalEchoFlowDisableProvidersEnv = process.env.ECHOFLOW_MARKET_DISABLE_PROVIDERS
   originalDisableProvidersEnv = process.env.HAHA_MARKET_DISABLE_PROVIDERS
+  delete process.env.ECHOFLOW_MARKET_DISABLE_PROVIDERS
   delete process.env.HAHA_MARKET_DISABLE_PROVIDERS
+  delete process.env.ECHOFLOW_MARKET_BASE_CLAWHUB
+  delete process.env.HAHA_MARKET_BASE_CLAWHUB
 })
 
 afterEach(() => {
   globalThis.fetch = originalFetch
-  // Restore rather than delete: these are the developer's variables, not ours.
+  if (originalEchoFlowDisableProvidersEnv === undefined) {
+    delete process.env.ECHOFLOW_MARKET_DISABLE_PROVIDERS
+  } else {
+    process.env.ECHOFLOW_MARKET_DISABLE_PROVIDERS = originalEchoFlowDisableProvidersEnv
+  }
   if (originalDisableProvidersEnv === undefined) {
     delete process.env.HAHA_MARKET_DISABLE_PROVIDERS
   } else {
     process.env.HAHA_MARKET_DISABLE_PROVIDERS = originalDisableProvidersEnv
   }
+  delete process.env.ECHOFLOW_MARKET_BASE_CLAWHUB
+  delete process.env.HAHA_MARKET_BASE_CLAWHUB
 })
 
 describe('clawhubProvider', () => {
@@ -163,8 +175,16 @@ describe('clawhubProvider', () => {
     await expect(clawhubProvider.list({ limit: 3 })).rejects.toThrow(MarketUpstreamError)
   })
 
+  it('prefers EchoFlow market overrides while retaining legacy environment variables', () => {
+    process.env.HAHA_MARKET_BASE_CLAWHUB = 'https://legacy.example'
+    expect(getProviderBase('clawhub')).toBe('https://legacy.example')
+
+    process.env.ECHOFLOW_MARKET_BASE_CLAWHUB = 'https://echoflow.example'
+    expect(getProviderBase('clawhub')).toBe('https://echoflow.example')
+  })
+
   it('fails when the provider is disabled via env', async () => {
-    process.env.HAHA_MARKET_DISABLE_PROVIDERS = 'clawhub'
+    process.env.ECHOFLOW_MARKET_DISABLE_PROVIDERS = 'clawhub'
     stubFetch(() => ({ body: '{"items":[]}' }))
 
     await expect(clawhubProvider.list({ limit: 3 })).rejects.toThrow('disabled')

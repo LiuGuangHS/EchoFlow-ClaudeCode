@@ -35,7 +35,7 @@ import type { SessionListSummary, TranscriptChunk, TranscriptProjection } from '
 const tempDirs: string[] = []
 
 async function createTempDir(label: string): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), `cc-haha-entries-${label}-`))
+  const directory = await mkdtemp(join(tmpdir(), `echoflow-code-entries-${label}-`))
   tempDirs.push(directory)
   return directory
 }

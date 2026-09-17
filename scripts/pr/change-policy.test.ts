@@ -35,7 +35,7 @@ describe('evaluateChangePolicy', () => {
       'docs/index.md',
       'site/src/App.tsx',
       'README.md',
-      'README.en.md',
+      'README.zh-CN.md',
     ])
 
     expect(result.blocked).toBe(false)
@@ -160,6 +160,8 @@ describe('evaluateChangePolicy', () => {
       '.github/CODEOWNERS',
       '.github/copilot-instructions.md',
       'docs/internals/contributing.md',
+      'scripts/harness-audit.js',
+      'scripts/harness-audit.test.ts',
     ])
 
     expect(result.checks.policy).toBe(true)

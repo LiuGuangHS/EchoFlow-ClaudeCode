@@ -1,7 +1,7 @@
 import Darwin
 import XCTest
 
-@testable import cc_haha_computer_use
+@testable import echoflow_code_computer_use
 
 final class OverlayPolicyTests: XCTestCase {
     private let processA = AXTreeProcessIdentity(

@@ -7,7 +7,6 @@
  */
 
 import * as fs from 'node:fs'
-import * as os from 'node:os'
 import * as path from 'node:path'
 import { ProviderService } from './providerService.js'
 import { SettingsService } from './settingsService.js'
@@ -44,6 +43,11 @@ import {
   resolveClaudeCliLauncher,
 } from '../../utils/desktopBundledCli.js'
 import {
+  resolveClaudeCodeRuntimeId,
+  resolveClaudeCodeRuntimePath,
+  type ClaudeCodeRuntimeId,
+} from './claudeCodeRuntimeService.js'
+import {
   ASK_USER_QUESTION_CLARIFY_MESSAGE,
   ASK_USER_QUESTION_CLARIFY_WITH_QUESTIONS_PREFIX,
   PLAN_REJECTION_MESSAGE,
@@ -63,8 +67,13 @@ import {
   SYSTEM_PROXY_URL_ENV,
   type NetworkSettings,
 } from './networkSettings.js'
+import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 import { readTraceCaptureSettings } from './traceCaptureService.js'
 import { logError } from '../../utils/log.js'
+import {
+  ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
+  LEGACY_ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
+} from '../../utils/thinking.js'
 import {
   createImageMetadataText,
   maybeResizeAndDownsampleImageBuffer,
@@ -86,6 +95,22 @@ const CONTROL_READY_POLL_MS = 50
 const MAX_SEEN_SDK_MESSAGE_UUIDS = 2_000
 const AUTO_MEMORY_DIRNAME = 'memory'
 export const DESKTOP_CLI_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 6_000
+const DESKTOP_BRIDGE_ENV_KEYS = [
+  'ECHOFLOW_COMPUTER_USE_HOST_BUNDLE_ID',
+  'ECHOFLOW_DESKTOP_SERVER_URL',
+  'ECHOFLOW_DESKTOP_AWAIT_MCP',
+  'ECHOFLOW_DESKTOP_AWAIT_MCP_TIMEOUT_MS',
+  'ECHOFLOW_SKIP_DOTENV',
+] as const
+
+// Never expose server-only credentials or runtime configuration to a CLI
+// executable selected by the user. The installed runtime is a separate trust
+// boundary and can inspect its inherited environment.
+const CHILD_PROCESS_SECRET_ENV_KEYS = [
+  'ECHOFLOW_LOCAL_ACCESS_TOKEN',
+  'ECHOFLOW_PET_ACCESS_TOKEN',
+  'ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG',
+] as const
 
 /**
  * Severity for a CLI subprocess exit, by exit code.
@@ -223,6 +248,7 @@ type SessionProcess = {
   initMessage: any | null
   usesOfficialOAuth: boolean
   officialOAuthToken: string | null
+  cliRuntimeId?: ClaudeCodeRuntimeId
   officialOAuthRefreshPromise?: Promise<void>
   pendingPermissionRequests: Map<
     string,
@@ -251,6 +277,8 @@ type SessionStartOptions = {
   effort?: string
   thinking?: 'enabled' | 'adaptive' | 'disabled'
   providerId?: string | null
+  cliRuntimeId?: ClaudeCodeRuntimeId
+  persistCliRuntimeId?: boolean
   resumeInterruptedTurn?: boolean
 }
 
@@ -331,7 +359,7 @@ export class ConversationService {
       '--replay-user-messages',
       ...this.getRuntimeArgs(options),
       ...this.getPermissionArgs(options?.permissionMode, dangerousMode),
-    ])
+    ], options?.cliRuntimeId)
   }
 
   async startSession(
@@ -495,6 +523,7 @@ export class ConversationService {
       initMessage: null,
       usesOfficialOAuth,
       officialOAuthToken: childEnv.CLAUDE_CODE_OAUTH_TOKEN ?? null,
+      cliRuntimeId: resolveClaudeCodeRuntimeId(options?.cliRuntimeId) ?? 'bundled',
       pendingPermissionRequests: new Map(),
       pendingControlRequests: new Map(),
     }
@@ -561,7 +590,8 @@ export class ConversationService {
     const shouldPersistRuntimeMetadata =
       options?.providerId !== undefined ||
       !!options?.model ||
-      !!options?.effort
+      !!options?.effort ||
+      options?.persistCliRuntimeId === true
     if (shouldReplacePlaceholder || !launchInfo || shouldPersistRuntimeMetadata) {
       await sessionService.appendSessionMetadata(sessionId, {
         workDir: launchWorkDir,
@@ -573,6 +603,9 @@ export class ConversationService {
           : {}),
         ...(options?.model ? { runtimeModelId: options.model } : {}),
         ...(options?.effort ? { effortLevel: options.effort } : {}),
+        ...(options?.persistCliRuntimeId && options.cliRuntimeId
+          ? { cliRuntimeId: options.cliRuntimeId }
+          : {}),
       })
     }
 
@@ -959,6 +992,10 @@ export class ConversationService {
   getSessionWorkDir(sessionId: string): string {
     const session = this.sessions.get(sessionId)
     return session?.workDir || ''
+  }
+
+  getSessionCliRuntimeId(sessionId: string): ClaudeCodeRuntimeId | undefined {
+    return this.sessions.get(sessionId)?.cliRuntimeId
   }
 
   updateSessionWorkDir(sessionId: string, workDir: string): void {
@@ -1544,7 +1581,7 @@ export class ConversationService {
   ): Promise<Record<string, string>> {
     // Provider isolation: when Desktop has its own provider config/index,
     // strip inherited provider env vars so the child CLI reads fresh values
-    // from ~/.claude/cc-haha/settings.json instead of stale process.env.
+    // from EchoFlow-managed settings instead of stale process.env.
     //
     // If the user never configured a Desktop provider and only launched the
     // app/server with ANTHROPIC_* env vars, keep those env vars so Windows
@@ -1565,13 +1602,14 @@ export class ConversationService {
       'ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES',
       'ANTHROPIC_DEFAULT_OPUS_MODEL',
       'ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES',
-      'CC_HAHA_SEND_DISABLED_THINKING',
+      ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
+      LEGACY_ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
       'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS',
       'CLAUDE_CODE_AUTO_COMPACT_WINDOW',
       'CLAUDE_CODE_ATTRIBUTION_HEADER',
       'CLAUDE_CODE_MODEL_CONTEXT_WINDOWS',
       OPENAI_OAUTH_PROVIDER_ENV_KEY,
-      OPENAI_CODEX_OAUTH_FILE_ENV_KEY,
+          OPENAI_CODEX_OAUTH_FILE_ENV_KEY,
       OPENAI_CODEX_REASONING_EFFORT_ENV_KEY,
       GROK_OAUTH_PROVIDER_ENV_KEY,
       GROK_OAUTH_FILE_ENV_KEY,
@@ -1590,12 +1628,18 @@ export class ConversationService {
         !cleanEnv.CLAUDE_STREAM_MAX_DURATION_MS
     }
     delete cleanEnv.CLAUDE_CODE_OAUTH_TOKEN
+    for (const key of DESKTOP_BRIDGE_ENV_KEYS) {
+      delete cleanEnv[key]
+    }
+    for (const key of CHILD_PROCESS_SECRET_ENV_KEYS) {
+      delete cleanEnv[key]
+    }
     if (options?.resumeInterruptedTurn === false) {
       delete cleanEnv.CLAUDE_CODE_RESUME_INTERRUPTED_TURN
     }
-    delete cleanEnv.CC_HAHA_TRACE_PROVIDER_ID
-    delete cleanEnv.CC_HAHA_TRACE_PROVIDER_NAME
-    delete cleanEnv.CC_HAHA_TRACE_PROVIDER_FORMAT
+    delete cleanEnv.ECHOFLOW_TRACE_PROVIDER_ID
+    delete cleanEnv.ECHOFLOW_TRACE_PROVIDER_NAME
+    delete cleanEnv.ECHOFLOW_TRACE_PROVIDER_FORMAT
     if (this.shouldStripInheritedProviderEnv(options?.providerId)) {
       for (const key of PROVIDER_ENV_KEYS) {
         delete cleanEnv[key]
@@ -1655,7 +1699,7 @@ export class ConversationService {
       ...cleanEnv,
       CLAUDE_CODE_ENABLE_TASKS: '1',
       // Resolve the same preference shown in General before launching the CLI.
-      CC_HAHA_AGENT_TEAMS_ENABLED: agentTeamsEnabled ? '1' : '0',
+      ECHOFLOW_AGENT_TEAMS_ENABLED: agentTeamsEnabled ? '1' : '0',
       CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1',
       // Desktop must fail stuck provider streams instead of leaving the UI running forever.
       CLAUDE_ENABLE_STREAM_WATCHDOG: cleanEnv.CLAUDE_ENABLE_STREAM_WATCHDOG || '1',
@@ -1707,45 +1751,45 @@ export class ConversationService {
             // arrives. Flush the completed turn first so the replacement can
             // reliably choose --resume and load the context (#1033).
             CLAUDE_CODE_EAGER_FLUSH: cleanEnv.CLAUDE_CODE_EAGER_FLUSH || '1',
+            ECHOFLOW_COMPUTER_USE_HOST_BUNDLE_ID: 'com.echoflow.code.desktop',
             // The CLI may keep processing internally after an SDK `result`
             // (for example, a completed background Agent can enqueue one last
             // model follow-up). Desktop cleanup must use the CLI's authoritative
             // running/idle boundary or a disconnected renderer can kill that
             // follow-up after the fixed idle grace period.
             CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: '1',
-            CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID: 'com.claude-code-haha.desktop',
           }
         : {}),
       ...(sdkUrl && traceCaptureEnabled
-        ? { CC_HAHA_TRACE_API_CALLS: '1' }
+        ? { ECHOFLOW_TRACE_API_CALLS: '1' }
         : {}),
       ...(sdkUrl && traceCaptureEnabled && explicitProvider
         ? {
-            CC_HAHA_TRACE_PROVIDER_ID: explicitProvider.id,
-            CC_HAHA_TRACE_PROVIDER_NAME: explicitProvider.name,
-            CC_HAHA_TRACE_PROVIDER_FORMAT: explicitProvider.apiFormat ?? 'anthropic',
+            ECHOFLOW_TRACE_PROVIDER_ID: explicitProvider.id,
+            ECHOFLOW_TRACE_PROVIDER_NAME: explicitProvider.name,
+            ECHOFLOW_TRACE_PROVIDER_FORMAT: explicitProvider.apiFormat ?? 'anthropic',
           }
         : {}),
       ...(desktopServerUrl
-        ? { CC_HAHA_DESKTOP_SERVER_URL: desktopServerUrl }
+        ? { ECHOFLOW_DESKTOP_SERVER_URL: desktopServerUrl }
         : {}),
       ...(sdkUrl
         ? {
-            CC_HAHA_DESKTOP_AWAIT_MCP: '1',
-            CC_HAHA_DESKTOP_AWAIT_MCP_TIMEOUT_MS: '5000',
+            ECHOFLOW_DESKTOP_AWAIT_MCP: '1',
+            ECHOFLOW_DESKTOP_AWAIT_MCP_TIMEOUT_MS: '5000',
           }
         : {}),
       // Tell the CLI entrypoint to skip project .env loading. Provider env
       // should come from Desktop-managed config or inherited launch env, not
       // be reintroduced from the repo's .env file.
-      CC_HAHA_SKIP_DOTENV: '1',
+      ECHOFLOW_SKIP_DOTENV: '1',
       // Keep the SDK runtime identity for auth and client behavior, but stamp
       // desktop-owned transcripts with an entrypoint visible to Claude /resume.
-      CC_HAHA_TRANSCRIPT_ENTRYPOINT: 'claude-desktop',
+      ECHOFLOW_TRANSCRIPT_ENTRYPOINT: 'claude-desktop',
       ...(explicitProviderEnv
         ? { CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: '1' }
         : {}),
-      // "官方" 模式 (cc-haha/settings.json 没 provider env) 下,把 CLI 标记为
+      // "官方" 模式 (EchoFlow settings.json 没 provider env) 下,把 CLI 标记为
       // managed-OAuth,让它忽略外部 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN
       // 残留、只走用户 /login 的 OAuth token。自定义 provider 模式绝不能设,
       // 否则 CLI 会忽略 provider 的 AUTH_TOKEN、错误地走 OAuth 打到第三方
@@ -1793,8 +1837,8 @@ export class ConversationService {
     try {
       // deferred import: avoids instantiating the OAuth singleton on every
       // ConversationService construction — only loaded when official mode hits.
-      const { hahaOAuthService } = await import('./hahaOAuthService.js')
-      const token = await hahaOAuthService.ensureFreshAccessToken()
+      const { echoFlowOAuthService } = await import('./echoFlowOAuthService.js')
+      const token = await echoFlowOAuthService.ensureFreshAccessToken()
       if (token) {
         env.CLAUDE_CODE_OAUTH_TOKEN = token
       }
@@ -1815,8 +1859,8 @@ export class ConversationService {
 
     let token: string | null = null
     try {
-      const { hahaOAuthService } = await import('./hahaOAuthService.js')
-      token = await hahaOAuthService.ensureFreshAccessToken()
+      const { echoFlowOAuthService } = await import('./echoFlowOAuthService.js')
+      token = await echoFlowOAuthService.ensureFreshAccessToken()
     } catch (err) {
       console.error(
         '[conversationService] refresh official OAuth token before turn failed:',
@@ -1844,8 +1888,8 @@ export class ConversationService {
     const rejectedToken = session.officialOAuthToken
     const recovery = (async () => {
       try {
-        const { hahaOAuthService } = await import('./hahaOAuthService.js')
-        const tokens = await hahaOAuthService.recoverFromUnauthorized(rejectedToken)
+        const { echoFlowOAuthService } = await import('./echoFlowOAuthService.js')
+        const tokens = await echoFlowOAuthService.recoverFromUnauthorized(rejectedToken)
         if (
           !tokens?.accessToken ||
           tokens.accessToken === rejectedToken ||
@@ -1882,10 +1926,10 @@ export class ConversationService {
     }
 
     const configDir =
-      process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
-    const ccHahaDir = path.join(configDir, 'cc-haha')
-    const providersIndexPath = path.join(ccHahaDir, 'providers.json')
-    const settingsPath = path.join(ccHahaDir, 'settings.json')
+      getEchoFlowConfigDir()
+    const echoFlowDir = getEchoFlowInternalDir(configDir)
+    const providersIndexPath = path.join(echoFlowDir, 'providers.json')
+    const settingsPath = path.join(echoFlowDir, 'settings.json')
 
     if (fs.existsSync(providersIndexPath)) {
       return true
@@ -1911,12 +1955,13 @@ export class ConversationService {
         'ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES',
         'ANTHROPIC_DEFAULT_OPUS_MODEL',
         'ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES',
-        'CC_HAHA_SEND_DISABLED_THINKING',
+        ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
+        LEGACY_ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
         'CLAUDE_CODE_AUTO_COMPACT_WINDOW',
         'CLAUDE_CODE_ATTRIBUTION_HEADER',
         'CLAUDE_CODE_MODEL_CONTEXT_WINDOWS',
         OPENAI_OAUTH_PROVIDER_ENV_KEY,
-        OPENAI_CODEX_OAUTH_FILE_ENV_KEY,
+              OPENAI_CODEX_OAUTH_FILE_ENV_KEY,
         GROK_OAUTH_PROVIDER_ENV_KEY,
         GROK_OAUTH_FILE_ENV_KEY,
         IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY,
@@ -1936,7 +1981,7 @@ export class ConversationService {
    * 这种情况下 CLI 必须按 token 路径走第三方 endpoint,不能被 managed 规则
    * 强制切 OAuth。
    *
-   * 默认 (读不到 settings.json) 按"官方"处理 — 即使用户从未用过 cc-haha
+   * 默认 (读不到 settings.json) 按"官方"处理 — 即使用户从未用过 EchoFlow
    * provider 管理,也希望官方 OAuth 能正常工作。
    */
   private shouldMarkManagedOAuth(providerId?: string | null): boolean {
@@ -1947,9 +1992,7 @@ export class ConversationService {
       return false
     }
 
-    const configDir =
-      process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
-    const settingsPath = path.join(configDir, 'cc-haha', 'settings.json')
+    const settingsPath = path.join(getEchoFlowInternalDir(getEchoFlowConfigDir()), 'settings.json')
     try {
       const raw = fs.readFileSync(settingsPath, 'utf-8')
       const parsed = JSON.parse(raw) as { env?: Record<string, string> }
@@ -1974,9 +2017,16 @@ export class ConversationService {
     }
   }
 
-  private resolveCliArgs(baseArgs: string[]): string[] {
+  private resolveCliArgs(
+    baseArgs: string[],
+    cliRuntimeId: ClaudeCodeRuntimeId | undefined = undefined,
+  ): string[] {
+    const effectiveRuntimeId = resolveClaudeCodeRuntimeId(cliRuntimeId)
+    const installedPath = resolveClaudeCodeRuntimePath(cliRuntimeId)
     const launcher = resolveClaudeCliLauncher({
-      cliPath: process.env.CLAUDE_CLI_PATH,
+      cliPath: effectiveRuntimeId === undefined
+        ? process.env.CLAUDE_CLI_PATH
+        : installedPath,
       execPath: process.execPath,
     })
 
@@ -1990,7 +2040,7 @@ export class ConversationService {
           ...baseArgs,
         ]
       }
-      return [path.resolve(import.meta.dir, '../../../bin/claude-haha'), ...baseArgs]
+      return [path.resolve(import.meta.dir, '../../../bin/echoflow-code'), ...baseArgs]
     }
 
     return buildClaudeCliArgs(launcher, baseArgs, process.env.CLAUDE_APP_ROOT)
@@ -1998,7 +2048,7 @@ export class ConversationService {
 
   private clearStaleLock(sessionId: string): boolean {
     const lockDir = path.join(
-      process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'),
+      getEchoFlowConfigDir(),
       '.lock',
     )
     const lockFile = path.join(lockDir, sessionId)
@@ -2042,7 +2092,7 @@ export class ConversationService {
       )
     ) {
       return new ConversationStartupError(
-        'Desktop chat could not start because Claude CLI is not authenticated. Run `./bin/claude-haha /login` or provide valid API credentials, then retry.',
+        'Desktop chat could not start because Claude CLI is not authenticated. Run `./bin/echoflow-code /login` or provide valid API credentials, then retry.',
         'CLI_AUTH_REQUIRED',
       )
     }
@@ -2278,7 +2328,7 @@ export class ConversationService {
     }
 
     const uploadDir = path.join(
-      process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'),
+      getEchoFlowConfigDir(),
       'uploads',
       sessionId,
     )

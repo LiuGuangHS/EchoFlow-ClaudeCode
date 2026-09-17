@@ -107,6 +107,7 @@ describe('providerStore runtime refresh', () => {
     chatStoreState.sessions = {}
     runtimeStoreState.selections = {}
     providersApiMock.list.mockResolvedValue({ providers: [], activeId: null })
+    providersApiMock.activate.mockResolvedValue({ ok: true })
   })
 
   it('reapplies an updated active provider to idle connected sessions using default runtime', async () => {

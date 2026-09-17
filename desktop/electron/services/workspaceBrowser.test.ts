@@ -238,7 +238,7 @@ function fakeParent() {
 const tempDirs: string[] = []
 
 function previewScript() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-haha-workspace-browser-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'echoflow-code-workspace-browser-'))
   tempDirs.push(dir)
   const file = path.join(dir, 'preview-agent.js')
   fs.writeFileSync(file, 'window.__previewInjected = true')
@@ -366,7 +366,7 @@ describe('Electron workspace browser service', () => {
     await harness.service.create(harness.parent, 'tab-a', { storageId: 'store-a' })
     await harness.service.create(harness.parent, 'tab-b', { storageId: 'store-b' })
 
-    expect(WORKSPACE_BROWSER_PARTITION).toBe('persist:cc-haha-browser-app')
+    expect(WORKSPACE_BROWSER_PARTITION).toBe('persist:echoflow-code-browser-app')
     expect(harness.partitions).toEqual([
       WORKSPACE_BROWSER_PARTITION,
       WORKSPACE_BROWSER_PARTITION,

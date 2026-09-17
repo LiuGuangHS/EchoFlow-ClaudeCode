@@ -35,6 +35,8 @@ describe('PR quality workflow', () => {
     const workflow = readFileSync('.github/workflows/pr-quality.yml', 'utf8')
 
     expect(workflow).toContain('scope-plan:')
+    expect(workflow).toContain('harness-audit:')
+    expect(workflow).toContain('node scripts/harness-audit.js repo --format json')
     expect(workflow).toContain('--plan-only')
     expect(workflow).toContain("if: needs.scope-plan.outputs.desktop_checks == 'true'")
     expect(workflow).toContain("if: needs.scope-plan.outputs.server_checks == 'true'")
@@ -190,6 +192,7 @@ describe('PR quality workflow', () => {
     expect(workflow).toContain('name: pr-quality-gate')
     expect(workflow).toContain('if: always()')
     expect(workflow).toContain('require_success "scope-plan" "${{ needs.scope-plan.result }}"')
+    expect(workflow).toContain('require_success "harness-audit" "${{ needs.harness-audit.result }}"')
     expect(workflow).toContain('require_success "policy-enforcement" "${{ needs.policy-enforcement.result }}"')
     expect(workflow).toContain('require_selected "provider-contract-checks"')
     expect(workflow).toContain('require_selected "chat-contract-checks"')

@@ -12,20 +12,16 @@
 
 import * as fs from 'fs'
 import * as path from 'path'
-import * as os from 'os'
 import * as crypto from 'node:crypto'
 import { sendToSession, getActiveSessionIds } from '../ws/handler.js'
 import type { ServerMessage, TeamMemberStatus } from '../ws/events.js'
-import {
-  teamIncarnationId,
-  teamService,
-  type TeamService,
-} from './teamService.js'
+import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
+import { teamIncarnationId, teamService, type TeamService } from './teamService.js'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
 function getTeamsDir(): string {
-  const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
+  const configDir = getClaudeConfigHomeDir()
   return path.join(configDir, 'teams')
 }
 

@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { Database } from 'bun:sqlite'
-import { getCcHahaDir, getClaudeConfigHomeDir } from '../../../utils/envUtils.js'
+import { getEchoFlowCodeDir, getClaudeConfigHomeDir } from '../../../utils/envUtils.js'
 import {
   LOCAL_INDEX_BUSY_TIMEOUT_MS,
   prepareManagedDatabasePath,
@@ -42,7 +42,7 @@ type OwnedStatement = {
 }
 
 export function getTraceIndexDatabasePath(): string {
-  return join(getCcHahaDir(), 'db', 'trace-index-v1.sqlite')
+  return join(getEchoFlowCodeDir(), 'db', 'trace-index-v1.sqlite')
 }
 
 function configureConnection(database: Database): void {

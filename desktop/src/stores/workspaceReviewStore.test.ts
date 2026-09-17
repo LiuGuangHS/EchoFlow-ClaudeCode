@@ -420,11 +420,11 @@ describe('writes', () => {
   it('remembers where a discard backed the content up', async () => {
     reviewApi.getStatus.mockResolvedValueOnce(status('snap-1'))
     await store().load(SESSION, UNSTAGED)
-    reviewApi.revert.mockResolvedValueOnce(writeResult({ backupDir: '/tmp/cc-haha-backup-1' }))
+    reviewApi.revert.mockResolvedValueOnce(writeResult({ backupDir: '/tmp/echoflow-code-backup-1' }))
 
     await store().revert(SESSION, UNSTAGED, ['src/a.ts'])
 
-    expect(entry().lastBackupDir).toBe('/tmp/cc-haha-backup-1')
+    expect(entry().lastBackupDir).toBe('/tmp/echoflow-code-backup-1')
   })
 })
 
@@ -526,7 +526,7 @@ describe('revert planning', () => {
   it('remembers which paths a revert deleted rather than restored', async () => {
     await loadMixed()
     reviewApi.revert.mockResolvedValueOnce(writeResult({
-      backupDir: '/tmp/cc-haha-backup-1',
+      backupDir: '/tmp/echoflow-code-backup-1',
       revertedPaths: [TRACKED],
       deletedPaths: [NEW_FILE],
       results: [
@@ -539,7 +539,7 @@ describe('revert planning', () => {
 
     expect(outcome.state).toBe('ok')
     expect(entry().lastDeletedPaths).toEqual([NEW_FILE])
-    expect(entry().lastBackupDir).toBe('/tmp/cc-haha-backup-1')
+    expect(entry().lastBackupDir).toBe('/tmp/echoflow-code-backup-1')
   })
 
   it('clears the deleted list when the next write deletes nothing', async () => {

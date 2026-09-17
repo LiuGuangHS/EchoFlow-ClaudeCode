@@ -17,7 +17,7 @@ final class ComputerUseDisplaySleepAssertion {
             var assertionID: IOPMAssertionID = 0
             let result = IOPMAssertionCreateWithDescription(
                 kIOPMAssertionTypePreventUserIdleDisplaySleep as CFString,
-                "Claude Code Haha Computer Use interaction" as CFString,
+                "EchoFlow Code Computer Use interaction" as CFString,
                 "Computer Use turn is controlling a background application" as CFString,
                 "Keeping the display awake while Computer Use is active" as CFString,
                 nil,

@@ -68,18 +68,18 @@ async function makeExternalFixtureDir(): Promise<string | null> {
 }
 
 describe('filesystem API', () => {
-  it('allows browsing a directory under the user home directory', async () => {
-    const homeFixtureDir = await fsp.mkdtemp(path.join(os.homedir(), 'claude-filesystem-test-'))
-    cleanupDirs.add(homeFixtureDir)
-    await fsp.mkdir(path.join(homeFixtureDir, '.config'))
-    await fsp.mkdir(path.join(homeFixtureDir, '.git'))
-    await fsp.writeFile(path.join(homeFixtureDir, 'note.txt'), 'hello')
-    await fsp.writeFile(path.join(homeFixtureDir, '.env.local'), 'SECRET=example')
+  it('allows browsing a directory under the default allowed roots', async () => {
+    const fixtureDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'claude-filesystem-test-'))
+    cleanupDirs.add(fixtureDir)
+    await fsp.mkdir(path.join(fixtureDir, '.config'))
+    await fsp.mkdir(path.join(fixtureDir, '.git'))
+    await fsp.writeFile(path.join(fixtureDir, 'note.txt'), 'hello')
+    await fsp.writeFile(path.join(fixtureDir, '.env.local'), 'SECRET=example')
 
     const res = await handleFilesystemRoute(
       '/api/filesystem/browse',
       makeUrl('/api/filesystem/browse', {
-        path: homeFixtureDir,
+        path: fixtureDir,
         includeFiles: 'true',
       }),
     )
@@ -175,36 +175,36 @@ describe('filesystem API', () => {
   })
 
   it('fuzzy searches files and directories below the selected root', async () => {
-    const homeFixtureDir = await fsp.mkdtemp(path.join(os.homedir(), 'claude-filesystem-test-'))
-    cleanupDirs.add(homeFixtureDir)
-    git(homeFixtureDir, 'init')
-    await fsp.mkdir(path.join(homeFixtureDir, 'src', 'commands'), { recursive: true })
-    await fsp.mkdir(path.join(homeFixtureDir, 'src', 'commands', 'files'), { recursive: true })
-    await fsp.mkdir(path.join(homeFixtureDir, 'src', 'constants'), { recursive: true })
-    await fsp.mkdir(path.join(homeFixtureDir, 'src', 'hooks'), { recursive: true })
-    await fsp.mkdir(path.join(homeFixtureDir, 'desktop', 'src'), { recursive: true })
-    await fsp.mkdir(path.join(homeFixtureDir, 'scripts', 'quality-gate', 'baseline', 'fixtures', 'cross-module-refactor', 'src'), { recursive: true })
-    await fsp.mkdir(path.join(homeFixtureDir, '__pycache__'), { recursive: true })
-    await fsp.mkdir(path.join(homeFixtureDir, 'node_modules', 'pkg'), { recursive: true })
-    await fsp.mkdir(path.join(homeFixtureDir, '.venv', 'lib'), { recursive: true })
-    await fsp.mkdir(path.join(homeFixtureDir, 'tmp-ignore'), { recursive: true })
-    await fsp.writeFile(path.join(homeFixtureDir, '.gitignore'), ['__pycache__/', 'node_modules/', '.venv/', 'venv/'].join('\n'))
-    await fsp.writeFile(path.join(homeFixtureDir, '.ignore'), 'tmp-ignore/')
-    await fsp.writeFile(path.join(homeFixtureDir, 'src', 'commands', 'files.ts'), 'export {}')
-    await fsp.writeFile(path.join(homeFixtureDir, 'src', 'commands', 'files', 'index.ts'), 'export {}')
-    await fsp.writeFile(path.join(homeFixtureDir, 'src', 'constants', 'fileSearch.ts'), 'export {}')
-    await fsp.writeFile(path.join(homeFixtureDir, 'src', 'hooks', 'useFileSearch.ts'), 'export {}')
-    await fsp.writeFile(path.join(homeFixtureDir, 'desktop', 'src', 'main.ts'), 'export {}')
-    await fsp.writeFile(path.join(homeFixtureDir, 'scripts', 'quality-gate', 'baseline', 'fixtures', 'cross-module-refactor', 'src', 'index.ts'), 'export {}')
-    await fsp.writeFile(path.join(homeFixtureDir, '__pycache__', 'fileSearch.cpython-311.pyc'), '')
-    await fsp.writeFile(path.join(homeFixtureDir, 'node_modules', 'pkg', 'files.js'), '')
-    await fsp.writeFile(path.join(homeFixtureDir, '.venv', 'lib', 'files.py'), '')
-    await fsp.writeFile(path.join(homeFixtureDir, 'tmp-ignore', 'files.tmp'), '')
+    const fixtureDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'claude-filesystem-test-'))
+    cleanupDirs.add(fixtureDir)
+    git(fixtureDir, 'init')
+    await fsp.mkdir(path.join(fixtureDir, 'src', 'commands'), { recursive: true })
+    await fsp.mkdir(path.join(fixtureDir, 'src', 'commands', 'files'), { recursive: true })
+    await fsp.mkdir(path.join(fixtureDir, 'src', 'constants'), { recursive: true })
+    await fsp.mkdir(path.join(fixtureDir, 'src', 'hooks'), { recursive: true })
+    await fsp.mkdir(path.join(fixtureDir, 'desktop', 'src'), { recursive: true })
+    await fsp.mkdir(path.join(fixtureDir, 'scripts', 'quality-gate', 'baseline', 'fixtures', 'cross-module-refactor', 'src'), { recursive: true })
+    await fsp.mkdir(path.join(fixtureDir, '__pycache__'), { recursive: true })
+    await fsp.mkdir(path.join(fixtureDir, 'node_modules', 'pkg'), { recursive: true })
+    await fsp.mkdir(path.join(fixtureDir, '.venv', 'lib'), { recursive: true })
+    await fsp.mkdir(path.join(fixtureDir, 'tmp-ignore'), { recursive: true })
+    await fsp.writeFile(path.join(fixtureDir, '.gitignore'), ['__pycache__/', 'node_modules/', '.venv/', 'venv/'].join('\n'))
+    await fsp.writeFile(path.join(fixtureDir, '.ignore'), 'tmp-ignore/')
+    await fsp.writeFile(path.join(fixtureDir, 'src', 'commands', 'files.ts'), 'export {}')
+    await fsp.writeFile(path.join(fixtureDir, 'src', 'commands', 'files', 'index.ts'), 'export {}')
+    await fsp.writeFile(path.join(fixtureDir, 'src', 'constants', 'fileSearch.ts'), 'export {}')
+    await fsp.writeFile(path.join(fixtureDir, 'src', 'hooks', 'useFileSearch.ts'), 'export {}')
+    await fsp.writeFile(path.join(fixtureDir, 'desktop', 'src', 'main.ts'), 'export {}')
+    await fsp.writeFile(path.join(fixtureDir, 'scripts', 'quality-gate', 'baseline', 'fixtures', 'cross-module-refactor', 'src', 'index.ts'), 'export {}')
+    await fsp.writeFile(path.join(fixtureDir, '__pycache__', 'fileSearch.cpython-311.pyc'), '')
+    await fsp.writeFile(path.join(fixtureDir, 'node_modules', 'pkg', 'files.js'), '')
+    await fsp.writeFile(path.join(fixtureDir, '.venv', 'lib', 'files.py'), '')
+    await fsp.writeFile(path.join(fixtureDir, 'tmp-ignore', 'files.tmp'), '')
 
     const res = await handleFilesystemRoute(
       '/api/filesystem/browse',
       makeUrl('/api/filesystem/browse', {
-        path: homeFixtureDir,
+        path: fixtureDir,
         search: 'files',
         includeFiles: 'true',
       }),
@@ -229,7 +229,7 @@ describe('filesystem API', () => {
     const srcRes = await handleFilesystemRoute(
       '/api/filesystem/browse',
       makeUrl('/api/filesystem/browse', {
-        path: homeFixtureDir,
+        path: fixtureDir,
         search: 'src',
         includeFiles: 'true',
       }),
@@ -247,18 +247,18 @@ describe('filesystem API', () => {
   })
 
   it('falls back to ripgrep search outside git and still respects ignore files', async () => {
-    const homeFixtureDir = await fsp.mkdtemp(path.join(os.homedir(), 'claude-filesystem-test-'))
-    cleanupDirs.add(homeFixtureDir)
-    await fsp.mkdir(path.join(homeFixtureDir, 'app'), { recursive: true })
-    await fsp.mkdir(path.join(homeFixtureDir, 'node_modules', 'pkg'), { recursive: true })
-    await fsp.writeFile(path.join(homeFixtureDir, '.gitignore'), 'node_modules/')
-    await fsp.writeFile(path.join(homeFixtureDir, 'app', 'cache-result.ts'), 'export {}')
-    await fsp.writeFile(path.join(homeFixtureDir, 'node_modules', 'pkg', 'cache-result.js'), '')
+    const fixtureDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'claude-filesystem-test-'))
+    cleanupDirs.add(fixtureDir)
+    await fsp.mkdir(path.join(fixtureDir, 'app'), { recursive: true })
+    await fsp.mkdir(path.join(fixtureDir, 'node_modules', 'pkg'), { recursive: true })
+    await fsp.writeFile(path.join(fixtureDir, '.gitignore'), 'node_modules/')
+    await fsp.writeFile(path.join(fixtureDir, 'app', 'cache-result.ts'), 'export {}')
+    await fsp.writeFile(path.join(fixtureDir, 'node_modules', 'pkg', 'cache-result.js'), '')
 
     const res = await handleFilesystemRoute(
       '/api/filesystem/browse',
       makeUrl('/api/filesystem/browse', {
-        path: homeFixtureDir,
+        path: fixtureDir,
         search: 'cache',
         includeFiles: 'true',
       }),

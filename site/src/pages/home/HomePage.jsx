@@ -8,9 +8,9 @@ import { content, mascotAccents, mascots } from './content'
 import './home.css'
 
 const SOURCE_COMMANDS = [
-  'git clone https://github.com/NanmiCoder/cc-haha.git',
-  'cd cc-haha && bun install',
-  './bin/claude-haha'
+  'git clone https://github.com/LiuGuangHS/EchoFlow-ClaudeCode.git echoflow-code',
+  'cd echoflow-code && bun install',
+  './bin/echoflow-code'
 ]
 
 function Hero({ c, locale }) {
@@ -260,7 +260,7 @@ function Footer({ c, locale }) {
       <div className="u-shell site-footer__inner">
         <div className="site-footer__brand">
           <img alt="" src={toSiteHref('/images/app-icon.png')} width="30" height="30" />
-          <strong>Claude Code Haha</strong>
+          <strong>EchoFlow Code</strong>
           <p>{c.footer.tagline}</p>
           <a className="link-arrow" href={GITHUB_URL} rel="noreferrer" target="_blank">
             <Icon name="github" size={16} />
@@ -301,8 +301,8 @@ export default function HomePage({ locale = 'zh' }) {
       description: c.hero.lede,
       lang: locale === 'en' ? 'en' : 'zh-CN',
       title: locale === 'en'
-        ? 'Claude Code Haha — a local-first desktop client for Claude Code'
-        : 'Claude Code Haha — Claude Code 的本地优先桌面客户端'
+        ? 'EchoFlow Code — a local-first desktop client for Claude Code'
+        : 'EchoFlow Code — Claude Code 的本地优先桌面客户端'
     })
   }, [c, locale])
 
