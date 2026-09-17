@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test'
-import { readFileSync, readdirSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { parse } from 'yaml'
 
 describe('release desktop workflow', () => {
   function readReleaseWorkflow() {
@@ -192,14 +195,15 @@ describe('release desktop workflow', () => {
 
   test('release workflow signs and notarizes macOS builds only when signing preflight succeeds', () => {
     const workflow = readReleaseWorkflow()
+    const importIdentityStep = extractStep(workflow, 'Import macOS signing identity for native runtimes')
     const signedBuildStep = extractStep(workflow, 'Build signed macOS Electron release artifacts')
     const unsignedBuildStep = extractStep(workflow, 'Build unsigned Electron release artifacts')
 
     expect(workflow).toContain('app_bundle_dir: mac-arm64')
     expect(workflow).toContain('app_bundle_dir: mac')
     expect(signedBuildStep).toContain("if: matrix.smoke_platform == 'macos' && needs.signing-preflight.outputs.macos_signed == 'true'")
-    expect(signedBuildStep).toContain('CSC_LINK: ${{ secrets.MACOS_CERTIFICATE }}')
-    expect(signedBuildStep).toContain('CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}')
+    expect(importIdentityStep).toContain('CSC_LINK: ${{ secrets.MACOS_CERTIFICATE }}')
+    expect(importIdentityStep).toContain('CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}')
     expect(signedBuildStep).toContain('APPLE_ID: ${{ secrets.APPLE_ID }}')
     expect(signedBuildStep).toContain('APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}')
     expect(signedBuildStep).toContain('APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}')
@@ -256,7 +260,26 @@ describe('release desktop workflow', () => {
     expect(workflow.indexOf('Build unsigned Electron release artifacts')).toBeLessThan(workflow.indexOf('Verify packaged app structure'))
   })
 
-  test('release workflow records macOS and SignPath signing state and blocks unsigned releases', () => {
+  test('macOS packaging reuses the native runtime keychain instead of importing the certificate again', () => {
+    const workflow = readReleaseWorkflow()
+    const importIdentityStep = extractStep(workflow, 'Import macOS signing identity for native runtimes')
+    const signedBuildStep = extractStep(workflow, 'Build signed macOS Electron release artifacts')
+    const cleanupStep = extractStep(workflow, 'Remove temporary macOS signing keychain')
+
+    expect(importIdentityStep).toContain('echo "ECHOFLOW_CI_KEYCHAIN=$keychain_path" >> "$GITHUB_ENV"')
+    expect(signedBuildStep).toContain('export CSC_KEYCHAIN="${ECHOFLOW_CI_KEYCHAIN:?macOS signing keychain was not prepared}"')
+    expect(signedBuildStep).not.toContain('CSC_LINK:')
+    expect(signedBuildStep).not.toContain('CSC_KEY_PASSWORD:')
+    expect(cleanupStep).toContain('security delete-keychain "$ECHOFLOW_CI_KEYCHAIN"')
+    expect(workflow.indexOf('Import macOS signing identity for native runtimes')).toBeLessThan(
+      workflow.indexOf('Build signed macOS Electron release artifacts'),
+    )
+    expect(workflow.indexOf('Remove temporary macOS signing keychain')).toBeGreaterThan(
+      workflow.indexOf('Verify macOS launch policy'),
+    )
+  })
+
+  test('release workflow requires signed macOS Computer Use and preserves SignPath draft policy', () => {
     const workflow = readReleaseWorkflow()
     const signingJob = workflow.match(
       /signing-preflight:[\s\S]*?(?:\n {2}[a-zA-Z0-9_-]+:|$)/,
@@ -288,8 +311,7 @@ describe('release desktop workflow', () => {
       expect(signingJob).toContain(setting)
     }
     expect(signingJob).toContain('Missing macOS signing/notarization secrets')
-    expect(signingJob).toContain('macOS artifacts will be unsigned')
-    expect(signingJob).toContain('install-macos-unsigned.sh')
+    expect(signingJob).toContain('refusing to build a macOS release whose Computer Use runtime cannot pass client attestation')
     expect(signingJob).toContain("RELEASE_DRAFT: ${{ github.event_name == 'workflow_dispatch' && inputs.draft == true }}")
     expect(signingJob).toContain('macos_signed=false')
     expect(signingJob).toContain('macos_signed=true')
@@ -312,6 +334,63 @@ describe('release desktop workflow', () => {
     expect(buildJob).toContain('- signing-preflight')
     expect(workflow.indexOf('signing-preflight:')).toBeLessThan(workflow.indexOf('build:'))
     expect(workflow.indexOf('signing-preflight:')).toBeLessThan(workflow.indexOf('Upload release artifacts for final publish'))
+  })
+
+  test('an explicit manual Windows signing skip preserves macOS and default release requirements', async () => {
+    const workflow = parse(readReleaseWorkflow())
+    expect(workflow.on.workflow_dispatch.inputs.skip_windows_signing).toEqual({
+      description: 'Build unsigned Windows artifacts while SignPath onboarding is pending',
+      required: false,
+      default: false,
+      type: 'boolean',
+    })
+    const preflight = workflow.jobs['signing-preflight'].steps.find((step: { id?: string }) => step.id === 'validate')
+    expect(preflight.env.SKIP_WINDOWS_SIGNING).toBe("${{ github.event_name == 'workflow_dispatch' && inputs.skip_windows_signing == true }}")
+
+    const directory = mkdtempSync(join(tmpdir(), 'release-signing-preflight-'))
+    const configured = Object.fromEntries(Object.keys(preflight.env).map(key => [key, 'test-value']))
+    const cases = [
+      { name: 'configured release', env: {}, code: 0, outputs: 'macos_signed=true\nwindows_signed=true\n' },
+      { name: 'explicit skip with configured SignPath', env: { SKIP_WINDOWS_SIGNING: 'true' }, code: 0, outputs: 'macos_signed=true\nwindows_signed=false\n' },
+      { name: 'explicit skip without SignPath', env: { SKIP_WINDOWS_SIGNING: 'true', SIGNPATH_API_TOKEN: '' }, code: 0, outputs: 'macos_signed=true\nwindows_signed=false\n' },
+      { name: 'release missing SignPath without skip', env: { SIGNPATH_API_TOKEN: '' }, code: 1, outputs: 'macos_signed=true\nwindows_signed=false\n' },
+      { name: 'draft missing SignPath', env: { RELEASE_DRAFT: 'true', SIGNPATH_API_TOKEN: '' }, code: 0, outputs: 'macos_signed=true\nwindows_signed=false\n' },
+      { name: 'explicit skip still requires macOS credentials', env: { SKIP_WINDOWS_SIGNING: 'true', CSC_LINK: '' }, code: 1, outputs: 'macos_signed=false\n' },
+    ]
+    try {
+      for (const [index, scenario] of cases.entries()) {
+        const output = join(directory, `output-${index}`)
+        const logPath = join(directory, `log-${index}`)
+        // Capture inside the shell so Bun's test-output pipes cannot affect echo/printf exit codes.
+        const result = Bun.spawn(['bash', '-e', '-c', 'exec > "$PREFLIGHT_LOG" 2>&1\n' + preflight.run], {
+          env: {
+            ...configured,
+            RELEASE_DRAFT: 'false',
+            SKIP_WINDOWS_SIGNING: 'false',
+            ...scenario.env,
+            PATH: process.env.PATH,
+            HOME: directory,
+            GITHUB_OUTPUT: output,
+            PREFLIGHT_LOG: logPath,
+          },
+          stdout: 'ignore',
+          stderr: 'ignore',
+        })
+        const code = await result.exited
+        expect(code, `${scenario.name}: ${readFileSync(logPath, 'utf8')}`).toBe(scenario.code)
+        expect(readFileSync(output, 'utf8'), scenario.name).toBe(scenario.outputs)
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+
+    const unsignedBuild = extractStep(readReleaseWorkflow(), 'Build unsigned Electron release artifacts')
+    expect(unsignedBuild).toContain("matrix.smoke_platform == 'windows' && needs.signing-preflight.outputs.windows_signed != 'true'")
+    for (const name of ['Sign Windows application executables with SignPath', 'Sign Windows installer with SignPath']) {
+      expect(extractStep(readReleaseWorkflow(), name)).toContain("needs.signing-preflight.outputs.windows_signed == 'true'")
+    }
+    expect(extractStep(readReleaseWorkflow(), 'Verify Windows installer execution')).not.toContain('windows_signed')
+    expect(extractStep(readReleaseWorkflow(), 'Verify packaged app structure')).not.toContain('windows_signed')
   })
 
   test('release workflow signs project-owned Windows binaries before packaging and repairs updater metadata', () => {
@@ -610,10 +689,64 @@ describe('release desktop workflow', () => {
     expect(desktopPackage.build.mac?.notarize).toBe(true)
     expect(desktopPackage.build.mac?.entitlements).toBe('build/entitlements.mac.plist')
     expect(desktopPackage.build.mac?.entitlementsInherit).toBe('build/entitlements.mac.inherit.plist')
+    // The Computer Use helper is excluded on purpose. `native/cu-helper/build.sh`
+    // already signed it under the stable identity `dev.echoflow.cu-helper`, and
+    // macOS ties the user's Accessibility and Screen Recording grants to that
+    // signing identity — re-signing it here would rotate the identity and
+    // silently drop both permissions on every update.
+    //
+    // The sidecar is excluded for a different reason — see the dedicated test
+    // below, which states the causal chain this literal list cannot express.
     expect(desktopPackage.build.mac?.signIgnore).toEqual([
       '/Contents/Frameworks/.+\\.(?:pak|bin|dat|nib)$',
       '/Contents/Resources/.+\\.(?:asar|pak|bin|dat|icns|png|jpg|jpeg|gif|svg|ttf|woff|woff2)$',
+      'echoflow-code-computer-use\\.app',
+      'claude-sidecar-[^/]+$',
     ])
+  })
+
+  // Regression: this entry was once dropped from signIgnore while the literal
+  // assertion above was edited to match, so the suite stayed green and every
+  // Computer Use call in the shipped build failed closed with
+  // `unauthorized_client` — the settings page just said "checking…" forever.
+  //
+  // The causal chain: `build-sidecars.ts` signs the sidecar with an explicit
+  // `--identifier com.echoflow.code.desktop.sidecar`, because
+  // `ClientAttestation.swift` compares that identifier EXACTLY when it walks the
+  // helper -> sidecar -> desktop process chain. If electron-builder re-signs the
+  // sidecar it drops that flag, and codesign falls back to deriving the
+  // identifier from the file name (`claude-sidecar-aarch64-apple-darwin`), which
+  // never matches. So this test asserts the behaviour (real sidecar file names
+  // are excluded) rather than the spelling of one array element.
+  test('macOS signIgnore keeps electron-builder off the attested sidecar', () => {
+    const desktopPackage = JSON.parse(readFileSync('desktop/package.json', 'utf8')) as {
+      build: { mac?: { signIgnore?: string[] } }
+    }
+    const patterns = (desktopPackage.build.mac?.signIgnore ?? []).map(
+      p => new RegExp(p),
+    )
+
+    // Both architectures ship under these names; ClientAttestation.swift accepts
+    // exactly these two, so both must survive electron-builder's signing pass.
+    for (const sidecar of [
+      '/Contents/Resources/app.asar.unpacked/src-tauri/binaries/claude-sidecar-aarch64-apple-darwin',
+      '/Contents/Resources/app.asar.unpacked/src-tauri/binaries/claude-sidecar-x86_64-apple-darwin',
+    ]) {
+      expect(
+        patterns.some(p => p.test(sidecar)),
+        `${sidecar} must be in signIgnore, or electron-builder re-signs it and ` +
+          'the attestation chain breaks',
+      ).toBe(true)
+    }
+
+    // The identifier the exclusion exists to protect. If this constant moves,
+    // ClientAttestation.swift's `sidecarIdentifier` has to move with it.
+    expect(
+      readFileSync('desktop/scripts/sign-identity.ts', 'utf8'),
+    ).toContain("SIDECAR_SIGNING_IDENTIFIER = 'com.echoflow.code.desktop.sidecar'")
+    expect(
+      readFileSync('native/cu-helper/Sources/cu-helper/ClientAttestation.swift', 'utf8'),
+    ).toContain('sidecarIdentifier = "com.echoflow.code.desktop.sidecar"')
   })
 
   test('Windows NSIS installer lets users choose the install directory', () => {

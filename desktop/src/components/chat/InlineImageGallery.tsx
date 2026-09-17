@@ -1,7 +1,10 @@
 import { useMemo, useState } from 'react'
 import { ImageGalleryModal } from './ImageGalleryModal'
-import { localImageFileUrl } from '../../lib/attachmentImages'
-import { extractAssistantOutputTargets } from '../../lib/assistantOutputTargets'
+import { isManagedGeneratedImagePath, localImageFileUrl } from '../../lib/attachmentImages'
+import {
+  extractAssistantOutputTargets,
+  extractMarkdownImageSources,
+} from '../../lib/assistantOutputTargets'
 import { isAbsoluteLocalPath, previewFsUrl } from '../../lib/handlePreviewLink'
 import { getServerBaseUrl } from '../../lib/desktopRuntime'
 
@@ -34,6 +37,17 @@ function fileName(filePath: string): string {
   return filePath.split('/').pop() || filePath
 }
 
+function normalizeImageReference(value: string): string {
+  const withoutSuffix = value.trim().split('#')[0]!.split('?')[0]!
+  let decoded = withoutSuffix
+  try {
+    decoded = decodeURIComponent(withoutSuffix)
+  } catch {
+    // Keep malformed escapes comparable without turning them into a URL.
+  }
+  return decoded.replaceAll('\\', '/').replace(/^\.\//, '')
+}
+
 type GalleryImage = {
   src: string
   name: string
@@ -56,6 +70,11 @@ type Props = {
 export function InlineImageGallery({ text, sessionId, workDir, changedFiles, suppressManagedGeneratedImages = false }: Props) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
 
+  const markdownImageSources = useMemo(
+    () => new Set(extractMarkdownImageSources(text).map(normalizeImageReference)),
+    [text],
+  )
+
   // Absolute paths are explicitly written out in the prose (not guessed), and the
   // turn checkpoint can't see files written via Bash or outside its tracking scope
   // — so they keep the legacy behavior and render unconditionally. changedFiles
@@ -63,9 +82,12 @@ export function InlineImageGallery({ text, sessionId, workDir, changedFiles, sup
   // need to be reconciled against what the turn actually wrote.
   const imagePaths = useMemo(
     () => extractImagePaths(text).filter(
-      (imagePath) => !suppressManagedGeneratedImages || !isManagedGeneratedImagePath(imagePath),
+      (imagePath) => (
+        !markdownImageSources.has(normalizeImageReference(imagePath)) &&
+        (!suppressManagedGeneratedImages || !isManagedGeneratedImagePath(imagePath))
+      ),
     ),
-    [suppressManagedGeneratedImages, text],
+    [markdownImageSources, suppressManagedGeneratedImages, text],
   )
 
   // An empty changedFiles only means "no TRACKED file changed" (Bash writes are
@@ -86,7 +108,12 @@ export function InlineImageGallery({ text, sessionId, workDir, changedFiles, sup
     //    a bespoke relative-path regex.
     const base = getServerBaseUrl()
     const relativeTargets = extractAssistantOutputTargets(text, { workDir, changedFiles: changedFileEvidence }).filter(
-      (target) => target.kind === 'image',
+      (target) => (
+        target.kind === 'image' &&
+        target.source !== 'markdown-link' &&
+        !markdownImageSources.has(normalizeImageReference(target.href)) &&
+        !markdownImageSources.has(normalizeImageReference(target.normalizedPath ?? ''))
+      ),
     )
 
     // Dedup: an absolute path inside the workspace can be caught by BOTH sources.
@@ -113,7 +140,7 @@ export function InlineImageGallery({ text, sessionId, workDir, changedFiles, sup
     }
 
     return [...absolute, ...relative]
-  }, [changedFileEvidence, imagePaths, sessionId, text, workDir])
+  }, [changedFileEvidence, imagePaths, markdownImageSources, sessionId, text, workDir])
 
   if (images.length === 0) return null
 

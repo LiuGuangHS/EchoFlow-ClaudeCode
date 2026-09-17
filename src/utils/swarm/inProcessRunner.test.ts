@@ -692,7 +692,7 @@ describe('in-process teammate task claiming', () => {
         status: 'in_progress',
       })
       await updateTask(taskListId, explicitAssignment, { status: 'completed' })
-      await createTask(taskListId, {
+      const followUpTaskId = await createTask(taskListId, {
         subject: 'Audit workflow',
         description: 'Audit workflow changes',
         status: 'pending',
@@ -710,7 +710,8 @@ describe('in-process teammate task claiming', () => {
       const prompt = await claimNextInProcessTask({ agentName, teamName })
 
       expect(prompt).toContain('Audit workflow')
-      const claimedTask = (await listTasks(taskListId)).find((task) => task.subject === 'Audit workflow')
+      const claimedTasks = await listTasks(taskListId)
+      const claimedTask = claimedTasks.find(task => task.id === followUpTaskId)
       expect(claimedTask?.owner).toBe(agentName)
       expect(claimedTask?.status).toBe('in_progress')
 

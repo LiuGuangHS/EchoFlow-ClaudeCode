@@ -1,11 +1,12 @@
 import { EventEmitter } from 'node:events'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { spawn, type ChildProcess } from 'node:child_process'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SidecarChild, SidecarPlan } from './sidecarManager'
-import { SYSTEM_PROXY_ERROR_ENV } from './sidecarManager'
+import { ADAPTER_FLAGS, SYSTEM_PROXY_ERROR_ENV } from './sidecarManager'
 import { ElectronServerRuntime } from './serverRuntime'
 import type { SystemProxyBridgeLike } from './systemProxyBridge'
 
@@ -31,6 +32,10 @@ const sidecarMocks = {
     return child as unknown as SidecarChild
   }),
 }
+
+/** One sidecar per IM adapter, so the counts below track the flag list
+ *  rather than a number that has to be edited whenever a platform is added. */
+const ADAPTER_COUNT = ADAPTER_FLAGS.length
 
 let isolatedConfigDir = ''
 
@@ -115,7 +120,7 @@ describe('ElectronServerRuntime', () => {
     const firstUrl = await runtime.getServerUrl()
     const firstChild = sidecarMocks.serverChildren[0]!
     const firstAdapters = [...sidecarMocks.adapterChildren]
-    expect(firstAdapters).toHaveLength(5)
+    expect(firstAdapters).toHaveLength(ADAPTER_COUNT)
     firstChild.emit('exit', 7, null)
 
     const [secondUrl, coalescedUrl] = await Promise.all([
@@ -129,9 +134,9 @@ describe('ElectronServerRuntime', () => {
     expect(secondUrl).toBe('http://127.0.0.1:49322')
     expect(coalescedUrl).toBe(secondUrl)
     expect(sidecarMocks.serverChildren).toHaveLength(2)
-    expect(sidecarMocks.adapterChildren).toHaveLength(10)
+    expect(sidecarMocks.adapterChildren).toHaveLength(ADAPTER_COUNT * 2)
     for (const adapter of firstAdapters) expect(adapter.kill).toHaveBeenCalledTimes(1)
-    for (const adapter of sidecarMocks.adapterChildren.slice(5)) {
+    for (const adapter of sidecarMocks.adapterChildren.slice(ADAPTER_COUNT)) {
       expect(adapter.kill).not.toHaveBeenCalled()
     }
     expect(await runtime.getServerUrl()).toBe(secondUrl)
@@ -223,7 +228,7 @@ describe('ElectronServerRuntime', () => {
     const adapterPlans = sidecarMocks.spawnSidecar.mock.calls
       .map(([plan]) => plan)
       .filter(plan => plan.args[0] === 'adapters')
-    expect(adapterPlans).toHaveLength(5)
+    expect(adapterPlans).toHaveLength(ADAPTER_COUNT)
     for (const plan of adapterPlans) {
       expect(plan.env.HTTP_PROXY).toBe('http://127.0.0.1:49123')
       expect(plan.env.HTTPS_PROXY).toBe('http://127.0.0.1:49123')
@@ -257,6 +262,83 @@ describe('ElectronServerRuntime', () => {
     await expect(starting).rejects.toThrow('server startup stopped')
     expect(sidecarMocks.spawnSidecar).not.toHaveBeenCalled()
     expect(bridge.stop).toHaveBeenCalledTimes(1)
+  })
+
+  it('waits for real server shutdown cleanup before the first restart attempt', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'echoflow-code-electron-restart-'))
+    const activeTurn = path.join(root, 'active-turn')
+    const children: ChildProcess[] = []
+    const readyFiles: string[] = []
+    let serverStarts = 0
+    const fixture = String.raw`
+      const fs = require('node:fs')
+      const activeTurn = process.argv[1]
+      const readyFile = process.argv[2]
+      let owned = false
+      process.on('SIGTERM', () => {
+        setTimeout(() => {
+          if (owned) fs.rmSync(activeTurn, { force: true })
+          process.exit(0)
+        }, 150)
+      })
+      try {
+        const fd = fs.openSync(activeTurn, 'wx')
+        fs.closeSync(fd)
+        owned = true
+        fs.writeFileSync(readyFile, 'ready')
+      } catch {
+        process.exit(17)
+      }
+      setInterval(() => {}, 1_000)
+    `
+
+    const runtime = new ElectronServerRuntime({
+      desktopRoot: '/isolated/desktop',
+      env: { CLAUDE_CONFIG_DIR: root },
+      deps: {
+        appendHostDiagnostic: () => undefined,
+        preferredServerPorts: () => [],
+        reserveServerPort: async () => 49321 + serverStarts,
+        spawnSidecar: plan => {
+          if (plan.args[0] !== 'server') {
+            return new FakeSidecarChild() as unknown as SidecarChild
+          }
+          const readyFile = path.join(root, `ready-${++serverStarts}`)
+          readyFiles.push(readyFile)
+          const child = spawn(process.execPath, ['-e', fixture, activeTurn, readyFile], {
+            stdio: ['ignore', 'pipe', 'pipe'],
+          })
+          children.push(child)
+          return child as SidecarChild
+        },
+        waitForServer: async () => {
+          const readyFile = readyFiles.at(-1)!
+          for (let attempt = 0; attempt < 100 && !existsSync(readyFile); attempt++) {
+            await new Promise(resolve => setTimeout(resolve, 10))
+          }
+          if (!existsSync(readyFile)) throw new Error('fixture server did not become ready')
+        },
+        writeLastServerPort: () => undefined,
+      },
+    })
+
+    try {
+      await runtime.startServer()
+      expect(existsSync(activeTurn)).toBe(true)
+
+      await runtime.stopAllAndWait(2_000)
+
+      expect(existsSync(activeTurn)).toBe(false)
+      await runtime.startServer()
+      expect(serverStarts).toBe(2)
+      expect(children[1]!.exitCode).toBeNull()
+    } finally {
+      await runtime.stopAllAndWait(2_000).catch(() => undefined)
+      for (const child of children) {
+        if (child.exitCode === null) child.kill('SIGKILL')
+      }
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it('passes a sanitized bridge startup failure to the server without silently using direct mode', async () => {
@@ -373,7 +455,7 @@ describe('ElectronServerRuntime', () => {
     releaseReplacementHealth()
     await recovery
     expect(recoveredUrl).toBe('http://127.0.0.1:49322')
-    expect(sidecarMocks.adapterChildren).toHaveLength(10)
+    expect(sidecarMocks.adapterChildren).toHaveLength(ADAPTER_COUNT * 2)
   })
 
   it('keeps demand recovery available after an immediate restart fails transiently', async () => {
@@ -490,11 +572,11 @@ describe('ElectronServerRuntime', () => {
     const firstServer = sidecarMocks.serverChildren[0]!
     firstServer.emit('exit', 20, null)
     await runtime.getServerUrl()
-    const replacementAdapters = sidecarMocks.adapterChildren.slice(5)
+    const replacementAdapters = sidecarMocks.adapterChildren.slice(ADAPTER_COUNT)
 
     firstServer.emit('exit', 21, 'SIGTERM')
 
-    expect(replacementAdapters).toHaveLength(5)
+    expect(replacementAdapters).toHaveLength(ADAPTER_COUNT)
     for (const adapter of replacementAdapters) {
       expect(adapter.kill).not.toHaveBeenCalled()
     }
@@ -506,7 +588,7 @@ describe('ElectronServerRuntime', () => {
     const firstAdapters = [...sidecarMocks.adapterChildren]
 
     await runtime.restartAdaptersSidecars()
-    const restartedAdapters = sidecarMocks.adapterChildren.slice(5)
+    const restartedAdapters = sidecarMocks.adapterChildren.slice(ADAPTER_COUNT)
     sidecarMocks.serverChildren[0]!.emit('exit', 22, null)
     await waitForServerChildren(2)
 
@@ -528,11 +610,11 @@ describe('ElectronServerRuntime', () => {
 
     expect(secondRestart).toBe(firstRestart)
     await Promise.all([firstRestart, secondRestart])
-    expect(sidecarMocks.adapterChildren).toHaveLength(10)
+    expect(sidecarMocks.adapterChildren).toHaveLength(ADAPTER_COUNT * 2)
     for (const adapter of originalAdapters) {
       expect(adapter.kill).toHaveBeenCalledTimes(1)
     }
-    for (const adapter of sidecarMocks.adapterChildren.slice(5)) {
+    for (const adapter of sidecarMocks.adapterChildren.slice(ADAPTER_COUNT)) {
       expect(adapter.kill).not.toHaveBeenCalled()
     }
   })
@@ -549,16 +631,16 @@ describe('ElectronServerRuntime', () => {
 
     await runtime.restartAdaptersSidecars()
 
-    expect(sidecarMocks.adapterChildren).toHaveLength(6)
+    expect(sidecarMocks.adapterChildren).toHaveLength(ADAPTER_COUNT + 1)
     for (const adapter of originalAdapters) {
       expect(adapter.kill).toHaveBeenCalledTimes(1)
     }
-    expect(sidecarMocks.adapterChildren[5]!.kill).toHaveBeenCalledTimes(1)
+    expect(sidecarMocks.adapterChildren[ADAPTER_COUNT]!.kill).toHaveBeenCalledTimes(1)
 
     await expect(runtime.getServerUrl()).resolves.toBe('http://127.0.0.1:49322')
     expect(sidecarMocks.serverChildren).toHaveLength(2)
-    expect(sidecarMocks.adapterChildren).toHaveLength(11)
-    for (const adapter of sidecarMocks.adapterChildren.slice(6)) {
+    expect(sidecarMocks.adapterChildren).toHaveLength(ADAPTER_COUNT * 2 + 1)
+    for (const adapter of sidecarMocks.adapterChildren.slice(ADAPTER_COUNT + 1)) {
       expect(adapter.kill).not.toHaveBeenCalled()
     }
   })
@@ -577,7 +659,7 @@ describe('ElectronServerRuntime', () => {
 
     await expect(runtime.getServerUrl()).resolves.toBe('http://127.0.0.1:49322')
     expect(sidecarMocks.serverChildren).toHaveLength(2)
-    expect(sidecarMocks.adapterChildren).toHaveLength(6)
+    expect(sidecarMocks.adapterChildren).toHaveLength(ADAPTER_COUNT + 1)
     for (const adapter of sidecarMocks.adapterChildren.slice(1)) {
       expect(adapter.kill).not.toHaveBeenCalled()
     }

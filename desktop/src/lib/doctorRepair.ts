@@ -6,6 +6,7 @@ import {
 } from '../theme/systemAppearance'
 import { APP_ZOOM_STORAGE_KEY } from './appZoom'
 import { DESKTOP_PERSISTENCE_VERSION_KEY } from './persistenceMigrations'
+import { WORKSPACE_STORAGE_KEY } from './workspace/storageKey'
 
 export const SAFE_DOCTOR_STORAGE_KEYS = [
   'echoflow-code-open-tabs',
@@ -18,6 +19,10 @@ export const SAFE_DOCTOR_STORAGE_KEYS = [
   LIGHT_THEME_STORAGE_KEY,
   'echoflow-code-locale',
   APP_ZOOM_STORAGE_KEY,
+  // Regenerable by the same standard as the open-tab list: it holds panel
+  // layout and tab descriptors, never content. Leaving it out would mean a
+  // corrupt entry has no documented way to be cleared.
+  WORKSPACE_STORAGE_KEY,
   DESKTOP_PERSISTENCE_VERSION_KEY,
 ] as const
 

@@ -4,6 +4,7 @@ import * as os from 'os'
 import * as path from 'path'
 
 import {
+  activeProviderNeedsProxy,
   getManagedEnvKeys,
   mergeActiveProviderManagedEnv,
   readActiveProviderManagedEnv,
@@ -35,6 +36,40 @@ describe('providerRuntimeEnv', () => {
     if (originalHome !== undefined) process.env.HOME = originalHome
     else delete process.env.HOME
     await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  test('routes Anthropic providers without nested tool media through the proxy', async () => {
+    await writeJson(path.join(tmpDir, 'cc-haha', 'providers.json'), {
+      activeId: 'provider-media-compat',
+      providers: [{
+        id: 'provider-media-compat',
+        presetId: 'custom',
+        name: 'Media compatibility',
+        apiKey: 'sk-media',
+        baseUrl: 'https://media.example.test',
+        apiFormat: 'anthropic',
+        models: { main: 'model', haiku: 'model', sonnet: 'model', opus: 'model' },
+        supportsNestedToolResultMedia: false,
+      }],
+    })
+
+    expect(activeProviderNeedsProxy(tmpDir)).toBe(true)
+
+    await writeJson(path.join(tmpDir, 'cc-haha', 'providers.json'), {
+      activeId: 'provider-media-native',
+      providers: [{
+        id: 'provider-media-native',
+        presetId: 'custom',
+        name: 'Native media',
+        apiKey: 'sk-media',
+        baseUrl: 'https://media.example.test',
+        apiFormat: 'anthropic',
+        models: { main: 'model', haiku: 'model', sonnet: 'model', opus: 'model' },
+        supportsNestedToolResultMedia: true,
+      }],
+    })
+
+    expect(activeProviderNeedsProxy(tmpDir)).toBe(false)
   })
 
   test('normalizes and preserves Grok Official as the active runtime provider', async () => {
@@ -246,6 +281,63 @@ describe('providerRuntimeEnv', () => {
         'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
       ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES:
         'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
+    })
+  })
+
+  test('scopes GLM 5.3 standard API capabilities without disabling Coding Plan aliases', async () => {
+    const models = {
+      main: 'glm-5.3-flash[1m]',
+      haiku: 'glm-5.3-flash[1m]',
+      sonnet: 'glm-5.3[1m]',
+      opus: 'glm-5.3[1m]',
+    }
+    await writeJson(path.join(tmpDir, 'cc-haha', 'providers.json'), {
+      activeId: 'provider-zhipu-standard',
+      providers: [{
+        id: 'provider-zhipu-standard',
+        presetId: 'zhipuglm',
+        name: 'Zhipu GLM',
+        apiKey: 'sk-zhipu',
+        authStrategy: 'auth_token',
+        baseUrl: 'https://open.bigmodel.cn/api/anthropic',
+        apiFormat: 'anthropic',
+        models,
+      }],
+    })
+
+    const standardEnv = readActiveProviderManagedEnv(tmpDir)
+    expect(standardEnv).toMatchObject({
+      ANTHROPIC_MODEL: 'glm-5.3-flash[1m]',
+      ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES:
+        'thinking,required_thinking,effort,max_effort',
+      ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES:
+        'thinking,required_thinking,effort,max_effort',
+    })
+    expect(JSON.parse(standardEnv!.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS)).toMatchObject({
+      'glm-5.3[1m]': 1000000,
+      'glm-5.3-flash[1m]': 1000000,
+    })
+
+    await writeJson(path.join(tmpDir, 'cc-haha', 'providers.json'), {
+      activeId: 'provider-zhipu-coding-plan',
+      providers: [{
+        id: 'provider-zhipu-coding-plan',
+        presetId: 'custom',
+        name: 'Zhipu Coding Plan',
+        apiKey: 'sk-zhipu-plan',
+        authStrategy: 'auth_token',
+        baseUrl: 'https://open.bigmodel.cn/api/anthropic',
+        apiFormat: 'anthropic',
+        models,
+      }],
+    })
+
+    const codingPlanEnv = readActiveProviderManagedEnv(tmpDir)
+    expect(codingPlanEnv).toMatchObject({
+      ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES:
+        'thinking,required_thinking,effort,xhigh_effort,max_effort',
+      ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES:
+        'thinking,required_thinking,effort,xhigh_effort,max_effort',
     })
   })
 

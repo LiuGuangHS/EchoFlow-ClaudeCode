@@ -14,6 +14,7 @@ import { attributionHeaderEnvForModel } from '../services/attributionHeaderPolic
 import { ApiError, errorResponse } from '../middleware/errorHandler.js'
 import { hasOpenAIAuthLogin } from '../../utils/auth.js'
 import { getOpenAICodexModelCatalog } from '../../services/openaiAuth/modelCatalog.js'
+import { getDesktopOpenAICodexModelCatalog } from '../services/openaiModelCatalog.js'
 import {
   OPENAI_DEFAULT_MAIN_MODEL,
   type OpenAIModelCatalogEntry,
@@ -35,17 +36,29 @@ import {
 } from '../services/grokOfficialProvider.js'
 import { echoFlowGrokOAuthService } from '../services/echoFlowGrokOAuthService.js'
 import { resolveClaudeOfficialRuntimeModel } from '../services/claudeOfficialRuntime.js'
-import { getPresetDefaultEnv } from '../services/providerRuntimeEnv.js'
+import {
+  getPresetDefaultEnv,
+  getPresetReasoningProviderKind,
+} from '../services/providerRuntimeEnv.js'
 import {
   getModelReasoningCapabilityOverride,
   MODEL_REASONING_EFFORTS,
   resolveModelReasoningProfile,
   type ModelReasoningApiFormat,
+  type ModelReasoningProviderKind,
 } from '../../shared/modelReasoning.js'
 
 // ─── Fallback models (used when no provider is configured) ────────────────────
 
 const DEFAULT_MODELS = [
+  {
+    id: 'claude-fable-5-1',
+    name: 'Fable 5.1',
+    description: 'Highest capability for long-running tasks',
+    context: '1m',
+    defaultReasoningEffort: 'high',
+    supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+  },
   {
     id: 'claude-fable-5',
     name: 'Fable 5',
@@ -118,6 +131,7 @@ function buildProviderModelList(
   },
   apiFormat?: ModelReasoningApiFormat,
   presetDefaultEnv: Record<string, string> = {},
+  providerKind?: ModelReasoningProviderKind,
 ): ApiModelInfo[] {
   const modelList: ApiModelInfo[] = []
 
@@ -127,6 +141,7 @@ function buildProviderModelList(
           id,
           apiFormat,
           getModelReasoningCapabilityOverride(id, models, presetDefaultEnv),
+          providerKind,
         )
       : undefined
     return {
@@ -174,7 +189,7 @@ function buildOpenAIModelList(catalog: OpenAIModelCatalogEntry[]): ApiModelInfo[
 }
 
 async function getOpenAIModelList(): Promise<ApiModelInfo[]> {
-  return buildOpenAIModelList(await getOpenAICodexModelCatalog())
+  return buildOpenAIModelList(await getDesktopOpenAICodexModelCatalog())
 }
 
 function buildGrokModelList(catalog: GrokModelCatalogEntry[]): ApiModelInfo[] {
@@ -222,7 +237,7 @@ async function getOpenAIAuthModels(): Promise<ApiModelInfo[]> {
     return []
   }
 
-  return getOpenAIModelList()
+  return buildOpenAIModelList(await getOpenAICodexModelCatalog())
 }
 
 async function getStandaloneModelList(): Promise<ApiModelInfo[]> {
@@ -312,6 +327,7 @@ async function handleModelsList(): Promise<Response> {
       activeProvider.models,
       activeProvider.apiFormat,
       getPresetDefaultEnv(activeProvider.presetId),
+      getPresetReasoningProviderKind(activeProvider.presetId),
     )
     return Response.json({
       models: modelList,
@@ -389,6 +405,7 @@ async function handleCurrentModel(req: Request): Promise<Response> {
               activeProvider.models,
               activeProvider.apiFormat,
               getPresetDefaultEnv(activeProvider.presetId),
+              getPresetReasoningProviderKind(activeProvider.presetId),
             )
           : claudeOfficialModel
             ? [...DEFAULT_MODELS]

@@ -229,7 +229,7 @@ function areasForPath(path: string): ChangeArea[] {
     return []
   }
 
-  if (path.startsWith('desktop/')) {
+  if (path.startsWith('desktop/') || path.startsWith('native/')) {
     areas.add('desktop')
   }
 
@@ -366,6 +366,7 @@ export function evaluateChangePolicy(
     file.startsWith('desktop/src/') || desktopWebExactPaths.has(file)
   ))
   const touchesDesktopNative = selectionFiles.some((file) => (
+    file.startsWith('native/') ||
     file.startsWith('desktop/electron/') ||
     file.startsWith('desktop/scripts/') ||
     file.startsWith('desktop/src-tauri/') ||

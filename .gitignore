@@ -84,3 +84,6 @@ runtime/__pycache__
 graphify-out/
 
 .learnings/
+
+# Computer Use native helper build output (SwiftPM)
+native/cu-helper/.build/

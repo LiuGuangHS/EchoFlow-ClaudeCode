@@ -362,7 +362,7 @@ function SessionSurfacePreview({ kind }: { kind: 'main' | 'agent' }) {
           leading={isAgent ? <Button variant="ghost" size="xs">← Back</Button> : undefined}
           titleAddon={<Badge tone={isAgent ? 'warning' : 'success'}>{isAgent ? 'running' : 'ready'}</Badge>}
           metadata={[
-            { key: 'project', content: <span>claude-code-haha</span> },
+            { key: 'project', content: <span>echoflow-code</span> },
             { key: 'scope', content: <span>{isAgent ? 'commit-analysis / teams-analyst' : 'main'}</span> },
           ]}
           actions={<IconButton icon="refresh" label={`Refresh ${kind} session`} size="sm" />}
@@ -656,6 +656,9 @@ export function ComponentGallery() {
           <Button variant="secondary" onClick={() => setSheetOpen(true)}>Open BottomSheet</Button>
           <Tooltip content="This is a tooltip. It should flip near the viewport edge.">
             <Button variant="ghost">Hover / focus me</Button>
+          </Tooltip>
+          <Tooltip appearance="surface" content={<span className="flex items-center gap-3">Toggle bottom panel <kbd>⌘J</kbd></span>}>
+            <Button variant="ghost">Workspace tooltip</Button>
           </Tooltip>
           <Dropdown
             items={[

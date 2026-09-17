@@ -1,12 +1,15 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
 import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { getCwdState, setCwdState } from '../../bootstrap/state.js'
+import { enableConfigs } from '../../utils/config.js'
+import { invalidateComputerUseSkillGate } from '../../utils/computerUse/skillGate.js'
 import { clearInstalledPluginsCache } from '../../utils/plugins/installedPluginsManager.js'
 import { clearPluginCache } from '../../utils/plugins/pluginLoader.js'
 import { resetSettingsCache } from '../../utils/settings/settingsCache.js'
 import { handlePluginsApi } from '../api/plugins.js'
+import { handleComputerUseApi } from '../api/computer-use.js'
 import { handleSkillsApi, listSkillSlashCommands } from '../api/skills.js'
 
 let tmpHome: string
@@ -53,15 +56,22 @@ describe('Skills API', () => {
     process.env.USERPROFILE = tmpHome
     process.env.CLAUDE_CONFIG_DIR = path.join(tmpHome, '.claude')
     setCwdState(tmpHome)
+    // startServer() does this before serving anything, and the built-in command
+    // table reads config while it is built. Without it the compiled-in half of
+    // the slash list silently comes back empty — the exact bug these tests
+    // cover, hidden by a test process that differs from production.
+    enableConfigs()
     clearInstalledPluginsCache()
     clearPluginCache('skills-api-test-setup')
     resetSettingsCache()
+    invalidateComputerUseSkillGate()
   })
 
   afterEach(async () => {
     clearInstalledPluginsCache()
     clearPluginCache('skills-api-test-teardown')
     resetSettingsCache()
+    invalidateComputerUseSkillGate()
     if (originalHome === undefined) {
       delete process.env.HOME
     } else {
@@ -82,6 +92,60 @@ describe('Skills API', () => {
 
     setCwdState(originalCwdState)
     await fs.rm(tmpHome, { recursive: true, force: true })
+  })
+
+  it('isolates concurrent mention requests by project enablement and installed scope', async () => {
+    const projectA = path.join(tmpHome, '普通目录 A')
+    const projectB = path.join(tmpHome, '普通目录 B')
+    const pluginsDir = path.join(tmpHome, '.claude', 'plugins')
+    const market = path.join(tmpHome, 'market')
+    const pluginRoot = path.join(market, 'plugins', 'draw')
+    await Promise.all([projectA, projectB].map(project => fs.mkdir(path.join(project, '.claude'), { recursive: true })))
+    await fs.mkdir(path.join(pluginRoot, '.claude-plugin'), { recursive: true })
+    await fs.mkdir(path.join(market, '.claude-plugin'), { recursive: true })
+    await fs.mkdir(pluginsDir, { recursive: true })
+    await fs.writeFile(path.join(pluginRoot, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'draw', version: '1.0.0', description: 'Drawing' }))
+    await writeSkill(path.join(pluginRoot, 'skills'), 'render', '---\ndescription: Draw a diagram.\n---\nDraw only on request.')
+    await fs.writeFile(path.join(market, '.claude-plugin', 'marketplace.json'), JSON.stringify({ name: 'test-market', owner: { name: 'Fixture' }, plugins: [{ name: 'draw', source: './plugins/draw', version: '1.0.0' }] }))
+    await fs.writeFile(path.join(pluginsDir, 'known_marketplaces.json'), JSON.stringify({ 'test-market': { source: { source: 'directory', path: market }, installLocation: market, lastUpdated: new Date(0).toISOString() } }))
+    const installed = (scope: 'user' | 'project') => ({ version: 2, plugins: { 'draw@test-market': [{ scope, ...(scope === 'project' ? { projectPath: projectA } : {}), installPath: pluginRoot, version: '1.0.0', installedAt: new Date(0).toISOString(), lastUpdated: new Date(0).toISOString() }] } })
+    await fs.writeFile(path.join(pluginsDir, 'installed_plugins.json'), JSON.stringify(installed('user')))
+    await fs.writeFile(path.join(tmpHome, '.claude', 'settings.json'), JSON.stringify({ enabledPlugins: { 'draw@test-market': false } }))
+    await fs.writeFile(path.join(projectA, '.claude', 'settings.json'), JSON.stringify({ enabledPlugins: { 'draw@test-market': true } }))
+    await fs.writeFile(path.join(projectB, '.claude', 'settings.json'), JSON.stringify({ enabledPlugins: { 'draw@test-market': false } }))
+    const mentions = async (cwd: string) => {
+      const { req, url, segments } = makeRequest(`/api/skills/mentions?cwd=${encodeURIComponent(cwd)}`)
+      const response = await handleSkillsApi(req, url, segments)
+      expect(response.status).toBe(200)
+      return response.json()
+    }
+    const [a, b] = await Promise.all([mentions(projectA), mentions(projectB)])
+    expect(a.plugins.map((entry: { id: string }) => entry.id)).toEqual(['draw@test-market'])
+    expect(a.skills.map((entry: { name: string }) => entry.name)).toContain('draw:render')
+    expect(b.plugins).toEqual([])
+    // Local settings override project settings without changing the server cwd.
+    await fs.writeFile(path.join(projectA, '.claude', 'settings.local.json'), JSON.stringify({ enabledPlugins: { 'draw@test-market': false } }))
+    expect((await mentions(projectA)).plugins).toEqual([])
+    await fs.rm(path.join(projectA, '.claude', 'settings.local.json'))
+    // Even enabled=true cannot borrow another project's installation.
+    await fs.writeFile(path.join(projectB, '.claude', 'settings.json'), JSON.stringify({ enabledPlugins: { 'draw@test-market': true } }))
+    await fs.writeFile(path.join(pluginsDir, 'installed_plugins.json'), JSON.stringify(installed('project')))
+    const [scopedA, scopedB] = await Promise.all([mentions(projectA), mentions(projectB)])
+    expect(scopedA.plugins.map((entry: { id: string }) => entry.id)).toEqual(['draw@test-market'])
+    expect(scopedB.plugins).toEqual([])
+    expect(getCwdState()).toBe(tmpHome)
+  })
+
+  it('lists mention candidates using runtime skill identities without market placeholders', async () => {
+    await writeSkill(path.join(tmpHome, '.claude', 'skills'), 'mention-fixture', '---\nname: mention-fixture\ndescription: Temporary mention capability\n---\nUse temporary files only.\n')
+    const { req, url, segments } = makeRequest(`/api/skills/mentions?cwd=${encodeURIComponent(tmpHome)}`)
+    const response = await handleSkillsApi(req, url, segments)
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    const candidate = body.skills.find((item: { name: string }) => item.name === 'mention-fixture')
+    expect(candidate.kind).toBe('skill')
+    expect(candidate.modelText).toBe('Use the Skill tool with skill: "mention-fixture" for this request.')
+    expect(body.plugins.some((item: { source: string }) => item.source.endsWith('@haha-connectors'))).toBe(false)
   })
 
   it('lists user and project skills for the requested cwd', async () => {
@@ -670,6 +734,175 @@ describe('Skills API', () => {
 
       expect(names.filter((n) => n === 'deploy')).toHaveLength(1)
       expect(new Set(names).size).toBe(names.length)
+    })
+  })
+
+  /**
+   * This list stands in for the CLI whenever a session's subprocess has not
+   * started yet — which is every freshly opened session, i.e. exactly when a
+   * user first opens the slash menu. It used to scan directories only, so a
+   * brand-new session offered no built-in command and no bundled skill; a user
+   * who enabled Computer Use could not select /computer-use until after they
+   * had already sent a message. Measured against a live server, the list went
+   * from 93 entries to 110 the moment the first message was sent.
+   */
+  describe('commands that exist only inside the binary', () => {
+    const repoRoot = path.resolve(import.meta.dir, '..', '..', '..')
+
+    async function emptyRepo(): Promise<string> {
+      const repo = path.join(tmpHome, 'bare-workspace')
+      await fs.mkdir(path.join(repo, '.git'), { recursive: true })
+      return repo
+    }
+
+    it('lists bundled skills even with no skill directory on disk', async () => {
+      const names = (await listSkillSlashCommands(await emptyRepo())).map(
+        (c) => c.name,
+      )
+
+      // Two unconditional bundled skills — neither is behind a feature flag or
+      // a user setting, so their absence means the whole category is missing.
+      expect(names).toContain('simplify')
+      expect(names).toContain('batch')
+    })
+
+    it('lists built-in commands the headless CLI can run', async () => {
+      // Assembling the built-in table reads auth state; a signed-in server is
+      // the case this covers. The not-signed-in case is the test below.
+      const originalKey = process.env.ANTHROPIC_API_KEY
+      process.env.ANTHROPIC_API_KEY = 'sk-ant-test-not-a-real-key'
+      try {
+        const names = (await listSkillSlashCommands(await emptyRepo())).map(
+          (c) => c.name,
+        )
+
+        expect(names).toContain('compact')
+        expect(names).toContain('context')
+      } finally {
+        if (originalKey === undefined) delete process.env.ANTHROPIC_API_KEY
+        else process.env.ANTHROPIC_API_KEY = originalKey
+      }
+    })
+
+    it('still lists bundled skills when nobody has signed in', async () => {
+      // Built-ins and bundled skills are assembled together, and the built-in
+      // half throws without credentials. Letting that failure take the bundled
+      // skills with it would empty the slash menu for every new user — the
+      // people least able to tell a missing feature from a broken one.
+      //
+      // Runs in its own process on purpose: the built-in table is memoized at
+      // module scope, so any earlier test that built it successfully would
+      // leave this one asserting against a warm cache and passing no matter
+      // what the code does.
+      const scriptPath = path.join(tmpHome, 'no-auth-probe.ts')
+      await fs.writeFile(
+        scriptPath,
+        [
+          `import { getCompiledInCommands } from '${path.join(repoRoot, 'src', 'commands.js')}'`,
+          `import { enableConfigs } from '${path.join(repoRoot, 'src', 'utils', 'config.js')}'`,
+          'enableConfigs()',
+          'console.log(JSON.stringify(getCompiledInCommands().map(c => c.name)))',
+        ].join('\n'),
+      )
+
+      const env = { ...process.env, HOME: tmpHome, USERPROFILE: tmpHome }
+      delete env.ANTHROPIC_API_KEY
+      delete env.CLAUDE_CODE_OAUTH_TOKEN
+      const proc = Bun.spawn(['bun', 'run', scriptPath], {
+        env,
+        stdout: 'pipe',
+        stderr: 'pipe',
+      })
+      const stdout = await new Response(proc.stdout).text()
+      await proc.exited
+
+      const lastLine = stdout.trim().split('\n').at(-1) ?? '[]'
+      expect(JSON.parse(lastLine)).toContain('simplify')
+    })
+
+    it('carries descriptions, not bare names', async () => {
+      const commands = await listSkillSlashCommands(await emptyRepo())
+      const simplify = commands.find((c) => c.name === 'simplify')
+
+      // A name with an empty description renders as a blank menu row: the user
+      // cannot tell what the command does before running it.
+      expect(simplify?.description ?? '').not.toBe('')
+    })
+
+    it('offers /computer-use before the first message only while enabled in settings', async () => {
+      if (process.platform !== 'darwin' && process.platform !== 'win32') return
+      const repo = await emptyRepo()
+      let now = Date.now()
+      const clock = spyOn(Date, 'now').mockImplementation(() => now)
+      const names = async () => (await listSkillSlashCommands(repo)).map(c => c.name)
+      const setEnabled = async (enabled: boolean) => {
+        const url = new URL('http://localhost:3456/api/computer-use/authorized-apps')
+        const response = await handleComputerUseApi(new Request(url, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled }),
+        }), url, url.pathname.split('/').filter(Boolean))
+        expect(response.status).toBe(200)
+        // The server and CLI read the same file in different processes; let
+        // the real gate expire its cache instead of forcing its value.
+        now += 3_001
+      }
+
+      try {
+        expect(await names()).not.toContain('computer-use')
+        await setEnabled(true)
+        expect(await names()).toContain('computer-use')
+        await setEnabled(false)
+        expect(await names()).not.toContain('computer-use')
+      } finally {
+        clock.mockRestore()
+      }
+    })
+
+    it('can be asked to leave them out once the CLI has reported', async () => {
+      // This process judges a command's availability against its own state,
+      // which is near the CLI's but not the same — a live server offered
+      // /extra-usage where the CLI did not. Since the two lists get merged, a
+      // wrong guess would otherwise sit in the menu for the rest of the
+      // session even after the real list arrived.
+      const names = (
+        await listSkillSlashCommands(await emptyRepo(), {
+          includeCompiledIn: false,
+        })
+      ).map((c) => c.name)
+
+      expect(names).not.toContain('simplify')
+      expect(names).not.toContain('compact')
+    })
+
+    it('omits commands the user cannot invoke', async () => {
+      const names = (await listSkillSlashCommands(await emptyRepo())).map(
+        (c) => c.name,
+      )
+
+      // Registered with userInvocable: false — it backs a keyboard shortcut,
+      // and listing it would put a row in the menu that does nothing useful.
+      expect(names).not.toContain('keybindings-help')
+    })
+
+    it('lets a same-named skill on disk win', async () => {
+      // Whatever the CLI would actually run has to be what the menu describes,
+      // and a disk skill outranks the compiled-in copy in the CLI loader.
+      const repo = await emptyRepo()
+      await writeSkill(
+        path.join(tmpHome, '.claude', 'skills'),
+        'simplify',
+        ['---', 'description: Mine, not the bundled one', '---', '', '# Hi'].join(
+          '\n',
+        ),
+      )
+
+      const matches = (await listSkillSlashCommands(repo)).filter(
+        (c) => c.name === 'simplify',
+      )
+
+      expect(matches).toHaveLength(1)
+      expect(matches[0]!.description).toBe('Mine, not the bundled one')
     })
   })
 })

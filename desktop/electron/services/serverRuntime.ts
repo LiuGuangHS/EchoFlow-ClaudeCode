@@ -32,6 +32,8 @@ import {
 } from './systemProxyBridge'
 
 type ServerRuntimeOptions = {
+  onServerUnavailable?: () => void
+  onServerReady?: () => void
   desktopRoot: string
   appRoot?: string
   appVersion?: string
@@ -71,6 +73,8 @@ const AUTOMATIC_RESTART_LIMIT = 3
 const AUTOMATIC_RESTART_STABLE_MS = 60_000
 const AUTOMATIC_RESTART_COOLDOWN_MS = 60_000
 const AUTOMATIC_RESTART_BACKOFF_MS = [0, 250, 1_000] as const
+const SERVER_SHUTDOWN_TIMEOUT_MS = 15_000
+const SERVER_FORCE_EXIT_TIMEOUT_MS = 500
 
 type ServerStartState = {
   child: SidecarChild
@@ -111,6 +115,8 @@ function createServerStartState(child: SidecarChild): ServerStartState {
 }
 
 export class ElectronServerRuntime {
+  private readonly onServerUnavailable?: () => void
+  private readonly onServerReady?: () => void
   private readonly desktopRoot: string
   private readonly appRoot: string
   private readonly appVersion?: string
@@ -137,6 +143,8 @@ export class ElectronServerRuntime {
   private adapterRestartPromise: Promise<void> | null = null
 
   constructor(options: ServerRuntimeOptions) {
+    this.onServerUnavailable = options.onServerUnavailable
+    this.onServerReady = options.onServerReady
     this.desktopRoot = options.desktopRoot
     this.appRoot = options.appRoot ?? options.desktopRoot
     this.appVersion = options.appVersion
@@ -203,6 +211,7 @@ export class ElectronServerRuntime {
   }
 
   stopAll(sync = false) {
+    this.onServerUnavailable?.()
     ++this.lifecycleGeneration
     this.restartNotBefore = 0
     const starting = this.startingServer
@@ -222,6 +231,31 @@ export class ElectronServerRuntime {
       this.server = null
     }
     this.stopSystemProxyBridge()
+  }
+
+  async stopAllAndWait(timeoutMs = SERVER_SHUTDOWN_TIMEOUT_MS): Promise<void> {
+    const serverChildren = new Set<SidecarChild>()
+    if (this.startingServer) serverChildren.add(this.startingServer.child)
+    if (this.server) serverChildren.add(this.server.child)
+    const exitWaits = new Map(
+      [...serverChildren].map(child => [child, waitForSidecarExit(child, timeoutMs)]),
+    )
+
+    this.stopAll(process.platform === 'win32')
+
+    const results = await Promise.all(
+      [...exitWaits].map(async ([child, exited]) => ({ child, exited: await exited })),
+    )
+    const stillRunning = results.filter(result => !result.exited).map(result => result.child)
+    if (stillRunning.length === 0) return
+
+    for (const child of stillRunning) {
+      if (process.platform === 'win32') killSidecar(child, true)
+      else child.kill('SIGKILL')
+    }
+    await Promise.all(
+      stillRunning.map(child => waitForSidecarExit(child, SERVER_FORCE_EXIT_TIMEOUT_MS)),
+    )
   }
 
   private async startServerAfterDelay(generation: number, delayMs: number): Promise<string> {
@@ -287,6 +321,7 @@ export class ElectronServerRuntime {
         startState.failurePromise,
       ])
       if (startState.failure) throw startState.failure
+      this.onServerReady?.()
       return url
     } catch (error) {
       if (startState) {
@@ -337,6 +372,9 @@ export class ElectronServerRuntime {
       ['wechat', '--wechat'],
       ['dingtalk', '--dingtalk'],
       ['whatsapp', '--whatsapp'],
+      ['wecom', '--wecom'],
+      ['qq', '--qq'],
+      ['slack', '--slack'],
     ] as const) {
       if (!isCurrentGeneration()) break
       try {
@@ -458,6 +496,7 @@ export class ElectronServerRuntime {
     const active = this.server?.child === child
     const starting = this.startingServer?.child === child
     if (!active && !starting) return
+    this.onServerUnavailable?.()
     const failedServer = active ? this.server : null
     if (active) {
       const adapterChildren = this.server!.adapterChildren
@@ -573,4 +612,25 @@ export class ElectronServerRuntime {
     }
     return env
   }
+}
+
+function waitForSidecarExit(child: SidecarChild, timeoutMs: number): Promise<boolean> {
+  if (child.exitCode != null || child.signalCode != null) return Promise.resolve(true)
+
+  return new Promise(resolve => {
+    let settled = false
+    const finish = (exited: boolean) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      child.removeListener('exit', onExit)
+      child.removeListener('error', onError)
+      resolve(exited)
+    }
+    const onExit = () => finish(true)
+    const onError = () => finish(child.exitCode != null || child.signalCode != null)
+    const timer = setTimeout(() => finish(false), timeoutMs)
+    child.once('exit', onExit)
+    child.once('error', onError)
+  })
 }

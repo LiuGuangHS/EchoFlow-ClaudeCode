@@ -1,5 +1,9 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import {
+  BUNDLED_PROVIDER_PRESETS,
+  getBundledPresetReasoningProviderKind,
+} from '../../config/providerPresets'
 import { OFFICIAL_MODELS } from '../../constants/modelCatalog'
 import {
   OPENAI_OFFICIAL_MODELS,
@@ -19,6 +23,8 @@ import { isDesktopRuntime } from '../../lib/desktopRuntime'
 import {
   normalizeRuntimeSelection,
   resolveDefaultRuntimeSelection,
+  resolveProviderRuntimeModelId,
+  resolveProviderSlotModelId,
 } from '../../lib/runtimeSelection'
 import { useEchoFlowOAuthStore } from '../../stores/echoFlowOAuthStore'
 import { useEchoFlowOpenAIOAuthStore } from '../../stores/echoFlowOpenAIOAuthStore'
@@ -32,7 +38,13 @@ import { SearchField } from '@/components/ui/SearchField'
 import { ReasoningEffortPopover } from './ReasoningEffortPopover'
 import { useUIStore } from '../../stores/uiStore'
 import { SETTINGS_TAB_ID, useTabStore } from '../../stores/tabStore'
-import { resolveModelReasoningProfile } from '../../../../src/shared/modelReasoning'
+import {
+  getModelReasoningCapabilityOverride,
+  isOpenAIReasoningModel,
+  isModelReasoningEffort,
+  normalizeModelReasoningEffort,
+  resolveModelReasoningProfile,
+} from '../../../../src/shared/modelReasoning'
 
 type ProviderChoice = {
   providerId: string | null
@@ -77,6 +89,25 @@ const DROPDOWN_GAP = 8
 const VIEWPORT_MARGIN = 16
 const DROPDOWN_MAX_HEIGHT = 420
 const DROPDOWN_MIN_HEIGHT = 180
+const PROVIDER_PRESET_DEFAULT_ENVS = new Map(
+  BUNDLED_PROVIDER_PRESETS.map(preset => [preset.id, preset.defaultEnv ?? {}]),
+)
+
+function getProviderModelCapabilityOverride(
+  provider: SavedProvider,
+  modelId: string,
+): string | undefined {
+  return getModelReasoningCapabilityOverride(
+    modelId,
+    {
+      ...provider.models,
+      haiku: resolveProviderSlotModelId(provider, 'haiku'),
+      sonnet: resolveProviderSlotModelId(provider, 'sonnet'),
+      opus: resolveProviderSlotModelId(provider, 'opus'),
+    },
+    PROVIDER_PRESET_DEFAULT_ENVS.get(provider.presetId) ?? {},
+  )
+}
 
 function officialChoices(
   providerId: string | null,
@@ -109,10 +140,10 @@ function buildProviderModels(
   labels: Record<'main' | 'haiku' | 'sonnet' | 'opus', string>,
 ): ModelInfo[] {
   const entries: Array<{ id: string; label: string }> = [
-    { id: provider.models.main.trim(), label: labels.main },
-    { id: provider.models.haiku.trim(), label: labels.haiku },
-    { id: provider.models.sonnet.trim(), label: labels.sonnet },
-    { id: provider.models.opus.trim(), label: labels.opus },
+    { id: resolveProviderSlotModelId(provider, 'main'), label: labels.main },
+    { id: resolveProviderSlotModelId(provider, 'haiku'), label: labels.haiku },
+    { id: resolveProviderSlotModelId(provider, 'sonnet'), label: labels.sonnet },
+    { id: resolveProviderSlotModelId(provider, 'opus'), label: labels.opus },
   ]
 
   const byId = new Map<string, { id: string; labels: string[] }>()
@@ -129,7 +160,12 @@ function buildProviderModels(
   }
 
   return [...byId.values()].map((entry) => {
-    const reasoningProfile = resolveModelReasoningProfile(entry.id, provider.apiFormat)
+    const reasoningProfile = resolveModelReasoningProfile(
+      entry.id,
+      provider.apiFormat,
+      getProviderModelCapabilityOverride(provider, entry.id),
+      getBundledPresetReasoningProviderKind(provider.presetId),
+    )
     return {
       id: entry.id,
       name: entry.id,
@@ -420,10 +456,21 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
       storeModel?.id,
     )
     : null
+  const requestedRuntimeProvider = providers.find(
+    (provider) => provider.id === requestedRuntimeSelection?.providerId,
+  )
   const activeRuntimeSelection = requestedRuntimeSelection && providerChoices.some(
     (choice) => choice.providerId === requestedRuntimeSelection.providerId,
   )
-    ? requestedRuntimeSelection
+    ? {
+      ...requestedRuntimeSelection,
+      modelId: requestedRuntimeProvider
+        ? resolveProviderRuntimeModelId(
+          requestedRuntimeProvider,
+          requestedRuntimeSelection.modelId,
+        )
+        : requestedRuntimeSelection.modelId,
+    }
     : null
 
   const selectedProviderChoice = activeRuntimeSelection
@@ -445,7 +492,8 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
     : null
   const runtimeEffortSuppressedByProvider =
     selectedRuntimeProvider?.disableExperimentalBetas === true &&
-    (selectedRuntimeProvider.apiFormat ?? 'anthropic') === 'anthropic'
+    (selectedRuntimeProvider.apiFormat ?? 'anthropic') === 'anthropic' &&
+    !isOpenAIReasoningModel(selectedRuntimeModel?.id ?? '')
 
   const needsProviderConfiguration = isRuntimeScoped && providerChoices.length === 0
   const buttonModelLabel = isRuntimeScoped
@@ -463,12 +511,13 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
         ? t('model.runtimeRestartFailed')
         : null
   const supportedRuntimeEfforts = selectedRuntimeModel?.supportedReasoningEfforts
+  const requestedRuntimeEffort = activeRuntimeSelection?.effortLevel ?? effortLevel
   const selectedRuntimeEffort = selectedRuntimeModel && !runtimeEffortSuppressedByProvider
     ? supportedRuntimeEfforts?.length === 0
       ? undefined
-      : activeRuntimeSelection?.effortLevel
-        ?? selectedRuntimeModel.defaultReasoningEffort
-        ?? effortLevel
+      : supportedRuntimeEfforts === undefined || supportedRuntimeEfforts.includes(requestedRuntimeEffort)
+        ? requestedRuntimeEffort
+        : selectedRuntimeModel.defaultReasoningEffort ?? supportedRuntimeEfforts[0]
     : undefined
   const runtimeEffortOptions = supportedRuntimeEfforts === undefined
     ? EFFORT_OPTIONS.filter((option) => option.value !== 'xhigh')
@@ -558,8 +607,12 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
       return
     }
 
-    const apiFormat = providers.find((provider) => provider.id === selection.providerId)?.apiFormat
-    const normalizedSelection = normalizeRuntimeSelection(selection, apiFormat)
+    const provider = providers.find((entry) => entry.id === selection.providerId)
+    const normalizedSelection = normalizeRuntimeSelection(
+      selection,
+      provider?.apiFormat,
+      provider ? getBundledPresetReasoningProviderKind(provider.presetId) : undefined,
+    )
     if (
       currentSelection &&
       currentSelection.providerId === normalizedSelection.providerId &&
@@ -655,14 +708,38 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
                         onClick={() => {
                           const supportedEfforts = model.supportedReasoningEfforts
                           const explicitEffort = activeRuntimeSelection?.effortLevel
+                          const selectedProvider = providers.find(
+                            (provider) => provider.id === choice.providerId,
+                          )
+                          const normalizedProviderEffort = explicitEffort &&
+                            isModelReasoningEffort(explicitEffort)
+                            ? normalizeModelReasoningEffort(
+                                model.id,
+                                explicitEffort,
+                                selectedProvider?.apiFormat,
+                                selectedProvider
+                                  ? getProviderModelCapabilityOverride(selectedProvider, model.id)
+                                  : undefined,
+                                selectedProvider
+                                  ? getBundledPresetReasoningProviderKind(selectedProvider.presetId)
+                                  : undefined,
+                              )
+                            : undefined
+                          const supportedProviderEffort = normalizedProviderEffort && (
+                            supportedEfforts === undefined ||
+                            supportedEfforts.includes(normalizedProviderEffort)
+                          )
+                            ? normalizedProviderEffort
+                            : undefined
                           const nextEffort = supportedEfforts === undefined
                             ? explicitEffort ?? effortLevel
                             : supportedEfforts.length
-                              ? explicitEffort && supportedEfforts.includes(explicitEffort)
+                              ? supportedProviderEffort
+                                ?? (explicitEffort && supportedEfforts.includes(explicitEffort)
                                 ? explicitEffort
                                 : supportedEfforts.includes(effortLevel)
                                   ? effortLevel
-                                  : model.defaultReasoningEffort ?? supportedEfforts[0]
+                                  : model.defaultReasoningEffort ?? supportedEfforts[0])
                               : undefined
                           handleRuntimeSelect({
                             providerId: choice.providerId,
@@ -789,7 +866,7 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
   return (
     <div
       data-testid="model-selector-shell"
-      className={`relative min-w-0 ${fluid || appearance === 'field' ? 'flex-1' : 'shrink-0'}`}
+      className={`relative min-w-0 ${appearance === 'field' ? 'flex-1' : fluid ? 'shrink' : 'shrink-0'}`}
     >
       {/* No fill at rest: on the composer row the model name is type, not a
           control chip — the handoff reserves filled pills for the permission
@@ -826,10 +903,10 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
           className={`flex min-w-0 items-center gap-2 text-xs font-medium text-[var(--color-text-secondary)] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)] disabled:cursor-not-allowed ${
             appearance === 'field'
               ? 'h-full w-full rounded-[var(--radius-md)] px-3 text-left'
-              : `rounded-l-[var(--radius-md)] focus-visible:rounded-[var(--radius-md)] ${compact ? `${fluid ? 'flex-1' : ''} max-w-[112px] py-1.5 pl-2.5 pr-1` : 'max-w-[220px] py-2 pl-2.5 pr-1'}`
+              : `rounded-l-[var(--radius-md)] focus-visible:rounded-[var(--radius-md)] ${fluid ? 'flex-1' : ''} ${compact ? 'max-w-[112px] py-1.5 pl-2.5 pr-1' : 'max-w-[220px] py-1.5 pl-2.5 pr-1'}`
           }`}
         >
-          <span className={`${appearance === 'field' ? 'text-sm font-normal' : compact ? 'text-xs font-semibold' : 'text-[15px] font-semibold'} min-w-0 flex-1 truncate text-[var(--color-text-primary)]`}>
+          <span className={`${appearance === 'field' ? 'text-sm font-normal' : compact ? 'text-xs font-medium' : 'text-[13px] font-medium'} min-w-0 flex-1 truncate text-[var(--color-text-primary)]`}>
             {buttonModelLabel}
           </span>
           {!canEditRuntimeEffort && !compact && buttonProviderLabel && (
@@ -854,7 +931,7 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
               setOpen(false)
               setEffortOpen(!effortOpen)
             }}
-            className={`rounded-r-[var(--radius-md)] pr-2.5 text-[var(--color-text-secondary)] outline-none transition-colors hover:text-[var(--color-text-primary)] focus-visible:rounded-[var(--radius-md)] focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)] disabled:cursor-not-allowed ${compact ? 'pl-1 text-[10px]' : 'pl-1.5 text-[13.5px]'}`}
+            className={`shrink-0 rounded-r-[var(--radius-md)] pr-2.5 text-[var(--color-text-secondary)] outline-none transition-colors hover:text-[var(--color-text-primary)] focus-visible:rounded-[var(--radius-md)] focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)] disabled:cursor-not-allowed ${compact ? 'pl-1 text-[10px]' : 'pl-1.5 text-[12px]'}`}
           >
             {effortLabels[selectedRuntimeEffort]}
           </button>

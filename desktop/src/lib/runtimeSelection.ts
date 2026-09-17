@@ -15,7 +15,36 @@ import {
   normalizeModelReasoningEffort,
   resolveModelReasoningProfile,
   type ModelReasoningApiFormat,
+  type ModelReasoningProviderKind,
 } from '../../../src/shared/modelReasoning'
+
+const PROVIDER_MODEL_SLOTS = ['main', 'haiku', 'sonnet', 'opus', 'fable'] as const
+
+function baseProviderModelId(modelId: string): string {
+  return modelId.trim().replace(/\[1m\]$/i, '').replace(/:1m$/i, '').trim()
+}
+
+export function resolveProviderSlotModelId(
+  provider: SavedProvider,
+  slot: keyof SavedProvider['models'],
+): string {
+  const modelId = provider.models[slot]?.trim() ?? ''
+  const enabled = slot === 'fable' ? undefined : provider.model1mSupport?.[slot]
+  // Missing flags are legacy configuration: preserve explicit model suffixes.
+  if (!modelId || enabled === undefined) return modelId
+  const baseModelId = baseProviderModelId(modelId)
+  return enabled ? `${baseModelId}[1m]` : baseModelId
+}
+
+export function resolveProviderRuntimeModelId(provider: SavedProvider, modelId: string): string {
+  const candidates = PROVIDER_MODEL_SLOTS
+    .filter((slot) => provider.models[slot]?.trim() &&
+      baseProviderModelId(provider.models[slot]!) === baseProviderModelId(modelId))
+    .map((slot) => resolveProviderSlotModelId(provider, slot))
+  // A provider can map one ID to slots with different capabilities. Preserve
+  // an exact runtime choice; otherwise reconcile old IDs in main-first order.
+  return candidates.find((candidate) => candidate === modelId.trim()) ?? candidates[0] ?? modelId
+}
 
 export function resolveActiveProviderRuntimeSelection(
   activeId: string | null,
@@ -31,7 +60,7 @@ export function resolveActiveProviderRuntimeSelection(
   const inferredProviderId = activeId ?? activeProvider?.id ?? null
   if (!inferredProviderId) return null
 
-  const providerMainModelId = activeProvider?.models.main.trim()
+  const providerMainModelId = activeProvider ? resolveProviderSlotModelId(activeProvider, 'main') : undefined
 
   return {
     providerId: inferredProviderId,
@@ -65,6 +94,7 @@ export function resolveDefaultRuntimeSelection(
 export function normalizeRuntimeSelection(
   selection: RuntimeSelection,
   apiFormat?: ModelReasoningApiFormat,
+  providerKind?: ModelReasoningProviderKind,
 ): RuntimeSelection {
   if (
     selection.effortLevel === undefined ||
@@ -90,15 +120,27 @@ export function normalizeRuntimeSelection(
   const requestedEffort = isModelReasoningEffort(selection.effortLevel)
     ? selection.effortLevel
     : undefined
-  const reasoningProfile = resolveModelReasoningProfile(selection.modelId, apiFormat)
+  const reasoningProfile = resolveModelReasoningProfile(
+    selection.modelId,
+    apiFormat,
+    undefined,
+    providerKind,
+  )
   if (!reasoningProfile && apiFormat === undefined) return selection
   const effortLevel = normalizeModelReasoningEffort(
     selection.modelId,
     requestedEffort,
     apiFormat,
+    undefined,
+    providerKind,
   )
   if (effortLevel === selection.effortLevel) return selection
 
   const { effortLevel: _unsupportedEffort, ...runtime } = selection
-  return effortLevel ? { ...runtime, effortLevel } : runtime
+  const defaultEffort = reasoningProfile?.defaultReasoningEffort
+  return effortLevel
+    ? { ...runtime, effortLevel }
+    : defaultEffort
+      ? { ...runtime, effortLevel: defaultEffort }
+      : runtime
 }

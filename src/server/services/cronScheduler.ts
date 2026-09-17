@@ -16,6 +16,7 @@ import { CronService, type CronTask } from './cronService.js'
 import { SessionService } from './sessionService.js'
 import { sendTaskNotification } from './notificationService.js'
 import { ProviderService } from './providerService.js'
+import { SettingsService } from './settingsService.js'
 import { isProviderManagedEnvVar } from '../../utils/managedEnvConstants.js'
 import {
   buildClaudeCliArgs,
@@ -860,6 +861,7 @@ export class CronScheduler {
     for (const key of CRON_BRIDGE_ENV_KEYS) {
       delete cleanEnv[key]
     }
+    delete cleanEnv.ECHOFLOW_AGENT_TEAMS_ENABLED
 
     if (this.shouldStripInheritedProviderEnv(task.providerId)) {
       for (const key of Object.keys(cleanEnv)) {
@@ -885,10 +887,12 @@ export class CronScheduler {
       await loadNetworkSettings(),
       cleanEnv,
     )
+    const agentTeamsEnabled = await new SettingsService().getAgentTeamsEnabled()
 
     return {
       ...cleanEnv,
       CLAUDE_CODE_ENABLE_TASKS: '1',
+      ECHOFLOW_AGENT_TEAMS_ENABLED: agentTeamsEnabled ? '1' : '0',
       CLAUDE_CODE_ENTRYPOINT: 'sdk-cli',
       CALLER_DIR: workDir,
       PWD: workDir,

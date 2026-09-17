@@ -1,5 +1,6 @@
 import { forwardRef, useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef } from 'react'
-import { Check, ChevronDown, Clock, Folder, FolderOpen, FolderPlus, GitBranch, MoreHorizontal, Pin, PinOff, RefreshCw, RotateCcw, SquarePen, X } from 'lucide-react'
+import { Bell, Check, ChevronDown, Clock, Folder, FolderOpen, FolderPlus, GitBranch, MoreHorizontal, Pin, PinOff, RefreshCw, RotateCcw, SquarePen, X } from 'lucide-react'
+import { releaseWorkspaceSession } from '../../lib/workspace/releaseSession'
 import { useSessionStore } from '../../stores/sessionStore'
 import { useUIStore } from '../../stores/uiStore'
 import { useTranslation, type TranslationKey } from '../../i18n'
@@ -14,9 +15,19 @@ import { useDismissable } from '@/hooks/useDismissable'
 import { GlobalSearchModal } from '../search/GlobalSearchModal'
 import { FindInPageModal } from '../search/FindInPageModal'
 import { ProjectEditorModal, type ProjectEditorSubmission } from './ProjectEditorModal'
+import { SidebarTaskList } from './SidebarTaskList'
+import { ProjectSessionList, notifyProjectHistoryAtSidebarBottom } from '@/components/layout/ProjectSessionList'
+import {
+  buildSidebarTaskGroups,
+  getSessionProjectKey,
+  getSessionWorkspaceLabel,
+  isWorktreeSession,
+  normalizePathForCompare,
+  projectTitle,
+} from './sidebarTaskGroups'
 import { sessionsApi } from '../../api/sessions'
 import type { SessionListItem } from '../../types/session'
-import { useTabStore, SETTINGS_TAB_ID, SCHEDULED_TAB_ID, MARKET_TAB_ID, DEEPSEEK_HARNESS_TAB_ID } from '../../stores/tabStore'
+import { useTabStore, SETTINGS_TAB_ID, SCHEDULED_TAB_ID, MARKET_TAB_ID, CONNECTORS_TAB_ID, DEEPSEEK_HARNESS_TAB_ID } from '../../stores/tabStore'
 import { useChatStore } from '../../stores/chatStore'
 import { useOpenTargetStore } from '../../stores/openTargetStore'
 import {
@@ -45,7 +56,6 @@ const PROJECT_HIDDEN_STORAGE_KEY = 'echoflow-code-sidebar-hidden-projects'
 const PROJECT_ORGANIZATION_STORAGE_KEY = 'echoflow-code-sidebar-project-organization'
 const PROJECT_SORT_STORAGE_KEY = 'echoflow-code-sidebar-project-sort'
 const PROJECT_GROUP_VISIBLE_COUNT = 6
-const PROJECT_GROUP_SCROLL_COUNT = 12
 
 type SidebarProjectOrganization = 'project' | 'recentProject' | 'time'
 type SidebarProjectSortBy = 'createdAt' | 'updatedAt'
@@ -104,6 +114,7 @@ export function Sidebar({
 }: SidebarProps) {
   const t = useTranslation()
   const sessions = useSessionStore((s) => s.sessions)
+  const projectHistory = useSessionStore((s) => s.projectHistory)
   const isLoading = useSessionStore((s) => s.isLoading)
   const error = useSessionStore((s) => s.error)
   const indexStatus = useSessionStore((s) => s.indexStatus)
@@ -252,6 +263,12 @@ export function Sidebar({
       !hiddenProjectKeys.has(project.key)
     ))
   }, [hiddenProjectKeys, orderedProjectGroups])
+  /**
+   * 任务视图和「整理侧边栏 → 按时间顺序」是同一个状态：铃铛亮 ⟺ 组织方式是
+   * `time`。这个选项本来就承诺按时间排，此前却仍旧按工作区分组，两个入口指向
+   * 一份持久化偏好比再引入一个平行开关更省事，也不会有两处互相说不通的状态。
+   */
+  const isTaskView = projectOrganization === 'time'
   const showInitialLoading = isLoading && sessions.length === 0
   const showRefreshLoading = showInitialLoading
   // Index building/ready/off are implementation details of how the list is
@@ -278,6 +295,28 @@ export function Sidebar({
     }
     return ids
   }, [chatSessions, tabs])
+  // 停在权限请求上的会话在 `runningSessionIds` 里也算「没结束」，但它不是在
+  // 干活而是在等人。任务视图要把这两种状态分开显示。
+  const attentionSessionIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const [sessionId, sessionState] of Object.entries(chatSessions)) {
+      if (sessionState.chatState === 'permission_pending') ids.add(sessionId)
+    }
+    return ids
+  }, [chatSessions])
+  const taskGroups = useMemo(() => {
+    if (!isTaskView) return []
+    // 隐藏的项目在任务视图里也要隐藏，否则两个视图对「有哪些会话」说法不一致。
+    const visibleSessions = hiddenProjectKeys.size === 0
+      ? filteredSessions
+      : filteredSessions.filter((session) => !hiddenProjectKeys.has(getSessionProjectKey(session)))
+    return buildSidebarTaskGroups(visibleSessions, runningSessionIds, Date.now())
+  }, [filteredSessions, hiddenProjectKeys, isTaskView, runningSessionIds])
+  const workspaceLabelFor = useCallback(
+    (session: SessionListItem) => getSessionWorkspaceLabel(session, resolveProjectDisplayName),
+    // 改过的项目名要跟着变；与 projectGroups 同一个 revision 依赖。
+    [projectDisplayNameRevision],
+  )
   const pendingBatchDeleteSessions = useMemo(
     () => (pendingBatchDeleteSessionIds ?? [])
       .map((sessionId) => sessionsById.get(sessionId))
@@ -473,6 +512,19 @@ export function Sidebar({
       projectSortBy,
     ))
   }, [hiddenProjectKeys, persistSidebarProjectPreferences, pinnedProjectKeys, projectOrder, projectSortBy])
+
+  /**
+   * 关掉任务视图要回到「上一次用的分组方式」，而不是硬回默认值：按项目排过的
+   * 人切一次任务视图再切回来，不该被悄悄改成近期项目。
+   */
+  const lastGroupedOrganizationRef = useRef<SidebarProjectOrganization>('recentProject')
+  useEffect(() => {
+    if (projectOrganization !== 'time') lastGroupedOrganizationRef.current = projectOrganization
+  }, [projectOrganization])
+
+  const toggleTaskView = useCallback(() => {
+    updateProjectOrganization(isTaskView ? lastGroupedOrganizationRef.current : 'time')
+  }, [isTaskView, updateProjectOrganization])
 
   const updateProjectSortBy = useCallback((sortBy: SidebarProjectSortBy) => {
     setProjectHeaderMenu(null)
@@ -719,6 +771,7 @@ export function Sidebar({
     if (!pendingDeleteSessionId) return
     await deleteSession(pendingDeleteSessionId)
     disconnectSession(pendingDeleteSessionId)
+    releaseWorkspaceSession(pendingDeleteSessionId)
     closeTab(pendingDeleteSessionId)
     setPendingDeleteSessionId(null)
   }, [closeTab, deleteSession, disconnectSession, pendingDeleteSessionId])
@@ -738,6 +791,17 @@ export function Sidebar({
     toggleSessionSelected(id)
     setLastSelectedSessionId(id)
   }, [filteredSessionIds, lastSelectedSessionId, selectSessions, toggleSessionSelected])
+
+  /** 两个视图共用一份「点会话行」的行为，避免任务视图漏掉批量模式这一支。 */
+  const handleSessionRowClick = useCallback((event: React.MouseEvent, session: SessionListItem) => {
+    if (isBatchMode) {
+      handleBatchSessionClick(event, session.id)
+      return
+    }
+    useSessionStore.getState().openHistoricalSession(session)
+    useChatStore.getState().connectToSession(session.id)
+    closeMobileDrawer()
+  }, [closeMobileDrawer, handleBatchSessionClick, isBatchMode])
 
   const handleExitBatchMode = useCallback(() => {
     exitBatchMode()
@@ -759,6 +823,7 @@ export function Sidebar({
       const result = await deleteSessions(ids)
       for (const sessionId of result.successes) {
         disconnectSession(sessionId)
+        releaseWorkspaceSession(sessionId)
         closeTab(sessionId)
       }
 
@@ -836,6 +901,11 @@ export function Sidebar({
     setRenameValue('')
   }, [renamingId, renameValue, renameSession])
 
+  const cancelRename = useCallback(() => {
+    setRenamingId(null)
+    setRenameValue('')
+  }, [])
+
   useEffect(() => {
     if (!isBatchMode) return
 
@@ -892,6 +962,27 @@ export function Sidebar({
             </span>
           </div>
           <div className={`flex items-center ${expanded ? 'gap-1.5' : 'flex-col gap-2'}`}>
+            {/* 折叠态下整个会话列表都不渲染，露一个切不动视图的铃铛只会让人点空。
+                跟 GitHub 链接同一套处理：宽度夹到零、退出 tab 顺序，并且 `aria-hidden`
+                ——`sidebar-copy--hidden` 只是 `max-width:0; opacity:0`，元素仍留在
+                无障碍树里，少了这一条读屏还会念出一个按不动的按钮。 */}
+            <span
+              className={`sidebar-copy ${expanded ? 'sidebar-copy--visible' : 'sidebar-copy--hidden'} inline-flex`}
+              aria-hidden={!expanded}
+            >
+              <IconButton
+                icon={<Bell className="h-[17px] w-[17px]" strokeWidth={1.9} aria-hidden="true" />}
+                label={t('sidebar.taskView')}
+                onClick={toggleTaskView}
+                size={isMobile ? '2xl' : 'md'}
+                tone={isTaskView ? 'brand' : 'muted'}
+                filled={isTaskView}
+                pressed={isTaskView}
+                surface="sidebar"
+                tabIndex={expanded ? undefined : -1}
+                data-testid="sidebar-task-view-toggle"
+              />
+            </span>
             <a
               href="https://github.com/LiuGuangHS/EchoFlow-ClaudeCode"
               target="_blank"
@@ -963,17 +1054,17 @@ export function Sidebar({
         )}
         {!isMobile && (
           <NavItem
-            active={activeTabId === MARKET_TAB_ID}
+            active={activeTabId === MARKET_TAB_ID || activeTabId === CONNECTORS_TAB_ID}
             collapsed={!expanded}
-            label={t('sidebar.market')}
+            label={t('sidebar.extensions')}
             touchFriendly={isMobile}
             onClick={() => {
-              useTabStore.getState().openTab(MARKET_TAB_ID, t('sidebar.market'), 'market')
+              useTabStore.getState().openTab(MARKET_TAB_ID, t('sidebar.extensions'), 'market')
               closeMobileDrawer()
             }}
             icon={<StorefrontIcon />}
           >
-            {t('sidebar.market')}
+            {t('sidebar.extensions')}
           </NavItem>
         )}
         {!isMobile && isDesktopRuntime && (
@@ -1098,6 +1189,7 @@ export function Sidebar({
             )}
             <div
               ref={sessionScrollAreaRef}
+              onScroll={(event) => notifyProjectHistoryAtSidebarBottom(event.currentTarget)}
               data-testid="sidebar-session-scroll-area"
               className="sidebar-scroll-area min-h-0 flex-1 overflow-y-auto px-3 pb-20"
             >
@@ -1123,7 +1215,7 @@ export function Sidebar({
               )}
               {!showInitialLoading && (
                 <ProjectHeaderActions
-                  title={t('sidebar.projects')}
+                  title={isTaskView ? t('sidebar.tasks') : t('sidebar.projects')}
                   menuLabel={t('sidebar.projectMenu')}
                   createLabel={t('sidebar.newProject')}
                   onOpenMenu={(event) => openProjectHeaderMenu(event, 'main')}
@@ -1132,7 +1224,26 @@ export function Sidebar({
                   isMobile={isMobile}
                 />
               )}
-              {visibleProjectGroups.map((project) => {
+              {isTaskView ? (
+                <SidebarTaskList
+                  groups={taskGroups}
+                  activeTabId={activeTabId}
+                  runningSessionIds={runningSessionIds}
+                  attentionSessionIds={attentionSessionIds}
+                  selectedSessionIds={selectedSessionIds}
+                  isBatchMode={isBatchMode}
+                  isMobile={isMobile}
+                  renamingId={renamingId}
+                  renameValue={renameValue}
+                  workspaceLabelFor={workspaceLabelFor}
+                  onRenameChange={setRenameValue}
+                  onFinishRename={handleFinishRename}
+                  onCancelRename={cancelRename}
+                  onSessionClick={handleSessionRowClick}
+                  onSessionContextMenu={handleContextMenu}
+                  t={t}
+                />
+              ) : visibleProjectGroups.map((project) => {
                 const projectCollapsed = collapsedProjectKeys.has(project.key)
                 const sessionsExpanded = expandedProjectKeys.has(project.key)
                 const visibleItems = projectCollapsed
@@ -1141,7 +1252,7 @@ export function Sidebar({
                 const hiddenCount = project.sessions.length - visibleItems.length
                 const groupIds = project.sessions.map((session) => session.id)
                 const groupSelectedCount = groupIds.filter((id) => selectedSessionIds.has(id)).length
-                const hasInternalScroll = sessionsExpanded && project.sessions.length > PROJECT_GROUP_SCROLL_COUNT
+                const history = projectHistory[project.key]
                 const isProjectDragging = draggingProjectKey === project.key
                 const isProjectPinned = pinnedProjectKeys.has(project.key)
                 const dropBefore = projectDropTarget?.key === project.key && projectDropTarget.position === 'before'
@@ -1257,9 +1368,20 @@ export function Sidebar({
                     </div>
                     {!projectCollapsed && (
                       <div className="mt-0.5 pl-5">
-                        <div
-                          className={hasInternalScroll ? 'max-h-[420px] overflow-y-auto pr-1' : undefined}
-                          data-testid={`sidebar-project-session-list-${domSafeProjectKey(project.key)}`}
+                        <ProjectSessionList
+                          projectKey={project.key}
+                          outerScrollRef={sessionScrollAreaRef}
+                          testId={`sidebar-project-session-list-${domSafeProjectKey(project.key)}`}
+                          expanded={sessionsExpanded}
+                          hasHiddenSessions={hiddenCount > 0}
+                          itemCount={visibleItems.length}
+                          nextCursor={history?.nextCursor}
+                          isLoading={history?.isLoading ?? false}
+                          hasMore={history?.hasMore ?? true}
+                          error={history?.error}
+                          onExpand={() => setExpandedProjectKeys((current) => new Set([...current, project.key]))}
+                          onLoadMore={() => useSessionStore.getState().loadMoreProjectSessions(project.key)}
+                          onRelease={() => useSessionStore.getState().releaseProjectHistory(project.key)}
                         >
                           {visibleItems.map((session) => (
                             <div
@@ -1275,24 +1397,13 @@ export function Sidebar({
                                   onBlur={handleFinishRename}
                                   onKeyDown={(e) => {
                                     if (e.key === 'Enter') handleFinishRename()
-                                    if (e.key === 'Escape') {
-                                      setRenamingId(null)
-                                      setRenameValue('')
-                                    }
+                                    if (e.key === 'Escape') cancelRename()
                                   }}
                                   className="w-full rounded-[var(--radius-md)] border border-[var(--color-border-focus)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-primary)] outline-none"
                                 />
                               ) : (
                                 <button
-                                  onClick={(event) => {
-                                    if (isBatchMode) {
-                                      handleBatchSessionClick(event, session.id)
-                                      return
-                                    }
-                                    useTabStore.getState().openTab(session.id, session.title)
-                                    useChatStore.getState().connectToSession(session.id)
-                                    closeMobileDrawer()
-                                  }}
+                                  onClick={(event) => handleSessionRowClick(event, session)}
                                   onContextMenu={(e) => handleContextMenu(e, session.id)}
                                   className={`
                                     group/session w-full rounded-[var(--radius-md)] px-2 ${isMobile ? 'py-3' : 'py-1.5'} text-left text-[13px] transition-[background,filter,color,box-shadow] duration-200
@@ -1346,7 +1457,7 @@ export function Sidebar({
                               )}
                             </div>
                           ))}
-                        </div>
+                        </ProjectSessionList>
                         {(hiddenCount > 0 || sessionsExpanded) && (
                           <div className="mt-2 flex justify-start px-2.5">
                             <button
@@ -1376,7 +1487,7 @@ export function Sidebar({
         <div className="flex-1" aria-hidden="true" />
       )}
 
-      {!isMobile && (
+      {(
         <div
           data-testid="sidebar-settings-dock"
           className={`sidebar-settings-dock absolute bottom-0 left-0 right-0 border-t border-[var(--color-border)] p-3 ${expanded ? '' : 'flex justify-center'}`}
@@ -2146,10 +2257,6 @@ function getVisibleProjectSessions(
   return activeSession ? [...visible, activeSession] : visible
 }
 
-function getSessionProjectKey(session: SessionListItem): string {
-  return session.projectRoot || session.workDir || session.projectPath || 'unknown'
-}
-
 function compareSessionsByTimestamp(
   a: SessionListItem | undefined,
   b: SessionListItem | undefined,
@@ -2162,15 +2269,6 @@ function getSessionTimestamp(session: SessionListItem | undefined, sortBy: Sideb
   const value = sortBy === 'createdAt' ? session?.createdAt : session?.modifiedAt
   const timestamp = new Date(value ?? 0).getTime()
   return Number.isFinite(timestamp) ? timestamp : 0
-}
-
-function projectTitle(pathLike: string | null | undefined): string {
-  if (!pathLike) return 'Unknown project'
-  const normalized = pathLike.replace(/[\\/]+$/, '')
-  const segments = normalized.split(/[\\/]/).filter(Boolean)
-  const last = segments[segments.length - 1]
-  if (last) return last
-  return normalized || 'Unknown project'
 }
 
 async function saveProjectDisplayName(projectKey: string, displayName: string): Promise<void> {
@@ -2186,23 +2284,6 @@ async function saveProjectDisplayName(projectKey: string, displayName: string): 
 function projectSubtitle(projectRoot: string | null | undefined, fallbackKey: string): string | null {
   if (!projectRoot) return fallbackKey === 'unknown' ? null : fallbackKey
   return compactProjectPath(projectRoot)
-}
-
-function isWorktreeSession(session: SessionListItem): boolean {
-  if (!session.workDir) return false
-  if (/[\\/]\.claude[\\/]worktrees[\\/]/.test(session.workDir)) return true
-  if (!session.projectRoot || session.workDir === session.projectRoot) return false
-  return !isSameOrChildPath(session.workDir, session.projectRoot)
-}
-
-function isSameOrChildPath(childPath: string, parentPath: string): boolean {
-  const child = normalizePathForCompare(childPath)
-  const parent = normalizePathForCompare(parentPath)
-  return child === parent || child.startsWith(`${parent}/`)
-}
-
-function normalizePathForCompare(pathLike: string): string {
-  return pathLike.replace(/\\/g, '/').replace(/\/+$/, '')
 }
 
 function compactProjectPath(pathLike: string): string {

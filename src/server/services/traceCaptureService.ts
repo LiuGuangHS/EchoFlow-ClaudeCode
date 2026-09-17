@@ -1,6 +1,7 @@
 export {
   captureResponseTraceSnapshot,
   clearTraceCaptureStateForTests,
+  drainTraceCaptureForTests,
   createTraceCallId,
   createTraceBodySnapshot,
   getTraceCaptureDiagnosticsForTests,
@@ -30,6 +31,7 @@ export type {
   TraceEventRecord,
   TraceEventSeverity,
   TraceProviderInfo,
+  TraceRequestSemantic,
   TraceResponseCapture,
   TraceSession,
   TraceSessionDeleteResult,

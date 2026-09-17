@@ -11,6 +11,7 @@ import { handleProvidersApi } from '../api/providers.js'
 import { handleProxyRequest } from '../proxy/handler.js'
 import {
   clearTraceCaptureStateForTests,
+  drainTraceCaptureForTests,
   setTraceAppendBeforeWriteHookForTests,
   traceCaptureService,
 } from '../services/traceCaptureService.js'
@@ -23,6 +24,7 @@ import {
   IMAGE_GENERATION_PROVIDER_ID_ENV_KEY,
   IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY,
 } from '../../services/imageGeneration/config.js'
+import { buildComputerUseTools } from '../../vendor/computer-use-mcp/tools.js'
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
 
@@ -40,6 +42,7 @@ async function setup() {
 }
 
 async function teardown() {
+  await drainTraceCaptureForTests()
   clearTraceCaptureStateForTests()
   if (originalConfigDir !== undefined) {
     process.env.CLAUDE_CONFIG_DIR = originalConfigDir
@@ -50,6 +53,17 @@ async function teardown() {
     process.env.HOME = originalHome
   } else {
     delete process.env.HOME
+  }
+  // The background trace projection may still hold a handle briefly (first
+  // index builds are slower); retry the removal instead of failing the test
+  // on Windows.
+  for (let attempt = 0; attempt < 60; attempt++) {
+    try {
+      await fs.rm(tmpDir, { recursive: true, force: true })
+      return
+    } catch {
+      await new Promise(resolve => setTimeout(resolve, 25))
+    }
   }
   await fs.rm(tmpDir, { recursive: true, force: true })
 }
@@ -151,6 +165,69 @@ async function settlesBeforeBlockedTraceWrite<T>(promise: Promise<T>): Promise<T
     // as response/trace coupling.
     new Promise<null>((resolve) => setTimeout(() => resolve(null), 1_000)),
   ])
+}
+
+async function captureOpenAIChatRequest(options: {
+  contentSource?: 'user' | 'tool'
+  baseUrl: string
+  model: string
+  content: Array<Record<string, unknown>>
+}): Promise<Record<string, unknown>> {
+  const originalFetch = globalThis.fetch
+  const calls: Array<{ body: Record<string, unknown> }> = []
+  globalThis.fetch = mock(async (_url: string | URL | Request, init?: RequestInit) => {
+    calls.push({ body: JSON.parse(String(init?.body)) as Record<string, unknown> })
+    return new Response(JSON.stringify({
+      id: 'chatcmpl-computer-use',
+      object: 'chat.completion',
+      created: 0,
+      model: options.model,
+      choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }) as typeof fetch
+
+  try {
+    const svc = new ProviderService()
+    const provider = await svc.addProvider(sampleInput({
+      apiFormat: 'openai_chat',
+      baseUrl: options.baseUrl,
+      models: {
+        main: options.model,
+        haiku: options.model,
+        sonnet: options.model,
+        opus: options.model,
+      },
+    }))
+    await svc.activateProvider(provider.id)
+
+    const req = new Request('http://localhost:3456/proxy/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: options.model,
+        max_tokens: 64,
+        messages: [{
+          role: 'user',
+          content: options.contentSource === 'user' ? options.content : [{
+            type: 'tool_result',
+            tool_use_id: 'computer_1',
+            content: options.content,
+          }],
+        }],
+      }),
+    })
+
+    const res = await handleProxyRequest(req, new URL(req.url))
+    expect(res.status).toBe(200)
+    expect(calls).toHaveLength(1)
+    return calls[0].body
+  } finally {
+    globalThis.fetch = originalFetch
+  }
 }
 
 // =============================================================================
@@ -528,6 +605,7 @@ describe('ProviderService', () => {
           'gpt-5.4': 950_000,
           'gpt-5.5': 258_400,
           'gpt-5.4-mini': 258_400,
+          'gpt-6-astra': 997_500,
         })
         expect(env.ANTHROPIC_BASE_URL).toBeUndefined()
         expect(env.ANTHROPIC_API_KEY).toBeUndefined()
@@ -771,6 +849,34 @@ describe('ProviderService', () => {
       expect(env.ANTHROPIC_AUTH_TOKEN).toBe('sk-new-key')
       expect(env.ANTHROPIC_API_KEY).toBe('')
       expect(env.ANTHROPIC_MODEL).toBe('model-main')
+    })
+
+    test('editing an existing provider persists supportsNestedToolResultMedia and reroutes it through the proxy', async () => {
+      const svc = new ProviderService()
+      const added = await svc.addProvider(sampleInput())
+      await svc.activateProvider(added.id)
+
+      // Default: nested media preserved, direct connection.
+      let settings = await readSettings()
+      let env = settings.env as Record<string, string>
+      expect(env.ANTHROPIC_BASE_URL).toBe('https://api.example.com')
+
+      const updated = await svc.updateProvider(added.id, { supportsNestedToolResultMedia: false })
+
+      expect(updated.supportsNestedToolResultMedia).toBe(false)
+
+      settings = await readSettings()
+      env = settings.env as Record<string, string>
+      expect(env.ANTHROPIC_BASE_URL).toContain('127.0.0.1')
+      expect(env.ANTHROPIC_API_KEY).toBe('proxy-managed')
+
+      // Editing back to nested media restores the direct connection.
+      const reverted = await svc.updateProvider(added.id, { supportsNestedToolResultMedia: true })
+      expect(reverted.supportsNestedToolResultMedia).toBe(true)
+
+      settings = await readSettings()
+      env = settings.env as Record<string, string>
+      expect(env.ANTHROPIC_BASE_URL).toBe('https://api.example.com')
     })
 
     test('updating active provider should override and clear auto compact window', async () => {
@@ -1248,6 +1354,50 @@ describe('ProviderService', () => {
       }
     })
 
+    test.each([
+      ['xuanshuapi', 'https://www.xuanshuapi.com', 'claude-sonnet-5'],
+      ['fennoai', 'https://api.fenno.ai', 'claude-sonnet-5'],
+      ['qiniuai', 'https://api.qnaigc.com', 'deepseek/deepseek-v4-pro'],
+    ])('keeps legacy %s providers editable and usable after retirement', async (presetId, baseUrl, model) => {
+      // This is an old on-disk record: auth/context fields were not always persisted.
+      const legacyProvider = {
+        id: `saved-${presetId}`,
+        ...sampleInput({ presetId, baseUrl, models: { main: model, haiku: model, sonnet: model, opus: model } }),
+      }
+      await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+      await fs.writeFile(path.join(tmpDir, 'cc-haha', 'providers.json'), JSON.stringify({
+        providers: [legacyProvider],
+        activeId: legacyProvider.id,
+      }))
+
+      const svc = new ProviderService()
+      expect((await svc.listProviders()).providers).toEqual([expect.objectContaining(legacyProvider)])
+
+      await svc.updateProvider(legacyProvider.id, { name: 'Renamed saved provider' })
+      await svc.activateProvider(legacyProvider.id)
+      const restarted = new ProviderService()
+      expect(await restarted.getProvider(legacyProvider.id)).toMatchObject({
+        ...legacyProvider,
+        name: 'Renamed saved provider',
+      })
+      expect((await restarted.listProviders()).activeId).toBe(legacyProvider.id)
+
+      const runtimeEnv = await restarted.getProviderRuntimeEnv(legacyProvider.id)
+      const settingsEnv = (await readSettings()).env as Record<string, string>
+      for (const env of [runtimeEnv, settingsEnv]) {
+        expect(env).toMatchObject({
+          ANTHROPIC_BASE_URL: baseUrl,
+          ANTHROPIC_AUTH_TOKEN: legacyProvider.apiKey,
+          ANTHROPIC_API_KEY: '',
+          ANTHROPIC_MODEL: model,
+        })
+        expect(JSON.parse(env.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS)[model]).toBe(1000000)
+        if (presetId === 'xuanshuapi') {
+          expect(env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('claude-sonnet-5')
+        }
+      }
+    })
+
     test('should include preset default env on activation and runtime env', async () => {
       const svc = new ProviderService()
       const provider = await svc.addProvider(sampleInput({
@@ -1451,6 +1601,21 @@ describe('ProviderService', () => {
       expect(active!.apiFormat).toBe('anthropic')
     })
 
+    test('should resolve preset default auth for a no-key proxy provider', async () => {
+      const svc = new ProviderService()
+      const provider = await svc.addProvider(sampleInput({
+        presetId: 'lmstudio',
+        apiKey: '',
+        apiFormat: 'anthropic',
+        supportsNestedToolResultMedia: false,
+      }))
+
+      const config = await svc.getProviderForProxy(provider.id)
+
+      expect(config?.apiKey).toBe('lmstudio')
+      expect(config?.authStrategy).toBe('auth_token_empty_api_key')
+    })
+
     test('should return null when ChatGPT Official is the active provider', async () => {
       const svc = new ProviderService()
       await svc.activateProvider('openai-official')
@@ -1471,6 +1636,67 @@ describe('ProviderService', () => {
   })
 
   describe('handleProxyRequest', () => {
+    test('preserves optional Computer Use parameters in the final Responses proxy request', async () => {
+      const originalFetch = globalThis.fetch
+      const computerTools = buildComputerUseTools().filter(tool =>
+        ['get_app_state', 'click'].includes(tool.name),
+      )
+      const originalSchemas = structuredClone(computerTools.map(tool => tool.inputSchema))
+      const calls: Array<{ url: string; body: Record<string, unknown> }> = []
+      globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
+        calls.push({ url: String(input), body: JSON.parse(String(init?.body)) })
+        return Response.json({
+          id: 'resp_computer_schema',
+          object: 'response',
+          created_at: 0,
+          model: 'gpt-6-astra',
+          status: 'completed',
+          output: [],
+        })
+      }) as typeof fetch
+
+      try {
+        const svc = new ProviderService()
+        const provider = await svc.addProvider(sampleInput({ apiFormat: 'openai_responses' }))
+        await svc.activateProvider(provider.id)
+        const req = new Request('http://localhost:3456/proxy/v1/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'gpt-6-astra',
+            max_tokens: 64,
+            messages: [{ role: 'user', content: 'Inspect Blender' }],
+            tools: computerTools.map(tool => ({
+              name: tool.name,
+              description: tool.description,
+              input_schema: tool.inputSchema,
+            })),
+          }),
+        })
+
+        const response = await handleProxyRequest(req, new URL(req.url))
+        expect(response.status).toBe(200)
+        await response.text()
+        expect(calls).toHaveLength(1)
+        expect(calls[0].url).toBe('https://api.example.com/v1/responses')
+        const outboundTools = calls[0].body.tools as Array<{
+          name: string
+          strict?: boolean
+          parameters: Record<string, unknown>
+        }>
+        expect(outboundTools).toHaveLength(computerTools.length)
+        for (const [index, tool] of outboundTools.entries()) {
+          expect(tool.name).toBe(computerTools[index].name)
+          expect(tool.strict).toBe(false)
+          expect(tool.parameters).toEqual(originalSchemas[index])
+          expect(tool.parameters.required).toEqual(['app'])
+        }
+        expect(computerTools.map(tool => tool.inputSchema)).toEqual(originalSchemas)
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+
     test('records a session trace for proxied OpenAI Chat calls', async () => {
       const originalFetch = globalThis.fetch
       const upstreamHeaders: Headers[] = []
@@ -1526,6 +1752,147 @@ describe('ProviderService', () => {
         expect(trace.calls[0].response.body.preview).toContain('chatcmpl-trace')
         expect(upstreamHeaders[0].get('Authorization')).toBe('Bearer sk-test-key-123')
         expect(upstreamHeaders[0].get('Authorization')).not.toContain('desktop-local-secret')
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+
+    test('records DeepSeek Computer Use request semantics independently of the truncated raw body', async () => {
+      const originalFetch = globalThis.fetch
+      globalThis.fetch = mock(async () => new Response(JSON.stringify({
+        id: 'chatcmpl-trace-deepseek-computer-use',
+        object: 'chat.completion',
+        created: 0,
+        model: 'deepseek-v4-flash-vision-exp',
+        choices: [{ index: 0, message: { role: 'assistant', content: 'validated' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 119_000, completion_tokens: 12, total_tokens: 119_012 },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })) as typeof fetch
+
+      const screenshotData = 'AQID'.repeat(80_000)
+      const injectedContext = '<system-reminder>\n# Project rules\nUse the repository instructions.\n</system-reminder>'
+
+      try {
+        const svc = new ProviderService()
+        const provider = await svc.addProvider(sampleInput({
+          apiFormat: 'openai_chat',
+          baseUrl: 'https://opencode.ai/zen',
+          name: 'DeepSeek V4 Flash',
+          models: {
+            main: 'deepseek-v4-flash-vision-exp',
+            haiku: 'deepseek-v4-flash-vision-exp',
+            sonnet: 'deepseek-v4-flash-vision-exp',
+            opus: 'deepseek-v4-flash-vision-exp',
+          },
+        }))
+        await svc.activateProvider(provider.id)
+
+        const req = new Request('http://localhost:3456/proxy/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Claude-Code-Session-Id': 'session-deepseek-computer-use-trace',
+          },
+          body: JSON.stringify({
+            model: 'deepseek-v4-flash-vision-exp',
+            max_tokens: 64,
+            system: [{ type: 'text', text: 'You are Claude Code.' }],
+            messages: [
+              {
+                role: 'user',
+                content: [
+                  { type: 'text', text: injectedContext },
+                  { type: 'text', text: '创建并校验 large-200.json 文件' },
+                ],
+              },
+              {
+                role: 'assistant',
+                content: [{
+                  type: 'tool_use',
+                  id: 'computer_1',
+                  name: 'computer',
+                  input: { action: 'screenshot' },
+                }],
+              },
+              {
+                role: 'user',
+                content: [{
+                  type: 'tool_result',
+                  tool_use_id: 'computer_1',
+                  content: [
+                    { type: 'text', text: 'Computer Use state' },
+                    {
+                      type: 'image',
+                      source: { type: 'base64', media_type: 'image/jpeg', data: screenshotData },
+                    },
+                  ],
+                }],
+              },
+            ],
+          }),
+        })
+
+        const response = await handleProxyRequest(req, new URL(req.url))
+        const trace = await waitForCompletedProxyTrace('session-deepseek-computer-use-trace')
+        const call = trace.calls[0]
+
+        expect(response.status).toBe(200)
+        expect(call.request.body.truncated).toBe(true)
+        expect(() => JSON.parse(call.request.body.preview)).toThrow()
+        expect(call.request.semantic).toMatchObject({
+          version: 1,
+          request: {
+            model: 'deepseek-v4-flash-vision-exp',
+            system: [{ type: 'text', text: 'You are Claude Code.' }],
+            messages: [
+              {
+                role: 'user',
+                content: [
+                  { type: 'text', text: injectedContext },
+                  { type: 'text', text: '创建并校验 large-200.json 文件' },
+                ],
+              },
+              {
+                role: 'assistant',
+                content: [{
+                  type: 'tool_use',
+                  id: 'computer_1',
+                  name: 'computer',
+                  input: { action: 'screenshot' },
+                }],
+              },
+              {
+                role: 'user',
+                content: [{
+                  type: 'tool_result',
+                  tool_use_id: 'computer_1',
+                  content: [
+                    { type: 'text', text: 'Computer Use state' },
+                    {
+                      type: 'image',
+                      source: {
+                        type: 'base64',
+                        media_type: 'image/jpeg',
+                        bytes: 240_000,
+                        sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+                      },
+                    },
+                  ],
+                }],
+              },
+            ],
+          },
+        })
+        const semanticMessages = call.request.semantic?.request.messages as Array<{
+          content: Array<Record<string, unknown>>
+        }>
+        expect(semanticMessages[2]?.content[0]).toMatchObject({
+          type: 'tool_result',
+          tool_use_id: 'computer_1',
+        })
+        expect(JSON.stringify(call.request.semantic)).not.toContain(screenshotData.slice(0, 64))
       } finally {
         globalThis.fetch = originalFetch
       }
@@ -1699,6 +2066,89 @@ describe('ProviderService', () => {
       }
     })
 
+    test('round-trips DeepSeek reasoning by model on generic OpenAI Chat hosts', async () => {
+      const originalFetch = globalThis.fetch
+      const calls: Array<Record<string, unknown>> = []
+      globalThis.fetch = mock(async (_url: string | URL | Request, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+        calls.push(body)
+        const messages = body.messages as Array<Record<string, unknown>>
+        const assistantMessage = messages.find(message => message.role === 'assistant')
+
+        if (body.model === 'deepseek-v4-flash' && assistantMessage?.reasoning_content === undefined) {
+          return new Response(JSON.stringify({
+            error: {
+              message: 'The reasoning_content in the thinking mode must be passed back to the API',
+            },
+          }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        }
+
+        return new Response(JSON.stringify({
+          id: 'chatcmpl-reasoning-round-trip',
+          object: 'chat.completion',
+          created: 0,
+          model: body.model,
+          choices: [{ index: 0, message: { role: 'assistant', content: 'done' }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }) as typeof fetch
+
+      try {
+        const svc = new ProviderService()
+        const provider = await svc.addProvider(sampleInput({
+          apiFormat: 'openai_chat',
+          baseUrl: 'https://api.b.ai',
+        }))
+        await svc.activateProvider(provider.id)
+
+        const makeFollowUpRequest = (model: string) => new Request('http://localhost:3456/proxy/v1/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model,
+            max_tokens: 64,
+            messages: [
+              {
+                role: 'assistant',
+                content: [
+                  { type: 'thinking', thinking: 'Need to inspect the repository first.' },
+                  { type: 'tool_use', id: 'call_1', name: 'read_file', input: { path: 'README.md' } },
+                ],
+              },
+              {
+                role: 'user',
+                content: [{ type: 'tool_result', tool_use_id: 'call_1', content: 'Repository contents' }],
+              },
+            ],
+          }),
+        })
+
+        const deepSeekRequest = makeFollowUpRequest('deepseek-v4-flash')
+        const deepSeekResponse = await handleProxyRequest(deepSeekRequest, new URL(deepSeekRequest.url))
+        expect(deepSeekResponse.status).toBe(200)
+
+        const genericRequest = makeFollowUpRequest('generic-chat-model')
+        const genericResponse = await handleProxyRequest(genericRequest, new URL(genericRequest.url))
+        expect(genericResponse.status).toBe(200)
+
+        const deepSeekMessages = calls[0].messages as Array<Record<string, unknown>>
+        const deepSeekAssistant = deepSeekMessages.find(message => message.role === 'assistant')
+        expect(deepSeekAssistant?.reasoning_content).toBe('Need to inspect the repository first.')
+
+        const genericMessages = calls[1].messages as Array<Record<string, unknown>>
+        const genericAssistant = genericMessages.find(message => message.role === 'assistant')
+        expect(genericAssistant?.reasoning_content).toBeUndefined()
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+
     test('forwards a stable prompt_cache_key from client session metadata for OpenAI Responses upstreams', async () => {
       const originalFetch = globalThis.fetch
       const calls: Array<{ body: Record<string, unknown>; headers: Headers }> = []
@@ -1750,65 +2200,119 @@ describe('ProviderService', () => {
       }
     })
 
-    test('omits image_url parts for DeepSeek OpenAI Chat proxy requests', async () => {
-      const originalFetch = globalThis.fetch
-      const calls: Array<{ body: Record<string, unknown> }> = []
-      globalThis.fetch = mock(async (_url: string | URL | Request, init?: RequestInit) => {
-        calls.push({ body: JSON.parse(String(init?.body)) as Record<string, unknown> })
-        return new Response(JSON.stringify({
-          id: 'chatcmpl-1',
-          object: 'chat.completion',
-          created: 0,
-          model: 'deepseek-v4-pro',
-          choices: [{ index: 0, message: { role: 'assistant', content: 'I cannot view images.' }, finish_reason: 'stop' }],
-          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-        }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        })
-      }) as typeof fetch
+    test.each([
+      'https://opencode.ai/zen',
+      'https://api.deepseek.com',
+      'https://gateway.example.test',
+    ])('preserves Computer Use tool images for explicit vision models at %s', async (baseUrl) => {
+      const body = await captureOpenAIChatRequest({
+        baseUrl,
+        model: 'deepseek-v4-flash-vision-exp',
+        content: [
+          { type: 'text', text: 'Computer Use state' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: '/9j/AA==' } },
+          { type: 'text', text: 'After screenshot' },
+        ],
+      })
 
-      try {
-        const svc = new ProviderService()
-        const provider = await svc.addProvider(sampleInput({
-          apiFormat: 'openai_chat',
-          baseUrl: 'https://api.deepseek.com',
-          models: {
-            main: 'deepseek-v4-pro',
-            haiku: 'deepseek-v4-pro',
-            sonnet: 'deepseek-v4-pro',
-            opus: 'deepseek-v4-pro',
-          },
-        }))
-        await svc.activateProvider(provider.id)
+      const messages = body.messages as Array<Record<string, unknown>>
+      expect(messages).toEqual([
+        {
+          role: 'tool',
+          tool_call_id: 'computer_1',
+          content: 'Computer Use stateAfter screenshot',
+        },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: '[Media content for tool call computer_1]' },
+            { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,/9j/AA==' } },
+          ],
+        },
+      ])
+    })
 
-        const req = new Request('http://localhost:3456/proxy/v1/messages', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            model: 'deepseek-v4-pro',
-            max_tokens: 64,
-            messages: [{
-              role: 'user',
-              content: [
-                { type: 'text', text: 'What is in this screenshot?' },
-                { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'abc123' } },
-              ],
-            }],
-          }),
-        })
+    test.each([
+      {
+        name: 'opencode non-vision model',
+        baseUrl: 'https://opencode.ai/zen',
+        model: 'deepseek-v4-flash',
+      },
+      {
+        name: 'classic DeepSeek text model',
+        baseUrl: 'https://api.deepseek.com',
+        model: 'deepseek-v4-flash',
+      },
+    ])('uses text-only Computer Use content for $name', async ({ baseUrl, model }) => {
+      const body = await captureOpenAIChatRequest({
+        baseUrl,
+        model,
+        content: [{
+          type: 'image',
+          source: { type: 'base64', media_type: 'image/jpeg', data: 'private-screenshot-data' },
+        }],
+      })
 
-        const res = await handleProxyRequest(req, new URL(req.url))
-        expect(res.status).toBe(200)
+      const messages = body.messages as Array<Record<string, unknown>>
+      expect(messages[0]).toEqual({
+        role: 'tool',
+        tool_call_id: 'computer_1',
+        content: '\n[Image omitted: this OpenAI-compatible chat endpoint only supports text content.]\n',
+      })
+      expect(JSON.stringify(body)).not.toContain('private-screenshot-data')
+      expect(JSON.stringify(body)).not.toContain('image_url')
+    })
 
-        const serialized = JSON.stringify(calls[0].body)
-        expect(serialized).not.toContain('image_url')
-        expect(serialized).not.toContain('abc123')
-        expect(serialized).toContain('What is in this screenshot?')
-        expect(serialized).toContain('Image omitted')
-      } finally {
-        globalThis.fetch = originalFetch
-      }
+    test.each([
+      { baseUrl: 'https://api.deepseek.com', model: 'deepseek-v4-flash-vision-exp' },
+      { baseUrl: 'https://gateway.example.test', model: 'deepseek-v4-flash-vision-exp' },
+      { baseUrl: 'https://opencode.ai/zen', model: 'deepseek-v4-flash-vision-exp' },
+    ])('forwards chat attachments for $model at $baseUrl (#1304)', async ({ baseUrl, model }) => {
+      const body = await captureOpenAIChatRequest({
+        baseUrl,
+        model,
+        contentSource: 'user',
+        content: [
+          { type: 'text', text: 'Describe this picture.' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'picture-data' } },
+        ],
+      })
+
+      expect(body.messages).toEqual([{
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Describe this picture.' },
+          { type: 'image_url', image_url: { url: 'data:image/png;base64,picture-data' } },
+        ],
+      }])
+      expect(JSON.stringify(body)).not.toContain('Image omitted:')
+    })
+
+    test('keeps generic OpenAI Chat providers vision-capable by default', async () => {
+      const body = await captureOpenAIChatRequest({
+        baseUrl: 'https://chat.example.test',
+        model: 'custom-text-named-model',
+        content: [{
+          type: 'image',
+          source: { type: 'base64', media_type: 'image/png', data: 'generic-image-data' },
+        }],
+      })
+
+      const messages = body.messages as Array<Record<string, unknown>>
+      expect(messages).toEqual([
+        {
+          role: 'tool',
+          tool_call_id: 'computer_1',
+          content: 'Media result attached after this tool result.',
+        },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: '[Media content for tool call computer_1]' },
+            { type: 'image_url', image_url: { url: 'data:image/png;base64,generic-image-data' } },
+          ],
+        },
+      ])
     })
 
     test('normalizes context-window suffixes before forwarding OpenAI Chat proxy requests', async () => {
@@ -2003,6 +2507,76 @@ describe('ProviderService', () => {
   })
 
   describe('testProviderConfig', () => {
+    for (const [basePath, messagePath] of [
+      ['', '/v1/messages'],
+      ['/', '/v1/messages'],
+      ['/v1', '/v1/messages'],
+      ['/v1///', '/v1/messages'],
+      ['/anthropic', '/anthropic/v1/messages'],
+      ['/anthropic/v1/', '/anthropic/v1/messages'],
+      ['/v1/tenant', '/v1/tenant/v1/messages'],
+    ]) {
+      test(`Anthropic base URL ${basePath || '(root)'} works in connectivity and proxy requests (#1279)`, async () => {
+        const requests: Array<{ path: string; apiKey: string | null; version: string | null }> = []
+        const server = Bun.serve({
+          hostname: '127.0.0.1',
+          port: 0,
+          async fetch(req) {
+            const requestPath = new URL(req.url).pathname
+            requests.push({
+              path: requestPath,
+              apiKey: req.headers.get('x-api-key'),
+              version: req.headers.get('anthropic-version'),
+            })
+            if (requestPath !== messagePath) {
+              return Response.json({ error: { message: 'Unknown endpoint' } }, { status: 404 })
+            }
+            const body = await req.json() as { stream?: boolean }
+            if (body.stream) {
+              return new Response('event: message_stop\ndata: {"type":"message_stop"}\n\n', {
+                headers: { 'Content-Type': 'text/event-stream' },
+              })
+            }
+            return Response.json({ type: 'message', model: 'model-main', content: [{ type: 'text', text: 'ok' }] })
+          },
+        })
+
+        try {
+          const svc = new ProviderService()
+          const baseUrl = `http://127.0.0.1:${server.port}${basePath}`
+          const provider = await svc.addProvider(sampleInput({
+            baseUrl,
+            authStrategy: 'api_key',
+            supportsNestedToolResultMedia: false,
+          }))
+          const result = await svc.testProvider(provider.id)
+          expect(requests[0]?.path).toBe(messagePath)
+          expect(result.connectivity.success).toBe(true)
+          expect(result.proxy?.success).toBe(true)
+
+          for (const stream of [false, true]) {
+            const req = new Request(`http://localhost/proxy/providers/${provider.id}/v1/messages`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'anthropic-version': '2023-06-01' },
+              body: JSON.stringify({ model: 'model-main', max_tokens: 16, stream, messages: [{ role: 'user', content: 'hello' }] }),
+            })
+            const response = await handleProxyRequest(req, new URL(req.url))
+            expect(response.status).toBe(200)
+            if (stream) expect(await response.text()).toContain('event: message_stop')
+            else expect(await response.json()).toMatchObject({ type: 'message' })
+          }
+          expect(requests).toEqual(Array.from({ length: 4 }, () => ({
+            path: messagePath,
+            apiKey: 'sk-test-key-123',
+            version: '2023-06-01',
+          })))
+          expect((await svc.getProvider(provider.id))?.baseUrl).toBe(baseUrl)
+        } finally {
+          server.stop(true)
+        }
+      })
+    }
+
     test('should use auth strategy headers for Anthropic-compatible tests', async () => {
       const originalFetch = globalThis.fetch
       const calls: Array<{ url: string; headers: Record<string, string> }> = []
@@ -2051,6 +2625,40 @@ describe('ProviderService', () => {
         expect(calls[1].headers.Authorization).toBeUndefined()
         expect(calls[2].headers['x-api-key']).toBe('sk-dual')
         expect(calls[2].headers.Authorization).toBe('Bearer sk-dual')
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+
+    test('tests the proxy path for Anthropic providers that require media hoisting', async () => {
+      const originalFetch = globalThis.fetch
+      const calls: Array<{ body: Record<string, unknown> }> = []
+      globalThis.fetch = mock(async (_url: string | URL | Request, init?: RequestInit) => {
+        calls.push({ body: JSON.parse(String(init?.body)) as Record<string, unknown> })
+        return new Response(JSON.stringify({
+          type: 'message',
+          model: 'model-main',
+          content: [{ type: 'text', text: 'ok' }],
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }) as typeof fetch
+
+      try {
+        const svc = new ProviderService()
+        const result = await svc.testProviderConfig({
+          baseUrl: 'https://api.example.com/anthropic',
+          apiKey: 'sk-api',
+          modelId: 'model-main',
+          authStrategy: 'api_key',
+          apiFormat: 'anthropic',
+          supportsNestedToolResultMedia: false,
+        })
+
+        expect(result.connectivity.success).toBe(true)
+        expect(result.proxy?.success).toBe(true)
+        expect(calls).toHaveLength(2)
       } finally {
         globalThis.fetch = originalFetch
       }
@@ -2284,13 +2892,18 @@ describe('ProviderService', () => {
       }
     })
 
-    test('should use configured network timeout for provider tests', async () => {
-      await writeSettings({
-        network: {
-          aiRequestTimeoutMs: 180_000,
-          proxy: { mode: 'system', url: '' },
-        },
-      })
+    test.each([180_000, 14_400_000, 21_600_000])('should use the configured network timeout for provider tests (%i ms)', async timeoutMs => {
+      await fs.mkdir(echoFlowDir(), { recursive: true })
+      await fs.writeFile(
+        path.join(echoFlowDir(), 'settings.json'),
+        JSON.stringify({
+          network: {
+            aiRequestTimeoutMs: timeoutMs,
+            proxy: { mode: 'system', url: '' },
+          },
+        }),
+        'utf-8',
+      )
       const originalFetch = globalThis.fetch
       const originalTimeout = AbortSignal.timeout
       const timeoutCalls: number[] = []
@@ -2319,7 +2932,7 @@ describe('ProviderService', () => {
           apiFormat: 'anthropic',
         })
 
-        expect(timeoutCalls).toEqual([180_000])
+        expect(timeoutCalls).toEqual([timeoutMs])
       } finally {
         AbortSignal.timeout = originalTimeout
         globalThis.fetch = originalFetch
@@ -2606,5 +3219,163 @@ describe('Providers API', () => {
     const res = await handleProvidersApi(req, url, segments)
 
     expect(res.status).toBe(405)
+  })
+})
+
+describe('ApiSmart preset request contract (offline fixtures)', () => {
+  beforeEach(setup)
+  afterEach(teardown)
+
+  const apiKey = 'sk-apismart-offline-fixture'
+
+  async function createApiSmart() {
+    const { PROVIDER_PRESETS } = await import('../config/providerPresets.js')
+    const preset = PROVIDER_PRESETS.find(item => item.id === 'apismart')!
+    expect(preset).toBeDefined()
+    // Exercise the same API boundary as the desktop's save action.
+    const { req, url, segments } = makeRequest('POST', '/api/providers', {
+      presetId: preset.id, name: preset.name, baseUrl: preset.baseUrl,
+      apiFormat: preset.apiFormat, apiKey, models: preset.defaultModels,
+    })
+    const result = await handleProvidersApi(req, url, segments)
+    expect(result.status).toBe(201)
+    const saved = await result.json()
+    return { preset, provider: saved.provider }
+  }
+
+  async function proxy(providerId: string, body: Record<string, unknown>) {
+    const { req, url } = makeRequest('POST', `/proxy/providers/${providerId}/v1/messages`, body)
+    return handleProxyRequest(req, url)
+  }
+
+  test('preset save, model fetch, connectivity, and actual chat all use exactly one /v1', async () => {
+    const { preset, provider } = await createApiSmart()
+    const originalFetch = globalThis.fetch
+    const calls: Array<{ url: string; method: string | undefined; body: any }> = []
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input)
+      expect(new Headers(init?.headers).get('authorization')).toBe(`Bearer ${apiKey}`)
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined
+      calls.push({ url, method: init?.method, body })
+      if (url === 'https://gw.apismart.ai/v1/models' && init?.method === 'GET') {
+        return Response.json({ object: 'list', data: [
+          { id: 'deepseek-v4-pro-0813', object: 'model', owned_by: 'deepseek' },
+          { id: 'deepseek-v4-flash-0731-tem', object: 'model', owned_by: 'deepseek' },
+        ] })
+      }
+      if (url !== 'https://gw.apismart.ai/v1/chat/completions' || init?.method !== 'POST') {
+        return Response.json({ error: 'Wrong request endpoint' }, { status: 404 })
+      }
+      return Response.json({
+        id: 'chatcmpl-offline', object: 'chat.completion', model: body.model,
+        choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
+      })
+    }) as typeof fetch
+    try {
+      const catalog = makeRequest('POST', '/api/providers/models', { baseUrl: preset.baseUrl, apiKey })
+      const models = await handleProvidersApi(catalog.req, catalog.url, catalog.segments)
+      expect(models.status).toBe(200)
+      expect(await models.json()).toMatchObject({ ok: true, models: [
+        { id: 'deepseek-v4-flash-0731-tem' }, { id: 'deepseek-v4-pro-0813' },
+      ] })
+      const check = await new ProviderService().testProviderConfig({
+        baseUrl: preset.baseUrl, apiKey, apiFormat: preset.apiFormat, modelId: preset.defaultModels.main,
+      })
+      expect(check.connectivity.success).toBe(true)
+      expect(check.proxy?.success).toBe(true)
+      for (const model of [preset.defaultModels.main, preset.defaultModels.haiku]) {
+        const response = await proxy(provider.id, {
+          model, max_tokens: 64, system: 'Be helpful.', messages: [{ role: 'user', content: 'hello' }],
+        })
+        expect(response.status).toBe(200)
+        expect(await response.json()).toMatchObject({
+          model, content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn',
+        })
+        expect(calls.at(-1)?.body).toMatchObject({ model, stream: false, messages: [
+          { role: 'system', content: 'Be helpful.' }, { role: 'user', content: 'hello' },
+        ] })
+      }
+      expect(calls.map(call => call.url)).toEqual([
+        'https://gw.apismart.ai/v1/models',
+        ...Array(4).fill('https://gw.apismart.ai/v1/chat/completions'),
+      ])
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  test('streamed tool calls survive the proxy and their result is sent back with DeepSeek reasoning', async () => {
+    const { preset, provider } = await createApiSmart()
+    const originalFetch = globalThis.fetch
+    const calls: any[] = []
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      expect(String(input)).toBe('https://gw.apismart.ai/v1/chat/completions')
+      expect(init?.method).toBe('POST')
+      expect(new Headers(init?.headers).get('authorization')).toBe(`Bearer ${apiKey}`)
+      calls.push(JSON.parse(String(init?.body)))
+      const chunks = calls.length === 1 ? [
+        { delta: { role: 'assistant', reasoning_content: 'Need the weather.' } },
+        { delta: { tool_calls: [{ index: 0, id: 'call_weather', type: 'function', function: { name: 'weather', arguments: '{"city":' } }] } },
+        { delta: { tool_calls: [{ index: 0, function: { arguments: '"Paris"}' } }] } },
+        { delta: {}, finish_reason: 'tool_calls' },
+      ] : [
+        { delta: { role: 'assistant', content: 'It is sunny.' } },
+        { delta: {}, finish_reason: 'stop' },
+      ]
+      const data = chunks.map(choice => `data: ${JSON.stringify({
+        id: 'chatcmpl-offline-tool', object: 'chat.completion.chunk', model: preset.defaultModels.main,
+        choices: [{ index: 0, ...choice }],
+      })}\n\n`).join('') + 'data: [DONE]\n\n'
+      return new Response(data, { headers: { 'Content-Type': 'text/event-stream' } })
+    }) as typeof fetch
+    try {
+      const tool = { name: 'weather', description: 'Get weather', input_schema: {
+        type: 'object', properties: { city: { type: 'string' } }, required: ['city'],
+      } }
+      const first = await proxy(provider.id, { model: preset.defaultModels.main, stream: true, max_tokens: 64,
+        messages: [{ role: 'user', content: 'Weather in Paris?' }], tools: [tool], tool_choice: { type: 'auto' },
+      })
+      expect(first.status).toBe(200)
+      const events = (await first.text()).split('\n\n').flatMap(block => {
+        const data = block.split('\n').find(line => line.startsWith('data: '))?.slice(6)
+        return data ? [JSON.parse(data)] : []
+      })
+      expect(calls[0]).toMatchObject({ stream: true, stream_options: { include_usage: true },
+        tools: [{ type: 'function', function: { name: 'weather', parameters: tool.input_schema } }], tool_choice: 'auto',
+      })
+      expect(events).toContainEqual(expect.objectContaining({ type: 'content_block_start', content_block: {
+        type: 'tool_use', id: 'call_weather', name: 'weather', input: {},
+      } }))
+      const toolInput = events.filter(event => event.delta?.type === 'input_json_delta')
+        .map(event => event.delta.partial_json).join('')
+      expect(JSON.parse(toolInput)).toEqual({ city: 'Paris' })
+      const thinking = events.filter(event => event.delta?.type === 'thinking_delta')
+        .map(event => event.delta.thinking).join('')
+      expect(thinking).toBe('Need the weather.')
+      expect(events.find(event => event.type === 'message_delta')?.delta.stop_reason).toBe('tool_use')
+      expect(events.at(-1)?.type).toBe('message_stop')
+      const second = await proxy(provider.id, { model: preset.defaultModels.main, stream: true, max_tokens: 64,
+        messages: [
+          { role: 'user', content: 'Weather in Paris?' },
+          { role: 'assistant', content: [
+            { type: 'thinking', thinking },
+            { type: 'tool_use', id: 'call_weather', name: 'weather', input: JSON.parse(toolInput) },
+          ] },
+          { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call_weather', content: 'sunny' }] },
+        ], tools: [tool],
+      })
+      expect(second.status).toBe(200)
+      expect(await second.text()).toContain('It is sunny.')
+      expect(calls[1].messages).toEqual([
+        { role: 'user', content: 'Weather in Paris?' },
+        { role: 'assistant', content: null, reasoning_content: 'Need the weather.', tool_calls: [
+          { id: 'call_weather', type: 'function', function: { name: 'weather', arguments: '{"city":"Paris"}' } },
+        ] },
+        { role: 'tool', tool_call_id: 'call_weather', content: 'sunny' },
+      ])
+    } finally {
+      globalThis.fetch = originalFetch
+    }
   })
 })

@@ -1,3 +1,4 @@
+import { PublicAccessManager } from './services/publicAccess'
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, screen, session, WebContentsView } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import path from 'node:path'
@@ -24,6 +25,9 @@ import {
   sendDesktopNotification,
 } from './services/notifications'
 import { installApplicationMenu, installRendererContextMenu } from './services/menu'
+import { saveWorkspaceBrowserPdf } from './services/workspaceBrowserPdf'
+import { workspaceBrowserMenuPosition } from './services/workspaceBrowserMenu'
+import type { WorkspaceBrowserMenuOptions } from '../src/lib/desktopHost/types'
 import { acquireSingleInstanceLock } from './services/singleInstance'
 import { installTray, shouldInstallTray, type TrayController } from './services/tray'
 import { ElectronUpdaterService, updaterSessionProxyConfig } from './services/updater'
@@ -31,6 +35,14 @@ import { resolveUpdateFeedConfig } from './services/updateFeed'
 import { createUpdateSmokeUpdaterFromEnv } from './services/updateSmoke'
 import { ElectronTerminalService, type TerminalSpawnInput } from './services/terminal'
 import { ElectronPreviewService, type PreviewBounds } from './services/preview'
+import {
+  ElectronWorkspaceBrowserService,
+  WORKSPACE_BROWSER_PARTITION,
+  type WorkspaceBrowserBounds,
+  type WorkspaceBrowserCaptureKind,
+  type WorkspaceBrowserCreateOptions,
+  type WorkspaceBrowserFindOptions,
+} from './services/workspaceBrowser'
 import {
   configureLocalServerRequestAuth,
   configurePreviewSessionPermissions,
@@ -100,12 +112,16 @@ let mainWindow: BrowserWindow | null = null
 let serverRuntime: ElectronServerRuntime | null = null
 let deepSeekHarnessRuntime: DeepSeekHarnessRuntime | null = null
 let deepSeekHarnessWindow: BrowserWindow | null = null
+let publicAccessManager: PublicAccessManager | null = null
 let updaterService: ElectronUpdaterService | null = null
 let terminalService: ElectronTerminalService | null = null
 let previewService: ElectronPreviewService | null = null
+let workspaceBrowserService: ElectronWorkspaceBrowserService | null = null
 let petWindowController: PetWindowController | null = null
 const traceWindows = new Map<string, BrowserWindow>()
 let isQuitting = false
+let quitCleanupStarted = false
+let quitCleanupFinished = false
 let trayController: TrayController | null = null
 
 // Must run before anything logs: a Finder/Dock launch inherits unreadable
@@ -243,6 +259,8 @@ async function openTraceWindow(sessionId: string) {
 
 function getServerRuntime() {
   serverRuntime ??= new ElectronServerRuntime({
+    onServerUnavailable: () => { void publicAccessManager?.serverUnavailable() },
+    onServerReady: () => { void publicAccessManager?.serverChanged() },
     desktopRoot: unpackedRoot(),
     appRoot: appRoot(),
     appVersion: app.getVersion(),
@@ -301,6 +319,35 @@ async function openDeepSeekHarnessWindow() {
     if (isHttpUrl(url)) openExternalUrl(url)
   })
   await window.loadURL(targetUrl)
+}
+
+function getPublicAccessManager() {
+  if (publicAccessManager) return publicAccessManager
+  let queue: Promise<unknown> = Promise.resolve()
+  publicAccessManager = new PublicAccessManager({
+    directory: path.join(getAppMode(app).activeConfigDir ?? app.getPath('userData'), 'echoflow-code', 'public-access'),
+    backend: {
+      request<T>(route: string, method: string, body?: unknown): Promise<T> {
+        const operation = queue.catch(() => {}).then(async () => {
+          const runtime = getServerRuntime()
+          // Never boot the sidecar merely to disable an already stopped tunnel.
+          const serverUrl = runtime.getActiveServerUrl()
+          if (!serverUrl) throw new Error('Server unavailable')
+          const response = await fetch(`${serverUrl}/api/public-access${route}`, {
+            method,
+            headers: { Authorization: `Bearer ${runtime.getLocalAccessToken()}`, 'Content-Type': 'application/json' },
+            body: body === undefined ? undefined : JSON.stringify(body),
+            signal: AbortSignal.timeout(10_000),
+          })
+          if (!response.ok) throw new Error('Public access configuration failed')
+          return await response.json() as T
+        })
+        queue = operation
+        return operation
+      },
+    },
+  })
+  return publicAccessManager
 }
 
 function resolvePetServerAccess(): PreviewLocalAccess | null {
@@ -412,6 +459,64 @@ const loadCustomPetCatalog = createCustomPetCatalogLoader(() => loadCustomPets({
     inspectImageSize: ({ data }) => nativeImage.createFromBuffer(data).getSize(),
   }))
 
+function workspaceBrowserDownloadsDir() {
+  return app.getPath('downloads')
+}
+
+function getWorkspaceBrowserService() {
+  workspaceBrowserService ??= new ElectronWorkspaceBrowserService({
+    previewScriptPath: previewAgentPath(),
+    menuFactory: template => {
+      const window = mainWindow
+      if (!window || window.isDestroyed()) throw new Error('Workspace browser menu requires a live main window')
+      const menu = Menu.buildFromTemplate(template)
+      return {
+        popup: options => menu.popup({ ...options, window }),
+        closePopup: () => { if (!window.isDestroyed()) menu.closePopup(window) },
+      }
+    },
+    emit: event => {
+      mainWindow?.webContents.send(ELECTRON_EVENT_CHANNELS.workspaceBrowserEvent, event)
+    },
+    resolveScaleFactor: parent => {
+      const bounds = parent.getBounds?.()
+      return bounds ? screen.getDisplayMatching(bounds).scaleFactor : 1
+    },
+    writePdf: async ({ data, filename }) => {
+      return saveWorkspaceBrowserPdf(data, async () => {
+        if (!mainWindow || mainWindow.isDestroyed()) return null
+        const result = await dialog.showSaveDialog(mainWindow, {
+          defaultPath: path.join(workspaceBrowserDownloadsDir(), filename),
+          filters: [{ name: 'PDF', extensions: ['pdf'] }],
+        })
+        return result.canceled ? null : result.filePath ?? null
+      })
+    },
+    createView: () => {
+      const view = new WebContentsView({
+        webPreferences: {
+          preload: previewPreloadPath(),
+          // One shared persistent partition for every workspace page: a login in
+          // one tab has to still be there in the next one. Per-tab partitions
+          // would turn every new tab into a fresh, logged-out browser.
+          partition: WORKSPACE_BROWSER_PARTITION,
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+        },
+      })
+      // Same boundary as the singleton preview: OS permissions are denied, and
+      // `configureLocalServerRequestAuth` is deliberately NOT installed here.
+      // These pages render arbitrary remote sites, so attaching the desktop's
+      // local access token to their loopback requests would hand any visited
+      // site the local API.
+      configurePreviewSessionPermissions(view.webContents.session)
+      return view
+    },
+  })
+  return workspaceBrowserService
+}
+
 async function listCustomPets() {
   const { pets, errors } = await loadCustomPetCatalog()
   return { pets, errors }
@@ -443,6 +548,9 @@ function registerHandler<T>(
       throw new Error(`Invalid Electron IPC payload for ${channel}`)
     }
     const senderWindow = BrowserWindow.fromWebContents(event.sender)
+    if (channel.startsWith('desktop:public-access:') && (senderWindow !== mainWindow || event.senderFrame !== event.sender.mainFrame)) {
+      throw new Error('Public access management requires the main desktop window')
+    }
     if (
       petWindowController?.owns(senderWindow) &&
       !isElectronIpcChannelAllowedForPetWindow(channel)
@@ -519,8 +627,17 @@ async function handleCommandInvoke(payload: unknown): Promise<unknown> {
 
 function registerIpcHandlers() {
   ipcMain.on(ELECTRON_INTERNAL_CHANNELS.previewMessageFromView, (event, raw) => {
+    // Workspace pages and the legacy singleton preview share one preload, so the
+    // owner of the sender decides which service receives the message.
+    if (getWorkspaceBrowserService().handleMessageFromView(event.sender, raw)) return
     void getPreviewService().sendMessageToRenderer(event.sender, raw, mainWindow?.webContents)
   })
+  registerHandler(ELECTRON_IPC_CHANNELS.publicAccessGetStatus, () => getPublicAccessManager().getStatus())
+  registerHandler(ELECTRON_IPC_CHANNELS.publicAccessSaveCredential, (_event, payload) => getPublicAccessManager().saveCredential(payload as string))
+  registerHandler(ELECTRON_IPC_CHANNELS.publicAccessDeleteCredential, () => getPublicAccessManager().deleteCredential())
+  registerHandler(ELECTRON_IPC_CHANNELS.publicAccessStart, (_event, payload) => getPublicAccessManager().start(payload as number))
+  registerHandler(ELECTRON_IPC_CHANNELS.publicAccessStop, () => getPublicAccessManager().stop())
+  registerHandler(ELECTRON_IPC_CHANNELS.publicAccessSetAutoStart, (_event, payload) => getPublicAccessManager().setAutoStart(payload as boolean))
   registerHandler(ELECTRON_IPC_CHANNELS.appGetVersion, () => app.getVersion())
   registerHandler(
     ELECTRON_IPC_CHANNELS.appGetLocalePreference,
@@ -740,9 +857,10 @@ function registerIpcHandlers() {
     requireMainWindow(event)
     return getUpdaterService().stageDownloadedUpdate()
   })
-  registerHandler(ELECTRON_IPC_CHANNELS.updatePrepareInstall, (event) => {
+  registerHandler(ELECTRON_IPC_CHANNELS.updatePrepareInstall, async (event) => {
     requireMainWindow(event)
-    return getServerRuntime().stopAll()
+    await publicAccessManager?.stop()
+    getServerRuntime().stopAll()
   })
   registerHandler(ELECTRON_IPC_CHANNELS.updateCancelInstall, (event) => {
     requireMainWindow(event)
@@ -752,6 +870,7 @@ function registerIpcHandlers() {
     requireMainWindow(event)
     if (!getUpdaterService().hasDownloadedUpdate()) {
       throw new Error('No downloaded update is ready to relaunch')
+    }
     }
     isQuitting = true
     getUpdaterService().quitAndInstallDownloadedUpdate()
@@ -802,6 +921,77 @@ function registerIpcHandlers() {
   registerHandler(ELECTRON_IPC_CHANNELS.previewSetZoom, (_event, payload) => getPreviewService().setZoomFactor(payload))
   registerHandler(ELECTRON_IPC_CHANNELS.previewClose, () => getPreviewService().close())
   registerHandler(ELECTRON_IPC_CHANNELS.previewMessage, (event, payload) => getPreviewService().message(payload, event.sender))
+  registerHandler(ELECTRON_IPC_CHANNELS.workspaceBrowserCreate, (event, payload) => {
+    // The service keeps a single parent window, so whichever renderer calls
+    // `create` last owns where every page is attached and detached. Trace and
+    // pet windows load the same preload, so without this a secondary window
+    // could adopt the pages and strand them as unremovable children of the main
+    // window. Same guard shape as `appSetLocalePreference`.
+    if (!mainWindow || currentWindow(event) !== mainWindow) {
+      throw new Error('Only the main window can host workspace browser pages')
+    }
+    const { tabId, ...options } = payload as { tabId: string } & WorkspaceBrowserCreateOptions
+    return getWorkspaceBrowserService().create(mainWindow, tabId, options)
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.workspaceBrowserNavigate, (_event, payload) => {
+    const { tabId, url } = payload as { tabId: string, url: string }
+    return getWorkspaceBrowserService().navigate(tabId, url)
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.workspaceBrowserShowMenu, (event, payload) => {
+    if (!mainWindow || currentWindow(event) !== mainWindow || mainWindow.isDestroyed()) {
+      throw new Error('Only the main window can open workspace browser menus')
+    }
+    const { tabId, ...options } = payload as { tabId: string } & WorkspaceBrowserMenuOptions
+    const { width, height } = mainWindow.getContentBounds()
+    const anchor = workspaceBrowserMenuPosition(options, mainWindow.webContents.getZoomFactor(), { width, height })
+    return getWorkspaceBrowserService().showMenu(mainWindow, tabId, { ...options, ...anchor })
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.workspaceBrowserGoBack, (_event, payload) =>
+    getWorkspaceBrowserService().goBack((payload as { tabId: string }).tabId))
+  registerHandler(ELECTRON_IPC_CHANNELS.workspaceBrowserGoForward, (_event, payload) =>
+    getWorkspaceBrowserService().goForward((payload as { tabId: string }).tabId))
+  registerHandler(ELECTRON_IPC_CHANNELS.workspaceBrowserReload, (_event, payload) => {
+    const { tabId, ignoreCache } = payload as { tabId: string, ignoreCache?: boolean }
+    return getWorkspaceBrowserService().reload(tabId, { ignoreCache })
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.workspaceBrowserStop, (_event, payload) =>
+    getWorkspaceBrowserService().stop((payload as { tabId: string }).tabId))
+  registerHandler(ELECTRON_IPC_CHANNELS.workspaceBrowserSetBounds, (_event, payload) => {
+    const { tabId, bounds } = payload as { tabId: string, bounds: WorkspaceBrowserBounds }
+    return getWorkspaceBrowserService().setBounds(tabId, bounds)
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.workspaceBrowserSetVisible, (_event, payload) => {
+    const { tabId, visible } = payload as { tabId: string, visible: boolean }
+    return getWorkspaceBrowserService().setVisible(tabId, visible)
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.workspaceBrowserSetZoom, (_event, payload) => {
+    const { tabId, factor } = payload as { tabId: string, factor: number }
+    return getWorkspaceBrowserService().setZoom(tabId, factor)
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.workspaceBrowserFind, (_event, payload) => {
+    const { tabId, text, options } = payload as {
+      tabId: string
+      text: string
+      options?: WorkspaceBrowserFindOptions
+    }
+    return getWorkspaceBrowserService().find(tabId, text, options)
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.workspaceBrowserStopFind, (_event, payload) =>
+    getWorkspaceBrowserService().stopFind((payload as { tabId: string }).tabId))
+  registerHandler(ELECTRON_IPC_CHANNELS.workspaceBrowserCapture, (_event, payload) => {
+    const { tabId, kind } = payload as { tabId: string, kind: WorkspaceBrowserCaptureKind }
+    return getWorkspaceBrowserService().capture(tabId, kind)
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.workspaceBrowserSnapshot, (_event, payload) =>
+    getWorkspaceBrowserService().snapshot((payload as { tabId: string }).tabId))
+  registerHandler(ELECTRON_IPC_CHANNELS.workspaceBrowserMessage, (_event, payload) => {
+    const { tabId, payload: message } = payload as { tabId: string, payload: unknown }
+    return getWorkspaceBrowserService().message(tabId, message)
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.workspaceBrowserPrintToPdf, (_event, payload) =>
+    getWorkspaceBrowserService().printToPdf((payload as { tabId: string }).tabId))
+  registerHandler(ELECTRON_IPC_CHANNELS.workspaceBrowserClose, (_event, payload) =>
+    getWorkspaceBrowserService().close((payload as { tabId: string }).tabId))
   registerHandler(ELECTRON_IPC_CHANNELS.appModeGet, () => getAppMode(app))
   registerHandler(ELECTRON_IPC_CHANNELS.appModeSet, (_event, payload) => setAppMode(app, payload as Parameters<typeof setAppMode>[1]))
   registerHandler(ELECTRON_IPC_CHANNELS.appModePrepareRestart, () => getServerRuntime().stopAll(true))
@@ -878,6 +1068,9 @@ async function createMainWindow() {
   await installRendererContextMenu(mainWindow)
   installPreviewCleanupOnRendererNavigation(mainWindow.webContents, () => {
     previewService?.close()
+    // A renderer reload discards every workspace tab, so the pages behind them
+    // have to go too rather than linger as orphaned webContents.
+    workspaceBrowserService?.closeAll()
   })
 
   installWindowLifecycle({
@@ -947,11 +1140,13 @@ app.whenReady().then(async () => {
   screen.on('display-metrics-changed', (_event, _display, changedMetrics) => {
     if (changedMetrics.includes('scaleFactor') || changedMetrics.includes('bounds')) {
       previewService?.refreshBounds()
+      workspaceBrowserService?.refreshBounds()
     }
   })
   await getServerRuntime().startServer().catch(error => {
     console.error('[desktop] failed to start Electron server sidecar', error)
   })
+  await getPublicAccessManager().restore().catch(() => {})
   await installApplicationMenu(app, () => mainWindow)
   if (shouldInstallTray(process.platform)) {
     trayController = await installTray({
@@ -987,19 +1182,53 @@ app.on('window-all-closed', () => {
   if (isQuitting && process.platform !== 'darwin') app.quit()
 })
 
-app.on('before-quit', () => {
+app.on('before-quit', event => {
   isQuitting = true
-  if (mainWindow) saveWindowState(app, mainWindow)
-  trayController?.dispose()
+  if (quitCleanupFinished) return
+  event.preventDefault()
+  if (quitCleanupStarted) return
+  quitCleanupStarted = true
+  const cleanupSteps = {
+    window: () => { if (mainWindow) saveWindowState(app, mainWindow) },
+    tray: () => { trayController?.dispose() },
+    terminal: () => { terminalService?.killAll() },
+    preview: () => { previewService?.close() },
+    workspaceBrowser: () => { workspaceBrowserService?.closeAll() },
+    pet: () => { petWindowController?.dispose() },
+  }
+  // A destroyed native view or PTY can throw during cleanup. Keep going so a
+  // failed resource cannot leave every later quit blocked by cleanupStarted.
+  for (const [resource, cleanup] of Object.entries(cleanupSteps)) {
+    try {
+      cleanup()
+    } catch (error) {
+      console.error(`[desktop] ${resource} cleanup failed during quit`, error)
+    }
+  }
   trayController = null
-  terminalService?.killAll()
-  previewService?.close()
-  petWindowController?.dispose()
   petWindowController = null
   deepSeekHarnessWindow?.close()
   deepSeekHarnessWindow = null
   void deepSeekHarnessRuntime?.stop(true)
-  // Synchronous on quit so the Windows taskkill completes before the process
-  // exits, otherwise the fire-and-forget kill can leave orphaned sidecars.
-  getServerRuntime().stopAll(true)
+  // Keep Electron (and the server's stdout/stderr pipes) alive until the server
+  // has waited for its CLI children to finish their graceful cleanup. The CLI
+  // owns the launchd-reparented Computer Use helper, so exiting the host first
+  // can strand its active turn across an immediate app restart.
+  void (async () => {
+    try {
+      try {
+        await publicAccessManager?.dispose()
+      } catch {
+        // Provider errors may contain credentials. A tunnel cleanup failure
+        // must never bypass the sidecar's graceful shutdown.
+        console.error('[desktop] public access cleanup failed during quit')
+      }
+      await getServerRuntime().stopAllAndWait()
+    } catch (error) {
+      console.error('[desktop] graceful server shutdown failed', error)
+    } finally {
+      quitCleanupFinished = true
+      app.quit()
+    }
+  })()
 })
