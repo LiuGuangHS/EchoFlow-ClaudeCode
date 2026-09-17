@@ -871,7 +871,6 @@ function registerIpcHandlers() {
     if (!getUpdaterService().hasDownloadedUpdate()) {
       throw new Error('No downloaded update is ready to relaunch')
     }
-    }
     isQuitting = true
     getUpdaterService().quitAndInstallDownloadedUpdate()
   })
