@@ -633,7 +633,7 @@ jobs:
         run: bun run scripts/refresh-windows-update-metadata.ts --installer "${{ steps.stage-signpath-installer.outputs.installer_path }}" --metadata desktop/build-artifacts/electron/latest.yml
 
       - name: Verify Windows installer execution
-        if: matrix.smoke_platform == 'windows' && matrix.arch == 'x64'
+        if: matrix.smoke_platform == 'windows' && matrix.arch == 'x64' && needs.signing-preflight.outputs.windows_signed == 'true'
         timeout-minutes: 10
         working-directory: desktop
         run: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/windows-installer-smoke.ps1 -ArtifactsDir ./build-artifacts/electron -Arch x64
