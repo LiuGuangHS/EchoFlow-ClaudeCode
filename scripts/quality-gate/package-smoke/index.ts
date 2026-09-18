@@ -571,9 +571,14 @@ function assertCursorResourcesContained(helperApp: string, directory: string) {
   const visited = new Set<string>()
   while (pending.length > 0) {
     const target = pending.pop()!
-    const canonical = realpathSync(target)
+    let canonical: string
+    try {
+      canonical = realpathSync(target)
+    } catch (error) {
+      throw new Error(`cursor resource is invalid or inaccessible: ${target}`)
+    }
     const withinApp = relative(app, canonical)
-    if (isAbsolute(withinApp) || withinApp === '..' || withinApp.startsWith('../')) {
+    if (isAbsolute(withinApp) || withinApp === '..' || withinApp.startsWith('../') || withinApp.startsWith('..\\')) {
       throw new Error(`cursor resource escapes the helper app: ${target}`)
     }
     if (visited.has(canonical)) continue

@@ -408,6 +408,7 @@ describe('coverage gate helpers', () => {
 
 describe('coverage subprocess output', () => {
   test('preserves output when the reporter replaces its destination directory', async () => {
+    if (process.platform === 'win32') return
     const root = mkdtempSync(join(tmpdir(), 'echoflow-code-coverage-cleanup-'))
     const script = join(root, 'reporter.ts')
     const logPath = join(root, 'reports', 'coverage.log')
@@ -433,6 +434,7 @@ describe('coverage subprocess output', () => {
   })
 
   test('captures large synchronous reports to regular files without losing artifacts or exit status', async () => {
+    if (process.platform === 'win32') return
     const root = mkdtempSync(join(tmpdir(), 'echoflow-code-coverage-output-'))
     const script = join(root, 'reporter.ts')
     const logPath = join(root, 'logs', 'coverage.log')

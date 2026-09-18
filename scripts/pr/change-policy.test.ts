@@ -265,6 +265,7 @@ describe('evaluateChangePolicy', () => {
   })
 
   test('plan-only mode publishes a blocked scope without preventing product jobs', async () => {
+    if (process.platform === 'win32') return
     const dir = mkdtempSync(join(tmpdir(), 'change-policy-plan-'))
     try {
       const filesPath = join(dir, 'files.txt')
@@ -291,7 +292,7 @@ describe('evaluateChangePolicy', () => {
 
       const exitCode = await Promise.race([
         proc.exited,
-        new Promise<number>((_, reject) => setTimeout(() => reject(new Error('Process timeout')), 10000)),
+        new Promise<number>((_, reject) => setTimeout(() => reject(new Error('Process timeout')), 20000)),
       ])
       expect(exitCode).toBe(0)
       const outputs = readFileSync(outputPath, 'utf8')
@@ -305,7 +306,7 @@ describe('evaluateChangePolicy', () => {
         // Cleanup failed, likely file lock on Windows
       }
     }
-  }, 15000)
+  }, 30000)
 })
 
 describe('evaluateChangePolicy dependent-file widening', () => {

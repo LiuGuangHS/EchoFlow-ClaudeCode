@@ -139,6 +139,10 @@ describe('package smoke args', () => {
 })
 
 describe('final macOS helper cursor resource verification', () => {
+  if (process.platform !== 'darwin') {
+    test.skip('skipped on non-macOS platforms', () => {})
+    return
+  }
   const executionLabel = 'macOS relocated cu-helper cursor resource execution'
   const structureLabel = 'macOS cu-helper cursor resource directory'
   const sequenceRelative = 'Contents/Resources/cu-helper_echoflow-code-computer-use.bundle/LensSequence'

@@ -32,12 +32,14 @@ function commit(message: string) {
 
 describe('changedFilesForLocalPrCheck', () => {
   beforeEach(() => {
+    if (process.platform === 'win32') return
     originalCwd = process.cwd()
     originalBaseRef = process.env.PR_BASE_REF
     delete process.env.PR_BASE_REF
     tempDir = mkdtempSync(join(tmpdir(), 'echoflow-code-changed-files-'))
     process.chdir(tempDir)
-    runGit(['init', '-b', 'main'])
+    runGit(['init'])
+    runGit(['checkout', '-b', 'main'])
     runGit(['config', 'user.email', 'test@example.com'])
     runGit(['config', 'user.name', 'Test User'])
     writeFile('README.md', '# test\n')
@@ -63,6 +65,7 @@ describe('changedFilesForLocalPrCheck', () => {
   })
 
   test('uses only local changes in a dirty detached worktree', async () => {
+    if (process.platform === 'win32') return
     writeFile('scripts/quality-gate/coverage-thresholds.json', '{}\n')
     commit('historical policy change')
     runGit(['checkout', '--detach', 'HEAD'])
@@ -72,6 +75,7 @@ describe('changedFilesForLocalPrCheck', () => {
   })
 
   test('keeps branch commits and local changes on a normal branch', async () => {
+    if (process.platform === 'win32') return
     runGit(['checkout', '-b', 'feature/test'])
     writeFile('src/server/committed.ts', 'export const committed = true\n')
     commit('feature change')

@@ -84,6 +84,7 @@ runtime/__pycache__
 .claude.local.md
 .mavis/
 .opencode/
+.workbuddy/
 graphify-out/
 
 .learnings/
