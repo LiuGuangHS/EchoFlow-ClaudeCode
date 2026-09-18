@@ -1,6 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { spawn, type ChildProcess } from 'node:child_process'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -264,33 +263,14 @@ describe('ElectronServerRuntime', () => {
     expect(bridge.stop).toHaveBeenCalledTimes(1)
   })
 
-  it('waits for real server shutdown cleanup before the first restart attempt', async () => {
+  // Keep this at the runtime boundary: Windows taskkill /F cannot deliver the
+  // SIGTERM cleanup signal used by a real Node fixture. Process termination is
+  // covered separately by sidecarManager tests.
+  it('waits for sidecar shutdown cleanup before the first restart attempt', async () => {
     const root = mkdtempSync(path.join(tmpdir(), 'echoflow-code-electron-restart-'))
     const activeTurn = path.join(root, 'active-turn')
-    const children: ChildProcess[] = []
-    const readyFiles: string[] = []
+    const children: FakeSidecarChild[] = []
     let serverStarts = 0
-    const fixture = String.raw`
-      const fs = require('node:fs')
-      const activeTurn = process.argv[1]
-      const readyFile = process.argv[2]
-      let owned = false
-      process.on('SIGTERM', () => {
-        setTimeout(() => {
-          if (owned) fs.rmSync(activeTurn, { force: true })
-          process.exit(0)
-        }, 150)
-      })
-      try {
-        const fd = fs.openSync(activeTurn, 'wx')
-        fs.closeSync(fd)
-        owned = true
-        fs.writeFileSync(readyFile, 'ready')
-      } catch {
-        process.exit(17)
-      }
-      setInterval(() => {}, 1_000)
-    `
 
     const runtime = new ElectronServerRuntime({
       desktopRoot: '/isolated/desktop',
@@ -300,43 +280,38 @@ describe('ElectronServerRuntime', () => {
         preferredServerPorts: () => [],
         reserveServerPort: async () => 49321 + serverStarts,
         spawnSidecar: plan => {
-          if (plan.args[0] !== 'server') {
-            return new FakeSidecarChild() as unknown as SidecarChild
-          }
-          const readyFile = path.join(root, `ready-${++serverStarts}`)
-          readyFiles.push(readyFile)
-          const child = spawn(process.execPath, ['-e', fixture, activeTurn, readyFile], {
-            stdio: ['ignore', 'pipe', 'pipe'],
+          const child = new FakeSidecarChild()
+          if (plan.args[0] !== 'server') return child as unknown as SidecarChild
+
+          serverStarts += 1
+          writeFileSync(activeTurn, '', { flag: 'wx' })
+          child.kill.mockImplementation(() => {
+            setTimeout(() => {
+              rmSync(activeTurn, { force: true })
+              child.emit('exit', null, 'SIGTERM')
+            }, 150)
           })
           children.push(child)
-          return child as SidecarChild
+          return child as unknown as SidecarChild
         },
-        waitForServer: async () => {
-          const readyFile = readyFiles.at(-1)!
-          for (let attempt = 0; attempt < 100 && !existsSync(readyFile); attempt++) {
-            await new Promise(resolve => setTimeout(resolve, 10))
-          }
-          if (!existsSync(readyFile)) throw new Error('fixture server did not become ready')
-        },
+        waitForServer: async () => undefined,
         writeLastServerPort: () => undefined,
       },
     })
 
     try {
       await runtime.startServer()
-      expect(existsSync(activeTurn)).toBe(true)
+      expect(children).toHaveLength(1)
 
       await runtime.stopAllAndWait(2_000)
 
-      expect(existsSync(activeTurn)).toBe(false)
+      expect(children[0]!.kill).toHaveBeenCalledTimes(1)
       await runtime.startServer()
       expect(serverStarts).toBe(2)
-      expect(children[1]!.exitCode).toBeNull()
+      expect(children).toHaveLength(2)
+      expect(children[1]!.kill).not.toHaveBeenCalled()
     } finally {
       await runtime.stopAllAndWait(2_000).catch(() => undefined)
-      for (const child of children) {
-        if (child.exitCode === null) child.kill('SIGKILL')
-      }
       rmSync(root, { recursive: true, force: true })
     }
   })

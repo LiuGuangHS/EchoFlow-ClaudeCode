@@ -1,71 +1,157 @@
-; getProcessInfo.nsh - Get process information using kernel32.dll
-; Provides GetProcessInfo macro for retrieving process details
+; NSIS PROCESS INFO LIBRARY - GetProcessInfo.nsh
+; Version 1.1 - Mar 28th, 2011
+;
+; Description:
+;   Gets process information.
+;
+; Usage example:
+;   ${GetProcessInfo} 0 $0 $1 $2 $3 $4
+;   DetailPrint "pid=$0 parent_pid=$1 priority=$2 process_name=$3 exe=$4"
+;
+; History:
+;   1.1 - 28/03/2011 - Added uninstall function, include guards, file header. Fixed getting full exe path on pre vista systems. (Sergius)
+;
 
-!ifndef GET_PROCESS_INFO_NSH
-!define GET_PROCESS_INFO_NSH
+!ifndef GETPROCESSINFO_INCLUDED
+!define GETPROCESSINFO_INCLUDED
 
-!include LogicLib.nsh
+!define PROCESSINFO.TH32CS_SNAPPROCESS      2
+!define PROCESSINFO.INVALID_HANDLE_VALUE    -1
 
-; GetProcessInfo - Get information about a process
-; Usage: ${GetProcessInfo} ProcessID PID ParentPID Executable Name Path
-!macro GetProcessInfo ProcessID OutPID OutParentPID OutExePath OutExeName OutPath
-  Push $0
-  Push $1
-  Push $2
-  Push $3
+!define GetProcessInfo '!insertmacro GetProcessInfo'
 
-  StrCpy ${OutPID} ""
-  StrCpy ${OutParentPID} ""
-  StrCpy ${OutExePath} ""
-  StrCpy ${OutExeName} ""
-  StrCpy ${OutPath} ""
-
-  ${If} ${ProcessID} == 0
-    ; Get current process information
-    System::Call 'kernel32::GetCurrentProcessId() i.r0'
-    StrCpy ${OutPID} $0
-
-    ; Return installer PID as parent PID
-    ; The PowerShell script check-install-processes.ps1 uses InstallerPid to exclude
-    ; the installer process itself from the running app check. InstallerParentPid is
-    ; passed but never used. Returning the installer's own PID satisfies this usage.
-    StrCpy ${OutParentPID} "$0"
-
-    ; Get executable path
-    System::Call 'kernel32::GetModuleFileNameA(i 0, t .r2, i 1024) i.r3'
-    StrCpy ${OutExePath} $2
-
-    ; Extract filename from path
-    StrCpy $3 $2
-    ${Do}
-      StrCpy $1 $3 1 -1
-      ${If} $1 == "\"
-      ${OrIf} $1 == "/"
-        IntOp $3 $3 + 1
-        StrCpy ${OutExeName} $3
-        ${ExitDo}
-      ${EndIf}
-      StrCpy $3 $3 -1
-      ${If} $3 == ""
-        StrCpy ${OutExeName} $2
-        ${ExitDo}
-      ${EndIf}
-    ${Loop}
-
-    ; Get directory path
-    StrLen $1 ${OutExeName}
-    StrLen $2 ${OutExePath}
-    IntOp $2 $2 - $1
-    IntOp $2 $2 - 1
-    StrCpy ${OutPath} ${OutExePath} $2
-  ${EndIf}
-
-  Pop $3
-  Pop $2
-  Pop $1
-  Pop $0
+;@in pid_in - if 0 - get current process info
+;@out pid_out - real process id (may be useful, if pid_in=0)
+;@out ppid - parent process id
+;@out priority
+;@out name - name of process
+;@out fullname - fully-qualified path of process
+!macro GetProcessInfo pid_in pid_out ppid priority name fullname
+    Push ${pid_in}
+    !ifdef BUILD_UNINSTALLER
+        Call un._GetProcessInfo
+    !else
+        Call _GetProcessInfo
+    !endif
+    ;name;pri;ppid;fname;pid;
+    Pop ${name}
+    Pop ${priority}
+    Pop ${ppid}
+    Pop ${fullname}
+    Pop ${pid_out}
 !macroend
 
-!define GetProcessInfo "!insertmacro GetProcessInfo"
+!macro FUNC_GETPROCESSINFO
+    Exch $R3 ;pid
+    Push $0
+    Push $1
+    Push $2
+    Push $3
+    Push $4
+    Push $5
+    Push $R0 ;hSnapshot
+    Push $R1 ;result
+    Push $R9 ;PROCESSENTRY32;MODULEENTRY32 and so on
+    Push $R8
 
-!endif ; GET_PROCESS_INFO_NSH
+    ;zero registers to waste trash, if error occurred
+    StrCpy $0 ""
+    StrCpy $1 ""
+    StrCpy $2 ""
+    StrCpy $3 ""
+    StrCpy $4 ""
+    StrCpy $5 ""
+
+    IntCmp $R3 0 0 skip_pid_detection skip_pid_detection
+    System::Call 'kernel32::GetCurrentProcess() i.R0'
+    System::Call "Kernel32::GetProcessId(i R0) i.R3"
+
+skip_pid_detection:
+    System::Call 'Kernel32::CreateToolhelp32Snapshot(i ${PROCESSINFO.TH32CS_SNAPPROCESS},i R3) i.R0'
+
+    IntCmp $R0 ${PROCESSINFO.INVALID_HANDLE_VALUE} end ;someting wrong
+
+    ;$R9=PROCESSENTRY32
+    ;typedef struct tagPROCESSENTRY32 {
+    ;  DWORD     dwSize;
+    ;  DWORD     cntUsage;
+    ;  DWORD     th32ProcessID;
+    ;  ULONG_PTR th32DefaultHeapID;
+    ;  DWORD     th32ModuleID;
+    ;  DWORD     cntThreads;
+    ;  DWORD     th32ParentProcessID;
+    ;  LONG      pcPriClassBase;
+    ;  DWORD     dwFlags;
+    ;  TCHAR     szExeFile[MAX_PATH];
+    ;}PROCESSENTRY32, *PPROCESSENTRY32;
+    ;dwSize=4*9+2*260
+
+    System::Alloc 1024
+    pop $R9
+    System::Call "*$R9(i 556)"
+
+    System::Call 'Kernel32::Process32FirstW(i R0, i $R9) i.R1'
+    StrCmp $R1 0 end
+
+nnext_iteration:
+    System::Call "*$R9(i,i,i.R1)" ;get PID
+    IntCmp $R1 $R3 exitloop
+
+    System::Call 'Kernel32::Process32NextW(i R0, i $R9) i.R1'
+    IntCmp $R1 0 0 nnext_iteration nnext_iteration
+
+exitloop:
+    ;$0 - pid
+    ;$1 - threads
+    ;$2 - ppid
+    ;$3 - priority
+    ;$4 - process name
+    System::Call "*$R9(i,i,i.r0,i,i,i.r1,i.r2,i.r3,i,&w256.r4)" ; Get next module
+
+    ;free:
+    System::Free $R9
+    System::Call "Kernel32::CloseToolhelp32Snapshot(i R0)"
+
+    ;===============
+    ;now get full path and commandline
+
+    System::Call "Kernel32::OpenProcess(i 1040, i 0, i r0)i .R0"
+
+    StrCmp $R0 0 end
+
+    IntOp $R8 0 + 256
+    System::Call "psapi::GetModuleFileNameExW(i R0,i 0,t .r5, *i $R8)i .R1"
+
+end:
+    Pop $R8
+    Pop $R9
+    Pop $R1
+    Pop $R0
+    Exch $5
+    Exch 1
+    Exch $4
+    Exch 2
+    Exch $3
+    Exch 3
+    Exch $2
+    Exch 4
+    Pop $1
+    Exch 4
+    Exch $0
+    Exch 5
+    Pop $R3
+!macroend ;FUNC_GETPROCESSINFO
+
+!ifndef BUILD_UNINSTALLER
+Function _GetProcessInfo
+    !insertmacro FUNC_GETPROCESSINFO
+FunctionEnd
+!endif
+
+!ifdef BUILD_UNINSTALLER
+Function un._GetProcessInfo
+    !insertmacro FUNC_GETPROCESSINFO
+FunctionEnd
+!endif
+
+!endif ;GETPROCESSINFO_INCLUDED

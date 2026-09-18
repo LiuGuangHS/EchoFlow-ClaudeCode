@@ -34,7 +34,7 @@ async function main() {
   // Install dsh to bundle directory
   console.log(`[bundle-dsh] Installing to ${bundleDir}`)
   try {
-    execSync(`npm install --prefix ${bundleDir} --no-audit --no-fund --ignore-scripts ${DSH_PACKAGE}@${DSH_VERSION}`, {
+    execSync(`npm install --prefix "${bundleDir}" --no-audit --no-fund --ignore-scripts ${DSH_PACKAGE}@${DSH_VERSION}`, {
       stdio: 'inherit',
       cwd: desktopRoot,
     })

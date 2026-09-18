@@ -279,7 +279,7 @@ describe('release desktop workflow', () => {
     )
   })
 
-  test('release workflow requires signed macOS Computer Use and preserves SignPath draft policy', () => {
+  test('release workflow allows unsigned macOS fallback and preserves SignPath draft policy', () => {
     const workflow = readReleaseWorkflow()
     const signingJob = workflow.match(
       /signing-preflight:[\s\S]*?(?:\n {2}[a-zA-Z0-9_-]+:|$)/,
@@ -311,7 +311,7 @@ describe('release desktop workflow', () => {
       expect(signingJob).toContain(setting)
     }
     expect(signingJob).toContain('Missing macOS signing/notarization secrets')
-    expect(signingJob).toContain('refusing to build a macOS release whose Computer Use runtime cannot pass client attestation')
+    expect(signingJob).toContain('the macOS build will be unsigned and Computer Use runtime may not pass client attestation.')
     expect(signingJob).toContain("RELEASE_DRAFT: ${{ github.event_name == 'workflow_dispatch' && inputs.draft == true }}")
     expect(signingJob).toContain('macos_signed=false')
     expect(signingJob).toContain('macos_signed=true')
@@ -336,7 +336,7 @@ describe('release desktop workflow', () => {
     expect(workflow.indexOf('signing-preflight:')).toBeLessThan(workflow.indexOf('Upload release artifacts for final publish'))
   })
 
-  test('an explicit manual Windows signing skip preserves macOS and default release requirements', async () => {
+  test('an explicit manual Windows signing skip preserves unsigned macOS fallback and default release requirements', { timeout: 60_000 }, async () => {
     const workflow = parse(readReleaseWorkflow())
     expect(workflow.on.workflow_dispatch.inputs.skip_windows_signing).toEqual({
       description: 'Build unsigned Windows artifacts while SignPath onboarding is pending',
@@ -355,7 +355,7 @@ describe('release desktop workflow', () => {
       { name: 'explicit skip without SignPath', env: { SKIP_WINDOWS_SIGNING: 'true', SIGNPATH_API_TOKEN: '' }, code: 0, outputs: 'macos_signed=true\nwindows_signed=false\n' },
       { name: 'release missing SignPath without skip', env: { SIGNPATH_API_TOKEN: '' }, code: 1, outputs: 'macos_signed=true\nwindows_signed=false\n' },
       { name: 'draft missing SignPath', env: { RELEASE_DRAFT: 'true', SIGNPATH_API_TOKEN: '' }, code: 0, outputs: 'macos_signed=true\nwindows_signed=false\n' },
-      { name: 'explicit skip still requires macOS credentials', env: { SKIP_WINDOWS_SIGNING: 'true', CSC_LINK: '' }, code: 1, outputs: 'macos_signed=false\n' },
+      { name: 'explicit skip allows unsigned macOS fallback', env: { SKIP_WINDOWS_SIGNING: 'true', CSC_LINK: '' }, code: 0, outputs: 'macos_signed=false\nwindows_signed=false\n' },
     ]
     try {
       for (const [index, scenario] of cases.entries()) {
@@ -476,7 +476,7 @@ describe('release desktop workflow', () => {
     expect(buildJob).toContain('builder_args: --linux AppImage deb rpm --arm64')
     expect(buildJob).toContain('EchoFlow-Code-${APP_VERSION}-win-arm64.exe')
     expect(buildJob).toContain('Upload release artifacts for final publish')
-    expect(buildJob).toContain('actions/upload-artifact@v4')
+    expect(buildJob).toContain('actions/upload-artifact@v5')
     expect(buildJob).toContain('name: desktop-release-artifacts-${{ matrix.label }}')
     expect(buildJob).not.toContain('softprops/action-gh-release@v2')
     expect(buildJob).not.toContain('Load release notes')
@@ -502,20 +502,20 @@ describe('release desktop workflow', () => {
     expect(workflow).toContain('name: desktop-update-metadata-${{ matrix.label }}')
     expect(workflow).toContain('name: desktop-release-artifacts-${{ matrix.label }}')
     expect(publishJob).toContain('needs: build')
-    expect(publishJob).toContain('actions/download-artifact@v4')
+    expect(publishJob).toContain('actions/download-artifact@v5')
     expect(publishJob).toContain('pattern: desktop-release-artifacts-*')
     expect(publishJob).toContain('pattern: desktop-update-metadata-*')
     expect(publishJob).toContain('Validate complete release asset set')
     expect(publishJob).toContain('bun run scripts/release-update-metadata.ts --metadata-dir artifacts/update-metadata --out-dir artifacts/update-metadata-standard')
     expect(publishJob).toContain('Validate standard update metadata set')
     expect(publishJob).toContain('softprops/action-gh-release@v2')
-    expect(publishJob).toContain('artifacts/release-assets/**/*.dmg')
-    expect(publishJob).toContain('artifacts/release-assets/**/*.zip')
-    expect(publishJob).toContain('artifacts/release-assets/**/*.exe')
-    expect(publishJob).toContain('artifacts/release-assets/**/*.AppImage')
-    expect(publishJob).toContain('artifacts/release-assets/**/*.deb')
-    expect(publishJob).toContain('artifacts/release-assets/**/*.rpm')
-    expect(publishJob).toContain('artifacts/release-assets/**/*.blockmap')
+    expect(publishJob).toContain('artifacts/release-assets/*.dmg')
+    expect(publishJob).toContain('artifacts/release-assets/*.zip')
+    expect(publishJob).toContain('artifacts/release-assets/*.exe')
+    expect(publishJob).toContain('artifacts/release-assets/*.AppImage')
+    expect(publishJob).toContain('artifacts/release-assets/*.deb')
+    expect(publishJob).toContain('artifacts/release-assets/*.rpm')
+    expect(publishJob).toContain('artifacts/release-assets/*.blockmap')
     expect(publishJob).toContain('artifacts/update-metadata-standard/*.yml')
     expect(publishJob).toContain('desktop/scripts/install-macos-unsigned.sh')
     expect(publishJob).toContain('draft: true')

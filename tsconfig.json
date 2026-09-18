@@ -26,6 +26,6 @@
         "./src/*"
       ]
     },
-    "ignoreDeprecations": "5.9"
+    "ignoreDeprecations": "6.0"
   }
 }
