@@ -289,15 +289,23 @@ describe('evaluateChangePolicy', () => {
         stderr: 'pipe',
       })
 
-      expect(await proc.exited).toBe(0)
+      const exitCode = await Promise.race([
+        proc.exited,
+        new Promise<number>((_, reject) => setTimeout(() => reject(new Error('Process timeout')), 10000)),
+      ])
+      expect(exitCode).toBe(0)
       const outputs = readFileSync(outputPath, 'utf8')
       expect(outputs).toContain('blocked=true')
       expect(outputs).toContain('desktop_checks=true')
       expect(outputs).toContain('desktop_native_checks=false')
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      try {
+        rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
+      } catch {
+        // Cleanup failed, likely file lock on Windows
+      }
     }
-  })
+  }, 15000)
 })
 
 describe('evaluateChangePolicy dependent-file widening', () => {

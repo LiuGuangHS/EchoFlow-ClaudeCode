@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs'
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
@@ -578,8 +578,15 @@ function assertCursorResourcesContained(helperApp: string, directory: string) {
     }
     if (visited.has(canonical)) continue
     visited.add(canonical)
-    const entry = statSync(target)
-    if (entry.isDirectory()) pending.push(...readdirSync(target).map(name => join(target, name)))
+    const entry = lstatSync(target)
+    if (entry.isSymbolicLink()) {
+      // realpathSync above has already proved the link target remains inside the app.
+      // Inspect the target after that boundary check so symlinks cannot be treated as
+      // opaque packaged resources.
+      const targetEntry = statSync(target)
+      if (targetEntry.isDirectory()) pending.push(...readdirSync(target).map(name => join(target, name)))
+      else if (!targetEntry.isFile()) throw new Error(`cursor resource is not a regular file: ${target}`)
+    } else if (entry.isDirectory()) pending.push(...readdirSync(target).map(name => join(target, name)))
     else if (!entry.isFile()) throw new Error(`cursor resource is not a regular file: ${target}`)
   }
 }

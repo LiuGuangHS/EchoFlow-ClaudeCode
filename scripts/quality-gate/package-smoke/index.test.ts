@@ -156,6 +156,8 @@ describe('final macOS helper cursor resource verification', () => {
     writeFile(rootDir, `${resources}/app.asar`)
     writeFile(rootDir, `${resources}/app.asar.unpacked/dist/index.html`)
     writeFile(rootDir, `${binaries}/claude-sidecar-${triple}`, thinMachO(arch))
+    writeFile(rootDir, `${binaries}/echoflow-code-computer-use.app/Contents/MacOS/echoflow-code-computer-use`, thinMachO(arch))
+    writeFile(rootDir, `${binaries}/echoflow-code-computer-use.app/${sequenceRelative}/README.md`, 'Optional cursor frames are absent in this fixture.\n')
     writeFile(rootDir, `${pty}/package.json`)
     writeFile(rootDir, `${pty}/prebuilds/darwin-${arch}/pty.node`, thinMachO(arch))
     writeFile(rootDir, `${pty}/prebuilds/darwin-${arch}/spawn-helper`, thinMachO(arch))

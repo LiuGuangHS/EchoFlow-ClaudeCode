@@ -45,13 +45,21 @@ describe('changedFilesForLocalPrCheck', () => {
   })
 
   afterEach(() => {
-    process.chdir(originalCwd)
+    try {
+      process.chdir(originalCwd)
+    } catch {
+      // Already changed directory
+    }
     if (originalBaseRef === undefined) {
       delete process.env.PR_BASE_REF
     } else {
       process.env.PR_BASE_REF = originalBaseRef
     }
-    rmSync(tempDir, { recursive: true, force: true })
+    try {
+      rmSync(tempDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
+    } catch {
+      // Cleanup failed, likely file lock on Windows
+    }
   })
 
   test('uses only local changes in a dirty detached worktree', async () => {
