@@ -115,7 +115,6 @@ $installerFallbackImageNames = @(
   'claude-sidecar-x86_64-pc-windows-msvc.exe',
   'claude-sidecar-aarch64-pc-windows-msvc.exe',
   'claude-sidecar.exe',
-  'OpenConsole.exe',
   'winpty-agent.exe',
   'rg.exe'
 )
@@ -460,7 +459,7 @@ try {
   $siblingProcess.Dispose()
   $siblingProcess = $null
 
-  $bundledHelperProbe = Join-Path $siblingDir 'OpenConsole.exe'
+  $bundledHelperProbe = Join-Path $siblingDir 'rg.exe'
   Copy-Item -LiteralPath $processProbeSource -Destination $bundledHelperProbe
   $bundledHelperProcess = Start-Process -FilePath $bundledHelperProbe -ArgumentList @('-t', '127.0.0.1') -PassThru
   Start-Sleep -Milliseconds 500
