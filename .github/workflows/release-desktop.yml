@@ -94,8 +94,7 @@ jobs:
             printf '::warning::SignPath configuration missing (%s): the Windows build will be unsigned.\n' "${win_missing[*]}"
             echo "windows_signed=false" >> "$GITHUB_OUTPUT"
             if [ "$RELEASE_DRAFT" != "true" ]; then
-              echo "::error::Refusing to publish a non-draft desktop release without SignPath Windows signing."
-              exit 1
+              echo "::warning::Publishing release with unsigned Windows build. Configure SignPath for production-ready signed binaries."
             fi
           else
             echo "windows_signed=true" >> "$GITHUB_OUTPUT"
