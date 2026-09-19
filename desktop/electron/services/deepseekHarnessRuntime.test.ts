@@ -94,11 +94,19 @@ describe('DeepSeekHarnessRuntime', () => {
       userDataPath: root,
       deps: {
         resolveNode: () => null,
+        resolveManagedNode: async () => null,
+        installNode: async () => {
+          throw new Error('Node.js environment download failed')
+        },
       },
     })
 
     await expect(runtime.getStatus()).resolves.toMatchObject({ state: 'unavailable' })
-    await expect(runtime.install()).rejects.toThrow('Node.js 22.19.0 or later is required')
+    await expect(runtime.install()).rejects.toThrow('Node.js environment download failed')
+    await expect(runtime.getStatus()).resolves.toMatchObject({
+      state: 'error',
+      error: 'Node.js environment download failed',
+    })
   })
 
   it('reports unavailable when the system Node.js runtime is too old', async () => {
@@ -111,6 +119,31 @@ describe('DeepSeekHarnessRuntime', () => {
     })
 
     await expect(runtime.getStatus()).resolves.toMatchObject({ state: 'unavailable' })
+  })
+
+  it('downloads a managed Node runtime when the system runtime is unavailable', async () => {
+    const resourcesPath = path.join(root, 'fake-resources')
+    const bundledExecutable = path.join(resourcesPath, 'deepseek-harness', '0.1.5-rc.2', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+    const managedNode = path.join(root, 'runtimes', 'node', 'current', 'node.exe')
+    await fs.mkdir(path.dirname(bundledExecutable), { recursive: true })
+    await fs.writeFile(bundledExecutable, 'bundled launcher')
+    const installNode = vi.fn(async () => managedNode)
+
+    const runtime = createRuntime({
+      resolveNode: () => null,
+      resolveManagedNode: async () => null,
+      installNode,
+    }, resourcesPath)
+
+    await expect(runtime.install()).resolves.toMatchObject({ state: 'installed', version: '0.1.5-rc.2' })
+    expect(installNode).toHaveBeenCalledWith(root)
+
+    await runtime.start()
+    expect(spawn).toHaveBeenCalledWith(
+      managedNode,
+      expect.arrayContaining([bundledExecutable, 'web', '--no-open']),
+      expect.any(Object),
+    )
   })
 
   it('starts only the managed Harness package on loopback with an isolated home', async () => {

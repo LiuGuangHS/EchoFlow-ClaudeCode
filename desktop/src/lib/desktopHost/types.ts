@@ -118,7 +118,7 @@ export type DesktopUpdateCheckOptions = {
   proxy?: string
 }
 
-export type DeepSeekHarnessState = 'unavailable' | 'not-installed' | 'installed' | 'starting' | 'running' | 'stopped' | 'error'
+export type DeepSeekHarnessState = 'unavailable' | 'not-installed' | 'installing' | 'installed' | 'starting' | 'running' | 'stopped' | 'error'
 
 export type DeepSeekHarnessStatus = {
   state: DeepSeekHarnessState
