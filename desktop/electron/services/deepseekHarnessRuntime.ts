@@ -129,7 +129,15 @@ function harnessEnvironment(dataRoot: string): NodeJS.ProcessEnv {
   const environment = Object.fromEntries(
     HARNESS_ENV_KEYS.flatMap((key) => process.env[key] === undefined ? [] : [[key, process.env[key]]]),
   )
-  return { ...environment, DSH_HOME: dataRoot }
+  return {
+    ...environment,
+    DSH_HOME: dataRoot,
+    // ponytail: Clear proxy vars so dsh can bind to 127.0.0.1 without proxy interference
+    http_proxy: undefined,
+    https_proxy: undefined,
+    HTTP_PROXY: undefined,
+    HTTPS_PROXY: undefined,
+  }
 }
 
 function parseStoredState(raw: string): StoredState | null {
@@ -189,17 +197,33 @@ async function installPackage(nodePath: string, directory: string): Promise<void
 async function waitForUrl(url: string): Promise<void> {
   const deadline = Date.now() + DSH_STARTUP_TIMEOUT_MS
   let lastError: unknown
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(url)
-      if (response.ok) return
-    } catch (error) {
-      lastError = error
-    }
-    await new Promise(resolve => setTimeout(resolve, 200))
+  // ponytail: Save and clear proxy env vars for localhost fetch
+  const savedProxy = {
+    http_proxy: process.env.http_proxy,
+    https_proxy: process.env.https_proxy,
+    HTTP_PROXY: process.env.HTTP_PROXY,
+    HTTPS_PROXY: process.env.HTTPS_PROXY,
   }
-  const reason = lastError instanceof Error ? `: ${lastError.message}` : ''
-  throw new Error(`DeepSeek Harness did not start in time${reason}`)
+  delete process.env.http_proxy
+  delete process.env.https_proxy
+  delete process.env.HTTP_PROXY
+  delete process.env.HTTPS_PROXY
+  try {
+    while (Date.now() < deadline) {
+      try {
+        const response = await fetch(url)
+        if (response.ok || response.status === 401) return
+      } catch (error) {
+        lastError = error
+      }
+      await new Promise(resolve => setTimeout(resolve, 200))
+    }
+    const reason = lastError instanceof Error ? `: ${lastError.message}` : ''
+    throw new Error(`DeepSeek Harness did not start in time${reason}`)
+  } finally {
+    // ponytail: Restore proxy env vars
+    Object.assign(process.env, savedProxy)
+  }
 }
 
 export class DeepSeekHarnessRuntime {
