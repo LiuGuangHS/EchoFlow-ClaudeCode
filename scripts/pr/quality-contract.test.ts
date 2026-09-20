@@ -27,6 +27,10 @@ describe('feature quality contract', () => {
     expect(agents).toContain('Official vendor APIs and official OAuth integrations, including Grok Official')
     expect(agents).toContain('rejected by default')
     expect(agents).toContain('Never apply blanket `--ours` or `--theirs`')
+    // A resolved gap must not survive as prose. The contract once stated that
+    // `mobile/` had no area and no route; both now exist, and nothing tied the
+    // claim to the code, so the stale sentence outlived the fix.
+    expect(agents).not.toMatch(/`mobile\/` has no/)
   })
 
   test('keeps pointers out of the contract resolving to real content in docs', () => {
@@ -114,6 +118,7 @@ describe('feature quality contract', () => {
     const desktop = readFileSync('desktop/AGENTS.md', 'utf8')
     const adapters = readFileSync('adapters/AGENTS.md', 'utf8')
     const docs = readFileSync('docs/AGENTS.md', 'utf8')
+    const mobile = readFileSync('mobile/AGENTS.md', 'utf8')
 
     expect(policy).toContain('`scripts/pr/change-policy.ts` is the source of truth')
     expect(policy).toContain('`pull_request_target`')
@@ -125,6 +130,7 @@ describe('feature quality contract', () => {
     expect(desktop).toContain('`bun run check:chat-contract`')
     expect(adapters).toContain('`bun run check:adapters`')
     expect(docs).toContain('`bun run check:docs`')
+    expect(mobile).toContain('`bun run check:mobile`')
   })
 
   test('keeps PR authors accountable for tests, coverage, E2E, and risk', () => {

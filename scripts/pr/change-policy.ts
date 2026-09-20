@@ -9,6 +9,7 @@ export type ChangeArea =
   | 'adapters'
   | 'docs'
   | 'release'
+  | 'mobile'
   | 'cli-core'
 
 export type ChangePolicyResult = {
@@ -26,6 +27,7 @@ export type ChangePolicyResult = {
     desktop: boolean
     server: boolean
     adapters: boolean
+    mobile: boolean
     desktopNative: boolean
     providerContract: boolean
     chatContract: boolean
@@ -47,6 +49,7 @@ const areaLabels: Record<ChangeArea, string> = {
   adapters: 'area:adapters',
   docs: 'area:docs',
   release: 'area:release',
+  mobile: 'area:mobile',
   'cli-core': 'area:cli-core',
 }
 
@@ -233,6 +236,15 @@ function areasForPath(path: string): ChangeArea[] {
     areas.add('desktop')
   }
 
+  // `mobile/` is its own Expo app with its own `bun run check` (typecheck,
+  // typecheck:tests, bun test) and its own release workflow. It shares no
+  // tsconfig and no module graph with the rest of the repository, so before
+  // this area existed a diff there selected no surface check and triage gave
+  // it no area label at all.
+  if (path.startsWith('mobile/')) {
+    areas.add('mobile')
+  }
+
   if (path.startsWith('src/server/')) {
     areas.add('server')
   }
@@ -287,6 +299,7 @@ function missingTestSignals(files: string[]) {
   const desktopProd = changedProductionFiles(files, (file) => file.startsWith('desktop/src/'))
   const serverProd = changedProductionFiles(files, (file) => file.startsWith('src/server/'))
   const adapterProd = changedProductionFiles(files, (file) => file.startsWith('adapters/'))
+  const mobileProd = changedProductionFiles(files, (file) => file.startsWith('mobile/'))
   const rootRuntimeProd = changedProductionFiles(files, (file) => (
     file.startsWith('src/') &&
     !file.startsWith('src/server/')
@@ -300,6 +313,9 @@ function missingTestSignals(files: string[]) {
   }
   if (adapterProd.length > 0 && !hasMatchingTest(files, (file) => file.startsWith('adapters/'))) {
     signals.push('Adapter product files changed without an adapter test file in the PR.')
+  }
+  if (mobileProd.length > 0 && !hasMatchingTest(files, (file) => file.startsWith('mobile/'))) {
+    signals.push('Mobile product files changed without a mobile test file in the PR.')
   }
   if (rootRuntimeProd.length > 0 && !hasMatchingTest(files, (file) => (
     file.startsWith('src/') &&
@@ -372,6 +388,11 @@ export function evaluateChangePolicy(
     file.startsWith('desktop/src-tauri/') ||
     desktopNativeExactPaths.has(file)
   ))
+  // `mobile/` uses one prefix for both the area and the check, so the check
+  // reads area membership instead of repeating the predicate. A second copy of
+  // the rule can drift, and `areasForPath` already excludes agent instruction
+  // files — which `files.some(...)` would have pulled into this lane.
+  const touchesMobile = areas.has('mobile')
   const touchesProviderContract = selectionFiles.some((file) => startsWithAny(file, providerContractPrefixes))
   const touchesChatContract = selectionFiles.some((file) => startsWithAny(file, chatContractPrefixes))
   const touchesAgentFlow = selectionFiles.some((file) => startsWithAny(file, agentFlowPrefixes))
@@ -419,6 +440,7 @@ export function evaluateChangePolicy(
       desktop: touchesDesktopWeb,
       server: selectionFiles.some((file) => file.startsWith('src/') && !isAgentInstructionPath(file)),
       adapters: selectionFiles.some((file) => file.startsWith('adapters/') && !isAgentInstructionPath(file)),
+      mobile: touchesMobile,
       desktopNative: touchesDesktopNative,
       providerContract: touchesProviderContract,
       chatContract: touchesChatContract,
@@ -468,7 +490,7 @@ function formatSummary(result: ChangePolicyResult) {
     'PR change policy',
     `  Areas: ${result.areas.length ? result.areas.join(', ') : 'none'}`,
     `  Labels: ${result.labels.length ? result.labels.join(', ') : 'none'}`,
-    `  Checks: desktop=${result.checks.desktop}, server=${result.checks.server}, adapters=${result.checks.adapters}, desktopNative=${result.checks.desktopNative}, providerContract=${result.checks.providerContract}, chatContract=${result.checks.chatContract}, agentFlow=${result.checks.agentFlow}, persistence=${result.checks.persistence}, policy=${result.checks.policy}, docs=${result.checks.docs}, coverage=${result.checks.coverage}`,
+    `  Checks: desktop=${result.checks.desktop}, server=${result.checks.server}, adapters=${result.checks.adapters}, mobile=${result.checks.mobile}, desktopNative=${result.checks.desktopNative}, providerContract=${result.checks.providerContract}, chatContract=${result.checks.chatContract}, agentFlow=${result.checks.agentFlow}, persistence=${result.checks.persistence}, policy=${result.checks.policy}, docs=${result.checks.docs}, coverage=${result.checks.coverage}`,
   ]
 
   if (result.cliCoreFiles.length > 0) {
@@ -516,6 +538,7 @@ function writeGithubOutputs(result: ChangePolicyResult) {
     desktop_checks: String(result.checks.desktop),
     server_checks: String(result.checks.server),
     adapter_checks: String(result.checks.adapters),
+    mobile_checks: String(result.checks.mobile),
     desktop_native_checks: String(result.checks.desktopNative),
     provider_contract_checks: String(result.checks.providerContract),
     chat_contract_checks: String(result.checks.chatContract),

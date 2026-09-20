@@ -73,6 +73,35 @@ describe('evaluateChangePolicy', () => {
     expect(result.missingTestSignals).toEqual(['Adapter product files changed without an adapter test file in the PR.'])
   })
 
+  test('routes the Expo mobile shell to its own lane without widening coverage or native packaging', () => {
+    const result = evaluateChangePolicy(['mobile/src/lib/credentials.ts'])
+
+    expect(result.areas).toEqual(['mobile'])
+    expect(result.areaLabels).toEqual(['area:mobile'])
+    expect(result.checks.mobile).toBe(true)
+    // The mobile app pins no coverage configuration and shares no module graph
+    // with the rest of the repository, so its diffs must not select those lanes.
+    expect(result.checks.coverage).toBe(false)
+    expect(result.checks.desktop).toBe(false)
+    expect(result.checks.desktopNative).toBe(false)
+    expect(result.checks.server).toBe(false)
+    expect(result.checks.policy).toBe(false)
+    expect(result.blocked).toBe(true)
+    expect(result.missingTestSignals).toEqual(['Mobile product files changed without a mobile test file in the PR.'])
+  })
+
+  test('clears the mobile test signal when the change ships a mobile test', () => {
+    const result = evaluateChangePolicy([
+      'mobile/src/lib/credentials.ts',
+      'mobile/src/lib/credentials.test.ts',
+    ])
+
+    expect(result.areas).toEqual(['mobile'])
+    expect(result.checks.mobile).toBe(true)
+    expect(result.missingTestSignals).toEqual([])
+    expect(result.blocked).toBe(false)
+  })
+
   test('allows production changes when matching tests are included', () => {
     const result = evaluateChangePolicy([
       'desktop/src/pages/Settings.tsx',

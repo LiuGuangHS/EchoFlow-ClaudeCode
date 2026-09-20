@@ -32,6 +32,7 @@ jobs:
               'area:adapters': '5319e7',
               'area:docs': '0075ca',
               'area:release': 'fbca04',
+              'area:mobile': '006b75',
               'area:cli-core': 'b60205',
               'needs-maintainer-approval': 'b60205',
               'allow-cli-core-change': 'c2e0c6',
@@ -78,6 +79,7 @@ jobs:
 
             for (const filename of filenames) {
               if (filename.startsWith('desktop/')) areas.add('area:desktop')
+              if (filename.startsWith('mobile/')) areas.add('area:mobile')
               if (filename.startsWith('src/server/')) areas.add('area:server')
               if (filename.startsWith('adapters/')) areas.add('area:adapters')
               if (filename.startsWith('docs/') || filename.startsWith('release-notes/') || docsExact.has(filename)) areas.add('area:docs')

@@ -44,6 +44,7 @@ describe('PR quality workflow', () => {
     expect(workflow).toContain("if: needs.scope-plan.outputs.chat_contract_checks == 'true'")
     expect(workflow).toContain("if: needs.scope-plan.outputs.persistence_checks == 'true'")
     expect(workflow).toContain("if: needs.scope-plan.outputs.adapter_checks == 'true'")
+    expect(workflow).toContain("if: needs.scope-plan.outputs.mobile_checks == 'true'")
     expect(workflow).toContain("if: needs.scope-plan.outputs.desktop_native_checks == 'true'")
     expect(workflow).toContain("if: needs.scope-plan.outputs.docs_checks == 'true'")
     expect(workflow).toContain("if: needs.scope-plan.outputs.coverage_checks == 'true'")
@@ -66,6 +67,7 @@ describe('PR quality workflow', () => {
       'chat-contract-checks',
       'agent-flow-checks',
       'adapter-checks',
+      'mobile-checks',
       'desktop-native-checks',
       'macos-swift-checks',
       'persistence-checks',

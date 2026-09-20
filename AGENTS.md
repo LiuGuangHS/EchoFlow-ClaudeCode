@@ -34,7 +34,7 @@ Keep this file under 24 KB. Crossing that is the signal to move content out, not
 ## Agent Operating Rules
 - Work autonomously on clear, reversible tasks. Do not stop to ask whether to proceed with obvious next steps; ask only for destructive actions, missing authority, or genuinely branching product decisions.
 - Prefer the installed agent toolset over recreating planning, review, debugging, or design workflows: `/superpowers:brainstorm` → `/superpowers:write-plan` → `/superpowers:execute-plan` for design and planning, `@code-reviewer` for review, `ponytail` for minimal-code discipline, `frontend-design` for desktop/web UI. No plugin replaces the gates in this file, and the contract stays tool-independent; details in `docs/internals/contributing.md`.
-- Identify the changed surface first. The canonical vocabulary is the `ChangeArea` union in `scripts/pr/change-policy.ts`: `desktop`, `server`, `adapters`, `docs`, `release`, `cli-core`. The prose surfaces in this file map onto it, and `native/` routes to the `desktop` area. Do not invent a surface name that has no area and no check behind it.
+- Identify the changed surface first. The canonical vocabulary is the `ChangeArea` union in `scripts/pr/change-policy.ts`: `desktop`, `server`, `adapters`, `docs`, `release`, `mobile`, `cli-core`. The prose surfaces in this file map onto it, and `native/` routes to the `desktop` area. Do not invent a surface name that has no area and no check behind it.
 - `cli-core` covers `bin/` and the root `src/` runtime paths. Changes there are blocked until the PR carries the `allow-cli-core-change` label and a maintainer approves.
 - Check `git status --short` before editing. The worktree may already contain user changes; never revert, overwrite, restage, or reformat unrelated files.
 - Keep diffs small and owned. Stage or commit only files you intentionally changed for the current task.
@@ -42,7 +42,6 @@ Keep this file under 24 KB. Crossing that is the signal to move content out, not
 - For cleanup/refactor/deslop work, write the cleanup plan first, lock existing behavior with regression tests when it is not already protected, then make one smell-focused pass at a time.
 - Never commit generated output: `artifacts/`, coverage reports, `node_modules/`, build directories, or Rust `target/` trees.
 - `.claude/` stays local-only. It must never be a CI dependency or a committed source of truth. Run `bun run audit:harness` when changing agent guidance, quality policy, CI, or the agent toolset.
-- Known gap: `mobile/` has no `ChangeArea` and no path route in `scripts/pr/change-policy.ts`, so changes there select no check. Treat mobile work as unverified until that route exists, and say so in the handoff.
 
 ## Fork Identity & Provider Policy
 - Public/release brand: `EchoFlow Code`; executable/docs: `echoflow-code`.
@@ -67,6 +66,7 @@ Use the narrowest meaningful check while iterating; do not silently escalate a s
 | Desktop UI/store/API | `bun run check:desktop` |
 | Server/API/provider/runtime/MCP/OAuth/WebSocket | `bun run check:server` |
 | IM adapters | `bun run check:adapters` |
+| Expo mobile shell (Android) | `bun run check:mobile` |
 | Electron/native/packaging/version | `bun run check:native` |
 | Docs/README/release notes/workflows | `bun run check:docs` |
 | JSON/localStorage/app-config migration | `bun run check:persistence-upgrade` |
@@ -85,9 +85,10 @@ Use the narrowest meaningful check while iterating; do not silently escalate a s
 Bun-based Coding Agent product with a CLI, local server, desktop app, IM adapters, docs, and release automation. `docs/internals/structure.md` carries the full directory map; this section keeps only what changes how you work.
 
 - `bin/echoflow-code` is the executable entrypoint. `src/` is the CLI/runtime surface (`entrypoints/`, the Ink TUI in `screens/` and `components/`, `commands/`, `services/`, `tools/`, `utils/`, `server/`).
-- `desktop/` is the desktop product: React UI in `desktop/src/`, Electron host code in `desktop/electron/`, legacy assets in `desktop/src-tauri/`, build scripts in `desktop/scripts/`.
+- `desktop/` is the desktop product: React UI in `desktop/src/`, Electron host code in `desktop/electron/`, build scripts in `desktop/scripts/`.
 - Desktop is Electron-first. `desktop/src-tauri/` is retained for icons, sidecar binaries, preview-agent resources, and compatibility assets. Do not treat `desktop/src-tauri/tauri.conf.json` as the release source of truth unless a task explicitly revives Tauri packaging.
 - `adapters/` holds IM adapter sidecars for Telegram, Feishu, WeChat, and DingTalk. `site/` is the React documentation site; `docs/` and `docs/en/` are its Chinese and English Markdown sources.
+- `mobile/` is the separate Expo Android shell. Rules in `mobile/AGENTS.md`.
 - `native/` holds the Computer Use native helper (`native/cu-helper`, Swift). Its gates are `bun run check:swift`, `check:computer-use-live-smoke`, and `check:computer-use-signed-chain`.
 - `.github/workflows/`, `scripts/pr/`, and `scripts/quality-gate/` define CI routing and quality policy. `scripts/harness-audit.js` audits this contract itself.
 - `release-notes/`, `scripts/release.ts`, and `.github/workflows/release-desktop.yml` define release behavior. Treat workflow changes as product changes because they alter what future agents and contributors can safely ship.

@@ -25,6 +25,7 @@
     "check:desktop": "cd desktop && bun run lint && bun run test -- --run && bun run build",
     "check:electron": "cd desktop && bun run check:electron",
     "check:adapters": "cd adapters && bun test",
+    "check:mobile": "cd mobile && bun run check",
     "check:native": "bun run check:swift && cd desktop && bun run build:sidecars && bun run test:compiled-sidecar-smoke && bun run check:electron && CSC_IDENTITY_AUTO_DISCOVERY=false bun run electron:package:dir && cd .. && bun run test:package-smoke:current",
     "check:docs": "npm --prefix site ci --loglevel=error && npm --prefix site run --loglevel=error build && npm --prefix site run --loglevel=error check",
     "check:persistence-upgrade": "bun run scripts/quality-gate/persistence-upgrade.ts",

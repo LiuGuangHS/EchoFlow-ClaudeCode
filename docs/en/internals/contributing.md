@@ -243,6 +243,7 @@ Run the checks that match the files you changed:
 bun run check:server      # Server API, WebSocket, providers, sessions, and related tests
 bun run check:desktop     # Desktop lint, Vitest, and production build
 bun run check:adapters    # IM adapter tests
+bun run check:mobile      # Expo mobile shell: type checks and bun test
 bun run check:native      # Desktop sidecars, Electron host, and package-smoke checks
 bun run check:provider-contract # Offline provider/runtime/proxy contract tests
 bun run check:chat-contract     # WebSocket, session, and desktop chat-store contracts

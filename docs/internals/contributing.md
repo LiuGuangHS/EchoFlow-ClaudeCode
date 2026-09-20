@@ -243,6 +243,7 @@ bun run quality:gate --mode baseline --allow-live --provider-model minimax:main:
 bun run check:server      # 服务端 API、WebSocket、provider、会话等测试
 bun run check:desktop     # 桌面端 lint、Vitest、生产构建
 bun run check:adapters    # IM adapter 测试
+bun run check:mobile      # Expo 移动端外壳：类型检查、测试类型检查与 bun test
 bun run check:native      # 桌面 sidecar、Electron host 与 package-smoke 检查
 bun run check:provider-contract # Provider/runtime/proxy 的离线契约测试
 bun run check:chat-contract     # WebSocket、会话与桌面 chat store 契约测试

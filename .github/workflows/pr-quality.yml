@@ -24,6 +24,7 @@ jobs:
       desktop_checks: ${{ steps.policy.outputs.desktop_checks }}
       server_checks: ${{ steps.policy.outputs.server_checks }}
       adapter_checks: ${{ steps.policy.outputs.adapter_checks }}
+      mobile_checks: ${{ steps.policy.outputs.mobile_checks }}
       desktop_native_checks: ${{ steps.policy.outputs.desktop_native_checks }}
       provider_contract_checks: ${{ steps.policy.outputs.provider_contract_checks }}
       chat_contract_checks: ${{ steps.policy.outputs.chat_contract_checks }}
@@ -228,6 +229,26 @@ jobs:
       - name: Run adapter checks
         run: bun run check:adapters
 
+  mobile-checks:
+    name: mobile-checks
+    needs: scope-plan
+    if: needs.scope-plan.outputs.mobile_checks == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - name: Install mobile dependencies
+        run: bun install --frozen-lockfile
+      - name: Run mobile checks
+        run: bun run check
+
   desktop-native-checks:
     name: desktop-native-checks
     needs: scope-plan
@@ -364,6 +385,7 @@ jobs:
       - chat-contract-checks
       - agent-flow-checks
       - adapter-checks
+      - mobile-checks
       - desktop-native-checks
       - macos-swift-checks
       - persistence-checks
@@ -410,6 +432,7 @@ jobs:
           require_selected "chat-contract-checks" "${{ needs.scope-plan.outputs.chat_contract_checks }}" "${{ needs.chat-contract-checks.result }}"
           require_selected "agent-flow-checks" "${{ needs.scope-plan.outputs.agent_flow_checks }}" "${{ needs.agent-flow-checks.result }}"
           require_selected "adapter-checks" "${{ needs.scope-plan.outputs.adapter_checks }}" "${{ needs.adapter-checks.result }}"
+          require_selected "mobile-checks" "${{ needs.scope-plan.outputs.mobile_checks }}" "${{ needs.mobile-checks.result }}"
           require_selected "desktop-native-checks" "${{ needs.scope-plan.outputs.desktop_native_checks }}" "${{ needs.desktop-native-checks.result }}"
           require_selected "macos-swift-checks" "${{ needs.scope-plan.outputs.desktop_native_checks }}" "${{ needs.macos-swift-checks.result }}"
           require_selected "persistence-checks" "${{ needs.scope-plan.outputs.persistence_checks }}" "${{ needs.persistence-checks.result }}"
