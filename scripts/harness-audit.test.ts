@@ -19,12 +19,12 @@ function fixture(options: { provider?: string; consumer?: boolean } = {}): strin
   return rootDir
 }
 
-describe('ECC harness audit', () => {
-  test('uses the ECC report contract and ignores private project state', () => {
+describe('repository harness audit', () => {
+  test('uses the report contract and ignores private project state', () => {
     const rootDir = fixture()
     try {
       mkdirSync(join(rootDir, '.claude'), { recursive: true })
-      writeFileSync(join(rootDir, '.claude', 'private.txt'), 'PRIVATE_ECC_STATE')
+      writeFileSync(join(rootDir, '.claude', 'private.txt'), 'PRIVATE_HARNESS_STATE')
 
       const report = buildReport('repo', { rootDir })
 
@@ -32,14 +32,14 @@ describe('ECC harness audit', () => {
       expect(report.rubric_version).toBe('2026-05-19')
       expect(report.deterministic).toBe(true)
       expect(report.category_count).toBe(report.applicable_categories.length)
-      expect(JSON.stringify(report)).not.toContain('PRIVATE_ECC_STATE')
+      expect(JSON.stringify(report)).not.toContain('PRIVATE_HARNESS_STATE')
       expect(report.checks.every((check) => typeof check.id === 'string')).toBe(true)
     } finally {
       rmSync(rootDir, { recursive: true, force: true })
     }
   })
 
-  test('supports all ECC scopes and filters checks by scope', () => {
+  test('supports all scopes and filters checks by scope', () => {
     const rootDir = fixture()
     try {
       const full = buildReport('repo', { rootDir })
@@ -70,7 +70,7 @@ describe('ECC harness audit', () => {
     }
   })
 
-  test('parses ECC command arguments and normalizes paths', () => {
+  test('parses command arguments and normalizes paths', () => {
     expect(parseArgs(['node', 'scripts/harness-audit.js', '--scope=agents', '--format=json', '--root=fixture'])).toMatchObject({
       scope: 'agents',
       format: 'json',

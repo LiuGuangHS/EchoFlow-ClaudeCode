@@ -33,6 +33,21 @@ bun install
 
 不要提交本地运行产物，例如 `artifacts/quality-runs/`、`node_modules/`、`desktop/node_modules/`。
 
+### 常用开发命令
+
+```bash
+bun run start                                   # 或 ./bin/echoflow-code，本地运行 CLI
+SERVER_PORT=3456 bun run src/server/index.ts    # desktop/ 使用的本地 API/WebSocket 服务
+cd desktop && bun run dev                       # Vite 启动桌面端前端
+cd desktop && bun run test                      # 桌面端 Vitest 套件
+cd desktop && bun run check:electron            # 校验 Electron host 代码并重建 bundle
+cd desktop && bun run build                     # 类型检查 + 生产构建
+cd adapters && bun run test                     # 全部 adapter 测试；test:<platform> 只跑单平台
+bun run docs:dev                                # 文档站预览；bun run docs:build 构建
+```
+
+Windows x64 打包用 `cd desktop && bun run build:windows-x64`，需要 Bun/Bunx 和带「使用 C++ 的桌面开发」工作负载的 Visual Studio 2022 Build Tools。
+
 ## 四层门禁分工
 
 | 层级 | 触发 | 运行内容 | 约束 |
@@ -111,6 +126,31 @@ PR 描述里请贴出你实际运行的命令和 summary。`quality:pr` / `quali
 
 只有最终 diff 的 `bun run verify` 报告通过，才能声明 PR-ready/full validation。不要通过降低 coverage baseline/threshold 或改写测试预期掩盖失败。
 
+## Agent 工具链
+
+本仓库的默认工具链是五个插件，覆盖设计、规划、评审与最小化实现。它们加速流程，但**不替代门禁**：`bun run check:impact`、各 surface 检查、`bun run check:policy` 与 `bun run verify` 仍然是唯一裁判。插件与本仓库约定冲突时，以 `AGENTS.md` 和本文档为准。
+
+| 插件 | 用途 | 入口 |
+| --- | --- | --- |
+| `superpowers` | 需求澄清 → 实现计划 → 分批执行的主流程，带评审检查点 | `/superpowers:brainstorm`、`/superpowers:write-plan`、`/superpowers:execute-plan`；评审用 `@code-reviewer` |
+| `ponytail` | 最小实现阶梯：先问需不需要写，再复用既有代码、标准库、原生能力，最后才写最少可用代码 | `/ponytail-review` 审查当前 diff；`/ponytail-audit` 审查整个仓库 |
+| `frontend-design` | 桌面端与文档站的界面设计质量，避免通用化观感 | 涉及 UI 设计时按需触发 |
+| `typescript-lsp` | TypeScript/JavaScript 的跳转定义、查找引用与错误检查 | 自动生效 |
+| `claude-model-router-hook` | 按任务类别路由模型档位，并约束子代理生成时的模型选择 | 自动生效；配置见 `.claude/model-router.json` |
+
+`superpowers`、`typescript-lsp`、`frontend-design` 由 Claude Code 官方市场提供；另外两个需要先添加各自的市场：
+
+```bash
+/plugin marketplace add tzachbon/claude-model-router-hook
+/plugin install claude-model-router-hook@claude-model-router-hook
+/plugin marketplace add DietrichGebert/ponytail
+/plugin install ponytail@ponytail
+```
+
+任务类别（机械操作、实现、调试、架构、跨系统改造）到模型档位的映射由 `claude-model-router-hook` 自己定义和维护——**不要**在仓库文档里复制这张表，也不要改写插件的判定逻辑。调用 Agent 工具时按任务类别设置 `model`，不要把每个子代理都设为最高档。
+
+`ponytail` 是 Engineering Behavior Guardrails 中"最小改动"那条的执行手段：diff 超出自身证明范围时用 `/ponytail-review` 找出可删的部分。它的 `ultra` 档会挑战需求本身，而 fork 身份、provider 政策、持久化兼容与发布链路是 `AGENTS.md` 规定的不可协商项——不要用任何档位去挑战它们。
+
 ## 回归测试设计
 
 同区域测试文件是门禁的最低信号，测试还需要证明实际行为：
@@ -121,6 +161,16 @@ PR 描述里请贴出你实际运行的命令和 summary。`quality:pr` / `quali
 - **跨边界测试连接点。** server、store、component 分别通过并不能证明消息真正驱动了 UI；通过真实入口验证有风险的连接，避免 mock 被测模块本身。
 
 覆盖率报告也有边界：`desktop/vitest.config.ts` 只采集 `src/**`，不包含 Electron main process。仓库现有 Bun coverage baseline 中分支总数为 0，`coverage.ts` 把 `0/0` 显示为 100%；这不代表测到了全部分支。查看当前配置和报告，不把历史覆盖率数字当作新改动的证明。
+
+### 真实回归判例
+
+上面是方向，以下是已经发生过的回归。保留具体证据，用来判断"这次是不是同一类问题"。
+
+- **驱动状态迁移，不要手写迁移产出的状态。** `desktop/src` 的组件测试里 `setState` 出现 744 次，真实 store action 只有 3 次。手写状态在构造上自洽，因此暴露不出"迁移 A 没有更新 B"——而这正是这类 bug 的所在。改用 `handleServerMessage`、store action 和真实用户事件。
+- **断言不变量，不要断言今天的输出。** `2262973a4` 提交了 `expect(getByText('deepseek-reasoner'))`，而当时屏幕上显示的是另一个模型的数字：它把 bug 写成了通过的断言，下一个修复不得不反转同一行。要问的是"这一步之后必须为真的是什么"，不是"它现在打印什么"。
+- **丢弃与保留两个方向都要覆盖。** replay 防护只测了"replay 必须被丢弃"，没测"真实重复必须保留"，于是上线后把真实回复丢掉了。
+- **测连接点，不要只测两端。** server、store、component 各自都有 `runtime_config_applied` 的测试，但没有任何一个跨越三者；删掉连接它们的 `ChatInput.tsx` 中的 `refreshNonce`，314 个测试依然全绿。
+- **不要为了保持绿灯而重调既有测试的输入。** `128f75ab5` 把五个测试的 props 从 `messageCount={0}` 改成 `{1}`，而不是承认它们描述的是真实会话到不了的状态。如果一个测试只有在你改完输入后才通过，那它描述的是实现，不是行为。
 
 ### 覆盖率参考
 
@@ -133,6 +183,8 @@ PR 描述里请贴出你实际运行的命令和 summary。`quality:pr` / `quali
 ## 维护 Agent 指导
 
 根 `AGENTS.md` 保留项目约束与入口，专项规则留在对应目录，解释和示例按需放到文档。共享指导应适用于贡献者使用的不同模型；能力升级后重新核对重复流程和宽泛停止条件，不能据此跳过现行安全或 CI 契约。这次整理参考了 Eric Provencher 的 [Rethinking skills and prompts for GPT-6 Astra](https://x.com/pvncher/status/2095991462416490862)（2026-09-04）。
+
+`AGENTS.md` 的 "How This Contract Is Maintained" 一节把这条原则变成了可执行规则：一条规则只在同时满足三条时才留在根契约——改变方向判断、违反造成不可逆损失、无法从代码读出；否则外移到本文档并只留一行指针。触发条件（顶层目录或 gate 增删、`ChangeArea` 变更、流程变更、被引用文件移动）出现时，必须在**同一次提交**里修正。`scripts/pr/quality-contract.test.ts` 校验字节预算，并校验根契约的指针仍指向真实存在的内容——外移后又在根契约里重新写一份副本，会被这条断言拦住。
 
 仓库技能的描述只写适用任务和必要的区分信息，操作细节放正文或引用文件。多工作流技能用短入口路由；避免为了覆盖更多关键词而扩大触发范围。模型默认值、工具格式和压缩行为属于产品实现，更新相关文档前应先核对源码。
 
@@ -252,7 +304,7 @@ bun run quality:gate --mode baseline --allow-live \
   --provider-model minimax:main:minimax-main
 ```
 
-`provider` selector 来自桌面端「设置 → 服务商」里保存的本机配置。别人 clone 代码后不需要知道你的 provider UUID，也不需要使用你的供应商；他们可以在自己的桌面端添加 provider 后运行 `bun run quality:providers` 选择自己的模型。
+`provider` selector 来自桌面端「设置 → 模型配置」里保存的本机配置。别人 clone 代码后不需要知道你的 provider UUID，也不需要复用你的模型配置；他们可以在自己的桌面端添加 provider 后运行 `bun run quality:providers` 选择自己的模型。
 
 如果没有保存 provider，也可以用环境变量跑一条 unsaved provider smoke：
 
@@ -348,6 +400,80 @@ bun run check:policy
 6. 确认历史附件上下文、子 Agent 详情和任务状态可以恢复；打开桌宠，验证悬浮窗口与当前会话导航。
 
 各平台的重点不同：macOS 要确认 release job 走的是签名产物且启动策略检查通过；Windows 要确认 `latest.yml`、`.exe`、`.exe.blockmap` 都在 Release 资产里，未签名时的 SmartScreen 提示不代表 updater 失败；Linux 优先用 AppImage 验证自动更新，`.deb` 只作手动安装包发布。
+
+## 上游同步（维护者）
+
+fork 跟踪上游的**发布**，而不是上游 `main` 的移动顶端：上游 `main` 是开发分支，只有 release tag 才是 fork 能对齐的版本。同步是高风险操作，不可协商的约束写在根 `AGENTS.md` 的 "Upstream Sync Direction"；本节是完整流程。
+
+### 三条命令
+
+| 命令 | 作用 |
+| --- | --- |
+| `bun run upstream:check` | 只读探测，报告判定结果，不改动任何东西 |
+| `bun run upstream:resolve` | 拉取同步分支并在本地把 `main` 合入，冲突留在工作区、不提交 |
+| `bun run upstream:sync` | 推送同步分支，便于开 PR |
+
+### 自动化路径（推荐）
+
+`.github/workflows/upstream-sync.yml` 跟踪上游 release，并为每个新版本创建 `sync/upstream-vX.Y.Z` PR：
+
+1. **审查同步 PR**：新 PR 出现时，先看描述里的变更文件清单。
+2. **就地解决冲突**：如果 PR 被标为 draft 并列出冲突，拉取同步分支，用 `bun run upstream:resolve` 把 `main` 合入；冲突留在工作区且不提交。
+3. **套用下面的冲突处理流程**（手工路径第 6-11 步），然后 `git push origin sync/upstream-vX.Y.Z`。
+4. **合并 PR**：同步分支干净且验证通过后，用 GitHub 的 merge 按钮或本地快进合并进 `main`。
+
+自动化把上游 release（不是 `main`）拉进 `refs/remotes/upstream-release/`，从不污染本地 tag 命名空间；它拒绝覆盖内容不同的同步分支，因此手工解决的冲突能在后续定时运行中保留。
+
+### 手工路径
+
+自动化不可用、或需要非 release 的同步时使用：
+
+1. 从干净的 `main` 工作区开始，先检查已配置的 remote。
+2. 正常拉取 `origin`。拉上游分支时不带 tag：`git fetch upstream +refs/heads/*:refs/remotes/upstream/* --prune`；上游 release tag 可能与 fork 的 release tag 重名。
+3. 合并前先比较 `main...origin/main` 与 `main...upstream/main`。
+4. 用 merge commit 合并上游；**不要** rebase 公开的 `main`。
+5. 用 `/superpowers:brainstorm` 与 `/superpowers:write-plan` 规划这次合并（"合并上游，保留修复，替换品牌名"）；对冲突、高风险文件以及 provider 政策决策用 `@code-reviewer`。
+6. **动手前先写出完整的冲突矩阵**（见下），然后一轮把所有冲突解决完；不要逐个发现、逐个修补。
+7. 有意地解决文件内容，**绝不**整体套用 `--ours` 或 `--theirs`。保留 fork 身份与 provider 政策、无赞助的公开文档、持久化兼容、Electron 发布链路和质量门禁。
+8. 每次合并后审计公开身份：README、文档、release notes、包元数据、诊断导出、签名/隐私页面、更新链接，以及桌面端「关于」/个人资料默认值，都不能把 NanmiCoder/阿江 或 `cc-haha` 写成当前 EchoFlow 的作者、维护者、联系人或产品。
+9. 冲突分析与工作区编辑可以自动化，但 `git add` 和 `git commit` 必须由开发者显式确认。**绝不**自动暂存或提交冲突解决结果。
+10. 写完冲突解决后，让 `@code-reviewer` 审阅这些结果并运行 `bun run check:policy`，再请开发者暂存/提交。构建或类型检查失败时，按 `AI Coding Agent 修复循环` 一节定位并修复，重跑失败的窄检查，并在声称可推送前运行 `bun run verify`。
+11. 先推 `main`（或与 release tag 一起推），然后核对远端分支与 tag 指向。
+
+### 冲突矩阵模板
+
+一条一行，编辑前一次性写完：
+
+| 文件 | base / ours / theirs 行为 | 最终决策 | 验证命令 |
+| --- | --- | --- | --- |
+| `package.json` | 上游改版本与依赖，ours 是 fork 元数据 | `ours` | `bun run check:policy` |
+| `LICENSE` | 上游改版权行 | `ours` | 人工核对 |
+| `providerPresets.json` | 上游新增 provider 预设 | `manual`，逐条按规则裁定 | `bun run check:provider-contract` |
+| `desktop/src/stores/chatStore.ts` | 上游改会话标题逻辑，ours 是品牌文案 | 逐字段取舍：`title` 保 fork 品牌，`body` 吸上游逻辑 | `cd desktop && bun run test` |
+
+`providerPresets.json` 永远判 `manual`；品牌类文件（`package.json`、`LICENSE`、`README.md`、`desktop/package.json`、`AGENTS.md`）判 `ours`，并单独确认上游逻辑是否需要一并带走。
+
+### 参考案例：v0.6.4 的选择性采纳
+
+这次合并走四阶段流程，是"选择性采纳"的范例。分支 `merge/upstream-v0.6.4-selective`，快照 tag `pre-merge-v0.6.4-snapshot`，预估 12–18 小时。
+
+- **策略**：Cherry-pick + 手动合并，而不是整包 merge。
+- **Phase 2 选中 6 个上游提交**（全部落地 `main`，cherry-pick 后生成新哈希）：Agent Teams 继承 lead model；队友权限提示路由；会话列表不再扫描全部 JSONL；恢复窗口拖拽；修复测试连接按钮塌陷；折叠控件与上下文表。
+- **唯一一处品牌冲突的解法**（`desktop/src/stores/chatStore.ts`）既不是 `--ours` 也不是 `--theirs`，而是逐字段取舍——`title` 保 EchoFlow 品牌，`body` 吸上游逻辑。这是整条同步哲学最凝练的体现。
+- **Phase 3 provider 决策**：上游 v0.6.4 新增的 7 个 provider 预设**全部拒绝**（5 个上游自己标了 `deprecated`，`atlascloud` 的链接带 `utm_campaign=cc-haha`，`apismart` 是赞助商），并恢复了上游删掉的 EchoFlow API。结论是 `providerPresets.json` **完全不改**。
+- **最终只落 1 个文件**：`desktop/build/getProcessInfo.nsh`。
+
+### 版本合并
+
+上游同步包含多个上游 release 时，不要把上游的 release note 文件或版本号原样带进 fork。fork 的 `desktop/package.json` 是版本唯一事实源：
+
+1. 下一个 fork 版本号由**最新的 fork 发布/tag** 决定，不由上游 tag 决定。
+2. 把与用户相关的上游改动合并进下一个 fork release note，挂 fork 的版本号。
+3. 每个 fork 发布只递增一次 patch 版本；**不要**因为合并了上游 `v0.6.4` / `v0.6.5` 就创建同名 tag。
+4. 上游专用 release note 的内容归并完成后删除，除非维护者明确要求保留。
+5. 提交前确认 `desktop/package.json`、合并后的 release note、发布脚本和 tag 计划用的是同一个 fork 版本。如果目标版本或待删文件有歧义，先问维护者再删。
+
+例如：如果 fork 还没发布 `v0.5.6`，就把上游改动并进 fork 的 `v0.5.6` release note，不要引入上游 `v0.6.x` 的 release note 或 tag。
 
 ## PR 提交流程
 

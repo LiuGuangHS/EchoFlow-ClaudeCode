@@ -233,20 +233,52 @@ function detectTargetMode(rootDir) {
   return 'consumer';
 }
 
-const ECC_PLUGIN_KEY_PATTERNS = [
+// The toolset this audit expects to find installed. ECC keys stay in the list
+// for users who have not migrated; the fork's current toolset is the five
+// plugins from `docs/internals/contributing.md` § Agent toolset.
+const AGENT_PLUGIN_KEY_PATTERNS = [
   /^ecc@/i,
   /^everything-claude-code@/i,
+  /^superpowers@/i,
+  /^ponytail@/i,
+  /^typescript-lsp@/i,
+  /^frontend-design@/i,
+  /^claude-model-router-hook@/i,
 ];
 
-const ECC_LEGACY_PLUGIN_DIRS = [
+const AGENT_PLUGIN_DIRS = [
   'ecc',
   'ecc@ecc',
   'everything-claude-code',
   'everything-claude-code@everything-claude-code',
+  'superpowers',
+  'superpowers@claude-plugins-official',
+  'ponytail',
+  'ponytail@ponytail',
+  'typescript-lsp',
+  'typescript-lsp@claude-plugins-official',
+  'frontend-design',
+  'frontend-design@claude-plugins-official',
+  'claude-model-router-hook',
+  'claude-model-router-hook@claude-model-router-hook',
 ];
 
-const ECC_CACHE_MARKETPLACES = ['everything-claude-code', 'ecc'];
-const ECC_CACHE_PLUGIN_NAMES = ['ecc', 'everything-claude-code'];
+const AGENT_PLUGIN_CACHE_MARKETPLACES = [
+  'everything-claude-code',
+  'ecc',
+  'claude-plugins-official',
+  'ponytail',
+  'claude-model-router-hook',
+];
+const AGENT_PLUGIN_CACHE_PLUGIN_NAMES = [
+  'ecc',
+  'everything-claude-code',
+  'superpowers',
+  'ponytail',
+  'typescript-lsp',
+  'frontend-design',
+  'claude-model-router-hook',
+];
 
 function uniquePaths(paths) {
   return [...new Set(paths.filter(Boolean))];
@@ -290,7 +322,7 @@ function findPluginInstallFromManifest(installedPluginsPaths) {
     }
 
     for (const [key, value] of Object.entries(manifest.plugins)) {
-      if (!ECC_PLUGIN_KEY_PATTERNS.some(pattern => pattern.test(key))) {
+      if (!AGENT_PLUGIN_KEY_PATTERNS.some(pattern => pattern.test(key))) {
         continue;
       }
 
@@ -316,7 +348,7 @@ function findPluginInstallFromManifest(installedPluginsPaths) {
 
 function findPluginInstallFlatLayout(candidateRoots) {
   for (const pluginsDir of candidateRoots) {
-    for (const pluginDir of ECC_LEGACY_PLUGIN_DIRS) {
+    for (const pluginDir of AGENT_PLUGIN_DIRS) {
       const hit = findPluginJsonUnder(path.join(pluginsDir, pluginDir));
       if (hit) {
         return hit;
@@ -329,8 +361,8 @@ function findPluginInstallFlatLayout(candidateRoots) {
 
 function findPluginInstallMarketplaceCache(candidateRoots) {
   for (const pluginsDir of candidateRoots) {
-    for (const marketplace of ECC_CACHE_MARKETPLACES) {
-      for (const pluginName of ECC_CACHE_PLUGIN_NAMES) {
+    for (const marketplace of AGENT_PLUGIN_CACHE_MARKETPLACES) {
+      for (const pluginName of AGENT_PLUGIN_CACHE_PLUGIN_NAMES) {
         const pluginRoot = path.join(pluginsDir, 'cache', marketplace, pluginName);
         if (!fs.existsSync(pluginRoot)) {
           continue;
@@ -384,6 +416,106 @@ function findPluginInstall(rootDir) {
     || findPluginInstallFlatLayout(flatRoots)
     || findPluginInstallMarketplaceCache(pluginRoots)
   );
+}
+
+// docs/AGENTS.md declares that `docs/en/` mirrors the Chinese tree file for
+// file. Pages missing a counterpart are reported rather than allowlisted: the
+// fix is to write the mirror or move the page out of docs/ entirely.
+const DOCS_TREE_EXCLUDED_DIRS = new Set(['superpowers', 'ui-clone', 'public', 'images', '_internal', 'en']);
+const DOCS_TREE_EXCLUDED_FILES = new Set(['AGENTS.md']);
+
+// Fork-owned brand strings must not survive in shipped source. Tests, fixtures
+// and migration sources keep the historical name on purpose: they are the
+// compatibility contract for user data that already exists on disk.
+const BRAND_RESIDUE_PATTERNS = [/cc[-_]haha/i, /claude-code-haha/i];
+const BRAND_SCAN_DIRS = ['src', 'desktop/src', 'desktop/electron', 'adapters', 'scripts'];
+const BRAND_SCAN_EXCLUDED_DIRS = new Set(['node_modules', 'target', 'dist', 'build', 'coverage']);
+const BRAND_SCAN_EXCLUDED_FILES = [
+  /\.test\.[cm]?[jt]sx?$/,
+  /\.spec\.[cm]?[jt]sx?$/,
+  /\.d\.[cm]?ts$/,
+  /__tests__\//,
+  /fixtures\//,
+];
+const BRAND_RESIDUE_ALLOWED = new Set([
+  // Migration sources must keep the historical directory name so existing user
+  // data still resolves; the old name is the compatibility contract.
+  'desktop/src/lib/persistenceMigrations.ts',
+  // This scanner holds the patterns themselves.
+  'scripts/harness-audit.js',
+]);
+
+function collectSourceFiles(rootDir, relativeDir, predicate, excludedDirs) {
+  const dirPath = path.join(rootDir, relativeDir);
+  if (!fs.existsSync(dirPath)) {
+    return [];
+  }
+
+  const found = [];
+  const stack = [dirPath];
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const nextPath = path.join(current, entry.name);
+
+      if (entry.isDirectory()) {
+        if (!excludedDirs.has(entry.name)) {
+          stack.push(nextPath);
+        }
+        continue;
+      }
+
+      const relative = path.relative(rootDir, nextPath).split(path.sep).join('/');
+      if (predicate(relative)) {
+        found.push(relative);
+      }
+    }
+  }
+
+  return found;
+}
+
+function findMissingDocMirrors(rootDir) {
+  // The file-for-file mirror is a convention of this repository. A project that
+  // has no English tree at all is not failing it.
+  if (!fileExists(rootDir, 'docs/en')) {
+    return [];
+  }
+
+  return collectSourceFiles(rootDir, 'docs', (file) => file.endsWith('.md'), DOCS_TREE_EXCLUDED_DIRS)
+    .map((file) => file.replace(/^docs\//, ''))
+    .filter((file) => !DOCS_TREE_EXCLUDED_FILES.has(path.posix.basename(file)))
+    .filter((file) => !fileExists(rootDir, `docs/en/${file}`))
+    .sort();
+}
+
+function findBrandResidueFiles(rootDir) {
+  const hits = [];
+
+  for (const dir of BRAND_SCAN_DIRS) {
+    const sources = collectSourceFiles(
+      rootDir,
+      dir,
+      (file) => /\.(?:[cm]?[jt]sx?|mjs|cjs)$/.test(file),
+      BRAND_SCAN_EXCLUDED_DIRS,
+    );
+
+    for (const file of sources) {
+      if (BRAND_RESIDUE_ALLOWED.has(file)) {
+        continue;
+      }
+      if (BRAND_SCAN_EXCLUDED_FILES.some((pattern) => pattern.test(file))) {
+        continue;
+      }
+      if (BRAND_RESIDUE_PATTERNS.some((pattern) => pattern.test(safeRead(rootDir, file)))) {
+        hits.push(file);
+      }
+    }
+  }
+
+  return [...new Set(hits)].sort();
 }
 
 function getRepoChecks(rootDir) {
@@ -825,16 +957,29 @@ function getConsumerChecks(rootDir) {
   const projectHooks = safeRead(rootDir, '.claude/settings.json');
   const pluginInstall = findPluginInstall(rootDir);
 
+  // Lazily scanned once per report so scoped audits that filter these checks out
+  // never walk the tree, and building two reports never shares stale findings.
+  let missingMirrorsValue;
+  const missingMirrors = () => {
+    missingMirrorsValue ??= findMissingDocMirrors(rootDir);
+    return missingMirrorsValue;
+  };
+  let brandResidueValue;
+  const brandResidue = () => {
+    brandResidueValue ??= findBrandResidueFiles(rootDir);
+    return brandResidueValue;
+  };
+
   return [
     {
       id: 'consumer-plugin-install',
       category: 'Tool Coverage',
       points: 4,
       scopes: ['repo'],
-      path: '~/.claude/plugins/ecc/ (legacy everything-claude-code paths also supported)',
-      description: 'Everything Claude Code is installed for the active user or project',
+      path: '~/.claude/plugins/',
+      description: 'An agent toolset is installed for the active user or project',
       pass: Boolean(pluginInstall),
-      fix: 'Install the ECC plugin for this user or project before auditing project-specific harness quality.',
+      fix: 'Install the agent toolset (superpowers, ponytail, typescript-lsp, frontend-design, claude-model-router-hook) for this user or project before auditing project-specific harness quality.',
     },
     {
       id: 'consumer-project-overrides',
@@ -848,7 +993,7 @@ function getConsumerChecks(rootDir) {
         countFiles(rootDir, '.claude/commands', '.md') > 0 ||
         fileExists(rootDir, '.claude/settings.json') ||
         fileExists(rootDir, '.claude/hooks.json'),
-      fix: 'Add project-local .claude hooks, commands, skills, or settings that tailor ECC to this repo.',
+      fix: 'Add project-local .claude hooks, commands, skills, or settings that tailor the agent toolset to this repo.',
     },
     {
       id: 'consumer-instructions',
@@ -939,6 +1084,35 @@ function getConsumerChecks(rootDir) {
       description: 'Project-local hook settings reference tool/prompt guardrails',
       pass: projectHooks.includes('PreToolUse') || projectHooks.includes('beforeSubmitPrompt') || fileExists(rootDir, '.claude/hooks.json'),
       fix: 'Add project-local hook settings or hook definitions for prompt/tool guardrails.',
+    },
+    // Getters keep these repo-wide scans off scoped audits that filter them out.
+    {
+      id: 'docs-locale-mirror',
+      category: 'Quality Gates',
+      points: 2,
+      scopes: ['repo'],
+      path: 'docs/en/',
+      description: 'Every docs page has an English counterpart',
+      get pass() {
+        return missingMirrors().length === 0;
+      },
+      get fix() {
+        return `Add the missing docs/en counterparts, or move the page out of docs/ and fold the durable part into docs/internals/contributing.md: ${missingMirrors().join(', ')}`;
+      },
+    },
+    {
+      id: 'brand-residue-scan',
+      category: 'Quality Gates',
+      points: 3,
+      scopes: ['repo'],
+      path: 'src/',
+      description: 'Fork-owned brand names are absent from shipped source',
+      get pass() {
+        return brandResidue().length === 0;
+      },
+      get fix() {
+        return `Rename the fork-owned brand strings to echoflow, or allowlist the file when it is a deliberate migration source: ${brandResidue().join(', ')}`;
+      },
     },
     ...buildGithubChecks(rootDir),
     ...collectProviderChecks(rootDir, packageJson),
@@ -1044,7 +1218,7 @@ Usage: node scripts/harness-audit.js [scope] [--scope <repo|hooks|skills|command
        [--root <path>]
 
 Deterministic harness audit based on explicit file/rule checks.
-Audits the current working directory by default and auto-detects ECC repo mode vs consumer-project mode.
+Audits the current working directory by default and auto-detects repo mode vs consumer-project mode.
 `);
   process.exit(exitCode);
 }

@@ -13,9 +13,9 @@
 - Known risk / rollback:
   - <!-- remaining risk and how to revert safely -->
 
-## ECC / Reproduction Evidence
+## Tooling & Reproduction Evidence
 
-- ECC workflow or review used: <!-- e.g. /ecc:plan, @code-reviewer, /ecc:quality-gate; write N/A with a reason if unavailable -->
+- Agent toolset used: <!-- e.g. /superpowers:write-plan, @code-reviewer, /ponytail-review; write N/A with a reason if unavailable -->
 - `bun run audit:harness`: <!-- result, or N/A with a reason -->
 - `.claude/` local state was not committed or used as a CI dependency.
 

@@ -7,7 +7,8 @@
  *
  * The fork tracks upstream *releases*, not upstream's moving tip. Upstream `main`
  * is a development branch; a release tag is what a fork can version against.
- * See AGENTS.md "Safe Upstream Sync Workflow" for the policies this encodes.
+ * See AGENTS.md "Upstream Sync Direction" for the non-negotiable policies this
+ * encodes, and docs/internals/contributing.md for the full procedure.
  */
 
 export type UpstreamRelease = {
