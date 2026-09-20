@@ -106,6 +106,29 @@ Install root dependencies with `bun install`, plus `desktop/` or `adapters/` dep
 - `cd desktop && bun run test`: run desktop Vitest suites.
 - `cd desktop && bun run build:windows-x64`: package the Windows x64 Electron app from PowerShell; requires Visual Studio 2022 Build Tools with the Desktop development with C++ workload.
 
+### WSL Development with Windows Preview
+When developing in WSL but previewing on Windows:
+
+1. Start the server in WSL:
+   ```bash
+   cd /home/zhijun/WorkSpace/EchoFlow-Code
+   SERVER_PORT=3456 bun run src/server/index.ts
+   ```
+
+2. Build desktop in WSL:
+   ```bash
+   cd desktop
+   bun run electron:build
+   ```
+
+3. Run from Windows PowerShell:
+   ```powershell
+   cd \\wsl$\Ubuntu\home\zhijun\WorkSpace\EchoFlow-Code\desktop
+   npx electron .\electron-dist\main.cjs
+   ```
+
+Windows can access WSL server via `localhost:3456`. The `\\wsl$\` path works in Windows Explorer and terminals.
+
 ## Test Design Direction
 Case law, the concrete regression examples, and the coverage caveats live in `docs/internals/contributing.md`. These are the parts that change how you write a test:
 
