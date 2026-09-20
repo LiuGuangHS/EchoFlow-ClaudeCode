@@ -9,6 +9,9 @@ import {
 import { normalizeRuntimeSelection } from '../lib/runtimeSelection'
 
 const STORAGE_KEY = 'echoflow-code-session-runtime'
+// Session-list metadata can lag behind runtime changes or arrive out of order.
+// Protect local choices until the server confirms them.
+const pendingRuntimes = new WeakSet<RuntimeSelection>()
 const RETIRED_GROK_MODEL_IDS = new Set([
   'grok-build',
   'grok-build-0.1',
@@ -32,7 +35,8 @@ type SessionRuntimeStore = {
   markRequestApplied: (sessionId: string, requestId?: string) => void
   markRequestUnconfirmed: (sessionId: string) => void
   markRequestFailed: (sessionId: string, requestId?: string) => void
-  syncFromSessions: (sessions: SessionListItem[]) => void
+  settleSelection: (key: string) => void
+  syncFromSessions: (sessions: SessionListItem[], startedWith?: Record<string, RuntimeSelection>) => void
 }
 
 function normalizeSelection(selection: RuntimeSelection): RuntimeSelection | null {
@@ -115,7 +119,10 @@ export const useSessionRuntimeStore = create<SessionRuntimeStore>((set) => ({
     set((state) => {
       const normalized = normalizeSelection(selection)
       const selections = { ...state.selections }
-      if (normalized) selections[key] = normalized
+      if (normalized) {
+        pendingRuntimes.add(normalized)
+        selections[key] = normalized
+      }
       else delete selections[key]
       persistSelections(selections)
       return { selections }
@@ -195,30 +202,38 @@ export const useSessionRuntimeStore = create<SessionRuntimeStore>((set) => ({
       }
     }),
 
-  syncFromSessions: (sessions) =>
+  settleSelection: (key) =>
+    set((state) => {
+      const current = state.selections[key]
+      if (!current || !pendingRuntimes.has(current)) return state
+      return { selections: { ...state.selections, [key]: { ...current } } }
+    }),
+
+  syncFromSessions: (sessions, startedWith) =>
     set((state) => {
       let selections = state.selections
       for (const session of sessions) {
+        const current = selections[session.id]
+        if (startedWith && startedWith[session.id] !== current) continue
         if (!session.runtimeModelId || session.runtimeProviderId === undefined) continue
         const selection = normalizeSelection({
           providerId: session.runtimeProviderId,
           modelId: session.runtimeModelId,
           ...(session.effortLevel ? { effortLevel: session.effortLevel } : {}),
         })
+        const matchesCurrent = selection &&
+          current?.providerId === selection.providerId &&
+          current.modelId === selection.modelId &&
+          current.effortLevel === selection.effortLevel
+        const pending = current && pendingRuntimes.has(current)
+        if (pending && !matchesCurrent) continue
         if (!selection) {
           if (!(session.id in selections)) continue
           if (selections === state.selections) selections = { ...state.selections }
           delete selections[session.id]
           continue
         }
-        const current = selections[session.id]
-        if (
-          current?.providerId === selection.providerId &&
-          current.modelId === selection.modelId &&
-          current.effortLevel === selection.effortLevel
-        ) {
-          continue
-        }
+        if (matchesCurrent && !pending) continue
         if (selections === state.selections) selections = { ...state.selections }
         selections[session.id] = selection
       }

@@ -846,6 +846,27 @@ export class ConversationService {
     return true
   }
 
+  getPendingPermissionToolName(sessionId: string, requestId: string): string | undefined {
+    return this.sessions.get(sessionId)?.pendingPermissionRequests.get(requestId)?.toolName
+  }
+
+  /**
+   * In-process main-loop model switch via the SDK set_model control request.
+   * Only the model name changes — provider env is fixed at process spawn, so
+   * this is only valid when the target model belongs to the session's current
+   * provider. The ack resolves before the CLI's next API request is built, so
+   * sending this while the CLI is blocked on a permission decision is
+   * race-free (unlike sending it after the allow response).
+   */
+  async setModel(sessionId: string, model: string, timeoutMs = 10_000): Promise<boolean> {
+    if (!this.sessions.has(sessionId)) return false
+    await this.requestControl(sessionId, {
+      subtype: 'set_model',
+      model,
+    }, timeoutMs)
+    return this.sessions.has(sessionId)
+  }
+
   setMaxThinkingTokens(sessionId: string, maxThinkingTokens: number | null): boolean {
     return this.sendSdkMessage(sessionId, {
       type: 'control_request',

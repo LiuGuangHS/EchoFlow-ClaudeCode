@@ -9,6 +9,7 @@ import {
   type SubagentRunStatus,
 } from '../api/subagents'
 import { MessageList } from '../components/chat/MessageList'
+import type { AgentActivityTarget } from '../components/chat/ToolCallGroup'
 import { ChatInput } from '../components/chat/ChatInput'
 import { SessionChatHeader, SessionChatSurface } from '@/components/chat/SessionChatSurface'
 import { SessionActivityButton } from '../components/activity/SessionActivityButton'
@@ -149,11 +150,14 @@ export function SubagentRunPage({
     teamMember?.sessionId,
   ].filter((value): value is string => Boolean(value)))], [data?.agentId, teamMember])
   const activityProjectionMessages = useMemo(() => {
-    if (!data?.activityMessages) return undefined
-    return mapHistoryMessagesToUiMessages(data.activityMessages, {
+    // The server only sends `activityMessages` when it differs from `messages`
+    // (truncation); below that threshold `messages` is the same projection.
+    const projection = data?.activityMessages ?? data?.messages
+    if (!projection || data?.activityComplete === false) return undefined
+    return mapHistoryMessagesToUiMessages(projection, {
       includeTeammateMessages: true,
     })
-  }, [data?.activityMessages])
+  }, [data?.activityMessages, data?.messages, data?.activityComplete])
 
   const handleReturn = () => {
     const store = useTabStore.getState()
@@ -212,7 +216,7 @@ export function SubagentRunPage({
       data.activityMessages ?? data.messages,
       data.activityTaskNotifications ?? data.taskNotifications ?? [],
     )
-    useChatStore.setState((state) => {
+    useChatStore.getState().applyBoundedUpdate((state) => {
       const existing = state.sessions[tabId] ?? createDefaultSessionState()
       const localMessages = existing.messages.filter((message) => {
         if (message.type === 'error' && message.code === 'SUBAGENT_MESSAGE_FAILED') {
@@ -225,7 +229,10 @@ export function SubagentRunPage({
       const hasPendingMessage = localMessages.some((message) => (
         message.type === 'user_text' && message.pending === true
       ))
-      const mergedActivity = mergeReconstructedRunActivity({
+      const mergedActivity = data.activityComplete === false ? {
+        agentTaskNotifications: existing.agentTaskNotifications ?? {},
+        backgroundAgentTasks: existing.backgroundAgentTasks ?? {},
+      } : mergeReconstructedRunActivity({
         agentTaskNotifications: existing.agentTaskNotifications ?? {},
         backgroundAgentTasks: existing.backgroundAgentTasks ?? {},
       }, runActivity, {
@@ -717,6 +724,16 @@ function AgentSessionView({
       useActivityPanelStore.getState().open(targetSessionId)
     }
   }, [runAgentId, runToolUseId, sessionId, sourceSessionId])
+  // Cards rendered inside this page address their runs through the source
+  // session, not this tab's `subagent:*` id — and a nested card needs the same
+  // canonical parent prefix the "open" button uses.
+  const resolveAgentActivityTarget = useCallback(({ toolUseId, taskId }: AgentActivityTarget) => ({
+    sessionId: sourceSessionId,
+    toolUseId: runAgentId && runToolUseId
+      ? (toolUseId.includes('/') ? `${runToolUseId}/${toolUseId}` : `${runToolUseId}/${runAgentId}/${toolUseId}`)
+      : toolUseId,
+    taskId,
+  }), [runAgentId, runToolUseId, sourceSessionId])
   const handleClearFinishedBackgroundTasks = useCallback((taskKeys: string[]) => {
     dismissBackgroundTaskKeys(sessionId, taskKeys)
   }, [dismissBackgroundTaskKeys, sessionId])
@@ -805,6 +822,7 @@ function AgentSessionView({
             sessionId={sessionId}
             mobileLayout={isMobileLayout}
             onOpenAgentRun={handleOpenSubagent}
+            resolveAgentActivityTarget={resolveAgentActivityTarget}
           />
         </div>
       ) : null}

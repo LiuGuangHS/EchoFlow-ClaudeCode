@@ -6,13 +6,14 @@ import { useTranslation } from '../../i18n'
 import { openPreviewLink } from '../../lib/openPreviewLink'
 import { splitTextByUrls } from '../../lib/urlBoundary'
 import { AttachmentGallery } from './AttachmentGallery'
-import { MessageActionBar, type MessageBranchAction } from './MessageActionBar'
+import { MessageActionBar, type MessageBranchAction, type MessageRewindAction } from './MessageActionBar'
 import { MarkdownRenderer } from '../markdown/MarkdownRenderer'
 
 type Props = {
   content: string
   attachments?: UIAttachment[]
   branchAction?: MessageBranchAction
+  rewindAction?: MessageRewindAction
   timestamp?: number
   sessionId?: string
   /** Set when this turn came from another agent rather than from the user. */
@@ -26,6 +27,7 @@ export const UserMessage = memo(function UserMessage({
   content,
   attachments,
   branchAction,
+  rewindAction,
   timestamp,
   sessionId,
   teammateFrom,
@@ -170,6 +172,7 @@ export const UserMessage = memo(function UserMessage({
             copyText={content}
             copyLabel={t('chat.copyPrompt')}
             branchAction={branchAction}
+            rewindAction={rewindAction}
             align="end"
             timestamp={timestamp}
           />

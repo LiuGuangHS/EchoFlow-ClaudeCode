@@ -28,7 +28,7 @@ The repository contract is tool-independent: run `bun run check:impact` for scop
 - When touching fork-owned identifiers, convert `cc-haha` → `echoflow`, `Claude-Code-Haha` → `EchoFlow-Code`, and `CC_HAHA_*` → `ECHOFLOW_*`. Retain historical names only for explicit compatibility, attribution, migration fixtures, or supported variables.
 - Retain upstream `Claude Code`, `Claude CLI`, `claude-code-*`, and `CLAUDE_CODE_*` terminology for upstream/runtime compatibility.
 - Fork calls to action and service links use EchoFlow surfaces, including `https://code.echoflow.cn/` and `https://api.echoflowai.cc/`.
-- `src/server/config/providerPresets.json` contains only official vendor APIs, official local integrations, EchoFlow API, and custom. Do not automatically add third-party relay, sponsor/referral gateway, or promotional provider presets; reject (`jiekouai`, `shengsuanyun`, `teamorouter`) and referral URLs. Official vendor APIs and official OAuth integrations, including Grok Official, may be synchronized from upstream; private gateways use custom.
+- `src/server/config/providerPresets.json` contains only official vendor APIs, official local integrations, official subscription/API integrations such as OpenCode Go, EchoFlow API, and custom. Do not automatically add third-party relay, sponsor/referral gateway, or promotional provider presets; reject (`jiekouai`, `shengsuanyun`, `teamorouter`) and referral URLs. Official vendor APIs and official OAuth integrations, including Grok Official, may be synchronized from upstream; private gateways use custom.
 
 ## Safe Upstream Sync Workflow
 These are repository policies, not guarantees enforced by Git. Use them for every upstream merge.
@@ -67,6 +67,18 @@ When the automation is unavailable or a non-release sync is needed:
 9. Conflict analysis and worktree edits may be automated, but `git add` and `git commit` require explicit developer confirmation. Never stage or commit a conflict resolution automatically.
 10. After writing conflict resolutions, run `/ecc:code-review` and `/ecc:quality-gate` before asking the developer to stage or commit. If a build or type check fails, use `/ecc:build-fix`, rerun the narrow failed check, and run `bun run verify` before claiming the merge push-ready.
 11. Push `main` before or together with release tags, then verify the remote branch and tag targets.
+
+### Release Version Consolidation
+
+When an upstream sync contains multiple upstream releases, do not carry upstream release-note files or upstream version numbers into the fork unchanged. Treat the fork's `desktop/package.json` as the release-version source of truth:
+
+1. Determine the next fork release from the latest fork release/tag, not from the upstream tag.
+2. Consolidate user-relevant upstream changes into the next fork release note under the fork's version.
+3. Increment the fork patch version exactly once per fork release; do not create upstream-version tags such as `v0.6.4` or `v0.6.5` merely because those upstream tags were merged.
+4. Remove upstream-only release-note files after their useful content has been consolidated, unless the maintainer explicitly asks to retain them.
+5. Before committing, verify that `desktop/package.json`, the consolidated release note, release scripts, and any tag plan all use the same fork version. If the target version or document to remove is ambiguous, ask the maintainer before deleting it.
+
+For example, if the fork has not released `v0.5.6`, merge upstream changes into the fork's `v0.5.6` release note and do not introduce upstream `v0.6.x` release notes or tags.
 
 ## Engineering Behavior Guardrails
 These rules are adapted from Karpathy-style coding-agent guidelines. They bias toward caution and simplicity, but do not override the autonomy rule for clear, reversible work.

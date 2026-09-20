@@ -966,6 +966,14 @@ describe('Models API', () => {
         context: '1m',
       },
       {
+        id: 'claude-opus-5',
+        name: 'Opus 5',
+        description: 'Best for complex agentic coding and enterprise work',
+        context: '1m',
+        defaultReasoningEffort: 'high',
+        supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      },
+      {
         id: 'claude-opus-4-8',
         name: 'Opus 4.8',
         description: 'Best for complex agentic coding and enterprise work',
@@ -1182,7 +1190,7 @@ describe('Models API', () => {
 
     expect(res.status).toBe(200)
     const body = await res.json()
-    expect(body.model.id).toBe('claude-opus-4-8')
+    expect(body.model.id).toBe('claude-opus-5')
   })
 
   it('GET /api/models/current should replace the legacy opus[1m] default with the Claude OAuth Pro default', async () => {
@@ -1219,6 +1227,7 @@ describe('Models API', () => {
     expect(listBody.models.map((model: { id: string }) => model.id)).toEqual([
       'claude-fable-5-1',
       'claude-fable-5',
+      'claude-opus-5',
       'claude-opus-4-8',
       'claude-sonnet-5',
       'claude-haiku-4-5',
@@ -1240,8 +1249,8 @@ describe('Models API', () => {
     const body = await response.json()
 
     expect(body.model).toMatchObject({
-      id: 'claude-opus-4-8',
-      name: 'Opus 4.8',
+      id: 'claude-opus-5',
+      name: 'Opus 5',
     })
   })
 
@@ -1564,15 +1573,15 @@ describe('Model Options', () => {
   beforeEach(setup)
   afterEach(teardown)
 
-  it('defaults Anthropic API users to Opus 4.8 and exposes the current official options once', () => {
+  it('defaults Anthropic API users to Opus 5 and exposes the current official options once', () => {
     process.env.ANTHROPIC_API_KEY = 'test-api-key'
 
-    expect(getDefaultMainLoopModelSetting()).toBe('claude-opus-4-8')
+    expect(getDefaultMainLoopModelSetting()).toBe('claude-opus-5')
 
     const options = getModelOptions()
     const values = options.map(option => option.value)
 
-    expect(options[0]?.description).toContain('Opus 4.8')
+    expect(options[0]?.description).toContain('Opus 5')
     expect(options[0]?.description).toContain('$5')
     expect(values).toContain('fable')
     expect(values).toContain('sonnet')
@@ -1614,9 +1623,9 @@ describe('Model Options', () => {
     process.env.ANTHROPIC_API_KEY = 'test-api-key'
 
     expect(getSonnet46_1MOption().description).toContain('Sonnet 5')
-    expect(getOpus46_1MOption().description).toContain('Opus 4.8')
+    expect(getOpus46_1MOption().description).toContain('Opus 5')
     expect(getMaxSonnet46_1MOption().description).toContain('Sonnet 5')
-    expect(getMaxOpus46_1MOption().description).toContain('Opus 4.8')
+    expect(getMaxOpus46_1MOption().description).toContain('Opus 5')
 
     process.env.ANTHROPIC_BASE_URL = 'https://api.deepseek.com/anthropic'
 
@@ -1636,11 +1645,11 @@ describe('Model Options', () => {
 
     process.env.ANTHROPIC_MODEL = 'opus'
     expect(getModelOptions().find(option => option.value === 'opus')?.description)
-      .toContain('Opus 4.8')
+      .toContain('Opus 5')
 
     process.env.ANTHROPIC_MODEL = 'opus[1m]'
     expect(getModelOptions().find(option => option.value === 'opus[1m]')?.description)
-      .toContain('Opus 4.8')
+      .toContain('Opus 5')
 
     process.env.ANTHROPIC_MODEL = 'claude-fable-5'
     expect(getModelOptions()).toContainEqual(expect.objectContaining({

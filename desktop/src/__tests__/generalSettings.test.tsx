@@ -2547,7 +2547,7 @@ describe('Settings > Providers tab', () => {
     fireEvent.click(screen.getByRole('button', { name: /Add Model/i }))
 
     const dialog = screen.getByRole('dialog')
-    const mediaSupport = within(dialog).getByLabelText('Preserve nested tool result media')
+    const mediaSupport = within(dialog).getByRole('checkbox', { name: 'Preserve nested tool result media' })
     expect(mediaSupport).toBeChecked()
     fireEvent.click(mediaSupport)
 
@@ -2959,9 +2959,10 @@ describe('Settings > Providers tab', () => {
     fireEvent.click(screen.getByRole('button', { name: /Add Model/i }))
     const dialog = screen.getByRole('dialog')
     const disableBetasCheckbox = within(dialog).getByRole('checkbox', { name: 'Disable experimental beta headers' })
-    expect(within(dialog).getByText(
+    fireEvent.focus(within(dialog).getByRole('button', { name: 'Disable experimental beta headers' }))
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(
       /GPT and o-series models still receive the reasoning effort selected for the Session/i,
-    )).toBeInTheDocument()
+    )
     const settingsTextarea = await waitFor(() => {
       const textarea = dialog.querySelector('textarea')
       expect(textarea?.value).toContain('"ANTHROPIC_MODEL"')

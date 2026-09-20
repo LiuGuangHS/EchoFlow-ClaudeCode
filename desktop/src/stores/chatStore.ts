@@ -1,6 +1,9 @@
+import { boundHistoryWindow, historyWindowBoundary, historyWindowMessages, type HistoryDirection, type HistoryWindowPage } from '../lib/chatHistoryWindow'
 import { create } from 'zustand'
+import { boundActivityText, boundChatHistory, previewHistoryPage, copyChatPreview, CHAT_STREAM_MAX_CHARS, CHAT_TERMINAL_ACTIVITY_MAX_PER_SESSION, CHAT_TERMINAL_ACTIVITY_MAX_TOTAL } from '../lib/chatHistoryBudget'
 import { wsManager } from '../api/websocket'
-import { sessionsApi } from '../api/sessions'
+import { sessionsApi, type SessionHistoryPage } from '../api/sessions'
+import { ApiResponseParseError } from '../api/client'
 import { subagentsApi } from '../api/subagents'
 import { useTeamStore } from './teamStore'
 import { useSessionStore } from './sessionStore'
@@ -132,6 +135,19 @@ export type PerSessionState = {
   /** True once durable transcript history has been applied for this lifecycle. */
   historyHydrated?: boolean
   historyError?: string | null
+  historyPage?: SessionHistoryPage['page']
+  historyWindowed?: boolean
+  historyLiveGap?: boolean
+  historyPageLoading?: boolean
+  historyPageDirection?: HistoryDirection | 'latest'
+  historyWindowRevision?: number
+  historyWindowPages?: HistoryWindowPage[]
+  historyLivePage?: SessionHistoryPage['page']
+  historyInitialPage?: HistoryWindowPage
+  historyWindowOverlay?: UIMessage[]
+  historyViewingOlder?: boolean
+  historyBrowseMessages?: UIMessage[]
+  historyRecoveryStatus?: 'loading' | 'ready' | 'incomplete' | 'error'
   streamingText: string
   streamingToolInput: string
   activeToolUseId: string | null
@@ -311,6 +327,19 @@ export function listPendingPermissions(
   return session ? Object.values(getPendingPermissionRecord(session)) : []
 }
 
+/**
+ * Whether this session is blocked on an AskUserQuestion the user has to answer.
+ * The composer and the question card both read this: while it is true, the card
+ * is the only way forward, because nothing else can reach the model until the
+ * tool call resolves.
+ */
+export function hasPendingAskUserQuestion(
+  session: Pick<PerSessionState, 'pendingPermission' | 'pendingPermissions'> | undefined,
+): boolean {
+  return listPendingPermissions(session)
+    .some((permission) => permission.toolName === 'AskUserQuestion')
+}
+
 export function getPendingPermission(
   session: Pick<PerSessionState, 'pendingPermission' | 'pendingPermissions'> | undefined,
   requestId: string,
@@ -323,9 +352,40 @@ export function getPendingPermission(
   )
 }
 
-type ChatStore = {
-  sessions: Record<string, PerSessionState>
+/**
+ * What the user had filled into an AskUserQuestion card, kept so switching tabs
+ * (which unmounts the whole session page) or scrolling the card out of the
+ * virtualized window does not throw the answers away.
+ *
+ * Deliberately a top-level store slice rather than part of `PerSessionState`:
+ * MessageList and ChatInput both subscribe to the whole session object, so a
+ * write there would re-render the message list on every keystroke.
+ */
+export type AskUserQuestionDraft = {
+  activeTab: number
+  selections: Record<number, string[]>
+  freeTexts: Record<number, string>
+  /**
+   * Terminal states only this renderer knows about. The server records neither,
+   * so without them a remount would resurrect an answerable form — and let the
+   * same answer be delivered twice.
+   */
+  sentAsMessage?: boolean
+  handedOff?: boolean
+}
 
+type ChatStore = {
+  applyBoundedUpdate: (update: (state: ChatStore) => Partial<ChatStore>) => void
+  sessions: Record<string, PerSessionState>
+  /** sessionId → toolUseId → draft. In-memory, like `composerDraft`. */
+  askUserQuestionDrafts: Record<string, Record<string, AskUserQuestionDraft>>
+
+  setAskUserQuestionDraft: (
+    sessionId: string,
+    toolUseId: string,
+    draft: AskUserQuestionDraft,
+  ) => void
+  clearAskUserQuestionDraft: (sessionId: string, toolUseId: string) => void
   getSession: (sessionId: string) => PerSessionState
   connectToSession: (
     sessionId: string,
@@ -351,6 +411,8 @@ type ChatStore = {
       updatedInput?: Record<string, unknown>
       denyMessage?: string
       permissionUpdates?: PermissionUpdate[]
+      /** Execution-model switch applied together with an ExitPlanMode approval. */
+      runtimeOverride?: RuntimeSelection
     },
   ) => void
   respondToComputerUsePermission: (
@@ -373,6 +435,9 @@ type ChatStore = {
     sessionId: string,
     options?: { mode?: 'terminal-reconnect' },
   ) => Promise<void>
+  loadOlderHistory: (sessionId: string, latest?: boolean) => Promise<void>
+  loadNewerHistory: (sessionId: string) => Promise<void>
+  prefetchHistory: (sessionId: string, direction: HistoryDirection) => Promise<void>
   reloadHistory: (
     sessionId: string,
     guard?: {
@@ -627,7 +692,7 @@ function retireAgentStream(sessionId: string, streamId: string): void {
 }
 
 function advanceAgentStreamRevision(sessionId: string): void {
-  useChatStore.setState((state) => ({
+  useChatStore.getState().applyBoundedUpdate((state) => ({
     sessions: {
       ...state.sessions,
       [sessionId]: {
@@ -2139,12 +2204,29 @@ function sessionOwnedActivityToolUseIds(session: PerSessionState | undefined): S
   return ids
 }
 
+/**
+ * A parse failure on a 200 has no status to show, and its raw text
+ * ("Unexpected end of JSON input") says nothing a reader can act on. Say what
+ * actually happened instead.
+ */
+function describeHistoryLoadError(error: unknown): string {
+  if (error instanceof ApiResponseParseError) {
+    return error.tooLarge ? t('session.historyTooLarge') : t('session.historyLoadFailed')
+  }
+  return error instanceof Error ? error.message : String(error)
+}
+
 async function fetchAndMapSessionHistory(
   sessionId: string,
   existingOwnedToolUseIds = new Set<string>(),
+  signal?: AbortSignal,
 ) {
-  const { messages, taskNotifications } = await sessionsApi.getMessages(sessionId)
-  const uiMessages = mapHistoryMessagesToUiMessages(messages)
+  const response = await sessionsApi.getMessages(sessionId, { signal })
+  const { page } = response
+  const historyComplete = !page || page.historyComplete
+  const messages = historyComplete ? response.messages : []
+  const taskNotifications = historyComplete ? response.taskNotifications : []
+  const uiMessages = mapHistoryMessagesToUiMessages(response.messages)
   // Session history intentionally joins child tool activity back into the
   // parent transcript for the conversation timeline. Activity ownership is
   // narrower: restoring from that joined stream would put a child's shell
@@ -2168,9 +2250,10 @@ async function fetchAndMapSessionHistory(
     rootRunMessages,
     rootRunNotifications,
   )
-  const restoredGoalState = deriveActiveGoalStateFromMessages(uiMessages)
+  const restoredGoalState = deriveActiveGoalStateFromMessages(historyComplete ? uiMessages : [])
   return {
-    rawMessages: messages,
+    page,
+    historyComplete,
     uiMessages,
     activeGoal: restoredGoalState.activeGoal,
     hasRestoredGoalState: restoredGoalState.hasStateEvidence,
@@ -2182,7 +2265,63 @@ async function fetchAndMapSessionHistory(
   }
 }
 
+function recoveryMatchesHistorySource(pageVersion: string, recoveryVersion: string): boolean {
+  if (pageVersion === recoveryVersion) return true
+  const page = pageVersion.split(':')
+  const recovery = recoveryVersion.split(':')
+  // A newer append-only snapshot can restore an older page. Equal-size
+  // rewrites and inode replacements must never restore stale session state.
+  return page.length === 4 && recovery.length === 4 && page[0] === recovery[0] && page[1] === recovery[1]
+    && Number.isFinite(Number(page[2])) && Number(recovery[2]) > Number(page[2])
+}
+
+async function recoverSessionHistory(sessionId: string, sourceVersion: string): Promise<void> {
+  historyRecoveryControllers.get(sessionId)?.abort()
+  const controller = new AbortController()
+  historyRecoveryControllers.set(sessionId, controller)
+  const lifecycle = currentHistoryLifecycle(sessionId)
+  const baseline = useChatStore.getState().sessions[sessionId]
+  if (!baseline) return
+  const taskBaseline = useCLITaskStore.getState()
+  useChatStore.getState().applyBoundedUpdate((state) => ({ sessions: updateSessionIn(state.sessions, sessionId, () => ({ historyRecoveryStatus: 'loading' })) }))
+  try {
+    const recovery = await sessionsApi.getHistoryRecovery(sessionId, { signal: controller.signal, timeout: 120_000 })
+    if (controller.signal.aborted || !isCurrentHistoryLifecycle(sessionId, lifecycle)) return
+    if (!recoveryMatchesHistorySource(sourceVersion, recovery.sourceVersion)) {
+      useChatStore.getState().applyBoundedUpdate((state) => ({ sessions: updateSessionIn(state.sessions, sessionId, () => ({ historyRecoveryStatus: 'incomplete' })) }))
+      return
+    }
+    const complete = recovery.completeness ?? { goal: recovery.status === 'ready', todos: recovery.status === 'ready', activity: recovery.status === 'ready', usage: recovery.status === 'ready' }
+    const rootMessages = recovery.messages.filter((message) => !message.parentToolUseId)
+    const goal = deriveActiveGoalStateFromMessages(mapHistoryMessagesToUiMessages(rootMessages))
+    const activity = reconstructRunActivityFromTranscript(rootMessages, (recovery.taskNotifications ?? []).filter((item) => !item.ownerAgentId))
+    useChatStore.getState().applyBoundedUpdate((state) => ({ sessions: updateSessionIn(state.sessions, sessionId, (current) => ({
+      historyRecoveryStatus: recovery.status,
+      activeGoal: complete.goal && current.activeGoalRevision === baseline.activeGoalRevision ? goal.activeGoal : current.activeGoal,
+      tokenUsage: complete.usage && current.tokenUsage === baseline.tokenUsage ? recovery.tokenUsage ?? current.tokenUsage : current.tokenUsage,
+      backgroundAgentTasks: complete.activity && current.backgroundAgentTasks === baseline.backgroundAgentTasks
+        ? mergeBackgroundAgentTaskRecords(current.backgroundAgentTasks ?? {}, activity.backgroundAgentTasks)
+        : current.backgroundAgentTasks,
+      agentTaskNotifications: complete.activity && current.agentTaskNotifications === baseline.agentTaskNotifications
+        ? mergeAgentTaskNotificationRecords(current.agentTaskNotifications, activity.agentTaskNotifications, current.backgroundAgentTasks ?? {})
+        : current.agentTaskNotifications,
+    })) }))
+    const taskCurrent = useCLITaskStore.getState()
+    if (complete.todos && taskCurrent.sessionId === taskBaseline.sessionId && taskCurrent.tasks === taskBaseline.tasks) {
+      taskCurrent.setTasksFromTodos(extractLastTodoWriteFromHistory(rootMessages) ?? [], sessionId)
+      if (hasUserMessagesAfterTaskCompletion(rootMessages)) taskCurrent.markCompletedAndDismissed(sessionId)
+    }
+  } catch {
+    if (!controller.signal.aborted && isCurrentHistoryLifecycle(sessionId, lifecycle)) {
+      useChatStore.getState().applyBoundedUpdate((state) => ({ sessions: updateSessionIn(state.sessions, sessionId, () => ({ historyRecoveryStatus: 'error' })) }))
+    }
+  } finally {
+    if (historyRecoveryControllers.get(sessionId) === controller) historyRecoveryControllers.delete(sessionId)
+  }
+}
+
 type HistoryLoadInFlight = {
+  controller: AbortController
   lifecycleGeneration: number
   promise: Promise<void>
 }
@@ -2213,6 +2352,39 @@ type TerminalReconnectHistoryBoundary = {
 }
 
 const historyLoadsInFlight = new Map<string, HistoryLoadInFlight>()
+const historyRecoveryControllers = new Map<string, AbortController>()
+const historyPageControllers = new Map<string, AbortController>()
+type PreparedHistoryPage = { messages: UIMessage[]; page: SessionHistoryPage['page'] }
+const historyPrefetches = new Map<string, { cursor: string | null; controller: AbortController; promise: Promise<PreparedHistoryPage> }>()
+
+function invalidateHistoryPrefetch(sessionId: string) {
+  historyPrefetches.get(sessionId)?.controller.abort()
+  historyPrefetches.delete(sessionId)
+}
+
+async function prepareHistoryPage(sessionId: string, cursor: string | null, signal: AbortSignal): Promise<PreparedHistoryPage> {
+  const response = await sessionsApi.getHistoryPage(sessionId, cursor ? { cursor } : undefined, { signal })
+  const messages = mapHistoryMessagesToUiMessages(response.messages)
+  // Keep speculative work small; retain all row identities within a cursor page.
+  return { messages: previewHistoryPage(messages, 256 * 1024), page: response.page }
+}
+
+async function requestHistoryPage(sessionId: string, cursor: string | null, signal: AbortSignal): Promise<PreparedHistoryPage> {
+  const prefetched = historyPrefetches.get(sessionId)
+  if (prefetched?.cursor === cursor && !prefetched.controller.signal.aborted) {
+    const abort = () => prefetched.controller.abort()
+    signal.addEventListener('abort', abort, { once: true })
+    try { return await prefetched.promise }
+    finally {
+      signal.removeEventListener('abort', abort)
+      if (historyPrefetches.get(sessionId) === prefetched) historyPrefetches.delete(sessionId)
+    }
+  }
+  invalidateHistoryPrefetch(sessionId)
+  return prepareHistoryPage(sessionId, cursor, signal)
+}
+
+const historyReloadControllers = new Map<string, AbortController>()
 const historyReloadGenerations = new Map<string, number>()
 const historyReloadCompletionGenerations = new Map<string, number>()
 const historyLifecycleGenerations = new Map<string, number>()
@@ -2228,7 +2400,15 @@ function currentHistoryLifecycle(sessionId: string): number {
 function advanceHistoryLifecycle(sessionId: string): number {
   const nextGeneration = currentHistoryLifecycle(sessionId) + 1
   historyLifecycleGenerations.set(sessionId, nextGeneration)
+  invalidateHistoryPrefetch(sessionId)
+  historyLoadsInFlight.get(sessionId)?.controller.abort()
   historyLoadsInFlight.delete(sessionId)
+  historyReloadControllers.get(sessionId)?.abort()
+  historyReloadControllers.delete(sessionId)
+  historyRecoveryControllers.get(sessionId)?.abort()
+  historyRecoveryControllers.delete(sessionId)
+  historyPageControllers.get(sessionId)?.abort()
+  historyPageControllers.delete(sessionId)
   terminalReconnectHistoryBoundaries.delete(sessionId)
   return nextGeneration
 }
@@ -2570,13 +2750,205 @@ function activeGoalAfterHistoryLoad(
   return session.activeGoal ?? null
 }
 
+const overlayWindowCache = new WeakMap<HistoryWindowPage[], WeakMap<UIMessage[], UIMessage[]>>()
+function messagesWithHistoryOverlay(pages: HistoryWindowPage[], overlay?: UIMessage[]): UIMessage[] {
+  const canonical = historyWindowMessages(pages)
+  if (!overlay?.length) return canonical
+  const cache = overlayWindowCache.get(pages) ?? new WeakMap<UIMessage[], UIMessage[]>()
+  overlayWindowCache.set(pages, cache)
+  const existing = cache.get(overlay)
+  if (existing) return existing
+  const indexes = new Map<string, number>()
+  canonical.forEach((message, index) => strongHistoryMessageIdentities(message).forEach(identity => indexes.set(identity, index)))
+  const buckets = new Map<number, UIMessage[]>()
+  const matched = new Map<number, UIMessage>()
+  let before = canonical.length
+  for (let index = overlay.length - 1; index >= 0; index--) {
+    const message = overlay[index]!
+    const target = strongHistoryMessageIdentities(message).map(identity => indexes.get(identity)).find(value => value !== undefined)
+    if (target !== undefined) { before = target; matched.set(target, message); continue }
+    // A disconnected live prefix has no shared row yet. Keep it visible until
+    // canonical paging reaches it; it never supplies a backend cursor.
+    if (before === canonical.length && message.timestamp < (canonical[0]?.timestamp ?? -Infinity)) before = 0
+    const bucket = buckets.get(before) ?? []
+    bucket.unshift(message)
+    buckets.set(before, bucket)
+  }
+  const result: UIMessage[] = []
+  canonical.forEach((message, index) => { result.push(...(buckets.get(index) ?? []), matched.get(index) ?? message) })
+  result.push(...(buckets.get(canonical.length) ?? []))
+  cache.set(overlay, result)
+  return result
+}
+
+async function changeHistoryWindow(
+  sessionId: string,
+  direction: HistoryDirection | 'latest',
+  get: () => ChatStore,
+  set: (update: (state: ChatStore) => Partial<ChatStore>) => void,
+) {
+  const session = get().sessions[sessionId]
+  let cursor = direction === 'latest' ? null : direction === 'older' ? session?.historyPage?.nextCursor : session?.historyPage?.previousCursor
+  if (!session || (direction !== 'latest' && ((!cursor && !(direction === 'older' && session.historyLiveGap)) || session.historyPageLoading))) return
+  if (direction === 'latest') invalidateHistoryPrefetch(sessionId)
+  const lifecycle = currentHistoryLifecycle(sessionId)
+  const controller = new AbortController()
+  historyPageControllers.get(sessionId)?.abort()
+  historyPageControllers.set(sessionId, controller)
+  set(state => ({ sessions: updateSessionIn(state.sessions, sessionId, () => ({ historyPageLoading: true, historyPageDirection: direction, historyError: null })) }))
+  try {
+    let seed = session.historyInitialPage
+    let overlay: UIMessage[] | undefined
+    if (direction === 'older' && !session.historyWindowPages && (seed || session.historyLiveGap)) {
+      const identities = new Set(seed?.messages.flatMap(strongHistoryMessageIdentities) ?? [])
+      const liveChanged = session.historyLiveGap || session.messages.some(message => !strongHistoryMessageIdentities(message).some(identity => identities.has(identity)))
+      if (liveChanged) {
+        invalidateHistoryPrefetch(sessionId)
+        const fresh = await requestHistoryPage(sessionId, null, controller.signal)
+        if (controller.signal.aborted || !isCurrentHistoryLifecycle(sessionId, lifecycle)) return
+        seed = fresh.page ? { cursor: null, page: fresh.page, messages: fresh.messages } : undefined
+        overlay = session.messages
+        cursor = fresh.page?.nextCursor ?? null
+      }
+    }
+    const result = direction === 'older' && seed && !cursor
+      ? { messages: [] as UIMessage[], page: undefined }
+      : await requestHistoryPage(sessionId, cursor ?? null, controller.signal)
+    if (controller.signal.aborted || !isCurrentHistoryLifecycle(sessionId, lifecycle)) return
+    set(state => ({ sessions: updateSessionIn(state.sessions, sessionId, current => {
+      if (direction === 'latest' || (!result.page && !seed)) return {
+        messages: mergeColdRestoredHistoryIntoLiveMessages(result.messages, current.messages),
+        historyBrowseMessages: undefined, historyWindowPages: undefined, historyLivePage: undefined, historyWindowOverlay: undefined,
+        historyInitialPage: result.page ? { cursor: null, page: result.page, messages: result.messages } : undefined,
+        historyPage: result.page, historyViewingOlder: false, historyLiveGap: false,
+        historyWindowed: Boolean(result.page && !result.page.historyComplete),
+        historyWindowRevision: (current.historyWindowRevision ?? 0) + 1,
+      }
+      const previous = current.historyWindowPages ?? (seed ? [seed] : current.historyPage ? [{
+        cursor: null, page: current.historyPage, messages: current.historyBrowseMessages ?? current.messages,
+      }] : [])
+      const incoming = result.page ? { cursor: cursor ?? null, page: result.page, messages: result.messages } : undefined
+      const pages = !incoming ? previous : direction === 'older' ? [incoming, ...previous] : [...previous, incoming]
+      return {
+        historyWindowPages: pages,
+        historyLiveGap: false,
+        historyWindowOverlay: overlay ?? current.historyWindowOverlay,
+        historyLivePage: current.historyLivePage ?? current.historyPage,
+        historyBrowseMessages: messagesWithHistoryOverlay(pages, overlay ?? current.historyWindowOverlay),
+        historyPage: historyWindowBoundary(pages), historyViewingOlder: true, historyWindowed: true,
+        historyWindowRevision: (current.historyWindowRevision ?? 0) + 1,
+      }
+    }) }))
+    if (direction === 'latest' && result.page && !result.page.historyComplete) void recoverSessionHistory(sessionId, result.page.sourceVersion)
+  } catch (error) {
+    if (controller.signal.aborted || !isCurrentHistoryLifecycle(sessionId, lifecycle)) return
+    set(state => ({ sessions: updateSessionIn(state.sessions, sessionId, () => ({ historyError: describeHistoryLoadError(error) })) }))
+  } finally {
+    if (historyPageControllers.get(sessionId) === controller) {
+      historyPageControllers.delete(sessionId)
+      set(state => ({ sessions: updateSessionIn(state.sessions, sessionId, () => ({ historyPageLoading: false })) }))
+    }
+  }
+}
+
 function shouldPrewarmSession(sessionId: string): boolean {
   const knownSession = useSessionStore.getState().sessions.find((session) => session.id === sessionId)
   return knownSession?.messageCount === 0
 }
 
-export const useChatStore = create<ChatStore>((set, get) => ({
+export const useChatStore = create<ChatStore>((setState, get) => {
+  const set = (update: Partial<ChatStore> | ((state: ChatStore) => Partial<ChatStore>)) => {
+    setState((previous) => {
+      const patch = typeof update === 'function' ? update(previous) : update
+      if (patch === previous || !patch.sessions) return patch
+      let sessions = patch.sessions
+      const sessionCount = Math.max(1, Object.keys(sessions).length)
+      const budget = Math.min(2 * 1024 * 1024, Math.floor(16 * 1024 * 1024 / sessionCount))
+      const terminalLimit = Math.min(CHAT_TERMINAL_ACTIVITY_MAX_PER_SESSION, Math.floor(CHAT_TERMINAL_ACTIVITY_MAX_TOTAL / (2 * sessionCount)))
+      for (const [id, session] of Object.entries(sessions)) {
+        // Bound the aggregate as well as individual tabs. Operational state is
+        // retained even when an older tab's display history needs reloading.
+        const displayBudget = Math.floor(budget * 3 / 4)
+        const activityBudget = Math.floor(budget / 8)
+        const tasks = boundActivityText(session.backgroundAgentTasks, activityBudget, terminalLimit)
+        const notifications = boundActivityText(session.agentTaskNotifications, activityBudget, terminalLimit)!
+        const liveBudget = session.historyBrowseMessages ? Math.floor(displayBudget / 4) : session.historyInitialPage ? Math.floor(displayBudget * 3 / 4) : displayBudget
+        const initialIdentities = session.historyInitialPage
+          ? new Set(session.historyInitialPage.messages.flatMap(strongHistoryMessageIdentities)) : undefined
+        const isCompleteInitialPage = initialIdentities && session.messages.every(message => strongHistoryMessageIdentities(message).some(identity => initialIdentities.has(identity)))
+        const bounded = isCompleteInitialPage
+          ? { messages: previewHistoryPage(session.messages, liveBudget), dropped: 0 }
+          : boundChatHistory(session.messages, liveBudget)
+        const pages = session.historyWindowPages
+          ? boundHistoryWindow(session.historyWindowPages, Math.floor(displayBudget / 2), session.historyPageDirection === 'newer' ? 'newer' : 'older')
+          : undefined
+        let overlay = session.historyWindowOverlay
+        if (overlay?.length && pages?.length) {
+          const canonical = historyWindowMessages(pages)
+          const identities = new Set(canonical.map(message => message.id))
+          if (overlay.every(message => identities.has(message.id)) ||
+            (session.historyPageDirection === 'older' && (canonical[canonical.length - 1]?.timestamp ?? Infinity) < overlay[0]!.timestamp)) overlay = undefined
+          else overlay = previewHistoryPage(overlay, Math.floor(displayBudget / 8))
+        }
+        const initialPage = session.historyInitialPage
+          ? { ...session.historyInitialPage, messages: previewHistoryPage(session.historyInitialPage.messages, Math.floor(displayBudget / (session.historyBrowseMessages ? 8 : 4))) }
+          : undefined
+        const browse = pages ? messagesWithHistoryOverlay(pages, overlay)
+          : session.historyBrowseMessages ? boundChatHistory(session.historyBrowseMessages, Math.floor(displayBudget / 2)).messages : undefined
+        const text = copyChatPreview(session.streamingText, CHAT_STREAM_MAX_CHARS, true)
+        const input = copyChatPreview(session.streamingToolInput, CHAT_STREAM_MAX_CHARS)
+        if (initialPage?.messages === session.historyInitialPage?.messages && overlay === session.historyWindowOverlay && bounded.messages === session.messages && browse === session.historyBrowseMessages && pages === session.historyWindowPages && text === session.streamingText && input === session.streamingToolInput && tasks === session.backgroundAgentTasks && notifications === session.agentTaskNotifications) continue
+        if (sessions === patch.sessions) sessions = { ...sessions }
+        sessions[id] = {
+          ...session, messages: bounded.messages, historyBrowseMessages: browse, historyWindowPages: pages, historyWindowOverlay: overlay, historyInitialPage: initialPage,
+          ...(pages ? { historyPage: historyWindowBoundary(pages) } : {}),
+          streamingText: text, streamingToolInput: input,
+          backgroundAgentTasks: tasks, agentTaskNotifications: notifications,
+          historyWindowed: true,
+          historyLiveGap: session.historyLiveGap || bounded.dropped > 0,
+          ...(bounded.dropped && session.streamAttemptStartIndex !== undefined
+            ? { streamAttemptStartIndex: Math.max(0, session.streamAttemptStartIndex - bounded.dropped) } : {}),
+        }
+      }
+      return sessions === patch.sessions ? patch : { ...patch, sessions }
+    })
+  }
+  return ({
+  applyBoundedUpdate: set,
   sessions: {},
+  askUserQuestionDrafts: {},
+
+  setAskUserQuestionDraft: (sessionId, toolUseId, draft) => {
+    set((state) => {
+      const forSession = { ...(state.askUserQuestionDrafts[sessionId] ?? {}) }
+      // The card writes on every mount, so an unfinished card must not leave an
+      // entry behind for every question the user never touched.
+      const isEmpty = Object.keys(draft.selections).length === 0 &&
+        Object.keys(draft.freeTexts).length === 0 &&
+        !draft.sentAsMessage &&
+        !draft.handedOff
+      if (isEmpty) {
+        delete forSession[toolUseId]
+      } else {
+        forSession[toolUseId] = draft
+      }
+      return {
+        askUserQuestionDrafts: { ...state.askUserQuestionDrafts, [sessionId]: forSession },
+      }
+    })
+  },
+
+  clearAskUserQuestionDraft: (sessionId, toolUseId) => {
+    set((state) => {
+      const forSession = state.askUserQuestionDrafts[sessionId]
+      if (!forSession || !(toolUseId in forSession)) return {}
+      const next = { ...forSession }
+      delete next[toolUseId]
+      return {
+        askUserQuestionDrafts: { ...state.askUserQuestionDrafts, [sessionId]: next },
+      }
+    })
+  },
 
   getSession: (sessionId) => get().sessions[sessionId] ?? createDefaultSessionState(),
 
@@ -2833,7 +3205,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     wsManager.disconnect(sessionId)
     set((s) => {
       const { [sessionId]: _, ...rest } = s.sessions
-      return { sessions: rest }
+      const { [sessionId]: _drafts, ...remainingDrafts } = s.askUserQuestionDrafts
+      return { sessions: rest, askUserQuestionDrafts: remainingDrafts }
     })
   },
 
@@ -2886,6 +3259,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       updateOptimisticSessionTitle(sessionId, userFacingContent || content.trim())
     }
 
+    // An explicit send returns to the live conversation; background events do not.
+    invalidateHistoryPrefetch(sessionId)
+    historyPageControllers.get(sessionId)?.abort()
+    historyPageControllers.delete(sessionId)
     set((s) => {
       const session = s.sessions[sessionId] ?? createDefaultSessionState()
       const bufferedDelta = consumePendingDelta(sessionId)
@@ -2927,6 +3304,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           [sessionId]: {
             ...session,
             messages: newMessages,
+            historyBrowseMessages: undefined,
+            historyWindowPages: undefined,
+            historyWindowOverlay: undefined,
+            historyPage: session.historyLivePage ?? session.historyPage,
+            historyLivePage: undefined,
+            historyViewingOlder: false,
+            historyPageLoading: false,
             chatState: 'thinking',
             isPreparingTurn: false,
             historyMutationEpoch: (session.historyMutationEpoch ?? 0) + 1,
@@ -3032,6 +3416,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       ...(options?.updatedInput ? { updatedInput: options.updatedInput } : {}),
       ...(options?.denyMessage ? { denyMessage: options.denyMessage } : {}),
       ...(options?.permissionUpdates?.length ? { permissionUpdates: options.permissionUpdates } : {}),
+      ...(options?.runtimeOverride ? { runtimeOverride: options.runtimeOverride } : {}),
     })
     set((s) => ({
       sessions: updateSessionIn(s.sessions, sessionId, (session) => {
@@ -3194,12 +3579,24 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   loadHistory: async (sessionId, options) => {
+    invalidateHistoryPrefetch(sessionId)
+    if (historyPageControllers.has(sessionId)) {
+      historyPageControllers.get(sessionId)?.abort()
+      historyPageControllers.delete(sessionId)
+      set((state) => ({ sessions: updateSessionIn(state.sessions, sessionId, () => ({ historyPageLoading: false })) }))
+    }
     const lifecycleGeneration = currentHistoryLifecycle(sessionId)
     const existingLoad = historyLoadsInFlight.get(sessionId)
     if (existingLoad?.lifecycleGeneration === lifecycleGeneration) {
       return existingLoad.promise
     }
-    if (existingLoad) historyLoadsInFlight.delete(sessionId)
+    if (existingLoad) {
+      existingLoad.controller.abort()
+      historyLoadsInFlight.delete(sessionId)
+    }
+    const controller = new AbortController()
+    historyRecoveryControllers.get(sessionId)?.abort()
+    historyRecoveryControllers.delete(sessionId)
 
     // Workflow runs are rebuilt from disk alongside the transcript. Without
     // this, reopening a session that ran a workflow showed no trace of it —
@@ -3285,6 +3682,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         })
         const {
           uiMessages,
+          page,
+          historyComplete,
           activeGoal,
           hasRestoredGoalState,
           restoredNotifications,
@@ -3295,6 +3694,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         } = await fetchAndMapSessionHistory(
           sessionId,
           sessionOwnedActivityToolUseIds(get().sessions[sessionId]),
+          controller.signal,
         )
         let historyApplied = false
         set((state) => {
@@ -3436,6 +3836,16 @@ export const useChatStore = create<ChatStore>((set, get) => ({
               )
               return {
                 historyStatus: 'ready',
+                historyPage: page,
+                historyInitialPage: page ? { cursor: null, page, messages: previewHistoryPage(uiMessages, 256 * 1024) } : undefined,
+                historyLiveGap: false,
+                historyViewingOlder: false,
+                historyBrowseMessages: undefined,
+                historyWindowPages: undefined,
+                historyWindowOverlay: undefined,
+                historyLivePage: undefined,
+                historyWindowed: !historyComplete,
+                historyRecoveryStatus: historyComplete ? 'ready' : 'loading',
                 historyHydrated: true,
                 historyError: null,
                 ...(shouldBackfillColdHistory ? {
@@ -3450,7 +3860,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                   requestedActiveGoalRevision,
                   activeGoal,
                   hasRestoredGoalState,
-                  discardBaselineMessages,
+                  discardBaselineMessages && historyComplete,
                 ),
                 agentTaskNotifications,
                 backgroundAgentTasks,
@@ -3521,6 +3931,16 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             )
             return {
               historyStatus: 'ready',
+              historyPage: page,
+              historyInitialPage: page ? { cursor: null, page, messages: previewHistoryPage(uiMessages, 256 * 1024) } : undefined,
+                historyLiveGap: false,
+              historyViewingOlder: false,
+              historyBrowseMessages: undefined,
+              historyWindowPages: undefined,
+              historyWindowOverlay: undefined,
+              historyLivePage: undefined,
+              historyWindowed: !historyComplete,
+              historyRecoveryStatus: historyComplete ? 'ready' : 'loading',
               historyHydrated: true,
               historyError: null,
               ...(shouldBackfillColdHistory ? {
@@ -3535,7 +3955,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                 requestedActiveGoalRevision,
                 activeGoal,
                 hasRestoredGoalState,
-                discardBaselineMessages,
+                discardBaselineMessages && historyComplete,
               ),
               agentTaskNotifications,
               backgroundAgentTasks,
@@ -3549,6 +3969,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           }) }
         })
         if (!historyApplied) return
+        if (!historyComplete && page) void recoverSessionHistory(sessionId, page.sourceVersion)
         if (
           terminalReconnectBoundary &&
           !terminalReconnectBoundary.preHydrationGap &&
@@ -3560,7 +3981,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         const taskStoreChangedWhileLoading =
           currentTaskStore.sessionId !== requestedTaskStoreSessionId ||
           currentTaskStore.tasks !== requestedTasks
-        if (!taskStoreChangedWhileLoading) {
+        if (historyComplete && !taskStoreChangedWhileLoading) {
           if (lastTodos && lastTodos.length > 0) {
             if (
               currentTaskStore.sessionId === sessionId &&
@@ -3619,7 +4040,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           return {
             sessions: updateSessionIn(state.sessions, sessionId, () => ({
               historyStatus: 'error',
-              historyError: error instanceof Error ? error.message : String(error),
+              historyError: describeHistoryLoadError(error),
               ...pendingFailureUpdate,
             })),
           }
@@ -3635,14 +4056,49 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       }
     })()
 
-    historyLoadsInFlight.set(sessionId, { lifecycleGeneration, promise: load })
+    historyLoadsInFlight.set(sessionId, { lifecycleGeneration, promise: load, controller })
     return load
   },
 
+  prefetchHistory: async (sessionId, direction) => {
+    const session = get().sessions[sessionId]
+    const cursor = direction === 'older' ? session?.historyPage?.nextCursor : session?.historyPage?.previousCursor
+    if (!cursor || session?.historyPageLoading || historyPrefetches.get(sessionId)?.cursor === cursor) return
+    invalidateHistoryPrefetch(sessionId)
+    while (historyPrefetches.size >= 4) invalidateHistoryPrefetch(historyPrefetches.keys().next().value!)
+    const controller = new AbortController()
+    const pending = { cursor, controller, promise: prepareHistoryPage(sessionId, cursor, controller.signal) }
+    historyPrefetches.set(sessionId, pending)
+    try { await pending.promise }
+    catch {
+      // Speculative failure is retried only when this page is actually requested.
+      if (historyPrefetches.get(sessionId) === pending) historyPrefetches.delete(sessionId)
+    }
+  },
+
+  loadOlderHistory: async (sessionId, latest = false) => {
+    await changeHistoryWindow(sessionId, latest ? 'latest' : 'older', get, set)
+  },
+
+  loadNewerHistory: async (sessionId) => {
+    const current = get().sessions[sessionId]
+    if (!current?.historyBrowseMessages) return
+    await changeHistoryWindow(sessionId, current.historyPage?.previousCursor ? 'newer' : 'latest', get, set)
+  },
+
   reloadHistory: async (sessionId, guard) => {
+    invalidateHistoryPrefetch(sessionId)
+    if (historyPageControllers.has(sessionId)) {
+      historyPageControllers.get(sessionId)?.abort()
+      historyPageControllers.delete(sessionId)
+      set((state) => ({ sessions: updateSessionIn(state.sessions, sessionId, () => ({ historyPageLoading: false })) }))
+    }
     const lifecycleGeneration = currentHistoryLifecycle(sessionId)
     const reloadGeneration = (historyReloadGenerations.get(sessionId) ?? 0) + 1
     historyReloadGenerations.set(sessionId, reloadGeneration)
+    historyReloadControllers.get(sessionId)?.abort()
+    const controller = new AbortController()
+    historyReloadControllers.set(sessionId, controller)
     try {
       const sessionAtReloadStart = get().sessions[sessionId]
       const requestedMutationEpoch = sessionAtReloadStart?.historyMutationEpoch ?? 0
@@ -3650,7 +4106,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       if (pendingLoad?.lifecycleGeneration === lifecycleGeneration) {
         await pendingLoad.promise
       }
-      if (!isCurrentHistoryLifecycle(sessionId, lifecycleGeneration)) return
+      if (!isCurrentHistoryLifecycle(sessionId, lifecycleGeneration) || controller.signal.aborted) return
+      historyRecoveryControllers.get(sessionId)?.abort()
+      historyRecoveryControllers.delete(sessionId)
       // A reload can queue behind a cold load. Capture snapshot baselines only
       // after that load settles so its REST state is not mistaken for a live
       // mutation that should override the newer reload response.
@@ -3668,6 +4126,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       )
       const {
         uiMessages,
+        page,
+        historyComplete,
         activeGoal,
         restoredNotifications,
         restoredBackgroundTasks,
@@ -3677,6 +4137,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       } = await fetchAndMapSessionHistory(
         sessionId,
         sessionOwnedActivityToolUseIds(get().sessions[sessionId]),
+        controller.signal,
       )
 
       if (
@@ -3748,9 +4209,19 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         return {
           sessions: updateSessionIn(state.sessions, sessionId, () => ({
             historyStatus: 'ready',
+            historyPage: page,
+            historyInitialPage: page ? { cursor: null, page, messages: previewHistoryPage(uiMessages, 256 * 1024) } : undefined,
+                historyLiveGap: false,
+            historyViewingOlder: false,
+            historyBrowseMessages: undefined,
+            historyWindowPages: undefined,
+            historyWindowOverlay: undefined,
+            historyLivePage: undefined,
+            historyWindowed: !historyComplete,
+            historyRecoveryStatus: historyComplete ? 'ready' : 'loading',
             historyHydrated: true,
             historyError: null,
-            activeGoal: activeGoalChangedWhileLoading
+            activeGoal: activeGoalChangedWhileLoading || !historyComplete
               ? session.activeGoal ?? null
               : activeGoal,
             agentTaskNotifications,
@@ -3780,6 +4251,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       })
 
       if (!historyApplied) return
+      if (!historyComplete && page) void recoverSessionHistory(sessionId, page.sourceVersion)
       const terminalReconnectBoundary = terminalReconnectHistoryBoundaries.get(sessionId)
       if (
         terminalReconnectBoundary?.lifecycleGeneration === lifecycleGeneration &&
@@ -3827,7 +4299,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       const taskStoreChangedWhileReloading =
         currentTaskStore.sessionId !== requestedTaskStoreSessionId ||
         currentTaskStore.tasks !== requestedTasks
-      if (!taskStoreChangedWhileReloading) {
+      if (historyComplete && !taskStoreChangedWhileReloading) {
         if (lastTodos && lastTodos.length > 0) {
           currentTaskStore.setTasksFromTodos(lastTodos, sessionId)
         } else {
@@ -3864,6 +4336,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             )),
         }
       })
+    } finally {
+      if (historyReloadControllers.get(sessionId) === controller) historyReloadControllers.delete(sessionId)
     }
   },
 
@@ -4418,8 +4892,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         break
 
       case 'model_config_applied': {
-        useSessionRuntimeStore.getState().markRequestApplied(sessionId, msg.requestId)
-        useSessionRuntimeStore.getState().setSelection(sessionId, {
+        const runtimeStore = useSessionRuntimeStore.getState()
+        const latestRequestId = runtimeStore.latestRequestIdBySessionId[sessionId]
+        if (latestRequestId && latestRequestId !== msg.requestId) break
+        runtimeStore.markRequestApplied(sessionId, msg.requestId)
+        runtimeStore.setSelection(sessionId, {
           providerId: msg.providerId,
           modelId: msg.modelId,
           ...(msg.effortLevel ? { effortLevel: msg.effortLevel as RuntimeSelection['effortLevel'] } : {}),
@@ -4443,6 +4920,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           selected?.modelId === msg.modelId &&
           selected?.effortLevel === msg.effortLevel
         if (matchesCurrentSelection) {
+          useSessionRuntimeStore.getState().settleSelection(sessionId)
           update((session) => ({
             runtimeConfigReadyCount: (session.runtimeConfigReadyCount ?? 0) + 1,
           }))
@@ -5127,6 +5605,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       }
 
       case 'error': {
+        if (msg.code === 'RUNTIME_CONFIG_INVALID' || msg.code === 'CLI_RESTART_FAILED') {
+          // Let a fresh server snapshot reconcile a rejected optimistic choice.
+          useSessionRuntimeStore.getState().settleSelection(sessionId)
+        }
         const errorMessage: Extract<UIMessage, { type: 'error' }> = {
           id: nextId(),
           type: 'error',
@@ -5302,6 +5784,15 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             queuedUserMessages: [],
             historyMutationEpoch: (session?.historyMutationEpoch ?? 0) + 1,
             historyStatus: 'ready',
+            historyPage: undefined,
+            historyInitialPage: undefined,
+            historyLiveGap: false,
+            historyViewingOlder: false,
+            historyBrowseMessages: undefined,
+            historyWindowPages: undefined,
+            historyWindowOverlay: undefined,
+            historyLivePage: undefined,
+            historyWindowed: false,
             historyHydrated: true,
             historyError: null,
           }))
@@ -5554,7 +6045,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         break
     }
   },
-}))
+  })
+})
 
 function updateOptimisticSessionTitle(sessionId: string, content: string): void {
   const title = deriveSessionTitle(content)

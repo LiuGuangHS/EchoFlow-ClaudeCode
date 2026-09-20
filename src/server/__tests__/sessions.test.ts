@@ -1660,6 +1660,222 @@ describe('SessionService', () => {
     ])
   })
 
+  it('should omit linked subagent tool messages when the caller reads the root transcript', async () => {
+    const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const projectDir = '-tmp-project'
+    const agentId = 'abc123'
+
+    await writeSessionFile(projectDir, sessionId, [
+      makeSnapshotEntry(),
+      makeUserEntry('Dispatch an agent'),
+      {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'Agent:0',
+              name: 'Agent',
+              input: { description: 'Inspect alpha' },
+            },
+          ],
+        },
+        uuid: crypto.randomUUID(),
+        timestamp: '2026-01-01T00:00:02.000Z',
+      },
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'Agent:0',
+              content: [
+                {
+                  type: 'text',
+                  text: `alpha summary\nagentId: ${agentId} (use SendMessage with to: '${agentId}' to continue this agent)\n<usage>total_tokens: 10\ntool_uses: 2\nduration_ms: 30</usage>`,
+                },
+              ],
+            },
+          ],
+        },
+        uuid: crypto.randomUUID(),
+        timestamp: '2026-01-01T00:00:03.000Z',
+      },
+    ])
+    await writeSubagentTranscriptFile(projectDir, sessionId, agentId, [
+      {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'Read:0',
+              name: 'Read',
+              input: { file_path: '/tmp/alpha.txt' },
+            },
+          ],
+        },
+        uuid: crypto.randomUUID(),
+        timestamp: '2026-01-01T00:00:04.000Z',
+      },
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'Read:0',
+              content: 'alpha body',
+            },
+          ],
+        },
+        uuid: crypto.randomUUID(),
+        timestamp: '2026-01-01T00:00:05.000Z',
+      },
+    ])
+
+    const merged = await service.getSessionMessages(sessionId)
+    expect(merged.filter((message) => message.parentToolUseId === 'Agent:0')).toHaveLength(2)
+
+    // A real session merges 500 MB+ of child tool output into this response —
+    // past the 536,870,888-character limit, where Chromium hands back an empty
+    // body. HTTP callers ask for the root transcript and read each run from
+    // `/subagents/by-tool` instead; the server-side consumers keep the merge.
+    const rootOnly = await service.getSessionMessages(sessionId, { includeSubagents: false })
+    expect(rootOnly.filter((message) => message.parentToolUseId === 'Agent:0')).toHaveLength(0)
+    expect(JSON.stringify(rootOnly)).toContain('"Agent:0"')
+
+    const detail = await service.getSession(sessionId, { includeSubagents: false })
+    expect(detail?.messages.filter((message) => message.parentToolUseId === 'Agent:0'))
+      .toHaveLength(0)
+  })
+
+  it('shares bounded inspection across metadata/context/usage readers and invalidates after append', async () => {
+    const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const projectDir = '-tmp-inspection-budget'
+    await writeSessionFile(projectDir, sessionId, [makeSessionMetaEntry('/tmp/inspection'), makeUserEntry('x'.repeat(256 * 1024), crypto.randomUUID())])
+    const fullRead = spyOn(service as any, 'readJsonlFile').mockImplementation(() => { throw new Error('unbounded history read') })
+    const stream = spyOn(service as any, 'streamJsonlFile')
+    try {
+      await Promise.all([service.getTranscriptMetadata(sessionId), service.getTranscriptContextEstimate(sessionId), service.getTranscriptUsage(sessionId)])
+      expect(fullRead).not.toHaveBeenCalled()
+      expect(stream).toHaveBeenCalledTimes(1)
+      await fs.appendFile(path.join(tmpDir, 'projects', projectDir, `${sessionId}.jsonl`), JSON.stringify({ ...makeUserEntry('next', crypto.randomUUID()), cwd: '/tmp/new-inspection' }) + '\n')
+      expect((await service.getTranscriptMetadata(sessionId))?.cwd).toBe('/tmp/new-inspection')
+      expect(stream).toHaveBeenCalledTimes(2)
+    } finally { fullRead.mockRestore(); stream.mockRestore() }
+  })
+
+  it('inspects records above the display limit without losing usage or context', async () => {
+    const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    await writeSessionFile('-tmp-inspection-large', sessionId, [
+      makeSessionMetaEntry('/tmp/inspection'),
+      {
+        type: 'assistant', uuid: crypto.randomUUID(),
+        message: {
+          role: 'assistant', model: 'claude-sonnet-4-5',
+          content: [{ type: 'text', text: 'x'.repeat(2 * 1024 * 1024) }],
+          usage: { input_tokens: 1234, output_tokens: 56 },
+        },
+      },
+    ])
+    const snapshot = await service.getInspectionTranscriptSnapshot(sessionId)
+    expect(snapshot?.metadata.model).toBe('claude-sonnet-4-5')
+    expect(snapshot?.usage?.totalInputTokens).toBe(1234)
+    expect(snapshot?.usage?.totalOutputTokens).toBe(56)
+    expect(snapshot?.contextEstimate).not.toBeNull()
+  })
+
+  it('ignores malformed lines and retries a completed live tail after append', async () => {
+    const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const projectDir = '-tmp-inspection-tail'
+    await writeSessionFile(projectDir, sessionId, [makeUserEntry('hello', crypto.randomUUID())])
+    const file = path.join(tmpDir, 'projects', projectDir, `${sessionId}.jsonl`)
+    await fs.appendFile(file, '\ninvalid JSON\n' + '{"type":"assistant","message":{"model":"claude-sonnet-4-5"')
+    expect(await service.getInspectionTranscriptSnapshot(sessionId)).not.toBeNull()
+    await fs.appendFile(file, '}}\n')
+    expect((await service.getTranscriptMetadata(sessionId))?.model).toBe('claude-sonnet-4-5')
+  })
+
+  it('reports oversized inspection records rather than returning partial authoritative state', async () => {
+    const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    await writeSessionFile('-tmp-inspection-limit', sessionId, [makeUserEntry('x'.repeat(9 * 1024 * 1024), crypto.randomUUID())])
+    await expect(service.getTranscriptMetadata(sessionId)).rejects.toMatchObject({ statusCode: 413, code: 'HISTORY_INSPECTION_LIMIT' })
+  })
+
+  it('coalesces overlapping history reads without retaining stale history', async () => {
+    const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const projectDir = '-tmp-project'
+    await writeSessionFile(projectDir, sessionId, [makeUserEntry('hello', crypto.randomUUID())])
+    const readSpy = spyOn(service as any, 'readJsonlFileWithDiagnostics')
+    try {
+      const histories = await Promise.all([
+        service.getSessionHistory(sessionId),
+        service.getSessionHistory(sessionId),
+      ])
+      expect(readSpy).toHaveBeenCalledTimes(1)
+      expect(histories[0]).toEqual(histories[1])
+      expect(histories[0]!.messages).toHaveLength(1)
+      await fs.appendFile(path.join(tmpDir, 'projects', projectDir, `${sessionId}.jsonl`),
+        `${JSON.stringify(makeUserEntry('new message', crypto.randomUUID()))}\n`)
+      expect((await service.getSessionHistory(sessionId)).messages).toHaveLength(2)
+      expect(readSpy).toHaveBeenCalledTimes(2)
+    } finally {
+      readSpy.mockRestore()
+    }
+  })
+
+  it('streams transcript diagnostics while preserving malformed and missing evidence', async () => {
+    const filePath = path.join(tmpDir, 'diagnostics.jsonl')
+    await fs.writeFile(filePath, '{"type":"user"}\nmalformed\n\n{"type":"assistant"}')
+    const readSpy = spyOn(fs, 'readFile')
+    try {
+      const result = await (service as any).readJsonlFileWithDiagnostics(filePath)
+      expect(result).toEqual({
+        entries: [{ type: 'user' }, { type: 'assistant' }],
+        exists: true,
+        parseComplete: false,
+      })
+      expect(await (service as any).readJsonlFileWithDiagnostics(`${filePath}.missing`)).toEqual({
+        entries: [], exists: false, parseComplete: false,
+      })
+      expect(readSpy).not.toHaveBeenCalled()
+    } finally {
+      readSpy.mockRestore()
+    }
+  })
+
+  it('computes stable message signatures without reading transcript payloads', async () => {
+    const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const projectDir = '-tmp-project'
+    await writeSessionFile(projectDir, sessionId, [makeUserEntry('hello', crypto.randomUUID())])
+    const child = await writeSubagentTranscriptFile(projectDir, sessionId, 'abc123', [])
+    const streamSpy = spyOn(service as any, 'streamJsonlFile')
+    const readSpy = spyOn(fs, 'readFile')
+    try {
+      const before = await service.getSessionMessagesSignature(sessionId)
+      expect(await service.getSessionMessagesSignature(sessionId)).toBe(before)
+      await fs.appendFile(child, 'child append\n')
+      const appended = await service.getSessionMessagesSignature(sessionId)
+      expect(appended).not.toBe(before)
+      await fs.rm(child)
+      const removed = await service.getSessionMessagesSignature(sessionId)
+      expect(removed).not.toBe(appended)
+      await fs.appendFile(path.join(tmpDir, 'projects', projectDir, `${sessionId}.jsonl`), 'root append\n')
+      expect(await service.getSessionMessagesSignature(sessionId)).not.toBe(removed)
+      expect(streamSpy).not.toHaveBeenCalled()
+      expect(readSpy).not.toHaveBeenCalled()
+    } finally {
+      streamSpy.mockRestore()
+      readSpy.mockRestore()
+    }
+  })
+
   it('should include linked subagent transcript changes in the message signature', async () => {
     const sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
     const projectDir = '-tmp-project'
@@ -3891,6 +4107,50 @@ describe('Sessions API', () => {
     expect(firstRecent.projects.some(project => project.realPath === firstRealWorkDir)).toBe(true)
     expect(secondRecent.projects.some(project => project.realPath === secondRealWorkDir)).toBe(true)
     expect(secondRecent.projects.some(project => project.realPath === firstRealWorkDir)).toBe(false)
+  })
+
+  it('GET /api/sessions/recent-projects should not serve a deep scan from a shallow cached response', async () => {
+    // The response cache lives for 30s. If a small-limit request (shallow
+    // session scan) is cached and a deeper request then hits that entry, the
+    // deep response would silently drop every project beyond the shallow scan.
+    const oldWorkDir = path.join(tmpDir, 'recent-scan-depth', 'old-project')
+    const busyWorkDir = path.join(tmpDir, 'recent-scan-depth', 'busy-project')
+    await fs.mkdir(oldWorkDir, { recursive: true })
+    await fs.mkdir(busyWorkDir, { recursive: true })
+    const oldRealPath = await fs.realpath(oldWorkDir)
+
+    const oldSessionId = 'd1000000-bbbb-cccc-dddd-eeeeeeeeeeee'
+    await writeSessionFile('-tmp-recent-scan-depth-old', oldSessionId, [
+      { ...makeUserEntry('Old project session'), cwd: oldWorkDir, sessionId: oldSessionId },
+    ])
+
+    // `modifiedAt` comes from the newest entry timestamp in the transcript, so
+    // ordering is pinned by content, not file mtime. A default limit=10 request
+    // scans min(max(10*16,100),500) = 160 sessions; 170 newer sessions push the
+    // old project past that horizon.
+    const busyBase = Date.parse('2026-06-01T00:00:00.000Z')
+    for (let i = 0; i < 170; i++) {
+      const sessionId = `d2000000-bbbb-cccc-dddd-${String(i).padStart(12, '0')}`
+      await writeSessionFile('-tmp-recent-scan-depth-busy', sessionId, [
+        {
+          ...makeUserEntry(`Busy session ${i}`),
+          timestamp: new Date(busyBase + i * 60_000).toISOString(),
+          cwd: busyWorkDir,
+          sessionId,
+        },
+      ])
+    }
+
+    const shallowRes = await fetch(`${baseUrl}/api/sessions/recent-projects?limit=10`)
+    expect(shallowRes.status).toBe(200)
+    const shallow = await shallowRes.json() as { projects: Array<{ realPath: string }> }
+    expect(shallow.projects.some((project) => project.realPath === oldRealPath)).toBe(false)
+
+    // Within the cache TTL this used to return the same shallow list.
+    const deepRes = await fetch(`${baseUrl}/api/sessions/recent-projects?limit=500&scan=5000`)
+    expect(deepRes.status).toBe(200)
+    const deep = await deepRes.json() as { projects: Array<{ realPath: string }> }
+    expect(deep.projects.some((project) => project.realPath === oldRealPath)).toBe(true)
   })
 
   it('GET /api/sessions/:id should return session detail', async () => {

@@ -275,6 +275,9 @@ ws.addEventListener('message', (event) => {
   void (async () => {
     for (const line of lines) {
       const parsed = JSON.parse(line)
+      if (parsed.type === 'control_request' && parsed.request?.subtype === 'mock_exit_after_api_error_ack') {
+        process.exit(1)
+      }
 
       if (parsed.type === 'user') {
         sendInit()
@@ -340,7 +343,10 @@ ws.addEventListener('message', (event) => {
             session_id: sessionId,
           })
           if (text.includes('then exit')) {
-            setTimeout(() => process.exit(1), 10)
+            // Wait for the test client's acknowledgment that the API error
+            // was reported. A 10ms exit could outrun the async SDK handler.
+            // Bound fixture lifetime if that acknowledgment never arrives.
+            setTimeout(() => process.exit(1), 5_000)
             continue
           }
           emit(ws, {

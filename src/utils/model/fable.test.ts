@@ -129,7 +129,7 @@ describe('Fable model configuration', () => {
     expect(getMarketingNameForModel('claude-opus-4-8')).toBe('Opus 4.8')
     expect(getMarketingNameForModel('claude-sonnet-5')).toBe('Sonnet 5')
     expect(renderDefaultModelSetting('opusplan')).toBe(
-      'Opus 4.8 in plan mode, else Sonnet 5',
+      'Opus 5 in plan mode, else Sonnet 5',
     )
   })
 

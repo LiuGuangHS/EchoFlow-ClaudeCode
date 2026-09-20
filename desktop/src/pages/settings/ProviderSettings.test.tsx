@@ -132,6 +132,43 @@ describe('EchoFlow provider setup', () => {
     expect(payload).not.toHaveProperty('apiKey')
     expect(payload).not.toHaveProperty('presetId')
     expect(payload).not.toHaveProperty('key')
+    expect(payload).not.toHaveProperty('managementToken')
+  })
+
+  it('keeps the modal open and reports a create failure', async () => {
+    createProviderFromTokenMock.mockRejectedValueOnce(new Error('create failed'))
+    render(<ProviderSettings />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Select main token' }))
+    const dialog = within(await screen.findByRole('dialog'))
+    fireEvent.click(dialog.getByRole('button', { name: 'Add' }))
+
+    await waitFor(() => expect(dialog.getByRole('alert')).toBeInTheDocument())
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(screen.queryByTestId('provider-echoflow-provider')).not.toBeInTheDocument()
+  })
+
+  it('refreshes the provider list after creating an EchoFlow provider', async () => {
+    const provider: SavedProvider = {
+      id: 'echoflow-provider',
+      presetId: 'echoflowai',
+      name: 'EchoFlow API · 主站',
+      baseUrl: 'https://api.echoflowai.cc',
+      apiKey: 'sk-••••1234',
+      apiFormat: 'anthropic',
+      models: { main: 'claude-test-model', haiku: 'claude-test-model', sonnet: 'claude-test-model', opus: 'claude-test-model' },
+    }
+    vi.mocked(providersApi.list)
+      .mockResolvedValueOnce({ providers: [], activeId: null })
+      .mockResolvedValueOnce({ providers: [provider], activeId: null })
+    createProviderFromTokenMock.mockResolvedValueOnce({ provider })
+    render(<ProviderSettings />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Select main token' }))
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Add' }))
+
+    expect(await screen.findByTestId('provider-echoflow-provider')).toHaveTextContent('EchoFlow API · 主站')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
   it('clears the selected token draft when the shared modal is canceled', async () => {
@@ -169,7 +206,7 @@ describe('EchoFlow provider setup', () => {
   it('uses the endpoint-scoped model discovery flow for EchoFlow tokens', async () => {
     fetchModelsFromTokenMock.mockResolvedValue({
       ok: true,
-      models: [{ id: 'claude-test-model', ownedBy: 'echoflow' }],
+      models: [{ id: 'gpt-test-model', ownedBy: 'echoflow' }],
       endpoint: 'dedicated',
     })
     const fetchModels = vi.spyOn(providersApi, 'fetchModels')
@@ -184,6 +221,29 @@ describe('EchoFlow provider setup', () => {
       tokenId: 'dedicated-token-id',
     }))
     expect(fetchModels).not.toHaveBeenCalled()
+    expect(dialog.getByRole('button', { name: /Anthropic Messages \(native\)/ })).toBeInTheDocument()
+  })
+
+  it('uses the normal provider test path when no EchoFlow token is selected', async () => {
+    const testConfig = vi.spyOn(providersApi, 'testConfig').mockResolvedValue({
+      result: { connectivity: { success: true, latencyMs: 8 } },
+    })
+    render(<ProviderSettings />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /Add Model/ }))
+    const dialog = within(screen.getByRole('dialog'))
+    fireEvent.click(dialog.getByRole('button', { name: 'Custom' }))
+    fireEvent.change(dialog.getByPlaceholderText('https://api.example.com/anthropic'), { target: { value: 'https://ordinary.example.test' } })
+    fireEvent.change(dialog.getByPlaceholderText('sk-...'), { target: { value: 'ordinary-api-key' } })
+    fireEvent.change(dialog.getByPlaceholderText('e.g. deepseek-v4-flash'), { target: { value: 'ordinary-model' } })
+    fireEvent.click(dialog.getByRole('button', { name: 'Test Connection' }))
+
+    await waitFor(() => expect(testConfig).toHaveBeenCalledWith(expect.objectContaining({
+      baseUrl: 'https://ordinary.example.test',
+      apiKey: 'ordinary-api-key',
+      modelId: 'ordinary-model',
+    })))
+    expect(testProviderFromTokenMock).not.toHaveBeenCalled()
   })
 
   it('uses the normal model discovery flow when no EchoFlow token is selected', async () => {
@@ -220,7 +280,32 @@ describe('EchoFlow provider setup', () => {
       tokenId: 'dedicated-token-id',
       baseUrl: 'https://expapi.echoflowai.cc',
     })))
+    const payload = testProviderFromTokenMock.mock.calls.at(-1)?.[0]
+    expect(payload).not.toHaveProperty('apiKey')
+    expect(payload).not.toHaveProperty('key')
+    expect(payload).not.toHaveProperty('managementToken')
   })
+
+  it('passes OpenAI Responses selection through the token flow', async () => {
+    render(<ProviderSettings />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Select main token' }))
+    const dialog = within(await screen.findByRole('dialog'))
+    fireEvent.click(dialog.getByRole('button', { name: /Anthropic Messages \(native\)/ }))
+    fireEvent.click(within(dialog.getByRole('listbox')).getByRole('option', { name: /OpenAI Responses/ }))
+    fireEvent.click(dialog.getByRole('button', { name: 'Add' }))
+
+    await waitFor(() => expect(createProviderFromTokenMock).toHaveBeenCalledWith(expect.objectContaining({
+      endpoint: 'main',
+      tokenId: 'main-token-id',
+      apiFormat: 'openai_responses',
+    })))
+    const payload = createProviderFromTokenMock.mock.calls.at(-1)?.[0]
+    expect(payload).not.toHaveProperty('apiKey')
+    expect(payload).not.toHaveProperty('key')
+    expect(payload).not.toHaveProperty('managementToken')
+  })
+
 })
 
 describe('saved and legacy providers', () => {

@@ -1845,6 +1845,31 @@ describe('Sidebar', () => {
     expect(desktopUiPreferencesApiMock.updateSidebarPreferences).not.toHaveBeenCalled()
   })
 
+  it('starts a new session in the project root when the active session ran in an isolated worktree', async () => {
+    createSession.mockResolvedValue('new-from-worktree')
+    const now = new Date().toISOString()
+    useSessionStore.setState({
+      sessions: [{
+        ...makeSession('worktree-active', 'Worktree Session', '/workspace/repo/.claude/worktrees/desktop-main-12345678', now),
+        projectRoot: '/workspace/repo',
+      }],
+    })
+    useTabStore.setState({
+      tabs: [{ sessionId: 'worktree-active', title: 'Worktree Session', type: 'session', status: 'idle' }],
+      activeTabId: 'worktree-active',
+    })
+
+    render(<Sidebar />)
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'New Session' }))
+    })
+
+    await waitFor(() => {
+      expect(createSession).toHaveBeenCalledWith('/workspace/repo')
+    })
+  })
+
   it('right-aligns running status, worktree marker, and update time on session rows', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-05-19T12:00:00.000Z'))

@@ -463,6 +463,16 @@ describe('SubagentRunPage', () => {
     expect(screen.queryByTestId('conversation-navigator')).not.toBeInTheDocument()
   })
 
+  it('does not replace authoritative activity with a partial transcript tail', async () => {
+    const tabId = `${SUBAGENT_TAB_PREFIX}session-1__tool-1`
+    const tasks = { running: { taskId: 'running', toolUseId: 'owned-tool', status: 'running' as const, description: 'Live owned task', startedAt: 1, updatedAt: 2 } }
+    useChatStore.setState({ sessions: { [tabId]: { ...createDefaultSessionState(), backgroundAgentTasks: tasks } } })
+    vi.mocked(subagentsApi.getRunByTool).mockResolvedValue(subagentRun({ activityComplete: false, historyComplete: false, truncated: true }))
+    render(<SubagentRunPage sourceSessionId="session-1" toolUseId="tool-1" title="SubAgent" />)
+    await screen.findByTestId('subagent-conversation')
+    expect(useChatStore.getState().sessions[tabId]?.backgroundAgentTasks).toBe(tasks)
+  })
+
   it('auto-opens the owning SubAgent Task and Bash activity without another click', async () => {
     vi.mocked(subagentsApi.getRunByTool).mockResolvedValue(subagentRun({
       status: 'running',
@@ -2135,6 +2145,7 @@ describe('SubagentRunPage', () => {
       useChatStore.setState({
         sessions: {
           'session-1': {
+            ...createDefaultSessionState(),
             backgroundAgentTasks: {
               'agent-1': {
                 taskId: 'agent-1',

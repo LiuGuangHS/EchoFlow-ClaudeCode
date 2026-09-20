@@ -2,7 +2,7 @@
  * Unit tests for TeamService and Teams API
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
+import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test'
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import * as os from 'node:os'
@@ -14,7 +14,7 @@ import {
   teamIncarnationId,
 } from '../services/teamService.js'
 import type { TeamWorkbenchSnapshot } from '../services/teamService.js'
-import type { MessageEntry } from '../services/sessionService.js'
+import { sessionService, type MessageEntry } from '../services/sessionService.js'
 import * as lockfile from '../../utils/lockfile.js'
 import { getSessionCreatedTeams } from '../../bootstrap/state.js'
 import {
@@ -1222,6 +1222,28 @@ describe('TeamService', () => {
       source: 'archive',
     })
     expect(reopened?.snapshots.at(-1)).toEqual(live)
+  })
+
+  it('uses the bounded incremental Team projection instead of canonical history during workbench polling', async () => {
+    const filePath = path.join(tmpDir, 'poll-session.jsonl')
+    const unrelated = JSON.stringify({ uuid: 'ordinary', message: { role: 'assistant', content: 'x'.repeat(8192) } }) + '\n'
+    await fs.writeFile(filePath, unrelated.repeat(640))
+    const canonical = spyOn(sessionService, 'getSessionMessages').mockImplementation(async () => { throw new Error('canonical history must not be loaded') })
+    service = new TeamService({ sessionLocator: { findSessionFile: async () => ({ filePath, projectDir: '-tmp-project' }) } })
+    try {
+      expect(await service.getWorkbenchForSession('poll-session')).toBeNull()
+      expect(await service.getWorkbenchForSession('poll-session')).toBeNull()
+      await fs.appendFile(filePath, JSON.stringify({ uuid: 'team-create', timestamp: '2026-01-01T00:00:00Z', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'create-team', name: 'TeamCreate', input: { team_name: 'bounded-team' } }] } }) + '\n')
+      expect(await service.getWorkbenchForSession('poll-session')).toMatchObject({ teamName: 'bounded-team', source: 'transcript' })
+      expect(canonical).not.toHaveBeenCalled()
+    } finally { canonical.mockRestore() }
+  })
+
+  it('reports an incomplete Team projection instead of pretending the session has no team', async () => {
+    const filePath = path.join(tmpDir, 'oversized-team.jsonl')
+    await fs.writeFile(filePath, JSON.stringify({ message: { role: 'assistant', content: [{ type: 'tool_use', id: 'team', name: 'TeamCreate', input: { team_name: 'large', description: 'x'.repeat(2 * 1024 * 1024) } }] } }) + '\n')
+    service = new TeamService({ sessionLocator: { findSessionFile: async () => ({ filePath, projectDir: '-tmp-project' }) } })
+    await expect(service.getWorkbenchForSession('oversized-team')).rejects.toMatchObject({ statusCode: 503, code: 'TEAM_HISTORY_INCOMPLETE' })
   })
 
   it('reconciles the final task tail from the matching Team incarnation before deletion', async () => {

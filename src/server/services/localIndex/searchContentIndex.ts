@@ -112,11 +112,11 @@ export interface SearchContentIndex {
   countSources(): number
   replaceSource(
     source: SearchContentSourceWrite,
-    documents: SearchContentDocumentWrite[],
+    documents: Iterable<SearchContentDocumentWrite>,
   ): void
   appendSource(
     source: SearchContentSourceWrite,
-    documents: SearchContentDocumentWrite[],
+    documents: Iterable<SearchContentDocumentWrite>,
   ): void
   deleteSource(path: string): void
   getReadiness(): SearchContentReadiness | null
@@ -278,7 +278,7 @@ function upsertSource(
 function insertDocuments(
   writer: SearchContentWriteOperation,
   sourcePath: string,
-  documents: SearchContentDocumentWrite[],
+  documents: Iterable<SearchContentDocumentWrite>,
 ): void {
   for (const document of documents) {
     writer.run(`
@@ -298,6 +298,26 @@ function insertDocuments(
     document.body,
     document.normalizedBody)
   }
+}
+
+// Keep these functions closed over their explicit arguments so the exact same
+// SQL implementation can run in the inline compiled-safe commit worker.
+function applySearchSource(
+  writer: SearchContentWriteOperation,
+  source: SearchContentSourceWrite,
+  documents: Iterable<SearchContentDocumentWrite>,
+  append: boolean,
+  upsert: typeof upsertSource,
+  insert: typeof insertDocuments,
+): void {
+  if (append && !writer.get('SELECT path FROM search_sources WHERE path = ?', source.path)) throw new Error('Cannot append an unindexed search source')
+  upsert(writer, source)
+  if (!append) writer.run('DELETE FROM search_documents WHERE source_path = ?', source.path)
+  insert(writer, source.path, documents)
+}
+
+export function searchContentCommitFunctions(): string {
+  return `const upsert = (${upsertSource.toString()}); const insert = (${insertDocuments.toString()}); const applySource = (${applySearchSource.toString()});`
 }
 
 function ftsPhrase(value: string): string {
@@ -329,22 +349,10 @@ export function createSearchContentIndex(
       ))?.total ?? 0
     },
     replaceSource(source, documents) {
-      database.transaction(writer => {
-        upsertSource(writer, source)
-        writer.run('DELETE FROM search_documents WHERE source_path = ?', source.path)
-        insertDocuments(writer, source.path, documents)
-      })
+      database.transaction(writer => applySearchSource(writer, source, documents, false, upsertSource, insertDocuments))
     },
     appendSource(source, documents) {
-      database.transaction(writer => {
-        const existing = writer.get<{ path: string }>(
-          'SELECT path FROM search_sources WHERE path = ?',
-          source.path,
-        )
-        if (!existing) throw new Error('Cannot append an unindexed search source')
-        upsertSource(writer, source)
-        insertDocuments(writer, source.path, documents)
-      })
+      database.transaction(writer => applySearchSource(writer, source, documents, true, upsertSource, insertDocuments))
     },
     deleteSource(path) {
       database.transaction(writer => {

@@ -419,6 +419,130 @@ describe('EchoFlow account API', () => {
     }
   })
 
+  test('rejects cross-endpoint model discovery and connection tests', async () => {
+    const originalFetch = globalThis.fetch
+    let upstreamCalls = 0
+    globalThis.fetch = mock(async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url.endsWith('/api/user/self')) {
+        return new Response(JSON.stringify({ success: true, data: { quota: 500_000, group: 'main', username: 'main-user' } }), { headers: { 'Content-Type': 'application/json' } })
+      }
+      if (url.endsWith('/api/token/?p=0&size=100')) {
+        return new Response(JSON.stringify({ success: true, data: [{ id: 'main-token', name: 'Main key', key: 'main-api-key' }] }), { headers: { 'Content-Type': 'application/json' } })
+      }
+      upstreamCalls += 1
+      return new Response(JSON.stringify({ data: [] }), { headers: { 'Content-Type': 'application/json' } })
+    }) as typeof fetch
+
+    try {
+      const bind = makeRequest({ endpoint: 'main', userId: 'main-user', managementToken: 'main-management-token' })
+      await handleEchoFlowApi(bind.req, bind.url, bind.segments)
+
+      const models = makeApiRequest('/api/echoflow/models', 'POST', { endpoint: 'dedicated', tokenId: 'main-token' })
+      const modelsResponse = await handleEchoFlowApi(models.req, models.url, models.segments)
+      expect(modelsResponse.status).toBe(400)
+      expect(await modelsResponse.json()).toEqual({ error: 'token_invalid' })
+
+      const testProvider = makeApiRequest('/api/echoflow/test-provider', 'POST', {
+        endpoint: 'dedicated',
+        tokenId: 'main-token',
+        baseUrl: 'https://api.echoflowai.cc',
+        modelId: 'main-model',
+        apiFormat: 'anthropic',
+        authStrategy: 'auth_token',
+      })
+      const testResponse = await handleEchoFlowApi(testProvider.req, testProvider.url, testProvider.segments)
+      expect(testResponse.status).toBe(400)
+      expect(await testResponse.json()).toEqual({ error: 'token_invalid' })
+      expect(upstreamCalls).toBe(0)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  test('tests OpenAI Responses with the server token and forced endpoint URL', async () => {
+    const originalFetch = globalThis.fetch
+    const requests: Array<{ url: string; authorization: string | null }> = []
+    globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input)
+      const headers = new Headers(init?.headers)
+      if (url.endsWith('/api/user/self')) {
+        return new Response(JSON.stringify({ success: true, data: { quota: 500_000, group: 'dedicated', username: 'dedicated-user' } }), { headers: { 'Content-Type': 'application/json' } })
+      }
+      if (url.endsWith('/api/token/?p=0&size=100')) {
+        return new Response(JSON.stringify({ success: true, data: [{ id: 'responses-token', name: 'Responses key', key: 'server-responses-key' }] }), { headers: { 'Content-Type': 'application/json' } })
+      }
+      requests.push({ url, authorization: headers.get('authorization') })
+      return new Response(JSON.stringify({ output: [], model: 'responses-model' }), { headers: { 'Content-Type': 'application/json' } })
+    }) as typeof fetch
+
+    try {
+      const bind = makeRequest({ endpoint: 'dedicated', userId: 'dedicated-user', managementToken: 'dedicated-management-token' })
+      await handleEchoFlowApi(bind.req, bind.url, bind.segments)
+
+      const testProvider = makeApiRequest('/api/echoflow/test-provider', 'POST', {
+        endpoint: 'dedicated',
+        tokenId: 'responses-token',
+        baseUrl: 'https://api.echoflowai.cc',
+        modelId: 'responses-model',
+        apiFormat: 'openai_responses',
+        authStrategy: 'api_key',
+      })
+      const response = await handleEchoFlowApi(testProvider.req, testProvider.url, testProvider.segments)
+      const body = await response.json() as { result: { connectivity: { success: boolean } } }
+
+      expect(response.status).toBe(200)
+      expect(body.result.connectivity.success).toBe(true)
+      expect(requests.length).toBeGreaterThan(0)
+      expect(requests.every(({ url, authorization }) => url === 'https://expapi.echoflowai.cc/v1/responses' && authorization === 'Bearer server-responses-key')).toBe(true)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  test('updates an EchoFlow provider to the selected endpoint without exposing its key', async () => {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = mock(async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url.endsWith('/api/user/self')) {
+        return new Response(JSON.stringify({ success: true, data: { quota: 500_000, group: 'dedicated', username: 'dedicated-user' } }), { headers: { 'Content-Type': 'application/json' } })
+      }
+      return new Response(JSON.stringify({ success: true, data: [{ id: 'dedicated-token', name: 'Dedicated key', key: 'dedicated-api-key' }] }), { headers: { 'Content-Type': 'application/json' } })
+    }) as typeof fetch
+
+    try {
+      const bind = makeRequest({ endpoint: 'dedicated', userId: 'dedicated-user', managementToken: 'dedicated-management-token' })
+      await handleEchoFlowApi(bind.req, bind.url, bind.segments)
+      const provider = await new ProviderService().addProvider({
+        presetId: 'echoflowai',
+        name: 'EchoFlow channel',
+        apiKey: 'old-api-key',
+        baseUrl: 'https://api.echoflowai.cc',
+        apiFormat: 'anthropic',
+        authStrategy: 'auth_token',
+        models: { main: 'model-main', haiku: 'model-haiku', sonnet: 'model-sonnet', opus: 'model-opus' },
+      })
+
+      const selection = makeApiRequest('/api/echoflow/select-token', 'POST', {
+        endpoint: 'dedicated',
+        tokenId: 'dedicated-token',
+        providerId: provider.id,
+      })
+      const response = await handleEchoFlowApi(selection.req, selection.url, selection.segments)
+      const body = await response.json() as { provider: Record<string, unknown> }
+
+      expect(response.status).toBe(200)
+      expect(body).toEqual({ provider: { id: provider.id } })
+      await expect(new ProviderService().getProvider(provider.id)).resolves.toMatchObject({
+        apiKey: 'dedicated-api-key',
+        baseUrl: 'https://expapi.echoflowai.cc',
+        presetId: 'echoflowai',
+      })
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
   test('tests a provider with the server-resolved endpoint token and base URL', async () => {
     const originalFetch = globalThis.fetch
     const requests: Array<{ url: string; headers: Headers }> = []

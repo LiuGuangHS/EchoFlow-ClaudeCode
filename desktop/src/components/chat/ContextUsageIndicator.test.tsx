@@ -520,10 +520,11 @@ describe('ContextUsageIndicator request behavior', () => {
 
     fireEvent.click(screen.getByTestId('context-usage-indicator'))
     const popover = await screen.findByTestId('context-usage-popover')
-    expect(popover).toHaveTextContent('7%')
+    // The panel headlines the *remaining* window, so session-2's 7% used reads as 93% here.
+    expect(popover).toHaveTextContent('93%')
     // session-2 fixture reuses the same model string as session-1; the meter
     // percentage is the session-isolation signal under test.
-    expect(popover).not.toHaveTextContent('21%')
+    expect(popover).not.toHaveTextContent('79%')
   })
 
   it('forces a fresh inspection when refreshNonce bumps after a compaction (#743)', async () => {
@@ -709,7 +710,10 @@ describe('ContextUsageIndicator presentation', () => {
     const popover = await screen.findByTestId('context-usage-popover')
     expect(popover).toBeInTheDocument()
     expect(popover).toHaveTextContent('kimi-k2.6')
-    expect(popover).toHaveTextContent('Messages')
+    // The category list is collapsed behind the breakdown toggle; the segmented bar is the
+    // always-visible summary of the same data.
+    expect(popover).not.toHaveTextContent('Messages')
+    expect(screen.getByTestId('context-segmented-bar')).toBeInTheDocument()
     expect(document.body.contains(popover)).toBe(true)
     expect(screen.queryByTestId('context-usage-sheet')).not.toBeInTheDocument()
 
@@ -717,6 +721,31 @@ describe('ContextUsageIndicator presentation', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('context-usage-popover')).not.toBeInTheDocument()
     })
+  })
+
+  it('reveals the category breakdown only after expanding its toggle', async () => {
+    render(
+      <ContextUsageIndicator
+        sessionId="session-1"
+        chatState="idle"
+        messageCount={1}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('context-usage-indicator')).toHaveTextContent('21%')
+    })
+
+    fireEvent.click(screen.getByTestId('context-usage-indicator'))
+    const popover = await screen.findByTestId('context-usage-popover')
+    const toggle = await screen.findByTestId('context-breakdown-toggle')
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(popover).not.toHaveTextContent('Messages')
+
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(popover).toHaveTextContent('Messages')
+    expect(popover).toHaveTextContent('42,000')
   })
 
   it('uses the bottom sheet when the composer is compact (Workbench / narrow column)', async () => {
@@ -824,11 +853,13 @@ describe('ContextUsageIndicator session usage', () => {
 
     fireEvent.click(screen.getByTestId('context-usage-indicator'))
 
-    // 1000 input + 9000 cache read + 2400 output; the cached tokens are counted once.
-    expect(await screen.findByTestId('session-total-tokens')).toHaveTextContent('12.4K')
+    // 1000 uncached input + 2400 output. Cache hits stay in the hit-rate row, not the headline.
+    expect(await screen.findByTestId('session-total-tokens')).toHaveTextContent('3.4K')
     expect(screen.getByTestId('session-cache-hit')).toHaveTextContent('90.0%')
-    expect(screen.getByTestId('session-speed')).toHaveTextContent('200')
+    // 2400 output / 42s API time, including prefill — not the 12s decode span (200 tok/s).
+    expect(screen.getByTestId('session-speed')).toHaveTextContent('57')
     expect(screen.getByTestId('session-speed')).toHaveTextContent('tok/s')
+    expect(screen.getByTestId('session-cost')).toHaveTextContent('$1.23')
     expect(sessionsApiMock.getSessionUsage).toHaveBeenCalledWith('session-1', expect.anything())
   })
 
@@ -851,11 +882,12 @@ describe('ContextUsageIndicator session usage', () => {
     expect(screen.getByTestId('session-cache-hit')).not.toHaveTextContent('100%')
   })
 
-  it('withholds the speed reading when the session reported no decode span', async () => {
-    // Transcript-sourced usage has no generation timing. Showing a number here would mean
-    // dividing by wall clock, which includes tool execution.
+  it('withholds the speed reading when the session reported no API duration', async () => {
+    // Transcript-sourced usage has no request timing. Showing a number here would mean
+    // dividing by session wall clock, which includes tool execution.
     sessionsApiMock.getSessionUsage.mockResolvedValue(usageInspection({
       ...baseUsage,
+      totalAPIDuration: 0,
       totalDecodeDuration: 0,
     }))
 
@@ -871,7 +903,7 @@ describe('ContextUsageIndicator session usage', () => {
     expect(screen.getByTestId('session-speed')).not.toHaveTextContent('tok/s')
   })
 
-  it('hides the block entirely for a session that has spent nothing', async () => {
+  it('hides the block entirely for a session that has produced nothing', async () => {
     sessionsApiMock.getSessionUsage.mockResolvedValue(usageInspection({
       ...baseUsage,
       totalInputTokens: 0,

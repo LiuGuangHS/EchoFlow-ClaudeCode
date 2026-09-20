@@ -13,6 +13,7 @@ import { useSettingsStore } from './settingsStore'
 import { useTabStore } from './tabStore'
 import type { LocalIndexStatus, SessionListItem } from '../types/session'
 import type { PermissionMode } from '../types/settings'
+import type { RuntimeSelection } from '../types/runtime'
 import { isPlaceholderSessionTitle } from '../lib/sessionTitle'
 import { invalidateRecentProjectsCache } from '../lib/recentProjectsCache'
 import { releaseWorkspaceSession } from '../lib/workspace/releaseSession'
@@ -56,7 +57,7 @@ type SessionStore = {
   fetchSessions: (project?: string) => Promise<void>
   loadMoreProjectSessions: (projectRoot: string) => Promise<void>
   releaseProjectHistory: (projectRoot: string) => void
-  hydrateHistoricalSessions: (sessions: SessionListItem[]) => SessionListItem[]
+  hydrateHistoricalSessions: (sessions: SessionListItem[], runtimeSelections?: Record<string, RuntimeSelection>) => SessionListItem[]
   openHistoricalSession: (session: SessionListItem) => void
   createSession: (workDir?: string, options?: CreateSessionOptions) => Promise<string>
   branchSession: (
@@ -106,13 +107,14 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
 
   fetchSessions: async (project?: string) => {
     const requestId = ++fetchSessionsRequestId
+    const runtimeSelections = useSessionRuntimeStore.getState().selections
     set({ isLoading: true, error: null, sessionListRequestId: requestId })
     try {
       const response = await sessionsApi.list(buildSessionListParams(project))
       if (requestId !== get().sessionListRequestId) return
       const raw = response.sessions
       const indexStatus = response.index ?? null
-      useSessionRuntimeStore.getState().syncFromSessions(raw)
+      useSessionRuntimeStore.getState().syncFromSessions(raw, runtimeSelections)
       let syncedSessions: SessionListItem[] = []
       set((state) => {
         if (requestId !== state.sessionListRequestId) return state
@@ -267,13 +269,13 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     })
   },
 
-  hydrateHistoricalSessions: (snapshots) => {
+  hydrateHistoricalSessions: (snapshots, runtimeSelections) => {
     if (snapshots.length === 0) return []
     const selected = reconcileSessionSnapshots(snapshots, get().sessions)
     const selectedIds = new Set(selected.map((session) => session.id))
     // Hydrate before activating the tab: connecting immediately applies its
     // runtime selection and the composer reads workspace/permission metadata.
-    useSessionRuntimeStore.getState().syncFromSessions(selected)
+    useSessionRuntimeStore.getState().syncFromSessions(selected, runtimeSelections)
     set((state) => ({
       sessions: mergeSessionList([
         ...selected,

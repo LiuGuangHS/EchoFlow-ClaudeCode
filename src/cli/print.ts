@@ -365,7 +365,7 @@ import { removeTeammateFromTeamFile } from '../utils/swarm/teamHelpers.js'
 import { unassignTeammateTasks } from '../utils/tasks.js'
 import { getRunningTasks } from '../utils/task/framework.js'
 import { isBackgroundTask } from '../tasks/types.js'
-import { stopTask } from '../tasks/stopTask.js'
+import { stopTaskFromControlRequest } from '../tasks/stopTask.js'
 import {
   drainSdkEvents,
   setAgentRunMessageSink,
@@ -3941,14 +3941,21 @@ function runHeadlessStreaming(
           })
         } else if (message.request.subtype === 'stop_task') {
           const { task_id: taskId } = message.request
-          try {
-            await stopTask(taskId, {
-              getAppState,
-              setAppState,
-            })
-            sendControlResponseSuccess(message, {})
-          } catch (error) {
-            sendControlResponseError(message, errorMessage(error))
+          const result = await stopTaskFromControlRequest(taskId, {
+            getAppState,
+            setAppState,
+          })
+          if (result.ok) {
+            // alreadyGone: the registry already evicted the task (it
+            // terminated earlier, or the process restarted). Tell the caller
+            // explicitly so it can converge its stale "running" entry instead
+            // of surfacing "No task found with ID" to the user.
+            sendControlResponseSuccess(
+              message,
+              result.alreadyGone ? { stopped: false, reason: 'not_found' } : {},
+            )
+          } else {
+            sendControlResponseError(message, result.message)
           }
         } else if (message.request.subtype === 'send_agent_message') {
           const agentId = message.request.agent_id.trim()

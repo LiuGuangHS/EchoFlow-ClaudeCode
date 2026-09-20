@@ -43,7 +43,7 @@ import {
 } from '../../api/desktopUiPreferences'
 import { getDesktopHost } from '../../lib/desktopHost'
 import { hasRunningBackgroundTasks } from '../../lib/backgroundTasks'
-import { getSessionWorkspaceState } from '../../lib/sessionWorkspace'
+import { getSessionWorkspaceState, getSessionSeedWorkDir } from '../../lib/sessionWorkspace'
 
 const desktopHost = getDesktopHost()
 const isDesktopRuntime = desktopHost.isDesktop
@@ -1033,7 +1033,7 @@ export function Sidebar({
             const currentSession = currentTabId
               ? useSessionStore.getState().sessions.find((s) => s.id === currentTabId)
               : null
-            void createSessionForWorkDir(currentSession?.workDir || currentSession?.projectRoot || undefined)
+            void createSessionForWorkDir(getSessionSeedWorkDir(currentSession))
           }}
           icon={<PlusIcon />}
         >

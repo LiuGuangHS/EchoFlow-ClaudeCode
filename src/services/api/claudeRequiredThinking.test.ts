@@ -786,3 +786,29 @@ test('invalid global output overrides fall back to the configured provider budge
     expect(result.requestHeaders[0]?.get('x-cc-haha-output-budget-source')).toBe('explicit')
   }
 }, 10_000)
+
+for (const effortValue of ['low', 'high', 'xhigh', 'max'] as const) {
+  test(`Opus 5 caps ${effortValue} effort when thinking is disabled`, async () => {
+    const { requests } = await captureQueryRequest({
+      model: 'claude-opus-5',
+      capabilities: 'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
+      effortValue,
+    })
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.thinking).toEqual({ type: 'disabled' })
+    expect(requests[0]?.output_config).toEqual({
+      effort: effortValue === 'xhigh' || effortValue === 'max' ? 'high' : effortValue,
+    })
+  }, 10_000)
+}
+
+test('Opus 5 preserves max effort with adaptive thinking enabled', async () => {
+  const { requests } = await captureQueryRequest({
+    model: 'claude-opus-5',
+    capabilities: 'thinking,required_thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
+    effortValue: 'max',
+  })
+  expect(requests).toHaveLength(1)
+  expect(requests[0]?.thinking).toEqual({ type: 'adaptive' })
+  expect(requests[0]?.output_config).toEqual({ effort: 'max' })
+}, 10_000)

@@ -33,6 +33,7 @@ export type TraceIndexDatabase = {
 }
 
 type OwnedStatement = {
+  finalize(): void
   get(...bindings: TraceIndexBinding[]): unknown
   all(...bindings: TraceIndexBinding[]): unknown[]
   run(...bindings: TraceIndexBinding[]): {
@@ -150,8 +151,11 @@ export function openTraceIndexDatabase(options?: {
     },
     close() {
       if (closed) return
-      database.clearQueryCache()
+      // Bun may evict a query from its internal cache while our cache still owns
+      // it. Finalize every owned statement before the strict SQLite close.
+      for (const statement of statements.values()) statement.finalize()
       statements.clear()
+      database.clearQueryCache()
       database.close(true)
       closed = true
     },

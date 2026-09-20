@@ -18,6 +18,8 @@ import { openLocalIndexDatabase } from './database.js'
 import { createSessionIndex, type SessionIndex } from './sessionIndex.js'
 import {
   SESSION_SUMMARY_PARSER_VERSION,
+  MAX_PROJECTION_RECORD_BYTES,
+  MAX_PROJECTION_RECORDS,
   createSessionProjector,
   type SessionSourceCandidate,
 } from './sessionProjector.js'
@@ -86,6 +88,41 @@ async function sourceHash(path: string): Promise<string> {
 }
 
 describe('session projector', () => {
+  it('rejects oversized records before concatenation and preserves the canonical file', async () => {
+    const root = await createTempDir('projector-record-budget')
+    const candidate = await createCandidate({ root, projectPath: '-repo', sessionId: 'large', content: line(user('x'.repeat(MAX_PROJECTION_RECORD_BYTES + 1), '2026-01-01T00:00:00Z')) })
+    const before = await sourceHash(candidate.path)
+    const database = openLocalIndexDatabase({ path: join(root, 'index.sqlite') })
+    try {
+      const projector = createSessionProjector({ database, index: createSessionIndex(database), scope: root })
+      await expect(projector.projectSource(candidate)).rejects.toMatchObject({ code: 'LOCAL_INDEX_SOURCE_LIMIT' })
+      expect(await sourceHash(candidate.path)).toBe(before)
+    } finally { database.close() }
+  })
+
+  it('bounds locator and reducer growth for arbitrarily many tiny records', async () => {
+    const root = await createTempDir('projector-count-budget')
+    const candidate = await createCandidate({ root, projectPath: '-repo', sessionId: 'many', content: line({ type: 'unknown' }).repeat(MAX_PROJECTION_RECORDS + 1) })
+    const database = openLocalIndexDatabase({ path: join(root, 'index.sqlite') })
+    try {
+      const projector = createSessionProjector({ database, index: createSessionIndex(database), scope: root })
+      await expect(projector.projectSource(candidate)).rejects.toMatchObject({ code: 'LOCAL_INDEX_SOURCE_LIMIT' })
+    } finally { database.close() }
+  })
+
+  it('keeps the record budget across incremental appends', async () => {
+    const root = await createTempDir('projector-append-budget')
+    const item = line({ type: 'unknown' })
+    const candidate = await createCandidate({ root, projectPath: '-repo', sessionId: 'append', content: item.repeat(MAX_PROJECTION_RECORDS) })
+    const database = openLocalIndexDatabase({ path: join(root, 'index.sqlite') })
+    try {
+      const projector = createSessionProjector({ database, index: createSessionIndex(database), scope: root })
+      expect((await projector.projectSource(candidate)).kind).toBe('indexed')
+      await appendFile(candidate.path, item)
+      await expect(projector.projectSource(candidate)).rejects.toMatchObject({ code: 'LOCAL_INDEX_SOURCE_LIMIT' })
+    } finally { database.close() }
+  })
+
   it('fully builds without changing JSONL and preserves malformed/pending semantics', async () => {
     const root = await createTempDir('projector-full')
     const candidate = await createCandidate({
@@ -938,4 +975,35 @@ describe('session projector', () => {
       database.close()
     }
   })
+  it('rejects oversized retained identities while accepting large discarded bodies', async () => {
+    const root = await createTempDir('metadata-budget')
+    const candidate = await createCandidate({ root, projectPath: '-repo-a', sessionId: 'metadata',
+      content: line({ ...user('x'.repeat(2 * 1024 * 1024), '2026-01-01T00:00:00.000Z'), uuid: 'ordinary' }),
+    })
+    const database = openLocalIndexDatabase({ path: join(root, 'index.sqlite') })
+    const index = createSessionIndex(database)
+    const projector = createSessionProjector({ database, index, scope: root })
+    try {
+      expect(await projector.projectSource(candidate)).toMatchObject({ kind: 'indexed' })
+      await appendFile(candidate.path, line({ ...user('small', '2026-01-01T00:00:01.000Z'), uuid: 'x'.repeat(4097) }))
+      await expect(projector.projectSource(candidate)).rejects.toMatchObject({ code: 'LOCAL_INDEX_SOURCE_LIMIT' })
+    } finally { database.close() }
+  })
+
+  it('enforces aggregate retained metadata across appended windows', async () => {
+    const root = await createTempDir('metadata-total-budget')
+    const record = (index: number) => line({ ...user('small', '2026-01-01T00:00:00.000Z'), uuid: `${index}:` + 'x'.repeat(3000) })
+    const candidate = await createCandidate({ root, projectPath: '-repo-a', sessionId: 'metadata-total',
+      content: Array.from({ length: 3000 }, (_, index) => record(index)).join(''),
+    })
+    const database = openLocalIndexDatabase({ path: join(root, 'index.sqlite') })
+    const index = createSessionIndex(database)
+    const projector = createSessionProjector({ database, index, scope: root })
+    try {
+      expect(await projector.projectSource(candidate)).toMatchObject({ kind: 'indexed' })
+      await appendFile(candidate.path, Array.from({ length: 3000 }, (_, index) => record(index + 3000)).join(''))
+      await expect(projector.projectSource(candidate)).rejects.toMatchObject({ code: 'LOCAL_INDEX_SOURCE_LIMIT' })
+    } finally { database.close() }
+  })
+
 })

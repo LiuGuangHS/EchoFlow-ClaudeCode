@@ -17,6 +17,8 @@ export type ClientMessage =
       updatedInput?: Record<string, unknown>
       denyMessage?: string
       permissionUpdates?: PermissionUpdate[]
+      // Execution-model switch applied together with an ExitPlanMode approval.
+      runtimeOverride?: RuntimeSelection
     }
   | {
       type: 'computer_use_permission_response'

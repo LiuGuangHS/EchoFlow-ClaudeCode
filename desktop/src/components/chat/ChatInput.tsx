@@ -1,9 +1,14 @@
+import { isComposerReferenceVisible, isComposerSlashCommandVisible } from '@/lib/composerCapabilityVisibility'
 import { useState, useRef, useEffect, useCallback, useMemo, useId } from 'react'
 import { useDismissable } from '@/hooks/useDismissable'
 import { Button } from '@/components/ui/Button'
 import { IconButton } from '@/components/ui/IconButton'
 import { useTranslation } from '../../i18n'
-import { useChatStore, type RepositoryLaunchDraftState } from '../../stores/chatStore'
+import {
+  hasPendingAskUserQuestion,
+  useChatStore,
+  type RepositoryLaunchDraftState,
+} from '../../stores/chatStore'
 import { SETTINGS_TAB_ID, useTabStore } from '../../stores/tabStore'
 import { useUIStore } from '../../stores/uiStore'
 import { useSessionStore } from '../../stores/sessionStore'
@@ -26,6 +31,8 @@ import { ProjectContextChip } from '@/components/chat/ProjectContextChip'
 import { RepositoryLaunchControls } from '@/components/chat/RepositoryLaunchControls'
 import { ComposerReferenceMenu, type ComposerReferenceMenuHandle } from './ComposerReferenceMenu'
 import { ComposerReferenceDetail } from './ComposerReferenceDetail'
+import { ComposerCapabilityMenu } from './ComposerCapabilityMenu'
+import { useCapabilityMenu } from './useCapabilityMenu'
 import { composerReferencesApi } from '@/api/composerReferences'
 import type { ComposerReferenceCandidate } from '@/types/composerReference'
 import { LocalSlashCommandPanel, type LocalSlashCommandName } from './LocalSlashCommandPanel'
@@ -61,7 +68,7 @@ import {
   type ComposerMention,
 } from '../../lib/composerMentions'
 import type { PermissionMode } from '../../types/settings'
-import { getSessionWorkspaceState } from '../../lib/sessionWorkspace'
+import { getSessionWorkspaceState, getSessionSeedWorkDir } from '../../lib/sessionWorkspace'
 import { hasRunningSubagentTasks } from '../../lib/backgroundTasks'
 
 type GitInfo = SessionGitInfo
@@ -166,6 +173,7 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
   const slashItemRefs = useRef<(HTMLElement | null)[]>([])
   const slashMenuId = useId()
   const referenceMenuId = useId()
+  const capabilityMenuId = useId()
   const previousActiveTabIdRef = useRef<string | null>(null)
   const inputRef = useRef(input)
   const mentionsRef = useRef(mentions)
@@ -207,6 +215,12 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
   const launchBranch = repositoryLaunchDraft?.branch ?? null
   const launchUseWorktree = repositoryLaunchDraft?.useWorktree ?? false
   const chatState = sessionState?.chatState ?? 'idle'
+  // While a question is waiting, the card is the only way to reach the model: it
+  // is blocked inside the AskUserQuestion tool call, so a message typed here
+  // would sit in the queue until the question resolves — and reading that as
+  // "I already replied" is how questions get abandoned.
+  const questionPending = useChatStore((s) =>
+    activeTabId ? hasPendingAskUserQuestion(s.sessions[activeTabId]) : false)
   const isPreparingTurn = Boolean(sessionState?.isPreparingTurn)
   const slashCommands = sessionState?.slashCommands ?? []
   const composerPrefill = sessionState?.composerPrefill ?? null
@@ -272,6 +286,10 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
   const hasRunningSubagents = hasRunningSubagentTasks(sessionState?.backgroundAgentTasks)
   const workspaceState = getSessionWorkspaceState(activeSession)
   const isWorkspaceMissing = workspaceState !== 'available'
+  // Both composer branches (hero and inline) and the drop handler share this:
+  // they used to spell the condition out separately, which is how one branch
+  // ends up locked while the other keeps accepting text.
+  const composerDisabled = isWorkspaceMissing || launchTransitioning || isPreparingTurn || questionPending
   const hasWorkspaceReferences = !isMemberSession && workspaceReferences.length > 0
   const isHeroComposer = variant === 'hero' && !isMemberSession && !compact
   const resolvedWorkDir = activeSession?.workDir || gitInfo?.workDir || undefined
@@ -293,18 +311,18 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
   const referenceCwd = activeLaunchWorkDir || resolvedWorkDir || ''
   const referenceContext = `${activeTabId ?? ''}\0${referenceCwd}`
   const referenceCurrent = referenceState?.context === referenceContext ? referenceState : null
-  const composerReferences = referenceCurrent?.items ?? EMPTY_COMPOSER_REFERENCES
+  const composerReferences = useMemo(() => (referenceCurrent?.items ?? EMPTY_COMPOSER_REFERENCES).filter(isComposerReferenceVisible), [referenceCurrent?.items])
   useEffect(() => {
     let active = true
     if (isMemberSession) return
-    setReferenceState(previous => ({ context: referenceContext, items: previous?.context === referenceContext ? previous.items : [], loading: true, error: false }))
+    setReferenceState({ context: referenceContext, items: [], loading: true, error: false })
     void composerReferencesApi.list(referenceCwd || undefined).then(data => {
       if (active) setReferenceState({ context: referenceContext, items: [...data.plugins, ...data.skills], loading: false, error: false })
     }).catch(() => {
       if (active) setReferenceState({ context: referenceContext, items: [], loading: false, error: true })
     })
     return () => { active = false }
-  }, [referenceContext, referenceCwd, isMemberSession, slashMenuOpen, fileSearchOpen])
+  }, [referenceContext, referenceCwd, isMemberSession, slashMenuOpen, fileSearchOpen, plusMenuOpen])
   useEffect(() => {
     setReferenceDetail(null)
     setReferenceOptionId(undefined)
@@ -519,7 +537,7 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
 
   useEffect(() => {
     if (!activeTabId || !showLaunchControls) return
-    const nextWorkDir = activeSession?.workDir || gitInfo?.workDir || ''
+    const nextWorkDir = getSessionSeedWorkDir(activeSession) || gitInfo?.workDir || ''
     const chatStore = useChatStore.getState()
     const current = chatStore.sessions[activeTabId]?.repositoryLaunchDraft
     if (current?.workDir === nextWorkDir) return
@@ -529,7 +547,7 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
       useWorktree: false,
     })
     setLaunchReady(!nextWorkDir)
-  }, [activeSession?.workDir, activeTabId, gitInfo?.workDir, showLaunchControls])
+  }, [activeSession?.workDir, activeSession?.projectRoot, activeSession?.workspaceState, activeTabId, gitInfo?.workDir, showLaunchControls])
 
   useDismissable({
     open: plusMenuOpen,
@@ -572,7 +590,7 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
       names.add(name.toLowerCase())
       commands.push({ name, description: reference.description, kind: reference.kind })
     }
-    return commands
+    return commands.filter(isComposerSlashCommandVisible)
   }, [agentSlashCommands, slashCommands, composerReferences, t])
 
   const filteredCommandGroups = useMemo(() => {
@@ -755,6 +773,9 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
   }, [activeTabId, replaceEmptySession, t, updateRepositoryLaunchDraft])
 
   const handleSubmit = async () => {
+    // Belt and braces: the composer is disabled too, but every send path (Enter,
+    // slash-Enter, programmatic) funnels through here.
+    if (questionPending) return
     const text = input.trim()
     if ((!text && ((!attachments.length && !hasWorkspaceReferences) || isMemberSession)) || isWorkspaceMissing) return
 
@@ -1026,7 +1047,7 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
   }, [setComposerAttachments])
 
   const { isDragActive, dragHandlers } = useComposerFileDrop({
-    disabled: isMemberSession || isWorkspaceMissing,
+    disabled: isMemberSession || composerDisabled,
     panelRef,
     onAttachments: appendAttachments,
     onError: (error) => {
@@ -1100,6 +1121,48 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
     })
   }
 
+  // The "+" capability menu. The hook owns data loading and navigation
+  // actions; these handlers are only the composer-local edits (mention badge,
+  // slash text, prompt seed) plus the surfaces this composer already opens.
+  const capabilityMenu = useCapabilityMenu({
+    open: plusMenuOpen && !isMemberSession,
+    cwd: referenceCwd,
+    references: composerReferences,
+    handlers: {
+      onInsertMention: (reference) => {
+        const cursorPos = composerRef.current?.getSelectionOffsets().start ?? inputRef.current.length
+        const mention = composerReferenceToMention(reference)
+        const inserted = insertMentionIntoText(inputRef.current, mentionsRef.current, cursorPos, cursorPos, mention)
+        setComposerInput(inserted.text, inserted.mentions)
+        requestAnimationFrame(() => {
+          composerRef.current?.focus()
+          composerRef.current?.setSelectionOffsets(inserted.cursorPos)
+        })
+      },
+      onInsertSlashText: (command) => {
+        const cursorPos = composerRef.current?.getSelectionOffsets().start ?? inputRef.current.length
+        const replacement = replaceSlashToken(inputRef.current, cursorPos, command)
+        setComposerInput(replacement.value)
+        requestAnimationFrame(() => {
+          composerRef.current?.focus()
+          composerRef.current?.setSelectionOffsets(replacement.cursorPos)
+        })
+      },
+      onInsertPromptSeed: (text) => {
+        const next = inputRef.current.trim() ? `${inputRef.current}\n${text}` : text
+        setComposerInput(next)
+        requestAnimationFrame(() => {
+          composerRef.current?.focus()
+          composerRef.current?.setSelectionOffsets(next.length)
+        })
+      },
+      onAttachment: openAttachmentPicker,
+      onSlashTrigger: insertSlashCommand,
+      onSaveWorkflow: () => setLocalSlashPanel('save-workflow'),
+      onClose: () => setPlusMenuOpen(false),
+    },
+  })
+
   const composerPlaceholder =
     isHeroComposer
       ? t('empty.placeholder')
@@ -1107,12 +1170,11 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
         ? workspaceState === 'worktree_removed'
           ? t('chat.placeholderWorktreeRemoved')
           : t('chat.placeholderMissing')
-        : isMemberSession
-          ? t('teams.memberPlaceholder')
-          : t('chat.placeholder')
-
-  const addFilesLabel = isHeroComposer ? t('empty.addFiles') : t('chat.addFiles')
-  const slashCommandsLabel = isHeroComposer ? t('empty.slashCommands') : t('chat.slashCommands')
+        : questionPending
+          ? t('chat.placeholderQuestionPending')
+          : isMemberSession
+            ? t('teams.memberPlaceholder')
+            : t('chat.placeholder')
 
   return (
     <div
@@ -1218,6 +1280,7 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
 
           {isSlashMenuVisible && (
             <SlashCommandMenu
+              isSearching={Boolean(slashFilter.trim())}
               ref={slashMenuRef}
               id={slashMenuId}
               groups={filteredCommandGroups}
@@ -1301,10 +1364,13 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
                         <span className="min-w-0 flex-1 truncate font-medium" title={message.displayContent}>
                           {message.displayContent}
                         </span>
-                        {/* The accent action of the three, per the handoff. */}
+                        {/* The accent action of the three, per the handoff. Blocked
+                            while a question is waiting: sending now would race the
+                            prompt the model is blocked on. */}
                         <Button
                           variant="link"
                           size="sm"
+                          disabled={questionPending}
                           onClick={() => sendQueuedUserMessage(activeTabId, message.id)}
                           aria-label={t('chat.pendingMessageGuideNow')}
                           title={t('chat.pendingMessageGuideNow')}
@@ -1360,8 +1426,12 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
                 onCompositionStart={() => { composingRef.current = true }}
                 onCompositionEnd={() => { composingRef.current = false }}
                 placeholder={composerPlaceholder}
-                disabled={isWorkspaceMissing || launchTransitioning || isPreparingTurn}
-                className="flex-1"
+                disabled={composerDisabled}
+                // `min-w-0`: a paragraph holding an unbreakable run (a long URL,
+                // a hash) has a huge min-content size, and `overflow-wrap:
+                // break-word` does not shrink it. Without this the flex item
+                // refuses to shrink and the whole editor paints past the panel.
+                className="flex-1 min-w-0"
                 editorClassName="max-h-[200px] overflow-y-auto py-2 leading-relaxed text-[var(--color-text-primary)]"
                 aria={{
                   role: isSlashMenuVisible || isReferenceMenuVisible ? 'combobox' : 'textbox',
@@ -1387,7 +1457,7 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
               onCompositionStart={() => { composingRef.current = true }}
               onCompositionEnd={() => { composingRef.current = false }}
               placeholder={composerPlaceholder}
-              disabled={isWorkspaceMissing || launchTransitioning || isPreparingTurn}
+              disabled={composerDisabled}
               editorClassName={`max-h-[200px] overflow-y-auto text-sm leading-relaxed text-[var(--color-text-primary)] ${
                 useCompactChrome ? 'py-1.5' : 'py-2'
               }`}
@@ -1442,6 +1512,7 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
                       type="button"
                       onClick={() => setPlusMenuOpen((value) => !value)}
                       aria-label={t('chat.composerTools')}
+                      aria-haspopup="menu"
                       aria-expanded={plusMenuOpen}
                       // Bordered on desktop so the tools affordance reads as a
                       // control at rest, not only on hover — it sits next to
@@ -1452,22 +1523,25 @@ export function ChatInput({ variant = 'default', compact = false }: ChatInputPro
                     </button>
 
                     {plusMenuOpen && (
-                      <div className={`absolute bottom-full left-0 z-[var(--z-dropdown)] mb-2 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] p-1.5 shadow-[var(--shadow-overlay)] ${isMobileComposer ? 'w-[min(240px,calc(100vw-32px))]' : 'w-[240px]'}`}>
-                        <button
-                          onClick={openAttachmentPicker}
-                          className="flex w-full items-center gap-3 rounded-[var(--radius-md)] px-3 py-2.5 text-left transition-colors hover:bg-[var(--color-surface-hover)]"
-                        >
-                          <span className="material-symbols-outlined text-[18px] text-[var(--color-text-secondary)]">attach_file</span>
-                          <span className="text-sm text-[var(--color-text-primary)]">{addFilesLabel}</span>
-                        </button>
-                        <button
-                          onClick={insertSlashCommand}
-                          className="flex w-full items-center gap-3 rounded-[var(--radius-md)] px-3 py-2.5 text-left transition-colors hover:bg-[var(--color-surface-hover)]"
-                        >
-                          <span className="w-[24px] text-center text-[18px] font-bold text-[var(--color-text-secondary)]">/</span>
-                          <span className="text-sm text-[var(--color-text-primary)]">{slashCommandsLabel}</span>
-                        </button>
-                      </div>
+                      <ComposerCapabilityMenu
+                        cwd={referenceCwd}
+                        referencesLoading={referenceCurrent?.loading ?? true}
+                        referencesError={referenceCurrent?.error}
+                        onSelectFile={mention => {
+                          const cursorPos = composerRef.current?.getSelectionOffsets().start ?? inputRef.current.length
+                          const inserted = insertMentionIntoText(inputRef.current, mentionsRef.current, cursorPos, cursorPos, mention)
+                          setComposerInput(inserted.text, inserted.mentions)
+                          requestAnimationFrame(() => {
+                            composerRef.current?.focus()
+                            composerRef.current?.setSelectionOffsets(inserted.cursorPos)
+                          })
+                        }}
+                        id={capabilityMenuId}
+                        sections={capabilityMenu.sections}
+                        onAction={capabilityMenu.onAction}
+                        onClose={() => setPlusMenuOpen(false)}
+                        mobile={isMobileComposer}
+                      />
                     )}
                   </div>
 

@@ -17,6 +17,53 @@ describe('sessionRuntimeStore runtime cleanup', () => {
     })
   })
 
+  it('keeps an explicit model choice through stale, matching, then stale metadata refreshes', () => {
+    const store = useSessionRuntimeStore.getState()
+    const oldSession = {
+      id: 'switch-session', runtimeProviderId: 'kimi', runtimeModelId: 'k3[1m]',
+    } as SessionListItem
+    store.syncFromSessions([oldSession])
+    const next = { providerId: 'deepseek', modelId: 'deepseek-v4-flash' }
+    store.setSelection(oldSession.id, next)
+    const startedWith = useSessionRuntimeStore.getState().selections
+
+    for (const metadata of [oldSession, {
+      ...oldSession, runtimeProviderId: next.providerId, runtimeModelId: next.modelId,
+    }, oldSession]) {
+      store.syncFromSessions([metadata], startedWith)
+      expect(useSessionRuntimeStore.getState().selections[oldSession.id]).toEqual(next)
+      expect(JSON.parse(localStorage.getItem('echoflow-code-session-runtime')!)[oldSession.id]).toEqual(next)
+    }
+  })
+
+  it('accepts later remote changes after confirmation but ignores pre-confirmation requests', () => {
+    const store = useSessionRuntimeStore.getState()
+    const next = { providerId: 'deepseek', modelId: 'deepseek-v4-flash' }
+    store.setSelection('confirmed', next)
+    const oldRequest = useSessionRuntimeStore.getState().selections
+    store.settleSelection('confirmed')
+    const remote = { id: 'confirmed', runtimeProviderId: 'kimi', runtimeModelId: 'k3' } as SessionListItem
+    store.syncFromSessions([remote], oldRequest)
+    expect(useSessionRuntimeStore.getState().selections.confirmed).toEqual(next)
+    store.syncFromSessions([remote], useSessionRuntimeStore.getState().selections)
+    expect(useSessionRuntimeStore.getState().selections.confirmed).toEqual({ providerId: 'kimi', modelId: 'k3' })
+  })
+
+  it('preserves a moved draft choice and releases local ownership when cleared', () => {
+    const store = useSessionRuntimeStore.getState()
+    const next = { providerId: 'deepseek', modelId: 'deepseek-v4-flash' }
+    const metadata = {
+      id: 'new-session', runtimeProviderId: 'kimi', runtimeModelId: 'k3',
+    } as SessionListItem
+    store.setSelection('__draft__', next)
+    store.moveSelection('__draft__', metadata.id)
+    store.syncFromSessions([metadata])
+    expect(useSessionRuntimeStore.getState().selections[metadata.id]).toEqual(next)
+    store.clearSelection(metadata.id)
+    store.syncFromSessions([metadata])
+    expect(useSessionRuntimeStore.getState().selections[metadata.id]).toEqual({ providerId: 'kimi', modelId: 'k3' })
+  })
+
   it('discards retired Grok selections before persisting them', () => {
     useSessionRuntimeStore.getState().setSelection('session-grok', {
       providerId: 'grok-official',

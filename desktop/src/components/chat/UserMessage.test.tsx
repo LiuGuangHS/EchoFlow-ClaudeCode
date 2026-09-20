@@ -19,6 +19,25 @@ describe('UserMessage', () => {
     openPreviewLink.mockClear().mockReturnValue(true)
   })
 
+  it('places rollback beside copy and fork in the existing hover and keyboard-focus action row', () => {
+    useSettingsStore.setState({ locale: 'en' })
+    const rollback = vi.fn()
+    const { container } = render(<UserMessage content="A prompt" branchAction={{ label: 'Fork', onBranch: vi.fn() }} rewindAction={{ label: 'Roll back conversation', onRewind: rollback }} />)
+    const button = screen.getByRole('button', { name: 'Roll back conversation' })
+    const actions = button.closest('[data-message-actions]')
+    expect(actions).toBeTruthy()
+    expect(actions?.className).toContain('opacity-0')
+    expect(actions?.className).toContain('group-hover:opacity-100')
+    expect(actions?.className).toContain('group-focus-within:opacity-100')
+    expect(container.querySelectorAll('[data-message-actions]')).toHaveLength(1)
+    expect(screen.getByRole('button', { name: 'Fork' }).closest('[data-message-actions]')).toBe(actions)
+    expect(button.textContent).toBe('')
+    button.focus()
+    expect(document.activeElement).toBe(button)
+    fireEvent.click(button)
+    expect(rollback).toHaveBeenCalledOnce()
+  })
+
   it('keeps long URLs inside the message bubble', () => {
     const longUrl = `https://cn.bing.com/search?q=${'encoded'.repeat(60)}`
 

@@ -29,6 +29,10 @@ const checks: Check[] = [
     ],
   },
   {
+    title: 'Trace projection resource-window schema migrations',
+    command: ['bun', 'test', './src/server/services/localIndex/traceIndex.test.ts'],
+  },
+  {
     title: 'Server persistent JSON migrations',
     command: ['bun', 'test', './src/server/__tests__/persistence-upgrade.test.ts'],
   },

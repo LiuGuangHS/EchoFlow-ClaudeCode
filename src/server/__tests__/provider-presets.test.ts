@@ -57,6 +57,7 @@ describe('provider presets API', () => {
       'zhipuglm',
       'kimi',
       'minimax',
+      'opencode-go',
       'lmstudio',
       'ollama',
       'custom',

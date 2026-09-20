@@ -220,11 +220,12 @@ describe('sessionStore', () => {
   })
 
   it('syncs transcript runtime metadata before a session is opened from the sidebar', async () => {
-    useSessionRuntimeStore.getState().setSelection('session-runtime-1', {
+    // Simulate a selection loaded from storage, not a choice made this run.
+    useSessionRuntimeStore.setState({ selections: { 'session-runtime-1': {
       providerId: null,
       modelId: 'gpt-5.4',
       effortLevel: 'max',
-    })
+    } } })
     listMock.mockResolvedValue({
       sessions: [{
         ...makeSession('session-runtime-1', '2026-07-13T05:57:05.818Z'),
@@ -242,6 +243,26 @@ describe('sessionStore', () => {
       modelId: 'anthropic/claude-opus-4.7',
       effortLevel: 'max',
     })
+  })
+
+  it('does not roll back a model selected while a session-list request is in flight', async () => {
+    const response = {
+      sessions: [{
+        ...makeSession('model-switch', '2026-09-20T00:00:00Z'),
+        runtimeProviderId: 'kimi', runtimeModelId: 'k3[1m]',
+      }],
+      total: 1,
+    }
+    const request = createDeferred<typeof response>()
+    listMock.mockReturnValueOnce(request.promise)
+    const refresh = useSessionStore.getState().fetchSessions()
+    const selection = { providerId: 'deepseek', modelId: 'deepseek-v4-flash' }
+    useSessionRuntimeStore.getState().setSelection('model-switch', selection)
+    request.resolve(response)
+    await refresh
+
+    expect(useSessionRuntimeStore.getState().selections['model-switch']).toEqual(selection)
+    expect(useSessionStore.getState().sessions[0]?.id).toBe('model-switch')
   })
 
   it('updates a session message count without changing other metadata', () => {
@@ -270,10 +291,10 @@ describe('sessionStore', () => {
       runtimeModelId: 'model-current',
       effortLevel: 'high' as const,
     }
-    useSessionRuntimeStore.getState().setSelection(historical.id, {
+    useSessionRuntimeStore.setState({ selections: { [historical.id]: {
       providerId: 'provider-stale',
       modelId: 'model-stale',
-    })
+    } } })
     let observedAtActivation: unknown
     const unsubscribe = useTabStore.subscribe((state) => {
       if (state.activeTabId !== historical.id) return

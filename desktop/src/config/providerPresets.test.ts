@@ -49,6 +49,7 @@ describe('bundled provider presets', () => {
       'zhipuglm',
       'kimi',
       'minimax',
+      'opencode-go',
       'lmstudio',
       'ollama',
       'custom',

@@ -17,6 +17,7 @@ import type {
 } from './events.js'
 import { CLI_RUNTIME_APPLIED_EVENT, RUNTIME_CONFIG_APPLIED_EVENT, MODEL_CONFIG_APPLIED_EVENT, MODEL_CONFIG_APPLY_FAILED_EVENT, RUNTIME_STATUS_EVENT } from './events.js'
 import { modelConfigService, type ModelConfig } from '../services/modelConfigService.js'
+import { PLAN_EXECUTION_CONTINUE_MESSAGE } from '../../constants/messages.js'
 import * as os from 'node:os'
 import {
   ConversationStartupError,
@@ -216,6 +217,11 @@ const sessionClearInProgress = new Set<string>()
 type DeferredRuntimeRestart = {
   nextRuntime: RuntimeOverride
   previousRuntime?: RuntimeOverride
+  previousConfigId?: string
+  config: ModelConfig
+  requestId: string
+  generation: number
+  legacyRuntimeConfig: boolean
 }
 const deferredRuntimeRestarts = new Map<string, DeferredRuntimeRestart>()
 const desiredModelConfigIds = new Map<string, string>()
@@ -1230,22 +1236,62 @@ function applyDeferredRuntimeRestartAfterActiveTurn(
   const deferred = deferredRuntimeRestarts.get(sessionId)
   if (!deferred) return
 
-  deferredRuntimeRestarts.delete(sessionId)
   void enqueueRuntimeTransition(sessionId, async () => {
-    const currentOverride = runtimeOverrides.get(sessionId)
     if (
-      !currentOverride ||
-      currentOverride.providerId !== deferred.nextRuntime.providerId ||
-      currentOverride.modelId !== deferred.nextRuntime.modelId ||
-      currentOverride.effort !== deferred.nextRuntime.effort ||
+      deferredRuntimeRestarts.get(sessionId) !== deferred ||
+      modelApplyGenerations.get(sessionId) !== deferred.generation ||
+      desiredModelConfigIds.get(sessionId) !== deferred.config.id ||
       !conversationService.hasSession(sessionId)
     ) {
       return
     }
-    await restartSessionWithRuntimeConfig(
+
+    const restarted = await restartSessionWithRuntimeConfig(
       ws,
       sessionId,
       deferred.previousRuntime,
+      deferred.nextRuntime,
+      {
+        broadcastAppliedRuntimeConfig: false,
+        onFailure: (message) => {
+          if (
+            modelApplyGenerations.get(sessionId) !== deferred.generation ||
+            deferredRuntimeRestarts.get(sessionId) !== deferred
+          ) return
+          sendMessage(ws, {
+            type: 'error',
+            message,
+            code: 'CLI_RESTART_FAILED',
+          })
+          sendModelConfigFailed(
+            sessionId,
+            deferred.requestId,
+            deferred.config,
+            deferred.previousConfigId,
+            new Error(message),
+          )
+        },
+      },
+    )
+    if (
+      deferredRuntimeRestarts.get(sessionId) !== deferred ||
+      modelApplyGenerations.get(sessionId) !== deferred.generation ||
+      desiredModelConfigIds.get(sessionId) !== deferred.config.id
+    ) {
+      return
+    }
+
+    deferredRuntimeRestarts.delete(sessionId)
+    if (!restarted) return
+
+    await persistSessionModelConfig(sessionId, deferred.config)
+    appliedModelConfigIds.set(sessionId, deferred.config.id)
+    sendModelConfigApplied(
+      sessionId,
+      deferred.requestId,
+      deferred.config,
+      'deferred',
+      deferred.legacyRuntimeConfig,
     )
   })
 }
@@ -1400,6 +1446,29 @@ function handlePermissionResponse(
   message: Extract<ClientMessage, { type: 'permission_response' }>
 ) {
   const { sessionId } = ws.data
+  if (
+    message.allowed &&
+    message.runtimeOverride &&
+    conversationService.getPendingPermissionToolName(sessionId, message.requestId) === 'ExitPlanMode'
+  ) {
+    void handlePlanApprovalWithRuntimeOverride(ws, message).catch((error) => {
+      console.error(`[WS] Plan approval with runtime override failed for ${sessionId}:`, error)
+      sendMessage(ws, {
+        type: 'error',
+        message: 'Failed to apply the execution model. The plan is still waiting for approval.',
+        code: 'RUNTIME_CONFIG_INVALID',
+      })
+    })
+    return
+  }
+  finalizePermissionResponse(ws, message)
+}
+
+function finalizePermissionResponse(
+  ws: ServerWebSocket<WebSocketData>,
+  message: Extract<ClientMessage, { type: 'permission_response' }>,
+): void {
+  const { sessionId } = ws.data
   const resolved = conversationService.respondToPermission(
     sessionId,
     message.requestId,
@@ -1420,9 +1489,111 @@ function handlePermissionResponse(
   console.log(`[WS] Permission response for ${message.requestId}: ${message.allowed}`)
 }
 
+async function handlePlanApprovalWithRuntimeOverride(
+  ws: ServerWebSocket<WebSocketData>,
+  message: Extract<ClientMessage, { type: 'permission_response' }>,
+): Promise<void> {
+  const { sessionId } = ws.data
+  const normalized = await normalizeRuntimeOverrideInput(message.runtimeOverride!)
+  if (!normalized.ok) {
+    sendMessage(ws, {
+      type: 'error',
+      message: normalized.reason === 'model' ? 'Runtime model selection is invalid.' : 'Runtime effort selection is invalid.',
+      code: 'RUNTIME_CONFIG_INVALID',
+    })
+    return
+  }
+  const nextOverride = normalized.override
+  const launchInfo = await sessionService.getSessionLaunchInfo(sessionId).catch(() => null)
+  const previous = runtimeOverrides.get(sessionId)
+  const currentProvider = previous?.providerId ?? launchInfo?.runtimeProviderId ?? null
+  const currentModel = previous?.modelId ?? launchInfo?.runtimeModelId
+  const currentEffort = previous?.effort ?? launchInfo?.effortLevel
+
+  if (currentProvider === nextOverride.providerId && currentModel === nextOverride.modelId && currentEffort === nextOverride.effort) {
+    finalizePermissionResponse(ws, message)
+    return
+  }
+
+  const canSwitchInProcess = conversationService.hasSession(sessionId) &&
+    currentProvider === nextOverride.providerId &&
+    (nextOverride.effort === undefined || nextOverride.effort === currentEffort)
+  if (canSwitchInProcess) {
+    await enqueueRuntimeTransition(sessionId, async () => {
+      await conversationService.setModel(sessionId, nextOverride.modelId)
+      runtimeOverrides.set(sessionId, nextOverride)
+      runtimeOverrideVersions.set(sessionId, (runtimeOverrideVersions.get(sessionId) ?? 0) + 1)
+      await persistSessionRuntimeConfig(sessionId, nextOverride)
+      broadcastAppliedRuntimeConfig(sessionId)
+    })
+    finalizePermissionResponse(ws, message)
+    return
+  }
+
+  await enqueueRuntimeTransition(sessionId, async () => {
+    runtimeOverrides.set(sessionId, nextOverride)
+    runtimeOverrideVersions.set(sessionId, (runtimeOverrideVersions.get(sessionId) ?? 0) + 1)
+    await persistSessionRuntimeConfig(sessionId, nextOverride)
+  })
+  finalizePermissionResponse(ws, message)
+  handleStopGeneration(ws)
+  await new Promise<void>((resolve) => {
+    let settled = false
+    const finish = () => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      conversationService.removeOutputCallback(sessionId, onOutput)
+      resolve()
+    }
+    const timeout = setTimeout(finish, 10_000)
+    const onOutput = (output: any) => {
+      if (output?.type === 'result') finish()
+    }
+    conversationService.onOutput(sessionId, onOutput)
+  })
+
+  let restarted = false
+  await enqueueRuntimeTransition(sessionId, async () => {
+    restarted = await restartSessionWithRuntimeConfig(ws, sessionId, previous, nextOverride)
+  })
+  if (!restarted) return
+  const clients = activeSessions.get(sessionId)
+  const resumeWs = clients && clients.has(ws) ? ws : clients?.values().next().value
+  if (!resumeWs) return
+  void handleUserMessage(
+    resumeWs,
+    { type: 'user_message', content: PLAN_EXECUTION_CONTINUE_MESSAGE },
+    { messageSent: false },
+  ).catch((error) => console.error(`[WS] Failed to auto-continue plan execution for ${sessionId}:`, error))
+}
+
+async function normalizeRuntimeOverrideInput(
+  input: { providerId: string | null; modelId: string; effortLevel?: string },
+): Promise<{ ok: true; override: RuntimeOverride } | { ok: false; reason: 'model' | 'effort' }> {
+  let modelId = typeof input.modelId === 'string' ? input.modelId.trim() : ''
+  if (!modelId) return { ok: false, reason: 'model' }
+  if (isGrokOfficialProviderId(input.providerId)) {
+    modelId = (await getGrokReasoningEfforts(modelId)).modelId
+  }
+  const requestedEffort = typeof input.effortLevel === 'string' ? input.effortLevel.trim() || undefined : undefined
+  const effortResolution = requestedEffort === undefined
+    ? { valid: true, effort: undefined }
+    : await resolveRuntimeEffort(input.providerId, modelId, requestedEffort)
+  if (!effortResolution.valid) return { ok: false, reason: 'effort' }
+  return {
+    ok: true,
+    override: {
+      providerId: input.providerId ?? null,
+      modelId,
+      ...(effortResolution.effort ? { effort: effortResolution.effort } : {}),
+    },
+  }
+}
+
 function handleComputerUsePermissionResponse(
   ws: ServerWebSocket<WebSocketData>,
-  message: Extract<ClientMessage, { type: 'computer_use_permission_response' }>
+  message: Extract<ClientMessage, { type: 'computer_use_permission_response' }>,
 ) {
   const { sessionId } = ws.data
   const ok = computerUseApprovalService.resolveApproval(
@@ -1659,16 +1830,26 @@ async function handleSetModelConfig(
       throw new Error('Model configuration is required')
     }
   } catch (error) {
-    sendMessage(ws, {
-      type: MODEL_CONFIG_APPLY_FAILED_EVENT,
-      requestId: message.requestId,
-      configId: message.configId ?? '',
-      code: 'MODEL_CONFIG_INVALID',
-      message: error instanceof Error ? error.message : String(error),
-    })
+    const errorMessage = error instanceof Error ? error.message : String(error)
+    if (legacyRuntimeConfig) {
+      sendMessage(ws, {
+        type: 'error',
+        message: errorMessage,
+        code: 'RUNTIME_CONFIG_INVALID',
+      })
+    } else {
+      sendMessage(ws, {
+        type: MODEL_CONFIG_APPLY_FAILED_EVENT,
+        requestId: message.requestId,
+        configId: message.configId ?? '',
+        code: 'MODEL_CONFIG_INVALID',
+        message: errorMessage,
+      })
+    }
     return
   }
 
+  const pendingStartup = sessionStartupPromises.get(sessionId)
   const generation = (modelApplyGenerations.get(sessionId) ?? 0) + 1
   modelApplyGenerations.set(sessionId, generation)
   desiredModelConfigIds.set(sessionId, config.id)
@@ -1685,6 +1866,8 @@ async function handleSetModelConfig(
       previousRuntime.effort === config.effortLevel
     )
     if (sameConfig) {
+      deferredRuntimeRestarts.delete(sessionId)
+      if (previousRuntime) runtimeOverrides.set(sessionId, previousRuntime)
       appliedModelConfigIds.set(sessionId, config.id)
       await persistSessionModelConfig(sessionId, config)
       sendModelConfigApplied(sessionId, message.requestId, config, 'noop', legacyRuntimeConfig)
@@ -1702,7 +1885,9 @@ async function handleSetModelConfig(
           model: config.modelId,
         })
       } catch (error) {
-        sendModelConfigFailed(sessionId, message.requestId, config, previousConfigId, error)
+        if (modelApplyGenerations.get(sessionId) === generation) {
+          sendModelConfigFailed(sessionId, message.requestId, config, previousConfigId, error)
+        }
         return
       }
 
@@ -1724,31 +1909,52 @@ async function handleSetModelConfig(
       modelId: config.modelId,
       ...(config.effortLevel ? { effort: config.effortLevel } : {}),
     }
-    runtimeOverrides.set(sessionId, nextRuntime)
+    if (modelApplyGenerations.get(sessionId) !== generation) return
     if (shouldDeferRuntimeRestartForActiveTurn(sessionId)) {
       deferredRuntimeRestarts.set(sessionId, {
         nextRuntime,
         previousRuntime,
+        previousConfigId,
+        config,
+        requestId: message.requestId,
+        generation,
+        legacyRuntimeConfig,
       })
-      await persistSessionModelConfig(sessionId, config)
-      sendModelConfigApplied(sessionId, message.requestId, config, 'deferred', legacyRuntimeConfig)
       return
     }
 
+    if (!conversationService.hasSession(sessionId) && pendingStartup) {
+      await pendingStartup.catch(() => undefined)
+      if (modelApplyGenerations.get(sessionId) !== generation) return
+    }
+
     if (!conversationService.hasSession(sessionId)) {
+      runtimeOverrides.set(sessionId, nextRuntime)
       await persistSessionModelConfig(sessionId, config)
       appliedModelConfigIds.set(sessionId, config.id)
       sendModelConfigApplied(sessionId, message.requestId, config, 'noop', legacyRuntimeConfig)
       return
     }
 
-    const restarted = await restartSessionWithRuntimeConfig(ws, sessionId, previousRuntime)
-    if (!restarted) {
-      if (previousRuntime) runtimeOverrides.set(sessionId, previousRuntime)
-      else runtimeOverrides.delete(sessionId)
-      sendModelConfigFailed(sessionId, message.requestId, config, previousConfigId, new Error('Runtime restart failed'))
-      return
-    }
+    const restarted = await restartSessionWithRuntimeConfig(
+      ws,
+      sessionId,
+      previousRuntime,
+      nextRuntime,
+      {
+        broadcastAppliedRuntimeConfig: false,
+        onFailure: (messageText) => {
+          if (modelApplyGenerations.get(sessionId) !== generation) return
+          sendMessage(ws, {
+            type: 'error',
+            message: messageText,
+            code: 'CLI_RESTART_FAILED',
+          })
+          sendModelConfigFailed(sessionId, message.requestId, config, previousConfigId, new Error(messageText))
+        },
+      },
+    )
+    if (!restarted) return
     if (modelApplyGenerations.get(sessionId) !== generation) return
     await persistSessionModelConfig(sessionId, config)
     appliedModelConfigIds.set(sessionId, config.id)
@@ -2100,41 +2306,51 @@ async function restartSessionWithCliRuntime(
   }
 }
 
+type RuntimeRestartOptions = {
+  onFailure?: (message: string) => void
+  broadcastAppliedRuntimeConfig?: boolean
+}
+
 async function restartSessionWithRuntimeConfig(
   ws: ServerWebSocket<WebSocketData>,
   sessionId: string,
   previousRuntime?: RuntimeOverride,
+  nextRuntime?: RuntimeOverride,
+  options?: RuntimeRestartOptions,
 ): Promise<boolean> {
   let workDir: string | null = null
   let sessionStopped = false
-  let replacementStarted = false
 
   try {
     workDir = await resolveRuntimeRestartWorkDir(sessionId)
+    if (nextRuntime) runtimeOverrides.set(sessionId, nextRuntime)
     markActiveAgentsStopping(sessionId)
     runtimeExitStoppedSessions.add(sessionId)
 
     // stopSessionAndWait removes the session before waiting for the process to
     // exit, so the rollback path must be armed before awaiting it.
     sessionStopped = true
-    await conversationService.stopSessionAndWait(sessionId)
+    await conversationService.stopSession(sessionId)
     await emitAuthoritativeStoppedForActiveAgents(sessionId)
     await emitStoppedForNonAgentTasksAfterRuntimeExit(sessionId)
 
     const runtimeSettings = await getRuntimeSettings(sessionId)
     const sdkUrl = buildSdkWebSocketUrl(ws, sessionId)
     await conversationService.startSession(sessionId, workDir, sdkUrl, runtimeSettings)
-    replacementStarted = true
     runtimeExitStoppedSessions.delete(sessionId)
+    if (options?.broadcastAppliedRuntimeConfig !== false) {
+      broadcastAppliedRuntimeConfig(sessionId)
+    }
 
-    broadcastAppliedRuntimeConfig(sessionId)
     sendMessage(ws, { type: 'status', state: 'idle' })
     console.log(`[WS] Restarted CLI for ${sessionId} with runtime override`)
     return true
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err)
 
-    if (replacementStarted && conversationService.hasSession(sessionId)) {
+    // startSession may create a replacement before its handshake rejects. The
+    // old process was already stopped, so any remaining session is disposable.
+    if (sessionStopped && conversationService.hasSession(sessionId)) {
       await conversationService.stopSessionAndWait(sessionId).catch((cleanupError) => {
         console.error(
           `[WS] Failed to clean up replacement CLI for ${sessionId}: ${
@@ -2187,18 +2403,19 @@ async function restartSessionWithRuntimeConfig(
     })
     console.error(`[WS] Failed to restart CLI for ${sessionId} after runtime override: ${errMsg}`)
 
-    if (rollbackSucceeded) {
-      runtimeExitStoppedSessions.delete(sessionId)
-      broadcastAppliedRuntimeConfig(sessionId)
-    }
+    if (rollbackSucceeded) runtimeExitStoppedSessions.delete(sessionId)
 
-    sendMessage(ws, {
-      type: 'error',
-      message: rollbackSucceeded
-        ? `Failed to switch provider/model; the previous runtime was restored: ${errMsg}`
-        : `Failed to switch provider/model and restore the previous runtime: ${errMsg}`,
-      code: 'CLI_RESTART_FAILED',
-    })
+    const failureMessage = rollbackSucceeded
+      ? `Failed to switch provider/model; the previous runtime was restored: ${errMsg}`
+      : `Failed to switch provider/model and restore the previous runtime: ${errMsg}`
+    if (options?.onFailure) options.onFailure(failureMessage)
+    else {
+      sendMessage(ws, {
+        type: 'error',
+        message: failureMessage,
+        code: 'CLI_RESTART_FAILED',
+      })
+    }
     sendMessage(ws, { type: 'status', state: 'idle' })
     return false
   }
@@ -2332,10 +2549,13 @@ async function requestStopBackgroundTask(
   }
 
   try {
-    await conversationService.requestControl(sessionId, {
+    const response = await conversationService.requestControl(sessionId, {
       subtype: 'stop_task',
       task_id: taskId,
     })
+    if (response?.reason === 'not_found') {
+      convergeEvictedBackgroundTaskStop(sessionId, taskId)
+    }
   } catch (error) {
     reportBackgroundTaskStopFailure(sessionId, ws, taskId, error)
   }
@@ -2467,6 +2687,25 @@ function ensureRemoteAgentArchive(
   return task.remoteArchive
 }
 
+/** A late stop for an already-evicted CLI task is already the desired state. */
+function convergeEvictedBackgroundTaskStop(sessionId: string, taskId: string): void {
+  const tracked = activeNonAgentTasks.get(sessionId)?.get(taskId)
+  untrackCliBackgroundTask(sessionId, taskId)
+  sendToSession(sessionId, {
+    type: 'system_notification',
+    subtype: 'task_notification',
+    message: tracked?.description ? `${tracked.description} stopped` : 'Background task stopped',
+    data: {
+      type: 'system',
+      subtype: 'task_notification',
+      task_id: taskId,
+      tool_use_id: tracked?.toolUseId,
+      status: 'stopped',
+      summary: tracked?.description ? `${tracked.description} stopped` : 'Background task stopped',
+      timestamp: new Date().toISOString(),
+    },
+  })
+}
 function reportBackgroundTaskStopFailure(
   sessionId: string,
   ws: ServerWebSocket<WebSocketData> | undefined,
@@ -5142,6 +5381,11 @@ export function __resetWebSocketHandlerStateForTests(): void {
   interruptedSessionChats.clear()
   runtimeTransitionPromises.clear()
   sessionStartupPromises.clear()
+  desiredModelConfigIds.clear()
+  appliedModelConfigIds.clear()
+  modelApplyGenerations.clear()
+  modelConfigRequests.clear()
+  deferredRuntimeRestarts.clear()
   cliRuntimeOverrides.clear()
   deferredCliRuntimeRestarts.clear()
 }

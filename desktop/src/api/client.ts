@@ -73,6 +73,52 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Chromium turns a response body larger than V8's maximum string length
+ * (2^29 - 24 = 536,870,888 characters) into an *empty* string rather than
+ * throwing, so the failure surfaces as a bare `Unexpected end of JSON input`
+ * with no status — indistinguishable from real corruption. This carries the
+ * numbers that tell the two apart.
+ *
+ * Character count can never exceed byte count for UTF-8, so a byte ceiling is
+ * a safe proxy for the string limit. It sits just under the real cap (530 MB
+ * vs 536,870,888 chars) so a body that could still be parsed is not refused.
+ */
+const MAX_JSON_RESPONSE_BYTES = 530_000_000
+
+export class ApiResponseParseError extends Error {
+  readonly bytes: number
+  readonly readChars: number
+  readonly contentType: string | null
+
+  constructor(details: {
+    bytes: number
+    readChars: number
+    contentType: string | null
+  }) {
+    super('The server response could not be parsed as JSON.')
+    this.name = 'ApiResponseParseError'
+    this.bytes = details.bytes
+    this.readChars = details.readChars
+    this.contentType = details.contentType
+  }
+
+  /** The response was bigger than any string this runtime can hold. */
+  get tooLarge(): boolean {
+    return this.bytes >= MAX_JSON_RESPONSE_BYTES
+  }
+
+  /**
+   * A 200 whose body read back as nothing. When no size was declared this is
+   * what an over-limit body looks like from here (Blink returns an empty
+   * string), but a truncated transfer can produce the same shape — hence a
+   * separate flag rather than folding it into `tooLarge`.
+   */
+  get emptyBody(): boolean {
+    return this.readChars === 0
+  }
+}
+
 export type ApiRequestOptions = {
   timeout?: number
   signal?: AbortSignal
@@ -117,7 +163,7 @@ async function request<T>(method: string, path: string, body?: unknown, options?
     }
 
     if (res.status === 204) return undefined as T
-    return await res.json() as T
+    return await readJsonBody<T>(res)
   } catch (err) {
     if (timedOut) {
       const timeoutError = new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`)
@@ -134,6 +180,38 @@ async function request<T>(method: string, path: string, body?: unknown, options?
   } finally {
     clearTimeout(timeout)
     options?.signal?.removeEventListener('abort', abortFromCaller)
+  }
+}
+
+async function readJsonBody<T>(res: Response): Promise<T> {
+  const contentType = res.headers.get('content-type')
+  const declaredLength = Number.parseInt(res.headers.get('content-length') ?? '', 10)
+  const declaredBytes = Number.isFinite(declaredLength) && declaredLength > 0
+    ? declaredLength
+    : 0
+
+  // Refuse an oversized body before it is downloaded: this runtime cannot turn
+  // one into a string, so reading it would only burn memory to produce the same
+  // answer.
+  if (declaredBytes >= MAX_JSON_RESPONSE_BYTES) {
+    throw new ApiResponseParseError({
+      bytes: declaredBytes,
+      readChars: 0,
+      contentType,
+    })
+  }
+
+  const text = await res.text()
+  try {
+    return JSON.parse(text) as T
+  } catch {
+    // A truncated or empty body has no status to report: the request itself
+    // succeeded, so the byte counts are the only usable evidence.
+    throw new ApiResponseParseError({
+      bytes: declaredBytes || text.length,
+      readChars: text.length,
+      contentType,
+    })
   }
 }
 
@@ -173,6 +251,13 @@ function reportApiFailure(method: string, path: string, error: unknown) {
   if (error instanceof ApiError) {
     details.status = error.status
     details.response = sanitizeDiagnosticValue(error.body)
+  }
+
+  if (error instanceof ApiResponseParseError) {
+    details.bytes = error.bytes
+    details.readChars = error.readChars
+    details.contentType = error.contentType
+    details.emptyBody = error.emptyBody
   }
 
   void rawRecordDiagnosticEvent({

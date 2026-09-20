@@ -113,6 +113,11 @@ export type TestProviderConfigInput = {
   apiFormat?: ApiFormat
   supportsNestedToolResultMedia?: boolean
   requestCompatibility?: RequestCompatibility
+  /**
+   * Preset the form is based on, so the server can resolve per-model protocol
+   * rules and upstream headers for an unsaved config. Only the id is sent.
+   */
+  presetId?: string
 }
 
 export type ProviderTestStepResult = {

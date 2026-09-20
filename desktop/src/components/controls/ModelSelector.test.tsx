@@ -159,14 +159,20 @@ describe('ModelSelector', () => {
       isLoading: false,
     })
 
-    render(<ModelSelector runtimeKey="session-claude-legacy" />)
+    const onRuntimeChange = vi.fn()
+    render(<ModelSelector runtimeKey="session-claude-legacy" onRuntimeSelectionChange={onRuntimeChange} />)
 
     await clickByRole(/Opus 4\.7/i)
 
     expect(screen.getByRole('button', { name: /Fable 5\.1/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Opus 5/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Opus 4\.8/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Sonnet 5/ })).toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: /Opus 4\.7/ }).length).toBeGreaterThan(0)
+    await clickByRole(/Opus 5/)
+    expect(onRuntimeChange).toHaveBeenCalledWith(expect.objectContaining({
+      providerId: null, modelId: 'claude-opus-5',
+    }))
   })
 
   it('does not query official OAuth status when mounted', () => {
