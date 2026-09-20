@@ -8,9 +8,11 @@ import { Button } from '@/components/ui/Button'
 import { DiffViewer } from './DiffViewer'
 import {
   PlanPreviewCard,
+  buildPlanApprovalPermissionUpdates,
   buildPromptPermissionUpdates,
   extractPlanPreview,
   isExitPlanModeTool,
+  type PlanApprovalMode,
 } from './PlanModePreview'
 
 type Props = {
@@ -19,6 +21,7 @@ type Props = {
   toolName: string
   input: unknown
   description?: string
+  displayName?: string
 }
 
 /**
@@ -78,19 +81,27 @@ function extractToolDetails(toolName: string, input: unknown, t: (key: Translati
   }
 }
 
-function getPermissionTitle(toolName: string, input: unknown, t: (key: TranslationKey, params?: Record<string, string | number>) => string) {
+function getPermissionTitle(
+  toolName: string,
+  input: unknown,
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string,
+  displayName?: string,
+) {
   const obj = (input && typeof input === 'object') ? input as Record<string, unknown> : {}
   const filePath = typeof obj.file_path === 'string' ? obj.file_path : ''
   const fileName = filePath ? filePath.split('/').pop() || filePath : ''
+  const actor = displayName || 'Claude'
 
   switch (toolName) {
     case 'Edit':
     case 'Write':
-      return fileName ? t('permission.allowEditFile', { toolName, fileName }) : t('permission.allowEditFileGeneric', { toolName: toolName.toLowerCase() })
+      return fileName
+        ? t('permission.allowEditFile', { actor, toolName, fileName })
+        : t('permission.allowEditFileGeneric', { actor, toolName: toolName.toLowerCase() })
     case 'Bash':
-      return t('permission.allowBash')
+      return t('permission.allowBash', { actor })
     default:
-      return t('permission.allowTool', { toolName })
+      return t('permission.allowTool', { actor, toolName })
   }
 }
 
@@ -119,7 +130,7 @@ function renderPermissionPreview(toolName: string, input: unknown) {
   return null
 }
 
-export function PermissionDialog({ sessionId, requestId, toolName, input, description }: Props) {
+export function PermissionDialog({ sessionId, requestId, toolName, input, description, displayName }: Props) {
   const { respondToPermission } = useChatStore()
   const activeTabId = useTabStore((s) => s.activeTabId)
   const targetSessionId = sessionId ?? activeTabId
@@ -146,7 +157,7 @@ export function PermissionDialog({ sessionId, requestId, toolName, input, descri
   const details = extractToolDetails(toolName, input, t)
   const rawInput = typeof input === 'string' ? input : JSON.stringify(input, null, 2)
   const preview = renderPermissionPreview(toolName, input)
-  const title = getPermissionTitle(toolName, input, t)
+  const title = getPermissionTitle(toolName, input, t, displayName)
   const allowRawToggle = !preview
   const permissionContext = (details.primary || description || toolName).slice(0, 160)
 
@@ -320,6 +331,17 @@ function ExitPlanModePermissionDialog({
   const permissionUpdates = buildPromptPermissionUpdates(preview.allowedPrompts)
   const trimmedFeedback = feedback.trim()
 
+  // Without an explicit mode the CLI resumes with whatever the session had
+  // before planning, falling back to `default` when there was nothing to
+  // restore (a session launched in plan mode) — which is why implementation
+  // used to start by asking for every tool. Approving with a mode pins it.
+  const approveWithMode = (mode: PlanApprovalMode) => {
+    if (!sessionId) return
+    respondToPermission(sessionId, requestId, true, {
+      permissionUpdates: buildPlanApprovalPermissionUpdates(mode, preview.allowedPrompts),
+    })
+  }
+
   return (
     <div className={`mb-4 overflow-hidden rounded-[var(--radius-lg)] border ${
       isPending
@@ -380,7 +402,7 @@ function ExitPlanModePermissionDialog({
       </div>
 
       {isPending ? (
-        <div className="flex items-center gap-2 border-t border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-4 py-3">
+        <div className="flex flex-wrap items-center gap-2 border-t border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-4 py-3">
           <Button
             variant="primary"
             size="sm"
@@ -388,6 +410,22 @@ function ExitPlanModePermissionDialog({
             icon={<span aria-hidden="true" className="material-symbols-outlined text-[14px]">check</span>}
           >
             {t('permission.planApprove')}
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => approveWithMode('acceptEdits')}
+            icon={<span aria-hidden="true" className="material-symbols-outlined text-[14px]">bolt</span>}
+          >
+            {t('permission.planApproveAcceptEdits')}
+          </Button>
+          <Button
+            variant="danger-outline"
+            size="sm"
+            onClick={() => approveWithMode('bypassPermissions')}
+            icon={<span aria-hidden="true" className="material-symbols-outlined text-[14px]">gavel</span>}
+          >
+            {t('permission.planApproveBypass')}
           </Button>
           <div className="flex-1" />
           <Button

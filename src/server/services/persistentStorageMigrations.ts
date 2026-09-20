@@ -11,9 +11,10 @@ import { isGrokOfficialProviderId } from './grokOfficialProvider.js'
 import {
   BUILT_IN_PROVIDER_IDS,
   PROVIDER_TOOL_SEARCH_OPT_IN_SCHEMA_VERSION,
+  PROVIDER_REQUEST_COMPATIBILITY_SCHEMA_VERSION,
 } from '../types/provider.js'
 
-export const CURRENT_PROVIDER_INDEX_SCHEMA_VERSION = PROVIDER_TOOL_SEARCH_OPT_IN_SCHEMA_VERSION
+export const CURRENT_PROVIDER_INDEX_SCHEMA_VERSION = PROVIDER_REQUEST_COMPATIBILITY_SCHEMA_VERSION
 
 type MigrationReport = {
   migratedEntries: string[]
@@ -21,6 +22,19 @@ type MigrationReport = {
 }
 
 type JsonObject = Record<string, unknown>
+type LegacyProviderModel = {
+  id: string
+  name?: string
+}
+type LegacyRootProvider = {
+  id: string
+  name: string
+  baseUrl: string
+  apiKey: string
+  models: LegacyProviderModel[]
+  isActive?: boolean
+  notes?: string
+}
 
 let migrationPromise: Promise<MigrationReport> | null = null
 let migrationConfigDir: string | null = null
@@ -49,6 +63,22 @@ function isSavedProvider(value: unknown): value is JsonObject {
     typeof value.apiKey === 'string' &&
     typeof value.baseUrl === 'string' &&
     isProviderModels(value.models)
+  )
+}
+
+function isLegacyProviderModel(value: unknown): value is LegacyProviderModel {
+  return isRecord(value) && typeof value.id === 'string'
+}
+
+function isLegacyRootProvider(value: unknown): value is LegacyRootProvider {
+  return (
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    typeof value.name === 'string' &&
+    typeof value.baseUrl === 'string' &&
+    typeof value.apiKey === 'string' &&
+    Array.isArray(value.models) &&
+    value.models.every(isLegacyProviderModel)
   )
 }
 
@@ -142,6 +172,9 @@ function migrateProvidersIndex(value: unknown): JsonObject {
     ...rest
   } = value
   const sourceSchemaVersion = typeof value.schemaVersion === 'number' ? value.schemaVersion : 1
+  // v5 introduces optional requestCompatibility. An absent object is the
+  // automatic policy, so upgrading v4 must not materialize a numeric budget
+  // from old Claude defaults. Spreading providers also preserves future fields.
   const providers = value.providers
     .filter(isSavedProvider)
     .map((provider) => sourceSchemaVersion < PROVIDER_TOOL_SEARCH_OPT_IN_SCHEMA_VERSION
@@ -186,6 +219,133 @@ function migrateManagedSettings(value: unknown): JsonObject {
   return { ...value, env: deepSeekMigration.env }
 }
 
+function legacyProviderModelId(
+  provider: LegacyRootProvider,
+  preferredModelId: unknown,
+): string {
+  if (
+    typeof preferredModelId === 'string' &&
+    provider.models.some((model) => model.id === preferredModelId)
+  ) {
+    return preferredModelId
+  }
+
+  return provider.models[0]?.id ?? ''
+}
+
+function migrateLegacyRootProvidersConfig(value: unknown): JsonObject | null {
+  if (!isRecord(value) || !Array.isArray(value.providers)) return null
+
+  const legacyProviders = value.providers.filter(isLegacyRootProvider)
+  const providers = legacyProviders.map((provider) => {
+    const main = legacyProviderModelId(provider, value.activeModel)
+    return {
+      id: provider.id,
+      presetId: 'custom',
+      name: provider.name,
+      apiKey: provider.apiKey,
+      baseUrl: provider.baseUrl,
+      apiFormat: 'anthropic',
+      models: {
+        main,
+        haiku: main,
+        sonnet: main,
+        opus: main,
+      },
+      ...(provider.notes !== undefined && { notes: provider.notes }),
+    }
+  })
+
+  if (providers.length === 0) return null
+
+  const activeLegacyProvider = legacyProviders.find((provider) =>
+    provider.isActive === true ||
+    (typeof value.activeModel === 'string' &&
+      provider.models.some((model) => model.id === value.activeModel)),
+  )
+  const activeId = activeLegacyProvider && providers.some((provider) => provider.id === activeLegacyProvider.id)
+    ? activeLegacyProvider.id
+    : null
+
+  return {
+    schemaVersion: CURRENT_PROVIDER_INDEX_SCHEMA_VERSION,
+    activeId,
+    providers,
+    providerOrder: normalizeProviderOrder(undefined, providers),
+  }
+}
+
+function buildManagedSettingsForMigratedProvider(provider: JsonObject | undefined): JsonObject | null {
+  if (!provider || !isProviderModels(provider.models)) return null
+  const apiKey = typeof provider.apiKey === 'string' ? provider.apiKey : ''
+  const baseUrl = typeof provider.baseUrl === 'string' ? provider.baseUrl : ''
+  if (!apiKey || !baseUrl) return null
+
+  return {
+    env: {
+      ANTHROPIC_BASE_URL: baseUrl,
+      ANTHROPIC_AUTH_TOKEN: apiKey,
+      ANTHROPIC_MODEL: provider.models.main,
+      ...(provider.models.fable ? { ANTHROPIC_DEFAULT_FABLE_MODEL: provider.models.fable } : {}),
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: provider.models.haiku,
+      ANTHROPIC_DEFAULT_SONNET_MODEL: provider.models.sonnet,
+      ANTHROPIC_DEFAULT_OPUS_MODEL: provider.models.opus,
+    },
+  }
+}
+
+async function migrateLegacyRootProviders(
+  configDir: string,
+  echoFlowDir: string,
+  report: MigrationReport,
+): Promise<void> {
+  const targetPath = path.join(echoFlowDir, 'providers.json')
+  try {
+    await fs.access(targetPath)
+    return
+  } catch (error) {
+    if (errnoCode(error) !== 'ENOENT') {
+      report.failures.push(`echoflow-code/providers.json: ${error instanceof Error ? error.message : String(error)}`)
+      return
+    }
+  }
+
+  const legacyPath = path.join(configDir, 'providers.json')
+
+  try {
+    const legacy = await readJsonFile(legacyPath)
+    if (legacy.missing) return
+
+    const migrated = migrateLegacyRootProvidersConfig(legacy.value)
+    if (!migrated) return
+
+    await writeJsonFile(targetPath, migrated)
+    report.migratedEntries.push('providers.json -> echoflow-code/providers.json')
+
+    const settingsPath = path.join(echoFlowDir, 'settings.json')
+    const settings = await readJsonFile(settingsPath)
+    if (!settings.missing) return
+
+    const activeId = typeof migrated.activeId === 'string' ? migrated.activeId : null
+    const activeProvider = Array.isArray(migrated.providers)
+      ? migrated.providers.find((provider) => isRecord(provider) && provider.id === activeId)
+      : undefined
+    const managedSettings = buildManagedSettingsForMigratedProvider(
+      isRecord(activeProvider) ? activeProvider : undefined,
+    )
+    if (managedSettings) {
+      await writeJsonFile(settingsPath, managedSettings)
+      report.migratedEntries.push('providers.json -> echoflow-code/settings.json')
+    }
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      report.failures.push(`providers.json: ${error.message}`)
+      return
+    }
+    report.failures.push(`providers.json: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
 async function migrateJsonEntry(
   filePath: string,
   entryName: string,
@@ -225,15 +385,33 @@ async function runPersistentStorageMigrations(configDir: string): Promise<Migrat
 
   await ensureEchoFlowConfigRoot(configDir)
 
+  await migrateLegacyRootProviders(configDir, echoFlowDir, report)
+
+  const legacyEchoFlowDir = path.join(configDir, 'echoflow')
+  if (legacyEchoFlowDir !== echoFlowDir) {
+    await migrateJsonEntry(
+      path.join(legacyEchoFlowDir, 'providers.json'),
+      'echoflow/providers.json',
+      report,
+      migrateProvidersIndex,
+    )
+    await migrateJsonEntry(
+      path.join(legacyEchoFlowDir, 'settings.json'),
+      'echoflow/settings.json',
+      report,
+      migrateManagedSettings,
+    )
+  }
+
   await migrateJsonEntry(
     path.join(echoFlowDir, 'providers.json'),
-    'echoflow/providers.json',
+    'echoflow-code/providers.json',
     report,
     migrateProvidersIndex,
   )
   await migrateJsonEntry(
     path.join(echoFlowDir, 'settings.json'),
-    'echoflow/settings.json',
+    'echoflow-code/settings.json',
     report,
     migrateManagedSettings,
   )

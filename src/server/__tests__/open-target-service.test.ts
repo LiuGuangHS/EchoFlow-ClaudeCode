@@ -278,7 +278,7 @@ describe('openTargetService', () => {
       nativeApplications: {
         defaultApplicationPath: '/Applications/Word.app',
         applications: [
-          { appPath: '/Applications/Chat Haha.app', bundleId: 'com.claude-code-haha.desktop', displayName: 'Chat Haha', isDefault: false },
+          { appPath: '/Applications/EchoFlow Code.app', bundleId: 'com.echoflow.code.desktop', displayName: 'EchoFlow Code', isDefault: false },
           { appPath: '/Applications/Visual Studio Code.app', bundleId: 'com.microsoft.VSCode', displayName: 'Visual Studio Code', isDefault: false },
           { appPath: '/Applications/Word.app', bundleId: 'com.microsoft.Word', displayName: 'Word', isDefault: false },
         ],

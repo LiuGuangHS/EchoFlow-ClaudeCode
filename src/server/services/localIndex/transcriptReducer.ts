@@ -89,6 +89,13 @@ type ReducerState = {
   runtimeProviderId: string | null | undefined
   runtimeModelId: string | undefined
   effortLevel: string | undefined
+  modelConfigId: string | undefined
+  modelConfig: {
+    providerId: string | null
+    modelId: string
+    effortLevel?: string
+  } | undefined
+  runtimeInstanceId: string | undefined
   repository: PersistedRepositorySession | undefined
   worktreeSession: PersistedWorktreeSession | null | undefined
   nextOrdinal: number
@@ -205,6 +212,7 @@ function cloneState(state: ReducerState): ReducerState {
   return {
     ...state,
     repository: state.repository ? { ...state.repository } : undefined,
+    modelConfig: state.modelConfig ? { ...state.modelConfig } : undefined,
     worktreeSession: state.worktreeSession
       ? { ...state.worktreeSession }
       : state.worktreeSession,
@@ -248,6 +256,9 @@ function createInitialState(
     runtimeProviderId: undefined,
     runtimeModelId: undefined,
     effortLevel: undefined,
+    modelConfigId: undefined,
+    modelConfig: undefined,
+    runtimeInstanceId: undefined,
     repository: undefined,
     worktreeSession: undefined,
     nextOrdinal: 0,
@@ -548,6 +559,30 @@ function applyEntry(state: ReducerState, entry: ReducerEntry): void {
     ) {
       state.effortLevel = record.effortLevel
     }
+    if (typeof record.modelConfigId === 'string' && record.modelConfigId.trim()) {
+      state.modelConfigId = record.modelConfigId.trim()
+    }
+    const modelConfig = record.modelConfig
+    if (modelConfig && typeof modelConfig === 'object' && !Array.isArray(modelConfig)) {
+      const value = modelConfig as Record<string, unknown>
+      if (
+        typeof value.modelId === 'string' &&
+        value.modelId.trim() &&
+        (value.providerId === null || typeof value.providerId === 'string')
+      ) {
+        const effortLevel = typeof value.effortLevel === 'string' && value.effortLevel.trim()
+          ? value.effortLevel.trim()
+          : undefined
+        state.modelConfig = {
+          providerId: value.providerId as string | null,
+          modelId: value.modelId.trim(),
+          ...(effortLevel ? { effortLevel } : {}),
+        }
+      }
+    }
+    if (typeof record.runtimeInstanceId === 'string' && record.runtimeInstanceId.trim()) {
+      state.runtimeInstanceId = record.runtimeInstanceId.trim()
+    }
   }
 
   if (typeof entry.cwd === 'string' && entry.cwd.trim()) {
@@ -612,6 +647,11 @@ function summaryFromState(state: ReducerState): SessionListSummary {
       : {}),
     ...(state.runtimeModelId ? { runtimeModelId: state.runtimeModelId } : {}),
     ...(state.effortLevel ? { effortLevel: state.effortLevel } : {}),
+    ...(state.modelConfigId ? { modelConfigId: state.modelConfigId } : {}),
+    ...(state.modelConfig ? { modelConfig: { ...state.modelConfig } } : {}),
+    ...(state.runtimeInstanceId
+      ? { runtimeInstanceId: state.runtimeInstanceId }
+      : {}),
     ...(state.repository ? { repository: { ...state.repository } } : {}),
     ...(state.worktreeSession !== undefined
       ? {
@@ -630,6 +670,9 @@ function cloneProjection(projection: TranscriptProjection): TranscriptProjection
       ...projection.summary,
       repository: projection.summary.repository
         ? { ...projection.summary.repository }
+        : undefined,
+      modelConfig: projection.summary.modelConfig
+        ? { ...projection.summary.modelConfig }
         : undefined,
       worktreeSession: projection.summary.worktreeSession
         ? { ...projection.summary.worktreeSession }

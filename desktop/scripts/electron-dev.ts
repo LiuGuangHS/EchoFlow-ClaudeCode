@@ -21,8 +21,11 @@ export function mergeNoProxy(existing: string | undefined, required = LOCAL_NO_P
 export function createElectronDevEnv(env: NodeJS.ProcessEnv = process.env) {
   const rendererUrl = env.ELECTRON_RENDERER_URL ?? DEFAULT_RENDERER_URL
   const noProxy = mergeNoProxy(env.NO_PROXY ?? env.no_proxy)
+  const childEnv = { ...env }
+  delete childEnv.ELECTRON_RUN_AS_NODE
+
   return {
-    ...env,
+    ...childEnv,
     ELECTRON_RENDERER_URL: rendererUrl,
     NO_PROXY: noProxy,
     no_proxy: noProxy,

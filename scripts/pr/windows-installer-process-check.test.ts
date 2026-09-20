@@ -26,7 +26,7 @@ describe('Windows installer process matching', () => {
     )
     expect(installerHook).toContain('claude-sidecar-x86_64-pc-windows-msvc.exe')
     expect(installerHook).toContain('claude-sidecar-aarch64-pc-windows-msvc.exe')
-    expect(installerHook).toContain('/C:"OpenConsole.exe"')
+    expect(installerHook).not.toContain('/C:"OpenConsole.exe"')
     expect(installerHook).toContain('/C:"winpty-agent.exe"')
     expect(installerHook).toContain('/C:"rg.exe"')
     expect(installerHook).toContain('bundled terminal/search helper')
@@ -65,7 +65,7 @@ describe('Windows installer process matching', () => {
     expect(installerSmoke).toContain('Sibling-prefix process remains running')
     expect(installerSmoke).toContain('Install-directory parent process detection')
     expect(installerSmoke).toContain('Install-directory process was not terminated')
-    expect(installerSmoke).toContain("$bundledHelperProbe = Join-Path $siblingDir 'OpenConsole.exe'")
+    expect(installerSmoke).toContain("$bundledHelperProbe = Join-Path $siblingDir 'rg.exe'")
     expect(installerSmoke).toContain('No-CLR external bundled-helper process reinstall')
     expect(installerSmoke).toMatch(
       /No-CLR external bundled-helper process reinstall' -ExpectedExitCode 22/,

@@ -10,6 +10,7 @@ import * as fs from 'fs/promises'
 import { readFileSync } from 'node:fs'
 import * as path from 'path'
 import * as os from 'os'
+import { withResolvers } from '../../utils/withResolvers.js'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import {
@@ -1970,29 +1971,6 @@ describe('WebSocket Chat Integration', () => {
     }
   }
 
-  async function withMockInitDelay<T>(
-    delayMs: number | undefined,
-    callback: () => Promise<T>,
-  ): Promise<T> {
-    const previousDelay = process.env.MOCK_SDK_INIT_DELAY_MS
-
-    if (delayMs && delayMs > 0) {
-      process.env.MOCK_SDK_INIT_DELAY_MS = String(delayMs)
-    } else {
-      delete process.env.MOCK_SDK_INIT_DELAY_MS
-    }
-
-    try {
-      return await callback()
-    } finally {
-      if (previousDelay === undefined) {
-        delete process.env.MOCK_SDK_INIT_DELAY_MS
-      } else {
-        process.env.MOCK_SDK_INIT_DELAY_MS = previousDelay
-      }
-    }
-  }
-
   async function withMockStreamDelay<T>(
     delayMs: number | undefined,
     callback: () => Promise<T>,
@@ -2812,7 +2790,7 @@ describe('WebSocket Chat Integration', () => {
   })
 
   it('should return initial context for a prewarmed empty session on the first inspection request', async () => {
-    await withMockInitDelay(500, async () => {
+    await withMockInitMode('on_first_user', async () => {
       const createRes = await fetch(`${baseUrl}/api/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2820,7 +2798,27 @@ describe('WebSocket Chat Integration', () => {
       })
       expect(createRes.status).toBe(201)
       const { sessionId } = await createRes.json() as { sessionId: string }
+      const sdkAttached = withResolvers<void>()
+      const inspectionStarted = withResolvers<void>()
+      const originalAttach = conversationService.attachSdkConnection.bind(conversationService)
+      const originalRequestControl = conversationService.requestControl.bind(conversationService)
+      let releaseSdkConnection: (() => void) | undefined
+      const attachSpy = spyOn(conversationService, 'attachSdkConnection').mockImplementation((id, socket) => {
+        if (id !== sessionId) return originalAttach(id, socket)
+        // Hold the real SDK transport until the first inspection is already waiting.
+        releaseSdkConnection = () => { originalAttach(id, socket) }
+        sdkAttached.resolve()
+        return true
+      })
+      const controlSpy = spyOn(conversationService, 'requestControl').mockImplementation((...args) => {
+        const result = originalRequestControl(...args)
+        if (args[0] === sessionId && args[1].subtype === 'get_context_usage') {
+          inspectionStarted.resolve()
+        }
+        return result
+      })
       const ws = new WebSocket(`${wsUrl}/ws/${sessionId}`)
+      const inspectionAbort = new AbortController()
 
       try {
         await new Promise<void>((resolve, reject) => {
@@ -2845,17 +2843,21 @@ describe('WebSocket Chat Integration', () => {
           }
         })
 
-        await waitUntil(
-          () => conversationService.hasSession(sessionId),
-          `prewarmed CLI process for ${sessionId}`,
-        )
+        await sdkAttached.promise
+        expect(conversationService.getSessionInitMessage(sessionId)).toBeNull()
 
         const startedAt = performance.now()
-        const res = await fetch(`${baseUrl}/api/sessions/${sessionId}/inspection?includeContext=1&contextOnly=1`)
+        const inspection = fetch(`${baseUrl}/api/sessions/${sessionId}/inspection?includeContext=1&contextOnly=1`, {
+          signal: inspectionAbort.signal,
+        })
+        await inspectionStarted.promise
+        releaseSdkConnection!()
+        const res = await inspection
         const elapsedMs = performance.now() - startedAt
         expect(res.status).toBe(200)
         const body = await res.json() as any
 
+        expect(conversationService.getSessionInitMessage(sessionId)).toBeNull()
         expect(body.context.model).toBe('mock-opus')
         expect(body.context.totalTokens).toBeGreaterThan(0)
         expect(body.context.percentage).toBe(13)
@@ -2863,6 +2865,9 @@ describe('WebSocket Chat Integration', () => {
         expect(body.errors).toEqual({})
         expect(elapsedMs).toBeLessThan(2_000)
       } finally {
+        inspectionAbort.abort()
+        attachSpy.mockRestore()
+        controlSpy.mockRestore()
         ws.close()
         conversationService.stopSession(sessionId)
       }
@@ -3512,6 +3517,92 @@ describe('WebSocket Chat Integration', () => {
       conversationService.startSession = originalStartSession
       conversationService.stopSession(sessionId)
       await providerService.activateOfficial()
+    }
+  }, 20_000)
+
+  it('should normalize default and persisted GLM 5.3 standard API effort to max', async () => {
+    const providerService = new ProviderService()
+    const settingsService = new SettingsService()
+    const previousSettings = await settingsService.getUserSettings()
+    const provider = await providerService.addProvider({
+      presetId: 'zhipuglm',
+      name: `GLM 5.3 Default ${crypto.randomUUID()}`,
+      apiKey: 'key-glm-default',
+      authStrategy: 'auth_token',
+      baseUrl: 'https://open.bigmodel.cn/api/anthropic',
+      apiFormat: 'anthropic',
+      models: {
+        main: 'glm-5.3[1m]',
+        haiku: 'glm-5.3-flash[1m]',
+        sonnet: 'glm-5.3[1m]',
+        opus: 'glm-5.3[1m]',
+      },
+    })
+    await providerService.activateProvider(provider.id)
+    await settingsService.updateUserSettings({ effort: 'medium' })
+
+    const createRes = await fetch(`${baseUrl}/api/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workDir: process.cwd() }),
+    })
+    expect(createRes.status).toBe(201)
+    const { sessionId } = await createRes.json() as { sessionId: string }
+    const persistedCreateRes = await fetch(`${baseUrl}/api/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workDir: process.cwd() }),
+    })
+    expect(persistedCreateRes.status).toBe(201)
+    const { sessionId: persistedSessionId } = await persistedCreateRes.json() as { sessionId: string }
+    await sessionService.appendSessionMetadata(persistedSessionId, {
+      workDir: process.cwd(),
+      runtimeProviderId: provider.id,
+      runtimeModelId: 'glm-5.3-flash[1m]',
+      effortLevel: 'medium',
+    })
+    const originalStartSession = conversationService.startSession.bind(conversationService)
+    const startCalls: Array<{
+      options?: { model?: string; effort?: string; providerId?: string | null }
+    }> = []
+    conversationService.startSession = (async function patchedStartSession(
+      sid: string,
+      workDir: string,
+      sdkUrl: string,
+      options?: { permissionMode?: string; model?: string; effort?: string; thinking?: 'enabled' | 'adaptive' | 'disabled'; providerId?: string | null },
+    ) {
+      startCalls.push({ options })
+      return originalStartSession(sid, workDir, sdkUrl, options)
+    }) as typeof conversationService.startSession
+
+    try {
+      const messages = await runTurn(sessionId, 'use the GLM default effort')
+      const persistedMessages = await runTurn(
+        persistedSessionId,
+        'resume the old GLM effort selection',
+      )
+
+      expect(messages.some((message) => message.type === 'message_complete')).toBe(true)
+      expect(persistedMessages.some((message) => message.type === 'message_complete')).toBe(true)
+      expect(startCalls).toHaveLength(2)
+      expect(startCalls.map((call) => call.options)).toEqual([
+        expect.objectContaining({ providerId: provider.id, effort: 'max' }),
+        expect.objectContaining({
+          providerId: provider.id,
+          model: 'glm-5.3-flash[1m]',
+          effort: 'max',
+        }),
+      ])
+    } finally {
+      conversationService.startSession = originalStartSession
+      conversationService.stopSession(sessionId)
+      conversationService.stopSession(persistedSessionId)
+      await providerService.activateOfficial()
+      await fs.writeFile(
+        path.join(tmpDir, 'settings.json'),
+        JSON.stringify(previousSettings, null, 2),
+        'utf-8',
+      )
     }
   }, 20_000)
 
@@ -5982,6 +6073,56 @@ describe('WebSocket Chat Integration', () => {
       }
       ws.onerror = () => reject(new Error('WebSocket failed for invalid OpenAI effort'))
     })
+  }, 10_000)
+
+  it('should reject unsupported GLM 5.3 standard API effort aliases', async () => {
+    const providerService = new ProviderService()
+    const provider = await providerService.addProvider({
+      presetId: 'zhipuglm',
+      name: `Zhipu GLM 5.3 ${crypto.randomUUID()}`,
+      apiKey: 'test-zhipu-key',
+      authStrategy: 'auth_token',
+      baseUrl: 'https://open.bigmodel.cn/api/anthropic',
+      apiFormat: 'anthropic',
+      models: {
+        main: 'glm-5.3-flash[1m]',
+        haiku: 'glm-5.3-flash[1m]',
+        sonnet: 'glm-5.3[1m]',
+        opus: 'glm-5.3[1m]',
+      },
+    })
+    const sessionId = `chat-glm-5-3-invalid-effort-${crypto.randomUUID()}`
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const ws = new WebSocket(`${wsUrl}/ws/${sessionId}`)
+        const timeout = setTimeout(() => {
+          ws.close()
+          reject(new Error('Timed out waiting for invalid GLM 5.3 effort rejection'))
+        }, 5_000)
+
+        ws.onmessage = (event) => {
+          const message = JSON.parse(event.data as string)
+          if (message.type === 'connected') {
+            ws.send(JSON.stringify({
+              type: 'set_runtime_config',
+              providerId: provider.id,
+              modelId: 'glm-5.3-flash[1m]',
+              effortLevel: 'medium',
+            }))
+          } else if (message.type === 'error') {
+            clearTimeout(timeout)
+            expect(message).toMatchObject({ code: 'RUNTIME_CONFIG_INVALID' })
+            ws.close()
+            resolve()
+          }
+        }
+        ws.onerror = () => reject(new Error('WebSocket failed for invalid GLM 5.3 effort'))
+      })
+    } finally {
+      conversationService.stopSession(sessionId)
+      await providerService.deleteProvider(provider.id)
+    }
   }, 10_000)
 
   it('should resume streaming to a reconnected client during an active turn', async () => {

@@ -49,6 +49,7 @@ export function DeepSeekHarness() {
 
   const installed = status.version !== null
   const running = status.state === 'running'
+  const installing = status.state === 'installing'
   const unavailable = status.state === 'unavailable'
 
   return (
@@ -61,7 +62,7 @@ export function DeepSeekHarness() {
               ? 'bg-[var(--color-success-container)] text-[var(--color-on-success-container)]'
               : 'bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)]'}`}
             >
-              {running ? '正在运行' : unavailable ? '运行环境不可用' : installed ? '已停止' : '未安装'}
+              {running ? '正在运行' : installing ? '正在安装运行环境' : unavailable ? '运行环境不可用' : installed ? '已停止' : '未安装'}
             </span>
           </div>
           <p className="max-w-2xl text-sm leading-6 text-[var(--color-text-secondary)]">
@@ -71,9 +72,9 @@ export function DeepSeekHarness() {
 
         <div className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-container-low)] p-5">
           <div className="flex flex-wrap items-center gap-3">
-            {!installed && !unavailable && (
+            {!installed && !installing && (
               <Button loading={loading} onClick={() => void run(() => desktopHost.deepSeekHarness.install())}>
-                安装 DeepSeek Harness
+                {unavailable ? '安装运行环境并安装 DeepSeek Harness' : '安装 DeepSeek Harness'}
               </Button>
             )}
             {installed && !running && (

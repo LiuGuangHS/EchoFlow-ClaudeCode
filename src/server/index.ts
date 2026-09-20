@@ -7,7 +7,7 @@
 
 import { handleApiRequest } from './router.js'
 import { handleWebSocket, type WebSocketData } from './ws/handler.js'
-import { resolveCors, type CorsResolution } from './middleware/cors.js'
+import { resolveCors, isAllowedBuiltInOrigin, type CorsResolution } from './middleware/cors.js'
 import { requireAuth, requireH5Token } from './middleware/auth.js'
 import { teamWatcher } from './services/teamWatcher.js'
 import { cronScheduler } from './services/cronScheduler.js'
@@ -30,6 +30,7 @@ import { handleStaticH5Request } from './staticH5.js'
 import {
   classifyH5Request,
   isH5AccessControlPath,
+  isLocalCredentialOnlyPath,
   requiresLocalAccessCredential,
   shouldBlockDisabledH5Access,
   shouldRequireH5Token,
@@ -49,6 +50,7 @@ import {
   isPetSessionInProjection,
   PET_SESSION_LIMIT,
 } from './petAccessPolicy.js'
+import { PublicAccessServer, isPublicAccessControlPath } from './publicAccess.js'
 import { settleResponseOnRequestAbort } from './requestLifecycle.js'
 
 function readArgValue(flag: string): string | undefined {
@@ -120,6 +122,8 @@ export async function startBackgroundIndexesInPriorityOrder(
   if (!options.signal?.aborted) await startSearch()
 }
 
+const publicAccessServers = new Set<PublicAccessServer>()
+
 let backgroundIndexStartupController: AbortController | undefined
 let backgroundIndexStartup: Promise<void> | undefined
 
@@ -147,6 +151,23 @@ function withCors(response: Response, cors: CorsResolution): Response {
   })
 }
 
+function withH5PolicyCors(
+  response: Response,
+  cors: CorsResolution,
+  origin: string | null,
+  h5Enabled: boolean,
+): Response {
+  // When H5 is disabled, do not expose the policy response to arbitrary
+  // browser origins. Built-in local origins still need to read the response so
+  // the desktop renderer receives the actual API error instead of a fetch
+  // network error caused by missing CORS headers.
+  if (!origin || (!h5Enabled && !isAllowedBuiltInOrigin(origin))) {
+    return response
+  }
+
+  return withCors(response, cors)
+}
+
 function corsRejectedResponse(cors: CorsResolution): Response {
   return Response.json(
     { error: 'CORS origin not allowed' },
@@ -159,6 +180,16 @@ function h5AccessControlRejectedResponse(): Response {
     {
       error: 'Forbidden',
       message: 'H5 access settings can only be changed from the local desktop app.',
+    },
+    { status: 403 },
+  )
+}
+
+function localCredentialRejectedResponse(): Response {
+  return Response.json(
+    {
+      error: 'Forbidden',
+      message: 'This action can only be performed from the local desktop app.',
     },
     { status: 403 },
   )
@@ -179,7 +210,10 @@ function isH5AccessControlRequest(
   url: URL,
   context: H5RequestContext,
 ): boolean {
-  if (!isH5AccessControlPath(url.pathname)) {
+  if (
+    !isH5AccessControlPath(url.pathname) &&
+    !isLocalCredentialOnlyPath(url.pathname)
+  ) {
     return false
   }
 
@@ -233,7 +267,19 @@ export function startServer(port = PORT, host = HOST) {
     process.env.SERVER_AUTH_REQUIRED === '1'
   const h5AccessService = new H5AccessService()
 
+  const publicAccess = new PublicAccessServer({
+    handleApiRequest,
+    handleStatic: handleStaticH5Request,
+    websocket: handleWebSocket,
+    serverPort: () => serverPort,
+  })
+  publicAccessServers.add(publicAccess)
   let server: ReturnType<typeof Bun.serve<WebSocketData>>
+
+  // Open SQLite before the first REST request. Discovery still runs in the
+  // background; without this, getPublicStatus() reports `off` and the sidebar
+  // falls through to a full JSONL scan that can exceed the 120s client timeout.
+  void localIndexCoordinator.start().catch(() => undefined)
 
   try {
     server = Bun.serve<WebSocketData>({
@@ -243,6 +289,7 @@ export function startServer(port = PORT, host = HOST) {
 
       async fetch(req, server) {
         const url = new URL(req.url)
+        if (isPublicAccessControlPath(url.pathname)) return publicAccess.control(req)
 
         // Startup probes must not wait on migrations, config reads, or auth.
         // Electron deliberately uses this endpoint to decide when the sidecar
@@ -259,6 +306,7 @@ export function startServer(port = PORT, host = HOST) {
           )
         }
 
+        await localIndexCoordinator.start().catch(() => undefined)
         await ensurePersistentStorageUpgraded()
         const origin = req.headers.get('Origin')
         const clientAddress = server.requestIP(req)?.address ?? null
@@ -333,20 +381,54 @@ export function startServer(port = PORT, host = HOST) {
         })
         const h5AccessControlBlocked = isH5AccessControlRequest(req, url, h5RequestContext)
 
-        if (h5AccessControlBlocked) {
-          return h5AccessControlRejectedResponse()
-        }
-
-        if (h5AccessDisabledBlocked) {
-          return h5AccessDisabledResponse()
-        }
-
-        // Handle CORS preflight
+        // Handle CORS preflight before capability authentication. A preflight
+        // carries no application credential by design; the actual request is
+        // still enforced by the H5 policy below. Remote preflights remain
+        // blocked while H5 access is disabled.
         if (req.method === 'OPTIONS') {
+          if (h5AccessControlBlocked) {
+            return withH5PolicyCors(
+              isLocalCredentialOnlyPath(url.pathname)
+                ? localCredentialRejectedResponse()
+                : h5AccessControlRejectedResponse(),
+              cors,
+              origin,
+              h5Settings.enabled,
+            )
+          }
+
+          if (
+            h5AccessDisabledBlocked &&
+            origin !== null &&
+            !isAllowedBuiltInOrigin(origin)
+          ) {
+            return h5AccessDisabledResponse()
+          }
+
           if (cors.rejected) {
             return corsRejectedResponse(cors)
           }
           return new Response(null, { status: 204, headers: cors.headers })
+        }
+
+        if (h5AccessControlBlocked) {
+          return withH5PolicyCors(
+            isLocalCredentialOnlyPath(url.pathname)
+              ? localCredentialRejectedResponse()
+              : h5AccessControlRejectedResponse(),
+            cors,
+            origin,
+            h5Settings.enabled,
+          )
+        }
+
+        if (h5AccessDisabledBlocked) {
+          return withH5PolicyCors(
+            h5AccessDisabledResponse(),
+            cors,
+            origin,
+            h5Settings.enabled,
+          )
         }
 
         // WebSocket upgrade
@@ -510,7 +592,7 @@ export function startServer(port = PORT, host = HOST) {
           try {
             const response = await settleResponseOnRequestAbort(
               req,
-              handleApiRequest(req, url),
+              handleApiRequest(req, url, { remoteBrowser: classifyH5Request(req, url, h5RequestContext) === 'h5-browser' }),
             )
             return withCors(response, cors)
           } catch (error) {
@@ -575,9 +657,17 @@ export function startServer(port = PORT, host = HOST) {
 
       websocket: handleWebSocket,
     })
+    const stop = server.stop.bind(server)
+    server.stop = (closeActiveConnections?: boolean) => {
+      publicAccess.disable()
+      publicAccessServers.delete(publicAccess)
+      return stop(closeActiveConnections)
+    }
     serverPort = server.port
     ProviderService.setServerPort(serverPort)
   } catch (error) {
+    publicAccess.disable()
+    publicAccessServers.delete(publicAccess)
     const message = error instanceof Error && error.message
       ? error.message
       : `Failed to start server. Is port ${port} in use?`
@@ -613,6 +703,8 @@ let shutdownInProgress: Promise<void> | null = null
 export async function stopServerRuntimeForShutdown(
   options: { waitForCli?: boolean } = {},
 ): Promise<void> {
+  for (const remote of publicAccessServers) remote.disable()
+  publicAccessServers.clear()
   teamWatcher.stop()
   cronScheduler.stop()
   backgroundIndexStartupController?.abort()

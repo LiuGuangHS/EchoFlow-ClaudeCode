@@ -218,6 +218,7 @@ function disabledIndexGateway(): LocalIndexGateway {
     isSessionScopeReady: () => false,
     listSessions: () => ({ sessions: [], total: 0 }),
     findSessionFiles: () => [],
+    getSession: () => null,
     async rebuild() { return this.getPublicStatus() },
   }
 }
@@ -2255,12 +2256,15 @@ describe('TeamService', () => {
         blocks: [],
         blockedBy: [],
       })
-      const snapshot = await readTaskListSnapshot(teamName)
-      expect(snapshot.revision).toBe(2)
-      expect(snapshot.tasks.map((task) => ({ id: task.id, subject: task.subject })))
-        .toContainEqual({ id: '1', subject: 'Only generation-two task' })
-      expect(snapshot.tasks.map((task) => ({ id: task.id, subject: task.subject })))
-        .toContainEqual({ id: '2', subject: 'Active generation-two writer' })
+      const activeSnapshot = await readTaskListSnapshot(teamName)
+      expect(activeSnapshot.tasks).toHaveLength(2)
+      expect(activeSnapshot).toMatchObject({
+        revision: 2,
+        tasks: expect.arrayContaining([
+          expect.objectContaining({ id: '1', subject: 'Only generation-two task' }),
+          expect.objectContaining({ id: '2', subject: 'Active generation-two writer' }),
+        ]),
+      })
     } finally {
       writerResource.emitDestroy()
       await queuedWriter?.catch(() => {})
@@ -3651,6 +3655,7 @@ describe('TeamService', () => {
       isSessionScopeReady: () => true,
       listSessions: () => ({ sessions: [], total: 0 }),
       findSessionFiles: () => [],
+      getSession: () => null,
       getSessionEntryLocators: () => ({
         source: { path: filePath, size: stat.size, mtimeMs: stat.mtimeMs, fileIdentity: null, fingerprint, indexedBytes: stat.size, parserVersion: 3, state: 'ready', lastErrorCode: null, updatedAtMs: 1 },
         entries: [
@@ -3763,6 +3768,7 @@ describe('TeamService', () => {
       isSessionScopeReady: () => true,
       listSessions: () => ({ sessions: [], total: 0 }),
       findSessionFiles: () => [],
+      getSession: () => null,
       getSessionEntryLocators: () => locatorPage,
       async rebuild() { return this.getPublicStatus() },
     }
@@ -3902,6 +3908,7 @@ describe('TeamService', () => {
       isSessionScopeReady: () => true,
       listSessions: () => ({ sessions: [], total: 0 }),
       findSessionFiles: () => [],
+      getSession: () => null,
       getSessionEntryLocators: () => locatorPage,
       async rebuild() { return this.getPublicStatus() },
     }
@@ -3988,6 +3995,7 @@ describe('TeamService', () => {
       isSessionScopeReady: () => true,
       listSessions: () => ({ sessions: [], total: 0 }),
       findSessionFiles: () => [],
+      getSession: () => null,
       getSessionEntryLocators: () => ({
         source: {
           path: filePath,

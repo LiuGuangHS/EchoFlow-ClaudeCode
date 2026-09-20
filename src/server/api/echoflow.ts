@@ -3,27 +3,47 @@ import { EchoFlowApiError, EchoFlowApiService } from '../services/echoflowApiSer
 import { LegacyMigrationService } from '../services/legacyMigrationService.js'
 import { isLocalAccessAuthorized } from '../localAccessAuth.js'
 import { ProviderService } from '../services/providerService.js'
+import { fetchProviderModels } from '../services/providerModelCatalog.js'
 import { errorResponse } from '../middleware/errorHandler.js'
+import { CreateProviderSchema, TestProviderSchema } from '../types/provider.js'
 
 const service = new EchoFlowApiService()
 const providerService = new ProviderService()
 const ECHOFLOW_PRESET_ID = 'echoflowai'
-const ECHOFLOW_BASE_URL = 'https://api.echoflowai.cc'
-const ECHOFLOW_DEFAULT_MODELS = {
-  main: 'claude-sonnet-4-6',
-  haiku: 'claude-haiku-4-5',
-  sonnet: 'claude-sonnet-4-6',
-  opus: 'claude-opus-4-7',
+const ECHOFLOW_BASE_URLS = {
+  main: 'https://api.echoflowai.cc',
+  dedicated: 'https://expapi.echoflowai.cc',
 }
 
 const BindAccountSchema = z.object({
   userId: z.string().trim().min(1),
   managementToken: z.string().trim().min(1),
+  endpoint: z.enum(['main', 'dedicated']).optional(),
+})
+
+const UpdateEndpointSchema = z.object({
+  endpoint: z.enum(['main', 'dedicated']),
 })
 
 const SelectTokenSchema = z.object({
+  endpoint: z.enum(['main', 'dedicated']).default('main'),
   tokenId: z.string().trim().min(1),
   providerId: z.string().trim().min(1).optional(),
+})
+
+const EchoFlowProviderSchema = CreateProviderSchema.omit({ presetId: true, apiKey: true }).extend({
+  endpoint: z.enum(['main', 'dedicated']),
+  tokenId: z.string().trim().min(1),
+})
+
+const EchoFlowTestSchema = TestProviderSchema.omit({ apiKey: true }).extend({
+  endpoint: z.enum(['main', 'dedicated']),
+  tokenId: z.string().trim().min(1),
+})
+
+const EchoFlowModelsSchema = z.object({
+  endpoint: z.enum(['main', 'dedicated']),
+  tokenId: z.string().trim().min(1),
 })
 
 const LegacyMigrationConfirmationSchema = z.object({
@@ -35,20 +55,27 @@ export async function handleEchoFlowApi(req: Request, _url: URL, segments: strin
     const action = segments[2]
 
     if (!action && req.method === 'GET') {
-      return Response.json({ account: await service.getAccount() })
+      const accounts = await service.getAccounts()
+      return Response.json({ account: accounts.main, accounts })
     }
 
     if (action === 'account') {
       if (req.method === 'POST') {
         const input = BindAccountSchema.parse(await req.json())
-        return Response.json({ account: await service.bindAccount(input.userId, input.managementToken) })
+        return Response.json({ account: await service.bindAccount(input.userId, input.managementToken, input.endpoint) })
       }
       if (req.method === 'PUT') {
-        return Response.json({ account: await service.refreshAccount() })
+        const input = z.object({ endpoint: z.enum(['main', 'dedicated']).default('main') }).parse(await req.json())
+        return Response.json({ account: await service.refreshAccount(input.endpoint) })
       }
       if (req.method === 'DELETE') {
-        await service.disconnectAccount()
+        const input = z.object({ endpoint: z.enum(['main', 'dedicated']).default('main') }).parse(await req.json().catch(() => ({})))
+        await service.disconnectAccount(input.endpoint)
         return Response.json({ ok: true })
+      }
+      if (req.method === 'PATCH') {
+        const input = UpdateEndpointSchema.parse(await req.json())
+        return Response.json({ account: await service.updateEndpoint(input.endpoint) })
       }
     }
 
@@ -66,28 +93,62 @@ export async function handleEchoFlowApi(req: Request, _url: URL, segments: strin
       }
     }
 
+    if (action === 'provider' && req.method === 'POST') {
+      const input = EchoFlowProviderSchema.parse(await req.json())
+      const token = await service.selectAccountToken(input.endpoint, input.tokenId)
+      const { endpoint, tokenId: _tokenId, ...providerInput } = input
+      const provider = await providerService.addProvider({
+        ...providerInput,
+        presetId: ECHOFLOW_PRESET_ID,
+        apiKey: token.key,
+        // The endpoint is part of the credential namespace. Never allow a
+        // client to combine a token with the other endpoint's base URL.
+        baseUrl: ECHOFLOW_BASE_URLS[endpoint],
+      })
+      return Response.json({ provider: { ...provider, apiKey: maskApiKey(provider.apiKey) } }, { status: 201 })
+    }
+
+    if (action === 'models' && req.method === 'POST') {
+      const input = EchoFlowModelsSchema.parse(await req.json())
+      const token = await service.selectAccountToken(input.endpoint, input.tokenId)
+      return Response.json(await fetchProviderModels({
+        baseUrl: ECHOFLOW_BASE_URLS[input.endpoint],
+        apiKey: token.key,
+      }))
+    }
+
+    if (action === 'test-provider' && req.method === 'POST') {
+      const input = EchoFlowTestSchema.parse(await req.json())
+      const token = await service.selectAccountToken(input.endpoint, input.tokenId)
+      const { endpoint: _endpoint, tokenId: _tokenId, ...testInput } = input
+      return Response.json({
+        result: await providerService.testProviderConfig({
+          ...testInput,
+          apiKey: token.key,
+          baseUrl: ECHOFLOW_BASE_URLS[input.endpoint],
+        }),
+      })
+    }
+
     if (action === 'select-token' && req.method === 'POST') {
       const input = SelectTokenSchema.parse(await req.json())
-      const token = await service.selectAccountToken(input.tokenId)
-      if (input.providerId) {
-        const provider = await providerService.getProvider(input.providerId)
-        if (provider.presetId !== ECHOFLOW_PRESET_ID) return Response.json({ error: 'invalid_provider' }, { status: 400 })
-        const updated = await providerService.updateProvider(input.providerId, { apiKey: token.key })
-        return Response.json({ provider: { id: updated.id } })
+      const token = await service.selectAccountToken(input.endpoint, input.tokenId)
+      if (!input.providerId) {
+        return Response.json({
+          token: {
+            id: token.id,
+            name: token.name,
+            keyPreview: token.key.length <= 8 ? '••••••••' : `${token.key.slice(0, 3)}-••••${token.key.slice(-4)}`,
+          },
+        })
       }
-      const { providers } = await providerService.listProviders()
-      const existing = providers.find((provider) => provider.presetId === ECHOFLOW_PRESET_ID && provider.apiKey === token.key)
-      if (existing) return Response.json({ provider: { id: existing.id } })
-      const provider = await providerService.addProvider({
-        presetId: ECHOFLOW_PRESET_ID,
-        name: `EchoFlow API #${providers.filter((item) => item.presetId === ECHOFLOW_PRESET_ID).length + 1}`,
-        baseUrl: ECHOFLOW_BASE_URL,
+      const provider = await providerService.getProvider(input.providerId)
+      if (provider.presetId !== ECHOFLOW_PRESET_ID) return Response.json({ error: 'invalid_provider' }, { status: 400 })
+      const updated = await providerService.updateProvider(input.providerId, {
         apiKey: token.key,
-        apiFormat: 'anthropic',
-        authStrategy: 'auth_token',
-        models: ECHOFLOW_DEFAULT_MODELS,
+        baseUrl: ECHOFLOW_BASE_URLS[input.endpoint],
       })
-      return Response.json({ provider: { id: provider.id } }, { status: 201 })
+      return Response.json({ provider: { id: updated.id } })
     }
 
     return Response.json({ error: 'not_found' }, { status: 404 })
@@ -100,4 +161,8 @@ export async function handleEchoFlowApi(req: Request, _url: URL, segments: strin
     }
     return errorResponse(error)
   }
+}
+
+function maskApiKey(key: string): string {
+  return key.length <= 8 ? '••••••••' : `${key.slice(0, 3)}-••••${key.slice(-4)}`
 }

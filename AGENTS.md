@@ -33,6 +33,29 @@ The repository contract is tool-independent: run `bun run check:impact` for scop
 ## Safe Upstream Sync Workflow
 These are repository policies, not guarantees enforced by Git. Use them for every upstream merge.
 
+### Automated Release Tracking (Preferred)
+
+`.github/workflows/upstream-sync.yml` automatically tracks upstream releases and creates pull requests for each new version. This is the recommended path for routine upstream syncs:
+
+1. **Review the sync PR**: When a new `sync/upstream-vX.Y.Z` PR appears, review the changed files list in the PR description.
+2. **Resolve conflicts in place**: If the PR is marked as draft with conflicts listed, fetch the sync branch and merge `main` into it locally using `bun run upstream:resolve`. This leaves conflicts in the working tree without committing them.
+3. **Apply the conflict resolution workflow below** (steps 5-10 from Manual Sync), then push the sync branch with `git push origin sync/upstream-vX.Y.Z`.
+4. **Merge the PR**: Once the sync branch is clean and verified, merge the PR into `main` using GitHub's merge button or fast-forward merge locally.
+
+The automation fetches upstream releases (not `main`) into `refs/remotes/upstream-release/`, never polluting the local tag namespace. It refuses to overwrite a sync branch holding different content, preserving manual resolutions across scheduled runs.
+
+Local commands for working with sync branches:
+
+| Command | Effect |
+| --- | --- |
+| `bun run upstream:check` | Read-only probe. Reports the verdict, changes nothing. |
+| `bun run upstream:resolve` | Fetches the sync branch and merges `main` into it locally, leaving conflicts in the tree. |
+| `bun run upstream:sync` | Pushes the sync branch so the PR can be opened. |
+
+### Manual Sync Workflow
+
+When the automation is unavailable or a non-release sync is needed:
+
 1. Start from a clean `main` worktree and inspect the configured remotes.
 2. Fetch `origin` normally. Fetch upstream branches without tags using `git fetch upstream +refs/heads/*:refs/remotes/upstream/* --prune`; upstream release tags can share names with fork release tags.
 3. Compare `main...origin/main` and `main...upstream/main` before merging.
@@ -42,8 +65,8 @@ These are repository policies, not guarantees enforced by Git. Use them for ever
 7. Resolve file contents intentionally; never apply blanket `--ours` or `--theirs`. Preserve the fork identity and provider policy, sponsor-free public docs, persistence compatibility, Electron release flow, and quality gates.
 8. Audit public identity after every upstream merge: README, docs, release notes, package metadata, diagnostics export, signing/privacy pages, updater links, and desktop About/profile defaults must not identify NanmiCoder/阿江 or `cc-haha` as the current EchoFlow author, maintainer, contact, or product.
 9. Conflict analysis and worktree edits may be automated, but `git add` and `git commit` require explicit developer confirmation. Never stage or commit a conflict resolution automatically.
-8. After writing conflict resolutions, run `/ecc:code-review` and `/ecc:quality-gate` before asking the developer to stage or commit. If a build or type check fails, use `/ecc:build-fix`, rerun the narrow failed check, and run `bun run verify` before claiming the merge push-ready.
-9. Push `main` before or together with release tags, then verify the remote branch and tag targets.
+10. After writing conflict resolutions, run `/ecc:code-review` and `/ecc:quality-gate` before asking the developer to stage or commit. If a build or type check fails, use `/ecc:build-fix`, rerun the narrow failed check, and run `bun run verify` before claiming the merge push-ready.
+11. Push `main` before or together with release tags, then verify the remote branch and tag targets.
 
 ## Engineering Behavior Guardrails
 These rules are adapted from Karpathy-style coding-agent guidelines. They bias toward caution and simplicity, but do not override the autonomy rule for clear, reversible work.

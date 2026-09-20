@@ -33,7 +33,7 @@ describe('Claude Code runtime config', () => {
 
   it('persists an installed runtime only with an absolute executable path', () => {
     const userDataPath = tempDir()
-    const executablePath = path.join(userDataPath, 'claude')
+    const executablePath = path.join(userDataPath, process.platform === 'win32' ? 'claude.exe' : 'claude')
     fs.writeFileSync(executablePath, '')
     fs.chmodSync(executablePath, 0o755)
 
@@ -61,7 +61,7 @@ describe('Claude Code runtime config', () => {
 
   it('does not replace a valid config when writing an invalid one fails', () => {
     const userDataPath = tempDir()
-    const executablePath = path.join(userDataPath, 'claude')
+    const executablePath = path.join(userDataPath, process.platform === 'win32' ? 'claude.exe' : 'claude')
     fs.writeFileSync(executablePath, '')
     fs.chmodSync(executablePath, 0o755)
     const original: ClaudeCodeRuntimeConfig = {

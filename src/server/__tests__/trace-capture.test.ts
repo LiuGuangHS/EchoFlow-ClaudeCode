@@ -21,6 +21,8 @@ import {
 } from '../services/traceCaptureService.js'
 import { sessionService } from '../services/sessionService.js'
 import { createDumpPromptsFetch } from '../../services/api/dumpPrompts.js'
+import { buildOpenAICodexFetch } from '../../services/openaiAuth/fetch.js'
+import { clearOpenAIOAuthTokenCache } from '../../services/openaiAuth/storage.js'
 import { getTraceIndexDatabasePath } from '../services/localIndex/traceDatabase.js'
 
 let tmpDir: string
@@ -64,6 +66,26 @@ afterEach(async () => {
 })
 
 describe('trace capture service', () => {
+  test('reads legacy metadata without protocol summaries alongside additive diagnostic metadata', async () => {
+    const common = {
+      sessionId: 'protocol-metadata-upgrade', source: 'proxy' as const,
+      startedAt: '2026-06-09T08:00:00.000Z', completedAt: '2026-06-09T08:00:01.000Z',
+      request: { body: { model: 'fixture' } }, response: { status: 200, body: { ok: true } },
+    }
+    await traceCaptureService.recordCall({ ...common, id: 'legacy', metadata: { phase: 'upstream_fetch_completed', futureField: 'preserve' } })
+    const protocolTrace = {
+      version: 1, protocol: 'openai_chat', transport: 'eof',
+      termination: { finishReason: 'length' },
+      usage: { completion_tokens: 64 },
+      outputBudget: { field: 'max_completion_tokens', effective: 64, source: 'explicit', wireFields: { max_completion_tokens: 64 } },
+    }
+    await traceCaptureService.recordCall({ ...common, id: 'current', metadata: { phase: 'upstream_fetch_completed', protocolTrace } })
+    clearTraceCaptureStateForTests()
+    const trace = await traceCaptureService.getSessionTrace(common.sessionId)
+    expect(trace.calls.find(call => call.id === 'legacy')?.metadata).toEqual({ phase: 'upstream_fetch_completed', futureField: 'preserve' })
+    expect(trace.calls.find(call => call.id === 'current')?.metadata?.protocolTrace).toEqual(protocolTrace)
+  })
+
   test('keeps a queued trace append and projection in the scope captured by its caller', async () => {
     const root = tmpDir
     const scopeA = path.join(root, 'scope-a')
@@ -665,6 +687,9 @@ describe('trace capture service', () => {
     const trace = await traceCaptureService.getSessionTrace('session-corrupt')
 
     expect(trace.calls.map((call) => call.id)).toEqual(['call-valid'])
+    // Pre-semantic JSONL remains readable; the desktop falls back to parsing
+    // its complete raw body and retains the legacy path for truncated bodies.
+    expect(trace.calls[0].request.semantic).toBeUndefined()
     expect(trace.events.map((event) => event.id)).toEqual(['event-valid'])
     expect(trace.summary.apiCalls).toBe(1)
   })
@@ -803,6 +828,48 @@ describe('trace capture service', () => {
       else process.env.ECHOFLOW_TRACE_PROVIDER_NAME = originalProviderName
       if (originalProviderFormat === undefined) delete process.env.ECHOFLOW_TRACE_PROVIDER_FORMAT
       else process.env.ECHOFLOW_TRACE_PROVIDER_FORMAT = originalProviderFormat
+    }
+  })
+
+  test('audits trusted OAuth plaintext while the actual transport receives zstd bytes', async () => {
+    const originalFetch = globalThis.fetch
+    const overrides = { CC_HAHA_TRACE_API_CALLS: '1', OPENAI_CODEX_OAUTH_FILE: path.join(tmpDir, 'oauth-fixture.json'), CC_HAHA_OPENAI_REQUEST_COMPRESSION: 'true' }
+    const prior = Object.fromEntries(Object.keys(overrides).map(key => [key, process.env[key]]))
+    Object.assign(process.env, overrides)
+    clearOpenAIOAuthTokenCache()
+    await fs.writeFile(overrides.OPENAI_CODEX_OAUTH_FILE, JSON.stringify({ accessToken: 'fake-access-audit', refreshToken: 'fake-refresh-audit', expiresAt: Date.now() + 3600000 }))
+    let wireBytes = 0
+    let plainBody = ''
+    try {
+      globalThis.fetch = (async (_input, init) => {
+        expect(new Headers(init?.headers).get('content-encoding')).toBe('zstd')
+        expect(init?.body).toBeInstanceOf(Uint8Array)
+        wireBytes = (init!.body as Uint8Array).byteLength
+        plainBody = Buffer.from(await Bun.zstdDecompress(init!.body as Uint8Array)).toString('utf8')
+        return Response.json({ id: 'resp_zstd_audit', object: 'response', model: 'gpt-6-astra', status: 'completed', output: [] })
+      }) as typeof fetch
+      const traced = createDumpPromptsFetch('zstd-audit', { traceSessionId: 'session-zstd-audit' })
+      const codex = buildOpenAICodexFetch(traced, 'test')
+      await (await codex('https://api.anthropic.com/v1/messages', {
+        method: 'POST', headers: { 'X-Claude-Code-Session-Id': 'fixture-root' },
+        body: JSON.stringify({ model: 'gpt-6-astra', max_tokens: 16, messages: [{ role: 'user', content: 'Audit 中文 '.repeat(1000) }] }),
+      })).text()
+      const trace = await waitForTrace('session-zstd-audit', snapshot => Boolean(snapshot.calls[0]?.response))
+      expect(trace.calls).toHaveLength(1)
+      const call = trace.calls[0]
+      expect(call.request.headers['content-encoding']).toBe('zstd')
+      expect(call.request.body.preview).toContain('Audit 中文')
+      expect(call.request.semantic?.request).toMatchObject({ model: 'gpt-6-astra', prompt_cache_key: 'fixture-root' })
+      expect(call.metadata).toMatchObject({ requestEncoding: 'zstd', requestPlainBytes: Buffer.byteLength(plainBody), requestWireBytes: wireBytes })
+      expect(wireBytes).toBeLessThan(Buffer.byteLength(plainBody))
+      expect(JSON.stringify(trace)).not.toContain('fake-access-audit')
+    } finally {
+      globalThis.fetch = originalFetch
+      for (const key of Object.keys(overrides)) {
+        if (prior[key] === undefined) delete process.env[key]
+        else process.env[key] = prior[key]
+      }
+      clearOpenAIOAuthTokenCache()
     }
   })
 
@@ -1302,7 +1369,10 @@ describe('session trace API', () => {
     const body = await res.json() as {
       calls: Array<{
         usage?: { inputTokens: number; outputTokens: number }
-        request: { body: { preview: string; truncated: boolean; bytes: number; sha256: string } }
+        request: {
+          body: { preview: string; truncated: boolean; bytes: number; sha256: string }
+          semantic?: unknown
+        }
         response?: { body: { preview: string; truncated: boolean; bytes: number; sha256: string } }
       }>
     }
@@ -1314,8 +1384,10 @@ describe('session trace API', () => {
     expect(body.calls[0].response?.body.preview.length).toBe(2048)
     expect(body.calls[0].response?.body.truncated).toBe(true)
     expect(body.calls[0].usage).toEqual({ inputTokens: 10, outputTokens: 20 })
+    expect(body.calls[0].request.semantic).toBeUndefined()
 
     const stored = await traceCaptureService.getSessionTrace('session-trim-api')
+    expect(stored.calls[0].request.semantic?.request.messages).toHaveLength(1)
     expect(stored.calls[0].request.body.preview.length).toBeGreaterThan(2048)
     expect(stored.calls[0].request.body.truncated).toBe(false)
     expect(stored.calls[0].response?.body.preview.length).toBeGreaterThan(2048)
@@ -1359,7 +1431,7 @@ describe('session trace API', () => {
       call: {
         id: string
         usage?: { inputTokens: number; outputTokens: number }
-        request: { body: { preview: string; truncated: boolean } }
+        request: { body: { preview: string; truncated: boolean }; semantic?: { version: number } }
       }
     }
 
@@ -1368,6 +1440,7 @@ describe('session trace API', () => {
     expect(body.call.request.body.preview.length).toBeGreaterThan(2048)
     expect(body.call.request.body.truncated).toBe(false)
     expect(body.call.request.body.preview).toContain('full detail please')
+    expect(body.call.request.semantic?.version).toBe(1)
     expect(body.call.usage).toEqual({ inputTokens: 64, outputTokens: 16 })
   })
 

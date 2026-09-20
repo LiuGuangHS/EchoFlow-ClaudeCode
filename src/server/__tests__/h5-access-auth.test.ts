@@ -365,6 +365,7 @@ describe('remote H5 auth and CORS integration', () => {
       headers: { Origin: 'http://localhost:5173' },
     })
     expect(browserResponse.status).toBe(403)
+    expect(browserResponse.headers.get('Access-Control-Allow-Origin')).toBe('http://localhost:5173')
 
     const desktopResponse = await fetch(`${baseUrl}/api/status`, {
       headers: {
@@ -650,6 +651,24 @@ describe('remote H5 auth and CORS integration', () => {
     await expect(response.json()).resolves.toMatchObject({
       error: 'Forbidden',
     })
+  })
+
+  test('allows loopback browser preflight when desktop local auth is configured', async () => {
+    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+    await restartRemoteServer()
+
+    const response = await fetch(`${baseUrl}/api/status`, {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'http://localhost:5173',
+        'Access-Control-Request-Method': 'GET',
+        'Access-Control-Request-Headers': 'authorization,content-type',
+      },
+    })
+
+    expect(response.status).toBe(204)
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('http://localhost:5173')
+    expect(response.headers.get('Access-Control-Allow-Headers')).toContain('Authorization')
   })
 
   test('blocks remote browser capability requests while H5 access is disabled', async () => {

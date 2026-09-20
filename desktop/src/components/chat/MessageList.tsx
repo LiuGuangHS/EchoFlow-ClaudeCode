@@ -1,12 +1,12 @@
 import { useRef, useEffect, useMemo, memo, useState, useCallback, useDeferredValue, useLayoutEffect, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { ArrowDown, BookMarked, Bot, CheckCircle2, ChevronDown, ChevronRight, CircleStop, FileStack, LoaderCircle, MessageCircle, Settings, Target, XCircle } from 'lucide-react'
+import { ArrowDown, BookMarked, Bot, CheckCircle2, ChevronDown, ChevronRight, CircleStop, FileStack, LoaderCircle, MessageCircle, Settings, Target, Undo2, XCircle } from 'lucide-react'
 import { ApiError } from '../../api/client'
 import { sessionsApi, type SessionRewindMode, type SessionTurnCheckpoint } from '../../api/sessions'
 import { listPendingPermissions, useChatStore } from '../../stores/chatStore'
 import { useSessionStore } from '../../stores/sessionStore'
 import { useWorkspaceChatContextStore } from '../../stores/workspaceChatContextStore'
-import { useWorkspacePanelStore, type WorkspacePanelOrigin } from '../../stores/workspacePanelStore'
+import { useWorkspaceStore, type WorkspaceOrigin } from '../../stores/workspaceStore'
 import { SETTINGS_TAB_ID, useTabStore } from '../../stores/tabStore'
 import { teamTaskWindowsForSnapshot, useTeamStore } from '../../stores/teamStore'
 import { useUIStore } from '../../stores/uiStore'
@@ -1253,11 +1253,12 @@ function buildTurnCardInsertionMap(
 
   const cardsByRenderIndex = new Map<number, TurnChangeCardModel[]>()
   turnChangeCards.forEach((card) => {
-    // An unverified-only turn has no structured files to list, but still needs
-    // the card for conversation rewind and the warning about changes left on disk.
+    // Tool usage alone does not establish a file change. Omit empty change
+    // cards even when Bash coverage is unverified; conversation-only targets
+    // keep their separate lightweight action.
     if (
-      card.checkpoint.code.filesChanged.length === 0 &&
-      (card.checkpoint.unverifiedChangeSources?.length ?? 0) === 0
+      card.checkpoint.code.available &&
+      card.checkpoint.code.filesChanged.length === 0
     ) return
     const renderIndex =
       lastResponseIndexByTurnId.get(card.target.messageId) ??
@@ -2217,11 +2218,11 @@ export function MessageList({
 }: MessageListProps = {}) {
   const activeTabId = useTabStore((s) => s.activeTabId)
   const resolvedSessionId = sessionId ?? activeTabId
-  const isWorkspacePanelOpen = useWorkspacePanelStore((state) =>
-    resolvedSessionId ? state.isPanelOpen(resolvedSessionId) : false,
+  const isWorkspacePanelOpen = useWorkspaceStore((state) =>
+    resolvedSessionId ? (state.bySession[resolvedSessionId]?.layout ?? 'hidden') !== 'hidden' : false,
   )
-  const workspacePanelOrigin = useWorkspacePanelStore((state) =>
-    resolvedSessionId ? state.originBySession[resolvedSessionId] ?? null : null,
+  const workspacePanelOrigin = useWorkspaceStore((state) =>
+    resolvedSessionId ? state.bySession[resolvedSessionId]?.origin ?? null : null,
   )
   const sessionState = useChatStore((s) =>
     resolvedSessionId ? s.sessions[resolvedSessionId] : undefined,
@@ -2336,6 +2337,8 @@ export function MessageList({
     streamingToolInput,
   })
   const t = useTranslation()
+  // Keep disclosure choices across virtualized row remounts and later turns.
+  const [expandedChangeCards, setExpandedChangeCards] = useState<Record<string, boolean>>({})
   const [turnChangeCards, setTurnChangeCards] = useState<TurnChangeCardModel[]>([])
   const [turnChangeLoadError, setTurnChangeLoadError] = useState<string | null>(null)
   const [turnActionErrors, setTurnActionErrors] = useState<Record<string, string>>({})
@@ -2940,25 +2943,29 @@ export function MessageList({
   // Undo is not reversible, so the dialog — not just the card — has to say which
   // changes it will leave behind when the checkpoint could not cover them all.
   const confirmUnverifiedSources = confirmTurnCard?.checkpoint.unverifiedChangeSources ?? []
-  const confirmCanRestoreCode = confirmTurnCard?.checkpoint.restoreAvailable !== false
+  const confirmHasCodeCheckpoint = Boolean(confirmTurnCard?.checkpoint.code.available)
+  const confirmCanRestoreCode = confirmHasCodeCheckpoint &&
+    confirmTurnCard?.checkpoint.restoreAvailable !== false
   const confirmBodyText = confirmTurnCard?.isLatest
     ? t('chat.turnChangesLatestConfirmBody')
     : t('chat.turnChangesHistoricalConfirmBody')
-  const confirmCaution = !confirmCanRestoreCode
+  const confirmCaution = confirmHasCodeCheckpoint && !confirmCanRestoreCode
     ? t('chat.turnChangesConversationOnlyConfirmBody')
     : confirmUnverifiedSources.length > 0
       ? t('chat.turnChangesPartialCoverageConfirmBody', {
           sources: confirmUnverifiedSources.join(', '),
         })
       : null
-  const confirmBody = confirmCaution === null
-    ? confirmBodyText
-    : (
-        <div className="space-y-2 text-sm leading-6 text-[var(--color-text-secondary)]">
-          {confirmCanRestoreCode ? <p>{confirmBodyText}</p> : null}
-          <p className="text-[var(--color-warning)]">{confirmCaution}</p>
-        </div>
-      )
+  const confirmBody = !confirmHasCodeCheckpoint
+    ? t('chat.conversationRewindConfirmBody')
+    : confirmCaution === null
+      ? confirmBodyText
+      : (
+          <div className="space-y-2 text-sm leading-6 text-[var(--color-text-secondary)]">
+            {confirmCanRestoreCode ? <p>{confirmBodyText}</p> : null}
+            <p className="text-[var(--color-warning)]">{confirmCaution}</p>
+          </div>
+        )
 
   useEffect(() => {
     const liveKeys = new Set(renderItemKeys)
@@ -3020,7 +3027,7 @@ export function MessageList({
             const target =
               targetByMessageId.get(checkpoint.target.targetUserMessageId) ??
               targetByUserMessageIndex.get(checkpoint.target.userMessageIndex)
-            if (!target || !checkpoint.code.available) {
+            if (!target) {
               return []
             }
             return [{
@@ -3362,7 +3369,7 @@ export function MessageList({
     paintConversationFindHighlights(root, activeConversationFindMatch)
   }, [activeConversationFindMatch, virtualTranscriptWindow.items])
 
-  const restoreWorkspacePanelOrigin = useCallback((origin: WorkspacePanelOrigin, attempt = 0) => {
+  const restoreWorkspaceOrigin = useCallback((origin: WorkspaceOrigin, attempt = 0) => {
     const container = scrollContainerRef.current
     const content = scrollContentRef.current
     if (!container || !content || !resolvedSessionId) return
@@ -3372,6 +3379,9 @@ export function MessageList({
     const opener = renderItem
       ? [...renderItem.querySelectorAll<HTMLElement>('[id]')]
           .find((node) => node.id === origin.sourceElementId)
+          ?? (origin.sourceElementId.startsWith('turn-change-opener-')
+            ? renderItem.querySelector<HTMLElement>('[data-turn-change-disclosure="true"]')
+            : null)
       : null
 
     if (renderItem && opener) {
@@ -3379,7 +3389,7 @@ export function MessageList({
         renderItem.scrollIntoView({ block: 'nearest' })
       }
       opener.focus({ preventScroll: true })
-      useWorkspacePanelStore.getState().clearOrigin(resolvedSessionId)
+      useWorkspaceStore.getState().setOrigin(resolvedSessionId, null)
       workspaceOriginRestoreFrameRef.current = null
       return
     }
@@ -3398,13 +3408,13 @@ export function MessageList({
     }
 
     if (attempt >= 7 || renderIndex < 0) {
-      useWorkspacePanelStore.getState().clearOrigin(resolvedSessionId)
+      useWorkspaceStore.getState().setOrigin(resolvedSessionId, null)
       workspaceOriginRestoreFrameRef.current = null
       return
     }
 
     workspaceOriginRestoreFrameRef.current = requestAnimationFrame(() => {
-      restoreWorkspacePanelOrigin(origin, attempt + 1)
+      restoreWorkspaceOrigin(origin, attempt + 1)
     })
   }, [
     renderItemKeys,
@@ -3433,9 +3443,9 @@ export function MessageList({
 
     workspaceOriginRestoreFrameRef.current = requestAnimationFrame(() => {
       workspaceOriginRestoreFrameRef.current = null
-      restoreWorkspacePanelOrigin(workspacePanelOrigin)
+      restoreWorkspaceOrigin(workspacePanelOrigin)
     })
-  }, [isWorkspacePanelOpen, resolvedSessionId, restoreWorkspacePanelOrigin, workspacePanelOrigin])
+  }, [isWorkspacePanelOpen, resolvedSessionId, restoreWorkspaceOrigin, workspacePanelOrigin])
 
   const renderTranscriptItem = (item: RenderItem, index: number) => {
     const cardsForItem = turnCardsByRenderIndex.get(index) ?? []
@@ -3504,20 +3514,52 @@ export function MessageList({
           />
         )}
 
-        {resolvedSessionId && cardsForItem.map((card) => (
-          <CurrentTurnChangeCard
-            key={`turn-change-${card.target.messageId}`}
-            sessionId={resolvedSessionId}
-            checkpoint={card.checkpoint}
-            workDir={card.workDir}
-            error={turnActionErrors[card.target.messageId] ?? null}
-            isUndoing={rewindingTurnId === card.target.messageId}
-            isLatest={card.isLatest}
-            onUndo={() => {
-              setTurnUndoConfirmTargetId(card.target.messageId)
-            }}
-          />
-        ))}
+        {resolvedSessionId && cardsForItem.map((card) => {
+          const error = turnActionErrors[card.target.messageId] ?? null
+          const openUndoDialog = () => {
+            setTurnUndoConfirmTargetId(card.target.messageId)
+          }
+          if (!card.checkpoint.code.available) {
+            return (
+              <div
+                key={`conversation-rewind-${card.target.messageId}`}
+                className="mt-1 flex flex-wrap items-center gap-2 px-1"
+              >
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  loading={rewindingTurnId === card.target.messageId}
+                  onClick={openUndoDialog}
+                  icon={<Undo2 size={13} strokeWidth={2} aria-hidden="true" />}
+                >
+                  {t('chat.conversationRewindAction')}
+                </Button>
+                {error ? (
+                  <span role="alert" className="text-xs text-[var(--color-error)]">
+                    {error}
+                  </span>
+                ) : null}
+              </div>
+            )
+          }
+          return (
+            <CurrentTurnChangeCard
+              key={`turn-change-${card.target.messageId}`}
+              sessionId={resolvedSessionId}
+              expanded={expandedChangeCards[`${resolvedSessionId}:${card.target.messageId}`] ?? false}
+              onExpandedChange={(expanded) => setExpandedChangeCards((current) => ({
+                ...current,
+                [`${resolvedSessionId}:${card.target.messageId}`]: expanded,
+              }))}
+              checkpoint={card.checkpoint}
+              workDir={card.workDir}
+              error={error}
+              isUndoing={rewindingTurnId === card.target.messageId}
+              isLatest={card.isLatest}
+              onUndo={openUndoDialog}
+            />
+          )
+        })}
       </>
     )
   }
@@ -3792,6 +3834,7 @@ export const MessageBlock = memo(function MessageBlock({
           toolName={message.toolName}
           input={message.input}
           description={message.description}
+          displayName={message.displayName}
         />
       )
     case 'error': {

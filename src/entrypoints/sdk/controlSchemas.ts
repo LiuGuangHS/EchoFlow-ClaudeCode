@@ -121,6 +121,27 @@ export const SDKControlPermissionRequestSchema = lazySchema(() =>
     .describe('Requests permission to use a tool with the given input.'),
 )
 
+/**
+ * Hands the CLI process the token that authenticates Computer Use approval
+ * callbacks from the desktop shell.
+ *
+ * The length is pinned rather than left open: the token is a 256-bit value
+ * rendered as lowercase hex, and accepting anything shorter would let a
+ * truncated or placeholder value install itself as a working credential.
+ */
+export const SDKControlSetComputerUseApprovalTokenRequestSchema = lazySchema(() =>
+  z
+    .object({
+      subtype: z.literal('set_computer_use_approval_token'),
+      token: z
+        .string()
+        .regex(/^[a-f0-9]{64}$/, 'must be 64 lowercase hex characters'),
+    })
+    .describe(
+      'Installs the desktop-issued token that authenticates Computer Use approval requests.',
+    ),
+)
+
 export const SDKControlSetPermissionModeRequestSchema = lazySchema(() =>
   z
     .object({
@@ -490,6 +511,7 @@ export const SDKControlMcpToggleRequestSchema = lazySchema(() =>
       subtype: z.literal('mcp_toggle'),
       serverName: z.string(),
       enabled: z.boolean(),
+      alreadyPersisted: z.boolean().optional(),
     })
     .describe('Enables or disables an MCP server.'),
 )
@@ -608,6 +630,7 @@ export const SDKControlRequestInnerSchema = lazySchema(() =>
     SDKControlPermissionRequestSchema(),
     SDKControlInitializeRequestSchema(),
     SDKControlSetPermissionModeRequestSchema(),
+    SDKControlSetComputerUseApprovalTokenRequestSchema(),
     SDKControlSetModelRequestSchema(),
     SDKControlSetMaxThinkingTokensRequestSchema(),
     SDKControlMcpStatusRequestSchema(),

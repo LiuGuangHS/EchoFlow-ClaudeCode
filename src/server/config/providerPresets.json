@@ -51,12 +51,7 @@
     "websiteUrl": "https://platform.deepseek.com",
     "apiKeyUrl": "https://platform.deepseek.com/api_keys",
     "authStrategy": "auth_token",
-    "defaultEnv": {
-      "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1000000",
-      "ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES": "thinking,effort,adaptive_thinking,max_effort",
-      "ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES": "thinking,effort,adaptive_thinking,max_effort",
-      "ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES": "thinking,effort,adaptive_thinking,max_effort"
-    },
+    "defaultEnv": {},
     "modelContextWindows": {
       "deepseek-v4-pro[1m]": 1000000,
       "deepseek-v4-pro": 1000000,
@@ -80,19 +75,23 @@
       }
     ],
     "apiFormat": "anthropic",
+    "reasoningProviderKind": "zhipu_standard_api",
     "defaultModels": {
-      "main": "glm-5.2[1m]",
-      "haiku": "glm-4.7",
-      "sonnet": "glm-5.2[1m]",
-      "opus": "glm-5.2[1m]"
+      "main": "glm-5.3[1m]",
+      "haiku": "glm-5.3-flash[1m]",
+      "sonnet": "glm-5.3[1m]",
+      "opus": "glm-5.3[1m]"
     },
     "needsApiKey": true,
     "websiteUrl": "https://open.bigmodel.cn",
+    "apiKeyUrl": "https://open.bigmodel.cn/usercenter/apikeys",
     "authStrategy": "auth_token",
-    "defaultEnv": {
-      "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1000000"
-    },
+    "defaultEnv": {},
     "modelContextWindows": {
+      "glm-5.3[1m]": 1000000,
+      "glm-5.3": 1000000,
+      "glm-5.3-flash[1m]": 1000000,
+      "glm-5.3-flash": 1000000,
       "glm-5.2[1m]": 1000000,
       "glm-5.2": 1000000,
       "glm-5.1": 200000,
@@ -116,11 +115,7 @@
     "websiteUrl": "https://www.kimi.com/code",
     "apiKeyUrl": "https://www.kimi.com/code/console",
     "authStrategy": "api_key",
-    "defaultEnv": {
-      "ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES": "thinking,required_thinking,effort,max_effort",
-      "ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES": "thinking,required_thinking,effort,max_effort",
-      "ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES": "thinking,required_thinking,effort,max_effort"
-    },
+    "defaultEnv": {},
     "modelContextWindows": {
       "k3": 262144,
       "kimi-for-coding": 262144,
@@ -154,13 +149,9 @@
     },
     "needsApiKey": true,
     "websiteUrl": "https://platform.minimaxi.com",
+    "apiKeyUrl": "https://platform.minimaxi.com/user-center/basic-information/interface-key",
     "authStrategy": "auth_token",
-    "defaultEnv": {
-      "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1000000",
-      "ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES": "thinking,adaptive_thinking",
-      "ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES": "thinking,adaptive_thinking",
-      "ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES": "thinking,adaptive_thinking"
-    },
+    "defaultEnv": {},
     "modelContextWindows": {
       "MiniMax-M3[1m]": 1000000,
       "MiniMax-M3": 1000000,

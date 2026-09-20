@@ -89,6 +89,15 @@ describe('bundled provider presets', () => {
       { region: 'cn_zh', baseUrl: 'https://open.bigmodel.cn/api/anthropic' },
       { region: 'global_en', baseUrl: 'https://api.z.ai/api/anthropic' },
     ])
+    expect(zhipu?.reasoningProviderKind).toBe('zhipu_standard_api')
+    expect(zhipu?.defaultModels).toEqual({
+      main: 'glm-5.3[1m]',
+      haiku: 'glm-5.3-flash[1m]',
+      sonnet: 'glm-5.3[1m]',
+      opus: 'glm-5.3[1m]',
+    })
+    expect(zhipu?.modelContextWindows?.['glm-5.3']).toBe(1000000)
+    expect(zhipu?.modelContextWindows?.['glm-5.3-flash']).toBe(1000000)
     expect(zhipu && presetMatchesBaseUrl(zhipu, ' HTTPS://API.Z.AI/api/anthropic/ ')).toBe(true)
   })
 

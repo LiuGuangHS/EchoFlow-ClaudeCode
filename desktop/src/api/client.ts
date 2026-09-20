@@ -1,4 +1,5 @@
 import { getDesktopHost } from '../lib/desktopHost'
+import { isPublicAccessRuntime } from '../lib/publicAccessRuntime'
 
 const ENV_BASE_URL =
   typeof import.meta !== 'undefined' &&
@@ -78,8 +79,6 @@ export type ApiRequestOptions = {
 }
 
 async function request<T>(method: string, path: string, body?: unknown, options?: ApiRequestOptions): Promise<T> {
-  const headers = buildHeaders()
-
   const controller = new AbortController()
   const timeoutMs = options?.timeout ?? DEFAULT_REQUEST_TIMEOUT_MS
   let timedOut = false
@@ -93,7 +92,7 @@ async function request<T>(method: string, path: string, body?: unknown, options?
   try {
     const fetchOnce = () => fetch(`${baseUrl}${path}`, {
       method,
-      headers,
+      headers: buildHeaders(),
       body: body !== undefined ? JSON.stringify(body) : undefined,
       signal: controller.signal,
     })
@@ -143,8 +142,12 @@ async function recoverDesktopServerUrl(): Promise<boolean> {
   if (!host.isDesktop) return false
 
   if (!desktopServerRecovery) {
-    const recovery = host.runtime.getServerUrl().then((serverUrl) => {
+    const recovery = Promise.all([
+      host.runtime.getServerUrl(),
+      host.runtime.getLocalAccessToken().catch(() => null),
+    ]).then(([serverUrl, localAccessToken]) => {
       setBaseUrl(serverUrl)
+      setAuthToken(localAccessToken)
       return serverUrl
     })
     const trackedRecovery = recovery.finally(() => {
@@ -187,6 +190,8 @@ export function rawRecordDiagnosticEvent(event: {
   sessionId?: string
   details?: unknown
 }) {
+  // Pairing material and remote content must never enter local diagnostics.
+  if (isPublicAccessRuntime()) return Promise.resolve()
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), DIAGNOSTICS_REQUEST_TIMEOUT_MS)
   return fetch(`${baseUrl}${DIAGNOSTICS_PATH}`, {
@@ -213,45 +218,6 @@ function buildHeaders(): Record<string, string> {
   return headers
 }
 
-/**
- * Read binary content through the same authenticated channel as `api.get`.
- *
- * Pointing an `<img src>` straight at an API endpoint does not work. The image is
- * a cross-origin subresource, so it carries neither the Authorization header nor
- * a trusted Origin, and the server's fetch-metadata policy refuses that shape:
- * the browser gets a 401 with a JSON body and Chrome drops it as
- * `ERR_BLOCKED_BY_ORB`. The same URL returns 200 from a terminal, which is what
- * makes this look fine until it is opened in a real page.
- *
- * Fetching the bytes here and handing the DOM a blob URL uses the credential path
- * every other call already takes (the CSP allows `blob:`).
- */
-export async function apiGetBlob(path: string, options?: ApiRequestOptions): Promise<Blob> {
-  const controller = new AbortController()
-  const timeoutMs = options?.timeout ?? DEFAULT_REQUEST_TIMEOUT_MS
-  const timeout = setTimeout(() => controller.abort(), timeoutMs)
-  const abortFromCaller = () => controller.abort(options?.signal?.reason)
-  if (options?.signal?.aborted) abortFromCaller()
-  else options?.signal?.addEventListener('abort', abortFromCaller, { once: true })
-  try {
-    const headers: Record<string, string> = {}
-    if (authToken) headers.Authorization = `Bearer ${authToken}`
-    const res = await fetch(`${baseUrl}${path}`, {
-      method: 'GET',
-      headers,
-      signal: controller.signal,
-    })
-    if (!res.ok) {
-      const errorBody = await res.text().catch(() => '')
-      throw new ApiError(res.status, errorBody)
-    }
-    return await res.blob()
-  } finally {
-    clearTimeout(timeout)
-    options?.signal?.removeEventListener('abort', abortFromCaller)
-  }
-}
-
 function sanitizeDiagnosticValue(value: unknown): unknown {
   if (!authToken) return value
 
@@ -272,10 +238,44 @@ function sanitizeDiagnosticValue(value: unknown): unknown {
   return value
 }
 
+/**
+ * Read binary content through the same authenticated channel as `api.get`.
+ *
+ * Pointing an `<img src>` straight at an API endpoint does not work in the
+ * packaged app: the renderer is loaded with `loadFile`, so the page origin is
+ * `file://` and the image is a cross-origin subresource that can carry neither
+ * the Authorization header nor a trusted Origin. The server's fetch-metadata
+ * policy refuses exactly that shape (verified in a real `file://` page: the
+ * image fires `error`). Fetching the bytes here and handing the DOM a blob URL
+ * uses the credential path that already works for every other call.
+ */
+export async function apiGetBlob(path: string, options?: ApiRequestOptions): Promise<Blob> {
+  const controller = new AbortController()
+  const timeoutMs = options?.timeout ?? DEFAULT_REQUEST_TIMEOUT_MS
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+  const abortFromCaller = () => controller.abort(options?.signal?.reason)
+  if (options?.signal?.aborted) abortFromCaller()
+  else options?.signal?.addEventListener('abort', abortFromCaller, { once: true })
+  try {
+    const res = await fetch(`${baseUrl}${path}`, {
+      method: 'GET',
+      headers: buildHeaders(),
+      signal: controller.signal,
+    })
+    if (!res.ok) {
+      throw new ApiError(res.status, await res.text().catch(() => ''))
+    }
+    return await res.blob()
+  } finally {
+    clearTimeout(timeout)
+    options?.signal?.removeEventListener('abort', abortFromCaller)
+  }
+}
+
 export const api = {
   get: <T>(path: string, options?: ApiRequestOptions) => request<T>('GET', path, undefined, options),
   post: <T>(path: string, body?: unknown, options?: ApiRequestOptions) => request<T>('POST', path, body, options),
   put: <T>(path: string, body?: unknown) => request<T>('PUT', path, body),
   patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, body),
-  delete: <T>(path: string) => request<T>('DELETE', path),
+  delete: <T>(path: string, body?: unknown) => request<T>('DELETE', path, body),
 }

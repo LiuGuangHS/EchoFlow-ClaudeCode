@@ -2,7 +2,7 @@
  * Settings Service — 读写用户级和项目级设置文件
  *
  * 设置文件为 JSON 格式：
- *   - 用户级: <EchoFlow AppData>/echoflow/settings.json
+ *   - 用户级: <EchoFlow config root>/settings.json（用户共享设置）
  *   - 项目级: {projectRoot}/.claude/settings.json
  *
  * 合并策略：Object.assign({}, userSettings, projectSettings)
@@ -17,6 +17,8 @@ import { ensurePersistentStorageUpgraded } from './persistentStorageMigrations.j
 import { resetSettingsCache } from '../../utils/settings/settingsCache.js'
 import { addFileGlobRuleToGitignore } from '../../utils/git/gitignore.js'
 import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
+import { isEnvTruthy } from '../../utils/envUtils.js'
+import { getProcessEnvWithTerminalShellEnvironment } from '../../utils/terminalShellEnvironment.js'
 
 export const VALID_PERMISSION_MODES = [
   'default',
@@ -46,9 +48,9 @@ export class SettingsService {
     return getEchoFlowConfigDir()
   }
 
-  /** 用户级设置文件路径 */
+  /** 用户级设置文件路径（用户共享设置，不属于仓库管理的内部索引） */
   private getUserSettingsPath(): string {
-    return path.join(getEchoFlowInternalDir(this.getConfigDir()), 'settings.json')
+    return path.join(this.getConfigDir(), 'settings.json')
   }
 
   /** 项目级设置文件路径 */
@@ -99,6 +101,22 @@ export class SettingsService {
   /** 获取用户级设置 */
   async getUserSettings(): Promise<Record<string, unknown>> {
     return this.readJsonFile(this.getUserSettingsPath())
+  }
+
+  /** Read-time upgrade for older settings that only stored the team env flag.
+   * Keep the original file intact until the user explicitly saves a choice.
+   */
+  async getAgentTeamsEnabled(): Promise<boolean> {
+    const user = await this.getUserSettings()
+    if (typeof user.agentTeamsEnabled === 'boolean') return user.agentTeamsEnabled
+    const managed = await this.readJsonFile(path.join(getEchoFlowInternalDir(this.getConfigDir()), 'settings.json'))
+    const legacyManaged = await this.readJsonFile(path.join(this.getConfigDir(), 'echoflow', 'settings.json'))
+    const inherited = await getProcessEnvWithTerminalShellEnvironment()
+    const key = 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS'
+    const legacyValue = normalizeJsonObject(managed.env)?.[key] ??
+      normalizeJsonObject(legacyManaged.env)?.[key] ??
+      normalizeJsonObject(user.env)?.[key] ?? inherited[key]
+    return typeof legacyValue === 'string' ? isEnvTruthy(legacyValue) : true
   }
 
   /** 获取项目级设置 */
@@ -172,6 +190,9 @@ export class SettingsService {
 
   /** 更新用户级设置（顶层浅合并，并保留桌面终端的未知子字段） */
   async updateUserSettings(settings: Record<string, unknown>): Promise<void> {
+    if (Object.hasOwn(settings, 'agentTeamsEnabled') && typeof settings.agentTeamsEnabled !== 'boolean') {
+      throw ApiError.badRequest('agentTeamsEnabled must be a boolean')
+    }
     const filePath = this.getUserSettingsPath()
     await this.withWriteLock(filePath, async () => {
       const current = await this.readJsonFile(filePath)

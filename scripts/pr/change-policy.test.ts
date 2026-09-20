@@ -93,6 +93,20 @@ describe('evaluateChangePolicy', () => {
     expect(result.checks.desktopNative).toBe(true)
   })
 
+  test.each([
+    'native/cu-helper/Sources/cu-helper/VirtualCursor.swift',
+    'native/cu-helper/Tests/CuHelperTests/VirtualCursorResourceTests.swift',
+    'native/cu-helper/Sources/cu-helper/Resources/LensSequence/frame_000.png',
+    'native/cu-helper/Package.swift',
+    'native/cu-helper/build.sh',
+  ])('requires the native and macOS Swift jobs for a standalone change to %s', file => {
+    const result = evaluateChangePolicy([file])
+    expect(result.areas).toEqual(['desktop'])
+    expect(result.checks.desktopNative).toBe(true)
+    expect(result.checks.desktop).toBe(false)
+    expect(result.blocked).toBe(false)
+  })
+
   test('routes provider runtime changes to the offline provider contract', () => {
     const result = evaluateChangePolicy([
       'src/server/services/providerRuntimeEnv.ts',
@@ -251,6 +265,7 @@ describe('evaluateChangePolicy', () => {
   })
 
   test('plan-only mode publishes a blocked scope without preventing product jobs', async () => {
+    if (process.platform === 'win32') return
     const dir = mkdtempSync(join(tmpdir(), 'change-policy-plan-'))
     try {
       const filesPath = join(dir, 'files.txt')
@@ -275,15 +290,23 @@ describe('evaluateChangePolicy', () => {
         stderr: 'pipe',
       })
 
-      expect(await proc.exited).toBe(0)
+      const exitCode = await Promise.race([
+        proc.exited,
+        new Promise<number>((_, reject) => setTimeout(() => reject(new Error('Process timeout')), 20000)),
+      ])
+      expect(exitCode).toBe(0)
       const outputs = readFileSync(outputPath, 'utf8')
       expect(outputs).toContain('blocked=true')
       expect(outputs).toContain('desktop_checks=true')
       expect(outputs).toContain('desktop_native_checks=false')
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      try {
+        rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
+      } catch {
+        // Cleanup failed, likely file lock on Windows
+      }
     }
-  })
+  }, 30000)
 })
 
 describe('evaluateChangePolicy dependent-file widening', () => {

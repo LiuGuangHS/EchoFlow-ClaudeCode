@@ -25,6 +25,17 @@ export type ClientMessage =
     }
   | { type: 'set_permission_mode'; mode: PermissionMode }
   | ({ type: 'set_runtime_config' } & RuntimeSelection)
+  | {
+      type: 'set_model_config'
+      configId?: string
+      config?: {
+        providerId: string | null
+        modelId: string
+        effortLevel?: string
+      }
+      requestId: string
+    }
+  | { type: 'restart_runtime'; requestId: string; reason?: string }
   | { type: 'set_cli_runtime'; cliRuntimeId: 'bundled' | 'installed' }
   | { type: 'stop_generation' }
   | { type: 'stop_background_task'; taskId: string }
@@ -108,6 +119,7 @@ export type ServerMessage =
       toolUseId?: string
       input: unknown
       description?: string
+      displayName?: string
     }
   | {
       type: 'computer_use_permission_request'
@@ -127,7 +139,7 @@ export type ServerMessage =
       turnActive: boolean
     }
   | { type: 'user_message_replay'; content: string }
-  | { type: 'message_complete'; usage: TokenUsage }
+  | { type: 'message_complete'; usage: TokenUsage; timing?: TurnTiming }
   /** `complete` marks a whole thinking block; without it `text` is a stream fragment. */
   | { type: 'thinking'; text: string; complete?: boolean }
   | { type: 'status'; state: ChatState; verb?: string; attemptStart?: boolean }
@@ -136,6 +148,31 @@ export type ServerMessage =
       providerId: string | null
       modelId: string
       effortLevel?: string
+    }
+  | {
+      type: 'model_config_applied'
+      requestId: string
+      configId: string
+      application: 'noop' | 'in_place' | 'runtime_restart' | 'deferred'
+      runtimeInstanceId: string
+      providerId: string | null
+      modelId: string
+      effortLevel?: string
+    }
+  | {
+      type: 'model_config_apply_failed'
+      requestId: string
+      configId: string
+      previousConfigId?: string
+      code: string
+      message: string
+    }
+  | {
+      type: 'runtime_status'
+      runtimeInstanceId: string
+      state: 'starting' | 'ready' | 'busy' | 'stopping' | 'stopped' | 'error'
+      processGeneration: number
+      reason?: string
     }
   | {
       type: 'cli_runtime_applied'
@@ -182,6 +219,14 @@ export type TokenUsage = {
   output_tokens: number
   cache_read_tokens?: number
   cache_creation_tokens?: number
+}
+
+/** Mirrors the server's `TurnTiming`: milliseconds, `decode_ms` excludes prefill and tools. */
+export type TurnTiming = {
+  duration_ms: number
+  duration_api_ms: number
+  ttft_ms: number
+  decode_ms: number
 }
 
 export type ChatState = 'idle' | 'thinking' | 'compacting' | 'tool_executing' | 'streaming' | 'permission_pending'
@@ -398,6 +443,7 @@ export type UIMessage =
       toolUseId?: string
       input: unknown
       description?: string
+      displayName?: string
       timestamp: number
     }
   | { id: string; type: 'error'; message: string; code: string; businessErrorCode?: string; timestamp: number }

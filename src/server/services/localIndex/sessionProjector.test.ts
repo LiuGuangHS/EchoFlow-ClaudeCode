@@ -93,6 +93,19 @@ describe('session projector', () => {
       projectPath: '-repo-a',
       sessionId: 'same-id',
       content: [
+        line({
+          type: 'session-meta',
+          modelConfigId: 'mc_projector',
+          modelConfig: {
+            providerId: 'provider-a',
+            modelId: 'model-a',
+            effortLevel: 'high',
+          },
+          runtimeInstanceId: 'runtime-projector',
+          runtimeProviderId: 'provider-a',
+          runtimeModelId: 'model-a',
+          effortLevel: 'high',
+        }),
         line(user('First title', '2026-01-01T00:00:00.000Z')),
         line('{malformed}'),
         line(assistant('2026-01-01T00:01:00.000Z')),
@@ -122,6 +135,13 @@ describe('session projector', () => {
             title: 'First title',
             messageCount: 2,
             modifiedAt: '2026-01-01T00:01:00.000Z',
+            modelConfigId: 'mc_projector',
+            modelConfig: {
+              providerId: 'provider-a',
+              modelId: 'model-a',
+              effortLevel: 'high',
+            },
+            runtimeInstanceId: 'runtime-projector',
           },
           malformedLineCount: 1,
         },
@@ -135,7 +155,23 @@ describe('session projector', () => {
           title: 'First title',
           messageCount: 2,
           transcriptPath: candidate.path,
+          modelConfigId: 'mc_projector',
+          modelConfig: {
+            providerId: 'provider-a',
+            modelId: 'model-a',
+            effortLevel: 'high',
+          },
+          runtimeInstanceId: 'runtime-projector',
         }],
+      })
+      expect(index.getProjectionSeed(candidate.path)?.summary).toMatchObject({
+        modelConfigId: 'mc_projector',
+        modelConfig: {
+          providerId: 'provider-a',
+          modelId: 'model-a',
+          effortLevel: 'high',
+        },
+        runtimeInstanceId: 'runtime-projector',
       })
       expect(index.getSource(candidate.path)).toMatchObject({
         path: candidate.path,
@@ -313,6 +349,47 @@ describe('session projector', () => {
         action: 'rebuild',
         projection: { summary: { title: 'Replacement', messageCount: 2 } },
       })
+    } finally {
+      database.close()
+    }
+  })
+
+  it('rebuilds a v5 cached session and ignores retained protocol metadata after rollback', async () => {
+    const root = await createTempDir('projector-protocol-rollback')
+    const content = line({ type: 'session-meta', sessionApiFormat: 'unknown' }) +
+      line(user('Existing conversation', '2026-01-01T00:00:00.000Z')) +
+      line(assistant('2026-01-01T00:01:00.000Z'))
+    const candidate = await createCandidate({
+      root,
+      projectPath: '-repo-a',
+      sessionId: 'existing',
+      content,
+    })
+    const database = openLocalIndexDatabase({ path: join(root, 'index.sqlite') })
+    const index = createSessionIndex(database)
+    try {
+      const oldParser = createSessionProjector({ database, index, scope: root, parserVersion: 5 })
+      await oldParser.projectSource(candidate)
+      database.write(operation => operation.run(
+        "UPDATE sessions SET session_api_format = 'unknown' WHERE transcript_path = ?",
+        candidate.path,
+      ))
+      const projector = createSessionProjector({ database, index, scope: root })
+      const result = await projector.projectSource(candidate)
+      expect(result).toMatchObject({
+        kind: 'indexed',
+        action: 'rebuild',
+        projection: { summary: { title: 'Existing conversation', messageCount: 2 } },
+      })
+      if (result.kind !== 'indexed') throw new Error('Expected rebuilt session')
+      expect(result.projection.summary).not.toHaveProperty('sessionApiFormat')
+      expect(database.read(operation => operation.get<{ parser_version: number }>(
+        'SELECT parser_version FROM source_files WHERE path = ?', candidate.path,
+      )?.parser_version)).toBe(6)
+      expect(database.read(operation => operation.get<{ session_api_format: string }>(
+        'SELECT session_api_format FROM sessions WHERE transcript_path = ?', candidate.path,
+      )?.session_api_format)).toBe('unknown')
+      expect(await readFile(candidate.path, 'utf8')).toBe(content)
     } finally {
       database.close()
     }

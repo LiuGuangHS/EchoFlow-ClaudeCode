@@ -143,6 +143,9 @@ function createFakeIndex(seed: SessionSourceCandidate[] = []): SessionIndex {
         .filter(row => row.id === sessionId)
         .map(row => ({ filePath: row.transcriptPath, projectDir: row.projectPath }))
     },
+    getSession(sessionId) {
+      return [...rows.values()].find(row => row.id === sessionId) ?? null
+    },
     getSource(path) {
       return sources.get(path) ?? null
     },

@@ -1,15 +1,20 @@
 import { spawn as spawnProcess, type ChildProcessByStdio } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
 import * as fs from 'node:fs/promises'
 import path from 'node:path'
 import { Readable } from 'node:stream'
 import { killSidecar, reserveLocalPort } from './sidecarManager'
+import {
+  installLatestLtsNode,
+  isCompatibleNodeVersion,
+  readNodeVersion,
+  resolveManagedNode,
+} from './nodeRuntime'
 
-const DSH_VERSION = '0.1.1-rc.2'
+const DSH_VERSION = '0.1.5-rc.2'
 const DSH_PACKAGE = '@deepseek-ai/dsh'
 const DSH_EXECUTABLE_PATH = ['node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js']
-const DSH_MIN_NODE_VERSION = [22, 19, 0] as const
 const DSH_STARTUP_TIMEOUT_MS = 30_000
 const HARNESS_ENV_KEYS = [
   'APPDATA',
@@ -26,7 +31,7 @@ const HARNESS_ENV_KEYS = [
   'USERPROFILE',
 ] as const
 
-export type DeepSeekHarnessState = 'unavailable' | 'not-installed' | 'installed' | 'starting' | 'running' | 'stopped' | 'error'
+export type DeepSeekHarnessState = 'unavailable' | 'not-installed' | 'installing' | 'installed' | 'starting' | 'running' | 'stopped' | 'error'
 
 export type DeepSeekHarnessStatus = {
   state: DeepSeekHarnessState
@@ -52,12 +57,15 @@ type DeepSeekHarnessRuntimeDeps = {
   reservePort: typeof reserveLocalPort
   waitForUrl: (url: string) => Promise<void>
   resolveNode: () => string | null
+  resolveManagedNode: (userDataPath: string) => Promise<string | null>
+  installNode: (userDataPath: string) => Promise<string>
   nodeVersion: (nodePath: string) => Promise<[number, number, number]>
   installPackage: (nodePath: string, directory: string) => Promise<void>
 }
 
 type DeepSeekHarnessRuntimeOptions = {
   userDataPath: string
+  resourcesPath?: string
   deps?: Partial<DeepSeekHarnessRuntimeDeps>
 }
 
@@ -82,18 +90,9 @@ const defaultDeps: DeepSeekHarnessRuntimeDeps = {
     }
     return candidates.find(target => existsSync(target)) ?? null
   },
-  nodeVersion: async nodePath => {
-    const output = await new Promise<string>((resolve, reject) => {
-      const child = spawnProcess(nodePath, ['--version'], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
-      let stdout = ''
-      child.stdout?.on('data', chunk => { stdout += String(chunk) })
-      child.once('error', reject)
-      child.once('exit', code => code === 0 ? resolve(stdout) : reject(new Error(`Node.js exited with code ${code ?? 'unknown'}`)))
-    })
-    const match = /^v(\d+)\.(\d+)\.(\d+)/.exec(output.trim())
-    if (!match) throw new Error('Unable to determine Node.js version')
-    return [Number(match[1]), Number(match[2]), Number(match[3])]
-  },
+  resolveManagedNode: userDataPath => resolveManagedNode(userDataPath),
+  installNode: userDataPath => installLatestLtsNode(userDataPath),
+  nodeVersion: nodePath => readNodeVersion(nodePath),
   installPackage,
 }
 
@@ -133,12 +132,6 @@ function harnessEnvironment(dataRoot: string): NodeJS.ProcessEnv {
   return { ...environment, DSH_HOME: dataRoot }
 }
 
-function isCompatibleNodeVersion(version: readonly [number, number, number]): boolean {
-  const [major, minor, patch] = version
-  const [requiredMajor, requiredMinor, requiredPatch] = DSH_MIN_NODE_VERSION
-  return major > requiredMajor || (major === requiredMajor && (minor > requiredMinor || (minor === requiredMinor && patch >= requiredPatch)))
-}
-
 function parseStoredState(raw: string): StoredState | null {
   try {
     const value = JSON.parse(raw) as unknown
@@ -150,10 +143,28 @@ function parseStoredState(raw: string): StoredState | null {
   }
 }
 
+function resolveNpmCli(nodePath: string): string | null {
+  const nodeDirectory = path.dirname(nodePath)
+  const candidates = process.platform === 'win32'
+    ? [
+        path.join(nodeDirectory, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+        path.join(nodeDirectory, '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+      ]
+    : [
+        path.join(nodeDirectory, '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+        path.join(nodeDirectory, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+        path.join(nodeDirectory, '..', 'share', 'nodejs', 'npm', 'bin', 'npm-cli.js'),
+      ]
+  return candidates.find(candidate => existsSync(candidate)) ?? null
+}
+
 async function installPackage(nodePath: string, directory: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
+    const npmCli = resolveNpmCli(nodePath)
     const npmPath = process.platform === 'win32' ? path.join(path.dirname(nodePath), 'npm.cmd') : path.join(path.dirname(nodePath), 'npm')
-    const child = spawnProcess(npmPath, [
+    const command = npmCli ?? npmPath
+    const args = [
+      ...(npmCli ? [npmCli] : []),
       'install',
       '--no-audit',
       '--no-fund',
@@ -161,9 +172,11 @@ async function installPackage(nodePath: string, directory: string): Promise<void
       '--prefix',
       directory,
       `${DSH_PACKAGE}@${DSH_VERSION}`,
-    ], {
+    ]
+    const child = spawnProcess(npmCli ? nodePath : command, args, {
       stdio: 'ignore',
       windowsHide: true,
+      shell: !npmCli && process.platform === 'win32',
     })
     child.once('error', () => reject(new Error('npm was not found beside the compatible Node.js runtime')))
     child.once('exit', code => {
@@ -190,7 +203,9 @@ async function waitForUrl(url: string): Promise<void> {
 }
 
 export class DeepSeekHarnessRuntime {
+  private readonly userDataPath: string
   private readonly root: string
+  private readonly resourcesPath?: string
   private readonly deps: DeepSeekHarnessRuntimeDeps
   private nodePath: string | null = null
   private currentStatus: DeepSeekHarnessStatus = status('not-installed')
@@ -200,17 +215,58 @@ export class DeepSeekHarnessRuntime {
   private generation = 0
 
   constructor(options: DeepSeekHarnessRuntimeOptions) {
+    this.userDataPath = options.userDataPath
     this.root = deepSeekHarnessRoot(options.userDataPath)
+    this.resourcesPath = options.resourcesPath
     this.deps = { ...defaultDeps, ...options.deps }
+  }
+
+  private resolveUserExecutable(): string | null {
+    const runtimeBase = path.join(this.root, 'runtime', 'dsh')
+    try {
+      const versions = this.deps.exists(runtimeBase)
+        ? readdirSync(runtimeBase).filter((version: string) => {
+            const executable = path.join(runtimeBase, version, ...DSH_EXECUTABLE_PATH)
+            return this.deps.exists(executable)
+          })
+        : []
+      if (versions.length > 0) {
+        const preferredVersion = versions.includes(DSH_VERSION) ? DSH_VERSION : versions[0]!
+        return path.join(runtimeBase, preferredVersion, ...DSH_EXECUTABLE_PATH)
+      }
+    } catch {
+      // If directory listing fails, fall back to checking the expected version.
+    }
+
+    const userInstalled = harnessExecutable(this.root)
+    return this.deps.exists(userInstalled) ? userInstalled : null
+  }
+
+  private resolveBestExecutable(): string | null {
+    const userInstalled = this.resolveUserExecutable()
+    if (userInstalled) return userInstalled
+
+    if (this.resourcesPath) {
+      const bundled = path.join(this.resourcesPath, 'deepseek-harness', DSH_VERSION, ...DSH_EXECUTABLE_PATH)
+      if (this.deps.exists(bundled)) return bundled
+    }
+
+    return null
   }
 
   async getStatus(): Promise<DeepSeekHarnessStatus> {
     if (this.currentStatus.state !== 'not-installed') return this.currentStatus
     if (!await this.resolveCompatibleNode()) return this.currentStatus
-    const stored = await this.readStoredState()
-    if (stored && this.deps.exists(harnessExecutable(this.root))) {
-      this.currentStatus = status('installed', stored.version)
+
+    // Check if any version is available (user-installed or bundled)
+    const executable = this.resolveBestExecutable()
+    if (executable) {
+      const stored = await this.readStoredState()
+      // Use stored version if available, otherwise assume bundled version
+      const version = stored?.version || DSH_VERSION
+      this.currentStatus = status('installed', version)
     }
+
     return this.currentStatus
   }
 
@@ -250,8 +306,40 @@ export class DeepSeekHarnessRuntime {
 
   private async installOnce(): Promise<DeepSeekHarnessStatus> {
     if (this.child || this.startPromise) throw new Error('Stop DeepSeek Harness before installing updates')
-    const nodePath = await this.resolveCompatibleNode()
-    if (!nodePath) throw new Error('Node.js 22.19.0 or later is required to install DeepSeek Harness')
+    let nodePath = await this.resolveCompatibleNode()
+    if (!nodePath) {
+      this.currentStatus = status('installing')
+      try {
+        const installedNode = await this.deps.installNode(this.userDataPath)
+        const version = await this.deps.nodeVersion(installedNode)
+        if (!isCompatibleNodeVersion(version)) {
+          throw new Error('Downloaded Node.js runtime does not meet the minimum version')
+        }
+        nodePath = installedNode
+        this.nodePath = installedNode
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        this.currentStatus = status('error', null, null, message)
+        throw error
+      }
+    }
+
+    const userExecutable = this.resolveUserExecutable()
+    const bundledExecutable = this.resolveBestExecutable()
+    if (!userExecutable && bundledExecutable) {
+      try {
+        await this.deps.mkdir(this.root, { recursive: true })
+        await this.deps.mkdir(harnessDataRoot(this.root), { recursive: true })
+        await this.writeStoredState({ version: DSH_VERSION })
+        this.currentStatus = status('installed', DSH_VERSION)
+        return this.currentStatus
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        this.currentStatus = status('error', null, null, message)
+        throw error
+      }
+    }
+
     const runtimeRoot = harnessRuntimeRoot(this.root)
     const temporaryRuntime = `${runtimeRoot}.installing-${randomUUID()}`
     const backupRuntime = `${runtimeRoot}.backup-${randomUUID()}`
@@ -281,7 +369,8 @@ export class DeepSeekHarnessRuntime {
       }
       const message = error instanceof Error ? error.message : String(error)
       const existing = await this.readStoredState()
-      this.currentStatus = existing && this.deps.exists(harnessExecutable(this.root))
+      const executable = this.resolveBestExecutable()
+      this.currentStatus = existing && executable
         ? status('installed', existing.version, null, message)
         : status('error', null, null, message)
       throw error
@@ -294,12 +383,15 @@ export class DeepSeekHarnessRuntime {
     if (!current.version) throw new Error('Install DeepSeek Harness before starting it')
     const nodePath = await this.resolveCompatibleNode()
     if (!nodePath) throw new Error('Node.js 22.19.0 or later is required to start DeepSeek Harness')
-    const executable = harnessExecutable(this.root)
-    if (!this.deps.exists(executable)) throw new Error('DeepSeek Harness installation is incomplete')
+
+    // Resolve best available executable
+    const executable = this.resolveBestExecutable()
+    if (!executable) throw new Error('DeepSeek Harness installation is incomplete')
+
     const port = await this.deps.reservePort('127.0.0.1')
     const url = `http://127.0.0.1:${port}`
     const generation = ++this.generation
-    this.currentStatus = status('starting', DSH_VERSION, url)
+    this.currentStatus = status('starting', current.version, url)
     try {
       const child = this.deps.spawn(nodePath, [executable, 'web', '--no-open', '--host', '127.0.0.1', '--port', String(port)], {
         cwd: harnessDataRoot(this.root),
@@ -311,16 +403,16 @@ export class DeepSeekHarnessRuntime {
       child.once('exit', () => {
         if (generation !== this.generation || this.child !== child) return
         this.child = null
-        this.currentStatus = status('stopped', DSH_VERSION)
+        this.currentStatus = status('stopped', current.version)
       })
       child.once('error', error => {
         if (generation !== this.generation || this.child !== child) return
         this.child = null
-        this.currentStatus = status('error', DSH_VERSION, null, error.message)
+        this.currentStatus = status('error', current.version, null, error.message)
       })
       await this.deps.waitForUrl(url)
       if (generation !== this.generation || this.child !== child) throw new Error('DeepSeek Harness startup stopped')
-      this.currentStatus = status('running', DSH_VERSION, url)
+      this.currentStatus = status('running', current.version, url)
       return this.currentStatus
     } catch (error) {
       if (generation === this.generation) {
@@ -328,7 +420,7 @@ export class DeepSeekHarnessRuntime {
         this.child = null
         if (child) killSidecar(child)
         const message = error instanceof Error ? error.message : String(error)
-        this.currentStatus = status('error', DSH_VERSION, null, message)
+        this.currentStatus = status('error', current.version, null, message)
       }
       throw error
     }
@@ -336,23 +428,21 @@ export class DeepSeekHarnessRuntime {
 
   private async resolveCompatibleNode(): Promise<string | null> {
     if (this.nodePath) return this.nodePath
-    const candidate = this.deps.resolveNode()
-    if (!candidate) {
-      this.currentStatus = status('unavailable', null, null, 'Node.js 22.19.0 or later is required')
-      return null
-    }
-    try {
-      const version = await this.deps.nodeVersion(candidate)
-      if (!isCompatibleNodeVersion(version)) {
-        this.currentStatus = status('unavailable', null, null, 'Node.js 22.19.0 or later is required')
-        return null
+    const candidates = [this.deps.resolveNode(), await this.deps.resolveManagedNode(this.userDataPath)]
+    for (const candidate of candidates) {
+      if (!candidate) continue
+      try {
+        const version = await this.deps.nodeVersion(candidate)
+        if (isCompatibleNodeVersion(version)) {
+          this.nodePath = candidate
+          return candidate
+        }
+      } catch {
+        // Try the next available runtime.
       }
-      this.nodePath = candidate
-      return candidate
-    } catch {
-      this.currentStatus = status('unavailable', null, null, 'Node.js 22.19.0 or later is required')
-      return null
     }
+    this.currentStatus = status('unavailable', null, null, 'Node.js 22.19.0 or later is required')
+    return null
   }
 
   private async readStoredState(): Promise<StoredState | null> {
@@ -366,7 +456,12 @@ export class DeepSeekHarnessRuntime {
   private async writeStoredState(next: StoredState): Promise<void> {
     const file = harnessStatePath(this.root)
     const temporary = `${file}.${randomUUID()}.tmp`
-    await this.deps.writeFile(temporary, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
-    await this.deps.rename(temporary, file)
+    try {
+      await this.deps.writeFile(temporary, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
+      await this.deps.rename(temporary, file)
+    } catch (error) {
+      await this.deps.rm(temporary, { force: true }).catch(() => undefined)
+      throw error
+    }
   }
 }

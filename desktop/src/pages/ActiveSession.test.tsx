@@ -48,12 +48,6 @@ vi.mock('../components/chat/ChatInput', () => ({
   ),
 }))
 
-vi.mock('../components/workbench/WorkbenchPanel', () => ({
-  WorkbenchPanel: ({ sessionId }: { sessionId: string }) => (
-    <div data-testid="workspace-panel">workspace:{sessionId}</div>
-  ),
-}))
-
 vi.mock('../api/teams', () => ({
   teamsApi: {
     getMemberTranscript: teamApiMocks.getMemberTranscript,
@@ -103,15 +97,14 @@ import { useSessionStore } from '../stores/sessionStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useTabStore } from '../stores/tabStore'
 import { useTeamStore } from '../stores/teamStore'
-import { useWorkspacePanelStore } from '../stores/workspacePanelStore'
-import { WORKSPACE_PANEL_DEFAULT_WIDTH } from '../stores/workspacePanelStore'
-import { useTerminalPanelStore } from '../stores/terminalPanelStore'
 import { useActivityPanelStore } from '../stores/activityPanelStore'
 import {
-  TERMINAL_PANEL_DEFAULT_HEIGHT,
-  TERMINAL_PANEL_MAX_HEIGHT,
-  TERMINAL_PANEL_MIN_HEIGHT,
-} from '../stores/terminalPanelStore'
+  WORKSPACE_BOTTOM_DEFAULT_HEIGHT,
+  WORKSPACE_BOTTOM_MAX_HEIGHT,
+  WORKSPACE_BOTTOM_MIN_HEIGHT,
+  WORKSPACE_SIDE_DEFAULT_WIDTH,
+  useWorkspaceStore,
+} from '../stores/workspaceStore'
 
 beforeEach(() => {
   sessionApiMocks.getGitInfo.mockReset()
@@ -142,8 +135,7 @@ afterEach(() => {
   useSettingsStore.setState({ locale: 'en' })
   useTeamStore.getState().stopMemberPolling()
   useTeamStore.setState(useTeamStore.getInitialState(), true)
-  useWorkspacePanelStore.setState(useWorkspacePanelStore.getInitialState(), true)
-  useTerminalPanelStore.setState(useTerminalPanelStore.getInitialState(), true)
+  useWorkspaceStore.setState(useWorkspaceStore.getInitialState(), true)
   useActivityPanelStore.setState(useActivityPanelStore.getInitialState(), true)
   useCLITaskStore.setState(useCLITaskStore.getInitialState(), true)
 })
@@ -197,14 +189,23 @@ describe('ActiveSession task polling', () => {
         },
       },
     })
-    useTerminalPanelStore.getState().openPanel(sessionId)
-
     render(<ActiveSession />)
 
     expect(screen.getByText(
       'The temporary workspace was cleaned up. History is still available; start a new session in /repo to continue.',
     )).toBeInTheDocument()
-    expect(screen.getByTestId(`session-terminal-host-${sessionId}`)).toHaveAttribute('data-cwd', '/repo')
+
+    // Open the terminal the way a user does, through the workspace launcher,
+    // so the cwd under test is the one ActiveSession actually hands down: the
+    // source project, not the worktree path that no longer exists.
+    act(() => {
+      useWorkspaceStore.getState().toggleWorkspace(sessionId)
+    })
+    act(() => {
+      fireEvent.click(screen.getByTestId('workspace-launcher-terminal'))
+    })
+
+    expect(screen.getByTestId('workspace-terminal-host-1')).toHaveAttribute('data-cwd', '/repo')
   })
 
   it('treats a persisted historical session as non-empty before messages finish loading', () => {
@@ -302,13 +303,13 @@ describe('ActiveSession task polling', () => {
     expect(screen.getByTestId('chat-input')).toHaveAttribute('data-variant', 'default')
   })
 
-  it('shows the session token badge when usage is cache-only', () => {
-    const sessionId = 'cache-only-token-session'
+  it('labels result usage that includes cache tokens without implying the Trace input/output total', async () => {
+    const sessionId = 'deepseek-cache-token-session'
 
     useSessionStore.setState({
       sessions: [{
         id: sessionId,
-        title: 'Cache Only Token Session',
+        title: 'DeepSeek Cache Token Session',
         createdAt: '2026-05-07T00:00:00.000Z',
         modifiedAt: '2026-05-07T00:00:00.000Z',
         messageCount: 1,
@@ -321,42 +322,35 @@ describe('ActiveSession task polling', () => {
       error: null,
     })
     useTabStore.setState({
-      tabs: [{ sessionId, title: 'Cache Only Token Session', type: 'session', status: 'idle' }],
+      tabs: [{ sessionId, title: 'DeepSeek Cache Token Session', type: 'session', status: 'idle' }],
       activeTabId: sessionId,
     })
     useChatStore.setState({
       sessions: {
         [sessionId]: {
-          messages: [],
-          chatState: 'idle',
+          ...createDefaultSessionState(),
           connectionState: 'connected',
-          streamingText: '',
-          streamingToolInput: '',
-          activeToolUseId: null,
-          activeToolName: null,
-          activeThinkingId: null,
-          pendingPermission: null,
-          pendingComputerUsePermission: null,
-          tokenUsage: {
-            input_tokens: 0,
-            output_tokens: 0,
-            cache_read_tokens: 1200,
-            cache_creation_tokens: 300,
-          },
-          streamingResponseChars: 0,
-          elapsedSeconds: 0,
-          statusVerb: '',
-          slashCommands: [],
-          agentTaskNotifications: {},
-          elapsedTimer: null,
         },
       },
     })
-
     render(<ActiveSession />)
 
-    const tokenBadge = screen.getByTitle(/cache 1,500/i)
-    expect(tokenBadge).toHaveTextContent('1.5k API tokens')
+    await act(async () => {
+      useChatStore.getState().handleServerMessage(sessionId, {
+        type: 'message_complete',
+        usage: {
+          input_tokens: 107_600,
+          output_tokens: 11_400,
+          cache_read_tokens: 4_971_000,
+          cache_creation_tokens: 10_000,
+        },
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const tokenBadge = screen.getByTitle(/cache read 4,971,000.*cache write 10,000/i)
+    expect(tokenBadge).toHaveTextContent('5.1m tokens incl. cache')
   })
 
   it('shows the worktree name in the header and reveals its directory on focus', async () => {
@@ -832,7 +826,7 @@ describe('ActiveSession task polling', () => {
     expect(screen.queryByTestId('background-tasks-button')).not.toBeInTheDocument()
 
     act(() => {
-      useWorkspacePanelStore.getState().openPanel(sessionId)
+      useWorkspaceStore.getState().openTarget(sessionId, { kind: 'file', path: 'src/a.ts' })
     })
 
     expect(screen.getByTestId('workbench-panel')).toBeInTheDocument()
@@ -1973,7 +1967,7 @@ describe('ActiveSession task polling', () => {
         },
       },
     })
-    useWorkspacePanelStore.getState().openPanel(sessionId)
+    useWorkspaceStore.getState().openTarget(sessionId, { kind: 'file', path: 'src/a.ts' })
 
     render(<ActiveSession />)
 
@@ -1982,10 +1976,14 @@ describe('ActiveSession task polling', () => {
     const resizeHandle = screen.getByTestId('workspace-resize-handle')
 
     const workbenchPanel = screen.getByTestId('workbench-panel')
+    expect(workbenchPanel.style.maxWidth).toBe('70%')
 
     expect(within(contentRow).getByTestId('message-list')).toBeInTheDocument()
     expect(within(contentRow).getByTestId('message-list')).toHaveAttribute('data-compact', 'true')
-    expect(within(workbenchPanel).getByTestId('workspace-panel')).toHaveTextContent(`workspace:${sessionId}`)
+    // The unified surface renders a tab strip even for a single tab, and the
+    // four-entry launcher when the workspace is empty.
+    expect(within(workbenchPanel).getByTestId('workspace-surface-side')).toBeInTheDocument()
+    expect(within(workbenchPanel).getByTestId('workspace-tab-strip-side')).toBeInTheDocument()
     expect(within(chatColumn).getByTestId('chat-input')).toBeInTheDocument()
     expect(within(chatColumn).getByTestId('chat-input')).toHaveAttribute('data-compact', 'true')
     expect(chatColumn).toHaveClass('flex-1')
@@ -2002,7 +2000,7 @@ describe('ActiveSession task polling', () => {
       fireEvent.keyDown(resizeHandle, { key: 'ArrowLeft' })
     })
 
-    expect(useWorkspacePanelStore.getState().width).toBe(WORKSPACE_PANEL_DEFAULT_WIDTH + 32)
+    expect(useWorkspaceStore.getState().sideWidth).toBe(WORKSPACE_SIDE_DEFAULT_WIDTH + 32)
 
     vi.spyOn(workbenchPanel, 'getBoundingClientRect').mockReturnValue({
       x: 0,
@@ -2030,7 +2028,7 @@ describe('ActiveSession task polling', () => {
       window.dispatchEvent(new Event('pointerup'))
     })
 
-    expect(useWorkspacePanelStore.getState().width).toBe(526)
+    expect(useWorkspaceStore.getState().sideWidth).toBe(526)
   })
 
   it('does not render the workspace panel when closed', () => {
@@ -2080,7 +2078,7 @@ describe('ActiveSession task polling', () => {
     })
 
     render(<ActiveSession />)
-    expect(screen.queryByTestId('workspace-panel')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-surface-side')).not.toBeInTheDocument()
   })
 
   it('keeps chat as the primary surface on mobile by hiding workspace and terminal panels', () => {
@@ -2129,8 +2127,11 @@ describe('ActiveSession task polling', () => {
         },
       },
     })
-    useWorkspacePanelStore.getState().openPanel(sessionId)
-    useTerminalPanelStore.getState().openPanel(sessionId)
+    useWorkspaceStore.getState().openTarget(sessionId, { kind: 'file', path: 'src/a.ts' })
+    useWorkspaceStore.getState().toggleBottomPanel(
+      sessionId,
+      useSessionStore.getState().sessions.find((entry) => entry.id === sessionId)?.workDir ?? '',
+    )
 
     render(<ActiveSession />)
 
@@ -2138,7 +2139,7 @@ describe('ActiveSession task polling', () => {
     expect(screen.getByTestId('message-list')).toHaveAttribute('data-compact', 'false')
     expect(screen.getByTestId('chat-input')).toHaveAttribute('data-compact', 'false')
     expect(screen.queryByRole('heading', { name: 'Mobile Session' })).not.toBeInTheDocument()
-    expect(screen.queryByTestId('workspace-panel')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-surface-side')).not.toBeInTheDocument()
     expect(screen.queryByTestId('workspace-resize-handle')).not.toBeInTheDocument()
     expect(screen.queryByTestId('session-terminal-panel')).not.toBeInTheDocument()
     expect(screen.queryByTestId('terminal-resize-handle')).not.toBeInTheDocument()
@@ -2189,25 +2190,33 @@ describe('ActiveSession task polling', () => {
         },
       },
     })
-    useTerminalPanelStore.getState().openPanel(sessionId)
+    useWorkspaceStore.getState().toggleBottomPanel(
+      sessionId,
+      useSessionStore.getState().sessions.find((entry) => entry.id === sessionId)?.workDir ?? '',
+    )
 
     render(<ActiveSession />)
 
     const panel = screen.getByTestId('session-terminal-panel')
     const resizeHandle = screen.getByTestId('terminal-resize-handle')
-    const host = screen.getByTestId(`session-terminal-host-${sessionId}`)
+    const host = screen.getByTestId(`workspace-terminal-host-1`)
 
-    expect(panel).toHaveStyle({ height: `${TERMINAL_PANEL_DEFAULT_HEIGHT}px` })
+    expect(panel).toHaveStyle({ height: `${WORKSPACE_BOTTOM_DEFAULT_HEIGHT}px` })
     expect(host).toHaveAttribute('data-cwd', '/tmp/project-root/packages/app')
     expect(host).toHaveAttribute('data-active', 'true')
     expect(host).toHaveAttribute('data-preserve-on-unmount', 'true')
-    expect(resizeHandle).toHaveAttribute('aria-valuemin', `${TERMINAL_PANEL_MIN_HEIGHT}`)
-    expect(resizeHandle).toHaveAttribute('aria-valuemax', `${TERMINAL_PANEL_MAX_HEIGHT}`)
+    expect(resizeHandle).toHaveAttribute('aria-valuemin', `${WORKSPACE_BOTTOM_MIN_HEIGHT}`)
+    expect(resizeHandle).toHaveAttribute('aria-valuemax', `${WORKSPACE_BOTTOM_MAX_HEIGHT}`)
+    // The hit target overlays the existing panel border instead of adding a
+    // second visible line and a spacer above the terminal tabs.
+    expect(panel).toHaveClass('relative', 'border-t')
+    expect(resizeHandle).toHaveClass('absolute', 'bg-transparent')
+    expect(resizeHandle.firstElementChild).toHaveClass('bg-transparent')
 
     act(() => {
       fireEvent.keyDown(resizeHandle, { key: 'ArrowUp' })
     })
-    expect(useTerminalPanelStore.getState().height).toBe(TERMINAL_PANEL_DEFAULT_HEIGHT + 24)
+    expect(useWorkspaceStore.getState().bottomHeight).toBe(WORKSPACE_BOTTOM_DEFAULT_HEIGHT + 24)
 
     await act(async () => {
       const pointerDown = createEvent.pointerDown(resizeHandle)
@@ -2222,34 +2231,39 @@ describe('ActiveSession task polling', () => {
       window.dispatchEvent(pointerMove)
       window.dispatchEvent(new Event('pointerup'))
     })
-    expect(useTerminalPanelStore.getState().height).toBe(TERMINAL_PANEL_DEFAULT_HEIGHT + 64)
+    expect(useWorkspaceStore.getState().bottomHeight).toBe(WORKSPACE_BOTTOM_DEFAULT_HEIGHT + 64)
 
     act(() => {
       fireEvent.keyDown(resizeHandle, { key: 'End' })
     })
-    expect(useTerminalPanelStore.getState().height).toBe(TERMINAL_PANEL_MAX_HEIGHT)
+    expect(useWorkspaceStore.getState().bottomHeight).toBe(WORKSPACE_BOTTOM_MAX_HEIGHT)
 
     act(() => {
       fireEvent.keyDown(resizeHandle, { key: 'Home' })
     })
-    expect(useTerminalPanelStore.getState().height).toBe(TERMINAL_PANEL_MIN_HEIGHT)
+    expect(useWorkspaceStore.getState().bottomHeight).toBe(WORKSPACE_BOTTOM_MIN_HEIGHT)
 
     act(() => {
       fireEvent.doubleClick(resizeHandle)
     })
-    expect(useTerminalPanelStore.getState().height).toBe(TERMINAL_PANEL_DEFAULT_HEIGHT)
+    expect(useWorkspaceStore.getState().bottomHeight).toBe(WORKSPACE_BOTTOM_DEFAULT_HEIGHT)
 
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Open in Tab' }))
-      await Promise.resolve()
+    // Moving the terminal to the side dock keeps the same PTY and creates no
+    // global app tab — the old "Open in Tab" promotion is gone on purpose.
+    const terminalTabId = useWorkspaceStore.getState().getTabs(sessionId, 'bottom')[0]!.id
+    const runtimeId = (useWorkspaceStore.getState().getTab(sessionId, terminalTabId) as {
+      runtimeId: string
+    }).runtimeId
+
+    act(() => {
+      useWorkspaceStore.getState().moveTabToDock(sessionId, terminalTabId, 'side')
     })
 
-    const terminalTab = useTabStore.getState().tabs.find((tab) => tab.type === 'terminal')
-    expect(useTerminalPanelStore.getState().isPanelOpen(sessionId)).toBe(false)
-    expect(useTerminalPanelStore.getState().getPanelRuntimeId(sessionId)).toBeUndefined()
-    expect(terminalTab?.terminalCwd).toBe('/tmp/project-root/packages/app')
-    expect(terminalTab?.terminalRuntimeId).toBe(`__session_terminal__${sessionId}`)
-    expect(useTabStore.getState().activeTabId).toBe(terminalTab?.sessionId)
+    expect(useWorkspaceStore.getState().getTabs(sessionId, 'side')).toHaveLength(1)
+    expect((useWorkspaceStore.getState().getTab(sessionId, terminalTabId) as {
+      runtimeId: string
+    }).runtimeId).toBe(runtimeId)
+    expect(useTabStore.getState().tabs.some((tab) => tab.type === 'terminal')).toBe(false)
   })
 
   it('keeps the docked terminal usable on a new empty session', () => {
@@ -2297,7 +2311,10 @@ describe('ActiveSession task polling', () => {
         },
       },
     })
-    useTerminalPanelStore.getState().openPanel(sessionId)
+    useWorkspaceStore.getState().toggleBottomPanel(
+      sessionId,
+      useSessionStore.getState().sessions.find((entry) => entry.id === sessionId)?.workDir ?? '',
+    )
 
     render(<ActiveSession />)
 
@@ -2354,16 +2371,27 @@ describe('ActiveSession task polling', () => {
         },
       },
     })
-    useTerminalPanelStore.getState().openPanel(sessionId)
+    useWorkspaceStore.getState().toggleBottomPanel(
+      sessionId,
+      useSessionStore.getState().sessions.find((entry) => entry.id === sessionId)?.workDir ?? '',
+    )
 
     render(<ActiveSession />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Close terminal panel' }))
+    const runtimeIdBefore = screen
+      .getByTestId('workspace-terminal-host-1')
+      .getAttribute('data-runtime-id')
+    expect(runtimeIdBefore).toBeTruthy()
 
-    expect(useTerminalPanelStore.getState().isPanelOpen(sessionId)).toBe(false)
+    act(() => useWorkspaceStore.getState().toggleBottomPanel(sessionId, '/tmp/project'))
+
+    expect(useWorkspaceStore.getState().getSession(sessionId).bottomOpen).toBe(false)
+    // Hidden, not unmounted, and still the same PTY: re-opening must come back
+    // to the same shell rather than starting a new one.
     expect(screen.getByTestId('session-terminal-panel')).toHaveClass('hidden')
-    expect(screen.getByTestId(`session-terminal-host-${sessionId}`)).toHaveAttribute('data-active', 'false')
-    expect(screen.getByTestId(`session-terminal-host-${sessionId}`)).toHaveAttribute('data-runtime-id', `__session_terminal__${sessionId}`)
+    expect(screen.getByTestId('workspace-terminal-host-1')).toHaveAttribute('data-active', 'false')
+    expect(screen.getByTestId('workspace-terminal-host-1'))
+      .toHaveAttribute('data-runtime-id', runtimeIdBefore!)
   })
 })
 

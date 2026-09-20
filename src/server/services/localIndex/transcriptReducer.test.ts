@@ -83,6 +83,13 @@ describe('reduceTranscript', () => {
         runtimeProviderId: 'provider-a',
         runtimeModelId: 'model-a',
         effortLevel: 'high',
+        modelConfigId: 'mc_config-a',
+        modelConfig: {
+          providerId: 'provider-a',
+          modelId: 'model-a',
+          effortLevel: 'high',
+        },
+        runtimeInstanceId: 'runtime_same-id',
         cliRuntimeId: 'installed',
         timestamp: '2026-01-01T00:00:00.000Z',
       },
@@ -126,6 +133,13 @@ describe('reduceTranscript', () => {
       runtimeProviderId: 'provider-a',
       runtimeModelId: 'model-a',
       effortLevel: 'high',
+      modelConfigId: 'mc_config-a',
+      modelConfig: {
+        providerId: 'provider-a',
+        modelId: 'model-a',
+        effortLevel: 'high',
+      },
+      runtimeInstanceId: 'runtime_same-id',
       repository,
       worktreeSession,
     })
@@ -135,6 +149,42 @@ describe('reduceTranscript', () => {
     ))
     expect(result.pendingTailBytes).toBe(0)
     expect(result.malformedLineCount).toBe(0)
+  })
+
+  it('ignores invalid legacy effort levels while preserving valid model metadata', () => {
+    const result = reduceTranscript(
+      completeChunks([{
+        type: 'session-meta',
+        runtimeProviderId: 'provider-a',
+        runtimeModelId: 'model-a',
+        effortLevel: 'unsupported',
+        modelConfigId: 'mc_config-a',
+        modelConfig: {
+          providerId: 'provider-a',
+          modelId: 'model-a',
+          effortLevel: 'high',
+        },
+        runtimeInstanceId: 'runtime-a',
+      }]),
+      initialProjection(),
+    )
+
+    expect(result.summary).toEqual({
+      title: 'Untitled Session',
+      createdAt: birthtime,
+      modifiedAt: mtime,
+      messageCount: 0,
+      workDir: '/fallback/project',
+      runtimeProviderId: 'provider-a',
+      runtimeModelId: 'model-a',
+      modelConfigId: 'mc_config-a',
+      modelConfig: {
+        providerId: 'provider-a',
+        modelId: 'model-a',
+        effortLevel: 'high',
+      },
+      runtimeInstanceId: 'runtime-a',
+    })
   })
 
   it.each([

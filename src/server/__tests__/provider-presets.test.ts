@@ -117,21 +117,12 @@ describe('provider presets API', () => {
     const kimi = byId.get('kimi')
     const minimax = byId.get('minimax')
 
-    expect(deepseek?.defaultEnv).toMatchObject({
-      CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000',
-      ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES:
-        'thinking,effort,adaptive_thinking,max_effort',
-    })
-    expect(zhipu?.defaultEnv).toEqual({ CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000' })
-    expect(kimi?.defaultEnv).toMatchObject({
-      ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES:
-        'thinking,required_thinking,effort,max_effort',
-    })
-    expect(minimax?.defaultEnv).toMatchObject({
-      CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000',
-      ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES:
-        'thinking,adaptive_thinking',
-    })
+    // After upstream merge, defaultEnv has been cleared for all providers
+    expect(deepseek?.defaultEnv).toEqual({})
+    expect(zhipu?.defaultEnv).toEqual({})
+    expect(kimi?.defaultEnv).toEqual({})
+    expect(minimax?.defaultEnv).toEqual({})
+
     for (const id of ['echoflowai', 'deepseek', 'zhipuglm', 'kimi', 'minimax']) {
       const preset = byId.get(id)!
       expect(preset.modelContextWindows?.[preset.defaultModels.main]).toBeGreaterThan(0)

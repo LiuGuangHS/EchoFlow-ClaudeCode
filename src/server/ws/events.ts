@@ -36,6 +36,17 @@ export type ClientMessage =
     }
   | { type: 'set_permission_mode'; mode: PermissionMode }
   | { type: 'set_runtime_config'; providerId: string | null; modelId: string; effortLevel?: string }
+  | {
+      type: 'set_model_config'
+      configId?: string
+      config?: {
+        providerId: string | null
+        modelId: string
+        effortLevel?: string
+      }
+      requestId: string
+    }
+  | { type: 'restart_runtime'; requestId: string; reason?: string }
   | { type: 'set_cli_runtime'; cliRuntimeId: 'bundled' | 'installed' }
   | { type: 'stop_generation' }
   | { type: 'stop_background_task'; taskId: string }
@@ -55,6 +66,9 @@ export type AttachmentRef = {
 // ============================================================================
 
 export const RUNTIME_CONFIG_APPLIED_EVENT = 'runtime_config_applied' as const
+export const MODEL_CONFIG_APPLIED_EVENT = 'model_config_applied' as const
+export const MODEL_CONFIG_APPLY_FAILED_EVENT = 'model_config_apply_failed' as const
+export const RUNTIME_STATUS_EVENT = 'runtime_status' as const
 export const CLI_RUNTIME_APPLIED_EVENT = 'cli_runtime_applied' as const
 
 export type ServerMessage =
@@ -83,6 +97,7 @@ export type ServerMessage =
       toolUseId?: string
       input: unknown
       description?: string
+      displayName?: string
     }
   | {
       type: 'computer_use_permission_request'
@@ -102,7 +117,7 @@ export type ServerMessage =
       turnActive: boolean
     }
   | { type: 'user_message_replay'; content: string }
-  | { type: 'message_complete'; usage: TokenUsage }
+  | { type: 'message_complete'; usage: TokenUsage; timing?: TurnTiming }
   /**
    * `text` is a fragment when the CLI streams `thinking_delta`, and a whole block when
    * it hands over a finished `thinking` block. The client has to concatenate the first
@@ -116,6 +131,31 @@ export type ServerMessage =
       providerId: string | null
       modelId: string
       effortLevel?: string
+    }
+  | {
+      type: typeof MODEL_CONFIG_APPLIED_EVENT
+      requestId: string
+      configId: string
+      application: 'noop' | 'in_place' | 'runtime_restart' | 'deferred'
+      runtimeInstanceId: string
+      providerId: string | null
+      modelId: string
+      effortLevel?: string
+    }
+  | {
+      type: typeof MODEL_CONFIG_APPLY_FAILED_EVENT
+      requestId: string
+      configId: string
+      previousConfigId?: string
+      code: string
+      message: string
+    }
+  | {
+      type: typeof RUNTIME_STATUS_EVENT
+      runtimeInstanceId: string
+      state: 'starting' | 'ready' | 'busy' | 'stopping' | 'stopped' | 'error'
+      processGeneration: number
+      reason?: string
     }
   | {
       type: typeof CLI_RUNTIME_APPLIED_EVENT
@@ -164,6 +204,23 @@ export type TokenUsage = {
   output_tokens: number
   cache_read_tokens?: number
   cache_creation_tokens?: number
+}
+
+/**
+ * Generation timings for one turn, in milliseconds.
+ *
+ * `duration_ms` is wall clock and therefore includes tool execution; `duration_api_ms` covers
+ * only the API requests but includes prefill. `decode_ms` is the span over which the model was
+ * actually emitting tokens — it excludes both — and is the right denominator for tokens/sec.
+ * `ttft_ms` is carried so a client can explain the gap between `duration_api_ms` and `decode_ms`.
+ *
+ * Absent when the turn produced no timed stream; never treat a missing value as zero seconds.
+ */
+export type TurnTiming = {
+  duration_ms: number
+  duration_api_ms: number
+  ttft_ms: number
+  decode_ms: number
 }
 
 export type ChatState = 'idle' | 'thinking' | 'compacting' | 'tool_executing' | 'streaming' | 'permission_pending'
