@@ -57,6 +57,16 @@ type StoredEchoFlowAccount = {
   endpoint?: EchoFlowEndpoint
 }
 
+type StoredEchoFlowAccounts = {
+  schemaVersion: 2
+  accounts: Record<EchoFlowEndpoint, StoredEchoFlowAccount | null>
+}
+
+const EMPTY_ACCOUNTS: StoredEchoFlowAccounts = {
+  schemaVersion: 2,
+  accounts: { main: null, dedicated: null },
+}
+
 const ENDPOINTS = {
   main: 'https://api.echoflowai.cc',
   dedicated: 'https://expapi.echoflowai.cc',
@@ -70,48 +80,58 @@ export class EchoFlowApiService {
     return ENDPOINTS[endpoint] || this.defaultBaseUrl
   }
 
-  async getAccount(): Promise<EchoFlowAccount | null> {
-    const account = await this.readAccount()
-    return account ? toPublicAccount(account) : null
+  async getAccounts(): Promise<Record<EchoFlowEndpoint, EchoFlowAccount | null>> {
+    const stored = await this.readAccounts()
+    return {
+      main: stored.accounts.main ? toPublicAccount(stored.accounts.main) : null,
+      dedicated: stored.accounts.dedicated ? toPublicAccount(stored.accounts.dedicated) : null,
+    }
+  }
+
+  async getAccount(endpoint: EchoFlowEndpoint = 'main'): Promise<EchoFlowAccount | null> {
+    const accounts = await this.getAccounts()
+    return accounts[endpoint]
   }
 
   async bindAccount(userId: string, managementToken: string, endpoint: EchoFlowEndpoint = 'main'): Promise<EchoFlowAccount> {
     const account = await this.refreshWithCredentials(userId, managementToken, endpoint)
     const stored = { ...account, managementToken, endpoint }
-    await this.writeAccount(stored)
+    const accounts = await this.readAccounts()
+    accounts.accounts[endpoint] = stored
+    await this.writeAccounts(accounts)
     return toPublicAccount(stored)
   }
 
+  // Kept as a compatibility boundary for older clients. It only reads the
+  // requested account now; it never changes credentials or aliases a route.
   async updateEndpoint(endpoint: EchoFlowEndpoint): Promise<EchoFlowAccount> {
-    const account = await this.readAccount()
+    const account = await this.getAccount(endpoint)
     if (!account) throw new EchoFlowApiError('token_invalid')
-    const stored = { ...account, endpoint }
-    await this.writeAccount(stored)
+    return account
+  }
+
+  async refreshAccount(endpoint: EchoFlowEndpoint = 'main'): Promise<EchoFlowAccount> {
+    const accounts = await this.readAccounts()
+    const account = accounts.accounts[endpoint]
+    if (!account) throw new EchoFlowApiError('token_invalid')
+    const refreshed = await this.refreshWithCredentials(account.userId, account.managementToken, endpoint)
+    const stored = { ...refreshed, managementToken: account.managementToken, endpoint }
+    accounts.accounts[endpoint] = stored
+    await this.writeAccounts(accounts)
     return toPublicAccount(stored)
   }
 
-  async refreshAccount(): Promise<EchoFlowAccount> {
-    const account = await this.readAccount()
-    if (!account) throw new EchoFlowApiError('token_invalid')
-    const refreshed = await this.refreshWithCredentials(account.userId, account.managementToken, account.endpoint)
-    const stored = { ...refreshed, managementToken: account.managementToken, endpoint: account.endpoint }
-    await this.writeAccount(stored)
-    return toPublicAccount(stored)
-  }
-
-  async selectAccountToken(id: string): Promise<EchoFlowTokenOption> {
-    const account = await this.readAccount()
-    const token = account?.tokens?.find((candidate) => candidate.id === id)
+  async selectAccountToken(endpoint: EchoFlowEndpoint, id: string): Promise<EchoFlowTokenOption> {
+    const accounts = await this.readAccounts()
+    const token = accounts.accounts[endpoint]?.tokens?.find((candidate) => candidate.id === id)
     if (!token) throw new EchoFlowApiError('token_invalid')
     return token
   }
 
-  async disconnectAccount(): Promise<void> {
-    try {
-      await fs.unlink(this.getAccountPath())
-    } catch (error) {
-      if (errnoCode(error) !== 'ENOENT') throw error
-    }
+  async disconnectAccount(endpoint: EchoFlowEndpoint = 'main'): Promise<void> {
+    const accounts = await this.readAccounts()
+    accounts.accounts[endpoint] = null
+    await this.writeAccounts(accounts)
   }
 
   async validateManagementToken(userId: string, token: string, endpoint: EchoFlowEndpoint = 'main'): Promise<EchoFlowUserInfo> {
@@ -174,22 +194,37 @@ export class EchoFlowApiService {
     return path.join(getEchoFlowInternalDir(getEchoFlowConfigDir()), 'echoflow-account.json')
   }
 
-  private async readAccount(): Promise<StoredEchoFlowAccount | null> {
+  private async readAccounts(): Promise<StoredEchoFlowAccounts> {
     try {
       const parsed = JSON.parse(await fs.readFile(this.getAccountPath(), 'utf-8')) as unknown
-      return isStoredAccount(parsed) ? parsed : null
+      if (isStoredAccounts(parsed)) return parsed
+      if (isStoredAccount(parsed)) {
+        const endpoint: EchoFlowEndpoint = parsed.endpoint === 'dedicated' ? 'dedicated' : 'main'
+        const migrated: StoredEchoFlowAccounts = {
+          schemaVersion: 2,
+          accounts: {
+            main: endpoint === 'dedicated' ? null : { ...parsed, endpoint },
+            dedicated: endpoint === 'dedicated' ? { ...parsed, endpoint } : null,
+          },
+        }
+        await this.writeAccounts(migrated)
+        return migrated
+      }
+      return { ...EMPTY_ACCOUNTS, accounts: { ...EMPTY_ACCOUNTS.accounts } }
     } catch (error) {
-      if (errnoCode(error) === 'ENOENT') return null
+      if (errnoCode(error) === 'ENOENT') {
+        return { ...EMPTY_ACCOUNTS, accounts: { ...EMPTY_ACCOUNTS.accounts } }
+      }
       throw error
     }
   }
 
-  private async writeAccount(account: StoredEchoFlowAccount): Promise<void> {
+  private async writeAccounts(accounts: StoredEchoFlowAccounts): Promise<void> {
     const accountPath = this.getAccountPath()
     await fs.mkdir(path.dirname(accountPath), { recursive: true })
     const temporaryPath = `${accountPath}.tmp.${randomBytes(3).toString('hex')}`
     try {
-      await fs.writeFile(temporaryPath, `${JSON.stringify(account, null, 2)}\n`, { encoding: 'utf-8', mode: 0o600 })
+      await fs.writeFile(temporaryPath, `${JSON.stringify(accounts, null, 2)}\n`, { encoding: 'utf-8', mode: 0o600 })
       await fs.rename(temporaryPath, accountPath)
     } catch (error) {
       await fs.unlink(temporaryPath).catch(() => {})
@@ -239,6 +274,15 @@ function toTokenSummary(token: EchoFlowTokenOption): EchoFlowTokenSummary {
 
 function maskKey(key: string): string {
   return key.length <= 8 ? '••••••••' : `${key.slice(0, 3)}-••••${key.slice(-4)}`
+}
+
+function isStoredAccounts(value: unknown): value is StoredEchoFlowAccounts {
+  if (!value || typeof value !== 'object') return false
+  const record = value as { schemaVersion?: unknown; accounts?: unknown }
+  if (record.schemaVersion !== 2 || !record.accounts || typeof record.accounts !== 'object') return false
+  const accounts = record.accounts as Record<string, unknown>
+  return (accounts.main === null || isStoredAccount(accounts.main)) &&
+    (accounts.dedicated === null || isStoredAccount(accounts.dedicated))
 }
 
 function isStoredAccount(value: unknown): value is StoredEchoFlowAccount {

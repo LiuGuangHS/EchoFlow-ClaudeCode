@@ -26,6 +26,13 @@ export type IndexedSessionRow = {
   runtimeProviderId?: string | null
   runtimeModelId?: string
   effortLevel?: string
+  modelConfigId?: string
+  modelConfig?: {
+    providerId: string | null
+    modelId: string
+    effortLevel?: string
+  }
+  runtimeInstanceId?: string
   repository?: PersistedRepositorySession
   worktreeSession?: PersistedWorktreeSession | null
 }
@@ -136,6 +143,9 @@ type SessionRow = {
   runtime_provider_present: number
   runtime_model_id: string | null
   effort_level: string | null
+  model_config_id: string | null
+  model_config_json: string | null
+  runtime_instance_id: string | null
   repository_json: string | null
   worktree_session_json: string | null
 }
@@ -186,6 +196,9 @@ function sessionFromRow(row: SessionRow): IndexedSessionRow {
   const worktreeSession = row.worktree_session_json === 'null'
     ? null
     : parseStoredJson<PersistedWorktreeSession>(row.worktree_session_json)
+  const modelConfig = parseStoredJson<NonNullable<IndexedSessionRow['modelConfig']>>(
+    row.model_config_json,
+  )
   return {
     transcriptPath: row.transcript_path,
     id: row.session_id,
@@ -201,6 +214,9 @@ function sessionFromRow(row: SessionRow): IndexedSessionRow {
       : {}),
     ...(row.runtime_model_id ? { runtimeModelId: row.runtime_model_id } : {}),
     ...(row.effort_level ? { effortLevel: row.effort_level } : {}),
+    ...(row.model_config_id ? { modelConfigId: row.model_config_id } : {}),
+    ...(modelConfig ? { modelConfig } : {}),
+    ...(row.runtime_instance_id ? { runtimeInstanceId: row.runtime_instance_id } : {}),
     ...(repository ? { repository } : {}),
     ...(row.worktree_session_json !== null ? { worktreeSession } : {}),
   }
@@ -279,6 +295,7 @@ export function createSessionIndex(database: LocalIndexDatabase): SessionIndex {
                 modified_at, message_count, work_dir, permission_mode,
                 runtime_provider_id, runtime_provider_present,
                 runtime_model_id, effort_level,
+                model_config_id, model_config_json, runtime_instance_id,
                 repository_json, worktree_session_json
               FROM sessions
               ORDER BY modified_at_ms DESC, session_id ASC, transcript_path ASC
@@ -289,6 +306,7 @@ export function createSessionIndex(database: LocalIndexDatabase): SessionIndex {
                 modified_at, message_count, work_dir, permission_mode,
                 runtime_provider_id, runtime_provider_present,
                 runtime_model_id, effort_level,
+                model_config_id, model_config_json, runtime_instance_id,
                 repository_json, worktree_session_json
               FROM sessions
               WHERE project_path = ?
@@ -323,6 +341,7 @@ export function createSessionIndex(database: LocalIndexDatabase): SessionIndex {
             modified_at, message_count, work_dir, permission_mode,
             runtime_provider_id, runtime_provider_present,
             runtime_model_id, effort_level,
+            model_config_id, model_config_json, runtime_instance_id,
             repository_json, worktree_session_json
           FROM sessions
           WHERE session_id = ?
@@ -414,6 +433,8 @@ export function createSessionIndex(database: LocalIndexDatabase): SessionIndex {
             sessions.permission_mode, sessions.runtime_provider_id,
             sessions.runtime_provider_present,
             sessions.runtime_model_id, sessions.effort_level,
+            sessions.model_config_id, sessions.model_config_json,
+            sessions.runtime_instance_id,
             sessions.repository_json, sessions.worktree_session_json,
             source_files.indexed_bytes, source_files.size_bytes
           FROM sessions
@@ -429,6 +450,9 @@ export function createSessionIndex(database: LocalIndexDatabase): SessionIndex {
           : parseStoredJson<NonNullable<TranscriptProjection['summary']['worktreeSession']>>(
             row.worktree_session_json,
           )
+        const modelConfig = parseStoredJson<NonNullable<TranscriptProjection['summary']['modelConfig']>>(
+          row.model_config_json,
+        )
         return {
           summary: {
             title: row.title,
@@ -442,6 +466,11 @@ export function createSessionIndex(database: LocalIndexDatabase): SessionIndex {
               : {}),
             ...(row.runtime_model_id ? { runtimeModelId: row.runtime_model_id } : {}),
             ...(row.effort_level ? { effortLevel: row.effort_level } : {}),
+            ...(row.model_config_id ? { modelConfigId: row.model_config_id } : {}),
+            ...(modelConfig ? { modelConfig } : {}),
+            ...(row.runtime_instance_id
+              ? { runtimeInstanceId: row.runtime_instance_id }
+              : {}),
             ...(repository ? { repository } : {}),
             ...(row.worktree_session_json !== null
               ? { worktreeSession }

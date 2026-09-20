@@ -2916,9 +2916,9 @@ export const zh: Record<TranslationKey, string> = {
   'model.clearSearch': '清除模型搜索',
   'model.noMatches': '没有匹配的模型',
   'model.effort': '推理强度',
-  'model.runtimeRestarting': '正在重启运行时…',
-  'model.runtimeUnconfirmed': '已请求切换运行时，但无法确认当前运行时。',
-  'model.runtimeRestartFailed': '运行时配置被拒绝。请检查提供商、模型和推理设置。',
+  'model.applyingConfiguration': '正在应用模型配置…',
+  'model.configurationUnconfirmed': '已请求切换模型，但无法确认当前模型。',
+  'model.configurationApplyFailed': '模型配置被拒绝。请检查提供商、模型和推理设置。',
 
   // ─── Directory Picker ──────────────────────────────────────
   'dirPicker.selectProject': '选择项目...',

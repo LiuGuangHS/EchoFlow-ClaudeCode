@@ -25,6 +25,17 @@ export type ClientMessage =
     }
   | { type: 'set_permission_mode'; mode: PermissionMode }
   | ({ type: 'set_runtime_config' } & RuntimeSelection)
+  | {
+      type: 'set_model_config'
+      configId?: string
+      config?: {
+        providerId: string | null
+        modelId: string
+        effortLevel?: string
+      }
+      requestId: string
+    }
+  | { type: 'restart_runtime'; requestId: string; reason?: string }
   | { type: 'set_cli_runtime'; cliRuntimeId: 'bundled' | 'installed' }
   | { type: 'stop_generation' }
   | { type: 'stop_background_task'; taskId: string }
@@ -137,6 +148,31 @@ export type ServerMessage =
       providerId: string | null
       modelId: string
       effortLevel?: string
+    }
+  | {
+      type: 'model_config_applied'
+      requestId: string
+      configId: string
+      application: 'noop' | 'in_place' | 'runtime_restart' | 'deferred'
+      runtimeInstanceId: string
+      providerId: string | null
+      modelId: string
+      effortLevel?: string
+    }
+  | {
+      type: 'model_config_apply_failed'
+      requestId: string
+      configId: string
+      previousConfigId?: string
+      code: string
+      message: string
+    }
+  | {
+      type: 'runtime_status'
+      runtimeInstanceId: string
+      state: 'starting' | 'ready' | 'busy' | 'stopping' | 'stopped' | 'error'
+      processGeneration: number
+      reason?: string
     }
   | {
       type: 'cli_runtime_applied'

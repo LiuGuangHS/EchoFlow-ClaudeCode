@@ -36,7 +36,7 @@ export type CorsResolutionOptions = {
 const LOCAL_DESKTOP_ORIGINS = new Set(['file://'])
 const CODEMOBILE_ORIGINS = new Set(['https://localhost'])
 
-function isAllowedBuiltInOrigin(origin?: string | null): boolean {
+export function isAllowedBuiltInOrigin(origin?: string | null): boolean {
   if (!origin) {
     return true
   }

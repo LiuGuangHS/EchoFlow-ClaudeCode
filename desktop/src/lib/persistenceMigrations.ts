@@ -73,6 +73,16 @@ function writeJson(storage: StorageLike, key: string, value: unknown): void {
   storage.setItem(key, JSON.stringify(value))
 }
 
+function canCopyLegacyWorkspace(raw: string): boolean {
+  try {
+    const parsed = JSON.parse(raw)
+    if (!isRecord(parsed) || parsed.version === undefined) return true
+    return parsed.version === 1 || parsed.version === WORKSPACE_STORAGE_VERSION
+  } catch {
+    return true
+  }
+}
+
 function copyLegacyStorage(storage: StorageLike, report: DesktopMigrationReport): void {
   for (const rule of LEGACY_STORAGE_RULES) {
     if (storage.getItem(rule.targetKey) !== null) continue
@@ -80,6 +90,7 @@ function copyLegacyStorage(storage: StorageLike, report: DesktopMigrationReport)
     if (!sourceKey) continue
     const value = storage.getItem(sourceKey)
     if (value === null) continue
+    if (rule.targetKey === WORKSPACE_STORAGE_KEY && !canCopyLegacyWorkspace(value)) continue
     storage.setItem(rule.targetKey, value)
     report.migratedKeys.push(rule.targetKey)
   }

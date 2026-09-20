@@ -395,10 +395,6 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
     }
   }, [open, updateDropdownPosition])
 
-  useEffect(() => {
-    if (runtimeRequestStatus === 'pending') setEffortOpen(false)
-  }, [runtimeRequestStatus])
-
   const roleLabels = useMemo(
     () => ({
       main: t('settings.providers.mainModel'),
@@ -504,11 +500,11 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
     ? selectedProviderChoice?.providerName ?? null
     : null
   const runtimeRequestStatusMessage = runtimeRequestStatus === 'pending'
-    ? t('model.runtimeRestarting')
+    ? t('model.applyingConfiguration')
     : runtimeRequestStatus === 'unconfirmed'
-      ? t('model.runtimeUnconfirmed')
+      ? t('model.configurationUnconfirmed')
       : runtimeRequestStatus === 'failed'
-        ? t('model.runtimeRestartFailed')
+        ? t('model.configurationApplyFailed')
         : null
   const supportedRuntimeEfforts = selectedRuntimeModel?.supportedReasoningEfforts
   const requestedRuntimeEffort = activeRuntimeSelection?.effortLevel ?? effortLevel
@@ -603,10 +599,6 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
       runtimeKey ? runtimeStore.selections[runtimeKey] : undefined
     )
 
-    if (runtimeKey && runtimeStore.runtimeRequestStatusBySessionId[runtimeKey] === 'pending') {
-      return
-    }
-
     const provider = providers.find((entry) => entry.id === selection.providerId)
     const normalizedSelection = normalizeRuntimeSelection(
       selection,
@@ -627,7 +619,7 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
     if (runtimeKey) {
       runtimeStore.setSelection(runtimeKey, normalizedSelection)
       if (runtimeKey !== DRAFT_RUNTIME_SELECTION_KEY) {
-        useChatStore.getState().setSessionRuntime(runtimeKey, normalizedSelection)
+        useChatStore.getState().setSessionModelConfig(runtimeKey, normalizedSelection)
       }
     }
     setOpen(false)
@@ -704,7 +696,7 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
                     return (
                       <button
                         key={`${choice.providerId ?? 'official'}:${model.id}`}
-                        disabled={runtimeRequestStatus === 'pending'}
+                        disabled={disabled}
                         onClick={() => {
                           const supportedEfforts = model.supportedReasoningEfforts
                           const explicitEffort = activeRuntimeSelection?.effortLevel
@@ -923,11 +915,11 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
           <button
             ref={effortButtonRef}
             type="button"
-            disabled={disabled || runtimeRequestStatus === 'pending'}
+            disabled={disabled}
             aria-label={`${t('model.effort')}: ${effortLabels[selectedRuntimeEffort]}`}
             aria-expanded={effortOpen}
             onClick={() => {
-              if (disabled || runtimeRequestStatus === 'pending') return
+              if (disabled) return
               setOpen(false)
               setEffortOpen(!effortOpen)
             }}

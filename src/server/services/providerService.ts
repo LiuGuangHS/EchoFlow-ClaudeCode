@@ -1,12 +1,13 @@
 /**
  * Provider Service — preset-based provider configuration
  *
- * Storage: <EchoFlow AppData>/echoflow/providers.json (lightweight index)
- * Active provider env vars written to <EchoFlow AppData>/echoflow/settings.json
+ * Storage: <EchoFlow AppData>/echoflow-code/providers.json (lightweight index)
+ * Active provider env vars written to <EchoFlow AppData>/echoflow-code/settings.json
  * (isolated from the original Claude Code's ~/.claude/settings.json)
  */
 
 import * as fs from 'fs/promises'
+import { existsSync } from 'node:fs'
 import * as path from 'path'
 import { ApiError } from '../middleware/errorHandler.js'
 import { buildOpenaiEndpoint } from '../proxy/openaiEndpoint.js'
@@ -177,7 +178,19 @@ export class ProviderService {
   }
 
   private getEchoFlowDir(): string {
-    return getEchoFlowInternalDir(this.getConfigDir())
+    const configDir = this.getConfigDir()
+    const currentDir = getEchoFlowInternalDir(configDir)
+    const legacyDir = path.join(configDir, 'echoflow')
+    // Keep an intermediate EchoFlow store usable when it has not yet been
+    // replaced by the canonical echoflow-code index.
+    if (
+      legacyDir !== currentDir &&
+      existsSync(path.join(legacyDir, 'providers.json')) &&
+      !existsSync(path.join(currentDir, 'providers.json'))
+    ) {
+      return legacyDir
+    }
+    return currentDir
   }
 
   private getIndexPath(): string {

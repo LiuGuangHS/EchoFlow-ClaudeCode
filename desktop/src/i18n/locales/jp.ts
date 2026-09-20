@@ -2918,9 +2918,9 @@ export const jp: Record<TranslationKey, string> = {
   'model.clearSearch': 'モデル検索をクリア',
   'model.noMatches': '一致するモデルはありません',
   'model.effort': '労力',
-  'model.runtimeRestarting': 'ランタイムを再起動中…',
-  'model.runtimeUnconfirmed': 'ランタイムの変更を要求しましたが、現在のランタイムを確認できませんでした。',
-  'model.runtimeRestartFailed': 'ランタイム構成が拒否されました。プロバイダー、モデル、推論設定を確認してください。',
+  'model.applyingConfiguration': 'モデル設定を適用中…',
+  'model.configurationUnconfirmed': 'モデルの変更を要求しましたが、現在のモデルを確認できませんでした。',
+  'model.configurationApplyFailed': 'モデル設定が拒否されました。プロバイダー、モデル、推論設定を確認してください。',
 
   // ─── Directory Picker ──────────────────────────────────────
   'dirPicker.selectProject': 'プロジェクトを選択...',

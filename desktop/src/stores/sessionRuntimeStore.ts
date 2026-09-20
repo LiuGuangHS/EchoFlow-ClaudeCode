@@ -24,12 +24,14 @@ export type RuntimeRequestStatus = 'pending' | 'unconfirmed' | 'failed'
 type SessionRuntimeStore = {
   selections: Record<string, RuntimeSelection>
   runtimeRequestStatusBySessionId: Record<string, RuntimeRequestStatus>
+  latestRequestIdBySessionId: Record<string, string>
   setSelection: (key: string, selection: RuntimeSelection) => void
   clearSelection: (key: string) => void
   moveSelection: (fromKey: string, toKey: string) => void
-  markRequestPending: (sessionId: string) => void
+  markRequestPending: (sessionId: string, requestId?: string) => void
+  markRequestApplied: (sessionId: string, requestId?: string) => void
   markRequestUnconfirmed: (sessionId: string) => void
-  markRequestFailed: (sessionId: string) => void
+  markRequestFailed: (sessionId: string, requestId?: string) => void
   syncFromSessions: (sessions: SessionListItem[]) => void
 }
 
@@ -107,6 +109,7 @@ function persistSelections(selections: Record<string, RuntimeSelection>) {
 export const useSessionRuntimeStore = create<SessionRuntimeStore>((set) => ({
   selections: loadSelections(),
   runtimeRequestStatusBySessionId: {},
+  latestRequestIdBySessionId: {},
 
   setSelection: (key, selection) =>
     set((state) => {
@@ -150,13 +153,23 @@ export const useSessionRuntimeStore = create<SessionRuntimeStore>((set) => ({
       return { selections, runtimeRequestStatusBySessionId }
     }),
 
-  markRequestPending: (sessionId) =>
+  markRequestPending: (sessionId, requestId) =>
     set((state) => ({
       runtimeRequestStatusBySessionId: {
         ...state.runtimeRequestStatusBySessionId,
         [sessionId]: 'pending',
       },
+      latestRequestIdBySessionId: requestId
+        ? { ...state.latestRequestIdBySessionId, [sessionId]: requestId }
+        : state.latestRequestIdBySessionId,
     })),
+
+  markRequestApplied: (sessionId, requestId) =>
+    set((state) => {
+      if (requestId && state.latestRequestIdBySessionId[sessionId] !== requestId) return state
+      const { [sessionId]: _status, ...runtimeRequestStatusBySessionId } = state.runtimeRequestStatusBySessionId
+      return { runtimeRequestStatusBySessionId }
+    }),
 
   markRequestUnconfirmed: (sessionId) =>
     set((state) => {
@@ -169,8 +182,9 @@ export const useSessionRuntimeStore = create<SessionRuntimeStore>((set) => ({
       }
     }),
 
-  markRequestFailed: (sessionId) =>
+  markRequestFailed: (sessionId, requestId) =>
     set((state) => {
+      if (requestId && state.latestRequestIdBySessionId[sessionId] !== requestId) return state
       const currentStatus = state.runtimeRequestStatusBySessionId[sessionId]
       if (currentStatus !== 'pending' && currentStatus !== 'unconfirmed') return state
       return {

@@ -483,9 +483,9 @@ describe('ModelSelector', () => {
   })
 
   it.each([
-    ['pending', 'Restarting runtime…'],
-    ['unconfirmed', 'Runtime change requested; active runtime could not be confirmed.'],
-    ['failed', 'Runtime configuration was rejected. Check the provider, model, and reasoning setting.'],
+    ['pending', 'Applying model configuration…'],
+    ['unconfirmed', 'Model configuration requested; active model could not be confirmed.'],
+    ['failed', 'Model configuration was rejected. Check the provider, model, and reasoning setting.'],
   ] as const)('shows truthful runtime request status for %s', (status, message) => {
     useSettingsStore.setState({
       locale: 'en',
@@ -554,7 +554,7 @@ describe('ModelSelector', () => {
   })
 
   it('selects provider-scoped runtime models and mirrors session selections', async () => {
-    const setSessionRuntime = vi.fn()
+    const setSessionModelConfig = vi.fn()
     useSettingsStore.setState({
       locale: 'en',
       availableModels: MODELS,
@@ -582,7 +582,7 @@ describe('ModelSelector', () => {
       isLoading: true,
     })
     useChatStore.setState({
-      setSessionRuntime,
+      setSessionModelConfig,
     } as Partial<ReturnType<typeof useChatStore.getState>>)
 
     render(<ModelSelector runtimeKey="session-1" />)
@@ -608,7 +608,7 @@ describe('ModelSelector', () => {
       modelId: 'provider-fast',
       effortLevel: 'high',
     })
-    expect(setSessionRuntime).toHaveBeenCalledWith('session-1', {
+    expect(setSessionModelConfig).toHaveBeenCalledWith('session-1', {
       providerId: 'provider-a',
       modelId: 'provider-fast',
       effortLevel: 'high',
@@ -618,7 +618,7 @@ describe('ModelSelector', () => {
   it.each(['failed', 'unconfirmed'] as const)(
     'does not resend a matching %s runtime selection',
     async (status) => {
-      const setSessionRuntime = vi.fn()
+      const setSessionModelConfig = vi.fn()
       const onRuntimeSelectionChange = vi.fn()
       const selection = {
         providerId: 'provider-a',
@@ -655,7 +655,7 @@ describe('ModelSelector', () => {
         runtimeRequestStatusBySessionId: { 'session-noop': status },
       })
       useChatStore.setState({
-        setSessionRuntime,
+        setSessionModelConfig,
       } as Partial<ReturnType<typeof useChatStore.getState>>)
 
       render(
@@ -668,7 +668,7 @@ describe('ModelSelector', () => {
       await clickByRole(/provider-main, provider a/i)
       await clickByRole(/^provider-main main model/i)
 
-      expect(setSessionRuntime).not.toHaveBeenCalled()
+      expect(setSessionModelConfig).not.toHaveBeenCalled()
       expect(onRuntimeSelectionChange).not.toHaveBeenCalled()
       expect(useSessionRuntimeStore.getState().selections['session-noop']).toEqual(selection)
       expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
@@ -677,8 +677,8 @@ describe('ModelSelector', () => {
     },
   )
 
-  it('does not allow a pending runtime request to be replaced by another selection', async () => {
-    const setSessionRuntime = vi.fn((sessionId: string) => {
+  it('allows a pending model request to be replaced by the latest selection', async () => {
+    const setSessionModelConfig = vi.fn((sessionId: string) => {
       useSessionRuntimeStore.getState().markRequestPending(sessionId)
     })
     useSettingsStore.setState({
@@ -712,7 +712,7 @@ describe('ModelSelector', () => {
       effortLevel: 'max',
     })
     useChatStore.setState({
-      setSessionRuntime,
+      setSessionModelConfig,
     } as Partial<ReturnType<typeof useChatStore.getState>>)
 
     render(<ModelSelector runtimeKey="session-pending" />)
@@ -722,17 +722,17 @@ describe('ModelSelector', () => {
     await clickByRole(/provider-fast, provider a/i)
 
     const providerMainOption = screen.getByRole('button', { name: /^provider-main main model/i })
-    expect(providerMainOption).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Effort: Max' })).toBeDisabled()
+    expect(providerMainOption).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Effort: Max' })).toBeEnabled()
     await act(async () => {
       fireEvent.click(providerMainOption)
       await Promise.resolve()
     })
 
-    expect(setSessionRuntime).toHaveBeenCalledTimes(1)
+    expect(setSessionModelConfig).toHaveBeenCalledTimes(2)
     expect(useSessionRuntimeStore.getState().selections['session-pending']).toEqual({
       providerId: 'provider-a',
-      modelId: 'provider-fast',
+      modelId: 'provider-main',
       effortLevel: 'max',
     })
     expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
@@ -845,7 +845,7 @@ describe('ModelSelector', () => {
   })
 
   it('keeps every CLI effort stop scoped to the selected session', async () => {
-    const setSessionRuntime = vi.fn()
+    const setSessionModelConfig = vi.fn()
     useSettingsStore.setState({
       locale: 'en',
       availableModels: MODELS,
@@ -883,7 +883,7 @@ describe('ModelSelector', () => {
       effortLevel: 'max',
     })
     useChatStore.setState({
-      setSessionRuntime,
+      setSessionModelConfig,
     } as Partial<ReturnType<typeof useChatStore.getState>>)
 
     render(<ModelSelector runtimeKey="session-1" />)
@@ -901,7 +901,7 @@ describe('ModelSelector', () => {
       modelId: 'k3',
       effortLevel: 'max',
     })
-    expect(setSessionRuntime).toHaveBeenCalledWith('session-1', {
+    expect(setSessionModelConfig).toHaveBeenCalledWith('session-1', {
       providerId: 'kimi-provider',
       modelId: 'k3',
       effortLevel: 'xhigh',
@@ -910,7 +910,7 @@ describe('ModelSelector', () => {
   })
 
   it('keeps effort selectable for unlisted Claude models from compatible providers', async () => {
-    const setSessionRuntime = vi.fn()
+    const setSessionModelConfig = vi.fn()
     useSettingsStore.setState({
       locale: 'en',
       availableModels: [],
@@ -943,7 +943,7 @@ describe('ModelSelector', () => {
       effortLevel: 'high',
     })
     useChatStore.setState({
-      setSessionRuntime,
+      setSessionModelConfig,
     } as Partial<ReturnType<typeof useChatStore.getState>>)
 
     render(<ModelSelector runtimeKey="session-claude-future" />)
@@ -961,7 +961,7 @@ describe('ModelSelector', () => {
     expect(useSessionRuntimeStore.getState().selections['session-claude-future']).toEqual(
       expectedSelection,
     )
-    expect(setSessionRuntime).toHaveBeenCalledWith('session-claude-future', expectedSelection)
+    expect(setSessionModelConfig).toHaveBeenCalledWith('session-claude-future', expectedSelection)
 
     await clickByRole('claude-opus-5, XuanShu API')
     await clickByRole(/claude-sonnet-5/i)
@@ -1115,7 +1115,7 @@ describe('ModelSelector', () => {
         supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
       },
     ]
-    const setSessionRuntime = vi.fn()
+    const setSessionModelConfig = vi.fn()
     useEchoFlowOpenAIOAuthStore.setState({
       status: { loggedIn: true, expiresAt: null, email: null, accountId: null },
       fetchStatus: async () => {},
@@ -1133,7 +1133,7 @@ describe('ModelSelector', () => {
       isLoading: true,
     })
     useChatStore.setState({
-      setSessionRuntime,
+      setSessionModelConfig,
     } as Partial<ReturnType<typeof useChatStore.getState>>)
 
     render(<ModelSelector runtimeKey="session-openai" />)
@@ -1149,7 +1149,7 @@ describe('ModelSelector', () => {
       modelId: 'gpt-5.5',
       effortLevel: 'medium',
     })
-    expect(setSessionRuntime).toHaveBeenCalledWith('session-openai', {
+    expect(setSessionModelConfig).toHaveBeenCalledWith('session-openai', {
       providerId: OPENAI_OFFICIAL_PROVIDER_ID,
       modelId: 'gpt-5.5',
       effortLevel: 'medium',
@@ -1229,7 +1229,7 @@ describe('ModelSelector', () => {
     await clickByRole('Effort: Medium')
     expect(screen.getByRole('slider', { name: 'Effort' })).toHaveAttribute('aria-valuemax', '3')
     fireEvent.keyDown(screen.getByRole('slider', { name: 'Effort' }), { key: 'End' })
-    expect(screen.queryByRole('slider', { name: 'Effort' })).not.toBeInTheDocument()
+    expect(screen.getByRole('slider', { name: 'Effort' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Effort: X-High' })).toBeInTheDocument()
 
     expect(useSessionRuntimeStore.getState().selections['session-openai-effort']).toEqual({
@@ -1248,7 +1248,7 @@ describe('ModelSelector', () => {
       defaultReasoningEffort: 'low',
       supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
     }
-    const setSessionRuntime = vi.fn()
+    const setSessionModelConfig = vi.fn()
     useEchoFlowOpenAIOAuthStore.setState({
       status: { loggedIn: true, expiresAt: null, email: null, accountId: null },
       fetchStatus: async () => {},
@@ -1285,7 +1285,7 @@ describe('ModelSelector', () => {
       effortLevel: 'xhigh',
     })
     useChatStore.setState({
-      setSessionRuntime,
+      setSessionModelConfig,
     } as Partial<ReturnType<typeof useChatStore.getState>>)
 
     render(<ModelSelector runtimeKey="session-kimi-switch" />)
@@ -1301,7 +1301,7 @@ describe('ModelSelector', () => {
     expect(useSessionRuntimeStore.getState().selections['session-kimi-switch']).toEqual(
       expectedSelection,
     )
-    expect(setSessionRuntime).toHaveBeenCalledWith('session-kimi-switch', expectedSelection)
+    expect(setSessionModelConfig).toHaveBeenCalledWith('session-kimi-switch', expectedSelection)
     expect(screen.getByRole('button', { name: 'Effort: X-High' })).toBeInTheDocument()
   })
 

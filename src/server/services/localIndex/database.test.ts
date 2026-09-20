@@ -647,6 +647,12 @@ describe('local index database', () => {
     seed.exec('UPDATE source_files SET parser_version = 5')
     seed.exec("INSERT INTO schema_meta (key, value) VALUES ('future-extension', 'keep-me')")
     const originalSessions = queryAll<Record<string, unknown>>(seed, 'SELECT * FROM sessions')
+    const expectedSessions = originalSessions.map(session => ({
+      ...session,
+      model_config_id: null,
+      model_config_json: null,
+      runtime_instance_id: null,
+    }))
     const originalActivity = queryAll<Record<string, unknown>>(seed, 'SELECT * FROM activity_sessions')
     seed.close(true)
     const { openLocalIndexDatabase } = await loadDatabase()
@@ -654,8 +660,8 @@ describe('local index database', () => {
     try {
       expect(reopened.read(operation => operation.get<{ user_version: number }>(
         'PRAGMA user_version',
-      )?.user_version)).toBe(5)
-      expect(reopened.read(operation => operation.all('SELECT * FROM sessions'))).toEqual(originalSessions)
+      )?.user_version)).toBe(LOCAL_INDEX_SCHEMA_VERSION)
+      expect(reopened.read(operation => operation.all('SELECT * FROM sessions'))).toEqual(expectedSessions)
       expect(reopened.read(operation => operation.all('SELECT * FROM activity_sessions'))).toEqual(originalActivity)
       expect(reopened.read(operation => operation.get<{ value: string }>(
         "SELECT value FROM schema_meta WHERE key = 'future-extension'",
@@ -666,6 +672,52 @@ describe('local index database', () => {
       ))).toEqual({ title: 'Still editable', session_api_format: 'unknown' })
     } finally {
       reopened.close()
+    }
+  })
+
+  it('upgrades a frozen v5 cache with independent model and runtime metadata columns', async () => {
+    const databasePath = join(process.env.CLAUDE_CONFIG_DIR!, 'frozen-v5-model-runtime.sqlite')
+    await mkdir(dirname(databasePath), { recursive: true })
+    const seed = await openRawDatabase(databasePath)
+    seedFrozenV3(seed)
+    seed.exec('ALTER TABLE activity_sessions ADD COLUMN active_duration_ms INTEGER NOT NULL DEFAULT 0')
+    seed.exec('ALTER TABLE sessions ADD COLUMN session_api_format TEXT')
+    seed.exec('PRAGMA user_version = 5')
+    seed.exec("UPDATE sessions SET session_api_format = 'legacy'")
+    seed.close(true)
+    const { openLocalIndexDatabase } = await loadDatabase()
+
+    const upgraded = openLocalIndexDatabase({ path: databasePath })
+    try {
+      expect(upgraded.read(operation => operation.get<{ user_version: number }>(
+        'PRAGMA user_version',
+      )?.user_version)).toBe(LOCAL_INDEX_SCHEMA_VERSION)
+      expect(upgraded.read(operation => operation.all<{ name: string }>(
+        'PRAGMA table_info(sessions)',
+      ).map(row => row.name))).toEqual(expect.arrayContaining([
+        'model_config_id',
+        'model_config_json',
+        'runtime_instance_id',
+      ]))
+      expect(upgraded.read(operation => operation.get<{
+        title: string
+        session_api_format: string
+        model_config_id: string | null
+        model_config_json: string | null
+        runtime_instance_id: string | null
+      }>(
+        `SELECT title, session_api_format, model_config_id, model_config_json,
+                runtime_instance_id FROM sessions
+         WHERE transcript_path = '/fixture/session.jsonl'`,
+      ))).toEqual({
+        title: 'Frozen v1',
+        session_api_format: 'legacy',
+        model_config_id: null,
+        model_config_json: null,
+        runtime_instance_id: null,
+      })
+    } finally {
+      upgraded.close()
     }
   })
 

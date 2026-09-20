@@ -25,7 +25,7 @@ import type { ComposerAttachment } from '../lib/composerAttachments'
 import type { ComposerMention } from '../lib/composerMentions'
 import type { MessageEntry } from '../types/session'
 import type { PermissionMode } from '../types/settings'
-import type { RuntimeSelection } from '../types/runtime'
+import type { ModelConfig, RuntimeSelection } from '../types/runtime'
 import type {
   ActiveGoalState,
   AgentTaskNotification,
@@ -358,7 +358,13 @@ type ChatStore = {
     requestId: string,
     response: ComputerUsePermissionResponse,
   ) => void
-  setSessionRuntime: (sessionId: string, selection: RuntimeSelection) => void
+  setSessionRuntime: (
+    sessionId: string,
+    selection: RuntimeSelection,
+    options?: { markPending?: boolean },
+  ) => void
+  setSessionModelConfig: (sessionId: string, config: ModelConfig) => void
+  restartSessionRuntime: (sessionId: string, reason?: string) => void
   setSessionCliRuntime: (sessionId: string, runtimeId: 'bundled' | 'installed') => void
   setSessionPermissionMode: (sessionId: string, mode: PermissionMode) => void
   stopGeneration: (sessionId: string) => void
@@ -2786,7 +2792,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
     const runtimeSelection = useSessionRuntimeStore.getState().selections[sessionId]
     if (runtimeSelection && options?.applyRuntimeSelection !== false) {
-      get().setSessionRuntime(sessionId, runtimeSelection)
+      get().setSessionRuntime(sessionId, runtimeSelection, { markPending: false })
     }
     if (
       options?.prewarm !== false &&
@@ -3072,7 +3078,29 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }))
   },
 
-  setSessionRuntime: (sessionId, selection) => {
+  setSessionModelConfig: (sessionId, config) => {
+    const selection: RuntimeSelection = {
+      providerId: config.providerId,
+      modelId: config.modelId,
+      ...(config.effortLevel ? { effortLevel: config.effortLevel } : {}),
+    }
+    const reconciled = reconcileProviderRuntimeSelection(selection)
+    useSessionRuntimeStore.getState().setSelection(sessionId, reconciled)
+    const requestId = nextId()
+    wsManager.send(sessionId, {
+      type: 'set_model_config',
+      ...(config.id ? { configId: config.id } : {}),
+      config: reconciled,
+      requestId,
+    })
+    useSessionRuntimeStore.getState().markRequestPending(sessionId, requestId)
+  },
+
+  restartSessionRuntime: (sessionId, reason) => {
+    wsManager.send(sessionId, { type: 'restart_runtime', requestId: nextId(), reason })
+  },
+
+  setSessionRuntime: (sessionId, selection, options) => {
     const reconciled = reconcileProviderRuntimeSelection(selection)
     if (reconciled !== selection) {
       useSessionRuntimeStore.getState().setSelection(sessionId, reconciled)
@@ -3081,7 +3109,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       type: 'set_runtime_config',
       ...reconciled,
     })
-    useSessionRuntimeStore.getState().markRequestPending(sessionId)
+    if (options?.markPending !== false) {
+      useSessionRuntimeStore.getState().markRequestPending(sessionId)
+    }
   },
 
   setSessionCliRuntime: (sessionId, runtimeId) => {
@@ -4387,6 +4417,25 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         useSessionCliRuntimeStore.getState().apply(sessionId, msg.cliRuntimeId)
         break
 
+      case 'model_config_applied': {
+        useSessionRuntimeStore.getState().markRequestApplied(sessionId, msg.requestId)
+        useSessionRuntimeStore.getState().setSelection(sessionId, {
+          providerId: msg.providerId,
+          modelId: msg.modelId,
+          ...(msg.effortLevel ? { effortLevel: msg.effortLevel as RuntimeSelection['effortLevel'] } : {}),
+        })
+        break
+      }
+
+      case 'model_config_apply_failed':
+        useSessionRuntimeStore.getState().markRequestFailed(sessionId, msg.requestId)
+        break
+
+      case 'runtime_status':
+        // Runtime lifecycle is intentionally not used to block model selection.
+        break
+
+
       case 'runtime_config_applied': {
         const selected = useSessionRuntimeStore.getState().selections[sessionId]
         const matchesCurrentSelection = Boolean(selected) &&
@@ -4400,7 +4449,6 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         }
         break
       }
-
       case 'permission_mode_changed': {
         // CLI 是权限模式的真相来源。这里把它恢复/切换后的权威值校正到本地镜像。
         // 注意：只更新本地状态，**不要**走 setSessionPermissionMode —— 那会把

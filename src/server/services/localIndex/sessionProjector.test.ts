@@ -93,6 +93,19 @@ describe('session projector', () => {
       projectPath: '-repo-a',
       sessionId: 'same-id',
       content: [
+        line({
+          type: 'session-meta',
+          modelConfigId: 'mc_projector',
+          modelConfig: {
+            providerId: 'provider-a',
+            modelId: 'model-a',
+            effortLevel: 'high',
+          },
+          runtimeInstanceId: 'runtime-projector',
+          runtimeProviderId: 'provider-a',
+          runtimeModelId: 'model-a',
+          effortLevel: 'high',
+        }),
         line(user('First title', '2026-01-01T00:00:00.000Z')),
         line('{malformed}'),
         line(assistant('2026-01-01T00:01:00.000Z')),
@@ -122,6 +135,13 @@ describe('session projector', () => {
             title: 'First title',
             messageCount: 2,
             modifiedAt: '2026-01-01T00:01:00.000Z',
+            modelConfigId: 'mc_projector',
+            modelConfig: {
+              providerId: 'provider-a',
+              modelId: 'model-a',
+              effortLevel: 'high',
+            },
+            runtimeInstanceId: 'runtime-projector',
           },
           malformedLineCount: 1,
         },
@@ -135,7 +155,23 @@ describe('session projector', () => {
           title: 'First title',
           messageCount: 2,
           transcriptPath: candidate.path,
+          modelConfigId: 'mc_projector',
+          modelConfig: {
+            providerId: 'provider-a',
+            modelId: 'model-a',
+            effortLevel: 'high',
+          },
+          runtimeInstanceId: 'runtime-projector',
         }],
+      })
+      expect(index.getProjectionSeed(candidate.path)?.summary).toMatchObject({
+        modelConfigId: 'mc_projector',
+        modelConfig: {
+          providerId: 'provider-a',
+          modelId: 'model-a',
+          effortLevel: 'high',
+        },
+        runtimeInstanceId: 'runtime-projector',
       })
       expect(index.getSource(candidate.path)).toMatchObject({
         path: candidate.path,

@@ -2,7 +2,7 @@
  * Settings Service — 读写用户级和项目级设置文件
  *
  * 设置文件为 JSON 格式：
- *   - 用户级: <EchoFlow AppData>/echoflow/settings.json
+ *   - 用户级: <EchoFlow config root>/settings.json（用户共享设置）
  *   - 项目级: {projectRoot}/.claude/settings.json
  *
  * 合并策略：Object.assign({}, userSettings, projectSettings)
@@ -48,9 +48,9 @@ export class SettingsService {
     return getEchoFlowConfigDir()
   }
 
-  /** 用户级设置文件路径 */
+  /** 用户级设置文件路径（用户共享设置，不属于仓库管理的内部索引） */
   private getUserSettingsPath(): string {
-    return path.join(getEchoFlowInternalDir(this.getConfigDir()), 'settings.json')
+    return path.join(this.getConfigDir(), 'settings.json')
   }
 
   /** 项目级设置文件路径 */
@@ -109,10 +109,12 @@ export class SettingsService {
   async getAgentTeamsEnabled(): Promise<boolean> {
     const user = await this.getUserSettings()
     if (typeof user.agentTeamsEnabled === 'boolean') return user.agentTeamsEnabled
-    const managed = await this.readJsonFile(path.join(this.getConfigDir(), 'echoflow', 'settings.json'))
+    const managed = await this.readJsonFile(path.join(getEchoFlowInternalDir(this.getConfigDir()), 'settings.json'))
+    const legacyManaged = await this.readJsonFile(path.join(this.getConfigDir(), 'echoflow', 'settings.json'))
     const inherited = await getProcessEnvWithTerminalShellEnvironment()
     const key = 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS'
     const legacyValue = normalizeJsonObject(managed.env)?.[key] ??
+      normalizeJsonObject(legacyManaged.env)?.[key] ??
       normalizeJsonObject(user.env)?.[key] ?? inherited[key]
     return typeof legacyValue === 'string' ? isEnvTruthy(legacyValue) : true
   }

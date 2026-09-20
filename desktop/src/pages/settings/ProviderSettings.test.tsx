@@ -3,15 +3,67 @@ import '@testing-library/jest-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { providersApi } from '../../api/providers'
 import { ApiError } from '../../api/client'
-import { getDesktopHost } from '../../lib/desktopHost'
 import { useProviderStore } from '../../stores/providerStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import type { SavedProvider } from '../../types/provider'
 import { ProviderSettings } from './ProviderSettings'
 
+const {
+  createProviderFromTokenMock,
+  testProviderFromTokenMock,
+  fetchModelsFromTokenMock,
+} = vi.hoisted(() => ({
+  createProviderFromTokenMock: vi.fn(),
+  testProviderFromTokenMock: vi.fn(),
+  fetchModelsFromTokenMock: vi.fn(),
+}))
+
+type EchoFlowTokenSource = {
+  endpoint: 'main' | 'dedicated'
+  tokenId: string
+  tokenName: string
+  keyPreview: string
+}
+
+vi.mock('../../api/echoflow', () => ({
+  echoflowApi: {
+    createProviderFromToken: createProviderFromTokenMock,
+    testProviderFromToken: testProviderFromTokenMock,
+    fetchModelsFromToken: fetchModelsFromTokenMock,
+  },
+}))
+
 vi.mock('../../components/settings/ClaudeOfficialLogin', () => ({ ClaudeOfficialLogin: () => null }))
 vi.mock('../../components/settings/ChatGPTOfficialLogin', () => ({ ChatGPTOfficialLogin: () => null }))
 vi.mock('../../components/settings/GrokOfficialLogin', () => ({ GrokOfficialLogin: () => null }))
+vi.mock('../../components/settings/EchoFlowAPIOfficialLogin', () => ({
+  EchoFlowAPIOfficialLogin: ({ onAddFromToken }: { onAddFromToken: (source: EchoFlowTokenSource) => void }) => (
+    <div data-testid="mock-echoflow-login">
+      <button
+        type="button"
+        onClick={() => onAddFromToken({
+          endpoint: 'main',
+          tokenId: 'main-token-id',
+          tokenName: 'Main key',
+          keyPreview: 'sk-main…1234',
+        })}
+      >
+        Select main token
+      </button>
+      <button
+        type="button"
+        onClick={() => onAddFromToken({
+          endpoint: 'dedicated',
+          tokenId: 'dedicated-token-id',
+          tokenName: 'Dedicated key',
+          keyPreview: 'sk-dedicated…5678',
+        })}
+      >
+        Select dedicated token
+      </button>
+    </div>
+  ),
+}))
 
 const savedProviders: SavedProvider[] = ([
   ['xuanshuapi', '玄枢API', 'https://www.xuanshuapi.com', 'claude-sonnet-5'],
@@ -27,13 +79,18 @@ const savedProviders: SavedProvider[] = ([
   models: { main: model, haiku: model, sonnet: model, opus: model },
 }))
 
-describe('ApiSmart sponsor provider', () => {
+describe('EchoFlow provider setup', () => {
   beforeEach(() => {
     useSettingsStore.setState({ locale: 'en' })
+    useProviderStore.setState({ providers: [], activeId: null, hasLoadedProviders: false, error: null })
     vi.spyOn(useSettingsStore.getState(), 'fetchAll').mockResolvedValue()
     vi.spyOn(providersApi, 'list').mockResolvedValue({ providers: [], activeId: null })
     vi.spyOn(providersApi, 'getSettings').mockResolvedValue({})
     vi.spyOn(providersApi, 'updateSettings').mockResolvedValue({ ok: true })
+    createProviderFromTokenMock.mockReset()
+    testProviderFromTokenMock.mockReset()
+    fetchModelsFromTokenMock.mockReset()
+    createProviderFromTokenMock.mockResolvedValue({ provider: {} })
   })
 
   afterEach(() => {
@@ -41,74 +98,132 @@ describe('ApiSmart sponsor provider', () => {
     vi.restoreAllMocks()
   })
 
-  it('prefills the sponsor connection, opens its landing page, and saves the selected models', async () => {
-    const open = vi.spyOn(getDesktopHost().shell, 'open').mockResolvedValue()
-    const create = vi.spyOn(providersApi, 'create').mockImplementation(async (input) => ({
-      provider: { ...input, id: 'saved-apismart', apiFormat: input.apiFormat ?? 'anthropic' },
-    }))
+  it('opens the shared configuration modal without creating a provider', async () => {
     render(<ProviderSettings />)
-    fireEvent.click(await screen.findByRole('button', { name: /Add Model/ }))
-    const dialog = within(screen.getByRole('dialog'))
-    const sponsor = dialog.getByRole('button', { name: 'ApiSmart' })
-    expect(sponsor.parentElement).toBe(dialog.getByRole('button', { name: 'Atlas Cloud' }).parentElement)
-    fireEvent.click(sponsor)
-    expect(dialog.getByDisplayValue('https://gw.apismart.ai/v1')).toBeInTheDocument()
-    expect(dialog.getAllByDisplayValue('deepseek-v4-pro-0813')).toHaveLength(3)
-    expect(dialog.getByDisplayValue('deepseek-v4-flash-0731-tem')).toBeInTheDocument()
-    expect(dialog.getByRole('switch', { name: 'Enable image generation' })).toBeChecked()
-    expect(dialog.getByDisplayValue('doubao-seedream-5-0')).toBeInTheDocument()
-    fireEvent.change(dialog.getByRole('textbox', { name: 'Reply output budget' }), { target: { value: '48000' } })
 
-    fireEvent.click(dialog.getByRole('button', { name: /Get API Key/ }))
-    expect(open).toHaveBeenCalledWith('https://www.apismart.ai')
-    fireEvent.change(dialog.getAllByPlaceholderText('sk-...')[0]!, { target: { value: 'fake-apismart-key' } })
-    fireEvent.click(dialog.getByRole('button', { name: 'Add' }))
-    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({
-      presetId: 'apismart',
-      name: 'ApiSmart',
-      baseUrl: 'https://gw.apismart.ai/v1',
-      apiFormat: 'openai_chat',
-      authStrategy: 'api_key',
-      apiKey: 'fake-apismart-key',
-      imageGeneration: { model: 'doubao-seedream-5-0' },
-      requestCompatibility: { maxOutputTokens: 48000 },
-      models: {
-        main: 'deepseek-v4-pro-0813',
-        haiku: 'deepseek-v4-flash-0731-tem',
-        sonnet: 'deepseek-v4-pro-0813',
-        opus: 'deepseek-v4-pro-0813',
-      },
-    })))
+    fireEvent.click(await screen.findByRole('button', { name: 'Select dedicated token' }))
+    const dialog = within(await screen.findByRole('dialog'))
+
+    expect(dialog.getByDisplayValue('https://expapi.echoflowai.cc')).toBeInTheDocument()
+    expect(dialog.getByText('API Format')).toBeInTheDocument()
+    expect(dialog.getByRole('button', { name: /Anthropic Messages \(native\)/ })).toBeInTheDocument()
+    expect(createProviderFromTokenMock).not.toHaveBeenCalled()
+
+    fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 
-  it('resets image credentials and defaults when switching presets', async () => {
+  it.each([
+    ['main', 'Select main token', 'main-token-id', 'https://api.echoflowai.cc'],
+    ['dedicated', 'Select dedicated token', 'dedicated-token-id', 'https://expapi.echoflowai.cc'],
+  ] as const)('saves the %s token through the server-resolved provider flow', async (_endpoint, buttonName, tokenId, baseUrl) => {
     render(<ProviderSettings />)
-    fireEvent.click(await screen.findByRole('button', { name: /Add Model/ }))
-    const dialog = within(screen.getByRole('dialog'))
-    fireEvent.click(dialog.getByRole('button', { name: 'ApiSmart' }))
-    fireEvent.change(dialog.getAllByPlaceholderText('sk-...')[1]!, { target: { value: 'fake-image-only-key' } })
-    fireEvent.click(dialog.getByRole('button', { name: 'Atlas Cloud' }))
-    expect(dialog.getByRole('switch', { name: 'Enable image generation' })).not.toBeChecked()
-    fireEvent.click(dialog.getByRole('button', { name: 'ApiSmart' }))
-    expect(dialog.getByDisplayValue('doubao-seedream-5-0')).toBeInTheDocument()
-    expect(dialog.getAllByPlaceholderText('sk-...')[1]).toHaveValue('')
+
+    fireEvent.click(await screen.findByRole('button', { name: buttonName }))
+    const dialog = within(await screen.findByRole('dialog'))
+    fireEvent.click(dialog.getByRole('button', { name: 'Add' }))
+
+    await waitFor(() => expect(createProviderFromTokenMock).toHaveBeenCalledWith(expect.objectContaining({
+      endpoint: _endpoint,
+      tokenId,
+      baseUrl,
+    })))
+    const payload = createProviderFromTokenMock.mock.calls.at(-1)?.[0]
+    expect(payload).not.toHaveProperty('apiKey')
+    expect(payload).not.toHaveProperty('presetId')
+    expect(payload).not.toHaveProperty('key')
   })
 
-  it('preserves image generation disabled on an older saved ApiSmart provider', async () => {
-    vi.mocked(providersApi.list).mockResolvedValue({ providers: [{
-      ...savedProviders[0]!, id: 'old-apismart', presetId: 'apismart', name: 'ApiSmart',
-      baseUrl: 'https://gw.apismart.ai/v1', apiFormat: 'openai_chat',
-    }], activeId: null })
+  it('clears the selected token draft when the shared modal is canceled', async () => {
     render(<ProviderSettings />)
-    const card = await screen.findByTestId('provider-old-apismart')
-    fireEvent.click(within(card).getByRole('button', { name: 'Edit' }))
-    expect(within(screen.getByRole('dialog')).getByRole('switch', { name: 'Enable image generation' }))
-      .not.toBeChecked()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Select dedicated token' }))
+    const tokenDialog = within(await screen.findByRole('dialog'))
+    expect(tokenDialog.getByDisplayValue('EchoFlow API · 专线')).toBeInTheDocument()
+    fireEvent.click(tokenDialog.getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('button', { name: /Add Model/ }))
+    const regularDialog = within(screen.getByRole('dialog'))
+    expect(regularDialog.queryByDisplayValue('EchoFlow API · 专线')).not.toBeInTheDocument()
+    fireEvent.click(regularDialog.getByRole('button', { name: 'Cancel' }))
+  })
+
+  it('passes a manually selected API format through the token flow', async () => {
+    render(<ProviderSettings />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Select main token' }))
+    const dialog = within(await screen.findByRole('dialog'))
+    fireEvent.click(dialog.getByRole('button', { name: /Anthropic Messages \(native\)/ }))
+    fireEvent.click(within(dialog.getByRole('listbox')).getByRole('option', { name: /OpenAI Chat Completions/ }))
+    expect(dialog.getByRole('button', { name: /OpenAI Chat Completions/ })).toBeInTheDocument()
+    fireEvent.click(dialog.getByRole('button', { name: 'Add' }))
+
+    await waitFor(() => expect(createProviderFromTokenMock).toHaveBeenCalledWith(expect.objectContaining({
+      endpoint: 'main',
+      tokenId: 'main-token-id',
+      apiFormat: 'openai_chat',
+    })))
+  })
+
+  it('uses the endpoint-scoped model discovery flow for EchoFlow tokens', async () => {
+    fetchModelsFromTokenMock.mockResolvedValue({
+      ok: true,
+      models: [{ id: 'claude-test-model', ownedBy: 'echoflow' }],
+      endpoint: 'dedicated',
+    })
+    const fetchModels = vi.spyOn(providersApi, 'fetchModels')
+    render(<ProviderSettings />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Select dedicated token' }))
+    const dialog = within(await screen.findByRole('dialog'))
+    fireEvent.click(dialog.getByRole('button', { name: /Fetch models/ }))
+
+    await waitFor(() => expect(fetchModelsFromTokenMock).toHaveBeenCalledWith({
+      endpoint: 'dedicated',
+      tokenId: 'dedicated-token-id',
+    }))
+    expect(fetchModels).not.toHaveBeenCalled()
+  })
+
+  it('uses the normal model discovery flow when no EchoFlow token is selected', async () => {
+    const fetchModels = vi.spyOn(providersApi, 'fetchModels').mockResolvedValue({
+      ok: true,
+      models: [{ id: 'ordinary-model' }],
+      endpoint: 'https://api.example.test/v1/models',
+    })
+    render(<ProviderSettings />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /Add Model/ }))
+    const dialog = within(screen.getByRole('dialog'))
+    fireEvent.change(dialog.getByPlaceholderText('sk-...'), { target: { value: 'ordinary-api-key' } })
+    fireEvent.click(dialog.getByRole('button', { name: /Fetch models/ }))
+
+    await waitFor(() => expect(fetchModels).toHaveBeenCalledWith(expect.objectContaining({
+      apiKey: 'ordinary-api-key',
+    })))
+    expect(fetchModelsFromTokenMock).not.toHaveBeenCalled()
+  })
+
+  it('tests an EchoFlow token with its endpoint and token id', async () => {
+    testProviderFromTokenMock.mockResolvedValue({
+      result: { connectivity: { success: true, latencyMs: 12 } },
+    })
+    render(<ProviderSettings />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Select dedicated token' }))
+    const dialog = within(await screen.findByRole('dialog'))
+    fireEvent.click(dialog.getByRole('button', { name: 'Test Connection' }))
+
+    await waitFor(() => expect(testProviderFromTokenMock).toHaveBeenCalledWith(expect.objectContaining({
+      endpoint: 'dedicated',
+      tokenId: 'dedicated-token-id',
+      baseUrl: 'https://expapi.echoflowai.cc',
+    })))
   })
 })
 
-describe('retired sponsor providers', () => {
+describe('saved and legacy providers', () => {
   beforeEach(() => {
     useSettingsStore.setState({ locale: 'en' })
     vi.spyOn(useSettingsStore.getState(), 'fetchAll').mockResolvedValue()
@@ -153,7 +268,7 @@ describe('retired sponsor providers', () => {
     for (const provider of savedProviders) {
       expect(dialog.queryByRole('button', { name: provider.name })).not.toBeInTheDocument()
     }
-    expect(dialog.getByRole('button', { name: 'Atlas Cloud' })).toBeInTheDocument()
+    expect(dialog.getByRole('button', { name: 'EchoFlow API' })).toBeInTheDocument()
     expect(dialog.getByRole('button', { name: 'Custom' })).toBeInTheDocument()
   })
 
@@ -184,7 +299,6 @@ describe('retired sponsor providers', () => {
       apiFormat: provider.apiFormat,
       authStrategy: 'auth_token',
       models: provider.models,
-      modelContextWindows: { [provider.models.main]: 1000000 },
     })))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     expect(useProviderStore.getState().providers.find((saved) => saved.id === provider.id))

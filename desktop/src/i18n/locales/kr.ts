@@ -2918,9 +2918,9 @@ export const kr: Record<TranslationKey, string> = {
   'model.clearSearch': '모델 검색 지우기',
   'model.noMatches': '일치하는 모델이 없습니다',
   'model.effort': '노력',
-  'model.runtimeRestarting': '런타임 재시작 중…',
-  'model.runtimeUnconfirmed': '런타임 변경을 요청했지만 현재 런타임을 확인할 수 없습니다.',
-  'model.runtimeRestartFailed': '런타임 구성이 거부되었습니다. 공급자, 모델 및 추론 설정을 확인하세요.',
+  'model.applyingConfiguration': '모델 구성 적용 중…',
+  'model.configurationUnconfirmed': '모델 변경을 요청했지만 현재 모델을 확인할 수 없습니다.',
+  'model.configurationApplyFailed': '모델 구성이 거부되었습니다. 공급자, 모델 및 추론 설정을 확인하세요.',
 
   // ─── Directory Picker ──────────────────────────────────────
   'dirPicker.selectProject': '프로젝트 선택...',

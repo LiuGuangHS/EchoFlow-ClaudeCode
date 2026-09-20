@@ -24,6 +24,7 @@ import type { ProviderPreset } from '../../types/providerPreset'
 import { normalizeProviderBaseUrl, presetMatchesBaseUrl, selectableProviderPresets } from '../../config/providerPresets'
 import { ClaudeOfficialLogin } from '../../components/settings/ClaudeOfficialLogin'
 import { EchoFlowAPIOfficialLogin } from '../../components/settings/EchoFlowAPIOfficialLogin'
+import { echoflowApi, type EchoFlowTokenSource } from '../../api/echoflow'
 import { ChatGPTOfficialLogin } from '../../components/settings/ChatGPTOfficialLogin'
 import { GrokOfficialLogin } from '../../components/settings/GrokOfficialLogin'
 import { CcSwitchImportModal } from '../../components/settings/CcSwitchImportModal'
@@ -95,7 +96,6 @@ function buildProviderListItems(
 ): ProviderListItem[] {
   const savedItems = new Map(
     providers
-      .filter((provider) => provider.presetId !== 'echoflowai')
       .map((provider) => [
         provider.id,
         { id: provider.id, kind: 'saved', provider } satisfies ProviderListItem,
@@ -145,6 +145,8 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
   const fetchSettings = useSettingsStore((s) => s.fetchAll)
   const t = useTranslation()
   const [editingProvider, setEditingProvider] = useState<SavedProvider | null>(null)
+  const [echoFlowDraft, setEchoFlowDraft] = useState<EchoFlowTokenSource | null>(null)
+  const [echoFlowHasAccount, setEchoFlowHasAccount] = useState(false)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showCcSwitchImport, setShowCcSwitchImport] = useState(false)
   const [pendingDeleteProvider, setPendingDeleteProvider] = useState<SavedProvider | null>(null)
@@ -168,6 +170,11 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
     () => new Map(presets.map((preset) => [preset.id, preset])),
     [presets],
   )
+
+  const openEchoFlowProviderModal = (draft: EchoFlowTokenSource) => {
+    setEchoFlowDraft(draft)
+    setShowCreateModal(true)
+  }
 
   const handleDelete = async (provider: SavedProvider) => {
     if (activeId === provider.id) return
@@ -273,18 +280,17 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
         className="relative mb-2 flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)]"
       >
         <div className="flex items-center gap-4 px-4 py-3.5">
-          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${activeId && providers.some((provider) => provider.id === activeId && provider.presetId === 'echoflowai') ? 'bg-[var(--color-success)]' : 'bg-[var(--color-text-tertiary)]'}`} />
+          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${echoFlowHasAccount ? 'bg-[var(--color-success)]' : 'bg-[var(--color-text-tertiary)]'}`} />
           <div className="min-w-0 flex-1">
             <div className="text-sm font-semibold text-[var(--color-text-primary)]">EchoFlow API 官方</div>
             <div className="mt-0.5 text-xs text-[var(--color-text-tertiary)]">https://api.echoflowai.cc · Claude / OpenAI 兼容协议</div>
           </div>
         </div>
         <div className="border-t border-[var(--color-border-separator)] px-4 pb-4 pt-3">
-          <EchoFlowAPIOfficialLogin
-            activeId={activeId}
-            providers={providers}
-            onEdit={setEditingProvider}
-          />
+            <EchoFlowAPIOfficialLogin
+              onAddFromToken={openEchoFlowProviderModal}
+              onBindingChange={setEchoFlowHasAccount}
+            />
         </div>
       </div>
       <DndContext
@@ -440,7 +446,17 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
 
       {/* Create Modal — conditionally rendered so state resets on close */}
       {showCreateModal && (
-        <ProviderFormModal browserMode={browserMode} open={true} onClose={() => setShowCreateModal(false)} mode="create" presets={presets} />
+        <ProviderFormModal
+          browserMode={browserMode}
+          open={true}
+          onClose={() => {
+            setShowCreateModal(false)
+            setEchoFlowDraft(null)
+          }}
+          mode="create"
+          presets={presets}
+          echoFlowDraft={echoFlowDraft}
+        />
       )}
 
       {/* Edit Modal */}
@@ -573,6 +589,7 @@ type ProviderFormProps = {
   mode: 'create' | 'edit'
   provider?: SavedProvider
   presets: ProviderPreset[]
+  echoFlowDraft?: EchoFlowTokenSource | null
 }
 
 function requirePreset(preset: ProviderPreset | undefined): ProviderPreset {
@@ -1019,8 +1036,8 @@ function openExternalUrl(url: string) {
     .catch(() => window.open(url, '_blank', 'noopener,noreferrer'))
 }
 
-function ProviderFormModal({ open, onClose, mode, provider, presets, browserMode = false }: ProviderFormProps) {
-  const { createProvider, updateProvider, testConfig, fetchModels } = useProviderStore()
+function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDraft, browserMode = false }: ProviderFormProps) {
+  const { createProvider, updateProvider, fetchProviders, testConfig, fetchModels } = useProviderStore()
   const fetchSettings = useSettingsStore((s) => s.fetchAll)
   const addToast = useUIStore((s) => s.addToast)
   const t = useTranslation()
@@ -1039,9 +1056,13 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, browserMode
     () => presets.flatMap((preset) => Object.keys(preset.defaultEnv ?? {})),
     [presets],
   )
+  const echoFlowPreset = availablePresets.find((preset) => preset.id === 'echoflowai')
   const initialPreset = provider
     ? availablePresets.find((p) => p.id === provider.presetId) ?? fallbackPreset
-    : selectablePresets[0] ?? fallbackPreset
+    : (echoFlowDraft && echoFlowPreset) ?? selectablePresets[0] ?? fallbackPreset
+  const echoFlowBaseUrl = echoFlowDraft
+    ? (echoFlowDraft.endpoint === 'main' ? 'https://api.echoflowai.cc' : 'https://expapi.echoflowai.cc')
+    : initialPreset.baseUrl
   const initialModels = stripModel1mMarkers(provider?.models ?? initialPreset.defaultModels)
   const initialImageGeneration = provider
     ? provider.imageGeneration
@@ -1056,8 +1077,8 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, browserMode
   )
 
   const [selectedPreset, setSelectedPreset] = useState<ProviderPreset>(initialPreset)
-  const [name, setName] = useState(provider?.name ?? initialPreset.name)
-  const [baseUrl, setBaseUrl] = useState(provider?.baseUrl ?? initialPreset.baseUrl)
+  const [name, setName] = useState(provider?.name ?? (echoFlowDraft ? `EchoFlow API · ${echoFlowDraft.endpoint === 'main' ? '主站' : '专线'}` : initialPreset.name))
+  const [baseUrl, setBaseUrl] = useState(provider?.baseUrl ?? echoFlowBaseUrl)
   const [apiFormat, setApiFormat] = useState<ApiFormat>(provider?.apiFormat ?? initialPreset.apiFormat ?? 'anthropic')
   const [authStrategy, setAuthStrategy] = useState<ProviderAuthStrategy>(provider?.authStrategy ?? getPresetAuthStrategy(initialPreset))
   const [apiKey, setApiKey] = useState(provider?.apiKey ?? '')
@@ -1237,7 +1258,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, browserMode
   const autoCompactWindowErrorKey = getAutoCompactWindowErrorKey(autoCompactWindow)
   const modelContextWindowErrorSlots = MODEL_SLOTS.filter((slot) => getModelContextWindowErrorKey(modelContextInputs[slot]))
   const compatibilityInvalid = apiFormat !== 'anthropic' && (invalidCompatibilityNumber(compatibility.maxOutputTokens) || invalidCompatibilityNumber(compatibility.outputTokenLimit))
-  const canSubmit = !compatibilityInvalid && name.trim() && baseUrl.trim() && (mode === 'edit' || !requiresApiKey || apiKey.trim()) && models.main.trim() && (!imageGeneration.enabled || imageGeneration.model.trim()) && !settingsJsonError && !autoCompactWindowErrorKey && modelContextWindowErrorSlots.length === 0
+  const canSubmit = !compatibilityInvalid && name.trim() && baseUrl.trim() && (mode === 'edit' || echoFlowDraft || !requiresApiKey || apiKey.trim()) && models.main.trim() && (!imageGeneration.enabled || imageGeneration.model.trim()) && !settingsJsonError && !autoCompactWindowErrorKey && modelContextWindowErrorSlots.length === 0
   const normalizedBaseUrl = normalizeProviderBaseUrl(baseUrl)
   const isPresetDefaultEndpoint = normalizedBaseUrl === normalizeProviderBaseUrl(selectedPreset.baseUrl)
   const apiKeyUrl = isPresetDefaultEndpoint ? selectedPreset.apiKeyUrl?.trim() : undefined
@@ -1468,7 +1489,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, browserMode
   }
   const hasModelsBaseUrl = Boolean(baseUrl.trim())
   const hasModelsApiKey = Boolean(apiKey.trim())
-  const canFetchModels = hasModelsBaseUrl && hasModelsApiKey
+  const canFetchModels = Boolean(echoFlowDraft?.tokenId) || (hasModelsBaseUrl && hasModelsApiKey)
   const handleFetchModels = async () => {
     if (!canFetchModels || isFetchingModels) return
     const requestId = modelsRequestRef.current + 1
@@ -1479,7 +1500,12 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, browserMode
     try {
       // Upstream failures arrive as a resolved `ok: false`, so the catch below
       // only covers our own server being unreachable.
-      const result = await fetchModels({ baseUrl: baseUrl.trim(), apiKey: apiKey.trim() })
+      const result = echoFlowDraft
+        ? await echoflowApi.fetchModelsFromToken({
+          endpoint: echoFlowDraft.endpoint,
+          tokenId: echoFlowDraft.tokenId,
+        })
+        : await fetchModels({ baseUrl: baseUrl.trim(), apiKey: apiKey.trim() })
       // The form moved on while we were probing — this answer describes a base
       // URL or key the user no longer has typed in.
       if (modelsRequestRef.current !== requestId) return
@@ -1557,7 +1583,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, browserMode
     try {
       // Write the edited echoflow-code settings.json first so provider-specific model
       // settings never conflict with the user's global ~/.claude/settings.json.
-      if (!browserMode && settingsJson.trim()) {
+      if (!browserMode && !echoFlowDraft && settingsJson.trim()) {
         try {
           const parsed = restoreSettingsJsonSecrets(JSON.parse(settingsJson), settingsJson, apiKey)
           const { providersApi } = await import('../../api/providers')
@@ -1570,24 +1596,48 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, browserMode
       }
 
       if (mode === 'create') {
-        await createProvider({
-          presetId: selectedPreset.id,
-          name: name.trim(),
-          apiKey: apiKey.trim(),
-          authStrategy,
-          baseUrl: baseUrl.trim(),
-          apiFormat,
-          ...(storedCompatibility ? { requestCompatibility: storedCompatibility } : {}),
-          models: normalizedModels,
-          ...(storedModel1mSupport !== undefined && { model1mSupport: storedModel1mSupport }),
-          ...(parsedAutoCompactWindow !== undefined && { autoCompactWindow: parsedAutoCompactWindow }),
-          ...(Object.keys(parsedModelContextWindows).length > 0 && { modelContextWindows: parsedModelContextWindows }),
-          toolSearchEnabled,
-          ...(disableExperimentalBetas && { disableExperimentalBetas }),
-          supportsNestedToolResultMedia,
-          ...(storedImageGeneration !== undefined && { imageGeneration: storedImageGeneration }),
-          notes: notes.trim() || undefined,
-        })
+        if (echoFlowDraft) {
+          await echoflowApi.createProviderFromToken({
+            endpoint: echoFlowDraft.endpoint,
+            tokenId: echoFlowDraft.tokenId,
+            tokenName: echoFlowDraft.tokenName,
+            keyPreview: echoFlowDraft.keyPreview,
+            name: name.trim(),
+            authStrategy,
+            baseUrl: baseUrl.trim(),
+            apiFormat,
+            ...(storedCompatibility ? { requestCompatibility: storedCompatibility } : {}),
+            models: normalizedModels,
+            ...(storedModel1mSupport !== undefined && { model1mSupport: storedModel1mSupport }),
+            ...(parsedAutoCompactWindow !== undefined && { autoCompactWindow: parsedAutoCompactWindow }),
+            ...(Object.keys(parsedModelContextWindows).length > 0 && { modelContextWindows: parsedModelContextWindows }),
+            toolSearchEnabled,
+            ...(disableExperimentalBetas && { disableExperimentalBetas }),
+            supportsNestedToolResultMedia,
+            ...(storedImageGeneration !== undefined && { imageGeneration: storedImageGeneration }),
+            notes: notes.trim() || undefined,
+          })
+          await fetchProviders()
+        } else {
+          await createProvider({
+            presetId: selectedPreset.id,
+            name: name.trim(),
+            apiKey: apiKey.trim(),
+            authStrategy,
+            baseUrl: baseUrl.trim(),
+            apiFormat,
+            ...(storedCompatibility ? { requestCompatibility: storedCompatibility } : {}),
+            models: normalizedModels,
+            ...(storedModel1mSupport !== undefined && { model1mSupport: storedModel1mSupport }),
+            ...(parsedAutoCompactWindow !== undefined && { autoCompactWindow: parsedAutoCompactWindow }),
+            ...(Object.keys(parsedModelContextWindows).length > 0 && { modelContextWindows: parsedModelContextWindows }),
+            toolSearchEnabled,
+            ...(disableExperimentalBetas && { disableExperimentalBetas }),
+            supportsNestedToolResultMedia,
+            ...(storedImageGeneration !== undefined && { imageGeneration: storedImageGeneration }),
+            notes: notes.trim() || undefined,
+          })
+        }
       } else if (provider) {
         const input: UpdateProviderInput = {
           name: name.trim(),
@@ -1644,16 +1694,27 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, browserMode
           modelId: models.main.trim(),
         })
       } else {
-        if (requiresApiKey && !apiKey.trim()) return
-        result = await testConfig({
-          baseUrl: baseUrl.trim(),
-          apiKey: apiKey.trim() || selectedPreset.defaultEnv?.ANTHROPIC_AUTH_TOKEN || 'local',
-          modelId: models.main.trim(),
-          authStrategy,
-          apiFormat,
-          supportsNestedToolResultMedia,
-          ...(apiFormat !== 'anthropic' ? { requestCompatibility: parseCompatibilityForm(compatibility) } : {}),
-        })
+        if (requiresApiKey && !apiKey.trim() && !echoFlowDraft) return
+        result = echoFlowDraft
+          ? await echoflowApi.testProviderFromToken({
+            endpoint: echoFlowDraft.endpoint,
+            tokenId: echoFlowDraft.tokenId,
+            baseUrl: baseUrl.trim(),
+            modelId: models.main.trim(),
+            authStrategy,
+            apiFormat,
+            supportsNestedToolResultMedia,
+            ...(apiFormat !== 'anthropic' ? { requestCompatibility: parseCompatibilityForm(compatibility) } : {}),
+          }).then(({ result: testResult }) => testResult)
+          : await testConfig({
+            baseUrl: baseUrl.trim(),
+            apiKey: apiKey.trim() || selectedPreset.defaultEnv?.ANTHROPIC_AUTH_TOKEN || 'local',
+            modelId: models.main.trim(),
+            authStrategy,
+            apiFormat,
+            supportsNestedToolResultMedia,
+            ...(apiFormat !== 'anthropic' ? { requestCompatibility: parseCompatibilityForm(compatibility) } : {}),
+          })
       }
       setTestResult(result)
     } catch {
@@ -1744,7 +1805,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, browserMode
         </div>
 
         {/* API Format */}
-        {(isCustom || mode === 'edit') ? (
+        {(isCustom || mode === 'edit' || Boolean(echoFlowDraft)) ? (
           <div>
             <label className="text-sm font-medium text-[var(--color-text-primary)] mb-1 block">{t('settings.providers.apiFormat')}</label>
             <Dropdown<ApiFormat>
@@ -1937,7 +1998,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, browserMode
               {t('settings.providers.fetchModels')}
             </Button>}
           </div>
-          {browserMode ? null : !hasModelsApiKey ? (
+          {browserMode ? null : !echoFlowDraft && !hasModelsApiKey ? (
             <p className="mb-2 text-[11px] text-[var(--color-text-tertiary)]">{t('settings.providers.fetchModelsApiKeyHint')}</p>
           ) : !hasModelsBaseUrl ? (
             <p className="mb-2 text-[11px] text-[var(--color-text-tertiary)]">{t('settings.providers.fetchModelsHint')}</p>
