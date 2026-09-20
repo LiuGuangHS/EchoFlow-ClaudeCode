@@ -1,18 +1,8 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import '@testing-library/jest-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-
-const {
-  getAccountsMock,
-  bindAccountMock,
-  refreshAccountMock,
-  disconnectAccountMock,
-} = vi.hoisted(() => ({
-  getAccountsMock: vi.fn(),
-  bindAccountMock: vi.fn(),
-  refreshAccountMock: vi.fn(),
-  disconnectAccountMock: vi.fn(),
-}))
+import { EchoFlowAPIOfficialLogin } from './EchoFlowAPIOfficialLogin'
+import { echoflowApi } from '../../api/echoflow'
 
 vi.mock('../../api/echoflow', () => ({
   ECHOFLOW_BASE_URLS: {
@@ -20,14 +10,12 @@ vi.mock('../../api/echoflow', () => ({
     dedicated: 'https://expapi.echoflowai.cc',
   },
   echoflowApi: {
-    getAccounts: getAccountsMock,
-    bindAccount: bindAccountMock,
-    refreshAccount: refreshAccountMock,
-    disconnectAccount: disconnectAccountMock,
+    getAccounts: vi.fn(),
+    bindAccount: vi.fn(),
+    refreshAccount: vi.fn(),
+    disconnectAccount: vi.fn(),
   },
 }))
-
-import { EchoFlowAPIOfficialLogin } from './EchoFlowAPIOfficialLogin'
 
 const mainAccount = {
   userId: 'main-user',
@@ -46,7 +34,7 @@ const dedicatedAccount = {
 }
 
 function mockAccounts(main: typeof mainAccount | null = mainAccount, dedicated: typeof dedicatedAccount | null = dedicatedAccount) {
-  getAccountsMock.mockResolvedValue({
+  vi.mocked(echoflowApi.getAccounts).mockResolvedValue({
     account: main,
     accounts: { main, dedicated },
   })
@@ -54,10 +42,10 @@ function mockAccounts(main: typeof mainAccount | null = mainAccount, dedicated: 
 
 describe('EchoFlowAPIOfficialLogin', () => {
   beforeEach(() => {
-    getAccountsMock.mockReset()
-    bindAccountMock.mockReset()
-    refreshAccountMock.mockReset()
-    disconnectAccountMock.mockReset()
+    vi.mocked(echoflowApi.getAccounts).mockReset()
+    vi.mocked(echoflowApi.bindAccount).mockReset()
+    vi.mocked(echoflowApi.refreshAccount).mockReset()
+    vi.mocked(echoflowApi.disconnectAccount).mockReset()
     mockAccounts()
   })
 
@@ -69,14 +57,14 @@ describe('EchoFlowAPIOfficialLogin', () => {
   it('shows one endpoint account at a time and keeps the account data isolated', async () => {
     render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
 
-    expect(await screen.findByText('用户 ID：main-user')).toBeInTheDocument()
-    expect(screen.queryByText('用户 ID：dedicated-user')).not.toBeInTheDocument()
+    expect(await screen.findByText(/用户 ID：main-user/)).toBeInTheDocument()
+    expect(screen.queryByText(/用户 ID：dedicated-user/)).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: '专线' }))
+    fireEvent.click(screen.getByRole('button', { name: /专线/ }))
 
-    expect(screen.getByText('用户 ID：dedicated-user')).toBeInTheDocument()
-    expect(screen.queryByText('用户 ID：main-user')).not.toBeInTheDocument()
-    expect(screen.getByText('https://expapi.echoflowai.cc')).toBeInTheDocument()
+    expect(screen.getByText(/用户 ID：dedicated-user/)).toBeInTheDocument()
+    expect(screen.queryByText(/用户 ID：main-user/)).not.toBeInTheDocument()
+    expect(screen.getByText(/https:\/\/expapi\.echoflowai\.cc/)).toBeInTheDocument()
     expect(screen.queryByText('management-main-secret')).not.toBeInTheDocument()
   })
 
@@ -89,15 +77,15 @@ describe('EchoFlowAPIOfficialLogin', () => {
     fireEvent.change(userId, { target: { value: 'main-user' } })
     fireEvent.change(managementToken, { target: { value: 'main-management-secret' } })
 
-    fireEvent.click(screen.getByRole('button', { name: '专线' }))
+    fireEvent.click(screen.getByRole('button', { name: /专线/ }))
     fireEvent.change(screen.getByPlaceholderText('用户 ID'), { target: { value: 'dedicated-user' } })
     fireEvent.change(screen.getByPlaceholderText('系统访问令牌'), { target: { value: 'dedicated-management-secret' } })
 
-    fireEvent.click(screen.getByRole('button', { name: '主站' }))
+    fireEvent.click(screen.getByRole('button', { name: /主站/ }))
 
     expect(screen.getByPlaceholderText('用户 ID')).toHaveValue('main-user')
     expect(screen.getByPlaceholderText('系统访问令牌')).toHaveValue('main-management-secret')
-    fireEvent.click(screen.getByRole('button', { name: '专线' }))
+    fireEvent.click(screen.getByRole('button', { name: /专线：https:\/\/expapi\.echoflowai\.cc/ }))
     expect(screen.getByPlaceholderText('用户 ID')).toHaveValue('dedicated-user')
     expect(screen.getByPlaceholderText('系统访问令牌')).toHaveValue('dedicated-management-secret')
   })
@@ -106,8 +94,9 @@ describe('EchoFlowAPIOfficialLogin', () => {
     const onAddFromToken = vi.fn()
     render(<EchoFlowAPIOfficialLogin onAddFromToken={onAddFromToken} />)
 
-    await screen.findByText('用户 ID：main-user')
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'shared-token-id' } })
+    await screen.findByText(/用户 ID：main-user/)
+    const tokenButton = screen.getByRole('button', { name: /Main key.*sk-main…1234/ })
+    fireEvent.click(tokenButton)
 
     expect(onAddFromToken).toHaveBeenCalledWith({
       endpoint: 'main',
@@ -121,7 +110,7 @@ describe('EchoFlowAPIOfficialLogin', () => {
 
   it('keeps binding credentials scoped to the selected endpoint', async () => {
     mockAccounts(null, null)
-    bindAccountMock.mockImplementation(async (endpoint: 'main' | 'dedicated', userId: string) => ({
+    vi.mocked(echoflowApi.bindAccount).mockImplementation(async (endpoint: 'main' | 'dedicated', userId: string) => ({
       account: {
         userId,
         username: endpoint === 'main' ? 'Main bound' : 'Dedicated bound',
@@ -140,8 +129,8 @@ describe('EchoFlowAPIOfficialLogin', () => {
     fireEvent.change(screen.getByPlaceholderText('系统访问令牌'), { target: { value: 'main-management-secret' } })
     fireEvent.click(screen.getByRole('button', { name: '绑定主站账户' }))
 
-    await waitFor(() => expect(bindAccountMock).toHaveBeenCalledWith('main', 'main-user', 'main-management-secret'))
-    fireEvent.click(screen.getByRole('button', { name: '专线' }))
+    await waitFor(() => expect(vi.mocked(echoflowApi.bindAccount)).toHaveBeenCalledWith('main', 'main-user', 'main-management-secret'))
+    fireEvent.click(screen.getByRole('button', { name: /专线：https:\/\/expapi\.echoflowai\.cc/ }))
     expect(screen.getByPlaceholderText('用户 ID')).toHaveValue('')
     expect(screen.getByPlaceholderText('系统访问令牌')).toHaveValue('')
 
@@ -149,29 +138,29 @@ describe('EchoFlowAPIOfficialLogin', () => {
     fireEvent.change(screen.getByPlaceholderText('系统访问令牌'), { target: { value: 'dedicated-management-secret' } })
     fireEvent.click(screen.getByRole('button', { name: '绑定专线账户' }))
 
-    await waitFor(() => expect(bindAccountMock).toHaveBeenCalledWith('dedicated', 'dedicated-user', 'dedicated-management-secret'))
-    fireEvent.click(screen.getByRole('button', { name: '主站' }))
-    expect(screen.getByText('用户 ID：main-user')).toBeInTheDocument()
-    expect(screen.getByRole('option', { name: 'main key · sk-main…1234' })).toBeInTheDocument()
+    await waitFor(() => expect(vi.mocked(echoflowApi.bindAccount)).toHaveBeenCalledWith('dedicated', 'dedicated-user', 'dedicated-management-secret'))
+    fireEvent.click(screen.getByRole('button', { name: /主站：https:\/\/api\.echoflowai\.cc/ }))
+    expect(screen.getByText(/用户 ID：main-user/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /main key.*sk-main…1234/ })).toBeInTheDocument()
   })
 
   it('disconnects only the selected endpoint account', async () => {
-    disconnectAccountMock.mockResolvedValue({ ok: true })
+    vi.mocked(echoflowApi.disconnectAccount).mockResolvedValue({ ok: true })
     render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
 
-    await screen.findByText('用户 ID：main-user')
+    await screen.findByText(/用户 ID：main-user/)
     fireEvent.click(screen.getByRole('button', { name: '解绑' }))
 
-    await waitFor(() => expect(disconnectAccountMock).toHaveBeenCalledWith('main'))
-    expect(screen.queryByText('用户 ID：main-user')).not.toBeInTheDocument()
+    await waitFor(() => expect(vi.mocked(echoflowApi.disconnectAccount)).toHaveBeenCalledWith('main'))
+    expect(screen.queryByText(/用户 ID：main-user/)).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: '专线' }))
-    expect(screen.getByText('用户 ID：dedicated-user')).toBeInTheDocument()
-    expect(screen.getByRole('option', { name: 'Dedicated key · sk-dedicated…5678' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /专线/ }))
+    expect(screen.getByText(/用户 ID：dedicated-user/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Dedicated key.*sk-dedicated…5678/ })).toBeInTheDocument()
   })
 
   it('refreshes only the selected endpoint account', async () => {
-    refreshAccountMock.mockResolvedValue({
+    vi.mocked(echoflowApi.refreshAccount).mockResolvedValue({
       account: {
         ...dedicatedAccount,
         username: 'Dedicated refreshed',
@@ -180,13 +169,13 @@ describe('EchoFlowAPIOfficialLogin', () => {
     })
     render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
 
-    await screen.findByText('用户 ID：main-user')
-    fireEvent.click(screen.getByRole('button', { name: '专线' }))
+    await screen.findByText(/用户 ID：main-user/)
+    fireEvent.click(screen.getByRole('button', { name: /专线：https:\/\/expapi\.echoflowai\.cc/ }))
     fireEvent.click(screen.getByRole('button', { name: '刷新' }))
 
-    await waitFor(() => expect(refreshAccountMock).toHaveBeenCalledWith('dedicated'))
+    await waitFor(() => expect(vi.mocked(echoflowApi.refreshAccount)).toHaveBeenCalledWith('dedicated'))
     expect(screen.getByText('Dedicated refreshed')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '主站' }))
+    fireEvent.click(screen.getByRole('button', { name: /主站/ }))
     expect(screen.getByText('Main User')).toBeInTheDocument()
     expect(screen.queryByText('Dedicated refreshed')).not.toBeInTheDocument()
   })
