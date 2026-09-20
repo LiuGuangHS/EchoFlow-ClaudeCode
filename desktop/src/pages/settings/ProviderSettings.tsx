@@ -28,6 +28,7 @@ import { echoflowApi, type EchoFlowTokenSource } from '../../api/echoflow'
 import { ChatGPTOfficialLogin } from '../../components/settings/ChatGPTOfficialLogin'
 import { GrokOfficialLogin } from '../../components/settings/GrokOfficialLogin'
 import { CcSwitchImportModal } from '../../components/settings/CcSwitchImportModal'
+import { AdminConfigGenerator } from '../../components/settings/AdminConfigGenerator'
 import { ModelIdCombobox } from '../../components/settings/ModelIdCombobox'
 import { ProviderRequestCompatibilityFields } from '@/components/settings/ProviderRequestCompatibilityFields'
 import { compatibilityForm, invalidCompatibilityNumber, parseCompatibilityForm, readCompatibilityEditorJson, writeCompatibilityJson, type RequestCompatibilityForm } from '../../lib/providerRequestCompatibility'
@@ -149,6 +150,7 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
   const [echoFlowHasAccount, setEchoFlowHasAccount] = useState(false)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showCcSwitchImport, setShowCcSwitchImport] = useState(false)
+  const [showAdminGenerator, setShowAdminGenerator] = useState(false)
   const [pendingDeleteProvider, setPendingDeleteProvider] = useState<SavedProvider | null>(null)
   const [isDeletingProvider, setIsDeletingProvider] = useState(false)
   const [actionFailed, setActionFailed] = useState(false)
@@ -174,6 +176,11 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
   const openEchoFlowProviderModal = (draft: EchoFlowTokenSource) => {
     setEchoFlowDraft(draft)
     setShowCreateModal(true)
+  }
+
+  const openEditProviderModal = (provider: SavedProvider) => {
+    setEditingProvider(provider)
+    setShowEditModal(true)
   }
 
   const handleDelete = async (provider: SavedProvider) => {
@@ -262,6 +269,14 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
             >
               {t('settings.providers.ccSwitch.importButton')}
             </Button>}
+            {!browserMode && <Button
+              variant="secondary"
+              size="base"
+              onClick={() => setShowAdminGenerator(true)}
+              icon={<span className="material-symbols-outlined text-[16px]">link</span>}
+            >
+              生成配置链接
+            </Button>}
             <Button
               size="base"
               onClick={() => setShowCreateModal(true)}
@@ -283,13 +298,14 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
           <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${echoFlowHasAccount ? 'bg-[var(--color-success)]' : 'bg-[var(--color-text-tertiary)]'}`} />
           <div className="min-w-0 flex-1">
             <div className="text-sm font-semibold text-[var(--color-text-primary)]">EchoFlow API 官方</div>
-            <div className="mt-0.5 text-xs text-[var(--color-text-tertiary)]">https://api.echoflowai.cc · Claude / OpenAI 兼容协议</div>
+            <div className="mt-0.5 text-xs text-[var(--color-text-tertiary)]">主站和专线接入，支持 Claude / OpenAI</div>
           </div>
         </div>
         <div className="border-t border-[var(--color-border-separator)] px-4 pb-4 pt-3">
             <EchoFlowAPIOfficialLogin
               onAddFromToken={openEchoFlowProviderModal}
               onBindingChange={setEchoFlowHasAccount}
+              onEditProvider={openEditProviderModal}
             />
         </div>
       </div>
@@ -378,6 +394,18 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
               const test = testResults[provider.id]
               const preset = presetMap.get(provider.presetId)
 
+              // Extract quota info from provider notes if available
+              const quotaInfo = (() => {
+                if (provider.notes) {
+                  const quotaMatch = provider.notes.match(/余额[:：]\s*¥?([\d.]+)/)
+                  if (quotaMatch) return ` · 余额: ¥${quotaMatch[1]}`
+                }
+                return ''
+              })()
+
+              // Display masked API key with sk- prefix if present
+              const displayKey = provider.apiKey || 'sk-...'
+
               return (
                 <SortableProviderCard
                     browserMode={browserMode}
@@ -387,7 +415,7 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
                   dragLabel={t('settings.providers.dragToReorder')}
                   onActivate={!isActive ? () => handleActivate(provider.id) : undefined}
                   title={provider.name}
-                  subtitle={<span className="font-mono text-[11.5px]">{`${provider.baseUrl} · ${provider.models.main}`}</span>}
+                  subtitle={<span className="font-mono text-[11.5px]">{displayKey}{quotaInfo}</span>}
                   badges={(
                     <>
                       {preset && preset.id !== 'custom' && (
@@ -467,6 +495,17 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
       {/* cc-switch import — conditionally rendered so the scan reruns each time */}
       {showCcSwitchImport && (
         <CcSwitchImportModal open={true} onClose={() => setShowCcSwitchImport(false)} />
+      )}
+
+      {showAdminGenerator && (
+        <Modal
+          isOpen={true}
+          onClose={() => setShowAdminGenerator(false)}
+          title="配置链接生成器"
+          size="lg"
+        >
+          <AdminConfigGenerator />
+        </Modal>
       )}
 
       <ConfirmDialog
@@ -1077,13 +1116,23 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
   )
 
   const [selectedPreset, setSelectedPreset] = useState<ProviderPreset>(initialPreset)
-  const [name, setName] = useState(provider?.name ?? (echoFlowDraft ? `EchoFlow API · ${echoFlowDraft.endpoint === 'main' ? '主站' : '专线'}` : initialPreset.name))
+  const [name, setName] = useState(
+    provider?.name ??
+    (echoFlowDraft
+      ? `${echoFlowDraft.endpoint === 'main' ? '主站' : '专线'} · ${echoFlowDraft.tokenName}`
+      : initialPreset.name)
+  )
+
+  // Store quota info in notes for display later
+  const defaultNotes = provider?.notes ?? (echoFlowDraft && typeof echoFlowDraft.remainQuota === 'number'
+    ? `余额: ¥${echoFlowDraft.remainQuota.toFixed(2)}`
+    : '')
   const [baseUrl, setBaseUrl] = useState(provider?.baseUrl ?? echoFlowBaseUrl)
   const [apiFormat, setApiFormat] = useState<ApiFormat>(provider?.apiFormat ?? initialPreset.apiFormat ?? 'anthropic')
   const [authStrategy, setAuthStrategy] = useState<ProviderAuthStrategy>(provider?.authStrategy ?? getPresetAuthStrategy(initialPreset))
-  const [apiKey, setApiKey] = useState(provider?.apiKey ?? '')
+  const [apiKey, setApiKey] = useState(provider?.apiKey ?? echoFlowDraft?.keyPreview ?? '')
   const [showApiKey, setShowApiKey] = useState(false)
-  const [notes, setNotes] = useState(provider?.notes ?? '')
+  const [notes, setNotes] = useState(defaultNotes)
   const [compatibility, setCompatibility] = useState(() => compatibilityForm(provider?.requestCompatibility))
   const [models, setModels] = useState<ModelMapping>(initialModels)
   const [model1mSupport, setModel1mSupport] = useState<Model1mSupport>(initialModel1mSupport)
@@ -1602,6 +1651,8 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
             tokenId: echoFlowDraft.tokenId,
             tokenName: echoFlowDraft.tokenName,
             keyPreview: echoFlowDraft.keyPreview,
+            remainQuota: echoFlowDraft.remainQuota,
+            unlimitedQuota: echoFlowDraft.unlimitedQuota,
             name: name.trim(),
             authStrategy,
             baseUrl: baseUrl.trim(),
