@@ -142,6 +142,24 @@ function buildSavedProvider(input: CreateProviderInput): SavedProvider {
     ...(input.requestCompatibility !== undefined && { requestCompatibility: input.requestCompatibility }),
     ...(imageGeneration !== undefined && { imageGeneration }),
     ...(input.notes !== undefined && { notes: input.notes }),
+    ...(input.credentialSource !== undefined && { credentialSource: input.credentialSource }),
+  }
+}
+
+function maskProviderKey(key: string): string {
+  if (!key) return ''
+  if (key.length <= 8) return '••••••••'
+  return key.startsWith('sk-')
+    ? `sk-${key.slice(3, 6)}****${key.slice(-4)}`
+    : `${key.slice(0, 6)}****${key.slice(-4)}`
+}
+
+export function toPublicProvider(provider: SavedProvider): SavedProvider {
+  return {
+    ...provider,
+    apiKey: '',
+    hasApiKey: Boolean(provider.apiKey),
+    keyPreview: maskProviderKey(provider.apiKey),
   }
 }
 
@@ -254,6 +272,11 @@ export class ProviderService {
     }
   }
 
+  async listPublicProviders(): Promise<{ providers: SavedProvider[]; activeId: string | null; providerOrder: string[] }> {
+    const result = await this.listProviders()
+    return { ...result, providers: result.providers.map(toPublicProvider) }
+  }
+
   async getProvider(id: string): Promise<SavedProvider> {
     if (isOpenAIOfficialProviderId(id)) {
       return OPENAI_OFFICIAL_PROVIDER
@@ -266,6 +289,10 @@ export class ProviderService {
     const provider = index.providers.find((p) => p.id === id)
     if (!provider) throw ApiError.notFound(`Provider not found: ${id}`)
     return provider
+  }
+
+  async getPublicProvider(id: string): Promise<SavedProvider> {
+    return toPublicProvider(await this.getProvider(id))
   }
 
   async addProvider(input: CreateProviderInput): Promise<SavedProvider> {
@@ -330,6 +357,7 @@ export class ProviderService {
       ...(input.disableExperimentalBetas === true && { disableExperimentalBetas: true }),
       ...(imageGeneration !== undefined && imageGeneration !== null && { imageGeneration }),
       ...(input.notes !== undefined && { notes: input.notes }),
+      ...(input.credentialSource !== undefined && input.credentialSource !== null && { credentialSource: input.credentialSource }),
     }
     if (input.model1mSupport === null) {
       delete updated.model1mSupport
@@ -348,6 +376,9 @@ export class ProviderService {
     }
     if (imageGeneration === null) {
       delete updated.imageGeneration
+    }
+    if (input.credentialSource === null) {
+      delete updated.credentialSource
     }
 
     index.providers[idx] = updated

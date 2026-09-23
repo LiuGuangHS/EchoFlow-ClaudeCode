@@ -29,8 +29,8 @@ type Accounts = Record<EchoFlowEndpoint, EchoFlowAccount | null>
 
 const EMPTY_ACCOUNTS: Accounts = { main: null, dedicated: null }
 const ENDPOINT_LABELS: Record<EchoFlowEndpoint, string> = {
-  main: '主站：https://api.echoflowai.cc',
-  dedicated: '专线：https://expapi.echoflowai.cc'
+  main: '主站',
+  dedicated: '专线',
 }
 const ENDPOINT_SHORT_LABELS: Record<EchoFlowEndpoint, string> = {
   main: '主站',
@@ -61,6 +61,7 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, onEd
   const [isSavingAccount, setIsSavingAccount] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [isDisconnecting, setIsDisconnecting] = useState(false)
+  const [showCredentialEditor, setShowCredentialEditor] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const account = accounts[selectedEndpoint]
@@ -125,6 +126,7 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, onEd
         ...current,
         [selectedEndpoint]: { userId: savedAccount.userId, managementToken: '' },
       }))
+      setShowCredentialEditor(false)
     } catch {
       setError('账户绑定失败，请检查当前线路的用户 ID 和系统访问令牌。')
     } finally {
@@ -152,8 +154,11 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, onEd
     setError(null)
     try {
       await echoflowApi.disconnectAccount(selectedEndpoint)
-      setAccounts((current) => ({ ...current, [selectedEndpoint]: null }))
-      onBindingChange?.(Boolean(accounts[selectedEndpoint === 'main' ? 'dedicated' : 'main']))
+      setAccounts((current) => {
+        const next = { ...current, [selectedEndpoint]: null }
+        onBindingChange?.(Boolean(next.main || next.dedicated))
+        return next
+      })
       setCredentials((current) => ({
         ...current,
         [selectedEndpoint]: { userId: '', managementToken: '' },
@@ -190,9 +195,9 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, onEd
             <div className="flex min-w-0 flex-1 items-center gap-2.5">
               <span className="h-2 w-2 shrink-0 rounded-full bg-[var(--color-success)]" />
               <span className="truncate text-sm font-medium text-[var(--color-text-primary)]">{activeProvider.name}</span>
-              {activeProvider.apiKey && (
+              {(activeProvider.keyPreview || activeProvider.apiKey) && (
                 <span className="shrink-0 font-mono text-xs text-[var(--color-text-tertiary)]">
-                  {activeProvider.apiKey}
+                  {activeProvider.keyPreview || activeProvider.apiKey}
                 </span>
               )}
               <span className="shrink-0 rounded border border-[var(--color-brand)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-brand)]">默认</span>
@@ -231,9 +236,10 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, onEd
           )
         })}
       </div>
+      <p className="text-xs text-[var(--color-text-tertiary)]">主站和专线可以同时绑定；这里切换的是查看和管理的线路，不会断开另一条线路。</p>
 
       <div className="rounded-lg border border-[var(--color-border-separator)] bg-[var(--color-surface-container-low)] p-3">
-        {!account ? (
+        {!account || showCredentialEditor ? (
           <div className="flex items-center gap-2">
             <input value={currentCredentials.userId} onChange={(event) => updateCredentials({ userId: event.target.value })} placeholder="用户 ID" className={`${inputBase} text-center`} />
             <div className="relative flex-1">
@@ -243,13 +249,15 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, onEd
               </button>
             </div>
             <button type="button" onClick={() => void saveAccount()} disabled={isSavingAccount || !currentCredentials.userId.trim() || !currentCredentials.managementToken.trim()} className="shrink-0 rounded-md bg-[var(--color-brand)] px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
-              {isSavingAccount ? '绑定中...' : `绑定${ENDPOINT_SHORT_LABELS[selectedEndpoint]}账户`}
+              {isSavingAccount ? '保存中...' : account ? '更新令牌' : `绑定${ENDPOINT_SHORT_LABELS[selectedEndpoint]}账户`}
             </button>
+            {account && <button type="button" onClick={() => setShowCredentialEditor(false)} className="shrink-0 rounded-md border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-text-secondary)]">取消</button>}
           </div>
         ) : (
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0 flex-1 text-sm text-[var(--color-text-secondary)]">{accountSummary}</div>
             <div className="flex shrink-0 items-center gap-2">
+              <button type="button" onClick={() => setShowCredentialEditor(true)} className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-text-secondary)]">更新令牌</button>
               <button type="button" onClick={() => void refreshAccount()} disabled={isRefreshing} className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-text-secondary)]"><RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />刷新</button>
               <button type="button" onClick={() => void disconnectAccount()} disabled={isDisconnecting} className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-text-secondary)]"><Unlink className="h-4 w-4" />解绑</button>
             </div>
@@ -260,14 +268,18 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, onEd
       {account && (
         <div className="flex flex-col gap-2">
           <div className="flex items-baseline gap-2">
-            <div className="text-sm font-medium text-[var(--color-text-primary)]">添加 API Key</div>
-            <div className="text-xs text-[var(--color-text-tertiary)]">从当前账户添加 API Key 到下方渠道列表</div>
+            <div className="text-sm font-medium text-[var(--color-text-primary)]">调用令牌</div>
+            <div className="text-xs text-[var(--color-text-tertiary)]">选择令牌后即可添加到模型配置，真实密钥不会显示在界面</div>
           </div>
 
           {tokenOptions.length > 0 ? (
             <div className="flex flex-col gap-1.5">
               {tokenOptions.map((token) => {
-                const alreadyAdded = endpointProviders.some((p) => p.apiKey && token.keyPreview && p.apiKey.includes(token.keyPreview))
+                const alreadyAdded = endpointProviders.some((p) =>
+                  p.credentialSource?.kind === 'echoflow-token' &&
+                  p.credentialSource.endpoint === selectedEndpoint &&
+                  p.credentialSource.tokenId === token.id,
+                )
                 return (
                   <button
                     key={token.id}

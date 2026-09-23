@@ -394,17 +394,7 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
               const test = testResults[provider.id]
               const preset = presetMap.get(provider.presetId)
 
-              // Extract quota info from provider notes if available
-              const quotaInfo = (() => {
-                if (provider.notes) {
-                  const quotaMatch = provider.notes.match(/余额[:：]\s*¥?([\d.]+)/)
-                  if (quotaMatch) return ` · 余额: ¥${quotaMatch[1]}`
-                }
-                return ''
-              })()
-
-              // Display masked API key with sk- prefix if present
-              const displayKey = provider.apiKey || 'sk-...'
+              const displayKey = provider.keyPreview || (provider.hasApiKey ? '已配置凭据' : '未配置凭据')
 
               return (
                 <SortableProviderCard
@@ -415,7 +405,7 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
                   dragLabel={t('settings.providers.dragToReorder')}
                   onActivate={!isActive ? () => handleActivate(provider.id) : undefined}
                   title={provider.name}
-                  subtitle={<span className="font-mono text-[11.5px]">{displayKey}{quotaInfo}</span>}
+                  subtitle={<span className="font-mono text-[11.5px]">{displayKey}</span>}
                   badges={(
                     <>
                       {preset && preset.id !== 'custom' && (
@@ -1123,14 +1113,11 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
       : initialPreset.name)
   )
 
-  // Store quota info in notes for display later
-  const defaultNotes = provider?.notes ?? (echoFlowDraft && typeof echoFlowDraft.remainQuota === 'number'
-    ? `余额: ¥${echoFlowDraft.remainQuota.toFixed(2)}`
-    : '')
+  const defaultNotes = provider?.notes ?? ''
   const [baseUrl, setBaseUrl] = useState(provider?.baseUrl ?? echoFlowBaseUrl)
   const [apiFormat, setApiFormat] = useState<ApiFormat>(provider?.apiFormat ?? initialPreset.apiFormat ?? 'anthropic')
   const [authStrategy, setAuthStrategy] = useState<ProviderAuthStrategy>(provider?.authStrategy ?? getPresetAuthStrategy(initialPreset))
-  const [apiKey, setApiKey] = useState(provider?.apiKey ?? echoFlowDraft?.keyPreview ?? '')
+  const [apiKey, setApiKey] = useState(provider?.apiKey ?? '')
   const [showApiKey, setShowApiKey] = useState(false)
   const [notes, setNotes] = useState(defaultNotes)
   const [compatibility, setCompatibility] = useState(() => compatibilityForm(provider?.requestCompatibility))

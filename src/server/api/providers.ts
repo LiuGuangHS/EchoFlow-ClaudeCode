@@ -125,7 +125,7 @@ export async function handleProvidersApi(
     // /api/providers (no ID)
     if (!id) {
       if (req.method === 'GET') {
-        const { providers, activeId, providerOrder } = await providerService.listProviders()
+        const { providers, activeId, providerOrder } = await providerService.listPublicProviders()
         return Response.json({ providers, activeId, providerOrder })
       }
       if (req.method === 'POST') {
@@ -185,7 +185,7 @@ export async function handleProvidersApi(
 
     // /api/providers/:id
     if (req.method === 'GET') {
-      const provider = await providerService.getProvider(id)
+      const provider = await providerService.getPublicProvider(id)
       return Response.json({ provider })
     }
     if (req.method === 'PUT') {

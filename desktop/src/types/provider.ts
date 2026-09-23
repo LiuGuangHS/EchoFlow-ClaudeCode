@@ -45,11 +45,20 @@ export type RequestCompatibility = {
   [key: string]: unknown
 }
 
+export type CredentialSource = {
+  kind: 'echoflow-token'
+  endpoint: 'main' | 'dedicated'
+  tokenId: string
+  tokenName?: string
+}
+
 export type SavedProvider = {
   id: string
   presetId: string
   name: string
   apiKey: string  // masked from server
+  hasApiKey?: boolean
+  keyPreview?: string
   authStrategy?: ProviderAuthStrategy
   baseUrl: string
   apiFormat: ApiFormat
@@ -64,6 +73,7 @@ export type SavedProvider = {
   requestCompatibility?: RequestCompatibility
   imageGeneration?: ImageGenerationConfig
   notes?: string
+  credentialSource?: CredentialSource
 }
 
 export type CreateProviderInput = {
@@ -84,6 +94,7 @@ export type CreateProviderInput = {
   requestCompatibility?: RequestCompatibility
   imageGeneration?: ImageGenerationConfig
   notes?: string
+  credentialSource?: CredentialSource
 }
 
 export type UpdateProviderInput = {

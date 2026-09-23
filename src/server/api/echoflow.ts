@@ -101,6 +101,12 @@ export async function handleEchoFlowApi(req: Request, _url: URL, segments: strin
         ...providerInput,
         presetId: ECHOFLOW_PRESET_ID,
         apiKey: token.key,
+        credentialSource: {
+          kind: 'echoflow-token',
+          endpoint,
+          tokenId: token.id,
+          tokenName: token.name,
+        },
         // The endpoint is part of the credential namespace. Never allow a
         // client to combine a token with the other endpoint's base URL.
         baseUrl: ECHOFLOW_BASE_URLS[endpoint],
@@ -134,11 +140,16 @@ export async function handleEchoFlowApi(req: Request, _url: URL, segments: strin
       const input = SelectTokenSchema.parse(await req.json())
       const token = await service.selectAccountToken(input.endpoint, input.tokenId)
       if (!input.providerId) {
+        const keyPreview = token.key.length <= 8
+          ? '••••••••'
+          : token.key.startsWith('sk-')
+            ? `sk-${token.key.slice(3, 6)}****${token.key.slice(-4)}`
+            : `${token.key.slice(0, 6)}****${token.key.slice(-4)}`
         return Response.json({
           token: {
             id: token.id,
             name: token.name,
-            keyPreview: token.key.length <= 8 ? '••••••••' : `${token.key.slice(0, 3)}-••••${token.key.slice(-4)}`,
+            keyPreview,
           },
         })
       }
@@ -147,6 +158,12 @@ export async function handleEchoFlowApi(req: Request, _url: URL, segments: strin
       const updated = await providerService.updateProvider(input.providerId, {
         apiKey: token.key,
         baseUrl: ECHOFLOW_BASE_URLS[input.endpoint],
+        credentialSource: {
+          kind: 'echoflow-token',
+          endpoint: input.endpoint,
+          tokenId: token.id,
+          tokenName: token.name,
+        },
       })
       return Response.json({ provider: { id: updated.id } })
     }
@@ -164,5 +181,8 @@ export async function handleEchoFlowApi(req: Request, _url: URL, segments: strin
 }
 
 function maskApiKey(key: string): string {
-  return key.length <= 8 ? '••••••••' : `${key.slice(0, 3)}-••••${key.slice(-4)}`
+  if (key.length <= 8) return '••••••••'
+  return key.startsWith('sk-')
+    ? `sk-${key.slice(3, 6)}****${key.slice(-4)}`
+    : `${key.slice(0, 6)}****${key.slice(-4)}`
 }
