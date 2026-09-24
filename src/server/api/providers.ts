@@ -241,7 +241,7 @@ async function handleCcSwitchImport(req: Request): Promise<Response> {
     const scan = await readCcSwitchProviders({ existingProviders: providers })
     const { inputs, skipped } = resolveCcSwitchImports(scan, input.sourceIds)
     const imported = await providerService.importProviders(inputs)
-    return Response.json({ imported, skipped })
+    return Response.json({ imported: imported.map(toPublicProvider), skipped })
   } catch (err) {
     if (err instanceof z.ZodError) throw ApiError.badRequest(err.issues.map((i) => i.message).join('; '))
     throw err

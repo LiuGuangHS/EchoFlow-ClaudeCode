@@ -345,6 +345,7 @@ describe('EchoFlow account API', () => {
         apiFormat: 'anthropic',
         authStrategy: 'auth_token',
         models: { main: 'model-main', haiku: 'model-haiku', sonnet: 'model-sonnet', opus: 'model-opus' },
+        imageGeneration: { model: 'image-model', apiKey: 'client-image-secret' },
       })
       const response = await handleEchoFlowApi(create.req, create.url, create.segments)
       const body = await response.json() as { provider: { id: string; presetId: string; baseUrl: string; apiKey: string } }
@@ -355,6 +356,7 @@ describe('EchoFlow account API', () => {
       })
       expect(body.provider.apiKey).not.toBe('server-dedicated-key')
       expect(body.provider.apiKey).not.toBe('client-forged-key')
+      expect(JSON.stringify(body)).not.toContain('client-image-secret')
 
       const stored = await readStoredJson<{ providers: Array<{ presetId: string; baseUrl: string; apiKey: string }> }>('providers.json')
       expect(stored.providers).toEqual([expect.objectContaining({

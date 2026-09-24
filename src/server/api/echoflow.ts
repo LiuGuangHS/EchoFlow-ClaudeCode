@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { EchoFlowApiError, EchoFlowApiService } from '../services/echoflowApiService.js'
 import { LegacyMigrationService } from '../services/legacyMigrationService.js'
 import { isLocalAccessAuthorized } from '../localAccessAuth.js'
-import { ProviderService } from '../services/providerService.js'
+import { ProviderService, toPublicProvider } from '../services/providerService.js'
 import { fetchProviderModels } from '../services/providerModelCatalog.js'
 import { errorResponse } from '../middleware/errorHandler.js'
 import { CreateProviderSchema, TestProviderSchema } from '../types/provider.js'
@@ -111,7 +111,7 @@ export async function handleEchoFlowApi(req: Request, _url: URL, segments: strin
         // client to combine a token with the other endpoint's base URL.
         baseUrl: ECHOFLOW_BASE_URLS[endpoint],
       })
-      return Response.json({ provider: { ...provider, apiKey: maskApiKey(provider.apiKey) } }, { status: 201 })
+      return Response.json({ provider: toPublicProvider(provider) }, { status: 201 })
     }
 
     if (action === 'models' && req.method === 'POST') {
@@ -178,11 +178,4 @@ export async function handleEchoFlowApi(req: Request, _url: URL, segments: strin
     }
     return errorResponse(error)
   }
-}
-
-function maskApiKey(key: string): string {
-  if (key.length <= 8) return '••••••••'
-  return key.startsWith('sk-')
-    ? `sk-${key.slice(3, 6)}****${key.slice(-4)}`
-    : `${key.slice(0, 6)}****${key.slice(-4)}`
 }
