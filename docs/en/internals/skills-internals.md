@@ -15,7 +15,7 @@ A deep dive into how Skills are discovered, loaded, injected, executed, and mana
 
 The Skills system consists of 5 core modules working together:
 
-```
+```text
 ┌─────────────────────────────────────────────────────┐
 │                   Skills System                      │
 │                                                     │
@@ -87,7 +87,7 @@ const loadAllCommands = memoize(async (cwd: string): Promise<Command[]> => {
 
 `getSkillDirCommands()` is the core loading function for directory Skills:
 
-```
+```text
 getSkillDirCommands(cwd)
 ├─ Determine loading paths
 │  ├─ managed: ${MANAGED_PATH}/.claude/skills/
@@ -184,7 +184,7 @@ export function initBundledSkills(): void {
 
 ### Plugin Skill Loading
 
-```
+```text
 Plugin System
 ├─ loadAllPluginsCacheOnly()
 │  └─ Get all enabled plugins
@@ -228,7 +228,7 @@ async function fetchCommandsForClient(client) {
 
 ### Parsing Flow
 
-```
+```text
 SKILL.md file
     ↓
 parseFrontmatter()              ← frontmatterParser.ts
@@ -314,7 +314,7 @@ async getPromptForCommand(args, toolUseContext) {
 
 Skills are injected into conversations via `system-reminder` messages:
 
-```
+```text
 Start of each conversation turn
     ↓
 getSkillListingAttachments()          ← attachments.ts:2600-2747
@@ -347,7 +347,7 @@ export const MAX_LISTING_DESC_CHARS = 250          // Max characters per descrip
 
 **Truncation strategy:**
 
-```
+```text
 formatCommandsWithinBudget(commands, contextWindowTokens)
     ├─ Cap description + whenToUse at 250 characters for every entry, including Bundled
     ├─ Calculate total budget = contextWindowTokens × 4 × 1%
@@ -412,7 +412,7 @@ export const SkillTool = buildTool({
 
 ![SkillTool Execution Flow](./images/07-skill-execution.png)
 
-```
+```text
 SkillTool.call({ skill, args })
     │
     ├─ 1. Normalize input
@@ -498,7 +498,7 @@ async function getAllCommands(context: ToolUseContext): Promise<Command[]> {
 
 ### Execution Flow
 
-```
+```text
 executeForkedSkill(command, commandName, args, context, ...)
     │
     ├─ 1. Create sub-agent ID
@@ -605,7 +605,7 @@ export async function prepareForkedCommandContext(
 
 Skills with `paths` frontmatter are not immediately exposed to the model:
 
-```
+```text
 At startup
 ├─ Load all Skills
 ├─ Those with paths → conditionalSkills Map
@@ -657,7 +657,7 @@ export async function discoverSkillDirsForPaths(
 
 ### Cache Invalidation Chain
 
-```
+```text
 Dynamic Skill change
     ↓
 skillsLoaded.emit()
@@ -705,7 +705,7 @@ export function registerSkillHooks(
 
 ### Hook Lifecycle
 
-```
+```text
 Skill invocation
     ↓
 processPromptSlashCommand()
@@ -726,7 +726,7 @@ During session
 
 ### Check Flow
 
-```
+```text
 checkPermissions({ skill, args }, context)
     │
     ├─ 1. Deny rule check (highest priority)
@@ -752,7 +752,7 @@ checkPermissions({ skill, args }, context)
 
 If a Skill contains only the following properties (no hooks, no allowedTools, no fork), it is automatically allowed:
 
-```
+```typescript
 SAFE_SKILL_PROPERTIES = {
   type, name, description, contentLength, source,
   loadedFrom, progressMessage, userInvocable,
@@ -769,7 +769,7 @@ SAFE_SKILL_PROPERTIES = {
 
 ![Complete Lifecycle](./images/09-skill-lifecycle.png)
 
-```
+```text
 Phase 1: Discovery and Registration
 ──────────────────────────────────
 CLI startup
@@ -817,7 +817,7 @@ File operation trigger
 
 Inline Skill content is recorded to session state via `addInvokedSkill()`, ensuring it can be restored after context compression:
 
-```
+```text
 addInvokedSkill(name, path, content, agentId)
     ↓
 Stored in session state

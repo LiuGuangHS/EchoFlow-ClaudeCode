@@ -2,7 +2,7 @@
 title: Won't install, won't open, won't connect
 nav_title: Troubleshooting
 description: Organized by symptom — install failures, blank window, model 401s, stuck sessions, port conflicts, phone access.
-order: 4
+order: 5
 ---
 
 # Won't install, won't open, won't connect
@@ -21,9 +21,9 @@ First, one check: make sure you're on the latest stable build from [GitHub Relea
 
 ### Windows shows a SmartScreen warning
 
-**Why** — Unsigned installers get flagged by SmartScreen.
+**Why** — Unsigned installers get flagged by SmartScreen. The project is applying for free code signing through SignPath, so **Windows artifacts may remain unsigned until that approval completes** (macOS builds are signed and notarized).
 
-**What to do** — Confirm the file came from this repository's Releases, then click "More info" → "Run anyway". If the filename or origin doesn't match, don't bypass it.
+**What to do** — Confirm the file came from this repository's Releases, then click "More info" → "Run anyway". If the filename or origin doesn't match, don't bypass it. Signing status is described in [Code signing policy](./code-signing.md).
 
 ### The Windows installer says the program is still running
 
@@ -76,7 +76,7 @@ Never delete `~/.claude` while troubleshooting. Your sessions, provider configur
 
 **Why** — The auth method doesn't match the provider, or the key itself is wrong.
 
-**What to do** — Open Settings → Providers, edit the entry, and check in order:
+**What to do** — Open Settings → Model settings, edit the entry, and check in order:
 
 1. Is **Base URL** the API root rather than the marketing site?
 2. Is **Auth Variable** correct? Third-party Anthropic-compatible services almost always want `Bearer Token (ANTHROPIC_AUTH_TOKEN)`; only direct Anthropic access uses `API Key (ANTHROPIC_API_KEY)`. If unsure, try both.
@@ -116,6 +116,26 @@ For local models (LM Studio / Ollama), **do not append `/v1` to the base URL** �
 **Why** — The authorization callback isn't reaching the running app.
 
 **What to do** — Keep the app running through the whole flow; complete the authorization in your system browser with the same account; disable proxies and blocking extensions; and check that your system clock is correct, since a skewed clock breaks the handshake. If the browser never opens, click "Copy authorization link" and paste it manually.
+
+### Binding an EchoFlow account fails
+
+**Why** — Usually one of three things: a mistyped user ID, an expired system access token, or the wrong line (main site versus dedicated line).
+
+**What to do** — Check that the line tab matches the account; the two lines bind independently and their credentials never overwrite each other. Regenerate the token under Security settings → System access token in the console and use **Update token**. If the balance still reads "not synced yet" after binding, click **Refresh** once.
+
+### The model selector stops responding
+
+**Why** — 0.5.5 fixed a defect where a runtime transition in a pending state locked the whole selector, making every later click appear dead. Older builds hit it.
+
+**What to do** — Upgrade to 0.5.5 or newer. If it still happens, wait for the current switch to finish, or restart the app once.
+
+### I sent an image to a model without vision support
+
+**Symptom** — The model reports it can't take images, and later text-only turns repeat the same error.
+
+**Why** — Before 0.5.5 that failure state poisoned the whole session.
+
+**What to do** — Upgrade to 0.5.5 or newer; later text-only turns no longer repeat the error. In the current session, switch to a vision-capable model or drop the image and ask again.
 
 ## Sessions that hang
 
@@ -195,6 +215,26 @@ Scanning only binds the platform account; it doesn't authorize everyone who can 
 6. Is the app you want to control listed under "Authorized Apps"?
 
 Full details in [Computer Use](../desktop/computer-use.md).
+
+## Other features that do nothing
+
+### DeepSeek Harness reports "runtime unavailable"
+
+**Why** — The bundled runtime requires Node.js 22.19.0 or newer; either the machine doesn't meet that, or automatic preparation failed.
+
+**What to do** — As of 0.5.6 the app downloads a compatible LTS release, verifies its SHA-256, and switches over with automatic rollback on failure, so waiting usually resolves it. On an older build, upgrade first; if it still fails afterwards, read the error in the panel. See [DeepSeek Harness](../desktop/deepseek-harness.md).
+
+### A connector won't install and hangs
+
+**Why** — 0.5.6 fixed stale state blocking installs. On older builds, a previous failed install leaves state that blocks the next attempt.
+
+**What to do** — Remove the entry and install it again; upgrade the app if it still hangs. Note that installed is not connected — **without account authorization the capability is not attached to any session**, and the entry is marked as not connected. See [Connectors](../desktop/connectors.md).
+
+### Opening an old session is slow
+
+**Why** — Older builds loaded the entire JSONL file into memory when reading a large session, so long transcripts dragged.
+
+**What to do** — 0.5.6 uses bounded history and the local index, which noticeably improves scrolling and Trace reads in large sessions; upgrade. If it still drags, rebuild the index under Settings → Diagnostics → Local index (it only affects the index, not source conversations).
 
 ## Still stuck
 

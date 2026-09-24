@@ -2,7 +2,7 @@
 title: 隐私与联网说明
 nav_title: 隐私与联网
 description: EchoFlow Code 在本机保存什么、何时访问网络，以及如何清理数据。
-order: 6
+order: 7
 ---
 
 # 隐私与联网说明

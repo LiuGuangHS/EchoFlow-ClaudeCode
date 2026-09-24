@@ -2,7 +2,7 @@
 title: Code signing policy
 nav_title: Signing policy
 description: Signing scope, responsible roles, approval, verification, and revocation rules for official EchoFlow Code releases.
-order: 5
+order: 6
 ---
 
 # Code signing policy

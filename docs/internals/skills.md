@@ -61,7 +61,7 @@ Claude Code 从 6 个不同来源加载 Skills，按优先级从高到低：
 
 用户个人定义，存放在 `~/.claude/skills/`，同时也会读取跨工具开放标准目录 `~/.agents/skills/`。
 
-```
+```text
 ~/.claude/skills/
 ├── my-review/
 │   └── SKILL.md          ← 主 Skill 文件
@@ -78,7 +78,7 @@ Claude Code 从 6 个不同来源加载 Skills，按优先级从高到低：
 
 项目级别定义，存放在 `.claude/skills/` 或 `.agents/skills/`，可提交到版本控制。
 
-```
+```text
 your-project/
 ├── .claude/
 │   └── skills/
@@ -112,7 +112,7 @@ OpenAI Codex、Cursor、Gemini CLI、opencode 等工具都会扫描它。放在�
 
 命名格式：`{pluginName}:{skillName}`
 
-```
+```text
 例如：superpowers:code-reviewer
       superpowers:brainstorming
 ```
@@ -129,7 +129,7 @@ OpenAI Codex、Cursor、Gemini CLI、opencode 等工具都会扫描它。放在�
 
 每个 Skill 是一个目录，包含一个 `SKILL.md` 文件：
 
-```
+```text
 skill-name/
 └── SKILL.md    ← 文件名必须是 SKILL.md（大小写不敏感）
 ```
@@ -207,7 +207,7 @@ hooks:
 
 直接在终端输入 `/skill-name`：
 
-```
+```text
 > /commit
 > /review-pr 123
 > /verify
@@ -219,7 +219,7 @@ hooks:
 
 Claude 在对话中识别到合适的 Skill 时，通过 SkillTool 自动调用：
 
-```
+```text
 用户：帮我审查一下这段代码
 Claude：[通过 SkillTool 调用 superpowers:code-reviewer]
 ```
@@ -230,7 +230,7 @@ Claude：[通过 SkillTool 调用 superpowers:code-reviewer]
 
 一个 Skill 执行过程中可以触发另一个 Skill：
 
-```
+```text
 /verify → 内部调用 → /simplify
 ```
 
@@ -240,7 +240,7 @@ Claude：[通过 SkillTool 调用 superpowers:code-reviewer]
 
 当同名 Skill 存在于多个来源时，按以下顺序解析（先匹配先用）：
 
-```
+```text
 1. Bundled（内置）      ← 最高优先级
 2. Built-in Plugin（内置插件）
 3. Skill Dirs（用户/项目目录）
@@ -308,7 +308,7 @@ paths: "src/**/*.ts, test/**/*.ts"
 
 ### 工作原理
 
-```
+```text
 1. 启动时加载所有 Skill
 2. 带 paths 的 Skill 存入 conditionalSkills Map（不暴露给模型）
 3. 当用户操作文件时（Read/Write/Edit）
@@ -321,7 +321,7 @@ paths: "src/**/*.ts, test/**/*.ts"
 
 除了条件激活，Skills 还支持**运行时发现**：
 
-```
+```text
 1. 用户操作某个深层目录中的文件
 2. discoverSkillDirsForPaths() 从文件路径向上遍历
 3. 寻找 .claude/skills/ 与 .agents/skills/ 目录（不超过 cwd）
@@ -339,7 +339,7 @@ paths: "src/**/*.ts, test/**/*.ts"
 
 包含工具限制、Hook 或 fork 执行的 Skill，首次调用时会提示用户：
 
-```
+```text
 Execute skill: my-custom-skill
 Allow? (y)es / (n)o / (a)lways allow / (d)eny
 ```

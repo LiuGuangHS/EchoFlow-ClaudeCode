@@ -45,7 +45,7 @@ type ChannelEntry =
 
 The Channel system follows a clear bidirectional message path:
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                    Inbound (IM → Agent)                      │
 │                                                             │
@@ -367,7 +367,7 @@ const ChannelPermissionNotificationSchema = z.object({
 
 Permission responses come from four sources, first to resolve wins:
 
-```
+```text
 ┌──────────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
 │  Local UI    │   │    Bridge    │   │   Channels   │   │    Hooks     │
 │  Terminal    │   │   Remote     │   │ Telegram etc │   │  Permission  │
@@ -423,7 +423,7 @@ const TRUNCATE_AT = 60  // Message body truncation length
 ```
 
 **Rendered output**:
-```
+```text
 ◁ tg · alice: Can you check what's wrong with main.ts?
 ```
 
@@ -444,7 +444,7 @@ Shows the status of `--channels` entries at startup, reporting blockers:
 
 Warning dialog shown when using `--dangerously-load-development-channels`:
 
-```
+```text
 ┌─ WARNING: Loading development channels ──────────────────┐
 │                                                          │
 │  --dangerously-load-development-channels is for local    │

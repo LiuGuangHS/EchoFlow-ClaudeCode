@@ -34,7 +34,7 @@ Claude Code ships with 6 specialized agent types, each with a specific tool pool
 
 **Use case**: Complex multi-step research, code search, tasks requiring full tool access.
 
-```
+```typescript
 Agent({
   description: "Research auth module",
   prompt: "Analyze all files under src/auth/ for the authentication flow...",
@@ -50,7 +50,7 @@ Agent({
 
 **Use case**: Quickly search files, find code patterns, answer questions about codebase structure.
 
-```
+```typescript
 Agent({
   description: "Search API endpoints",
   prompt: "Find all REST API endpoint definitions...",
@@ -66,7 +66,7 @@ Agent({
 
 **Use case**: Design implementation plans, analyze architectural trade-offs, generate step-by-step plans.
 
-```
+```typescript
 Agent({
   description: "Plan refactoring",
   prompt: "Design a plan to split the monolith into microservices...",
@@ -82,7 +82,7 @@ Agent({
 
 **Use case**: Independently verify that an implementation is correct, run tests, perform boundary checks.
 
-```
+```typescript
 Agent({
   description: "Verify login feature",
   prompt: "Verify the newly implemented login feature works correctly...",
@@ -98,7 +98,7 @@ Agent({
 
 **Use case**: Answer questions about Claude Code, Agent SDK, or the Claude API.
 
-```
+```typescript
 Agent({
   description: "Query Claude API usage",
   prompt: "How do I use the tool_use feature...",
@@ -151,7 +151,7 @@ The Agent tool accepts the following parameters:
 
 The simplest usage — the agent completes and returns its result:
 
-```
+```typescript
 Agent({
   description: "Analyze error logs",
   prompt: "Read the latest error logs under logs/ and summarize common error patterns"
@@ -164,7 +164,7 @@ The primary agent waits for the subagent to finish, then receives the result and
 
 Suitable for time-consuming tasks where the primary agent can continue with other work:
 
-```
+```typescript
 Agent({
   description: "Full code review",
   prompt: "Review all TypeScript files under src/ for code quality...",
@@ -181,7 +181,7 @@ Agent({
 
 Spawn multiple independent agents in a single message for true parallelism:
 
-```
+```typescript
 // Launch 3 explore agents simultaneously
 Agent({ description: "Explore frontend", prompt: "...", subagent_type: "Explore", run_in_background: true })
 Agent({ description: "Explore backend", prompt: "...", subagent_type: "Explore", run_in_background: true })
@@ -192,7 +192,7 @@ Agent({ description: "Explore database", prompt: "...", subagent_type: "Explore"
 
 Let an agent work in an isolated git worktree without affecting the main workspace:
 
-```
+```typescript
 Agent({
   description: "Experimental refactor",
   prompt: "Try refactoring module X into...",
@@ -254,7 +254,7 @@ Agent Teams is an advanced multi-agent collaboration mode where multiple agents 
 
 ### Creating a Team
 
-```
+```typescript
 TeamCreate({
   team_name: "feature-team",
   description: "Develop user authentication feature"
@@ -270,7 +270,7 @@ After team creation:
 
 Spawn teammates by specifying `name` and `team_name` in the Agent tool:
 
-```
+```typescript
 Agent({
   description: "Frontend development",
   prompt: "Implement the login page React components...",
@@ -290,7 +290,7 @@ Agent({
 
 Send messages using the SendMessage tool:
 
-```
+```typescript
 // Send to a specific teammate
 SendMessage({
   to: "frontend-dev",
@@ -310,7 +310,7 @@ SendMessage({
 
 When the task is complete, the Team Lead requests teammates to shut down:
 
-```
+```typescript
 // 1. Send shutdown request
 SendMessage({
   to: "frontend-dev",

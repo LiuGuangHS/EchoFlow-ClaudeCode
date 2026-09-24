@@ -9,7 +9,7 @@ order: 2
 
 EchoFlow Code has two configuration paths:
 
-- Desktop users should select, test, and activate a provider under **Settings → Providers**. The app manages authentication, model mappings, and protocol translation.
+- Desktop users should select, test, and activate a provider under **Settings → Model settings**. The app manages authentication, model mappings, and protocol translation.
 - When running the CLI from source, use a repository `.env`, shell variables, or Claude Code `settings.json`.
 
 Do not store the same API key in several places. When troubleshooting, first check whether a Desktop provider is active.

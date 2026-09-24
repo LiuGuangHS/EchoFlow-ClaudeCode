@@ -40,7 +40,7 @@ order: 10
 
 ### 核心函数：`getAutoMemPath()`
 
-```
+```text
 路径解析优先级（从高到低）：
 
 1. CLAUDE_COWORK_MEMORY_PATH_OVERRIDE  ← Cowork 环境变量（完整路径）
@@ -80,7 +80,7 @@ export const getAutoMemPath = memoize(
 
 `isAutoMemoryEnabled()` 的判断链：
 
-```
+```text
 CLAUDE_CODE_DISABLE_AUTO_MEMORY=1  → 关闭
 CLAUDE_CODE_SIMPLE (--bare)        → 关闭
 远程模式 且 无 REMOTE_MEMORY_DIR   → 关闭
@@ -96,7 +96,7 @@ settings.json autoMemoryEnabled    → 跟随设置
 
 这是记忆系统与系统提示词的接口。启动时调用一次（通过 `systemPromptSection` 缓存）。
 
-```
+```text
 loadMemoryPrompt()
   ├─ KAIROS 模式？→ buildAssistantDailyLogPrompt()  [日志追加模式]
   ├─ TEAMMEM 开启？→ buildCombinedMemoryPrompt()    [个人+团队双目录]
@@ -106,7 +106,7 @@ loadMemoryPrompt()
 
 ### `buildMemoryLines()` 构建的提示词结构
 
-```
+```bash
 # auto memory
 
 你有一个持久化的文件记忆系统，位于 `{memoryDir}`...
@@ -157,7 +157,7 @@ if (bytes > 25,000) → 在最后一个换行符处截断
 
 ### 完整提取流程
 
-```
+```text
 1. 模型完成回复（无 tool_use）
    ↓
 2. executeExtractMemories() 被调用
@@ -203,7 +203,7 @@ if (bytes > 25,000) → 在最后一个换行符处截断
 
 ### 工具权限（`createAutoMemCanUseTool`）
 
-```
+```text
 允许：Read, Grep, Glob（无限制）
 允许：Bash（仅只读命令：ls, find, grep, cat, stat...）
 允许：Edit/Write（仅 auto-memory 目录内）
@@ -239,7 +239,7 @@ function hasMemoryWritesSince(messages, sinceUuid): boolean {
 
 每次用户发送查询时，`findRelevantMemories()` 被触发：
 
-```
+```typescript
 1. scanMemoryFiles(memoryDir)
    - 递归读取所有 .md 文件（排除 MEMORY.md）
    - 解析 frontmatter（前 30 行）
@@ -262,7 +262,7 @@ function hasMemoryWritesSince(messages, sinceUuid): boolean {
 
 ### Sonnet 选择器的提示词
 
-```
+```text
 你正在选择对 Claude Code 处理用户查询有用的记忆。
 你将收到用户查询和可用记忆文件列表（含文件名和描述）。
 
@@ -315,7 +315,7 @@ async function scanMemoryFiles(memoryDir, signal): Promise<MemoryHeader[]> {
 
 生成供 Sonnet 或提取 Agent 消费的清单格式：
 
-```
+```text
 - [feedback] testing_policy.md (2026-03-15T10:30:00.000Z): 集成测试用真实数据库
 - [user] role.md (2026-03-14T08:00:00.000Z): 数据科学家，关注日志
 - [project] freeze.md (2026-03-10T15:00:00.000Z): 3/5 起合并冻结
@@ -344,7 +344,7 @@ Agent 记忆与主记忆的差异：
 
 ### 目录结构
 
-```
+```text
 ~/.claude/projects/{hash}/memory/
 ├── MEMORY.md           ← 个人记忆索引
 ├── user_*.md           ← 个人记忆
@@ -355,7 +355,7 @@ Agent 记忆与主记忆的差异：
 
 ### 同步 API
 
-```
+```text
 GET  /api/claude_code/team_memory?repo={owner/repo}  ← 拉取
 PUT  /api/claude_code/team_memory?repo={owner/repo}  ← 推送
 ```
@@ -402,7 +402,7 @@ maxTurns = 5  // 分叉代理最多 5 个 turn
 
 ## 数据流总览
 
-```
+```text
 ┌─────────────────────────────────────────────────────┐
 │                   会话启动                           │
 │                                                      │

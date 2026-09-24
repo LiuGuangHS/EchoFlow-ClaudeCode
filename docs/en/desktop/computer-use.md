@@ -2,7 +2,7 @@
 title: Computer Use
 nav_title: Computer Use
 description: Let Claude read your screen, move the mouse, and type into other apps.
-order: 7
+order: 8
 ---
 
 # Computer Use
@@ -11,7 +11,7 @@ With Computer Use enabled, Claude can take screenshots of your screen, move the 
 
 It acts on this computer, so read what you're authorizing before you turn it on.
 
-macOS and Windows are supported. There is no Linux executor yet.
+macOS and Windows are supported. There is no Linux executor yet. The full **background-operation** experience needs macOS 14.4 or newer — see "How Windows differs" below.
 
 ## Preparing the environment
 
@@ -42,19 +42,27 @@ After granting either one you must **fully quit and reopen the app**. macOS read
 
 Make sure you're granting the permission to the app that actually launches EchoFlow Code. Screen Recording detection is occasionally unreliable — if the system settings clearly show it granted but the page still says otherwise, it generally works anyway.
 
-## Pre-authorized apps
+## One global consent when you enable it
 
-By default, every time Claude wants to control a new app it raises a "Computer Use wants to control these apps" prompt naming the apps and the reason. You can **Allow for session** or **Deny**.
+**As of 0.5.5, the per-app prompt for every new app is gone.** What replaces it is **a single global consent** when you enable Computer Use: ticking **Enable** raises a risk summary, and you click **Confirm and enable** after reading it.
 
-For apps you keep approving, tick them under **Authorized Apps** in settings and Claude will control them without prompting. The search box filters your installed apps.
+That summary states what you are accepting. Three points matter most:
 
-Two more grants are separate and never come along with an app authorization:
+- Claude can capture your screen and may see sensitive or private information on it.
+- Claude can click, type, use the clipboard and system shortcuts, and can send, modify, or delete content.
+- **Once enabled, Claude can control all supported apps directly without asking per app**; product safety limits still apply.
+
+There are two ways out: stop or press `Esc` in the session to interrupt control, or turn Computer Use off here. With it off, **new sessions do not inject the computer-use MCP**, and desktop-control tools are not exposed to the coding agent.
+
+Settings still keeps an **Authorized Apps** list with a search box. Its role has changed from "approve one at a time" to "declare up front" — tick the apps you use constantly and there will be no confirmation step when they're needed.
+
+Two more grants are separate and never come along with enabling Computer Use:
 
 - **Clipboard access** — reading and writing the system clipboard.
 - **System key combos** — sending system-level shortcuts.
 
 :::danger
-Pre-authorization is permanent approval. Keep password managers, banking apps, and corporate chat off that list — make it ask, every time.
+With the global consent there is no per-request interception left, so the boundary is yours to draw. Be careful with password managers, banking apps, and corporate chat — don't leave them permanently controllable.
 :::
 
 ## Getting started
@@ -71,12 +79,26 @@ Claude works in a screenshot → decide → act → screenshot loop, so it's slo
 
 Only one session can drive the mouse and keyboard at a time. If you see that another session holds it, stop or finish that session first.
 
+## Background operation: it doesn't take over your input
+
+On macOS, Claude can click, type, scroll and drag **in the background** while you keep working in other applications.
+
+- **An independent virtual cursor** shows what the agent is doing on screen. It is separate from your real pointer, which never gets pulled away.
+- **Occlusion-proof** — the target window stays capturable while another app covers it.
+- **Batched execution** — native actions run in a long-lived worker process, so known operations complete back to back instead of waiting for a model round trip each time.
+- **Cancellable at any point** — cancellation propagates through the worker rather than silently failing.
+
+### How Windows differs
+
+**On Windows the system mouse and keyboard are still used** — background input is a macOS-only capability. If you try this on Windows and it seems not to work, that is why, not a fault.
+
+Windows did gain more reliable input handling, target validation, and a consistent virtual cursor in this release, but those background capabilities are not part of it.
+
 ## Known limits
 
-- **There is no global abort hotkey.** Use the stop button in the session (`⌘.`).
+- **Re-read the UI after it changes.** Old coordinates don't survive a page change.
 - **Windows screenshots aren't filtered.** On macOS a screenshot keeps only authorized apps and the desktop; on Windows every visible window is captured. Close or minimize anything sensitive first.
 - **Browsers and terminals are restricted.** Browsers are read-only (visible but not clickable) and terminals and IDEs are click-only (no typing). Use the browser extension for web pages and the Bash tool for commands.
-- **Re-screenshot after the UI changes.** Old coordinates don't survive a page change.
 
 ## Troubleshooting
 
@@ -87,6 +109,9 @@ Confirm you granted them to the app that actually launches EchoFlow Code, fully 
 Pick an explicit Python 3 under **Python interpreter path**, confirm it supports `venv`, and click **Install Environment** again. If it still fails, check the install log in **Settings → Diagnostics**.
 
 **Screenshots work but clicks don't**
-Make sure the target app is in the authorized list and is currently in the foreground. Browsers and terminals are subject to the tier restrictions above.
+Make sure the target app is within the allowed set and is currently in the foreground. Browsers and terminals are subject to the tier restrictions above.
 
-For the permission tiers, the Python bridge, and the executors, see [Computer Use architecture](../internals/computer-use.md).
+**Background operation doesn't work on Windows**
+Expected. Background clicking and typing are macOS-only; on Windows the app uses your system mouse and keyboard.
+
+For the permission tiers, the native executor, and the Python bridge, see [Computer Use architecture](../internals/computer-use.md).

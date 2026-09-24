@@ -40,7 +40,6 @@ This page is a map, not a manual. One line per feature — click through for the
 ## Making it yours
 
 - [Desktop pet](./pets.md) — a little robot that floats on your desktop and shows you how the current task is going. Off by default.
-- [Release and Windows packaging](./release-windows.md) — the maintainer workflow for aligned versions, fork tags, and Windows NSIS installers.
 
 ## Curious how it works inside
 

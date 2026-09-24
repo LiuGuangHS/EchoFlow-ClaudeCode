@@ -94,7 +94,7 @@ if (!toolUseContext.agentId) {
 
 ### Phase 1 — Orient（定向）
 
-```
+```text
 - ls 记忆目录，查看已有文件
 - 读取 MEMORY.md 索引，理解当前知识结构
 - 浏览现有主题文件，避免创建重复
@@ -109,7 +109,7 @@ if (!toolUseContext.agentId) {
 2. **漂移的记忆** — 与代码库现状矛盾的旧事实
 3. **会话记录搜索** — 用 `grep` 在 JSONL 转录文件中窄范围检索
 
-```
+```text
 不要穷尽读取转录文件。只查找你已经怀疑重要的内容。
 ```
 
@@ -135,7 +135,7 @@ AutoDream 子 Agent 受到严格的工具权限限制：
 
 ### Bash 仅限只读
 
-```
+```text
 允许：ls, find, grep, cat, stat, wc, head, tail
 拒绝：所有写入、重定向、修改状态的命令
 ```
@@ -144,7 +144,7 @@ AutoDream 子 Agent 受到严格的工具权限限制：
 
 `createAutoMemCanUseTool()` 是 `extractMemories` 和 `autoDream` 共享的权限函数：
 
-```
+```text
 允许 Read / Grep / Glob — 无限制
 允许 Edit / Write — 仅 auto-memory 目录内
 拒绝 MCP / Agent / 非只读 Bash / 其他写操作
@@ -261,7 +261,7 @@ export function isAutoDreamEnabled(): boolean {
 
 ### 协作流
 
-```
+```text
 每次对话结束
     ↓
 extractMemories → 提取新记忆片段 → 写入 *.md + MEMORY.md

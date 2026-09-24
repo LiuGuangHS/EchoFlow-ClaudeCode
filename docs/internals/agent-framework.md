@@ -28,7 +28,7 @@ order: 6
 
 大多数 Agent 框架（包括 LangChain）采用经典的 **ReAct** 模式：
 
-```
+```text
 思考(Thought) → 行动(Action) → 观察(Observation) → 思考 → ...
 ```
 
@@ -95,7 +95,7 @@ for await (const message of deps.callModel({
 
 #### 阶段 3：决策点（第 1062-1358 行）
 
-```
+```text
 模型响应完成
   │
   ├─ 有工具调用？ ──→ 继续循环（阶段 4）
@@ -107,7 +107,7 @@ for await (const message of deps.callModel({
 
 工具执行不是简单的逐个运行，而是有精心设计的**编排策略**（`src/services/tools/toolOrchestration.ts`）：
 
-```
+```text
 工具调用列表
   │
   ├─ 分区：只读 vs 写入
@@ -147,7 +147,7 @@ state = next
 
 ![系统提示词构建流程](./images/13-system-prompt-pipeline.png)
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                    静态可缓存区域                              │
 │  ┌───────────────────────────────────────────────────────┐  │
@@ -188,7 +188,7 @@ DANGEROUS_uncachedSystemPromptSection('mcp_instructions', async () => {
 
 CLAUDE.md 是用户自定义指令系统，按**优先级从低到高**加载（`src/utils/claudemd.ts`）：
 
-```
+```text
 /etc/claude-code/CLAUDE.md          ← 全局管理配置（最低优先级）
   ↓
 ~/.claude/CLAUDE.md                 ← 用户全局指令
@@ -257,7 +257,7 @@ type Tool<Input, Output> = {
 
 工具的发现和注册分三个阶段（`src/tools.ts`）：
 
-```
+```text
 阶段 1：基础工具池（getAllBaseTools）
   │  ~48 个内置工具
   │  + Feature Flag 控制的条件工具
@@ -277,7 +277,7 @@ type Tool<Input, Output> = {
 
 一次工具调用要经过**7 步管道**（`src/services/tools/toolExecution.ts`）：
 
-```
+```text
 1. 工具查找 ─→ 2. 输入解析（Zod） ─→ 3. 自定义验证
        │
 4. Pre-Tool 钩子 ─→ 5. 权限检查 ─→ 6. 实际执行 ─→ 7. Post-Tool 钩子
@@ -390,7 +390,7 @@ type BundledSkillDefinition = {
 
 #### 技能发现来源
 
-```
+```text
 内置技能（bundled）         ← 编译到 CLI 中，15+ 个
   ↓
 插件技能（plugin）          ← 插件注册
@@ -425,7 +425,7 @@ type BuiltinPluginDefinition = {
 
 钩子是整个生命周期的**可编程拦截点**：
 
-```
+```text
 SessionStart ─→ UserPromptSubmit ─→ PreToolUse ─→ [工具执行]
        │                                              │
        │                                          PostToolUse
@@ -444,7 +444,7 @@ SessionStart ─→ UserPromptSubmit ─→ PreToolUse ─→ [工具执行]
 
 MCP 是 Claude Code 与外部世界交互的标准协议。工具命名规范：
 
-```
+```text
 mcp__{标准化服务器名}__{工具名}
 例如：mcp__chrome_devtools__take_screenshot
 ```
@@ -457,7 +457,7 @@ MCP 工具在运行时动态发现，与内置工具**无缝合并**到统一的
 
 ### 分层权限模型
 
-```
+```text
 ┌─────────────────────────────────────┐
 │         权限规则（Rules）             │
 │  来源：userSettings, projectSettings │
@@ -580,7 +580,7 @@ Claude Code 的 Async Generator 模式解决了所有这些问题：
 
 ### 与 LangChain Agent 的具体差异
 
-```
+```typescript
 LangChain Agent:
   agent = initialize_agent(tools, llm, agent="zero-shot-react-description")
   result = agent.run("do something")
@@ -633,7 +633,7 @@ Claude Code 的优势在于**简单性**——不需要定义图结构，一个 
 
 三级提示词缓存系统（`src/services/api/claude.ts:3213-3237`）：
 
-```
+```text
 Global Cache（跨组织）    ← 静态系统提示词
   ↓
 Ephemeral Cache（会话级） ← 动态系统提示词
@@ -694,7 +694,7 @@ Claude Code 不是"通用 Agent + 代码插件"，而是**从底层为编码场�
 
 ## 核心组件关系
 
-```
+```text
 用户输入
   │
   ▼

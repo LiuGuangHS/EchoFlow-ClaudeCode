@@ -45,7 +45,7 @@ type ChannelEntry =
 
 Channel 系统的消息流转遵循一个清晰的双向路径：
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                    入站（IM → Agent）                        │
 │                                                             │
@@ -367,7 +367,7 @@ const ChannelPermissionNotificationSchema = z.object({
 
 权限响应来自四个来源，先到先得：
 
-```
+```text
 ┌──────────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
 │   本地终端    │   │    Bridge    │   │   Channels   │   │    Hooks     │
 │  Local UI    │   │   远程控制    │   │ Telegram etc │   │  Permission  │
@@ -423,7 +423,7 @@ const TRUNCATE_AT = 60  // 消息体截断长度
 ```
 
 **渲染效果**：
-```
+```text
 ◁ tg · alice: 帮我看看 main.ts 有什么问题
 ```
 
@@ -444,7 +444,7 @@ const TRUNCATE_AT = 60  // 消息体截断长度
 
 使用 `--dangerously-load-development-channels` 时显示的警告对话框：
 
-```
+```text
 ┌─ WARNING: Loading development channels ──────────────────┐
 │                                                          │
 │  --dangerously-load-development-channels is for local    │

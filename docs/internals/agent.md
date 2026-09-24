@@ -34,7 +34,7 @@ Claude Code 内置了 6 种专业 Agent，每种都有特定的工具池和适�
 
 **适用场景**：复杂的多步骤研究、代码搜索、需要完整工具访问的任务。
 
-```
+```typescript
 Agent({
   description: "调研认证模块",
   prompt: "分析 src/auth/ 下所有文件的认证流程...",
@@ -50,7 +50,7 @@ Agent({
 
 **适用场景**：快速搜索文件、搜索代码模式、回答代码库结构问题。
 
-```
+```typescript
 Agent({
   description: "搜索 API 端点",
   prompt: "找到所有 REST API 端点的定义...",
@@ -66,7 +66,7 @@ Agent({
 
 **适用场景**：设计实现方案、分析架构权衡、生成分步计划。
 
-```
+```typescript
 Agent({
   description: "规划重构方案",
   prompt: "设计将 monolith 拆分为微服务的方案...",
@@ -82,7 +82,7 @@ Agent({
 
 **适用场景**：独立验证实现是否正确，运行测试，边界检查。
 
-```
+```typescript
 Agent({
   description: "验证登录功能",
   prompt: "验证新实现的登录功能是否正确...",
@@ -98,7 +98,7 @@ Agent({
 
 **适用场景**：回答关于 Claude Code、Agent SDK、Claude API 的问题。
 
-```
+```typescript
 Agent({
   description: "查询 Claude API 用法",
   prompt: "如何使用 tool_use 功能...",
@@ -151,7 +151,7 @@ Agent 工具接受以下参数：
 
 最简单的用法，Agent 执行完毕后返回结果：
 
-```
+```typescript
 Agent({
   description: "分析错误日志",
   prompt: "读取 logs/ 下最近的错误日志，总结常见错误模式"
@@ -164,7 +164,7 @@ Agent({
 
 适合耗时任务，主 Agent 可以继续做其他事情：
 
-```
+```typescript
 Agent({
   description: "全面代码审查",
   prompt: "审查 src/ 下所有 TypeScript 文件的代码质量...",
@@ -181,7 +181,7 @@ Agent({
 
 在一条消息中生成多个独立的 Agent，实现真正的并行：
 
-```
+```typescript
 // 同时启动 3 个探索 agent
 Agent({ description: "探索前端", prompt: "...", subagent_type: "Explore", run_in_background: true })
 Agent({ description: "探索后端", prompt: "...", subagent_type: "Explore", run_in_background: true })
@@ -192,7 +192,7 @@ Agent({ description: "探索数据库", prompt: "...", subagent_type: "Explore",
 
 让 Agent 在独立的 git worktree 中工作，不影响主工作区：
 
-```
+```typescript
 Agent({
   description: "实验性重构",
   prompt: "尝试将模块 X 重构为...",
@@ -254,7 +254,7 @@ Agent Teams 是更高级的多 Agent 协作模式，多个 Agent 以团队形式
 
 ### 创建团队
 
-```
+```typescript
 TeamCreate({
   team_name: "feature-team",
   description: "开发用户认证功能"
@@ -270,7 +270,7 @@ TeamCreate({
 
 通过 Agent 工具指定 `name` 和 `team_name` 生成队友：
 
-```
+```typescript
 Agent({
   description: "前端开发",
   prompt: "负责实现登录页面的 React 组件...",
@@ -290,7 +290,7 @@ Agent({
 
 通过 SendMessage 工具发送消息：
 
-```
+```typescript
 // 发送给特定队友
 SendMessage({
   to: "frontend-dev",
@@ -310,7 +310,7 @@ SendMessage({
 
 当任务完成后，Team Lead 请求队友关停：
 
-```
+```typescript
 // 1. 发送关停请求
 SendMessage({
   to: "frontend-dev",

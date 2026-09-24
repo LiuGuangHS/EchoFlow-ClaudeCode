@@ -27,7 +27,7 @@ Claude Code's multi-agent system consists of the following core modules:
 
 ### Agent Categories
 
-```
+```text
 ┌─────────────────────────────────────────────────┐
 │                  Agent Tool                      │
 │            (Entry & Route Dispatch)              │
@@ -57,7 +57,7 @@ Claude Code's multi-agent system consists of the following core modules:
 
 The `call()` function in `src/tools/AgentTool/AgentTool.tsx` is the entry point for all agent spawning. Based on input parameters, it routes to one of four spawn paths:
 
-```
+```text
 AgentTool.call(input)
   │
   ├─ team_name + name? ──────→ Path 1: spawnTeammate()
@@ -112,7 +112,7 @@ export async function spawnInProcessTeammate(config, context) {
 
 **Flow**:
 
-```
+```text
 registerAsyncAgent()
   │
   ├─ Create LocalAgentTask (status: 'running')
@@ -148,7 +148,7 @@ registerAsyncAgent()
 
 **Flow**:
 
-```
+```text
 buildForkedMessages(directive, assistantMessage)
   │
   ├─ Preserve parent agent's complete assistant message (all tool_use blocks)
@@ -161,7 +161,7 @@ buildForkedMessages(directive, assistantMessage)
 
 **Fork child behavioral constraints** (injected via `FORK_BOILERPLATE_TAG`):
 
-```
+```text
 1. You are a forked worker process, not the primary agent
 2. Do not converse, ask questions, or suggest next steps
 3. Use tools directly (Bash, Read, Write, etc.)
@@ -180,7 +180,7 @@ buildForkedMessages(directive, assistantMessage)
 
 **Flow**:
 
-```
+```text
 runAgent(promptMessages, toolUseContext, options)
   │
   ├─ Resolve agent definition (getSystemPrompt, tools, permissions)
@@ -232,7 +232,7 @@ function filterToolsForAgent(tools, agentDef) {
 
 **ASYNC_AGENT_ALLOWED_TOOLS** (15 tools):
 
-```
+```text
 Read, WebSearch, TodoWrite, Grep, WebFetch, Glob,
 Bash/PowerShell, FileEdit, FileWrite, NotebookEdit,
 Skill, SyntheticOutput, ToolSearch, EnterWorktree, ExitWorktree
@@ -252,7 +252,7 @@ function resolveAgentTools(agentDef, availableTools) {
 
 **Filtering Pipeline**:
 
-```
+```text
 All available tools
   │
   ├─ Subtract ALL_AGENT_DISALLOWED_TOOLS ──→ Global disallow
@@ -289,7 +289,7 @@ export type CacheSafeParams = {
 
 Fork agents reuse prompt cache by keeping API request prefixes byte-level consistent:
 
-```
+```text
 ┌─────────────────────────────────────────┐
 │      Shared Prefix (byte-consistent)    │
 │  ┌──────────────────────────────────┐   │
@@ -312,7 +312,7 @@ Fork agents reuse prompt cache by keeping API request prefixes byte-level consis
 
 **Priority chain** (highest to lowest):
 
-```
+```text
 Override System Prompt     ← Highest priority, full replacement
   ↓
 Coordinator System Prompt  ← Coordinator mode only
@@ -378,7 +378,7 @@ export type SubagentContextOverrides = {
 
 **Priority chain**:
 
-```
+```text
 CLAUDE_CODE_SUBAGENT_MODEL env var  ← Highest
   ↓
 Agent({ model: 'opus' }) parameter  ← Specified via tool
@@ -490,7 +490,7 @@ useEffect(() => {
 
 ### Message Routing
 
-```
+```text
 SendMessage({ to, message })
   │
   ├─ to === "*" → Broadcast
@@ -540,7 +540,7 @@ type LocalAgentTaskState = {
 
 **State Transitions**:
 
-```
+```text
               ┌──────────────────────────┐
               │                          │
   register    │    ┌──── killed ←── abort()
@@ -690,7 +690,7 @@ Teammates automatically inherit team-level permission rules on startup.
 
 Fork agents use the `bubble` permission mode — permission prompts bubble up to the parent agent's terminal:
 
-```
+```text
 Fork Agent needs permission
   │
   └─ bubble mode → Permission request sent to parent agent
@@ -703,7 +703,7 @@ Fork Agent needs permission
 
 ### In-Process Teammate Permissions
 
-```
+```text
 Teammate needs permission
   │
   ├─ Has UI bridge → Displayed directly in Leader's confirmation dialog
@@ -715,7 +715,7 @@ Teammate needs permission
 
 ## Agent Lifecycle End-to-End Data Flow
 
-```
+```text
 1. User triggers Agent Tool
    │
 2. AgentTool.call() routes and dispatches

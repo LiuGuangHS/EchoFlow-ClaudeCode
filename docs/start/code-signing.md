@@ -2,7 +2,7 @@
 title: Code signing policy
 nav_title: 签名政策
 description: EchoFlow Code 正式发布包的签名范围、责任角色、审批、验证与撤销规则。
-order: 5
+order: 6
 ---
 
 # Code signing policy

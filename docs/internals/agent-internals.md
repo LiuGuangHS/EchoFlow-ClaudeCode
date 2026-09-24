@@ -27,7 +27,7 @@ Claude Code 的多 Agent 系统由以下核心模块组成：
 
 ### 大 Agent 类别
 
-```
+```text
 ┌─────────────────────────────────────────────────┐
 │                  Agent Tool                      │
 │              (入口 & 路由分发)                    │
@@ -53,7 +53,7 @@ Claude Code 的多 Agent 系统由以下核心模块组成：
 
 `src/tools/AgentTool/AgentTool.tsx` 中的 `call()` 函数是所有 Agent 生成的入口。根据输入参数，路由到四条不同的生成路径：
 
-```
+```text
 AgentTool.call(input)
   │
   ├─ team_name + name? ──────→ 路径1: spawnTeammate()
@@ -108,7 +108,7 @@ export async function spawnInProcessTeammate(config, context) {
 
 **流程**：
 
-```
+```text
 registerAsyncAgent()
   │
   ├─ 创建 LocalAgentTask（status: 'running'）
@@ -144,7 +144,7 @@ registerAsyncAgent()
 
 **流程**：
 
-```
+```text
 buildForkedMessages(directive, assistantMessage)
   │
   ├─ 保留父代理完整的 assistant message（所有 tool_use 块）
@@ -157,7 +157,7 @@ buildForkedMessages(directive, assistantMessage)
 
 **Fork 子 Agent 的行为约束**（通过 `FORK_BOILERPLATE_TAG` 注入）：
 
-```
+```text
 1. 你是分叉的工作进程，不是主代理
 2. 不要对话、提问或建议后续步骤
 3. 直接使用工具（Bash、Read、Write 等）
@@ -176,7 +176,7 @@ buildForkedMessages(directive, assistantMessage)
 
 **流程**：
 
-```
+```text
 runAgent(promptMessages, toolUseContext, options)
   │
   ├─ 解析 Agent 定义（getSystemPrompt、tools、permissions）
@@ -228,7 +228,7 @@ function filterToolsForAgent(tools, agentDef) {
 
 **ASYNC_AGENT_ALLOWED_TOOLS**（15 个）：
 
-```
+```text
 Read, WebSearch, TodoWrite, Grep, WebFetch, Glob,
 Bash/PowerShell, FileEdit, FileWrite, NotebookEdit,
 Skill, SyntheticOutput, ToolSearch, EnterWorktree, ExitWorktree
@@ -248,7 +248,7 @@ function resolveAgentTools(agentDef, availableTools) {
 
 **过滤流程图**：
 
-```
+```text
 所有可用工具
   │
   ├─ 减去 ALL_AGENT_DISALLOWED_TOOLS ──→ 通用禁止
@@ -285,7 +285,7 @@ export type CacheSafeParams = {
 
 Fork Agent 通过保持 API 请求前缀字节级一致来复用 prompt cache：
 
-```
+```text
 ┌─────────────────────────────────────────┐
 │         共享前缀（字节一致）              │
 │  ┌──────────────────────────────────┐   │
@@ -308,7 +308,7 @@ Fork Agent 通过保持 API 请求前缀字节级一致来复用 prompt cache：
 
 **优先级链**（从高到低）：
 
-```
+```text
 Override System Prompt     ← 最高优先级，完全替换
   ↓
 Coordinator System Prompt  ← 协调器模式专用
@@ -374,7 +374,7 @@ export type SubagentContextOverrides = {
 
 **优先级链**：
 
-```
+```text
 CLAUDE_CODE_SUBAGENT_MODEL 环境变量  ← 最高
   ↓
 Agent({ model: 'opus' }) 参数       ← 工具指定
@@ -486,7 +486,7 @@ useEffect(() => {
 
 ### 消息路由
 
-```
+```text
 SendMessage({ to, message })
   │
   ├─ to === "*" → 广播
@@ -536,7 +536,7 @@ type LocalAgentTaskState = {
 
 **状态转换**：
 
-```
+```text
               ┌──────────────────────────┐
               │                          │
   register    │    ┌──── killed ←── abort()
@@ -686,7 +686,7 @@ type TeamAllowedPath = {
 
 Fork Agent 使用 `bubble` 权限模式 — 权限提示冒泡到父 Agent 终端：
 
-```
+```text
 Fork Agent 需要权限
   │
   └─ bubble 模式 → 权限请求发送到父代理
@@ -699,7 +699,7 @@ Fork Agent 需要权限
 
 ### In-Process 队友权限
 
-```
+```text
 队友需要权限
   │
   ├─ 有 UI bridge → 直接显示在 Leader 的确认对话框
@@ -711,7 +711,7 @@ Fork Agent 需要权限
 
 ## Agent 生命周期完整数据流
 
-```
+```text
 1. 用户触发 Agent Tool
    │
 2. AgentTool.call() 路由分发

@@ -2,7 +2,7 @@
 title: 桌面宠物
 nav_title: 桌面宠物
 description: 一只悬浮在桌面上的小机器人，用动作告诉你任务跑到哪了。
-order: 8
+order: 12
 ---
 
 # 桌面宠物

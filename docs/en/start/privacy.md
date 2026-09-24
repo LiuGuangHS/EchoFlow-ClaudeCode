@@ -2,7 +2,7 @@
 title: Privacy and network access
 nav_title: Privacy
 description: What EchoFlow Code stores locally, when it uses the network, and how to remove its data.
-order: 6
+order: 7
 ---
 
 # Privacy and network access

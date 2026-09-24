@@ -414,20 +414,24 @@ fork 跟踪上游的**发布**，而不是上游 `main` 的移动顶端：上游
 | `bun run upstream:resolve` | 拉取同步分支并在本地把 `main` 合入，冲突留在工作区、不提交 |
 | `bun run upstream:sync` | 推送同步分支，便于开 PR |
 
-### 自动化路径（推荐）
+三条命令都要 bun（`packageManager: bun@1.3.14`）：脚本用了 `import.meta.dir`，Node 跑不了。
 
-`.github/workflows/upstream-sync.yml` 跟踪上游 release，并为每个新版本创建 `sync/upstream-vX.Y.Z` PR：
+能丢东西的两条约束：
 
-1. **审查同步 PR**：新 PR 出现时，先看描述里的变更文件清单。
-2. **就地解决冲突**：如果 PR 被标为 draft 并列出冲突，拉取同步分支，用 `bun run upstream:resolve` 把 `main` 合入；冲突留在工作区且不提交。
-3. **套用下面的冲突处理流程**（手工路径第 6-11 步），然后 `git push origin sync/upstream-vX.Y.Z`。
-4. **合并 PR**：同步分支干净且验证通过后，用 GitHub 的 merge 按钮或本地快进合并进 `main`。
+- `upstream:resolve` 内部是 `git switch --track --force-create <分支> origin/<分支>` —— **会切换分支并覆盖同名本地分支**，且工作区必须干净，有未提交改动会直接报错退出。
+- `upstream:sync` 用 `git push --force-with-lease`；远端同名分支内容不同时拒绝推送，不会覆盖人工解决过的冲突。
 
-自动化把上游 release（不是 `main`）拉进 `refs/remotes/upstream-release/`，从不污染本地 tag 命名空间；它拒绝覆盖内容不同的同步分支，因此手工解决的冲突能在后续定时运行中保留。
+`upstream:check` 的可选参数：`--strict`（有冲突时退出码为 1，默认始终 0）、`--base <分支>`（默认 `main`）。
+
+**"是否已同步"按提交图判定**，不比较版本号：逐个检查 release commit 是否已是 base 分支的祖先，取最新的一个未合入项。fork 的版本线（`0.5.x`）与上游（`0.6.x`）本就不可比，用版本号判断会在 fork 版本号超过上游时静默漏掉同步。同理，**同步分支上存在某个 release 不等于该 release 已合入 `main`** —— 判定只看 base 分支。
+
+### 自动化路径（已移除）
+
+此前由 `.github/workflows/upstream-sync.yml` 每三天探测上游 release，并创建 `sync/upstream-vX.Y.Z` 分支与 PR。它实际没有产出可合并的 PR：同步分支的冲突面很大，而用默认 `GITHUB_TOKEN` 开的 PR 不会触发 `pull_request` 工作流，拿不到 CI 结果，于是长期停在未合入状态。该工作流已删除，release 探测改为手工执行上面的三条命令。
 
 ### 手工路径
 
-自动化不可用、或需要非 release 的同步时使用：
+每个上游 release 都按这条路径同步：
 
 1. 从干净的 `main` 工作区开始，先检查已配置的 remote。
 2. 正常拉取 `origin`。拉上游分支时不带 tag：`git fetch upstream +refs/heads/*:refs/remotes/upstream/* --prune`；上游 release tag 可能与 fork 的 release tag 重名。
@@ -497,7 +501,7 @@ fork 跟踪上游的**发布**，而不是上游 `main` 的移动顶端：上游
 bun run check:impact
 ```
 
-`bun run verify` 也不需要真实模型；只有 live baseline 需要。维护者可以先在桌面端 设置 → 服务商 添加自己的 provider，再运行：
+`bun run verify` 也不需要真实模型；只有 live baseline 需要。维护者可以先在桌面端 设置 → 模型配置 添加自己的 provider，再运行：
 
 ```bash
 bun run quality:providers

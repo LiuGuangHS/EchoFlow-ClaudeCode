@@ -414,20 +414,24 @@ The fork tracks upstream **releases**, not upstream's moving tip: upstream `main
 | `bun run upstream:resolve` | Fetches the sync branch and merges `main` into it locally, leaving conflicts in the tree. |
 | `bun run upstream:sync` | Pushes the sync branch so the PR can be opened. |
 
-### Automated path (preferred)
+All three need bun (`packageManager: bun@1.3.14`): the runner uses `import.meta.dir`, which Node does not provide.
 
-`.github/workflows/upstream-sync.yml` tracks upstream releases and opens a `sync/upstream-vX.Y.Z` PR for each new version:
+Two constraints that can cost you work:
 
-1. **Review the sync PR**: start with the changed-files list in the PR description.
-2. **Resolve conflicts in place**: if the PR is a draft with conflicts listed, fetch the sync branch and merge `main` into it locally with `bun run upstream:resolve`. Conflicts stay in the working tree and are not committed.
-3. **Apply the conflict workflow below** (manual path steps 6-11), then `git push origin sync/upstream-vX.Y.Z`.
-4. **Merge the PR**: once the sync branch is clean and verified, merge into `main` via GitHub's merge button or a fast-forward merge locally.
+- `upstream:resolve` runs `git switch --track --force-create <branch> origin/<branch>` — it **switches branches and overwrites a same-named local branch**, and it refuses to start when the worktree is dirty.
+- `upstream:sync` pushes with `--force-with-lease` and refuses when the remote branch holds different content, so a manual resolution is never overwritten.
 
-The automation fetches upstream releases (not `main`) into `refs/remotes/upstream-release/`, never polluting the local tag namespace. It refuses to overwrite a sync branch holding different content, so manual resolutions survive later scheduled runs.
+`upstream:check` flags: `--strict` (exit 1 when the merge conflicts; the default is always 0) and `--base <branch>` (default `main`).
+
+**"Already synced?" is answered from the commit graph, not from version numbers**: each release commit is tested for ancestry against the base branch, and the newest one that fails is the target. The fork ships its own version line (`0.5.x`) that cannot be compared with upstream's (`0.6.x`), so a version comparison silently reports "already synced" as soon as the fork version passes upstream's. For the same reason, **a release sitting on a sync branch is not a release merged into `main`** — only the base branch decides.
+
+### Automated path (removed)
+
+`.github/workflows/upstream-sync.yml` used to probe upstream releases every three days and open a `sync/upstream-vX.Y.Z` PR. It never produced a mergeable PR: the sync branch carried a large conflict surface, and PRs opened with the default `GITHUB_TOKEN` do not trigger `pull_request` workflows, so no CI result ever came back. The workflow is gone; run the three commands above by hand.
 
 ### Manual path
 
-Use this when the automation is unavailable or a non-release sync is needed:
+Use this for every upstream release:
 
 1. Start from a clean `main` worktree and inspect the configured remotes.
 2. Fetch `origin` normally. Fetch upstream branches without tags: `git fetch upstream +refs/heads/*:refs/remotes/upstream/* --prune`. Upstream release tags can share names with fork release tags.
@@ -497,7 +501,7 @@ Yes. Run the impact report and its selected deterministic checks:
 bun run check:impact
 ```
 
-`bun run verify` also needs no real model. Only the live baseline does. Maintainers can add a provider in Desktop Settings > Providers, then run:
+`bun run verify` also needs no real model. Only the live baseline does. Maintainers can add a provider in the desktop app under Settings > Model settings, then run:
 
 ```bash
 bun run quality:providers

@@ -2,7 +2,7 @@
 title: 定时任务
 nav_title: 定时任务
 description: 让 Claude 按计划自动跑，比如每天早上审一遍昨天的提交。
-order: 5
+order: 9
 ---
 
 # 定时任务

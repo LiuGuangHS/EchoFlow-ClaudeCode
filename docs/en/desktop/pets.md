@@ -2,7 +2,7 @@
 title: Desktop pet
 nav_title: Desktop pet
 description: A little robot on your desktop that shows you how the current task is going.
-order: 8
+order: 12
 ---
 
 # Desktop pet
