@@ -1,17 +1,19 @@
 ---
 title: Settings reference
 nav_title: Settings
-description: All 16 settings tabs — what each one configures and when you'd need it.
-order: 6
+description: All 17 settings tabs — what each one configures and when you'd need it.
+order: 13
 ---
 
 # Settings reference
 
-Click **Settings** at the bottom of the sidebar. Sixteen tabs on the left, in a fixed order. This page walks through them in that order: what each one configures, and when you'd actually need to touch it.
+Click **Settings** at the bottom of the sidebar. Seventeen tabs on the left, in a fixed order. This page walks through them in that order: what each one configures, and when you'd actually need to touch it.
 
-## Providers
+## Model Settings
 
-Shared model-provider configuration. Sign in to Claude, ChatGPT, or Grok with an account (no API key required), or add any Anthropic- or OpenAI-compatible service with an API key. This is where provider credentials, endpoints, and model mappings live; it is not the execution runtime for a session. Choosing a provider, model, or effort inside a session creates a session-level override without replacing this shared configuration.
+Shared model configuration. This tab was called **Providers** before 0.5.5, when it was renamed to Model Settings / Model Management — same place, same contents.
+
+Sign in to Claude, ChatGPT, or Grok with an account (no API key required), add any Anthropic- or OpenAI-compatible service with an API key, or bind an [official EchoFlow account](../start/account.md) and build channels from its call tokens. This is where service credentials, endpoints, and model mappings live; it is not the execution runtime for a session. Choosing a provider, model, or effort inside a session creates a session-level override without replacing this shared configuration.
 
 You'll come here once during setup and rarely again. Full steps in [Connecting a model](../start/models.md).
 
@@ -28,8 +30,11 @@ The tab you'll open most often — everything about how the app feels.
 - **Default Session Permissions** — which permission mode new sessions start in. Each session can still be changed individually.
 - **Effort Level** and **Thinking Mode** — defaults for new sessions. Turning thinking off sends an explicit non-thinking parameter to providers like DeepSeek that need one.
 - **Message Sending** — Enter to send (Shift+Enter for a newline), or `Ctrl/Cmd+Enter` to send.
+- **Claude Code runtime** — which Claude Code executable starts new sessions. Two choices: **Bundled**, shipped with the app and the default, or **Installed**, your own local copy. When no usable install exists, **Installed** is disabled; selecting it opens **Choose installed runtime** so you can point at one. Switching shows a loading state on the button, and any failure appears as an inline error beneath it.
+- **Agent Teams** — the switch for the multi-agent workbench. Off means Agent Teams is not enabled.
+- **Session retention** — how long session transcripts stay on this machine. **365 days by default**; setting it to 0 stops recording and deletes existing transcripts. **Lowering it deletes older records immediately**, so a change first previews how many files will be removed and asks for confirmation. (Plans, file history, debug logs, pastes, and worktrees keep their own 30-day windows.)
 - **System Notifications** — route permission prompts, completed replies, and scheduled task results to the OS notification center. Enabling it requests system permission.
-- **Network** — three modes: Direct connection (explicitly bypass the system proxy), System proxy (follow system or PAC rules per destination), or Manual proxy (a URL like `http://user:password@127.0.0.1:7890`). Below that, **AI request timeout**, which can go up to 1800 seconds when a provider is slow to first byte. App updates use their own proxy setting, over in About.
+- **Network** — three modes: Direct connection (explicitly bypass the system proxy), System proxy (follow system or PAC rules per destination), or Manual proxy (a URL like `http://user:password@127.0.0.1:7890`). Below that, **AI request timeout**, **30 minutes (1800 seconds) by default** with no clamp, taking effect immediately in running sessions. App updates use their own proxy setting, over in About.
 - **WebSearch** — how web search is routed. Auto prefers Claude's native WebSearch for Claude models and falls back to Tavily or Brave otherwise; those two need API keys you supply.
 - **Auto-dream** — periodically tidies and compresses memory files in the background. Off by default, because it spends tokens.
 - **UI Zoom** — scale the whole interface, also bound to `⌘+` / `⌘-`, with `⌘0` back to 100%.
@@ -39,7 +44,12 @@ Product screenshots in this guide consistently use the **Pure White** theme so t
 
 ## H5 Access
 
-Continue the same session in your phone's browser. Off by default. See [Phone (H5) and IM](./remote.md).
+Continue the same session in your phone's browser. Off by default; enabling it makes the desktop server listen on a LAN address. This tab covers two things:
+
+- **LAN access** — generate an H5 token and QR code so a phone on the same network can join.
+- **Public access · ngrok** — with no public IP, connect your own ngrok account (enter the **ngrok Authtoken**) so your phone can reach this machine over the internet.
+
+A newly generated token is shown once — copy it immediately. Tokens from older builds cannot be recovered; regenerate once and it is stored long-term. Full steps in [Phone (H5) and IM](./remote.md).
 
 ## IM Adapters
 
@@ -119,6 +129,10 @@ Where to go when something breaks. Logs server and CLI startup, provider, and se
 :::info
 Issue reports and exported bundles are redacted on a best-effort basis — chat contents, file contents, full environment variables, and API keys are omitted. Still give them a read before sharing, in case an internal hostname, username, or path slipped through.
 :::
+
+## Config Generator
+
+Package the providers you configured under Model settings into a link someone else can import in one click. It shares connection parameters and model mappings, **not API keys** — the recipient supplies their own. See [Config sharing](./config-sharing.md).
 
 ## About
 
