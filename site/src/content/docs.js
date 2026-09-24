@@ -265,17 +265,20 @@ function escapeAttribute(value) {
     .replace(/>/g, '&gt;')
 }
 
-function preprocessDirectives(markdown) {
+/** 提示块默认表头：随文档语言切换，避免英文页出现中文表头。 */
+const CALLOUT_HEADINGS = {
+  zh: { danger: '注意', info: '说明', tip: '提示', warning: '当心' },
+  en: { danger: 'Important', info: 'Note', tip: 'Tip', warning: 'Warning' }
+}
+
+function preprocessDirectives(markdown, locale = 'zh') {
+  const headings = CALLOUT_HEADINGS[locale] || CALLOUT_HEADINGS.zh
+  // 围栏行与 kind/表头之间只吃空格与制表符，避免把正文首行吞成表头。
   return markdown.replace(
-    /^(:{3,})\s*(info|tip|warning|danger)?\s*([^\n]*)\n([\s\S]*?)^\1\s*$/gm,
+    /^(:{3,})[ \t]*(info|tip|warning|danger)?[ \t]*([^\n]*)\r?\n([\s\S]*?)^\1[ \t]*\r?$/gm,
     (_, _fence, kind = 'info', label, content) => {
       const safeKind = kind || 'info'
-      const heading = label.trim() || {
-        danger: '注意',
-        info: '说明',
-        tip: '提示',
-        warning: '当心'
-      }[safeKind]
+      const heading = label.trim() || headings[safeKind]
       return `<aside class="doc-callout doc-callout--${safeKind}">\n<strong>${escapeAttribute(heading)}</strong>\n\n${content.trim()}\n</aside>\n\n`
     }
   )
@@ -417,7 +420,7 @@ export function renderMarkdown(doc, markdown) {
   }
 
   const parser = new Marked({ gfm: true, renderer })
-  const html = DOMPurify.sanitize(parser.parse(preprocessDirectives(markdown)), {
+  const html = DOMPurify.sanitize(parser.parse(preprocessDirectives(markdown, doc?.locale)), {
     ADD_ATTR: [
       'aria-label',
       'data-doc-link',

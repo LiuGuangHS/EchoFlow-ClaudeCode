@@ -19,8 +19,8 @@ export const paths = {
   siteDir
 }
 
-const excludedDirectoryNames = new Set(['superpowers', 'ui-clone', 'public', 'images'])
-const excludedFiles = new Set(['AGENTS.md'])
+const excludedDirectoryNames = new Set(['superpowers', 'ui-clone', 'public', 'images', '_internal'])
+const excludedFiles = new Set(['AGENTS.md', 'config-link-system.md'])
 
 /** 分区顺序与标题。新增一个 docs/ 顶层目录时在这里登记，否则会排到最后并显示裸目录名。 */
 export const sections = [
@@ -71,16 +71,19 @@ async function listMarkdownFiles(directory, prefix = '') {
 }
 
 function parseFrontmatter(markdown) {
-  if (!markdown.startsWith('---\n')) {
-    return { body: markdown, attributes: {} }
+  // 允许 CRLF：Windows 上直接编辑过的 .md 会带回行尾 \r，
+  // 若只认 '\n' 会整段漏掉 frontmatter，把 title/nav_title/order 和正文一起弄错。
+  const normalized = markdown.replace(/\r\n/g, '\n')
+  if (!normalized.startsWith('---\n')) {
+    return { body: normalized, attributes: {} }
   }
 
-  const closingIndex = markdown.indexOf('\n---\n', 4)
+  const closingIndex = normalized.indexOf('\n---\n', 4)
   if (closingIndex === -1) {
-    return { body: markdown, attributes: {} }
+    return { body: normalized, attributes: {} }
   }
 
-  const rawFrontmatter = markdown.slice(4, closingIndex)
+  const rawFrontmatter = normalized.slice(4, closingIndex)
   const attributes = {}
 
   for (const line of rawFrontmatter.split('\n')) {
@@ -91,7 +94,7 @@ function parseFrontmatter(markdown) {
   }
 
   return {
-    body: markdown.slice(closingIndex + 5),
+    body: normalized.slice(closingIndex + 5),
     attributes
   }
 }
