@@ -107,29 +107,6 @@ Install root dependencies with `bun install`, plus `desktop/` or `adapters/` dep
 - `cd desktop && bun run test`: run desktop Vitest suites.
 - `cd desktop && bun run build:windows-x64`: package the Windows x64 Electron app from PowerShell; requires Visual Studio 2022 Build Tools with the Desktop development with C++ workload.
 
-### WSL Development with Windows Preview
-When developing in WSL but previewing on Windows:
-
-1. Start the server in WSL:
-   ```bash
-   cd /home/zhijun/WorkSpace/EchoFlow-Code
-   SERVER_PORT=3456 bun run src/server/index.ts
-   ```
-
-2. Build desktop in WSL:
-   ```bash
-   cd desktop
-   bun run electron:build
-   ```
-
-3. Run from Windows PowerShell:
-   ```powershell
-   cd \\wsl$\Ubuntu\home\zhijun\WorkSpace\EchoFlow-Code\desktop
-   npx electron .\electron-dist\main.cjs
-   ```
-
-Windows can access WSL server via `localhost:3456`. The `\\wsl$\` path works in Windows Explorer and terminals.
-
 ## Test Design Direction
 Case law, the concrete regression examples, and the coverage caveats live in `docs/internals/contributing.md`. These are the parts that change how you write a test:
 
@@ -186,7 +163,7 @@ The full workflow, the conflict-matrix template, and the worked `v0.6.4` example
 - Preserve fork identity and provider policy, sponsor-free public docs, persistence compatibility, the Electron release flow, and the quality gates. Reject upstream provider additions by default.
 - Audit public identity after every merge: README, docs, release notes, package metadata, diagnostics export, signing/privacy pages, updater links, and desktop About/profile defaults must not identify NanmiCoder/阿江 or `cc-haha` as the current EchoFlow author, maintainer, contact, or product.
 - Have `@code-reviewer` review the written resolutions and run `bun run check:policy` before asking the developer to stage; run `bun run verify` before calling the merge push-ready.
-- Sync-branch commands: `bun run upstream:check` (read-only probe), `bun run upstream:resolve` (merge `main` into the sync branch locally), `bun run upstream:sync` (push the sync branch). `.github/workflows/upstream-sync.yml` automates this for release tracking.
+- Sync-branch commands, bun only and run by hand (no scheduled automation): `bun run upstream:check` (read-only probe; `--strict` exits 1 on conflicts, `--base <branch>` retargets), `bun run upstream:resolve` (**switches to and force-creates the sync branch, requires a clean worktree**), `bun run upstream:sync` (pushes with `--force-with-lease`; refuses when the remote branch holds different content).
 - Plan the merge with `/superpowers:brainstorm` and `/superpowers:write-plan`, and put `@code-reviewer` on conflicted files, high-risk files, and provider-policy decisions.
 
 ## Commit & Pull Request Guidelines
