@@ -15,6 +15,8 @@
  *   --publish        pushes `sync/upstream-vX.Y.Z` for the PR.
  *   --prepare-local  fetches the sync branch and merges `main` into it locally,
  *                    leaving the conflict markers in the working tree to resolve.
+ *   --strict         exit 1 when the merge conflicts. Default: always exit 0.
+ *   --base <branch>  branch the sync merges into. Default: main.
  */
 
 import { execFileSync } from 'node:child_process'
@@ -38,9 +40,29 @@ import {
 
 const root = path.resolve(import.meta.dir, '..', '..')
 
+/** Network round-trips must not hang a run forever. */
+const NETWORK_TIMEOUT_MS = 120_000
+
+/**
+ * Fails with the fix rather than Git's wording.
+ *
+ * `ls-remote` against a remote that was never added reports "does not appear to
+ * be a git repository", which reads like a URL problem and sends people off to
+ * check credentials instead of running `git remote add`.
+ */
+function requireRemote(name: string) {
+  const remotes = git(['remote']).output.split(/\r?\n/).filter(Boolean)
+
+  if (!remotes.includes(name)) {
+    throw new Error(
+      `No git remote named '${name}'. Add it first: git remote add ${name} <url>`,
+    )
+  }
+}
+
 export function git(
   args: string[],
-  options: { allowFailure?: boolean; cwd?: string } = {},
+  options: { allowFailure?: boolean; cwd?: string; timeout?: number } = {},
 ) {
   try {
     return {
@@ -50,6 +72,7 @@ export function git(
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
         maxBuffer: 64 * 1024 * 1024,
+        timeout: options.timeout,
       }).trim(),
     }
   } catch (error) {
@@ -118,15 +141,15 @@ function writeGithubOutputs(values: Record<string, string>) {
 
 /** Writes the verdict to a file when the runner asks for one. */
 function writeReport(report: { action: string; tag: string; branch: string; lines: string[] }) {
+  // Defaults to a gitignored local path so a manual probe leaves evidence behind;
+  // CI overrides it with the runner temp dir.
   const reportDir = process.env.UPSTREAM_SYNC_REPORT_DIR
-
-  if (!reportDir) {
-    return
-  }
+    ?? path.join(root, 'artifacts', 'upstream-sync')
 
   mkdirSync(reportDir, { recursive: true })
+  const reportPath = path.join(reportDir, 'report.md')
   writeFileSync(
-    path.join(reportDir, 'report.md'),
+    reportPath,
     [
       `# Upstream sync: ${report.tag}`,
       '',
@@ -137,6 +160,8 @@ function writeReport(report: { action: string; tag: string; branch: string; line
       '',
     ].join('\n'),
   )
+
+  console.log(`\nReport: ${reportPath}`)
 }
 
 function currentVersion() {
@@ -148,12 +173,16 @@ function currentVersion() {
 }
 
 function upstreamReleases() {
-  const output = git(['ls-remote', '--tags', 'upstream', 'v*']).output
+  const output = git(['ls-remote', '--tags', 'upstream', 'v*'], {
+    timeout: NETWORK_TIMEOUT_MS,
+  }).output
   return parseUpstreamReleases(parseLsRemoteTags(output))
 }
 
 function remoteBranchHead(branch: string) {
-  const output = git(['ls-remote', '--heads', 'origin', branch]).output
+  const output = git(['ls-remote', '--heads', 'origin', branch], {
+    timeout: NETWORK_TIMEOUT_MS,
+  }).output
   return output ? output.split(/\s+/)[0] : null
 }
 
@@ -167,7 +196,14 @@ function releaseRef(tag: string) {
 }
 
 function fetchRelease(tag: string) {
-  git(['fetch', '--no-tags', 'upstream', `+refs/tags/${tag}:${releaseRef(tag)}`])
+  // `--no-filter` overrides the `blob:none` partial-clone filter configured on the
+  // upstream remote. `merge-tree` below needs blob contents to merge them, and
+  // lazy-fetching one blob per changed file is both slow and fragile: when the
+  // promisor remote cannot be reached mid-run the probe fails outright.
+  git(
+    ['fetch', '--no-tags', '--no-filter', 'upstream', `+refs/tags/${tag}:${releaseRef(tag)}`],
+    { timeout: NETWORK_TIMEOUT_MS },
+  )
 
   // Upstream tags are annotated, so the ref points at a tag object. `^{commit}`
   // peels to the commit it wraps, which is what a branch should point at.
@@ -270,11 +306,21 @@ function main() {
   const args = parseArgs(process.argv.slice(2))
   const baseBranch = args.get('--base') ?? 'main'
   const publish = args.has('--publish')
+  const strict = args.has('--strict')
   const base = resolveBase(baseBranch)
+
+  requireRemote('upstream')
 
   const releases = upstreamReleases()
   const version = currentVersion()
-  const target = releaseToSync({ releases, currentVersion: version })
+
+  // "Is this release already synced?" is a question about the base branch, not
+  // about the sync branch. A parked sync branch can hold the release commit while
+  // the base branch never merged it, and answering from the branch made the probe
+  // report "already synced" forever for a release that was still outstanding.
+  const isMerged = (commit: string) =>
+    git(['merge-base', '--is-ancestor', commit, base], { allowFailure: true }).ok
+  const target = releaseToSync({ releases, currentVersion: version, isMerged })
 
   if (!target) {
     const latest = releases[releases.length - 1]
@@ -301,13 +347,11 @@ function main() {
   }
 
   const commit = fetchRelease(target.tag)
-  const existingHead = remoteBranchHead(branch)
 
-  // A parked PR must not be re-pushed and re-described every day. The fork's own
-  // version only moves when the sync PR merges, so the branch is what answers
-  // "is this release already staged?".
-  if (existingHead && git(['merge-base', '--is-ancestor', commit, existingHead], { allowFailure: true }).ok) {
-    console.log(`${branch} already contains ${target.tag}; nothing to do.`)
+  // The ancestry test above runs before the fetch, so a release whose objects are
+  // not local yet reads as "not merged". Ask again now that they are.
+  if (isMerged(commit)) {
+    console.log(`${baseBranch} already contains ${target.tag}; nothing to do.`)
     writeGithubOutputs({
       action: 'already-synced',
       tag: target.tag,
@@ -322,6 +366,19 @@ function main() {
     return
   }
 
+  requireRemote('origin')
+  const existingHead = remoteBranchHead(branch)
+
+  // A parked branch is not evidence of a merge; it only constrains --publish.
+  // Probing anyway is the point: the release can sit unmerged in a branch for
+  // months while the base branch stays behind.
+  if (existingHead && existingHead !== commit) {
+    console.log(
+      `origin/${branch} already holds different content (${existingHead.slice(0, 12)}). `
+      + 'The merge is still proposed; --publish will refuse to overwrite that branch.',
+    )
+  }
+
   const counts = git(['rev-list', '--left-right', '--count', `${base}...${commit}`]).output
   const [behind, ahead] = counts.split(/\s+/).map(Number)
   const probe = probeMerge(base, commit)
@@ -332,7 +389,7 @@ function main() {
     ahead,
     conflictFiles: probe.files,
   }
-  const plan = planUpstreamSync({ releases, currentVersion: version, state })
+  const plan = planUpstreamSync({ releases, currentVersion: version, state, isMerged })
   const draft = syncPullRequestDraft(plan)
 
   console.log(formatPlan(plan))
@@ -385,6 +442,12 @@ function main() {
     console.log(`Pushed ${branch} at ${commit.slice(0, 12)}.`)
   } else {
     console.log('Probe only; pass --publish to push the sync branch.')
+  }
+
+  // Default exit stays 0 so a conflicting probe does not fail a scheduled run;
+  // --strict turns the verdict into an exit code for scripts and gates.
+  if (strict && plan.action === 'needs-conflict-resolution') {
+    process.exit(1)
   }
 
   writeGithubOutputs({

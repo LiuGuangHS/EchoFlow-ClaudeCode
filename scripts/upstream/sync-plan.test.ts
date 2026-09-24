@@ -7,6 +7,7 @@ import {
   parseLsRemoteTags,
   parseMergeTreeConflicts,
   parseUpstreamReleases,
+  pendingRelease,
   planUpstreamSync,
   releaseToSync,
   syncBranchFor,
@@ -155,6 +156,20 @@ describe('planUpstreamSync', () => {
     expect(plan.action).toBe('open-pr')
   })
 
+  test('asks the commit graph when the caller can answer it', () => {
+    // A fork version ahead of upstream's must not read as "already synced". The
+    // fork ships its own version line, so only ancestry is trustworthy.
+    const plan = planUpstreamSync({
+      releases: RELEASES,
+      currentVersion: '0.9.0',
+      state: { branch: 'sync/upstream-v0.6.3', behind: 4, ahead: 0, conflictFiles: [] },
+      isMerged: () => false,
+    })
+
+    expect(plan.action).toBe('open-pr')
+    expect(syncPullRequestTitle(plan)).toBe('chore: sync upstream v0.6.3')
+  })
+
   test('reports already-synced once the fork version reaches the latest release', () => {
     expect(planUpstreamSync({
       releases: RELEASES,
@@ -190,6 +205,50 @@ describe('releaseToSync', () => {
     // Guessing "current" from an unreadable package would let the fork silently
     // stop tracking upstream, which is the failure this whole workflow prevents.
     expect(releaseToSync({ releases: RELEASES, currentVersion: null })?.tag).toBe('v0.6.3')
+  })
+
+  test('prefers the commit graph over the version comparison', () => {
+    // The version comparison returns null here, which is exactly the silent
+    // desync it cannot see: the fork moved to 0.7.0 on its own line while
+    // upstream's v0.6.3 was never merged.
+    expect(releaseToSync({ releases: RELEASES, currentVersion: '0.7.0' })).toBeNull()
+    expect(releaseToSync({
+      releases: RELEASES,
+      currentVersion: '0.7.0',
+      isMerged: (commit) => commit === 'c1',
+    })?.tag).toBe('v0.6.3')
+  })
+})
+
+describe('pendingRelease', () => {
+  test('returns the newest release the base branch has not merged', () => {
+    // v0.6.3 is integrated; v0.6.2 is the newest one that is not.
+    expect(pendingRelease({
+      releases: RELEASES,
+      isMerged: (commit) => commit === 'c3',
+    })?.tag).toBe('v0.6.2')
+  })
+
+  test('returns null when every release is already merged', () => {
+    expect(pendingRelease({ releases: RELEASES, isMerged: () => true })).toBeNull()
+  })
+
+  test('returns the latest release when nothing is merged', () => {
+    expect(pendingRelease({ releases: RELEASES, isMerged: () => false })?.tag).toBe('v0.6.3')
+  })
+
+  test('returns null when upstream has no release tags', () => {
+    expect(pendingRelease({ releases: [], isMerged: () => false })).toBeNull()
+  })
+
+  test('does not treat a parked sync branch as a merge', () => {
+    // The regression this whole function exists for: the branch can hold the
+    // release commit while the base branch never merged it.
+    const branchHead = 'c3'
+    expect(pendingRelease({
+      releases: RELEASES,
+      isMerged: (commit) => commit === branchHead,
+    })?.tag).toBe('v0.6.2')
   })
 })
 

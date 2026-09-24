@@ -96,6 +96,33 @@ export function latestRelease(releases: UpstreamRelease[]): UpstreamRelease | nu
 }
 
 /**
+ * The newest upstream release the base branch has not integrated yet.
+ *
+ * Version numbers cannot answer this. The fork ships its own line (`0.5.x`) that
+ * `AGENTS.md` forbids from tracking upstream's (`0.6.x`), so comparing them is
+ * comparing two unrelated counters: it happens to agree today and silently
+ * reports "already synced" the moment the fork's own version passes upstream's.
+ * The commit graph has no such ambiguity — an ancestor is an ancestor.
+ *
+ * Releases are walked newest-first, so a fully synced fork costs one cheap
+ * ancestry test per tag and never fetches anything.
+ */
+export function pendingRelease(input: {
+  releases: UpstreamRelease[]
+  isMerged: (commit: string) => boolean
+}): UpstreamRelease | null {
+  for (let index = input.releases.length - 1; index >= 0; index -= 1) {
+    const release = input.releases[index]
+
+    if (!input.isMerged(release.commit)) {
+      return release
+    }
+  }
+
+  return null
+}
+
+/**
  * Parses `git ls-remote --tags` output into `{ tag, commit }` entries.
  *
  * Annotated tags appear twice: once as the tag object and once as `refs/tags/x^{}`
@@ -201,11 +228,18 @@ export function parseMergeTreeConflicts(output: string): string[] {
 export function releaseToSync(input: {
   releases: UpstreamRelease[]
   currentVersion: string | null
+  isMerged?: (commit: string) => boolean
 }): UpstreamRelease | null {
   const release = latestRelease(input.releases)
 
   if (!release) {
     return null
+  }
+
+  // With a repository to ask, the graph decides. The comparison below stays as a
+  // cheap pre-check for callers that only have a version string.
+  if (input.isMerged) {
+    return pendingRelease({ releases: input.releases, isMerged: input.isMerged })
   }
 
   const current = input.currentVersion ? parseVersion(input.currentVersion) : null
@@ -230,6 +264,7 @@ export function planUpstreamSync(input: {
   releases: UpstreamRelease[]
   currentVersion: string | null
   state: SyncState
+  isMerged?: (commit: string) => boolean
 }): SyncPlan {
   const release = releaseToSync(input)
 
