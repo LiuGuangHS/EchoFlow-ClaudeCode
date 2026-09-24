@@ -178,7 +178,6 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
 
   const openEditProviderModal = (provider: SavedProvider) => {
     setEditingProvider(provider)
-    setShowEditModal(true)
   }
 
   const handleDelete = async (provider: SavedProvider) => {
