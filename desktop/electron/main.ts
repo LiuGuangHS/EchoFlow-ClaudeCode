@@ -16,6 +16,7 @@ import {
   type ClaudeCodeRuntimeConfig,
 } from './services/claudeCodeRuntime'
 import { DeepSeekHarnessRuntime } from './services/deepseekHarnessRuntime'
+import { DeepLinkHandler, extractDeepLinkFromArgs } from './services/deepLinkHandler'
 import { appendHostDiagnostic, electronHostDiagnosticsFile, sanitizeHostDiagnostic } from './services/sidecarManager'
 import { openDialog, saveDialog } from './services/dialogs'
 import { openExternalUrl, openSystemPath, openSystemSettingsUrl } from './services/shell'
@@ -123,6 +124,7 @@ let isQuitting = false
 let quitCleanupStarted = false
 let quitCleanupFinished = false
 let trayController: TrayController | null = null
+let deepLinkHandler: DeepLinkHandler | null = null
 
 // Must run before anything logs: a Finder/Dock launch inherits unreadable
 // stdio, and an unguarded write failure there surfaces as a crash dialog.
@@ -1133,6 +1135,42 @@ if (!acquireSingleInstanceLock(app, () => mainWindow)) {
   process.exit(0)
 }
 
+// Register protocol for deep links
+if (process.defaultApp) {
+  if (process.argv.length >= 2 && process.argv[1]) {
+    app.setAsDefaultProtocolClient('echoflowcode', process.execPath, [path.resolve(process.argv[1])])
+  }
+} else {
+  app.setAsDefaultProtocolClient('echoflowcode')
+}
+
+// Handle deep link on macOS (open-url event)
+app.on('open-url', (event, url) => {
+  event.preventDefault()
+  if (deepLinkHandler) {
+    deepLinkHandler.handle(url)
+  } else {
+    // Main window not ready yet, store for later
+    deepLinkHandler = new DeepLinkHandler({
+      sendToRenderer: (_channel, data) => {
+        mainWindow?.webContents.send(ELECTRON_EVENT_CHANNELS.deepLink, data)
+      },
+    })
+    deepLinkHandler.setPending(url)
+  }
+})
+
+// Handle deep link on Windows/Linux (command line args)
+const deepLinkUrl = extractDeepLinkFromArgs(process.argv)
+if (deepLinkUrl) {
+  deepLinkHandler = new DeepLinkHandler({
+    sendToRenderer: (_channel, data) => {
+      mainWindow?.webContents.send(ELECTRON_EVENT_CHANNELS.deepLink, data)
+    },
+  })
+  deepLinkHandler.setPending(deepLinkUrl)
+}
+
 registerIpcHandlers()
 
 app.whenReady().then(async () => {
@@ -1165,6 +1203,23 @@ app.whenReady().then(async () => {
     })
   }
   await createMainWindow()
+
+  // Initialize deep link handler after main window is ready
+  if (!deepLinkHandler) {
+    deepLinkHandler = new DeepLinkHandler({
+      sendToRenderer: (_channel, data) => {
+        mainWindow?.webContents.send(ELECTRON_EVENT_CHANNELS.deepLink, data)
+      },
+    })
+  } else {
+    // Update send function with the real window
+    deepLinkHandler.updateSender((_channel, data) => {
+      mainWindow?.webContents.send(ELECTRON_EVENT_CHANNELS.deepLink, data)
+    })
+    // Flush any pending deep link
+    deepLinkHandler.flushPending()
+  }
+
   scheduleNotificationSmoke({
     env: process.env,
     NotificationClass: Notification,

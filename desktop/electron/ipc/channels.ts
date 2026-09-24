@@ -114,6 +114,7 @@ export const ELECTRON_EVENT_CHANNELS = {
   petNavigateSession: 'desktop:pets:navigate-session',
   petVisibilityChanged: 'desktop:pets:visibility-changed',
   petPanelPlacementChanged: 'desktop:pets:panel-placement-changed',
+  deepLink: 'desktop:deep-link',
 } as const
 
 export const ELECTRON_INTERNAL_CHANNELS = {

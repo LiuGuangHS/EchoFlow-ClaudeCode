@@ -28,7 +28,6 @@ import { echoflowApi, type EchoFlowTokenSource } from '../../api/echoflow'
 import { ChatGPTOfficialLogin } from '../../components/settings/ChatGPTOfficialLogin'
 import { GrokOfficialLogin } from '../../components/settings/GrokOfficialLogin'
 import { CcSwitchImportModal } from '../../components/settings/CcSwitchImportModal'
-import { AdminConfigGenerator } from '../../components/settings/AdminConfigGenerator'
 import { ModelIdCombobox } from '../../components/settings/ModelIdCombobox'
 import { ProviderRequestCompatibilityFields } from '@/components/settings/ProviderRequestCompatibilityFields'
 import { compatibilityForm, invalidCompatibilityNumber, parseCompatibilityForm, readCompatibilityEditorJson, writeCompatibilityJson, type RequestCompatibilityForm } from '../../lib/providerRequestCompatibility'
@@ -150,7 +149,6 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
   const [echoFlowHasAccount, setEchoFlowHasAccount] = useState(false)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showCcSwitchImport, setShowCcSwitchImport] = useState(false)
-  const [showAdminGenerator, setShowAdminGenerator] = useState(false)
   const [pendingDeleteProvider, setPendingDeleteProvider] = useState<SavedProvider | null>(null)
   const [isDeletingProvider, setIsDeletingProvider] = useState(false)
   const [actionFailed, setActionFailed] = useState(false)
@@ -268,14 +266,6 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
               icon={<span className="material-symbols-outlined text-[16px]">download</span>}
             >
               {t('settings.providers.ccSwitch.importButton')}
-            </Button>}
-            {!browserMode && <Button
-              variant="secondary"
-              size="base"
-              onClick={() => setShowAdminGenerator(true)}
-              icon={<span className="material-symbols-outlined text-[16px]">link</span>}
-            >
-              生成配置链接
             </Button>}
             <Button
               size="base"
@@ -485,17 +475,6 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
       {/* cc-switch import — conditionally rendered so the scan reruns each time */}
       {showCcSwitchImport && (
         <CcSwitchImportModal open={true} onClose={() => setShowCcSwitchImport(false)} />
-      )}
-
-      {showAdminGenerator && (
-        <Modal
-          isOpen={true}
-          onClose={() => setShowAdminGenerator(false)}
-          title="配置链接生成器"
-          size="lg"
-        >
-          <AdminConfigGenerator />
-        </Modal>
       )}
 
       <ConfirmDialog

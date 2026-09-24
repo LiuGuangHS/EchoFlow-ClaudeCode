@@ -247,6 +247,7 @@ export type SettingsTab =
   | 'trace'
   | 'diagnostics'
   | 'about'
+  | 'configGenerator'
 
 type ActiveView = 'code' | 'scheduled' | 'terminal' | 'history' | 'settings'
 

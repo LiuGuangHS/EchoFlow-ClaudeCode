@@ -13,6 +13,10 @@
   "build": {
     "appId": "com.echoflow.code.desktop",
     "productName": "EchoFlow Code",
+    "protocols": {
+      "name": "EchoFlow Code URL",
+      "schemes": ["echoflowcode"]
+    },
     "asar": true,
     "asarUnpack": [
       "dist/**",
@@ -151,6 +155,7 @@
     "marked": "^15.0.7",
     "mermaid": "^11.14.0",
     "node-pty": "^1.1.0",
+    "pako": "^3.0.2",
     "prism-react-renderer": "^2.4.1",
     "prosemirror-commands": "^1.7.1",
     "prosemirror-history": "^1.5.0",
@@ -173,6 +178,7 @@
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.1.0",
     "@types/node": "^25.9.1",
+    "@types/pako": "^3.0.0",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@typescript-eslint/parser": "^8",
