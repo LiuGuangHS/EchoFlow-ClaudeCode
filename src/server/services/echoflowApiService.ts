@@ -155,23 +155,39 @@ export class EchoFlowApiService {
   }
 
   async listTokens(userId: string, token: string, endpoint: EchoFlowEndpoint = 'main'): Promise<EchoFlowTokenOption[]> {
-    const data = await this.fetchManagementApi<{
-      success?: boolean
-      data?: unknown[] | { items?: unknown[]; tokens?: unknown[]; records?: unknown[] }
-    }>('/api/token/?p=0&size=100', userId, token, endpoint)
+    const pageSize = 100
+    const tokens: EchoFlowTokenOption[] = []
+    const seen = new Set<string>()
 
-    if (!data.success) return []
-    const rawList = Array.isArray(data.data)
-      ? data.data
-      : Array.isArray(data.data?.items)
-        ? data.data.items
-        : Array.isArray(data.data?.tokens)
-          ? data.data.tokens
-          : Array.isArray(data.data?.records)
-            ? data.data.records
-            : []
+    // The site uses a zero-based `p` page parameter. Continue while a full page
+    // is returned, with a hard cap so a broken upstream cannot create an endless
+    // refresh loop.
+    for (let page = 0; page < 100; page += 1) {
+      const data = await this.fetchManagementApi<{
+        success?: boolean
+        data?: unknown[] | { items?: unknown[]; tokens?: unknown[]; records?: unknown[] }
+      }>(`/api/token/?p=${page}&size=${pageSize}`, userId, token, endpoint)
 
-    return rawList.map(normalizeToken).filter((item): item is EchoFlowTokenOption => !!item)
+      if (!data.success) break
+      const rawList = Array.isArray(data.data)
+        ? data.data
+        : Array.isArray(data.data?.items)
+          ? data.data.items
+          : Array.isArray(data.data?.tokens)
+            ? data.data.tokens
+            : Array.isArray(data.data?.records)
+              ? data.data.records
+              : []
+      const normalized = rawList.map(normalizeToken).filter((item): item is EchoFlowTokenOption => !!item)
+      for (const item of normalized) {
+        if (seen.has(item.id)) continue
+        seen.add(item.id)
+        tokens.push(item)
+      }
+      if (rawList.length < pageSize) break
+    }
+
+    return tokens
   }
 
   private async refreshWithCredentials(userId: string, managementToken: string, endpoint: EchoFlowEndpoint = 'main'): Promise<EchoFlowAccount> {
@@ -291,7 +307,12 @@ function toTokenSummary(token: EchoFlowTokenOption): EchoFlowTokenSummary {
 }
 
 function maskKey(key: string): string {
-  return key.length <= 8 ? '••••••••' : `${key.slice(0, 3)}-••••${key.slice(-4)}`
+  if (key.length <= 8) return '••••••••'
+  // 保留 sk- 前缀（如果有的话）加上后面几个字符
+  if (key.startsWith('sk-')) {
+    return `sk-${key.slice(3, 6)}****${key.slice(-4)}`
+  }
+  return `${key.slice(0, 6)}****${key.slice(-4)}`
 }
 
 function isStoredAccounts(value: unknown): value is StoredEchoFlowAccounts {

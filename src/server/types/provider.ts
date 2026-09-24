@@ -68,6 +68,10 @@ export const ModelContextWindowsSchema = z.record(
 export const ToolSearchEnabledSchema = z.boolean()
 export const DisableExperimentalBetasSchema = z.boolean()
 export const SupportsNestedToolResultMediaSchema = z.boolean()
+export const AvailableModelSchema = z.object({
+  id: z.string().min(1),
+  ownedBy: z.string().optional(),
+})
 
 export const CredentialSourceSchema = z.object({
   kind: z.literal('echoflow-token'),
@@ -122,6 +126,7 @@ export const SavedProviderSchema = z.object({
   credentialSource: CredentialSourceSchema.optional(),
   hasApiKey: z.boolean().optional(),
   keyPreview: z.string().optional(),
+  availableModels: z.array(AvailableModelSchema).optional(),
 })
 
 export const ProvidersIndexSchema = z.object({
@@ -150,6 +155,7 @@ export const CreateProviderSchema = z.object({
   imageGeneration: ImageGenerationConfigSchema.optional(),
   notes: z.string().optional(),
   credentialSource: CredentialSourceSchema.optional(),
+  availableModels: z.array(AvailableModelSchema).optional(),
 })
 
 export const UpdateProviderSchema = z.object({
@@ -170,6 +176,7 @@ export const UpdateProviderSchema = z.object({
   imageGeneration: ImageGenerationConfigSchema.nullable().optional(),
   notes: z.string().optional(),
   credentialSource: CredentialSourceSchema.nullable().optional(),
+  availableModels: z.array(AvailableModelSchema).nullable().optional(),
 })
 
 export const TestProviderSchema = z.object({

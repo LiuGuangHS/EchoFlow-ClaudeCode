@@ -140,6 +140,7 @@ function buildProviderModels(
   labels: Record<'main' | 'haiku' | 'sonnet' | 'opus', string>,
 ): ModelInfo[] {
   const entries: Array<{ id: string; label: string }> = [
+    ...(provider.availableModels ?? []).map(model => ({ id: model.id, label: provider.credentialSource?.tokenName ? `EchoFlow · ${provider.credentialSource.tokenName}` : provider.name })),
     { id: resolveProviderSlotModelId(provider, 'main'), label: labels.main },
     { id: resolveProviderSlotModelId(provider, 'haiku'), label: labels.haiku },
     { id: resolveProviderSlotModelId(provider, 'sonnet'), label: labels.sonnet },

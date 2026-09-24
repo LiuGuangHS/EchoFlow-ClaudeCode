@@ -19,7 +19,7 @@
  */
 
 import { z } from 'zod'
-import { ProviderService } from '../services/providerService.js'
+import { ProviderService, toPublicProvider } from '../services/providerService.js'
 import { PROVIDER_PRESETS } from '../config/providerPresets.js'
 import {
   CreateProviderSchema,
@@ -207,7 +207,7 @@ async function handleCreate(req: Request): Promise<Response> {
   try {
     const input = CreateProviderSchema.parse(body)
     const provider = await providerService.addProvider(input)
-    return Response.json({ provider }, { status: 201 })
+    return Response.json({ provider: toPublicProvider(provider) }, { status: 201 })
   } catch (err) {
     if (err instanceof z.ZodError) throw ApiError.badRequest(err.issues.map((i) => i.message).join('; '))
     throw err
@@ -219,7 +219,7 @@ async function handleUpdate(req: Request, id: string): Promise<Response> {
   try {
     const input = UpdateProviderSchema.parse(body)
     const provider = await providerService.updateProvider(id, input)
-    return Response.json({ provider })
+    return Response.json({ provider: toPublicProvider(provider) })
   } catch (err) {
     if (err instanceof z.ZodError) throw ApiError.badRequest(err.issues.map((i) => i.message).join('; '))
     throw err
@@ -265,7 +265,7 @@ async function handleReorder(req: Request): Promise<Response> {
   try {
     const input = ReorderProvidersSchema.parse(body)
     const { providers, providerOrder } = await providerService.reorderProviders(input.orderedIds)
-    return Response.json({ providers, providerOrder })
+    return Response.json({ providers: providers.map(toPublicProvider), providerOrder })
   } catch (err) {
     if (err instanceof z.ZodError) throw ApiError.badRequest(err.issues.map((i) => i.message).join('; '))
     throw err

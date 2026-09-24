@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Eye, EyeOff, ExternalLink, RefreshCw, Unlink } from 'lucide-react'
+import { Eye, EyeOff, RefreshCw, Unlink } from 'lucide-react'
 import {
   ECHOFLOW_BASE_URLS,
   echoflowApi,
@@ -7,12 +7,10 @@ import {
   type EchoFlowEndpoint,
   type EchoFlowTokenSource,
 } from '../../api/echoflow'
-import { getDesktopHost } from '../../lib/desktopHost'
 import { useProviderStore } from '../../stores/providerStore'
 import type { SavedProvider } from '../../types/provider'
 import { normalizeProviderBaseUrl } from '../../config/providerPresets'
 
-const ECHOFLOW_CONSOLE_URL = 'https://api.echoflowai.cc/console/personal'
 
 type Props = {
   onAddFromToken: (source: EchoFlowTokenSource) => void
@@ -50,7 +48,7 @@ function formatQuota(remainQuota?: number, unlimitedQuota?: boolean): string {
 }
 
 export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, onEditProvider }: Props) {
-  const { providers, activeId, activateProvider } = useProviderStore()
+  const { providers, activeId } = useProviderStore()
   const [accounts, setAccounts] = useState<Accounts>(EMPTY_ACCOUNTS)
   const [selectedEndpoint, setSelectedEndpoint] = useState<EchoFlowEndpoint>('main')
   const [credentials, setCredentials] = useState<Record<EchoFlowEndpoint, Credentials>>({
@@ -167,14 +165,6 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, onEd
       setError('解除当前线路账户失败。')
     } finally {
       setIsDisconnecting(false)
-    }
-  }
-
-  const openConsole = async () => {
-    try {
-      await getDesktopHost().shell.open(ECHOFLOW_CONSOLE_URL)
-    } catch {
-      window.open(ECHOFLOW_CONSOLE_URL, '_blank', 'noopener,noreferrer')
     }
   }
 
@@ -305,6 +295,8 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, onEd
                     <span className="flex min-w-0 flex-1 items-center gap-2">
                       <span className="truncate text-sm text-[var(--color-text-primary)]">{token.name}</span>
                       <span className="shrink-0 font-mono text-xs text-[var(--color-text-tertiary)]">{token.keyPreview}</span>
+                      {token.status && <span className="shrink-0 text-xs text-[var(--color-text-tertiary)]">{token.status}</span>}
+                      {(token.unlimitedQuota || token.remainQuota !== undefined) && <span className="shrink-0 text-xs text-[var(--color-text-secondary)]">{formatQuota(token.remainQuota, token.unlimitedQuota)}</span>}
                     </span>
                     {alreadyAdded ? (
                       <span className="shrink-0 text-xs text-[var(--color-text-tertiary)]">已添加</span>

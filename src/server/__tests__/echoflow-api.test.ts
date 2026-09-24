@@ -73,6 +73,31 @@ describe('EchoFlow account API', () => {
     }
   })
 
+  test('loads all token pages and removes duplicate ids', async () => {
+    const originalFetch = globalThis.fetch
+    const requested: string[] = []
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input)
+      requested.push(url)
+      const page = new URL(url).searchParams.get('p')
+      const data = page === '0'
+        ? Array.from({ length: 100 }, (_, index) => ({ id: 'token-' + index, key: 'key-' + index }))
+        : [{ id: 'token-99', key: 'duplicate-key' }, { id: 'token-100', key: 'key-100' }]
+      return new Response(JSON.stringify({ success: true, data }), { headers: { 'Content-Type': 'application/json' } })
+    }) as typeof fetch
+    try {
+      const tokens = await new EchoFlowApiService().listTokens('user', 'management')
+      expect(tokens).toHaveLength(101)
+      expect(tokens.at(-1)?.id).toBe('token-100')
+      expect(requested).toEqual([
+        'https://api.echoflowai.cc/api/token/?p=0&size=100',
+        'https://api.echoflowai.cc/api/token/?p=1&size=100',
+      ])
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
   test('classifies management-token auth failures as token_invalid', async () => {
     const originalFetch = globalThis.fetch
     globalThis.fetch = mock(async () => new Response(JSON.stringify({

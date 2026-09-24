@@ -143,6 +143,7 @@ function buildSavedProvider(input: CreateProviderInput): SavedProvider {
     ...(imageGeneration !== undefined && { imageGeneration }),
     ...(input.notes !== undefined && { notes: input.notes }),
     ...(input.credentialSource !== undefined && { credentialSource: input.credentialSource }),
+    ...(input.availableModels !== undefined && { availableModels: input.availableModels }),
   }
 }
 
@@ -160,6 +161,7 @@ export function toPublicProvider(provider: SavedProvider): SavedProvider {
     apiKey: '',
     hasApiKey: Boolean(provider.apiKey),
     keyPreview: maskProviderKey(provider.apiKey),
+    ...(provider.imageGeneration ? { imageGeneration: { ...provider.imageGeneration, apiKey: undefined } } : {}),
   }
 }
 
@@ -358,6 +360,7 @@ export class ProviderService {
       ...(imageGeneration !== undefined && imageGeneration !== null && { imageGeneration }),
       ...(input.notes !== undefined && { notes: input.notes }),
       ...(input.credentialSource !== undefined && input.credentialSource !== null && { credentialSource: input.credentialSource }),
+      ...(input.availableModels !== undefined && input.availableModels !== null && { availableModels: input.availableModels }),
     }
     if (input.model1mSupport === null) {
       delete updated.model1mSupport
@@ -379,6 +382,9 @@ export class ProviderService {
     }
     if (input.credentialSource === null) {
       delete updated.credentialSource
+    }
+    if (input.availableModels === null) {
+      delete updated.availableModels
     }
 
     index.providers[idx] = updated

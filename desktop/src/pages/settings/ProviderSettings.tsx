@@ -1633,6 +1633,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
             supportsNestedToolResultMedia,
             ...(storedImageGeneration !== undefined && { imageGeneration: storedImageGeneration }),
             notes: notes.trim() || undefined,
+            ...(fetchedModels ? { availableModels: fetchedModels } : {}),
           })
           await fetchProviders()
         } else {
@@ -1653,6 +1654,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
             supportsNestedToolResultMedia,
             ...(storedImageGeneration !== undefined && { imageGeneration: storedImageGeneration }),
             notes: notes.trim() || undefined,
+            ...(fetchedModels ? { availableModels: fetchedModels } : {}),
           })
         }
       } else if (provider) {
@@ -1673,6 +1675,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
           supportsNestedToolResultMedia,
           imageGeneration: storedImageGeneration ?? null,
           notes: notes.trim() || undefined,
+          ...(fetchedModels ? { availableModels: fetchedModels } : {}),
         }
         if (apiKey.trim()) input.apiKey = apiKey.trim()
         await updateProvider(provider.id, input)

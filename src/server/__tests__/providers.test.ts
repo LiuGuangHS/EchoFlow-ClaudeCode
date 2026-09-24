@@ -2924,10 +2924,12 @@ describe('Providers API', () => {
     const res = await handleProvidersApi(req, url, segments)
 
     expect(res.status).toBe(200)
-    const body = (await res.json()) as { providers: { name: string; apiKey: string }[] }
+    const body = (await res.json()) as { providers: { name: string; apiKey: string; hasApiKey?: boolean; keyPreview?: string }[] }
     expect(body.providers).toHaveLength(1)
     expect(body.providers[0].name).toBe('Test Provider')
-    expect(body.providers[0].apiKey).toBe('sk-test-key-123')
+    expect(body.providers[0].apiKey).toBe('')
+    expect(body.providers[0].hasApiKey).toBe(true)
+    expect(body.providers[0].keyPreview).toBe('sk-tes****-123')
   })
 
   // ─── POST /api/providers ─────────────────────────────────────────────────
@@ -2941,6 +2943,7 @@ describe('Providers API', () => {
       apiFormat: 'anthropic',
       autoCompactWindow: 64000,
       disableExperimentalBetas: true,
+      imageGeneration: { model: 'image-model', apiKey: 'sk-image-secret' },
       models: {
         main: 'gpt-4',
         haiku: 'gpt-4-haiku',
@@ -2956,6 +2959,8 @@ describe('Providers API', () => {
     expect(body.provider.models.main).toBe('gpt-4')
     expect(body.provider.autoCompactWindow).toBe(64000)
     expect(body.provider.disableExperimentalBetas).toBe(true)
+    expect(JSON.stringify(body)).not.toContain('sk-test')
+    expect(JSON.stringify(body)).not.toContain('sk-image-secret')
   })
 
   test('POST /api/providers should return 400 for invalid input', async () => {

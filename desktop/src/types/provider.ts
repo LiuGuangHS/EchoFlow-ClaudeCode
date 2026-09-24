@@ -52,6 +52,11 @@ export type CredentialSource = {
   tokenName?: string
 }
 
+export type AvailableModel = {
+  id: string
+  ownedBy?: string
+}
+
 export type SavedProvider = {
   id: string
   presetId: string
@@ -74,6 +79,7 @@ export type SavedProvider = {
   imageGeneration?: ImageGenerationConfig
   notes?: string
   credentialSource?: CredentialSource
+  availableModels?: AvailableModel[]
 }
 
 export type CreateProviderInput = {
@@ -95,6 +101,7 @@ export type CreateProviderInput = {
   imageGeneration?: ImageGenerationConfig
   notes?: string
   credentialSource?: CredentialSource
+  availableModels?: AvailableModel[]
 }
 
 export type UpdateProviderInput = {
@@ -114,6 +121,7 @@ export type UpdateProviderInput = {
   requestCompatibility?: RequestCompatibility | null
   imageGeneration?: ImageGenerationConfig | null
   notes?: string
+  availableModels?: AvailableModel[] | null
 }
 
 export type TestProviderConfigInput = {
