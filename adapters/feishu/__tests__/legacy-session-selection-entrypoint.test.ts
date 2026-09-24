@@ -29,7 +29,7 @@ const environmentKeys = [
   'HOME', 'CLAUDE_CONFIG_DIR', 'ADAPTER_SERVER_URL', 'ADAPTER_ALLOWED_PROJECT_ROOTS',
   'FEISHU_APP_ID', 'FEISHU_APP_SECRET', 'DINGTALK_CLIENT_ID', 'DINGTALK_CLIENT_SECRET',
   'WECHAT_ACCOUNT_ID', 'WECHAT_BOT_TOKEN', 'WECHAT_BASE_URL', 'WHATSAPP_AUTH_DIR',
-  'CC_HAHA_LOCAL_ACCESS_TOKEN',
+  'ECHOFLOW_LOCAL_ACCESS_TOKEN',
 ]
 const savedEnvironment = new Map(environmentKeys.map((key) => [key, process.env[key]]))
 
@@ -103,7 +103,7 @@ beforeAll(async () => {
     FEISHU_APP_ID: 'fixture-app', FEISHU_APP_SECRET: 'fixture-secret',
     DINGTALK_CLIENT_ID: 'fixture-client', DINGTALK_CLIENT_SECRET: 'fixture-secret',
     WECHAT_ACCOUNT_ID: 'fixture-account', WECHAT_BOT_TOKEN: 'fixture-token', WECHAT_BASE_URL: httpOrigin,
-    WHATSAPP_AUTH_DIR: path.join(temporaryRoot, 'whatsapp-auth'), CC_HAHA_LOCAL_ACCESS_TOKEN: '',
+    WHATSAPP_AUTH_DIR: path.join(temporaryRoot, 'whatsapp-auth'), ECHOFLOW_LOCAL_ACCESS_TOKEN: '',
   }
   Object.assign(process.env, env)
   fs.mkdirSync(env.CLAUDE_CONFIG_DIR, { recursive: true })

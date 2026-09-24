@@ -45,9 +45,9 @@ async function waitForTrace(
 beforeEach(async () => {
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'trace-capture-'))
   originalConfigDir = process.env.CLAUDE_CONFIG_DIR
-  originalLocalIndexMode = process.env.CC_HAHA_LOCAL_INDEX
+  originalLocalIndexMode = process.env.ECHOFLOW_LOCAL_INDEX
   process.env.CLAUDE_CONFIG_DIR = tmpDir
-  process.env.CC_HAHA_LOCAL_INDEX = 'on'
+  process.env.ECHOFLOW_LOCAL_INDEX = 'on'
   clearTraceCaptureStateForTests()
 })
 
@@ -59,9 +59,9 @@ afterEach(async () => {
     process.env.CLAUDE_CONFIG_DIR = originalConfigDir
   }
   if (originalLocalIndexMode === undefined) {
-    delete process.env.CC_HAHA_LOCAL_INDEX
+    delete process.env.ECHOFLOW_LOCAL_INDEX
   } else {
-    process.env.CC_HAHA_LOCAL_INDEX = originalLocalIndexMode
+    process.env.ECHOFLOW_LOCAL_INDEX = originalLocalIndexMode
   }
   await fs.rm(tmpDir, { recursive: true, force: true })
 })
@@ -123,13 +123,13 @@ describe('trace capture service', () => {
 
     const canonicalA = path.join(
       scopeA,
-      'cc-haha',
+      'echoflow-code',
       'traces',
       'scope-frozen.jsonl',
     )
     const canonicalB = path.join(
       scopeB,
-      'cc-haha',
+      'echoflow-code',
       'traces',
       'scope-frozen.jsonl',
     )
@@ -137,13 +137,13 @@ describe('trace capture service', () => {
     await expect(fs.stat(canonicalB)).rejects.toMatchObject({ code: 'ENOENT' })
     expect((await fs.lstat(path.join(
       scopeA,
-      'cc-haha',
+      'echoflow-code',
       'db',
       'trace-index-v1.sqlite',
     ))).isFile()).toBe(true)
     await expect(fs.stat(path.join(
       scopeB,
-      'cc-haha',
+      'echoflow-code',
       'db',
       'trace-index-v1.sqlite',
     ))).rejects.toMatchObject({ code: 'ENOENT' })
@@ -193,7 +193,7 @@ describe('trace capture service', () => {
     ] as const) {
       const database = new Database(path.join(
         scope,
-        'cc-haha',
+        'echoflow-code',
         'db',
         'trace-index-v1.sqlite',
       ), { readonly: true })
@@ -240,7 +240,7 @@ describe('trace capture service', () => {
     await record('healthy-b-session')
     await fs.rm(path.join(
       scopeA,
-      'cc-haha',
+      'echoflow-code',
       'traces',
       'failing-a-session.jsonl',
     ))
@@ -250,7 +250,7 @@ describe('trace capture service', () => {
 
     const databaseB = new Database(path.join(
       scopeB,
-      'cc-haha',
+      'echoflow-code',
       'db',
       'trace-index-v1.sqlite',
     ), { readonly: true })
@@ -285,9 +285,9 @@ describe('trace capture service', () => {
     process.env.CLAUDE_CONFIG_DIR = scopeB
     await record('scope-b-model')
     process.env.CLAUDE_CONFIG_DIR = scopeA
-    process.env.CC_HAHA_LOCAL_INDEX = 'off'
+    process.env.ECHOFLOW_LOCAL_INDEX = 'off'
 
-    const traceDirA = path.join(scopeA, 'cc-haha', 'traces')
+    const traceDirA = path.join(scopeA, 'echoflow-code', 'traces')
     const originalReaddir = mutableFs.readdir.bind(mutableFs)
     let switched = false
     const readdirSpy = spyOn(mutableFs, 'readdir').mockImplementation(
@@ -644,7 +644,7 @@ describe('trace capture service', () => {
   })
 
   test('skips malformed trace jsonl entries when reading a session', async () => {
-    const traceDir = path.join(tmpDir, 'cc-haha', 'traces')
+    const traceDir = path.join(tmpDir, 'echoflow-code', 'traces')
     await fs.mkdir(traceDir, { recursive: true })
     await fs.writeFile(path.join(traceDir, 'session-corrupt.jsonl'), [
       'not-json',
@@ -764,7 +764,7 @@ describe('trace capture service', () => {
       },
     })
     const trace = await traceCaptureService.getSessionTrace('session-trace-disabled')
-    const settingsFile = JSON.parse(await fs.readFile(path.join(tmpDir, 'cc-haha', 'settings.json'), 'utf-8')) as {
+    const settingsFile = JSON.parse(await fs.readFile(path.join(tmpDir, 'echoflow-code', 'settings.json'), 'utf-8')) as {
       traceCapture?: { enabled?: boolean }
     }
 
@@ -775,14 +775,14 @@ describe('trace capture service', () => {
 
   test('captures direct Anthropic-compatible provider calls from desktop fetch override', async () => {
     const originalFetch = globalThis.fetch
-    const originalTraceEnv = process.env.CC_HAHA_TRACE_API_CALLS
-    const originalProviderId = process.env.CC_HAHA_TRACE_PROVIDER_ID
-    const originalProviderName = process.env.CC_HAHA_TRACE_PROVIDER_NAME
-    const originalProviderFormat = process.env.CC_HAHA_TRACE_PROVIDER_FORMAT
-    process.env.CC_HAHA_TRACE_API_CALLS = '1'
-    process.env.CC_HAHA_TRACE_PROVIDER_ID = 'provider-sub2api'
-    process.env.CC_HAHA_TRACE_PROVIDER_NAME = 'Sub2API-ChatGPT'
-    process.env.CC_HAHA_TRACE_PROVIDER_FORMAT = 'anthropic'
+    const originalTraceEnv = process.env.ECHOFLOW_TRACE_API_CALLS
+    const originalProviderId = process.env.ECHOFLOW_TRACE_PROVIDER_ID
+    const originalProviderName = process.env.ECHOFLOW_TRACE_PROVIDER_NAME
+    const originalProviderFormat = process.env.ECHOFLOW_TRACE_PROVIDER_FORMAT
+    process.env.ECHOFLOW_TRACE_API_CALLS = '1'
+    process.env.ECHOFLOW_TRACE_PROVIDER_ID = 'provider-sub2api'
+    process.env.ECHOFLOW_TRACE_PROVIDER_NAME = 'Sub2API-ChatGPT'
+    process.env.ECHOFLOW_TRACE_PROVIDER_FORMAT = 'anthropic'
     try {
       globalThis.fetch = (async () => new Response(
         JSON.stringify({ id: 'msg-direct-trace', content: [{ type: 'text', text: 'ok' }] }),
@@ -821,14 +821,14 @@ describe('trace capture service', () => {
       expect(trace.events.map((event) => event.phase)).toEqual(['api_call_started', 'api_call_completed'])
     } finally {
       globalThis.fetch = originalFetch
-      if (originalTraceEnv === undefined) delete process.env.CC_HAHA_TRACE_API_CALLS
-      else process.env.CC_HAHA_TRACE_API_CALLS = originalTraceEnv
-      if (originalProviderId === undefined) delete process.env.CC_HAHA_TRACE_PROVIDER_ID
-      else process.env.CC_HAHA_TRACE_PROVIDER_ID = originalProviderId
-      if (originalProviderName === undefined) delete process.env.CC_HAHA_TRACE_PROVIDER_NAME
-      else process.env.CC_HAHA_TRACE_PROVIDER_NAME = originalProviderName
-      if (originalProviderFormat === undefined) delete process.env.CC_HAHA_TRACE_PROVIDER_FORMAT
-      else process.env.CC_HAHA_TRACE_PROVIDER_FORMAT = originalProviderFormat
+      if (originalTraceEnv === undefined) delete process.env.ECHOFLOW_TRACE_API_CALLS
+      else process.env.ECHOFLOW_TRACE_API_CALLS = originalTraceEnv
+      if (originalProviderId === undefined) delete process.env.ECHOFLOW_TRACE_PROVIDER_ID
+      else process.env.ECHOFLOW_TRACE_PROVIDER_ID = originalProviderId
+      if (originalProviderName === undefined) delete process.env.ECHOFLOW_TRACE_PROVIDER_NAME
+      else process.env.ECHOFLOW_TRACE_PROVIDER_NAME = originalProviderName
+      if (originalProviderFormat === undefined) delete process.env.ECHOFLOW_TRACE_PROVIDER_FORMAT
+      else process.env.ECHOFLOW_TRACE_PROVIDER_FORMAT = originalProviderFormat
     }
   })
 
@@ -876,8 +876,8 @@ describe('trace capture service', () => {
 
   test('captures direct provider headers when fetch input is a Request', async () => {
     const originalFetch = globalThis.fetch
-    const originalTraceEnv = process.env.CC_HAHA_TRACE_API_CALLS
-    process.env.CC_HAHA_TRACE_API_CALLS = '1'
+    const originalTraceEnv = process.env.ECHOFLOW_TRACE_API_CALLS
+    process.env.ECHOFLOW_TRACE_API_CALLS = '1'
     try {
       globalThis.fetch = (async () => new Response(
         JSON.stringify({ id: 'msg-request-input', content: [{ type: 'text', text: 'ok' }] }),
@@ -915,15 +915,15 @@ describe('trace capture service', () => {
       expect(trace.calls[0].response.body.preview).toContain('msg-request-input')
     } finally {
       globalThis.fetch = originalFetch
-      if (originalTraceEnv === undefined) delete process.env.CC_HAHA_TRACE_API_CALLS
-      else process.env.CC_HAHA_TRACE_API_CALLS = originalTraceEnv
+      if (originalTraceEnv === undefined) delete process.env.ECHOFLOW_TRACE_API_CALLS
+      else process.env.ECHOFLOW_TRACE_API_CALLS = originalTraceEnv
     }
   })
 
   test('captures direct provider fetch failures without changing thrown behavior', async () => {
     const originalFetch = globalThis.fetch
-    const originalTraceEnv = process.env.CC_HAHA_TRACE_API_CALLS
-    process.env.CC_HAHA_TRACE_API_CALLS = '1'
+    const originalTraceEnv = process.env.ECHOFLOW_TRACE_API_CALLS
+    process.env.ECHOFLOW_TRACE_API_CALLS = '1'
     try {
       globalThis.fetch = (async () => {
         throw new Error('network down for trace')
@@ -957,16 +957,16 @@ describe('trace capture service', () => {
       expect(trace.events.map((event) => event.phase)).toEqual(['api_call_started', 'api_call_failed'])
     } finally {
       globalThis.fetch = originalFetch
-      if (originalTraceEnv === undefined) delete process.env.CC_HAHA_TRACE_API_CALLS
-      else process.env.CC_HAHA_TRACE_API_CALLS = originalTraceEnv
+      if (originalTraceEnv === undefined) delete process.env.ECHOFLOW_TRACE_API_CALLS
+      else process.env.ECHOFLOW_TRACE_API_CALLS = originalTraceEnv
     }
   })
 
   test('passes session id to local provider proxy without duplicating client-side trace', async () => {
     const originalFetch = globalThis.fetch
-    const originalTraceEnv = process.env.CC_HAHA_TRACE_API_CALLS
+    const originalTraceEnv = process.env.ECHOFLOW_TRACE_API_CALLS
     let seenHeader: string | null = null
-    process.env.CC_HAHA_TRACE_API_CALLS = '1'
+    process.env.ECHOFLOW_TRACE_API_CALLS = '1'
     try {
       globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
         seenHeader = new Headers(init?.headers).get('x-claude-code-session-id')
@@ -990,15 +990,15 @@ describe('trace capture service', () => {
       expect(trace.summary.apiCalls).toBe(0)
     } finally {
       globalThis.fetch = originalFetch
-      if (originalTraceEnv === undefined) delete process.env.CC_HAHA_TRACE_API_CALLS
-      else process.env.CC_HAHA_TRACE_API_CALLS = originalTraceEnv
+      if (originalTraceEnv === undefined) delete process.env.ECHOFLOW_TRACE_API_CALLS
+      else process.env.ECHOFLOW_TRACE_API_CALLS = originalTraceEnv
     }
   })
 
   test('records an aborted error call when the request is aborted mid-stream', async () => {
     const originalFetch = globalThis.fetch
-    const originalTraceEnv = process.env.CC_HAHA_TRACE_API_CALLS
-    process.env.CC_HAHA_TRACE_API_CALLS = '1'
+    const originalTraceEnv = process.env.ECHOFLOW_TRACE_API_CALLS
+    process.env.ECHOFLOW_TRACE_API_CALLS = '1'
     try {
       // A stream that sends one chunk then goes silent forever, like the
       // wedged upstream in #766. The mock ignores the abort signal, so the
@@ -1053,15 +1053,15 @@ describe('trace capture service', () => {
       expect(trace.events.at(-1)?.severity).toBe('error')
     } finally {
       globalThis.fetch = originalFetch
-      if (originalTraceEnv === undefined) delete process.env.CC_HAHA_TRACE_API_CALLS
-      else process.env.CC_HAHA_TRACE_API_CALLS = originalTraceEnv
+      if (originalTraceEnv === undefined) delete process.env.ECHOFLOW_TRACE_API_CALLS
+      else process.env.ECHOFLOW_TRACE_API_CALLS = originalTraceEnv
     }
   })
 
   test('synthesizes an AbortError when the abort signal carries no reason', async () => {
     const originalFetch = globalThis.fetch
-    const originalTraceEnv = process.env.CC_HAHA_TRACE_API_CALLS
-    process.env.CC_HAHA_TRACE_API_CALLS = '1'
+    const originalTraceEnv = process.env.ECHOFLOW_TRACE_API_CALLS
+    process.env.ECHOFLOW_TRACE_API_CALLS = '1'
     try {
       globalThis.fetch = (async () => {
         const stream = new ReadableStream<Uint8Array>({
@@ -1097,15 +1097,15 @@ describe('trace capture service', () => {
       expect(trace.calls[0].metadata).toMatchObject({ phase: 'api_call_aborted', aborted: true })
     } finally {
       globalThis.fetch = originalFetch
-      if (originalTraceEnv === undefined) delete process.env.CC_HAHA_TRACE_API_CALLS
-      else process.env.CC_HAHA_TRACE_API_CALLS = originalTraceEnv
+      if (originalTraceEnv === undefined) delete process.env.ECHOFLOW_TRACE_API_CALLS
+      else process.env.ECHOFLOW_TRACE_API_CALLS = originalTraceEnv
     }
   })
 
   test('keeps a completed call ok when the signal aborts after the response finished', async () => {
     const originalFetch = globalThis.fetch
-    const originalTraceEnv = process.env.CC_HAHA_TRACE_API_CALLS
-    process.env.CC_HAHA_TRACE_API_CALLS = '1'
+    const originalTraceEnv = process.env.ECHOFLOW_TRACE_API_CALLS
+    process.env.ECHOFLOW_TRACE_API_CALLS = '1'
     try {
       globalThis.fetch = (async () => new Response(
         JSON.stringify({ id: 'msg-late-abort', content: [{ type: 'text', text: 'ok' }] }),
@@ -1144,15 +1144,15 @@ describe('trace capture service', () => {
       expect(trace.events.map((event) => event.phase)).toEqual(['api_call_started', 'api_call_completed'])
     } finally {
       globalThis.fetch = originalFetch
-      if (originalTraceEnv === undefined) delete process.env.CC_HAHA_TRACE_API_CALLS
-      else process.env.CC_HAHA_TRACE_API_CALLS = originalTraceEnv
+      if (originalTraceEnv === undefined) delete process.env.ECHOFLOW_TRACE_API_CALLS
+      else process.env.ECHOFLOW_TRACE_API_CALLS = originalTraceEnv
     }
   })
 
   test('marks fetch rejections from an aborted signal with abort metadata', async () => {
     const originalFetch = globalThis.fetch
-    const originalTraceEnv = process.env.CC_HAHA_TRACE_API_CALLS
-    process.env.CC_HAHA_TRACE_API_CALLS = '1'
+    const originalTraceEnv = process.env.ECHOFLOW_TRACE_API_CALLS
+    process.env.ECHOFLOW_TRACE_API_CALLS = '1'
     try {
       const abortController = new AbortController()
       globalThis.fetch = (async () => {
@@ -1187,8 +1187,8 @@ describe('trace capture service', () => {
       expect(trace.events.map((event) => event.phase)).toEqual(['api_call_started', 'api_call_failed'])
     } finally {
       globalThis.fetch = originalFetch
-      if (originalTraceEnv === undefined) delete process.env.CC_HAHA_TRACE_API_CALLS
-      else process.env.CC_HAHA_TRACE_API_CALLS = originalTraceEnv
+      if (originalTraceEnv === undefined) delete process.env.ECHOFLOW_TRACE_API_CALLS
+      else process.env.ECHOFLOW_TRACE_API_CALLS = originalTraceEnv
     }
   })
 })
@@ -1629,10 +1629,10 @@ describe('session trace API', () => {
     expect(body.traces[0].sessionId).toBe('session-list-trace')
     expect(body.traces[0].summary.apiCalls).toBe(1)
     expect(body.traces[0].fileSize).toBeGreaterThan(0)
-    expect(body.storageDir).toBe(path.join(tmpDir, 'cc-haha', 'traces'))
+    expect(body.storageDir).toBe(path.join(tmpDir, 'echoflow-code', 'traces'))
     expect(body.settings).toEqual({
       enabled: true,
-      storageDir: path.join(tmpDir, 'cc-haha', 'traces'),
+      storageDir: path.join(tmpDir, 'echoflow-code', 'traces'),
     })
   })
 
@@ -1737,7 +1737,7 @@ describe('session trace API', () => {
 
     expect(res.status).toBe(200)
     expect(body).toEqual({ sessionId: 'session-delete-trace', deleted: true })
-    await expect(fs.stat(path.join(tmpDir, 'cc-haha', 'traces', 'session-delete-trace.jsonl'))).rejects.toThrow()
+    await expect(fs.stat(path.join(tmpDir, 'echoflow-code', 'traces', 'session-delete-trace.jsonl'))).rejects.toThrow()
 
     const afterDelete = await traceCaptureService.getSessionTrace('session-delete-trace')
     expect(afterDelete.calls).toEqual([])
@@ -1862,7 +1862,7 @@ describe('trace read cache', () => {
   }
 
   test('invalidates cached entries after a same-size rewrite with restored mtime', async () => {
-    const traceDir = path.join(tmpDir, 'cc-haha', 'traces')
+    const traceDir = path.join(tmpDir, 'echoflow-code', 'traces')
     const filePath = path.join(traceDir, 'session-cache-hit.jsonl')
     await fs.mkdir(traceDir, { recursive: true })
 
@@ -1892,7 +1892,7 @@ describe('trace read cache', () => {
   })
 
   test('stores trimmed records in the list cache and keeps full records for detail reads', async () => {
-    const traceDir = path.join(tmpDir, 'cc-haha', 'traces')
+    const traceDir = path.join(tmpDir, 'echoflow-code', 'traces')
     const filePath = path.join(traceDir, 'session-cache-list.jsonl')
     await fs.mkdir(traceDir, { recursive: true })
     await fs.writeFile(filePath, buildTraceCallLine('call-list-cache', 'session-cache-list', 'x'.repeat(10_000)))
@@ -2076,7 +2076,7 @@ describe('trace read cache', () => {
   })
 
   test('projects an external append from the stored boundary without rereading the prefix', async () => {
-    const traceDir = path.join(tmpDir, 'cc-haha', 'traces')
+    const traceDir = path.join(tmpDir, 'echoflow-code', 'traces')
     const filePath = path.join(traceDir, 'session-projection-external-append.jsonl')
     await fs.mkdir(traceDir, { recursive: true })
     const prefix = buildTraceCallLine(
@@ -2121,7 +2121,7 @@ describe('trace read cache', () => {
   })
 
   test('does not commit an append parsed from a different source snapshot than its fingerprint', async () => {
-    const traceDir = path.join(tmpDir, 'cc-haha', 'traces')
+    const traceDir = path.join(tmpDir, 'echoflow-code', 'traces')
     const filePath = path.join(traceDir, 'session-projection-append-race.jsonl')
     await fs.mkdir(traceDir, { recursive: true })
     const prefix = buildTraceCallLine(
@@ -2235,7 +2235,7 @@ describe('trace read cache', () => {
   })
 
   test('invalidates a projection after a same-size rewrite with restored mtime', async () => {
-    const traceDir = path.join(tmpDir, 'cc-haha', 'traces')
+    const traceDir = path.join(tmpDir, 'echoflow-code', 'traces')
     const filePath = path.join(traceDir, 'session-projection-same-size.jsonl')
     await fs.mkdir(traceDir, { recursive: true })
     const lineA = buildTraceCallLine('call-aaa', 'session-projection-same-size')
@@ -2264,7 +2264,7 @@ describe('trace read cache', () => {
 
   test('invalidates a large projection after an unsampled middle rewrite with restored mtime', async () => {
     const sessionId = 'session-projection-middle-rewrite'
-    const traceDir = path.join(tmpDir, 'cc-haha', 'traces')
+    const traceDir = path.join(tmpDir, 'echoflow-code', 'traces')
     const filePath = path.join(traceDir, `${sessionId}.jsonl`)
     await fs.mkdir(traceDir, { recursive: true })
     const paddedLine = (id: string, model: string, padding: number): string => {
@@ -2292,8 +2292,10 @@ describe('trace read cache', () => {
     await fs.writeFile(filePath, rewritten)
     await fs.utimes(filePath, fixedTime, fixedTime)
 
-    const projected = (await traceCaptureService.getSessionTraceOverview(sessionId)).summary.models
-    process.env.CC_HAHA_LOCAL_INDEX = 'off'
+    const projected = (await traceCaptureService.listSessionTraces({
+      sessionIds: [sessionId],
+    })).traces[0]!.summary.models
+    process.env.ECHOFLOW_LOCAL_INDEX = 'off'
     const canonical = (await traceCaptureService.listSessionTraces({
       sessionIds: [sessionId],
     })).traces[0]!.summary.models
@@ -2305,7 +2307,7 @@ describe('trace read cache', () => {
 
   test('does not commit old full-trace bytes with a newer middle-rewrite fingerprint', async () => {
     const sessionId = 'session-projection-full-read-race'
-    const traceDir = path.join(tmpDir, 'cc-haha', 'traces')
+    const traceDir = path.join(tmpDir, 'echoflow-code', 'traces')
     const filePath = path.join(traceDir, `${sessionId}.jsonl`)
     await fs.mkdir(traceDir, { recursive: true })
     const paddedLine = (id: string, model: string, padding: number): string => {
@@ -2332,8 +2334,10 @@ describe('trace read cache', () => {
       await fs.utimes(filePath, fixedTime, fixedTime)
     })
 
-    const projected = (await traceCaptureService.getSessionTraceOverview(sessionId)).summary.models
-    process.env.CC_HAHA_LOCAL_INDEX = 'off'
+    const projected = (await traceCaptureService.listSessionTraces({
+      sessionIds: [sessionId],
+    })).traces[0]!.summary.models
+    process.env.ECHOFLOW_LOCAL_INDEX = 'off'
     const canonical = (await traceCaptureService.listSessionTraces({
       sessionIds: [sessionId],
     })).traces[0]!.summary.models
@@ -2344,7 +2348,7 @@ describe('trace read cache', () => {
   })
 
   test('rebuilds after a same-size rewrite and after a truncated source', async () => {
-    const traceDir = path.join(tmpDir, 'cc-haha', 'traces')
+    const traceDir = path.join(tmpDir, 'echoflow-code', 'traces')
     const filePath = path.join(traceDir, 'session-projection-rewrite.jsonl')
     await fs.mkdir(traceDir, { recursive: true })
     const lineA = buildTraceCallLine('call-aaa', 'session-projection-rewrite')
@@ -2371,7 +2375,7 @@ describe('trace read cache', () => {
   })
 
   test('does not index a partial tail and picks up complete lines appended after it', async () => {
-    const traceDir = path.join(tmpDir, 'cc-haha', 'traces')
+    const traceDir = path.join(tmpDir, 'echoflow-code', 'traces')
     const filePath = path.join(traceDir, 'session-projection-tail.jsonl')
     await fs.mkdir(traceDir, { recursive: true })
     const lineA = buildTraceCallLine('call-tail-a', 'session-projection-tail')
@@ -2408,7 +2412,7 @@ describe('trace read cache', () => {
       response: { status: 200, body: { ok: true } },
     })
     clearTraceCaptureStateForTests()
-    const databasePath = path.join(tmpDir, 'cc-haha', 'db', 'trace-index-v1.sqlite')
+    const databasePath = path.join(tmpDir, 'echoflow-code', 'db', 'trace-index-v1.sqlite')
     await fs.writeFile(databasePath, 'not a sqlite database')
 
     const list = await traceCaptureService.listSessionTraces()
@@ -2422,7 +2426,7 @@ describe('trace read cache', () => {
   })
 
   test('keeps trace SQLite completely untouched in off mode, including after a runtime rollback', async () => {
-    process.env.CC_HAHA_LOCAL_INDEX = 'off'
+    process.env.ECHOFLOW_LOCAL_INDEX = 'off'
     clearTraceCaptureStateForTests()
 
     await traceCaptureService.recordCall({
@@ -2442,11 +2446,11 @@ describe('trace read cache', () => {
       .toBe('call-off-a')
     await expect(fs.stat(databasePath)).rejects.toThrow()
 
-    process.env.CC_HAHA_LOCAL_INDEX = 'on'
+    process.env.ECHOFLOW_LOCAL_INDEX = 'on'
     await traceCaptureService.listSessionTraces()
     expect((await fs.stat(databasePath)).isFile()).toBe(true)
 
-    process.env.CC_HAHA_LOCAL_INDEX = 'off'
+    process.env.ECHOFLOW_LOCAL_INDEX = 'off'
     await traceCaptureService.getSessionTraceRevision('session-off')
     await fs.rm(databasePath, { force: true })
     await traceCaptureService.recordCall({
@@ -2496,9 +2500,9 @@ describe('trace read cache', () => {
     expect(duringCooldown.traces[0]?.summary.apiCalls).toBe(0)
     expect(elapsedMs).toBeLessThan(250)
 
-    process.env.CC_HAHA_LOCAL_INDEX = 'off'
+    process.env.ECHOFLOW_LOCAL_INDEX = 'off'
     await traceCaptureService.listSessionTraces({ sessionIds: ['session-busy-open'] })
-    process.env.CC_HAHA_LOCAL_INDEX = 'on'
+    process.env.ECHOFLOW_LOCAL_INDEX = 'on'
     const recovered = await traceCaptureService.listSessionTraces({
       sessionIds: ['session-busy-open'],
     })
@@ -2520,7 +2524,7 @@ describe('trace read cache', () => {
     writer.exec('BEGIN IMMEDIATE')
     const traceFile = path.join(
       tmpDir,
-      'cc-haha',
+      'echoflow-code',
       'traces',
       'session-busy-operation.jsonl',
     )
@@ -2553,11 +2557,13 @@ describe('trace read cache', () => {
     expect(fallback.traces[0]?.summary.apiCalls).toBe(1)
     expect(getTraceCaptureDiagnosticsForTests().fullJsonlBytesRead).toBe(fullReadsBefore)
 
-    process.env.CC_HAHA_LOCAL_INDEX = 'off'
+    const duringCooldown = await traceCaptureService.listSessionTraces({
+      sessionIds: ['session-busy-operation'],
+    })
+    expect(duringCooldown.traces[0]?.summary.apiCalls).toBe(2)
+    process.env.ECHOFLOW_LOCAL_INDEX = 'off'
     await traceCaptureService.listSessionTraces({ sessionIds: ['session-busy-operation'] })
-    process.env.CC_HAHA_LOCAL_INDEX = 'on'
-    await traceCaptureService.listSessionTraces({ sessionIds: ['session-busy-operation'] })
-    await drainTraceCaptureForTests()
+    process.env.ECHOFLOW_LOCAL_INDEX = 'on'
     const recovered = await traceCaptureService.listSessionTraces({
       sessionIds: ['session-busy-operation'],
     })
@@ -2586,7 +2592,7 @@ describe('trace read cache', () => {
       ['session-shadow'],
     )
     database.close()
-    process.env.CC_HAHA_LOCAL_INDEX = 'shadow'
+    process.env.ECHOFLOW_LOCAL_INDEX = 'shadow'
 
     const list = await traceCaptureService.listSessionTraces({ sessionIds: ['session-shadow'] })
 
@@ -2629,7 +2635,7 @@ describe('trace read cache', () => {
     const projected = (await traceCaptureService.listSessionTraces({
       sessionIds: ['session-model-order'],
     })).traces[0]!.summary.models
-    process.env.CC_HAHA_LOCAL_INDEX = 'off'
+    process.env.ECHOFLOW_LOCAL_INDEX = 'off'
     const canonical = (await traceCaptureService.listSessionTraces({
       sessionIds: ['session-model-order'],
     })).traces[0]!.summary.models
@@ -2673,7 +2679,7 @@ describe('trace read cache', () => {
     const projected = (await traceCaptureService.listSessionTraces({
       sessionIds: ['session-start-tie'],
     })).traces[0]!.summary.updatedAt
-    process.env.CC_HAHA_LOCAL_INDEX = 'off'
+    process.env.ECHOFLOW_LOCAL_INDEX = 'off'
     const canonical = (await traceCaptureService.listSessionTraces({
       sessionIds: ['session-start-tie'],
     })).traces[0]!.summary.updatedAt
@@ -2716,12 +2722,10 @@ describe('trace read cache', () => {
     for (const suffix of ['', '-wal', '-shm']) {
       await fs.rm(`${getTraceIndexDatabasePath()}${suffix}`, { force: true })
     }
-    // The detail overview rebuilds synchronously; the list then serves the
-    // rebuilt projection.
-    const projected = (await traceCaptureService.getSessionTraceOverview(
-      'session-rebuild-lww-order',
-    )).summary
-    process.env.CC_HAHA_LOCAL_INDEX = 'off'
+    const projected = (await traceCaptureService.listSessionTraces({
+      sessionIds: ['session-rebuild-lww-order'],
+    })).traces[0]!.summary
+    process.env.ECHOFLOW_LOCAL_INDEX = 'off'
     const canonical = (await traceCaptureService.listSessionTraces({
       sessionIds: ['session-rebuild-lww-order'],
     })).traces[0]!.summary
@@ -2748,7 +2752,7 @@ describe('trace read cache', () => {
     expect(first.revisionToken).toBeString()
     const filePath = path.join(
       tmpDir,
-      'cc-haha',
+      'echoflow-code',
       'traces',
       'session-revision-incarnation.jsonl',
     )
@@ -2822,7 +2826,7 @@ describe('trace read cache', () => {
     await traceCaptureService.getSessionTraceRevision('session-bounded-detail')
     const sourceSize = (await fs.stat(path.join(
       tmpDir,
-      'cc-haha',
+      'echoflow-code',
       'traces',
       'session-bounded-detail.jsonl',
     ))).size
@@ -2888,7 +2892,7 @@ describe('trace read cache', () => {
     }
     const filePath = path.join(
       tmpDir,
-      'cc-haha',
+      'echoflow-code',
       'traces',
       'session-stale-locator.jsonl',
     )

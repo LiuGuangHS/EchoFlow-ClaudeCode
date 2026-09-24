@@ -59,8 +59,8 @@ const BOUNDARY_CASES: Array<{
     why: 'space ends the URL',
   },
   {
-    input: 'https://github.com/NanmiCoder/cc-haha/issues/1145 里',
-    expected: 'https://github.com/NanmiCoder/cc-haha/issues/1145',
+    input: 'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/issues/1145 里',
+    expected: 'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/issues/1145',
     why: 'nested path',
   },
   {

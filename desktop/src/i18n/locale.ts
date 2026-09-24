@@ -1,6 +1,6 @@
 export type Locale = 'en' | 'zh' | 'zh-TW' | 'jp' | 'kr'
 
-export const LOCALE_STORAGE_KEY = 'cc-haha-locale'
+export const LOCALE_STORAGE_KEY = 'echoflow-code-locale'
 
 const VALID_LOCALES: readonly Locale[] = ['en', 'zh', 'zh-TW', 'jp', 'kr']
 const DOCUMENT_LANG: Record<Locale, string> = {

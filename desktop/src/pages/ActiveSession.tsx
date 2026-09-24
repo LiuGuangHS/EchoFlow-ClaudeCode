@@ -61,6 +61,9 @@ import {
 } from '../lib/backgroundTasks'
 import { useActivityPanelStore } from '../stores/activityPanelStore'
 import { getSessionBrowsablePath, getSessionWorkspaceState } from '../lib/sessionWorkspace'
+import { useSessionCliRuntimeStore } from '../stores/sessionCliRuntimeStore'
+import { CliRuntimeSelector } from '../components/controls/CliRuntimeSelector'
+import { getDesktopHost } from '../lib/desktopHost'
 import type { AgentTaskNotification, UIMessage } from '../types/chat'
 import { sessionsApi, type SessionGitInfo } from '../api/sessions'
 
@@ -344,6 +347,16 @@ export function ActiveSession() {
   const tokenUsage = sessionState?.tokenUsage ?? { input_tokens: 0, output_tokens: 0 }
   const hasRunningBackgroundTasks = hasAnyRunningBackgroundTasks(sessionState?.backgroundAgentTasks)
   const stoppingBackgroundTaskIds = sessionState?.stoppingBackgroundTaskIds
+  const cliRuntimeEffective = useSessionCliRuntimeStore((state) =>
+    activeTabId ? state.effectiveBySessionId[activeTabId] : undefined,
+  )
+  const cliRuntimeRequested = useSessionCliRuntimeStore((state) =>
+    activeTabId ? state.requestedBySessionId[activeTabId] : undefined,
+  )
+  const cliRuntimeStatus = useSessionCliRuntimeStore((state) =>
+    activeTabId ? state.statusBySessionId[activeTabId] : undefined,
+  )
+  const setSessionCliRuntime = useChatStore((state) => state.setSessionCliRuntime)
 
   const session = sessions.find((s) => s.id === activeTabId)
   const sessionMessageCount = Math.max(
@@ -367,6 +380,7 @@ export function ActiveSession() {
     sessionId: string
     info: SessionGitInfo
   } | null>(null)
+  const [hasInstalledClaudeCodeRuntime, setHasInstalledClaudeCodeRuntime] = useState(false)
   const workspaceEnabled = Boolean(activeTabId) &&
     isSessionTabState(activeTabId, activeTabType) &&
     !isMobileLayout
@@ -400,6 +414,13 @@ export function ActiveSession() {
       void fetchTeamForSession(activeTabId)
     }
   }, [activeTabId, connectToSession, fetchTeamForSession])
+
+  useEffect(() => {
+    if (!isDesktopRuntime()) return
+    void getDesktopHost().runtime.getClaudeCode()
+      .then((status) => setHasInstalledClaudeCodeRuntime(status.hasInstalledRuntime))
+      .catch(() => setHasInstalledClaudeCodeRuntime(false))
+  }, [])
 
   useEffect(() => {
     if (!activeTabId || !isSessionTabState(activeTabId, activeTabType)) return
@@ -850,6 +871,17 @@ export function ActiveSession() {
                       </span>
                     </div>
                   )}
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <CliRuntimeSelector
+                      effectiveRuntime={cliRuntimeEffective}
+                      requestedRuntime={cliRuntimeRequested}
+                      status={cliRuntimeStatus}
+                      hasInstalledRuntime={hasInstalledClaudeCodeRuntime}
+                      onChange={(runtimeId) => {
+                        if (activeTabId) setSessionCliRuntime(activeTabId, runtimeId)
+                      }}
+                    />
+                  </div>
                   <ActiveGoalStrip
                     goal={activeGoal}
                     isRunning={isActive}

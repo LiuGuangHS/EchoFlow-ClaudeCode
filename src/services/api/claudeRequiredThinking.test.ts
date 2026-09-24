@@ -353,7 +353,7 @@ async function captureQueryRequest({
       })
     },
   })
-  const configDir = await mkdtemp(join(tmpdir(), 'cc-haha-required-thinking-'))
+  const configDir = await mkdtemp(join(tmpdir(), 'echoflow-code-required-thinking-'))
   const managedEnv = provider
     ? buildProviderManagedEnv({
         ...provider,

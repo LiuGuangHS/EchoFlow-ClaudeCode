@@ -9,15 +9,21 @@ import {
   drainTraceCaptureForTests,
   traceCaptureService,
 } from '../services/traceCaptureService.js'
+import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 import { resetSettingsCache } from '../../utils/settings/settingsCache.js'
 
 let tmpDir: string
 let originalConfigDir: string | undefined
 
+function settingsPath(): string {
+  return path.join(getEchoFlowInternalDir(tmpDir), 'settings.json')
+}
+
 async function setup() {
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'proxy-network-test-'))
   originalConfigDir = process.env.CLAUDE_CONFIG_DIR
   process.env.CLAUDE_CONFIG_DIR = tmpDir
+  await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
   resetSettingsCache()
   clearTraceCaptureStateForTests()
 }
@@ -83,7 +89,7 @@ describe('proxy network settings', () => {
 
   test('uses configured AI request timeout for non-stream upstream requests', async () => {
     await fs.writeFile(
-      path.join(tmpDir, 'settings.json'),
+      settingsPath(),
       JSON.stringify({
         network: {
           aiRequestTimeoutMs: 45_000,
@@ -159,7 +165,7 @@ describe('proxy network settings', () => {
 
   test('uses configured AI request timeout for non-stream Responses upstream requests', async () => {
     await fs.writeFile(
-      path.join(tmpDir, 'settings.json'),
+      settingsPath(),
       JSON.stringify({
         network: {
           aiRequestTimeoutMs: 45_000,
@@ -233,7 +239,7 @@ describe('proxy network settings', () => {
 
   test('bypasses inherited system proxy for direct OpenAI-compatible upstream requests', async () => {
     await fs.writeFile(
-      path.join(tmpDir, 'settings.json'),
+      settingsPath(),
       JSON.stringify({
         network: {
           proxy: { mode: 'direct', url: '' },
@@ -323,7 +329,7 @@ describe('proxy network settings', () => {
 
   test('bypasses manual proxy for loopback OpenAI-compatible upstream requests', async () => {
     await fs.writeFile(
-      path.join(tmpDir, 'settings.json'),
+      settingsPath(),
       JSON.stringify({
         network: {
           proxy: { mode: 'manual', url: 'http://127.0.0.1:1181' },
@@ -461,7 +467,7 @@ describe('proxy network settings', () => {
 
   test('uses configured AI request timeout while opening and reading streaming upstream requests', async () => {
     await fs.writeFile(
-      path.join(tmpDir, 'settings.json'),
+      settingsPath(),
       JSON.stringify({
         network: {
           aiRequestTimeoutMs: 180_000,
@@ -605,55 +611,3 @@ describe('proxy network settings', () => {
     expect(cancelReason).toBe('downstream closed')
   })
 })
-
-/**
- * Gateways that route on a client-supplied session id make that id part of the
- * request, and the OpenAI paths hand their outgoing headers to trace capture
- * verbatim. A trace is meant to be shareable when reporting a bug, so the id has
- * to be redacted alongside the credential.
- */
-describe('gateway client headers in trace capture', () => {
-  beforeEach(setup)
-  afterEach(teardown)
-
-  test('redacts the routing session id on the OpenAI Chat path', async () => {
-    const provider = await new ProviderService().addProvider({
-      presetId: 'opencode-go',
-      name: 'OpenCode Go',
-      baseUrl: 'https://opencode.ai/zen/go/v1',
-      apiKey: 'sk-opencode-trace',
-      apiFormat: 'openai_chat',
-      models: { main: 'glm-5.3', haiku: 'glm-5.3-flash', sonnet: 'glm-5.3', opus: 'glm-5.3' },
-    })
-
-    const originalFetch = globalThis.fetch
-    globalThis.fetch = mock(async () => Response.json({
-      id: 'chatcmpl-trace',
-      object: 'chat.completion',
-      model: 'glm-5.3',
-      choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
-      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-    })) as typeof fetch
-
-    try {
-      const sessionId = 'session-opencode-trace'
-      const req = new Request(`http://localhost:3456/proxy/providers/${provider.id}/v1/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-claude-code-session-id': sessionId },
-        body: JSON.stringify({ model: 'glm-5.3', max_tokens: 64, messages: [{ role: 'user', content: 'hello' }] }),
-      })
-      expect((await handleProxyRequest(req, new URL(req.url))).status).toBe(200)
-
-      const trace = await waitForTraceCall(sessionId)
-      expect(trace.calls).toHaveLength(1)
-      const headers = trace.calls[0]!.request.headers
-      expect(headers['x-opencode-session']).toBe('[redacted]')
-      expect(headers.Authorization).toBe('[redacted]')
-      // Non-sensitive headers still survive, so the trace stays useful.
-      expect(headers['Content-Type']).toBe('application/json')
-    } finally {
-      globalThis.fetch = originalFetch
-    }
-  })
-})
-

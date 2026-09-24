@@ -2,7 +2,7 @@ import AppKit
 import os
 import XCTest
 
-@testable import cc_haha_computer_use
+@testable import echoflow_code_computer_use
 
 /// Only the OS observations and event transport are substituted. Each test
 /// drives the production coordinator and, where relevant, the real observer.

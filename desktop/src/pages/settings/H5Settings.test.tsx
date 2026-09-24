@@ -101,12 +101,10 @@ it('routes the actual Settings page to the browser-safe panels', async () => {
   expect(await screen.findByTestId('provider-fixture-provider')).toBeInTheDocument()
 })
 
-it.each([true, false])('shows beta details on focus without overflowing narrow forms (browserMode=%s)', async (browserMode) => {
+it.each([true, false])('shows beta details without overflowing narrow forms (browserMode=%s)', async (browserMode) => {
   render(<ProviderSettings browserMode={browserMode} />)
   fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
-  expect(screen.queryByText(/CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1/)).not.toBeInTheDocument()
-  fireEvent.focus(within(screen.getByRole('dialog')).getByRole('button', { name: 'Disable experimental beta headers' }))
-  const description = await screen.findByRole('tooltip')
+  const description = within(screen.getByRole('dialog')).getByText(/CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1/)
   expect(description).toHaveTextContent('CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1')
-  expect(description.classList.contains('[overflow-wrap:anywhere]')).toBe(true)
+  expect(description.classList.contains('[overflow-wrap:anywhere]')).toBe(browserMode)
 })

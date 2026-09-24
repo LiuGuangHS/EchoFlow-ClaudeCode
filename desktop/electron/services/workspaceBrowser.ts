@@ -33,7 +33,7 @@ export type { WorkspaceBrowserCaptureKind, WorkspaceBrowserEvent, WorkspaceBrows
  * restore identity* — which page to reopen after a restart — and must never be
  * turned into a partition name, or every tab would get its own cookie jar.
  */
-export const WORKSPACE_BROWSER_PARTITION = 'persist:cc-haha-browser-app'
+export const WORKSPACE_BROWSER_PARTITION = 'persist:echoflow-code-browser-app'
 
 /** Mirrors the preview capture guard rails; a page controls these dimensions. */
 const FULL_CAPTURE_MAX_EDGE = 16_384

@@ -42,6 +42,18 @@ export type ClientMessage =
     }
   | { type: 'set_permission_mode'; mode: PermissionMode }
   | { type: 'set_runtime_config'; providerId: string | null; modelId: string; effortLevel?: string }
+  | {
+      type: 'set_model_config'
+      configId?: string
+      config?: {
+        providerId: string | null
+        modelId: string
+        effortLevel?: string
+      }
+      requestId: string
+    }
+  | { type: 'restart_runtime'; requestId: string; reason?: string }
+  | { type: 'set_cli_runtime'; cliRuntimeId: 'bundled' | 'installed' }
   | { type: 'stop_generation' }
   | { type: 'stop_background_task'; taskId: string }
   | { type: 'ping' }
@@ -60,6 +72,10 @@ export type AttachmentRef = {
 // ============================================================================
 
 export const RUNTIME_CONFIG_APPLIED_EVENT = 'runtime_config_applied' as const
+export const MODEL_CONFIG_APPLIED_EVENT = 'model_config_applied' as const
+export const MODEL_CONFIG_APPLY_FAILED_EVENT = 'model_config_apply_failed' as const
+export const RUNTIME_STATUS_EVENT = 'runtime_status' as const
+export const CLI_RUNTIME_APPLIED_EVENT = 'cli_runtime_applied' as const
 
 export type ServerMessage =
   | { type: 'connected'; sessionId: string }
@@ -121,6 +137,35 @@ export type ServerMessage =
       providerId: string | null
       modelId: string
       effortLevel?: string
+    }
+  | {
+      type: typeof MODEL_CONFIG_APPLIED_EVENT
+      requestId: string
+      configId: string
+      application: 'noop' | 'in_place' | 'runtime_restart' | 'deferred'
+      runtimeInstanceId: string
+      providerId: string | null
+      modelId: string
+      effortLevel?: string
+    }
+  | {
+      type: typeof MODEL_CONFIG_APPLY_FAILED_EVENT
+      requestId: string
+      configId: string
+      previousConfigId?: string
+      code: string
+      message: string
+    }
+  | {
+      type: typeof RUNTIME_STATUS_EVENT
+      runtimeInstanceId: string
+      state: 'starting' | 'ready' | 'busy' | 'stopping' | 'stopped' | 'error'
+      processGeneration: number
+      reason?: string
+    }
+  | {
+      type: typeof CLI_RUNTIME_APPLIED_EVENT
+      cliRuntimeId: 'bundled' | 'installed'
     }
   // CLI 是权限模式的唯一真相来源。当 CLI 内部 mode 变化（如 ExitPlanMode 后
   // 恢复到进入 plan 前的模式、Shift+Tab 切换）时，把新模式回传给前端，让桌面端

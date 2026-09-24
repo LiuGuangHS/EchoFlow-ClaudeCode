@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { Database } from 'bun:sqlite'
-import { getCcHahaDir, getClaudeConfigHomeDir } from '../../../utils/envUtils.js'
+import { getEchoFlowCodeDir, getClaudeConfigHomeDir } from '../../../utils/envUtils.js'
 import {
   LOCAL_INDEX_BUSY_TIMEOUT_MS,
   prepareManagedDatabasePath,
@@ -296,7 +296,7 @@ export function paginateScheduledRunRecords(
 }
 
 export function getScheduledRunIndexDatabasePath(): string {
-  return join(getCcHahaDir(), 'db', 'scheduled-runs-v1.sqlite')
+  return join(getEchoFlowCodeDir(), 'db', 'scheduled-runs-v1.sqlite')
 }
 
 export function openScheduledRunIndex(options?: {

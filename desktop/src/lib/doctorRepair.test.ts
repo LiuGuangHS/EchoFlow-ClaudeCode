@@ -20,8 +20,8 @@ describe('doctorRepair', () => {
     for (const key of SAFE_DOCTOR_STORAGE_KEYS) {
       window.localStorage.setItem(key, `${key}-value`)
     }
-    window.localStorage.setItem('cc-haha-chat-history', 'preserve')
-    window.localStorage.setItem('cc-haha-provider-config', 'preserve')
+    window.localStorage.setItem('echoflow-code-chat-history', 'preserve')
+    window.localStorage.setItem('echoflow-code-provider-config', 'preserve')
 
     const result = runLocalDoctorRepair(window.localStorage)
 
@@ -30,8 +30,8 @@ describe('doctorRepair', () => {
     for (const key of SAFE_DOCTOR_STORAGE_KEYS) {
       expect(window.localStorage.getItem(key)).toBeNull()
     }
-    expect(window.localStorage.getItem('cc-haha-chat-history')).toBe('preserve')
-    expect(window.localStorage.getItem('cc-haha-provider-config')).toBe('preserve')
+    expect(window.localStorage.getItem('echoflow-code-chat-history')).toBe('preserve')
+    expect(window.localStorage.getItem('echoflow-code-provider-config')).toBe('preserve')
   })
 
   it('resets the appearance completely, not just the applied theme', () => {
@@ -39,9 +39,9 @@ describe('doctorRepair', () => {
     // follow-the-system switch behind, so the reset would not restore the
     // out-of-the-box appearance.
     expect(SAFE_DOCTOR_STORAGE_KEYS).toEqual(expect.arrayContaining([
-      'cc-haha-theme',
-      'cc-haha-follow-system-theme',
-      'cc-haha-light-theme',
+      'echoflow-code-theme',
+      'echoflow-code-follow-system-theme',
+      'echoflow-code-light-theme',
     ]))
   })
 
@@ -63,7 +63,7 @@ describe('doctorRepair', () => {
 
   it('checks the server report for the active cwd without clearing desktop state', async () => {
     window.localStorage.clear()
-    window.localStorage.setItem('cc-haha-theme', 'dark')
+    window.localStorage.setItem('echoflow-code-theme', 'dark')
     doctorApiMock.report.mockResolvedValueOnce({
       report: {
         generatedAt: '2026-07-11T00:00:00.000Z',
@@ -77,6 +77,6 @@ describe('doctorRepair', () => {
 
     expect(doctorApiMock.report).toHaveBeenCalledWith('/workspace/project')
     expect(report.summary.total).toBe(0)
-    expect(window.localStorage.getItem('cc-haha-theme')).toBe('dark')
+    expect(window.localStorage.getItem('echoflow-code-theme')).toBe('dark')
   })
 })

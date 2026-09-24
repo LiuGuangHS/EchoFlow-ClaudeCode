@@ -57,7 +57,7 @@ export class WsBridge {
   constructor(
     serverUrl: string,
     platform: string,
-    localAccessToken = process.env.CC_HAHA_LOCAL_ACCESS_TOKEN,
+    localAccessToken = process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN,
   ) {
     this.serverUrl = serverUrl.replace(/\/$/, '')
     this.platform = platform

@@ -11,7 +11,7 @@ import {
 
 test('setMemberActive preserves concurrent updates to different members', async () => {
   const originalConfigDir = process.env.CLAUDE_CONFIG_DIR
-  const configDir = await mkdtemp(join(tmpdir(), 'cc-haha-member-active-'))
+  const configDir = await mkdtemp(join(tmpdir(), 'echoflow-code-member-active-'))
   process.env.CLAUDE_CONFIG_DIR = configDir
 
   try {

@@ -9,8 +9,8 @@ afterEach(() => { while (cleanups.length) cleanups.pop()!() })
 
 function fixture() {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'remote-access-test-'))
-  const oldToken = process.env.CC_HAHA_LOCAL_ACCESS_TOKEN
-  process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'fixture-process-credential'
+  const oldToken = process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
+  process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'fixture-process-credential'
   let clock = 1000
   const messages: unknown[] = []
   const storePath = path.join(dir, 'devices.json')
@@ -24,8 +24,8 @@ function fixture() {
   const base = `http://127.0.0.1:${service.status().port}`
   cleanups.push(() => {
     service.disable()
-    if (oldToken === undefined) delete process.env.CC_HAHA_LOCAL_ACCESS_TOKEN
-    else process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = oldToken
+    if (oldToken === undefined) delete process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
+    else process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = oldToken
     rmSync(dir, { recursive: true, force: true })
   })
   const control = async (route: string, body: unknown = {}, method = 'POST', authorized = true) => service.control(new Request(`http://localhost/api/public-access/${route}`, {

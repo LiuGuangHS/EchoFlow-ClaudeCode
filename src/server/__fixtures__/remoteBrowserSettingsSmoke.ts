@@ -16,7 +16,7 @@ const settingsPath = path.join(process.env.CLAUDE_CONFIG_DIR!, 'settings.json')
 await writeFile(settingsPath, JSON.stringify({ env: { ANTHROPIC_API_KEY: 'fake-original-key' }, language: 'en', unknownFutureSetting: { keep: true } }))
 const server = startServer(0, '127.0.0.1')
 const local = `http://127.0.0.1:${server.port}`
-const control = (route: string, body: unknown) => fetch(`${local}/api/public-access/${route}`, { method: 'POST', headers: { Authorization: `Bearer ${process.env.CC_HAHA_LOCAL_ACCESS_TOKEN}` }, body: JSON.stringify(body) })
+const control = (route: string, body: unknown) => fetch(`${local}/api/public-access/${route}`, { method: 'POST', headers: { Authorization: `Bearer ${process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN}` }, body: JSON.stringify(body) })
 function check(value: unknown, message: string): asserts value { if (!value) throw new Error(message) }
 try {
   const enabled = await (await control('enable', { publicUrl: origin })).json()
@@ -42,7 +42,7 @@ try {
     check(created.status === 201 && createdBody.provider.hasApiKey && createdBody.provider.apiKey === '', `${transport}: provider creation/redaction failed`)
     const id = createdBody.provider.id
     // Seed desktop-owned extensions as an existing store fixture, not via the remote API.
-    const providersPath = path.join(process.env.CLAUDE_CONFIG_DIR!, 'cc-haha', 'providers.json')
+    const providersPath = path.join(process.env.CLAUDE_CONFIG_DIR!, 'echoflow', 'providers.json')
     const stored = JSON.parse(await readFile(providersPath, 'utf8'))
     const oldProvider = stored.providers.find((provider: { id: string }) => provider.id === id)
     check(!oldProvider.requestCompatibility.privateFutureKey, 'Remote creation injected a hidden compatibility field')

@@ -1,6 +1,6 @@
 import type { Database } from 'bun:sqlite'
 
-export const LOCAL_INDEX_SCHEMA_VERSION = 5
+export const LOCAL_INDEX_SCHEMA_VERSION = 6
 export const LOCAL_INDEX_SCHEMA_UNSUPPORTED =
   'LOCAL_INDEX_SCHEMA_UNSUPPORTED' as const
 
@@ -188,12 +188,21 @@ const SCHEMA_V5 = `
 ALTER TABLE sessions ADD COLUMN session_api_format TEXT;
 `
 
+// Model configuration and runtime identity are separate session metadata. These nullable columns
+// preserve old indexes while allowing the index to return the same metadata as JSONL parsing.
+const SCHEMA_V6 = `
+ALTER TABLE sessions ADD COLUMN model_config_id TEXT;
+ALTER TABLE sessions ADD COLUMN model_config_json TEXT;
+ALTER TABLE sessions ADD COLUMN runtime_instance_id TEXT;
+`
+
 const MIGRATIONS = [
   { version: 1, sql: SCHEMA_V1 },
   { version: 2, sql: SCHEMA_V2 },
   { version: 3, sql: SCHEMA_V3 },
   { version: 4, sql: SCHEMA_V4 },
   { version: 5, sql: SCHEMA_V5 },
+  { version: 6, sql: SCHEMA_V6 },
 ] as const
 
 export class UnsupportedLocalIndexSchemaError extends Error {

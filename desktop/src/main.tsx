@@ -11,8 +11,8 @@ import { initializeLocale } from './i18n/locale'
 
 declare global {
   interface Window {
-    __CC_HAHA_BOOTSTRAPPED__?: boolean
-    __CC_HAHA_SHOW_STARTUP_ERROR__?: (reason: unknown) => void
+    __ECHOFLOW_BOOTSTRAPPED__?: boolean
+    __ECHOFLOW_SHOW_STARTUP_ERROR__?: (reason: unknown) => void
   }
 }
 
@@ -77,12 +77,12 @@ export async function bootstrapDesktopApp(
         </ErrorBoundary>
       </React.StrictMode>,
     )
-    window.__CC_HAHA_BOOTSTRAPPED__ = true
+    window.__ECHOFLOW_BOOTSTRAPPED__ = true
   } catch (error) {
     console.error('[desktop] Failed to bootstrap app', error)
     if (root) {
-      if (window.__CC_HAHA_SHOW_STARTUP_ERROR__) {
-        window.__CC_HAHA_SHOW_STARTUP_ERROR__(error)
+      if (window.__ECHOFLOW_SHOW_STARTUP_ERROR__) {
+        window.__ECHOFLOW_SHOW_STARTUP_ERROR__(error)
       } else {
         root.textContent = error instanceof Error ? error.message : String(error)
       }

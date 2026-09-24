@@ -25,8 +25,8 @@ const binariesDir = path.join(desktopRoot, 'src-tauri', 'binaries')
 // `await buildCuHelper()` below) so it is initialized when that runs — a
 // `const` placed after the call site hits the temporal dead zone (ReferenceError).
 // SwiftPM names the resource bundle `${PackageName}_${TargetName}.bundle`.
-// Package stays `cu-helper`; the executable target is now `cc-haha-computer-use`.
-const CU_HELPER_RESOURCE_BUNDLE = 'cu-helper_cc-haha-computer-use.bundle'
+// Package stays `cu-helper`; the executable target is now `echoflow-code-computer-use`.
+const CU_HELPER_RESOURCE_BUNDLE = 'cu-helper_echoflow-code-computer-use.bundle'
 
 const targetTriple =
   process.env.SIDECAR_TARGET_TRIPLE ||
@@ -254,6 +254,9 @@ async function compileExecutable({
   }
 
   const outputPath = result.outputs[0]?.path ?? outfileBase
+  if (!(await Bun.file(outputPath).exists())) {
+    throw new Error(`[build-sidecars] Compiler reported success but did not produce ${outputPath}`)
+  }
   console.log(`[build-sidecars] ${productName} -> ${outputPath}`)
 
   // macOS Apple System Policy (ASP) requires valid code signatures on all
@@ -272,7 +275,7 @@ async function compileExecutable({
  * The identifier is the reason this is not just `codesign -s -`. Ad-hoc signing
  * derives the identifier from the file name plus a content hash
  * (`claude-sidecar-aarch64-apple-darwin-5555…`), which never matches
- * `com.claude-code-haha.desktop.sidecar`. `ClientAttestation.swift` compares
+ * `com.echoflow.code.desktop.sidecar`. `ClientAttestation.swift` compares
  * that identifier exactly, so a hash-suffixed one makes every Computer Use call
  * fail closed with `unauthorized_client`.
  *
@@ -336,7 +339,7 @@ async function signMacBinary(outputPath: string) {
  * `desktop/src-tauri/binaries/` so electron-builder packs them (the existing
  * `src-tauri/binaries/**` glob already covers both).
  *
- * The copy is byte-preserving (`cp -R`) so cu-helper's stable `dev.cchaha.cu-helper`
+ * The copy is byte-preserving (`cp -R`) so cu-helper's stable `dev.echoflow.cu-helper`
  * Mach-O signature is left intact — we never strip or re-sign it here.
  */
 async function buildCuHelper(arch: CuHelperArch) {
@@ -369,15 +372,15 @@ async function buildCuHelper(arch: CuHelperArch) {
   // build.sh now emits the .app BUNDLE path (Screen Recording only works for a
   // real .app bundle subject, not a bare Mach-O). Copy the WHOLE bundle — the
   // resource bundle lives inside it at Contents/Resources/, and the spawnable
-  // executable is at Contents/MacOS/cc-haha-computer-use (see cuHelperBridge.ts).
-  const destApp = path.join(binariesDir, 'cc-haha-computer-use.app')
+  // executable is at Contents/MacOS/echoflow-code-computer-use (see cuHelperBridge.ts).
+  const destApp = path.join(binariesDir, 'echoflow-code-computer-use.app')
 
   // Remove any stale copies first (incl. ALL legacy bare-binary / bundle / old
   // -name artifacts) so `cp -R` does not nest into an existing dir.
   await Bun.spawn(
     ['rm', '-rf',
      destApp,
-     path.join(binariesDir, 'cc-haha-computer-use'),         // legacy bare binary
+     path.join(binariesDir, 'echoflow-code-computer-use'),         // legacy bare binary
      path.join(binariesDir, 'cu-helper'),                    // legacy old-name binary
      path.join(binariesDir, CU_HELPER_RESOURCE_BUNDLE),      // legacy sibling bundle
      path.join(binariesDir, 'cu-helper_cu-helper.bundle')],

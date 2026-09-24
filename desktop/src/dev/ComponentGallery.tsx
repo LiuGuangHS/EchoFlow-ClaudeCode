@@ -362,7 +362,7 @@ function SessionSurfacePreview({ kind }: { kind: 'main' | 'agent' }) {
           leading={isAgent ? <Button variant="ghost" size="xs">← Back</Button> : undefined}
           titleAddon={<Badge tone={isAgent ? 'warning' : 'success'}>{isAgent ? 'running' : 'ready'}</Badge>}
           metadata={[
-            { key: 'project', content: <span>claude-code-haha</span> },
+            { key: 'project', content: <span>echoflow-code</span> },
             { key: 'scope', content: <span>{isAgent ? 'commit-analysis / teams-analyst' : 'main'}</span> },
           ]}
           actions={<IconButton icon="refresh" label={`Refresh ${kind} session`} size="sm" />}
@@ -638,7 +638,7 @@ export function ComponentGallery() {
         </div>
       </Section>
 
-      <Section title="BrandSeal" note="The cc-haha mark, a vector rebuild of the app icon. It sheds parts as it shrinks — sparkles only at xl, cursor drops at sm — so check each size against its neighbours.">
+      <Section title="BrandSeal" note="The echoflow-code mark, a vector rebuild of the app icon. It sheds parts as it shrinks — sparkles only at xl, cursor drops at sm — so check each size against its neighbours.">
         <div className="flex flex-wrap items-end gap-4">
           <BrandSeal size="sm" />
           <BrandSeal size="md" />

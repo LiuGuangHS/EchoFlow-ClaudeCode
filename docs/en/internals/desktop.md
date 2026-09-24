@@ -147,7 +147,7 @@ That is why locking a phone, refreshing the renderer, or a brief network switch 
 
 ## CLI and provider proxy
 
-The server starts a CLI per session and forwards output, permission requests, tool results, and background task state over an internal protocol. Provider, model, effort, and permission mode are maintained jointly by the server and the CLI; the renderer is not the single source of truth.
+The server starts a CLI per session and forwards output, permission requests, tool results, and background task state over an internal protocol. Provider, model, effort, and permission mode are maintained jointly by the server and the CLI; the renderer is not the single source of truth. Provider configuration remains shared in Settings. A session may override its provider, model, and effort, but that does not select a CLI execution runtime.
 
 `src/server/proxy/` handles the supported provider protocols:
 

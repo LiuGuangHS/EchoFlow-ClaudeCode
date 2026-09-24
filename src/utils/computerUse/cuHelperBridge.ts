@@ -20,7 +20,7 @@ import { getRuntimePaths } from './pythonBridge.js'
  */
 
 /** Env override for the binary path (custom installs / tests). */
-const ENV_OVERRIDE = 'CC_HAHA_CU_HELPER_PATH'
+const ENV_OVERRIDE = 'ECHOFLOW_CU_HELPER_PATH'
 
 let cachedBinary: string | null | undefined
 
@@ -74,7 +74,7 @@ function resolveUncached(exists: (p: string) => boolean): string | null {
       : appRoot
     candidates.push(path.join(
       unpacked, 'src-tauri', 'binaries',
-      'cc-haha-computer-use.app', 'Contents', 'MacOS', 'cc-haha-computer-use',
+      'echoflow-code-computer-use.app', 'Contents', 'MacOS', 'echoflow-code-computer-use',
     ))
   }
 
@@ -102,15 +102,15 @@ export function resolveCuHelperDevelopmentBinary(
     swiftArch,
     `${swiftArch}-apple-macosx`,
     'release',
-    'cc-haha-computer-use.app',
+    'echoflow-code-computer-use.app',
     'Contents',
     'MacOS',
-    'cc-haha-computer-use',
+    'echoflow-code-computer-use',
   )
 }
 
 /**
- * Resolve the cu-helper `.app` BUNDLE directory (e.g. `…/cc-haha-computer-use.app`),
+ * Resolve the cu-helper `.app` BUNDLE directory (e.g. `…/echoflow-code-computer-use.app`),
  * derived from the resolved inner executable. This is the SOURCE bundle (dev build
  * or the one packaged inside the host app).
  *
@@ -124,7 +124,7 @@ export function resolveCuHelperDevelopmentBinary(
  * process its own TCC *responsible* process, but SR looks at the *subject*, not
  * the responsible process — that distinction is what earlier fixes got wrong.)
  *
- * Returns `null` when the resolved binary is not inside a `cc-haha-computer-use.app`
+ * Returns `null` when the resolved binary is not inside a `echoflow-code-computer-use.app`
  * (e.g. a bare-path test override) — callers then fall back to the CLI path.
  */
 export function resolveCuHelperAppBundle(
@@ -132,7 +132,7 @@ export function resolveCuHelperAppBundle(
 ): string | null {
   const inner = resolveCuHelperBinary(exists)
   if (!inner) return null
-  const appName = 'cc-haha-computer-use.app'
+  const appName = 'echoflow-code-computer-use.app'
   const marker = `${path.sep}${appName}${path.sep}`
   const idx = inner.indexOf(marker)
   if (idx < 0) return null

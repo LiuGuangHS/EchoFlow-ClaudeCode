@@ -153,11 +153,11 @@ describe('Settings > Diagnostics tab', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     diagnosticsApiMock.getStatus.mockResolvedValue({
-      logDir: '/tmp/claude/cc-haha/diagnostics',
-      diagnosticsPath: '/tmp/claude/cc-haha/diagnostics/diagnostics.jsonl',
-      cliDiagnosticsPath: '/tmp/claude/cc-haha/diagnostics/cli-diagnostics.jsonl',
-      runtimeErrorsPath: '/tmp/claude/cc-haha/diagnostics/runtime-errors.log',
-      exportDir: '/tmp/claude/cc-haha/diagnostics/exports',
+      logDir: '/tmp/claude/echoflow-code/diagnostics',
+      diagnosticsPath: '/tmp/claude/echoflow-code/diagnostics/diagnostics.jsonl',
+      cliDiagnosticsPath: '/tmp/claude/echoflow-code/diagnostics/cli-diagnostics.jsonl',
+      runtimeErrorsPath: '/tmp/claude/echoflow-code/diagnostics/runtime-errors.log',
+      exportDir: '/tmp/claude/echoflow-code/diagnostics/exports',
       retentionDays: 7,
       maxBytes: 50 * 1024 * 1024,
       totalBytes: 4096,
@@ -195,8 +195,8 @@ describe('Settings > Diagnostics tab', () => {
     })
     diagnosticsApiMock.exportBundle.mockResolvedValue({
       bundle: {
-        path: '/tmp/claude/cc-haha/diagnostics/exports/cc-haha-diagnostics.tar.gz',
-        fileName: 'cc-haha-diagnostics.tar.gz',
+        path: '/tmp/claude/echoflow-code/diagnostics/exports/echoflow-code-diagnostics.tar.gz',
+        fileName: 'echoflow-code-diagnostics.tar.gz',
         bytes: 1024,
       },
     })
@@ -210,11 +210,11 @@ describe('Settings > Diagnostics tab', () => {
         generatedAt: '2026-07-11T00:00:00.000Z',
         items: [
           {
-            id: 'cc-haha-providers',
+            id: 'echoflow-code-providers',
             label: 'Managed providers',
             kind: 'json',
             scope: 'user',
-            path: '~/.claude/cc-haha/providers.json',
+            path: '~/.claude/echoflow-code/providers.json',
             protected: true,
             exists: true,
             status: 'invalid_schema',
@@ -262,7 +262,7 @@ describe('Settings > Diagnostics tab', () => {
     fireEvent.click(screen.getByText('Diagnostics'))
 
     expect(await screen.findByText('Log directory')).toBeInTheDocument()
-    expect(screen.getByText('/tmp/claude/cc-haha/diagnostics')).toBeInTheDocument()
+    expect(screen.getByText('/tmp/claude/echoflow-code/diagnostics')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Export Bundle/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Copy Error Summary/i })).toBeInTheDocument()
     expect(screen.getByText('cli_start_failed')).toBeInTheDocument()
@@ -407,7 +407,7 @@ describe('Settings > Diagnostics tab', () => {
     await act(async () => {
       exportRequest.resolve({
         bundle: {
-          path: '/tmp/claude/cc-haha/diagnostics/exports/race.tar.gz',
+          path: '/tmp/claude/echoflow-code/diagnostics/exports/race.tar.gz',
           fileName: 'race.tar.gz',
           bytes: 128,
         },
@@ -462,7 +462,7 @@ describe('Settings > Diagnostics tab', () => {
     render(<Settings />)
     fireEvent.click(screen.getByText('Diagnostics'))
 
-    expect(await screen.findByText('/tmp/claude/cc-haha/diagnostics')).toBeInTheDocument()
+    expect(await screen.findByText('/tmp/claude/echoflow-code/diagnostics')).toBeInTheDocument()
     const section = screen.getByRole('region', { name: 'Local index' })
     expect(within(section).getByText('Local-index status is unavailable. Existing diagnostics remain available.')).toBeInTheDocument()
     expect(useUIStore.getState().toasts).toHaveLength(0)
@@ -508,11 +508,11 @@ describe('Settings > Diagnostics tab', () => {
 
   it('describes persisted corruption evidence accurately when current logs have no physical lines', async () => {
     diagnosticsApiMock.getStatus.mockResolvedValueOnce({
-      logDir: '/tmp/claude/cc-haha/diagnostics',
-      diagnosticsPath: '/tmp/claude/cc-haha/diagnostics/diagnostics.jsonl',
-      cliDiagnosticsPath: '/tmp/claude/cc-haha/diagnostics/cli-diagnostics.jsonl',
-      runtimeErrorsPath: '/tmp/claude/cc-haha/diagnostics/runtime-errors.log',
-      exportDir: '/tmp/claude/cc-haha/diagnostics/exports',
+      logDir: '/tmp/claude/echoflow-code/diagnostics',
+      diagnosticsPath: '/tmp/claude/echoflow-code/diagnostics/diagnostics.jsonl',
+      cliDiagnosticsPath: '/tmp/claude/echoflow-code/diagnostics/cli-diagnostics.jsonl',
+      runtimeErrorsPath: '/tmp/claude/echoflow-code/diagnostics/runtime-errors.log',
+      exportDir: '/tmp/claude/echoflow-code/diagnostics/exports',
       retentionDays: 7,
       maxBytes: 50 * 1024 * 1024,
       totalBytes: 0,
@@ -535,11 +535,11 @@ describe('Settings > Diagnostics tab', () => {
 
   it('explains temporary target overflow while active diagnostic segments are still open', async () => {
     diagnosticsApiMock.getStatus.mockResolvedValueOnce({
-      logDir: '/tmp/claude/cc-haha/diagnostics',
-      diagnosticsPath: '/tmp/claude/cc-haha/diagnostics/diagnostics.jsonl',
-      cliDiagnosticsPath: '/tmp/claude/cc-haha/diagnostics/cli-diagnostics.jsonl',
-      runtimeErrorsPath: '/tmp/claude/cc-haha/diagnostics/runtime-errors.log',
-      exportDir: '/tmp/claude/cc-haha/diagnostics/exports',
+      logDir: '/tmp/claude/echoflow-code/diagnostics',
+      diagnosticsPath: '/tmp/claude/echoflow-code/diagnostics/diagnostics.jsonl',
+      cliDiagnosticsPath: '/tmp/claude/echoflow-code/diagnostics/cli-diagnostics.jsonl',
+      runtimeErrorsPath: '/tmp/claude/echoflow-code/diagnostics/runtime-errors.log',
+      exportDir: '/tmp/claude/echoflow-code/diagnostics/exports',
       retentionDays: 7,
       maxBytes: 50 * 1024 * 1024,
       totalBytes: 52 * 1024 * 1024,
@@ -580,7 +580,7 @@ describe('Settings > Diagnostics tab', () => {
     await waitFor(() => {
       expect(diagnosticsApiMock.exportBundle).toHaveBeenCalled()
     })
-    expect(await screen.findByText('/tmp/claude/cc-haha/diagnostics/exports/cc-haha-diagnostics.tar.gz')).toBeInTheDocument()
+    expect(await screen.findByText('/tmp/claude/echoflow-code/diagnostics/exports/echoflow-code-diagnostics.tar.gz')).toBeInTheDocument()
   })
 
   it('asks with the shared confirm dialog before clearing diagnostics', async () => {
@@ -758,7 +758,7 @@ describe('Settings > Diagnostics tab', () => {
     for (const key of SAFE_DOCTOR_STORAGE_KEYS) {
       window.localStorage.setItem(key, `${key}-value`)
     }
-    window.localStorage.setItem('cc-haha-chat-history', 'keep')
+    window.localStorage.setItem('echoflow-code-chat-history', 'keep')
 
     render(<Settings />)
 
@@ -768,18 +768,18 @@ describe('Settings > Diagnostics tab', () => {
     await waitFor(() => {
       expect(doctorApiMock.report).toHaveBeenCalledWith('/workspace/project')
     })
-    expect(window.localStorage.getItem('cc-haha-theme')).toBe('cc-haha-theme-value')
-    expect(screen.getByText('~/.claude/cc-haha/providers.json')).toBeInTheDocument()
+    expect(window.localStorage.getItem('echoflow-code-theme')).toBe('echoflow-code-theme-value')
+    expect(screen.getByText('~/.claude/echoflow-code/providers.json')).toBeInTheDocument()
     expect(screen.getByText(/Invalid schema/i)).toBeInTheDocument()
     expect(screen.getByText(/User and active project/i)).toBeInTheDocument()
     expect(screen.getByText('Healthy: 1 · Not configured: 0 · Missing: 0 · Invalid: 1')).toBeInTheDocument()
     expect(screen.queryByText('<project>/.claude/skills')).not.toBeInTheDocument()
-    expect(screen.getByText(/cc-haha-app-zoom/)).toBeInTheDocument()
-    expect(screen.getByText(/cc-haha-ui-zoom/)).toBeInTheDocument()
+    expect(screen.getByText(/echoflow-code-app-zoom/)).toBeInTheDocument()
+    expect(screen.getByText(/echoflow-code\.persistence\.schemaVersion/)).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /Reset safe UI state/i }))
     const dialog = await screen.findByRole('dialog', { name: 'Reset safe UI state' })
-    expect(window.localStorage.getItem('cc-haha-theme')).toBe('cc-haha-theme-value')
+    expect(window.localStorage.getItem('echoflow-code-theme')).toBe('echoflow-code-theme-value')
     fireEvent.click(within(dialog).getByRole('button', { name: /Reset safe UI state/i }))
 
     await waitFor(() => {
@@ -788,8 +788,8 @@ describe('Settings > Diagnostics tab', () => {
     for (const key of SAFE_DOCTOR_STORAGE_KEYS) {
       expect(window.localStorage.getItem(key)).toBeNull()
     }
-    expect(window.localStorage.getItem('cc-haha-chat-history')).toBe('keep')
-    expect(screen.getByText(/Removed keys:.*cc-haha-app-zoom/)).toBeInTheDocument()
+    expect(window.localStorage.getItem('echoflow-code-chat-history')).toBe('keep')
+    expect(screen.getByText(/Removed keys:.*echoflow-code-app-zoom/)).toBeInTheDocument()
   })
 
   it('counts not-configured optional checks separately and excludes them from findings', async () => {
@@ -820,11 +820,11 @@ describe('Settings > Diagnostics tab', () => {
             bytes: 0,
           },
           {
-            id: 'cc-haha-providers',
+            id: 'echoflow-code-providers',
             label: 'Managed providers',
             kind: 'json' as const,
             scope: 'user' as const,
-            path: '~/.claude/cc-haha/providers.json',
+            path: '~/.claude/echoflow-code/providers.json',
             protected: true,
             exists: true,
             status: 'invalid_schema' as const,
@@ -841,7 +841,7 @@ describe('Settings > Diagnostics tab', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Run Doctor/i }))
 
     expect(await screen.findByText('Healthy: 1 · Not configured: 1 · Missing: 0 · Invalid: 1')).toBeInTheDocument()
-    expect(screen.getByText('~/.claude/cc-haha/providers.json')).toBeInTheDocument()
+    expect(screen.getByText('~/.claude/echoflow-code/providers.json')).toBeInTheDocument()
     expect(screen.queryByText('~/.claude/adapters.json')).not.toBeInTheDocument()
   })
 
@@ -866,7 +866,7 @@ describe('Settings > Diagnostics tab', () => {
 
     fireEvent.click(screen.getByText('Diagnostics'))
     fireEvent.click(await screen.findByRole('button', { name: /Run Doctor/i }))
-    expect(await screen.findByText('~/.claude/cc-haha/providers.json')).toBeInTheDocument()
+    expect(await screen.findByText('~/.claude/echoflow-code/providers.json')).toBeInTheDocument()
 
     await act(async () => {
       useSessionStore.setState((state) => ({
@@ -885,7 +885,7 @@ describe('Settings > Diagnostics tab', () => {
     })
 
     await waitFor(() => {
-      expect(screen.queryByText('~/.claude/cc-haha/providers.json')).not.toBeInTheDocument()
+      expect(screen.queryByText('~/.claude/echoflow-code/providers.json')).not.toBeInTheDocument()
     })
     expect(screen.getByText(/User only/i)).toBeInTheDocument()
   })
@@ -954,7 +954,7 @@ describe('Settings > Diagnostics tab', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Reset safe UI state' })
     fireEvent.click(within(dialog).getByRole('button', { name: /Reset safe UI state/i }))
 
-    expect(await screen.findByText(/Removed keys:.*cc-haha-app-zoom/)).toBeInTheDocument()
+    expect(await screen.findByText(/Removed keys:.*echoflow-code-app-zoom/)).toBeInTheDocument()
     expect(screen.getByText('Failed keys: None')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Reset safe UI state/i })).toBeDisabled()
 
@@ -973,7 +973,7 @@ describe('Settings > Diagnostics tab', () => {
       }))
     })
 
-    expect(screen.getByText(/Removed keys:.*cc-haha-app-zoom/)).toBeInTheDocument()
+    expect(screen.getByText(/Removed keys:.*echoflow-code-app-zoom/)).toBeInTheDocument()
     expect(screen.getByText('Failed keys: None')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Reset safe UI state/i })).not.toBeDisabled()
 

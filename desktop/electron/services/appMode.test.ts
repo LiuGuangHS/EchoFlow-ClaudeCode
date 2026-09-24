@@ -15,13 +15,13 @@ import {
 const tempDirs: string[] = []
 
 function tempDir() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-haha-app-mode-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'echoflow-code-app-mode-'))
   tempDirs.push(dir)
   return dir
 }
 
 function app(root = tempDir()): AppModeAppLike & { root: string } {
-  const exe = path.join(root, 'install', 'Claude Code Haha')
+  const exe = path.join(root, 'install', 'EchoFlow Code')
   const home = path.join(root, 'home')
   const userData = path.join(root, 'user-data')
   fs.mkdirSync(path.dirname(exe), { recursive: true })
@@ -77,7 +77,7 @@ describe('Electron app mode service', () => {
     expect(applyStartupPortableMode(fakeApp, env)).toBe(customDir)
     expect(env).toMatchObject({
       CLAUDE_CONFIG_DIR: customDir,
-      CC_HAHA_APP_PORTABLE_DIR: '1',
+      ECHOFLOW_APP_PORTABLE_DIR: '1',
       WEBVIEW2_USER_DATA_FOLDER: path.join(customDir, 'EBWebView'),
     })
     expect(getAppMode(fakeApp, env)).toEqual({
@@ -125,7 +125,7 @@ describe('Electron app mode service', () => {
     const customDir = path.join(tempDir(), 'custom-data')
     const managedEnv: NodeJS.ProcessEnv = {
       CLAUDE_CONFIG_DIR: customDir,
-      CC_HAHA_APP_PORTABLE_DIR: '1',
+      ECHOFLOW_APP_PORTABLE_DIR: '1',
       WEBVIEW2_USER_DATA_FOLDER: path.join(customDir, 'EBWebView'),
       APPDATA: 'C:\\Users\\someone\\AppData\\Roaming',
     }
@@ -135,6 +135,14 @@ describe('Electron app mode service', () => {
     const externalEnv: NodeJS.ProcessEnv = { CLAUDE_CONFIG_DIR: customDir }
     clearAppManagedPortableEnv(externalEnv)
     expect(externalEnv).toEqual({ CLAUDE_CONFIG_DIR: customDir })
+
+    const legacyManagedEnv: NodeJS.ProcessEnv = {
+      CLAUDE_CONFIG_DIR: customDir,
+      ECHOFLOW_APP_PORTABLE_DIR: '1',
+      WEBVIEW2_USER_DATA_FOLDER: path.join(customDir, 'EBWebView'),
+    }
+    clearAppManagedPortableEnv(legacyManagedEnv)
+    expect(legacyManagedEnv).toEqual({})
   })
 
   it('drops inherited app-managed env so switching back to ~/.claude survives relaunch', () => {
@@ -143,13 +151,13 @@ describe('Electron app mode service', () => {
     const oldCustomDir = path.join(fakeApp.root, 'old-custom')
     const env: NodeJS.ProcessEnv = {
       CLAUDE_CONFIG_DIR: oldCustomDir,
-      CC_HAHA_APP_PORTABLE_DIR: '1',
+      ECHOFLOW_APP_PORTABLE_DIR: '1',
       WEBVIEW2_USER_DATA_FOLDER: path.join(oldCustomDir, 'EBWebView'),
     }
 
     expect(applyStartupPortableMode(fakeApp, env)).toBeNull()
     expect(env.CLAUDE_CONFIG_DIR).toBeUndefined()
-    expect(env.CC_HAHA_APP_PORTABLE_DIR).toBeUndefined()
+    expect(env.ECHOFLOW_APP_PORTABLE_DIR).toBeUndefined()
     expect(env.WEBVIEW2_USER_DATA_FOLDER).toBeUndefined()
     expect(getAppMode(fakeApp, env)).toMatchObject({
       mode: 'default',
@@ -163,7 +171,7 @@ describe('Electron app mode service', () => {
     writeMode(fakeApp, { mode: 'portable', portable_dir: newCustomDir })
     const env: NodeJS.ProcessEnv = {
       CLAUDE_CONFIG_DIR: path.join(fakeApp.root, 'old-custom'),
-      CC_HAHA_APP_PORTABLE_DIR: '1',
+      ECHOFLOW_APP_PORTABLE_DIR: '1',
       WEBVIEW2_USER_DATA_FOLDER: path.join(fakeApp.root, 'old-custom', 'EBWebView'),
     }
 
@@ -197,7 +205,7 @@ describe('Electron app mode service', () => {
 
     setAppMode(fakeApp, { mode: 'portable', portableDir: customDir }, {
       CLAUDE_CONFIG_DIR: previousActive,
-      CC_HAHA_APP_PORTABLE_DIR: '1',
+      ECHOFLOW_APP_PORTABLE_DIR: '1',
     })
 
     expect(JSON.parse(fs.readFileSync(path.join(fakeApp.getPath('userData'), 'app-mode.json'), 'utf8'))).toEqual({
@@ -218,7 +226,7 @@ describe('Electron app mode service', () => {
 
     setAppMode(fakeApp, { mode: 'default', portableDir: null }, {
       CLAUDE_CONFIG_DIR: customDir,
-      CC_HAHA_APP_PORTABLE_DIR: '1',
+      ECHOFLOW_APP_PORTABLE_DIR: '1',
     })
 
     expect(JSON.parse(fs.readFileSync(path.join(fakeApp.getPath('userData'), 'app-mode.json'), 'utf8'))).toEqual({
@@ -266,7 +274,7 @@ describe('Electron app mode service', () => {
 
     expect(() => applyStartupPortableMode(fakeApp, env)).toThrow('mkdir failed')
     expect(env.CLAUDE_CONFIG_DIR).toBeUndefined()
-    expect(env.CC_HAHA_APP_PORTABLE_DIR).toBeUndefined()
+    expect(env.ECHOFLOW_APP_PORTABLE_DIR).toBeUndefined()
     expect(env.WEBVIEW2_USER_DATA_FOLDER).toBeUndefined()
   })
 

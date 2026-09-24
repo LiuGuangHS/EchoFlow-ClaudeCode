@@ -34,7 +34,7 @@ Claude Code strictly categorizes memories into four types:
 
 Records your role, goals, skill level, and preferences to help Claude tailor its collaboration approach.
 
-```
+```text
 User says: I've written Go for ten years, but this is my first time touching the React part of this repo
 Claude saves: Deep Go experience, React newcomer — explain frontend concepts using backend analogies
 ```
@@ -43,7 +43,7 @@ Claude saves: Deep Go experience, React newcomer — explain frontend concepts u
 
 Your corrections or affirmations about how Claude works. These memories prevent Claude from repeating the same mistakes.
 
-```
+```text
 User says: Don't summarize what you did at the end of your reply, I can see the diff
 Claude saves: User prefers concise replies, no trailing summaries
 ```
@@ -54,7 +54,7 @@ Claude saves: User prefers concise replies, no trailing summaries
 
 Project context that cannot be derived from the code or Git history: who's doing what, why, and deadlines.
 
-```
+```text
 User says: We're freezing all non-critical merges after Thursday, the mobile team needs to cut a release branch
 Claude saves: Merge freeze starting 2026-03-05, flag non-critical PR work after this date
 ```
@@ -65,7 +65,7 @@ Claude saves: Merge freeze starting 2026-03-05, flag non-critical PR work after 
 
 Pointers to information in external systems: dashboards, issue trackers, Slack channels.
 
-```
+```text
 User says: On-call monitors the grafana.internal/d/api-latency dashboard
 Claude saves: grafana.internal/d/api-latency is the on-call latency dashboard — check when editing request path code
 ```
@@ -87,7 +87,7 @@ Workflow:
 6. Writes memory files + updates the MEMORY.md index
 
 The terminal will display a notification:
-```
+```text
 Memory updated in ~/.claude/projects/.../memory/feedback_testing.md · /memory to edit
 ```
 
@@ -95,7 +95,7 @@ Memory updated in ~/.claude/projects/.../memory/feedback_testing.md · /memory t
 
 Directly tell Claude to "remember this":
 
-```
+```text
 User: Remember, this project must run bun test before deploying
 Claude: [Immediately saves as a feedback-type memory]
 ```
@@ -104,7 +104,7 @@ Claude: [Immediately saves as a feedback-type memory]
 
 Type `/memory` in the terminal to open a file picker that lets you edit memory files directly in your editor.
 
-```
+```text
 > /memory
 ```
 
@@ -122,7 +122,7 @@ Type `/remember` to trigger the memory review skill, which will:
 
 ### Directory Structure
 
-```
+```text
 ~/.claude/
 └── projects/
     └── {project-path-hash}/
@@ -172,14 +172,14 @@ MEMORY.md is an index, not content. It is **always loaded into context**, with o
 
 ### Ask Claude to Forget
 
-```
+```text
 User: Forget the memory about the merge freeze
 Claude: [Finds and deletes the relevant memory file and index entry]
 ```
 
 ### Ask Claude to Ignore Memories
 
-```
+```text
 User: Ignore memories, start from scratch
 Claude: [Does not use any memory content in this conversation]
 ```
@@ -212,7 +212,7 @@ Supports `~/` expansion. For security reasons, the project-level `.claude/settin
 
 ![Memory Lifecycle](./images/04-memory-lifecycle.png)
 
-```
+```text
 New information learned during conversation
       |
  Auto-extraction / Explicit save

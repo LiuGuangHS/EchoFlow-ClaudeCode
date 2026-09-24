@@ -62,7 +62,7 @@ describe('prepare-ripgrep target mapping', () => {
   })
 
   test('stages the pinned ripgrep license set for offline builds', async () => {
-    const fixtureDir = await mkdtemp(path.join(tmpdir(), 'cc-haha-ripgrep-licenses-'))
+    const fixtureDir = await mkdtemp(path.join(tmpdir(), 'echoflow-code-ripgrep-licenses-'))
     tempDirs.push(fixtureDir)
 
     const licensesDir = await stageRipgrepLicenses(fixtureDir)
@@ -73,7 +73,7 @@ describe('prepare-ripgrep target mapping', () => {
   })
 
   test('rejects a local archive that does not match the pinned checksum', async () => {
-    const fixtureDir = await mkdtemp(path.join(tmpdir(), 'cc-haha-ripgrep-test-'))
+    const fixtureDir = await mkdtemp(path.join(tmpdir(), 'echoflow-code-ripgrep-test-'))
     tempDirs.push(fixtureDir)
     const archivePath = path.join(fixtureDir, 'ripgrep.tar.gz')
     await writeFile(archivePath, 'not an official ripgrep archive')

@@ -1,8 +1,8 @@
 /**
  * Provider types — preset-based provider configuration.
  *
- * Providers are stored in ~/.claude/cc-haha/providers.json as a lightweight index.
- * The active provider's env vars are written to ~/.claude/settings.json.
+ * Providers are stored in <EchoFlow AppData>/echoflow/providers.json as a lightweight index.
+ * The active provider's env vars are written to <EchoFlow AppData>/echoflow/settings.json.
  */
 
 import { z } from 'zod'
@@ -68,6 +68,18 @@ export const ModelContextWindowsSchema = z.record(
 export const ToolSearchEnabledSchema = z.boolean()
 export const DisableExperimentalBetasSchema = z.boolean()
 export const SupportsNestedToolResultMediaSchema = z.boolean()
+export const AvailableModelSchema = z.object({
+  id: z.string().min(1),
+  ownedBy: z.string().optional(),
+})
+
+export const CredentialSourceSchema = z.object({
+  kind: z.literal('echoflow-token'),
+  endpoint: z.enum(['main', 'dedicated']),
+  tokenId: z.string().min(1),
+  tokenName: z.string().optional(),
+})
+export type CredentialSource = z.infer<typeof CredentialSourceSchema>
 
 const RequestCapabilitySchema = z.enum(['auto', 'supported', 'unsupported'])
 const OutputTokenBudgetSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
@@ -111,6 +123,10 @@ export const SavedProviderSchema = z.object({
   requestCompatibility: RequestCompatibilitySchema.optional(),
   imageGeneration: ImageGenerationConfigSchema.optional(),
   notes: z.string().optional(),
+  credentialSource: CredentialSourceSchema.optional(),
+  hasApiKey: z.boolean().optional(),
+  keyPreview: z.string().optional(),
+  availableModels: z.array(AvailableModelSchema).optional(),
 })
 
 export const ProvidersIndexSchema = z.object({
@@ -138,6 +154,8 @@ export const CreateProviderSchema = z.object({
   requestCompatibility: RequestCompatibilitySchema.optional(),
   imageGeneration: ImageGenerationConfigSchema.optional(),
   notes: z.string().optional(),
+  credentialSource: CredentialSourceSchema.optional(),
+  availableModels: z.array(AvailableModelSchema).optional(),
 })
 
 export const UpdateProviderSchema = z.object({
@@ -157,6 +175,8 @@ export const UpdateProviderSchema = z.object({
   requestCompatibility: RequestCompatibilitySchema.nullable().optional(),
   imageGeneration: ImageGenerationConfigSchema.nullable().optional(),
   notes: z.string().optional(),
+  credentialSource: CredentialSourceSchema.nullable().optional(),
+  availableModels: z.array(AvailableModelSchema).nullable().optional(),
 })
 
 export const TestProviderSchema = z.object({

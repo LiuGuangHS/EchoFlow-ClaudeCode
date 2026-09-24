@@ -501,7 +501,7 @@ export function configureEffortParams(
     // Native Claude defaults to high effort when this field is omitted, and
     // historically sends it explicitly for stable request behavior. OpenAI
     // Responses is different: its Desktop session effort lives in
-    // CC_HAHA_OPENAI_REASONING_EFFORT and its catalog has per-model defaults.
+    // ECHOFLOW_OPENAI_REASONING_EFFORT and its catalog has per-model defaults.
     // Writing a synthetic `high` here would make the transport mistake that
     // fallback for an explicit request value and override both layers.
     if (isOpenAIResponsesModel(model)) return

@@ -1,28 +1,115 @@
 import { describe, expect, test } from 'bun:test'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 
 describe('feature quality contract', () => {
-  test('keeps root agent guidance small, high-signal, and layered', () => {
+  test('keeps root agent guidance within budget and preserves the repository contract', () => {
     const agents = readFileSync('AGENTS.md', 'utf8')
 
     // Codex has a 32 KiB default budget for the complete instruction chain.
-    // Keep the root well below that limit so nested guidance has room to load.
-    expect(Buffer.byteLength(agents)).toBeLessThan(16 * 1024)
-    expect(agents).toContain('## Start Here')
-    expect(agents).toContain('## Repository Map')
-    expect(agents).toContain('## Verification')
-    expect(agents).toContain('## User-State Safety')
-    expect(agents).toContain('## Handoff')
-    expect(agents).toContain('read the nested `AGENTS.md` in that directory')
-    expect(agents).toContain('Tool access is capability, not authorization.')
-    expect(agents).toContain('same-area regression test')
+    // Leave room for the small nested guidance files loaded by affected areas.
+    expect(Buffer.byteLength(agents)).toBeLessThan(28 * 1024)
+
+    // AGENTS.md states direction; procedures and case law live in docs/.
+    // Assert the obligations themselves rather than `## ` section headings, so
+    // the file can be restructured without a false failure.
+    expect(agents).toContain('## How This Contract Is Maintained')
+    expect(agents).toContain('Otherwise it belongs in `docs/` with a one-line pointer')
+    expect(agents).toContain('under 24 KB')
+    expect(agents).toContain('Check `git status --short` before editing')
+    expect(agents).toContain('Production code changes under `desktop/src`, `src/server`, `src/tools`, `src/utils`, or `adapters`')
     expect(agents).toContain('`bun run check:impact`')
     expect(agents).toContain('`bun run verify`')
-    expect(agents).toContain('Required PR checks must be deterministic')
-    expect(agents).toContain('finding credentials on the machine is not authorization')
     expect(agents).toContain('`bun run check:persistence-upgrade`')
-    expect(agents).toContain('`~/.claude/settings.json` as user-owned shared state')
-    expect(agents).toContain('commands actually run and their observed results')
+    expect(agents).toContain('`bun run audit:harness`')
+    expect(agents).toContain('`.claude/` stays local-only')
+    expect(agents).toContain('`~/.claude/settings.json` is user-owned shared state')
+    expect(agents).toContain('Official vendor APIs and official OAuth integrations, including Grok Official')
+    expect(agents).toContain('rejected by default')
+    expect(agents).toContain('Never apply blanket `--ours` or `--theirs`')
+    // A resolved gap must not survive as prose. The contract once stated that
+    // `mobile/` had no area and no route; both now exist, and nothing tied the
+    // claim to the code, so the stale sentence outlived the fix.
+    expect(agents).not.toMatch(/`mobile\/` has no/)
+  })
+
+  test('keeps pointers out of the contract resolving to real content in docs', () => {
+    const agents = readFileSync('AGENTS.md', 'utf8')
+    const contributing = readFileSync('docs/internals/contributing.md', 'utf8')
+    const englishContributing = readFileSync('docs/en/internals/contributing.md', 'utf8')
+
+    // AGENTS.md delegates the upstream-sync procedure and the regression case
+    // law to docs/. A pointer that no longer resolves is worse than no pointer,
+    // and re-inlining the procedure silently re-inflates the contract.
+    expect(agents).toContain('docs/internals/contributing.md')
+    expect(agents).not.toContain('### Manual Sync Workflow')
+    expect(agents).not.toContain('### Automated Release Tracking')
+
+    expect(contributing).toContain('冲突矩阵')
+    expect(englishContributing).toContain('conflict matrix')
+
+    // The agent toolset is documented in docs/ and pointed at from AGENTS.md.
+    // ECC is no longer the toolset, and re-inlining its commands would put a
+    // policy the repository does not follow back into the contract.
+    expect(contributing).toContain('## Agent 工具链')
+    expect(englishContributing).toContain('## Agent Toolset')
+    expect(agents).not.toContain('/ecc:')
+    expect(agents).not.toContain('@architect')
+  })
+
+  test('keeps the contract vocabulary aligned with the change policy and the docs sections', () => {
+    const agents = readFileSync('AGENTS.md', 'utf8')
+    const policy = readFileSync('scripts/pr/change-policy.ts', 'utf8')
+    const docsGuidance = readFileSync('docs/AGENTS.md', 'utf8')
+    const manifest = readFileSync('site/scripts/generate-docs-manifest.mjs', 'utf8')
+
+    // The ChangeArea union is the canonical surface vocabulary. The eight-surface
+    // list this file used to carry drifted because nothing tied it to the code;
+    // naming every area makes adding or renaming one require a doc update.
+    const union = policy.match(/export type ChangeArea =([\s\S]*?)\n\n/)?.[1] ?? ''
+    const changeAreas = [...union.matchAll(/'([a-z][a-z-]*)'/g)].map((match) => match[1])
+    expect(changeAreas.length).toBeGreaterThan(0)
+
+    const vocabulary = agents.match(/canonical vocabulary is the `ChangeArea` union in `scripts\/pr\/change-policy\.ts`: ([^\n]+?)\.\s/)?.[1] ?? ''
+    const documentedAreas = [...vocabulary.matchAll(/`([^`]+)`/g)].map((match) => match[1])
+    expect([...documentedAreas].sort()).toEqual([...changeAreas].sort())
+
+    // docs/AGENTS.md states the section list; the site manifest owns it.
+    const manifestSections = manifest.match(/export const sections = \[([\s\S]*?)\n\]/)?.[1] ?? ''
+    const sectionIds = [...manifestSections.matchAll(/id: '([a-z-]+)'/g)].map((match) => match[1])
+    expect(sectionIds.length).toBeGreaterThan(0)
+
+    const documentedSections = [
+      ...(docsGuidance.match(/top-level sections: ([^\n]+?)\./)?.[1] ?? '').matchAll(/`([a-z-]+)\//g),
+    ].map((match) => match[1])
+    expect(documentedSections).toEqual(sectionIds)
+  })
+
+  test('keeps every repository path the contract points at resolving', () => {
+    const agents = readFileSync('AGENTS.md', 'utf8')
+
+    // `docs/guide/contributing.md` was renamed into `docs/internals/` and left
+    // stale pointers behind, so the references are checked rather than trusted.
+    // Only root-relative references are checked: nested guidance points at paths
+    // relative to its own directory, and home/config paths are not repo paths.
+    const roots = ['bin', 'src', 'desktop', 'adapters', 'site', 'docs', 'scripts', 'native', 'mobile', 'release-notes', '.github']
+    // Placeholders such as `docs/xxx` and `release-notes/vX.Y.Z.md` are templates.
+    const isPlaceholder = (token: string) => token
+      .split('/')
+      .some((segment) => segment === 'xxx' || segment.includes('X.Y.Z'))
+
+    const references = [...agents.matchAll(/`([^`\n]+)`/g)]
+      .map((match) => match[1].trim().replace(/[.,;:]+$/, ''))
+      .filter((token) => token.includes('/'))
+      .filter((token) => roots.some((root) => token === root || token.startsWith(`${root}/`)))
+      .filter((token) => !/[~*?{}<>|]/.test(token))
+      .filter((token) => !isPlaceholder(token))
+
+    const unique = [...new Set(references)].sort()
+    expect(unique.length).toBeGreaterThan(10)
+    for (const reference of unique) {
+      expect(existsSync(reference), `AGENTS.md points at \`${reference}\`, which does not exist`).toBe(true)
+    }
   })
 
   test('keeps specialized agent guidance next to the affected code', () => {
@@ -31,6 +118,7 @@ describe('feature quality contract', () => {
     const desktop = readFileSync('desktop/AGENTS.md', 'utf8')
     const adapters = readFileSync('adapters/AGENTS.md', 'utf8')
     const docs = readFileSync('docs/AGENTS.md', 'utf8')
+    const mobile = readFileSync('mobile/AGENTS.md', 'utf8')
 
     expect(policy).toContain('`scripts/pr/change-policy.ts` is the source of truth')
     expect(policy).toContain('`pull_request_target`')
@@ -42,12 +130,16 @@ describe('feature quality contract', () => {
     expect(desktop).toContain('`bun run check:chat-contract`')
     expect(adapters).toContain('`bun run check:adapters`')
     expect(docs).toContain('`bun run check:docs`')
+    expect(mobile).toContain('`bun run check:mobile`')
   })
 
   test('keeps PR authors accountable for tests, coverage, E2E, and risk', () => {
     const template = readFileSync('.github/pull_request_template.md', 'utf8')
 
     expect(template).toContain('## Feature Quality Contract')
+    expect(template).toContain('## Tooling & Reproduction Evidence')
+    expect(template).toContain('`bun run audit:harness`')
+    expect(template).toContain('`.claude/` local state was not committed')
     expect(template).toContain('Changed surface:')
     expect(template).toContain('Tests added or updated:')
     expect(template).toContain('Coverage evidence:')
@@ -60,19 +152,19 @@ describe('feature quality contract', () => {
   test('keeps quality policy and cross-process boundaries maintainer-owned', () => {
     const codeowners = readFileSync('.github/CODEOWNERS', 'utf8')
 
-    expect(codeowners).toContain('/.github/workflows/ @NanmiCoder')
-    expect(codeowners).toContain('/AGENTS.md @NanmiCoder')
-    expect(codeowners).toContain('**/AGENTS.md @NanmiCoder')
-    expect(codeowners).toContain('/CONTRIBUTING.md @NanmiCoder')
-    expect(codeowners).toContain('/scripts/pr/ @NanmiCoder')
-    expect(codeowners).toContain('/scripts/quality-gate/ @NanmiCoder')
-    expect(codeowners).toContain('/desktop/src/api/websocket* @NanmiCoder')
-    expect(codeowners).toContain('/desktop/src/lib/persistenceMigrations* @NanmiCoder')
-    expect(codeowners).toContain('/src/server/services/conversationService* @NanmiCoder')
-    expect(codeowners).toContain('/src/server/proxy/ @NanmiCoder')
-    expect(codeowners).toContain('/src/server/ws/ @NanmiCoder')
-    expect(codeowners).toContain('/src/services/openaiAuth/ @NanmiCoder')
-    expect(codeowners).toContain('/src/utils/model/ @NanmiCoder')
+    expect(codeowners).toContain('/.github/workflows/ @LiuGuangHS')
+    expect(codeowners).toContain('/AGENTS.md @LiuGuangHS')
+    expect(codeowners).toContain('**/AGENTS.md @LiuGuangHS')
+    expect(codeowners).toContain('/CONTRIBUTING.md @LiuGuangHS')
+    expect(codeowners).toContain('/scripts/pr/ @LiuGuangHS')
+    expect(codeowners).toContain('/scripts/quality-gate/ @LiuGuangHS')
+    expect(codeowners).toContain('/desktop/src/api/websocket* @LiuGuangHS')
+    expect(codeowners).toContain('/desktop/src/lib/persistenceMigrations* @LiuGuangHS')
+    expect(codeowners).toContain('/src/server/services/conversationService* @LiuGuangHS')
+    expect(codeowners).toContain('/src/server/proxy/ @LiuGuangHS')
+    expect(codeowners).toContain('/src/server/ws/ @LiuGuangHS')
+    expect(codeowners).toContain('/src/services/openaiAuth/ @LiuGuangHS')
+    expect(codeowners).toContain('/src/utils/model/ @LiuGuangHS')
   })
 
   test('keeps the one-command verification entrypoint documented', () => {
@@ -84,6 +176,7 @@ describe('feature quality contract', () => {
     const englishContributing = readFileSync('docs/en/internals/contributing.md', 'utf8')
     const rootContributing = readFileSync('CONTRIBUTING.md', 'utf8')
 
+    expect(packageJson.scripts?.['audit:harness']).toBe('node scripts/harness-audit.js repo --format json')
     expect(packageJson.scripts?.verify).toBe('bun run quality:pr')
     expect(packageJson.scripts?.['quality:verify']).toBe('bun run quality:pr')
     expect(packageJson.scripts?.['quality:push']).toBe('bun run quality:gate --mode pr --skip coverage')
@@ -188,7 +281,7 @@ describe('feature quality contract', () => {
     expect(sandbox).toContain('createSandboxedTestEnvironment')
     expect(sandbox).toContain('GUARDED_USER_STATE_PATHS')
     expect(sandbox).toContain("'settings.json'")
-    expect(sandbox).toContain("'cc-haha/providers.json'")
+    expect(sandbox).toContain("'echoflow-code/providers.json'")
   })
 
   test('keeps general AI coding tools pointed at the same quality bar', () => {
@@ -203,5 +296,65 @@ describe('feature quality contract', () => {
     expect(instructions).toContain('Provider/auth/runtime-env/model-window/proxy changes require offline `bun run check:provider-contract`')
     expect(instructions).toContain('Live smoke is trusted-maintainer evidence only and requires explicit authorization')
     expect(instructions).toContain('include changed files, tests added, commands actually run with pass/fail counts')
+  })
+
+  test('keeps every policy test either on the gate or on a reasoned exclusion', () => {
+    const packageJson = JSON.parse(readFileSync('package.json', 'utf8')) as {
+      scripts?: Record<string, string>
+    }
+    const gate = packageJson.scripts?.['check:policy'] ?? ''
+
+    // `scripts/` holds the policy suite and the sample projects the quality gate
+    // compiles. Samples are inputs that fail on purpose, so they can never run
+    // here. Every other test claims to protect something, and a test the gate
+    // never executes is indistinguishable from no test at all: harness-audit.test.ts
+    // sat unexecuted while the script it covers gated every pull request, and the
+    // Windows installer contracts were unrun despite guarding release integrity.
+    const samplePrefixes = [
+      'scripts/quality-gate/baseline/fixtures/',
+      'scripts/quality-gate/desktop-smoke/fixtures/',
+    ]
+    const reasonedExclusions = new Map([
+      ['scripts/perf/local-index-acceptance.test.ts', 'builds a local index corpus; the full sweep owns its runtime'],
+      ['scripts/perf/local-index-corpus.test.ts', 'generates a 10k-session corpus; the full sweep owns its runtime'],
+      ['scripts/cli-launcher.test.ts', 'spawns the real CLI; check:server owns that sandbox'],
+      ['scripts/release.test.ts', 'creates a real git repository and commits; the release workflow owns it'],
+    ])
+
+    const walk = (dir: string, acc: string[] = []): string[] => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name).replaceAll('\\', '/')
+        if (entry.isDirectory()) walk(full, acc)
+        else if (entry.name.endsWith('.test.ts')) acc.push(full)
+      }
+      return acc
+    }
+
+    const onDisk = walk('scripts')
+    const isExcluded = (file: string) =>
+      samplePrefixes.some((prefix) => file.startsWith(prefix)) || reasonedExclusions.has(file)
+
+    // Gate entries pointing at deleted files still read as coverage.
+    for (const token of gate.split('&&')[0].split(' ').filter((part) => part.startsWith('./scripts/'))) {
+      const path = token.replace('./', '')
+      expect(existsSync(path), `check:policy lists \`${path}\`, which no longer exists`).toBe(true)
+    }
+
+    // A test nobody runs is not protection.
+    for (const file of onDisk) {
+      if (isExcluded(file)) continue
+      expect(
+        gate.includes(`./${file}`),
+        `\`${file}\` is not on the check:policy gate; add it there or record the reason in the exclusion map`,
+      ).toBe(true)
+    }
+
+    // An exclusion that outlives its file turns a decision into an oversight.
+    for (const target of [...reasonedExclusions.keys(), ...samplePrefixes]) {
+      const alive = target.endsWith('/')
+        ? onDisk.some((candidate) => candidate.startsWith(target))
+        : existsSync(target)
+      expect(alive, `excluded \`${target}\` matches nothing; drop it or fix the path`).toBe(true)
+    }
   })
 })

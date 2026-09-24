@@ -21,7 +21,7 @@ export async function runSwiftChecks(options: {
   }
 
   const root = resolve(import.meta.dir, '../..')
-  const sandboxHome = mkdtempSync(join(tmpdir(), 'cc-haha-swift-checks-'))
+  const sandboxHome = mkdtempSync(join(tmpdir(), 'echoflow-code-swift-checks-'))
   const run = options.run ?? (async (command, spawnOptions) => {
     const child = Bun.spawn(command, { ...spawnOptions, stdout: 'inherit', stderr: 'inherit' })
     return await child.exited

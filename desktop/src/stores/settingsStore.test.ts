@@ -63,7 +63,7 @@ describe('settingsStore locale defaults', () => {
 
   it('keeps a stored locale override', async () => {
     mockSystemLanguages(['en-US'])
-    window.localStorage.setItem('cc-haha-locale', 'zh-TW')
+    window.localStorage.setItem('echoflow-code-locale', 'zh-TW')
 
     const { useSettingsStore } = await import('./settingsStore')
 
@@ -72,7 +72,7 @@ describe('settingsStore locale defaults', () => {
 
     useSettingsStore.getState().setLocale('jp')
 
-    expect(window.localStorage.getItem('cc-haha-locale')).toBe('jp')
+    expect(window.localStorage.getItem('echoflow-code-locale')).toBe('jp')
     expect(document.documentElement.lang).toBe('ja')
   })
 
@@ -95,7 +95,7 @@ describe('settingsStore locale defaults', () => {
     await vi.waitFor(() => {
       expect(setLocalePreference).toHaveBeenCalledWith('jp')
     })
-    expect(window.localStorage.getItem('cc-haha-locale')).toBe('jp')
+    expect(window.localStorage.getItem('echoflow-code-locale')).toBe('jp')
 
     vi.resetModules()
     mockSystemLanguages(['ko-KR'])
@@ -129,7 +129,7 @@ describe('settingsStore locale defaults', () => {
       )
     })
     expect(useSettingsStore.getState().locale).toBe('kr')
-    expect(window.localStorage.getItem('cc-haha-locale')).toBe('kr')
+    expect(window.localStorage.getItem('echoflow-code-locale')).toBe('kr')
   })
 
   it('applies a locale event from another desktop window', async () => {
@@ -170,7 +170,7 @@ describe('settingsStore UI zoom', () => {
   })
 
   it('hydrates from the app zoom storage key', async () => {
-    window.localStorage.setItem('cc-haha-app-zoom', '1.25')
+    window.localStorage.setItem('echoflow-code-app-zoom', '1.25')
 
     const { useSettingsStore } = await import('./settingsStore')
 
@@ -183,7 +183,7 @@ describe('settingsStore UI zoom', () => {
     useSettingsStore.getState().setUiZoom(1.25)
 
     await vi.waitFor(() => {
-      expect(window.localStorage.getItem('cc-haha-app-zoom')).toBe('1.25')
+      expect(window.localStorage.getItem('echoflow-code-app-zoom')).toBe('1.25')
     })
     expect(useSettingsStore.getState().uiZoom).toBe(1.25)
     expect(document.documentElement.getAttribute('data-app-zoom-percent')).toBe('125')
@@ -195,7 +195,7 @@ describe('settingsStore UI zoom', () => {
     useSettingsStore.getState().setUiZoom(9)
 
     await vi.waitFor(() => {
-      expect(window.localStorage.getItem('cc-haha-app-zoom')).toBe('2')
+      expect(window.localStorage.getItem('echoflow-code-app-zoom')).toBe('2')
     })
     expect(useSettingsStore.getState().uiZoom).toBe(2)
   })
@@ -640,8 +640,8 @@ describe('settingsStore app mode', () => {
   it('hydrates app mode from the Electron desktop host', async () => {
     const getAppMode = vi.fn().mockResolvedValue({
       mode: 'portable',
-      portableDir: 'D:\\cc-haha-data',
-      activeConfigDir: 'D:\\cc-haha-data',
+      portableDir: 'D:\\echoflow-code-data',
+      activeConfigDir: 'D:\\echoflow-code-data',
       configDirSource: 'portable',
     })
     installElectronAppModeHost({ get: getAppMode })
@@ -653,8 +653,8 @@ describe('settingsStore app mode', () => {
     expect(getAppMode).toHaveBeenCalledTimes(1)
     expect(useSettingsStore.getState().appMode).toEqual({
       mode: 'portable',
-      portableDir: 'D:\\cc-haha-data',
-      activeConfigDir: 'D:\\cc-haha-data',
+      portableDir: 'D:\\echoflow-code-data',
+      activeConfigDir: 'D:\\echoflow-code-data',
       configDirSource: 'portable',
     })
   })
@@ -1516,7 +1516,7 @@ describe('settingsStore theme persistence', () => {
   })
 
   it('keeps the desktop theme independent from the Claude user theme', async () => {
-    window.localStorage.setItem('cc-haha-theme', 'dark')
+    window.localStorage.setItem('echoflow-code-theme', 'dark')
     const updateUser = vi.fn()
     vi.doMock('../api/settings', () => ({
       settingsApi: {
@@ -1566,7 +1566,7 @@ describe('settingsStore theme persistence', () => {
 
     await useSettingsStore.getState().setTheme('warm-classic')
 
-    expect(window.localStorage.getItem('cc-haha-theme')).toBe('warm-classic')
+    expect(window.localStorage.getItem('echoflow-code-theme')).toBe('warm-classic')
     expect(updateUser).not.toHaveBeenCalled()
     teardownTheme()
   })

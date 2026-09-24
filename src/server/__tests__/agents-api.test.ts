@@ -27,7 +27,7 @@ let originalHasSession: typeof conversationService.hasSession
 let originalRequestControl: typeof conversationService.requestControl
 
 beforeEach(async () => {
-  tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'cc-haha-agents-api-'))
+  tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'echoflow-code-agents-api-'))
   configDir = path.join(tempRoot, 'config')
   projectRoot = path.join(tempRoot, 'project')
   projectCwd = path.join(projectRoot, 'src')
@@ -1532,7 +1532,7 @@ describe('Agents API built-in overrides', () => {
   async function readUserSettings(): Promise<Record<string, any>> {
     try {
       return JSON.parse(
-        await fs.readFile(path.join(configDir, 'settings.json'), 'utf-8'),
+        await fs.readFile(path.join(configDir, 'echoflow-code', 'settings.json'), 'utf-8'),
       )
     } catch {
       return {}
@@ -1540,10 +1540,9 @@ describe('Agents API built-in overrides', () => {
   }
 
   async function writeUserSettings(settings: unknown): Promise<void> {
-    await fs.writeFile(
-      path.join(configDir, 'settings.json'),
-      JSON.stringify(settings),
-    )
+    const settingsPath = path.join(configDir, 'echoflow-code', 'settings.json')
+    await fs.mkdir(path.dirname(settingsPath), { recursive: true })
+    await fs.writeFile(settingsPath, JSON.stringify(settings))
     resetSettingsCache()
     clearAgentDefinitionsCache()
   }
@@ -1708,7 +1707,7 @@ describe('Agents API built-in overrides', () => {
       systemPrompt: 'Prompt.',
     })
     const settingsBefore = await fs
-      .readFile(path.join(configDir, 'settings.json'), 'utf-8')
+      .readFile(path.join(configDir, 'echoflow-code', 'settings.json'), 'utf-8')
       .catch(() => null)
 
     const custom = await api('PUT', '/api/agents/custom-agent/override', {
@@ -1725,7 +1724,7 @@ describe('Agents API built-in overrides', () => {
     expect(missing.status).toBe(404)
 
     const settingsAfter = await fs
-      .readFile(path.join(configDir, 'settings.json'), 'utf-8')
+      .readFile(path.join(configDir, 'echoflow-code', 'settings.json'), 'utf-8')
       .catch(() => null)
     expect(settingsAfter).toEqual(settingsBefore)
   })

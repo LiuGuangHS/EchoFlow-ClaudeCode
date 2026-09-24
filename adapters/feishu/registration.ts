@@ -213,7 +213,7 @@ export async function beginFeishuRegistration(
 
   const verificationUrl = assertFeishuVerificationUrl(begun.verification_uri_complete)
   verificationUrl.searchParams.set('from', 'sdk')
-  verificationUrl.searchParams.set('source', options.source || 'claude-code-haha')
+  verificationUrl.searchParams.set('source', options.source || 'echoflow-code')
   verificationUrl.searchParams.set('tp', 'sdk')
   // Only ever create a new app: binding an existing one would let this flow
   // overwrite the callback configuration of a bot the user already runs.

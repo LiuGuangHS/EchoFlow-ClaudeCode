@@ -11,16 +11,16 @@ Install and go. You don't need Node.js, Python, or Claude Code — the CLI engin
 
 ## Pick the right package
 
-Everything lives on [GitHub Releases](https://github.com/NanmiCoder/cc-haha/releases/latest). Choose by operating system and CPU architecture:
+Everything lives on [GitHub Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest). Choose by operating system and CPU architecture:
 
 | Your system | Download |
 |---|---|
-| macOS, Apple Silicon | `Claude-Code-Haha-<version>-mac-arm64.dmg` |
-| macOS, Intel | `Claude-Code-Haha-<version>-mac-x64.dmg` |
-| Windows x64 | `Claude-Code-Haha-<version>-win-x64.exe` |
-| Windows ARM64 | `Claude-Code-Haha-<version>-win-arm64.exe` |
-| Linux x64 | `Claude-Code-Haha-<version>-linux-x86_64.AppImage` or `-linux-amd64.deb` |
-| Linux ARM64 | `Claude-Code-Haha-<version>-linux-arm64.AppImage` or `-linux-arm64.deb` |
+| macOS, Apple Silicon | `EchoFlow-Code-<version>-mac-arm64.dmg` |
+| macOS, Intel | `EchoFlow-Code-<version>-mac-x64.dmg` |
+| Windows x64 | `EchoFlow-Code-<version>-win-x64.exe` |
+| Windows ARM64 | `EchoFlow-Code-<version>-win-arm64.exe` |
+| Linux x64 | `EchoFlow-Code-<version>-linux-x86_64.AppImage` or `-linux-amd64.deb` |
+| Linux ARM64 | `EchoFlow-Code-<version>-linux-arm64.AppImage` or `-linux-arm64.deb` |
 
 Not sure which architecture you have? On macOS check the chip listed in "About This Mac"; on Windows check the system type under Settings → System → About. Don't guess from the brand of the machine.
 
@@ -29,7 +29,7 @@ The `.blockmap` and `latest*.yml` files are used by the app's own updater. You d
 ## macOS
 
 1. Open the DMG.
-2. Drag Claude Code Haha into Applications.
+2. Drag EchoFlow Code into Applications.
 3. Launch it from Applications.
 
 ### If macOS says the app is damaged
@@ -52,7 +52,7 @@ The script picks the DMG matching your architecture, mounts it, installs the app
 If the app is already in Applications:
 
 ```bash
-xattr -dr com.apple.quarantine "/Applications/Claude Code Haha.app"
+xattr -dr com.apple.quarantine "/Applications/EchoFlow Code.app"
 ```
 
 Only do this for packages you have confirmed came from this repository's Releases. Never bypass Gatekeeper for software of unknown origin.
@@ -72,8 +72,8 @@ When upgrading in place, the installer inspects user data in the old install dir
 **AppImage** (no installation, just run it):
 
 ```bash
-chmod +x Claude-Code-Haha-<version>-linux-x86_64.AppImage
-./Claude-Code-Haha-<version>-linux-x86_64.AppImage
+chmod +x EchoFlow-Code-<version>-linux-x86_64.AppImage
+./EchoFlow-Code-<version>-linux-x86_64.AppImage
 ```
 
 If it fails with a FUSE-related error, install the runtime: `sudo apt install libfuse2` on Ubuntu 22.04 and earlier, `libfuse2t64` on 24.04 and later.
@@ -81,7 +81,7 @@ If it fails with a FUSE-related error, install the runtime: `sudo apt install li
 **deb** (installs into your application menu):
 
 ```bash
-sudo apt install ./Claude-Code-Haha-<version>-linux-amd64.deb
+sudo apt install ./EchoFlow-Code-<version>-linux-amd64.deb
 ```
 
 On ARM64 machines, use the corresponding `linux-arm64` file.
@@ -91,11 +91,11 @@ On ARM64 machines, use the corresponding `linux-arm64` file.
 If you want to modify the code, debug the engine, or just use the CLI in a terminal:
 
 ```bash
-git clone https://github.com/NanmiCoder/cc-haha.git
-cd cc-haha
+git clone https://github.com/LiuGuangHS/EchoFlow-ClaudeCode.git echoflow-code
+cd echoflow-code
 bun install
 cp .env.example .env
-./bin/claude-haha
+./bin/echoflow-code
 ```
 
 Requires [Bun](https://bun.sh) and Git. This runs the CLI only; for building the desktop app and configuring the local server, see [Command line](../cli/index.md).

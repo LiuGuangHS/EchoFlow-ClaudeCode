@@ -30,13 +30,17 @@
       guesses from the page otherwise, and guesses gray here.
     -->
     <meta name="theme-color" content="#FFFFFF" />
-    <title>Claude Code Haha</title>
+    <title>EchoFlow Code</title>
     <!--
       The Electron window draws its own chrome, but this same document is what
       the H5 remote client loads in a phone browser, where a missing favicon
       means a blank tab and a screenshot for "add to home screen".
     -->
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
     <link rel="icon" href="/app-icon.png" type="image/png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
     <!-- Fonts are self-hosted in /fonts/ and declared via @font-face in globals.css -->
     <script>
       if (new URLSearchParams(window.location.search).get('petWindow') === '1') {
@@ -80,20 +84,20 @@
             if (meta && BACKGROUND[value]) meta.setAttribute('content', BACKGROUND[value])
           }
 
-          var stored = read('cc-haha-theme')
+          var stored = read('echoflow-code-theme')
           var theme = (has(LIGHT, stored) || isDark(stored)) ? stored : 'white'
 
-          var followRaw = read('cc-haha-follow-system-theme')
+          var followRaw = read('echoflow-code-follow-system-theme')
           // Unset means: new install follows the system, existing install
           // (recognised by having a stored theme) keeps its fixed pick.
           var follow = followRaw === '1' || (followRaw !== '0' && stored === null)
 
           if (follow) {
-            var storedLight = read('cc-haha-light-theme')
+            var storedLight = read('echoflow-code-light-theme')
             var lightTheme = has(LIGHT, storedLight)
               ? storedLight
               : (has(LIGHT, theme) ? theme : 'white')
-            var storedDark = read('cc-haha-dark-theme')
+            var storedDark = read('echoflow-code-dark-theme')
             var darkTheme = isDark(storedDark) ? storedDark : (isDark(theme) ? theme : 'dark')
             var prefersDark = false
             try {
@@ -152,7 +156,7 @@
         }
 
         function renderStartupError(reason) {
-          if (window.__CC_HAHA_BOOTSTRAPPED__) return
+          if (window.__ECHOFLOW_BOOTSTRAPPED__) return
           var root = document.getElementById('root')
           if (!root) return
 
@@ -201,7 +205,7 @@
           root.appendChild(shell)
         }
 
-        window.__CC_HAHA_SHOW_STARTUP_ERROR__ = renderStartupError
+        window.__ECHOFLOW_SHOW_STARTUP_ERROR__ = renderStartupError
 
         window.addEventListener('error', function (event) {
           var target = event.target

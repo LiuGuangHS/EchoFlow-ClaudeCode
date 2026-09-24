@@ -66,7 +66,7 @@ describe('restored session prewarm', () => {
   })
 
   it('does not prewarm an existing transcript after the real tab restore sequence', async () => {
-    localStorage.setItem('cc-haha-open-tabs', JSON.stringify({
+    localStorage.setItem('echoflow-code-open-tabs', JSON.stringify({
       openTabs: [{ sessionId: SESSION_ID, title: 'Existing transcript', type: 'session' }],
       activeTabId: SESSION_ID,
     }))

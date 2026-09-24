@@ -68,7 +68,7 @@ The system prompt, tool scope, and color stay fixed by Claude Code.
 "Built-in default" and "Inherit from parent" are not the same thing. For `Explore`, the first is the Haiku it ships pinned to; the second follows whatever model your main conversation is using. To go back to how it shipped, pick "Built-in default" or click **Reset to built-in default**.
 :::
 
-The override is written to `builtInAgentOverrides` in `~/.claude/settings.json` and applies to every project. Resetting removes the entry entirely rather than leaving an empty shell behind in your config.
+The override is written to `builtInAgentOverrides` in EchoFlow's user settings. The default path is `<platform data directory>/echoflow-code/settings.json`; setting `CLAUDE_CONFIG_DIR` uses `$CLAUDE_CONFIG_DIR/echoflow-code/settings.json` instead. It applies to every project. Resetting removes the entry entirely rather than leaving an empty shell behind in your config.
 
 Agent configuration stores a model ID, not a provider. The picker lists models from the current provider. If you switch providers later, aliases resolve through the new provider's mapping, while a full model ID must also be supported by the new provider.
 

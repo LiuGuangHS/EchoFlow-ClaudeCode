@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 
 test('source CLI launcher runs through Bun without requiring Bash', async () => {
-  const configDir = await mkdtemp(path.join(tmpdir(), 'cc-haha-cli-launcher-'))
+  const configDir = await mkdtemp(path.join(tmpdir(), 'echoflow-code-cli-launcher-'))
   const repoRoot = path.resolve(import.meta.dir, '..')
 
   try {
@@ -14,7 +14,7 @@ test('source CLI launcher runs through Bun without requiring Bash', async () => 
         cwd: repoRoot,
         env: {
           ...process.env,
-          CC_HAHA_SKIP_DOTENV: '1',
+          ECHOFLOW_SKIP_DOTENV: '1',
           CLAUDE_CONFIG_DIR: configDir,
         },
         stdout: 'pipe',

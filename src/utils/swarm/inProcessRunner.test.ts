@@ -52,7 +52,7 @@ async function withTempConfig(
   run: (configDir: string) => Promise<void>,
 ): Promise<void> {
   const originalConfigDir = process.env.CLAUDE_CONFIG_DIR
-  const configDir = await mkdtemp(join(tmpdir(), 'cc-haha-in-process-runner-'))
+  const configDir = await mkdtemp(join(tmpdir(), 'echoflow-code-in-process-runner-'))
   process.env.CLAUDE_CONFIG_DIR = configDir
 
   try {

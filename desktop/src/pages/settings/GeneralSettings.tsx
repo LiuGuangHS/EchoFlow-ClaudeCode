@@ -29,6 +29,7 @@ import { useUIStore } from '../../stores/uiStore'
 import { useOpenTargetStore } from '../../stores/openTargetStore'
 import { isDesktopRuntime } from '../../lib/desktopRuntime'
 import { getDesktopHost } from '../../lib/desktopHost'
+import { echoFlowMigrationApi, type EchoFlowMigrationResult } from '../../api/echoFlowMigration'
 import { getDesktopNotificationPermission, notifyDesktop, getDesktopNotificationPlatform, openDesktopNotificationSettings, requestDesktopNotificationPermission, type DesktopNotificationPermission } from '../../lib/desktopNotifications'
 import { SETTINGS_CHECKBOX_INPUT_CLASS, SettingsCheckboxMark, isValidHttpProxyUrl } from '../settings/shared'
 import { isTouchH5Document } from '../../lib/touchH5'
@@ -138,6 +139,15 @@ export function GeneralSettings() {
   const [portableDirDraft, setPortableDirDraft] = useState('')
   const [modeActionRunning, setModeActionRunning] = useState(false)
   const [modeError, setModeError] = useState<string | null>(null)
+  const [legacyMigrationResult, setLegacyMigrationResult] = useState<EchoFlowMigrationResult | null>(null)
+  const [legacyMigrationChecking, setLegacyMigrationChecking] = useState(false)
+  const [legacyMigrationRunning, setLegacyMigrationRunning] = useState(false)
+  const [legacyMigrationConfirmOpen, setLegacyMigrationConfirmOpen] = useState(false)
+  const [legacyMigrationError, setLegacyMigrationError] = useState<string | null>(null)
+  const [claudeCodeRuntime, setClaudeCodeRuntime] = useState<'bundled' | 'installed'>('bundled')
+  const [hasInstalledClaudeCodeRuntime, setHasInstalledClaudeCodeRuntime] = useState(false)
+  const [claudeCodeRuntimeError, setClaudeCodeRuntimeError] = useState<string | null>(null)
+  const [claudeCodeRuntimeSaving, setClaudeCodeRuntimeSaving] = useState(false)
   const [uiZoomDraft, setUiZoomDraft] = useState(uiZoom)
   const [retentionInput, setRetentionInput] = useState(String(cleanupPeriodDays ?? DEFAULT_CLEANUP_PERIOD_DAYS))
   const [retentionConfirmOpen, setRetentionConfirmOpen] = useState(false)
@@ -222,6 +232,14 @@ export function GeneralSettings() {
   useEffect(() => {
     if (!isDesktopRuntime()) return
     void fetchAppMode()
+    void getDesktopHost().runtime.getClaudeCode()
+      .then((status) => {
+        setClaudeCodeRuntime(status.defaultRuntimeId)
+        setHasInstalledClaudeCodeRuntime(status.hasInstalledRuntime)
+      })
+      .catch((error) => {
+        setClaudeCodeRuntimeError(error instanceof Error ? error.message : String(error))
+      })
   }, [fetchAppMode])
 
   useEffect(() => {
@@ -428,7 +446,7 @@ export function GeneralSettings() {
   const networkProxyError =
     networkDraft.proxy.mode === 'manual' && !networkProxyUrl
       ? t('settings.general.networkProxyUrlRequired')
-      : networkDraft.proxy.mode === 'manual' && !isValidHttpProxyUrl(networkProxyUrl)
+      : networkDraft.proxy.mode === 'manual' && !isValidHttpProxyUrl(networkProxyUrl, true)
         ? t('settings.general.networkProxyUrlInvalid')
         : null
   const timeoutSeconds = Math.round(networkDraft.aiRequestTimeoutMs / 1000)
@@ -614,6 +632,40 @@ export function GeneralSettings() {
     }
   }
 
+  const chooseClaudeCodeRuntime = async () => {
+    setClaudeCodeRuntimeSaving(true)
+    setClaudeCodeRuntimeError(null)
+    try {
+      const status = await getDesktopHost().runtime.chooseClaudeCode()
+      if (status) {
+        setClaudeCodeRuntime(status.defaultRuntimeId)
+        setHasInstalledClaudeCodeRuntime(status.hasInstalledRuntime)
+      }
+    } catch (error) {
+      setClaudeCodeRuntimeError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setClaudeCodeRuntimeSaving(false)
+    }
+  }
+
+  const setClaudeCodeRuntimeChoice = async (runtimeId: 'bundled' | 'installed') => {
+    if (runtimeId === 'installed' && !hasInstalledClaudeCodeRuntime) {
+      await chooseClaudeCodeRuntime()
+      return
+    }
+    setClaudeCodeRuntimeSaving(true)
+    setClaudeCodeRuntimeError(null)
+    try {
+      const status = await getDesktopHost().runtime.setClaudeCode(runtimeId)
+      setClaudeCodeRuntime(status.defaultRuntimeId)
+      setHasInstalledClaudeCodeRuntime(status.hasInstalledRuntime)
+    } catch (error) {
+      setClaudeCodeRuntimeError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setClaudeCodeRuntimeSaving(false)
+    }
+  }
+
   const openPortableDirPicker = async () => {
     setModeError(null)
     const host = getDesktopHost()
@@ -658,6 +710,40 @@ export function GeneralSettings() {
     setModeSwitchConfirmOpen(false)
     setPendingMode(null)
     setPendingPortableDir(null)
+  }
+
+  const checkLegacyMigration = async () => {
+    setLegacyMigrationChecking(true)
+    setLegacyMigrationError(null)
+    setLegacyMigrationResult(null)
+    try {
+      const result = await echoFlowMigrationApi.getStatus()
+      setLegacyMigrationResult(result)
+      if (result.summary.ready === 0) {
+        addToast({ type: 'info', message: t('settings.general.legacyMigrationNoData') })
+      }
+    } catch (error) {
+      setLegacyMigrationError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setLegacyMigrationChecking(false)
+    }
+  }
+
+  const confirmLegacyMigration = async () => {
+    setLegacyMigrationRunning(true)
+    setLegacyMigrationError(null)
+    try {
+      const result = await echoFlowMigrationApi.run()
+      setLegacyMigrationResult(result)
+      setLegacyMigrationConfirmOpen(false)
+      if (result.summary.migrated > 0 && result.summary.failed === 0 && result.summary.invalid === 0) {
+        addToast({ type: 'success', message: t('settings.general.legacyMigrationSuccess') })
+      }
+    } catch (error) {
+      setLegacyMigrationError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setLegacyMigrationRunning(false)
+    }
   }
 
   const confirmModeSwitch = async () => {
@@ -871,6 +957,40 @@ export function GeneralSettings() {
               </SettingsPill>
             ))}
           </div>
+        )}
+      </SettingsSection>
+
+      <SettingsSection
+        title="Claude Code runtime"
+        description="Choose which Claude Code executable starts new sessions."
+      >
+        <div className="flex flex-wrap gap-2">
+          <SettingsPill
+            selected={claudeCodeRuntime === 'bundled'}
+            disabled={claudeCodeRuntimeSaving}
+            onClick={() => void setClaudeCodeRuntimeChoice('bundled')}
+          >
+            Bundled
+          </SettingsPill>
+          <SettingsPill
+            selected={claudeCodeRuntime === 'installed'}
+            disabled={claudeCodeRuntimeSaving || !hasInstalledClaudeCodeRuntime}
+            onClick={() => void setClaudeCodeRuntimeChoice('installed')}
+          >
+            Installed
+          </SettingsPill>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={claudeCodeRuntimeSaving}
+            loading={claudeCodeRuntimeSaving}
+            onClick={() => void chooseClaudeCodeRuntime()}
+          >
+            Choose installed runtime
+          </Button>
+        </div>
+        {claudeCodeRuntimeError && (
+          <p role="alert" className="mt-2 text-xs text-[var(--color-error)]">{claudeCodeRuntimeError}</p>
         )}
       </SettingsSection>
 
@@ -1696,6 +1816,46 @@ export function GeneralSettings() {
               </div>
             </div>
 
+            <div className="mt-3 rounded-[var(--radius-lg)] border border-[var(--color-border-separator)] bg-[var(--color-surface)] px-3 py-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t('settings.general.legacyMigrationTitle')}</div>
+                  <div className="mt-1 text-xs leading-5 text-[var(--color-text-tertiary)]">{t('settings.general.legacyMigrationDescription')}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    loading={legacyMigrationChecking}
+                    disabled={legacyMigrationRunning}
+                    onClick={() => void checkLegacyMigration()}
+                  >
+                    {t('settings.general.legacyMigrationCheck')}
+                  </Button>
+                  {(legacyMigrationResult?.summary.ready ?? 0) > 0 && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={legacyMigrationChecking || legacyMigrationRunning}
+                      onClick={() => setLegacyMigrationConfirmOpen(true)}
+                    >
+                      {t('settings.general.legacyMigrationImport')}
+                    </Button>
+                  )}
+                </div>
+              </div>
+              {legacyMigrationResult && (
+                <div className="mt-3 grid gap-2 sm:grid-cols-4">
+                  <div className="rounded-md bg-[var(--color-surface-container-low)] px-2.5 py-2 text-xs text-[var(--color-text-secondary)]">{t('settings.general.legacyMigrationReadyCount', { count: legacyMigrationResult.summary.ready })}</div>
+                  <div className="rounded-md bg-[var(--color-surface-container-low)] px-2.5 py-2 text-xs text-[var(--color-text-secondary)]">{t('settings.general.legacyMigrationExistsCount', { count: legacyMigrationResult.summary['target-exists'] })}</div>
+                  <div className="rounded-md bg-[var(--color-surface-container-low)] px-2.5 py-2 text-xs text-[var(--color-text-secondary)]">{t('settings.general.legacyMigrationMissingCount', { count: legacyMigrationResult.summary.missing })}</div>
+                  <div className="rounded-md bg-[var(--color-surface-container-low)] px-2.5 py-2 text-xs text-[var(--color-text-secondary)]">{t('settings.general.legacyMigrationFailedCount', { count: legacyMigrationResult.summary.failed + legacyMigrationResult.summary.invalid })}</div>
+                </div>
+              )}
+              {legacyMigrationError && <div role="alert" className="mt-3 text-xs text-[var(--color-error)]">{t('settings.general.legacyMigrationFailed', { error: legacyMigrationError })}</div>}
+            </div>
+
             {activeConfigDir && (
               <div className="mt-3 rounded-[var(--radius-lg)] border border-[var(--color-border-separator)] bg-[var(--color-surface)] px-3 py-2">
                 <div className="text-[11px] font-medium uppercase tracking-wide text-[var(--color-text-tertiary)]">{t('settings.general.storageActiveDir')}</div>
@@ -1753,6 +1913,24 @@ export function GeneralSettings() {
         cancelLabel={t('common.cancel')}
         confirmVariant="primary"
         loading={modeActionRunning}
+      />
+      <ConfirmDialog
+        open={legacyMigrationConfirmOpen}
+        onClose={() => {
+          if (!legacyMigrationRunning) setLegacyMigrationConfirmOpen(false)
+        }}
+        onConfirm={() => void confirmLegacyMigration()}
+        title={t('settings.general.legacyMigrationConfirmTitle')}
+        body={(
+          <div className="space-y-3">
+            <p>{t('settings.general.legacyMigrationConfirmBody')}</p>
+            {legacyMigrationError && <div role="alert" className="text-xs text-[var(--color-error)]">{t('settings.general.legacyMigrationFailed', { error: legacyMigrationError })}</div>}
+          </div>
+        )}
+        confirmLabel={t('settings.general.legacyMigrationImport')}
+        cancelLabel={t('common.cancel')}
+        confirmVariant="primary"
+        loading={legacyMigrationRunning}
       />
       <ConfirmDialog
         open={autoDreamConfirmOpen}

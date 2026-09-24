@@ -302,6 +302,9 @@ async function selectAcrossMessageText(
     await Promise.resolve()
   })
   await waitForSelectionMenuUpdate()
+  await waitFor(() => {
+    expect(screen.getByRole('button', { name: 'Add to chat' })).toBeTruthy()
+  })
 }
 
 async function expandChangedFileCards() {
@@ -446,7 +449,7 @@ describe('MessageList nested tool calls', () => {
   })
 
   it('keeps the ImageGen result as the only image owner when final Markdown repeats its managed path', () => {
-    const generatedPath = '/Users/me/.claude/cc-haha/generated-images/session/result.png'
+    const generatedPath = '/Users/me/.claude/echoflow-code/generated-images/session/result.png'
     render(<MessageList sessionId={ACTIVE_TAB} />)
     const store = useChatStore.getState()
 
@@ -2531,7 +2534,7 @@ describe('MessageList nested tool calls', () => {
   it('summarizes repeated Edit events for one path as one changed file', () => {
     render(<MessageList sessionId={ACTIVE_TAB} />)
     const store = useChatStore.getState()
-    const filePath = '/tmp/cc-haha-manual-qa/live-run.json'
+    const filePath = '/tmp/echoflow-code-manual-qa/live-run.json'
 
     act(() => {
       for (let index = 0; index < 4; index += 1) {
@@ -2575,8 +2578,8 @@ describe('MessageList nested tool calls', () => {
 
     act(() => {
       for (const [index, filePath] of [
-        '/tmp/cc-haha-manual-qa/live-run.json',
-        '/tmp/cc-haha-manual-qa/summary.json',
+        '/tmp/echoflow-code-manual-qa/live-run.json',
+        '/tmp/echoflow-code-manual-qa/summary.json',
       ].entries()) {
         const toolUseId = `edit-distinct-${index}`
         store.handleServerMessage(ACTIVE_TAB, {

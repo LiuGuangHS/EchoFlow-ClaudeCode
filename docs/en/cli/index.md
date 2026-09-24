@@ -7,7 +7,7 @@ order: 0
 
 # Install and Run
 
-The CLI is the core of Claude Code Haha — every desktop session runs one underneath. If you only want the graphical app, installing that is enough; see [Download and install](../start/install.md). The steps below are for people who want a terminal workflow, `--print` automation, or a source checkout to read and contribute to.
+The CLI is the core of EchoFlow Code — every desktop session runs one underneath. If you only want the graphical app, installing that is enough; see [Download and install](../start/install.md). The steps below are for people who want a terminal workflow, `--print` automation, or a source checkout to read and contribute to.
 
 The CLI runs from source only. There is no separate installer for it.
 
@@ -16,8 +16,8 @@ The CLI runs from source only. There is no separate installer for it.
 Install [Git](https://git-scm.com/downloads) and [Bun](https://bun.sh) first, then:
 
 ```bash
-git clone https://github.com/NanmiCoder/cc-haha.git
-cd cc-haha
+git clone https://github.com/LiuGuangHS/EchoFlow-ClaudeCode.git echoflow-code
+cd echoflow-code
 bun install
 ```
 
@@ -44,8 +44,8 @@ Never commit a real API key, and never paste one into an issue, a screenshot, or
 macOS, Linux, or Git Bash:
 
 ```bash
-./bin/claude-haha
-./bin/claude-haha -p "Summarize the directory structure of this project"
+./bin/echoflow-code
+./bin/echoflow-code -p "Summarize the directory structure of this project"
 ```
 
 Windows PowerShell or cmd:
@@ -58,16 +58,16 @@ Once you see streaming output and tool calls, the provider, the project director
 
 ## Run from any directory
 
-`./bin/claude-haha` only works inside the checkout. Put it on your `PATH` and you can type `claude-haha` in any project directory — the CLI treats the current working directory as the project root.
+`./bin/echoflow-code` only works inside the checkout. Put it on your `PATH` and you can type `echoflow-code` in any project directory — the CLI treats the current working directory as the project root.
 
 On macOS and Linux, add this to `~/.bashrc` or `~/.zshrc`:
 
 ```bash
 # Option 1: add to PATH (recommended)
-export PATH="$HOME/path/to/claude-code-haha/bin:$PATH"
+export PATH="$HOME/path/to/echoflow-code/bin:$PATH"
 
 # Option 2: alias
-alias claude-haha="$HOME/path/to/claude-code-haha/bin/claude-haha"
+alias echoflow-code="$HOME/path/to/echoflow-code/bin/echoflow-code"
 ```
 
 Reload the shell config:
@@ -79,19 +79,19 @@ source ~/.zshrc  # or source ~/.bashrc
 On Windows, add the same `PATH` line to `~/.bashrc` under Git Bash:
 
 ```bash
-export PATH="$HOME/path/to/claude-code-haha/bin:$PATH"
+export PATH="$HOME/path/to/echoflow-code/bin:$PATH"
 ```
 
 To verify, start it from a different directory and ask what the current directory is:
 
 ```bash
 cd ~/your-other-project
-claude-haha
+echoflow-code
 ```
 
 ### Windows with a WSL toolchain
 
-If `claude-haha` runs on Windows or Git Bash while Node, Python, uv, and bun live inside WSL, call them through WSL explicitly:
+If `echoflow-code` runs on Windows or Git Bash while Node, Python, uv, and bun live inside WSL, call them through WSL explicitly:
 
 ```bash
 wsl -e bash -lc 'node --version && python3 --version'

@@ -24,7 +24,7 @@ import { resolveCuHelperAppBundle } from './cuHelperBridge.js'
  *
  * WHY THIS EXISTS (the real Screen Recording root cause, proven by tccd logs):
  * macOS resolves the TCC *subject* for Screen Recording to the OUTERMOST `.app`
- * on the running binary's path. When packaged, `cc-haha-computer-use.app` is
+ * on the running binary's path. When packaged, `echoflow-code-computer-use.app` is
  * NESTED inside the host Electron app (…/Contents/Resources/app.asar.unpacked/…),
  * so the helper's Screen Recording subject becomes the HOST bundle id — granting
  * the helper itself does nothing; only granting the host works. (Accessibility is
@@ -38,16 +38,16 @@ import { resolveCuHelperAppBundle } from './cuHelperBridge.js'
  * helper is its OWN Screen Recording subject, so the user grants the helper ONCE
  * and BOTH Screen Recording + Accessibility land on the same stable identity.
  * TCC matches the grant by the helper's certificate-based designated requirement
- * (Apple Development cert + `dev.cchaha.cu-helper`), so it survives rebuilds and
+ * (Apple Development cert + `dev.echoflow.cu-helper`), so it survives rebuilds and
  * path changes (a fresh path immediately reads "allowed", authReason=4).
  *
- * Dev builds (`.build/release/cc-haha-computer-use.app`) are already standalone
+ * Dev builds (`.build/release/echoflow-code-computer-use.app`) are already standalone
  * (not nested), so they are used in place — no copy, no dev friction.
  */
 
-const APP_NAME = 'cc-haha-computer-use.app'
-const INNER_REL = path.join('Contents', 'MacOS', 'cc-haha-computer-use')
-const HELPER_IDENTIFIER = 'dev.cchaha.cu-helper'
+const APP_NAME = 'echoflow-code-computer-use.app'
+const INNER_REL = path.join('Contents', 'MacOS', 'echoflow-code-computer-use')
+const HELPER_IDENTIFIER = 'dev.echoflow.cu-helper'
 const SIDECAR_IDENTIFIER = 'com.claude-code-haha.desktop.sidecar'
 const SIGNED_FINGERPRINT_FILES = [
   INNER_REL,

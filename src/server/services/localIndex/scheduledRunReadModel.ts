@@ -50,7 +50,7 @@ const busyCooldownUntil = new Map<string, number>()
 
 const SCHEDULED_RUN_PARSER_VERSION = 1
 const FINGERPRINT_WINDOW_BYTES = 64 * 1024
-const SCHEDULED_RUN_FINGERPRINT_PREFIX = 'cc-haha-scheduled-run-fingerprint:v1:'
+const SCHEDULED_RUN_FINGERPRINT_PREFIX = 'echoflow-code-scheduled-run-fingerprint:v1:'
 
 type SourceStats = Pick<Stats, 'size' | 'mtimeMs' | 'ctimeMs' | 'dev' | 'ino'>
 
@@ -74,7 +74,7 @@ export function captureScheduledRunReadModelTarget(
   return {
     scope,
     sourcePath,
-    databasePath: join(scope, 'cc-haha', 'db', 'scheduled-runs-v1.sqlite'),
+    databasePath: join(scope, 'echoflow-code', 'db', 'scheduled-runs-v1.sqlite'),
   }
 }
 

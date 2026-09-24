@@ -7,7 +7,7 @@ import { workspaceBrowserPdfFilename } from './workspaceBrowser'
 
 const directories: string[] = []
 async function fixture() {
-  const directory = await mkdtemp(path.join(os.tmpdir(), 'cc-haha-pdf-'))
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'echoflow-code-pdf-'))
   directories.push(directory)
   return directory
 }

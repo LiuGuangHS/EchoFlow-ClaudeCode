@@ -8,11 +8,9 @@ import {
 } from '../constants/grokOfficialProvider'
 import { normalizeRuntimeSelection } from '../lib/runtimeSelection'
 
-const STORAGE_KEY = 'cc-haha-session-runtime'
+const STORAGE_KEY = 'echoflow-code-session-runtime'
 // Session-list metadata can lag behind runtime changes or arrive out of order.
-// Protect local choices until the server confirms them. Object identity also
-// lets callers discard list responses started before a choice/confirmation.
-// This transient state follows moveSelection without changing persisted JSON.
+// Protect local choices until the server confirms them.
 const pendingRuntimes = new WeakSet<RuntimeSelection>()
 const RETIRED_GROK_MODEL_IDS = new Set([
   'grok-build',
@@ -27,11 +25,19 @@ const RETIRED_GROK_MODEL_IDS = new Set([
 
 export const DRAFT_RUNTIME_SELECTION_KEY = '__draft__'
 
+export type RuntimeRequestStatus = 'pending' | 'unconfirmed' | 'failed'
+
 type SessionRuntimeStore = {
   selections: Record<string, RuntimeSelection>
+  runtimeRequestStatusBySessionId: Record<string, RuntimeRequestStatus>
+  latestRequestIdBySessionId: Record<string, string>
   setSelection: (key: string, selection: RuntimeSelection) => void
   clearSelection: (key: string) => void
   moveSelection: (fromKey: string, toKey: string) => void
+  markRequestPending: (sessionId: string, requestId?: string) => void
+  markRequestApplied: (sessionId: string, requestId?: string) => void
+  markRequestUnconfirmed: (sessionId: string) => void
+  markRequestFailed: (sessionId: string, requestId?: string) => void
   settleSelection: (key: string) => void
   syncFromSessions: (sessions: SessionListItem[], startedWith?: Record<string, RuntimeSelection>) => void
 }
@@ -109,6 +115,8 @@ function persistSelections(selections: Record<string, RuntimeSelection>) {
 
 export const useSessionRuntimeStore = create<SessionRuntimeStore>((set) => ({
   selections: loadSelections(),
+  runtimeRequestStatusBySessionId: {},
+  latestRequestIdBySessionId: {},
 
   setSelection: (key, selection) =>
     set((state) => {
@@ -117,37 +125,90 @@ export const useSessionRuntimeStore = create<SessionRuntimeStore>((set) => ({
       if (normalized) {
         pendingRuntimes.add(normalized)
         selections[key] = normalized
-      } else delete selections[key]
+      }
+      else delete selections[key]
       persistSelections(selections)
       return { selections }
     }),
 
   clearSelection: (key) =>
     set((state) => {
-      if (!(key in state.selections)) return state
-      const { [key]: _removed, ...rest } = state.selections
-      persistSelections(rest)
-      return { selections: rest }
+      const hasSelection = key in state.selections
+      const hasRequestStatus = key in state.runtimeRequestStatusBySessionId
+      if (!hasSelection && !hasRequestStatus) return state
+
+      const { [key]: _removedSelection, ...selections } = state.selections
+      const { [key]: _removedRequestStatus, ...runtimeRequestStatusBySessionId } =
+        state.runtimeRequestStatusBySessionId
+      if (hasSelection) persistSelections(selections)
+      return { selections, runtimeRequestStatusBySessionId }
     }),
 
   moveSelection: (fromKey, toKey) =>
     set((state) => {
       const selection = state.selections[fromKey]
-      if (!selection) return state
-      const { [fromKey]: _removed, ...rest } = state.selections
+      const hasRequestStatus = fromKey in state.runtimeRequestStatusBySessionId
+      const { [fromKey]: _removedRequestStatus, ...runtimeRequestStatusBySessionId } =
+        state.runtimeRequestStatusBySessionId
+      if (!selection) {
+        if (!hasRequestStatus) return state
+        return { runtimeRequestStatusBySessionId }
+      }
+      const { [fromKey]: _removedSelection, ...rest } = state.selections
       const selections = {
         ...rest,
         [toKey]: selection,
       }
       persistSelections(selections)
-      return { selections }
+      return { selections, runtimeRequestStatusBySessionId }
+    }),
+
+  markRequestPending: (sessionId, requestId) =>
+    set((state) => ({
+      runtimeRequestStatusBySessionId: {
+        ...state.runtimeRequestStatusBySessionId,
+        [sessionId]: 'pending',
+      },
+      latestRequestIdBySessionId: requestId
+        ? { ...state.latestRequestIdBySessionId, [sessionId]: requestId }
+        : state.latestRequestIdBySessionId,
+    })),
+
+  markRequestApplied: (sessionId, requestId) =>
+    set((state) => {
+      if (requestId && state.latestRequestIdBySessionId[sessionId] !== requestId) return state
+      const { [sessionId]: _status, ...runtimeRequestStatusBySessionId } = state.runtimeRequestStatusBySessionId
+      return { runtimeRequestStatusBySessionId }
+    }),
+
+  markRequestUnconfirmed: (sessionId) =>
+    set((state) => {
+      if (state.runtimeRequestStatusBySessionId[sessionId] !== 'pending') return state
+      return {
+        runtimeRequestStatusBySessionId: {
+          ...state.runtimeRequestStatusBySessionId,
+          [sessionId]: 'unconfirmed',
+        },
+      }
+    }),
+
+  markRequestFailed: (sessionId, requestId) =>
+    set((state) => {
+      if (requestId && state.latestRequestIdBySessionId[sessionId] !== requestId) return state
+      const currentStatus = state.runtimeRequestStatusBySessionId[sessionId]
+      if (currentStatus !== 'pending' && currentStatus !== 'unconfirmed') return state
+      return {
+        runtimeRequestStatusBySessionId: {
+          ...state.runtimeRequestStatusBySessionId,
+          [sessionId]: 'failed',
+        },
+      }
     }),
 
   settleSelection: (key) =>
     set((state) => {
       const current = state.selections[key]
       if (!current || !pendingRuntimes.has(current)) return state
-      // A new identity invalidates requests started before confirmation/failure.
       return { selections: { ...state.selections, [key]: { ...current } } }
     }),
 
@@ -175,9 +236,7 @@ export const useSessionRuntimeStore = create<SessionRuntimeStore>((set) => ({
           delete selections[session.id]
           continue
         }
-        if (matchesCurrent && !pending) {
-          continue
-        }
+        if (matchesCurrent && !pending) continue
         if (selections === state.selections) selections = { ...state.selections }
         selections[session.id] = selection
       }

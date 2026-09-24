@@ -1,36 +1,41 @@
-# Claude Code Haha
+# EchoFlow Code
 
 <p align="center">
-  <img src="docs/images/readme-cover-zh.jpg" alt="cc-haha — Claude Code 开源桌面端" width="960">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-horizontal-dark.svg">
+    <img src="docs/images/logo-horizontal.svg" alt="EchoFlow Code" width="480">
+  </picture>
 </p>
 
 <div align="center">
 
-[![GitHub Stars](https://img.shields.io/github/stars/NanmiCoder/cc-haha?style=social)](https://github.com/NanmiCoder/cc-haha/stargazers)
-[![GitHub Forks](https://img.shields.io/github/forks/NanmiCoder/cc-haha?style=social)](https://github.com/NanmiCoder/cc-haha/network/members)
-[![GitHub Issues](https://img.shields.io/github/issues/NanmiCoder/cc-haha)](https://github.com/NanmiCoder/cc-haha/issues)
-[![GitHub Pull Requests](https://img.shields.io/github/issues-pr/NanmiCoder/cc-haha)](https://github.com/NanmiCoder/cc-haha/pulls)
-[![License](https://img.shields.io/badge/License-MIT-blue)](https://github.com/NanmiCoder/cc-haha/blob/main/LICENSE)
-[![中文](https://img.shields.io/badge/🇨🇳_简体中文-当前-blue)](README.zh-CN.md)
-[![English](https://img.shields.io/badge/🇺🇸_English-Available-green)](README.md)
-[![Docs](https://img.shields.io/badge/📖_文档站点-Visit-FF7A00)](https://cchaha.ai)
+[![GitHub Stars](https://img.shields.io/github/stars/LiuGuangHS/EchoFlow-ClaudeCode?style=social)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/stargazers)
+[![GitHub Forks](https://img.shields.io/github/forks/LiuGuangHS/EchoFlow-ClaudeCode?style=social)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/network/members)
+[![GitHub Issues](https://img.shields.io/github/issues/LiuGuangHS/EchoFlow-ClaudeCode)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/issues)
+[![GitHub Pull Requests](https://img.shields.io/github/issues-pr/LiuGuangHS/EchoFlow-ClaudeCode)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/pulls)
+[![License](https://img.shields.io/badge/License-MIT-blue)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/LICENSE)
+[![English](https://img.shields.io/badge/English-Available-green)](README.md)
+[![Docs](https://img.shields.io/badge/文档站点-Visit-FF7A00)](https://code.echoflow.cn)
 
-**简体中文** · [English](README.md)
+[English](README.md) · **简体中文**
 
 </div>
 
-Claude Code Haha 是一个**桌面端 Claude Code 工作台**：多会话与全局搜索、分支 / Worktree 启动、Diff 审阅、内置浏览器预览、图形化权限审批、模型自选（Claude / ChatGPT / Grok / 预设 / 本地端点）、图片生成、MCP 与 SubAgent 可视化管理、Agent Teams 协作工作台、动态 Workflow 编排、模型请求追踪、Computer Use、技能市场、多主题、桌面宠物、H5 远程访问、IM 接入和定时任务，集中在一个 macOS / Windows / Linux APP 里。
+EchoFlow Code 是一个**本地优先的 Claude Code 与模型服务商桌面工作台**：运行编程会话、逐项审阅 Diff、编排 Agent Teams 与 Dynamic Workflow，并掌控每一次工具调用和模型连接。
 
 <p align="center">
-  <a href="#桌面端预览">桌面端预览</a> · <a href="#安装桌面端">安装桌面端</a> · <a href="#桌面端亮点">桌面端亮点</a> · <a href="#更多文档">更多文档</a> · <a href="#赞助与合作">赞助与合作</a> · <a href="#用户交流群">用户交流群</a>
+  <a href="https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest"><strong>下载桌面端</strong></a> · <a href="docs/start/first-session.md"><strong>5 分钟跑通</strong></a> · <a href="https://code.echoflow.cn">查看文档</a> · <a href="https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/discussions">反馈与讨论</a>
 </p>
 
----
+| 每次改动可审阅 | 复杂任务可编排 | 环境由你掌控 |
+| --- | --- | --- |
+| 工具调用、工作区 Diff 和撤销都保持可见。 | SubAgent、Agent Teams 与 Dynamic Workflow 让并行工作可追踪。 | 使用官方 OAuth、厂商 API、本地模型或自定义兼容端点。 |
 
 ## 桌面端预览
 
 <p align="center">
-  <a href="https://github.com/NanmiCoder/cc-haha/releases"><img src="https://img.shields.io/badge/⬇_下载桌面端-macOS_%7C_Windows_%7C_Linux-FF7A00?style=for-the-badge" alt="下载桌面端"></a>
+  <a href="https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases"><img src="https://img.shields.io/badge/下载桌面端-macOS_%7C_Windows_%7C_Linux-FF7A00?style=for-the-badge" alt="下载桌面端"></a>
+  <a href="docs/start/install.md"><img src="https://img.shields.io/badge/安装指南-Guide-gray?style=for-the-badge" alt="安装指南"></a>
 </p>
 
 <table>
@@ -46,119 +51,35 @@ Claude Code Haha 是一个**桌面端 Claude Code 工作台**：多会话与全�
   </tr>
 </table>
 
----
-
-## 赞助与合作
-
-本项目由个人利用业余时间维护，欢迎企业或个人赞助支持持续开发，也可洽谈定制、集成或商务合作。
-
-<table>
-  <thead>
-    <tr>
-      <th width="220">赞助商</th>
-      <th align="left">介绍</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td align="center" valign="middle">
-        <a href="https://aruhub.com/sign-up?aff=Z54g">
-          <img src="docs/images/sponsors/aruhub-logo.png" width="180" alt="AruHub">
-        </a>
-      </td>
-      <td valign="middle">
-        感谢 <a href="https://aruhub.com/sign-up?aff=Z54g">AruHub</a> 对本项目的赞助！AruHub 专注为开发者提供长期稳定的主力 API 上游服务。面向 Codex / Claude Code 等高频 AI Coding 场景，提供 GPT 企业分组官方接口、Claude 稳定企业分组，适合长时间持续调用；同时覆盖 GPT、Claude 等主流模型。Image 2 / 2.5 全天稳定供应，低至 0.04 元/张。按量付费，支持企业大用量、开发票及退款。通过 <a href="https://aruhub.com/sign-up?aff=Z54g">专属链接</a>注册即送 1 美元全模型通用额度，不限制模型使用。
-      </td>
-    </tr>
-    <tr>
-      <td align="center" valign="middle">
-        <a href="https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=cc-haha">
-          <img src="docs/images/sponsors/atlascloud-logo-black.png#gh-light-mode-only" width="180" alt="Atlas Cloud">
-          <img src="docs/images/sponsors/atlascloud-logo-white.png#gh-dark-mode-only" width="180" alt="Atlas Cloud">
-        </a>
-      </td>
-      <td valign="middle">
-        感谢 <a href="https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=cc-haha">Atlas Cloud</a> 赞助本项目！Atlas Cloud 是一个全模态 AI 推理平台，让开发者通过统一的 AI API 访问视频生成、图像生成和 LLM API，无需分别维护多个厂商集成，即可调用 300+ 精选模型。cc-haha 已内置 Atlas Cloud 供应商预设，在设置里选择后填入 API Key 即可直接使用。Atlas Cloud 最新推出 <a href="https://www.atlascloud.ai/console/coding-plan">coding plan 优惠</a>，为开发者提供更具性价比的 API 访问预算。
-      </td>
-    </tr>
-    <tr>
-      <td align="center" valign="middle">
-        <a href="https://www.apismart.ai">
-          <img src="docs/images/sponsors/apismart-logo.png" width="180" alt="ApiSmart">
-        </a>
-      </td>
-      <td valign="middle">
-        感谢 <a href="https://www.apismart.ai">ApiSmart</a> 赞助本项目！ApiSmart 通过单一 API 提供对主流 AI 模型的统一访问。只需一个 API Key，即可通过兼容 OpenAI 的接口连接大语言模型、图像模型和视频模型。轻松切换模型、简化账单管理，并通过智能路由和自动故障转移提升可靠性。
-      </td>
-    </tr>
-  </tbody>
-</table>
-
-📧 **联系邮箱**：relakkes@gmail.com
-
----
-
 ## 安装桌面端
 
-1. 前往 [Releases](https://github.com/NanmiCoder/cc-haha/releases) 下载 macOS / Windows / Linux 桌面端安装包。
-2. 首次启动后，在桌面端设置里配置模型提供商、API Key 和默认模型。
-3. 正式 macOS Release 需要经过签名和公证；如果安装的是 draft/unsigned 临时包，首次打开可能仍需手动放行。Windows 未签名安装包可能出现 SmartScreen 提示，点「更多信息」→「仍要运行」即可。详见 [桌面端安装指南](docs/start/install.md)。
-
-发布可信度与隐私：[Code signing policy](docs/start/code-signing.md) · [隐私与联网说明](docs/start/privacy.md)
+1. 前往 [Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases) 下载 macOS、Windows 或 Linux 安装包。
+2. 首次启动后，在桌面端设置里配置模型服务商、API Key 和默认模型。
+3. 正式 macOS Release 需要经过签名和公证；draft 或 unsigned 临时包可能需要手动放行。Windows 未签名安装包可能出现 SmartScreen 提示，点“更多信息”后选择“仍要运行”。详见[安装指南](docs/start/install.md)。
 
 ## 从源码启动 CLI
-
-适合想调试底层 CLI、服务端或自行开发的用户：
 
 ```bash
 bun install
 cp .env.example .env
-./bin/claude-haha
+./bin/echoflow-code
 ```
 
-更多配置见 [环境变量](docs/cli/env.md) 和 [命令行安装与启动](docs/cli/index.md)。
+更多配置见[环境变量](docs/cli/env.md)和[命令行安装与启动](docs/cli/index.md)。
 
----
+## EchoFlow 的特别强化
 
-## 用户交流群
+EchoFlow Code 的目标不是再包一层聊天框，而是把 Coding Agent 变成看得见、审得了、能恢复的工作台。
 
-使用过程中有问题、想反馈 Bug，或者想看看别人怎么用，欢迎扫码加入 cc-haha 企业微信用户群。也可以直接来 [Issues](https://github.com/NanmiCoder/cc-haha/issues) 提问。企业定制 / 私有化部署 / Agent 定制需求，请联系作者 [NanmiCoder](https://github.com/NanmiCoder)。
-
-<p align="center">
-  <img src="docs/images/community/wechat-group-qr.png" width="300" alt="cc-haha 企业微信用户群二维码">
-</p>
-
----
-
-## ☕ 请作者喝杯咖啡
-
-如果这个项目对您有帮助，欢迎打赏支持，您的每一份支持都是我持续更新的动力 ❤️
-
-<table>
-<tr>
-<td align="center" width="33%">
-<img src="docs/images/donate/wechat_pay.jpeg" width="250" alt="微信赞赏"><br>
-<b>微信赞赏</b>
-</td>
-<td align="center" width="33%">
-<img src="docs/images/donate/zfb_pay.png" width="250" alt="支付宝"><br>
-<b>支付宝</b>
-</td>
-<td align="center" width="33%">
-<a href="https://buymeacoffee.com/relakkes" target="_blank">
-<img src="docs/images/donate/bmc_button.png" width="250" alt="Buy Me a Coffee">
-</a><br>
-<b>Buy Me a Coffee</b>
-</td>
-</tr>
-</table>
-
----
+- **多 Agent 协作可视化**：Agent Teams 工作台集中展示成员、共享任务、通信流、依赖泳道和已完成会话历史；Dynamic Workflow 可并发或流水线编排，并显示阶段进度、中断与恢复。
+- **每一步都可审阅**：权限请求、工具调用、工作区 Diff、内置浏览器预览、模型 Trace、诊断和撤销路径都在界面中，不把 Agent 执行藏在一条回复后面。
+- **模型与权限由你掌控**：可连接 Claude、ChatGPT、Grok 官方登录、厂商 API、LM Studio、Ollama 和兼容的自定义端点；Provider 凭据、模型选择和权限模式都由你决定。
+- **不止一台桌面端**：通过 H5、Android 和 IM 接力同一个会话，同时仍以桌面端作为项目上下文与高风险审批的主界面。
+- **出问题有证据可查**：本地活动记录、诊断导出、兼容升级和受控修复路径帮助定位启动、Provider 或会话故障，同时避免暴露密钥。
 
 ## 桌面端亮点
 
-- **多会话工作台**：标签页、项目切换、终端入口和会话历史集中管理，侧边栏宽度可拖拽。
-- **全局搜索**：按 Cmd+K 跨所有会话全文搜索，一键跳到命中位置。
+- **多会话与全局搜索**：标签页、项目切换、终端入口、会话历史和跨会话全文搜索集中管理。
 - **分支 / Worktree 启动**：新会话可以选择仓库分支，并决定用当前工作树还是隔离 Worktree。
 - **改动逐个文件审阅**：右侧工作区列出本轮改动，点开就是带语法高亮的 Diff，整轮可撤销。
 - **内置浏览器预览**：Agent 刚改完的页面直接在应用内渲染，登录态和 Cookie 真实可用。
@@ -176,24 +97,25 @@ cp .env.example .env
 - **Computer Use**：让 Agent 在授权后截图、点击、输入并控制桌面应用。
 - **桌面宠物**：搭搭、弧弧、补补、回回随任务状态换动作，也能自己做一只（默认关闭）。
 - **H5 远程访问**：扫码用手机浏览器接入当前会话，锁屏切后台都不打断正在跑的任务。
-- **IM 接入**：通过 Telegram / 飞书 / 微信 / 钉钉 / WhatsApp / 企业微信 / QQ / Slack 远程对话、切换项目和审批权限。
+- **IM 接入**：通过 Telegram / 飞书 / 微信 / 钉钉 / WhatsApp 远程对话、切换项目和审批权限。
 - **定时任务与用量统计**：创建计划任务在独立会话执行，并查看本机 Token 使用趋势。
 
 ---
 
 ## 更多文档
 
-完整文档站：<https://cchaha.ai>
+完整文档站：<https://code.echoflow.cn>
 
 | 分区 | 文档 |
 |------|------|
-| **开始使用** | [这是什么](docs/start/index.md) · [下载与安装](docs/start/install.md) · [连接模型服务](docs/start/models.md) · [跑通第一条会话](docs/start/first-session.md) · [故障排查](docs/start/troubleshooting.md) |
-| **桌面端功能** | [功能总览](docs/desktop/index.md) · [Computer Use](docs/desktop/computer-use.md) · [桌面宠物](docs/desktop/pets.md) · [手机 H5 与 IM 接力](docs/desktop/remote.md) |
-| **IM 接入** | [总览与配对流程](docs/im/index.md) · [飞书](docs/im/feishu.md) · [Telegram](docs/im/telegram.md) · [微信](docs/im/wechat.md) · [钉钉](docs/im/dingtalk.md) · [WhatsApp](docs/im/whatsapp.md) · [企业微信](docs/im/wecom.md) · [QQ](docs/im/qq.md) · [Slack](docs/im/slack.md) |
-| **命令行** | [安装与启动](docs/cli/index.md) · [命令参考](docs/cli/reference.md) · [环境变量](docs/cli/env.md) |
-| **深入原理** | [桌面端架构](docs/internals/desktop.md) · [多 Agent 系统](docs/internals/agent.md) · [Skills 系统](docs/internals/skills.md) · [记忆系统](docs/internals/memory.md) · [Computer Use 架构](docs/internals/computer-use.md) · [本地 Server 与 API](docs/internals/server.md) · [Channel 系统](docs/internals/channel.md) · [项目结构](docs/internals/structure.md) · [参与贡献与质量门禁](docs/internals/contributing.md) |
+| 开始使用 | [下载与安装](docs/start/install.md) · [连接模型服务](docs/start/models.md) · [跑通第一条会话](docs/start/first-session.md) · [故障排查](docs/start/troubleshooting.md) |
+| 桌面端功能 | [功能总览](docs/desktop/index.md) · [Agent Teams](docs/desktop/agent-teams.md) · [Dynamic Workflow](docs/desktop/dynamic-workflow.md) · [Computer Use](docs/desktop/computer-use.md) · [桌面宠物](docs/desktop/pets.md) · [手机 H5 与 IM 接力](docs/desktop/remote.md) |
+| 命令行 | [安装与启动](docs/cli/index.md) · [命令参考](docs/cli/reference.md) · [环境变量](docs/cli/env.md) |
+| 深入原理 | [桌面端架构](docs/internals/desktop.md) · [多 Agent 系统](docs/internals/agent.md) · [Skills 系统](docs/internals/skills.md) · [本地 Server 与 API](docs/internals/server.md) · [参与贡献与质量门禁](docs/internals/contributing.md) |
 
----
+## 反馈与讨论
+
+使用问题、功能想法和实践交流请到 [Discussions](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/discussions)；可复现的产品问题请提交 [Issues](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/issues)。分享日志前先看 [SUPPORT.md](SUPPORT.md)，安全漏洞请遵循 [SECURITY.md](SECURITY.md)。
 
 ## 技术栈
 
@@ -210,19 +132,6 @@ cp .env.example .env
 
 ## 致谢
 
-感谢以下开源项目和社区实践为本项目提供参考与启发：
-
 - [React](https://github.com/facebook/react)：前端工程与组件化 UI 生态。
 - [Electron](https://github.com/electron/electron)：跨端桌面应用能力与工程实践。
 - [cc-switch](https://github.com/farion1231/cc-switch)：模型供应商配置能力参考。
-- [LINUX DO](https://linux.do/)：新的理想型开发者社区。
-
----
-
-## ⭐ Star History
-
-如果这个项目对你有帮助，欢迎点一个 ⭐ Star，让更多人发现 Claude Code Haha。
-
-<a href="https://www.repostars.dev/?repos=NanmiCoder%2Fcc-haha&theme=ocean">
-  <img alt="Star History Chart" src="https://www.repostars.dev/api/embed?repo=NanmiCoder%2Fcc-haha&theme=ocean" />
-</a>

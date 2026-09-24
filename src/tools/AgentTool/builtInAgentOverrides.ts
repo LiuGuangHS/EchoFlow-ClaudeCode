@@ -1,13 +1,15 @@
+import { join } from 'node:path'
 import { EFFORT_LEVELS, type EffortValue, parseEffortValue } from '../../utils/effort.js'
 import {
   getEnabledSettingSources,
   type SettingSource,
 } from '../../utils/settings/constants.js'
+import { getEchoFlowConfigDir, getEchoFlowInternalDir } from '../../utils/echoFlowConfigRoot.js'
 import {
   isRestrictedToPluginOnly,
   isSourceAdminTrusted,
 } from '../../utils/settings/pluginOnlyPolicy.js'
-import { getSettingsForSource } from '../../utils/settings/settings.js'
+import { getSettingsForSource, parseSettingsFile } from '../../utils/settings/settings.js'
 import type { AgentDefinition } from './loadAgentsDir.js'
 
 /**
@@ -43,6 +45,18 @@ export type ResolvedBuiltInAgentOverride = {
  *      it. Blocking only the write path would not be enough — settings.json is
  *      user-writable by definition.
  */
+function getBuiltInOverridesForSource(
+  source: SettingSource,
+): Record<string, unknown> | undefined {
+  if (source === 'userSettings') {
+    return parseSettingsFile(
+      join(getEchoFlowInternalDir(getEchoFlowConfigDir()), 'settings.json'),
+    ).settings?.builtInAgentOverrides
+  }
+
+  return getSettingsForSource(source)?.builtInAgentOverrides
+}
+
 export function resolveBuiltInAgentOverrides(): Map<
   string,
   ResolvedBuiltInAgentOverride
@@ -53,7 +67,7 @@ export function resolveBuiltInAgentOverrides(): Map<
   for (const source of getEnabledSettingSources()) {
     if (agentsLocked && !isSourceAdminTrusted(source)) continue
 
-    const overrides = getSettingsForSource(source)?.builtInAgentOverrides
+    const overrides = getBuiltInOverridesForSource(source)
     if (!overrides) continue
 
     for (const [agentType, entry] of Object.entries(overrides)) {

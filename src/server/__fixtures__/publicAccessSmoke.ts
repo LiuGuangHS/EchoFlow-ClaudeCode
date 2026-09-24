@@ -19,7 +19,7 @@ process.env.CLAUDE_CLI_PATH = path.join(import.meta.dir, '../__tests__/fixtures/
 const server = startServer(0, '127.0.0.1')
 const base = `http://127.0.0.1:${server.port}`
 const control = (route: string, body?: unknown) => fetch(`${base}/api/public-access${route}`, {
-  method: body === undefined ? 'GET' : 'POST', headers: { Authorization: `Bearer ${process.env.CC_HAHA_LOCAL_ACCESS_TOKEN}` }, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  method: body === undefined ? 'GET' : 'POST', headers: { Authorization: `Bearer ${process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN}` }, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
 })
 let socket: WebSocket | undefined
 try {

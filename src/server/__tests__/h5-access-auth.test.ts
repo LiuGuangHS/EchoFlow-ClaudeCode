@@ -221,17 +221,15 @@ beforeEach(async () => {
   originalH5DistDir = process.env.CLAUDE_H5_DIST_DIR
   originalClaudeAppRoot = process.env.CLAUDE_APP_ROOT
   originalServerAuthRequired = process.env.SERVER_AUTH_REQUIRED
-  originalLocalAccessToken = process.env.CC_HAHA_LOCAL_ACCESS_TOKEN
-  originalTrustedRendererOrigin = process.env.CC_HAHA_TRUSTED_RENDERER_ORIGIN
-  delete process.env.CC_HAHA_TRUSTED_RENDERER_ORIGIN
-  originalPetAccessToken = process.env.CC_HAHA_PET_ACCESS_TOKEN
+  originalLocalAccessToken = process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
+  originalPetAccessToken = process.env.ECHOFLOW_PET_ACCESS_TOKEN
   originalServerPort = ProviderService.getServerPort()
   process.env.CLAUDE_CONFIG_DIR = tmpDir
   const h5DistDir = path.join(tmpDir, 'dist')
   process.env.CLAUDE_H5_DIST_DIR = h5DistDir
   delete process.env.ANTHROPIC_API_KEY
-  delete process.env.CC_HAHA_LOCAL_ACCESS_TOKEN
-  delete process.env.CC_HAHA_PET_ACCESS_TOKEN
+  delete process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
+  delete process.env.ECHOFLOW_PET_ACCESS_TOKEN
   await fs.mkdir(path.join(h5DistDir, 'assets'), { recursive: true })
   await fs.writeFile(
     path.join(h5DistDir, 'index.html'),
@@ -258,12 +256,10 @@ afterEach(async () => {
   else process.env.CLAUDE_APP_ROOT = originalClaudeAppRoot
   if (originalServerAuthRequired === undefined) delete process.env.SERVER_AUTH_REQUIRED
   else process.env.SERVER_AUTH_REQUIRED = originalServerAuthRequired
-  if (originalLocalAccessToken === undefined) delete process.env.CC_HAHA_LOCAL_ACCESS_TOKEN
-  else process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = originalLocalAccessToken
-  if (originalTrustedRendererOrigin === undefined) delete process.env.CC_HAHA_TRUSTED_RENDERER_ORIGIN
-  else process.env.CC_HAHA_TRUSTED_RENDERER_ORIGIN = originalTrustedRendererOrigin
-  if (originalPetAccessToken === undefined) delete process.env.CC_HAHA_PET_ACCESS_TOKEN
-  else process.env.CC_HAHA_PET_ACCESS_TOKEN = originalPetAccessToken
+  if (originalLocalAccessToken === undefined) delete process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
+  else process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = originalLocalAccessToken
+  if (originalPetAccessToken === undefined) delete process.env.ECHOFLOW_PET_ACCESS_TOKEN
+  else process.env.ECHOFLOW_PET_ACCESS_TOKEN = originalPetAccessToken
 
   await fs.rm(tmpDir, {
     recursive: true,
@@ -275,8 +271,8 @@ afterEach(async () => {
 
 describe('remote H5 auth and CORS integration', () => {
   test('allows only the configured dev renderer preflight with a desktop process token', async () => {
-    process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'fixture-desktop-token'
-    process.env.CC_HAHA_TRUSTED_RENDERER_ORIGIN = 'http://localhost:1420'
+    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'fixture-desktop-token'
+    process.env.ECHOFLOW_TRUSTED_RENDERER_ORIGIN = 'http://localhost:1420'
     await restartRemoteServer()
     const headers = {
       Origin: 'http://localhost:1420',
@@ -369,16 +365,19 @@ describe('remote H5 auth and CORS integration', () => {
     // The desktop shell injects a process token, but the browser windows it
     // opens (OAuth success pages, `/preview-fs` links) and local scripts cannot
     // carry it. Loopback must stay trusted on its own.
-    process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
     await restartRemoteServer()
 
     const tokenlessResponse = await fetch(`${baseUrl}/api/status`)
     expect(tokenlessResponse.status).toBe(200)
     await expect(tokenlessResponse.json()).resolves.toMatchObject({ status: 'ok' })
 
-    const oauthSuccessResponse = await fetch(`${baseUrl}/api/haha-grok-oauth/success`)
+    const oauthSuccessResponse = await fetch(`${baseUrl}/api/echoflow-grok-oauth/success`)
     expect(oauthSuccessResponse.status).toBe(200)
     expect(oauthSuccessResponse.headers.get('Content-Type')).toContain('text/html')
+
+    const retiredOauthResponse = await fetch(`${baseUrl}/api/haha-grok-oauth/success`)
+    expect(retiredOauthResponse.status).toBe(404)
 
     const desktopResponse = await fetch(`${baseUrl}/api/status`, {
       headers: { Authorization: 'Bearer desktop-local-secret' },
@@ -388,13 +387,14 @@ describe('remote H5 auth and CORS integration', () => {
   })
 
   test('rejects tokenless loopback browser origins when desktop local auth is configured', async () => {
-    process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
     await restartRemoteServer()
 
     const browserResponse = await fetch(`${baseUrl}/api/status`, {
       headers: { Origin: 'http://localhost:5173' },
     })
     expect(browserResponse.status).toBe(403)
+    expect(browserResponse.headers.get('Access-Control-Allow-Origin')).toBe('http://localhost:5173')
 
     const desktopResponse = await fetch(`${baseUrl}/api/status`, {
       headers: {
@@ -406,7 +406,7 @@ describe('remote H5 auth and CORS integration', () => {
   })
 
   test('still requires the desktop process token for the H5 control plane', async () => {
-    process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
     await restartRemoteServer()
 
     // Another browser or script on the same machine must not be able to publish
@@ -426,7 +426,7 @@ describe('remote H5 auth and CORS integration', () => {
   })
 
   test('does not extend tokenless loopback trust to cross-site subresource loads', async () => {
-    process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
     await restartRemoteServer()
 
     // A malicious page embedding `<img src="http://127.0.0.1:<port>/api/...">`
@@ -451,7 +451,7 @@ describe('remote H5 auth and CORS integration', () => {
   })
 
   test('serves same-capability preview assets without opening ordinary local APIs', async () => {
-    process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
     await restartRemoteServer()
 
     const workDir = path.join(tmpDir, 'preview-workspace')
@@ -511,8 +511,8 @@ describe('remote H5 auth and CORS integration', () => {
   })
 
   test('enforces the pet bearer capability allowlist before API routing', async () => {
-    process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
-    process.env.CC_HAHA_PET_ACCESS_TOKEN = 'pet-capability-secret'
+    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+    process.env.ECHOFLOW_PET_ACCESS_TOKEN = 'pet-capability-secret'
     await restartRemoteServer()
     const petHeaders = { Authorization: 'Bearer pet-capability-secret' }
     const privateWorkDir = path.join(tmpDir, 'private-workspace')
@@ -628,7 +628,7 @@ describe('remote H5 auth and CORS integration', () => {
   })
 
   test('keeps the host-managed provider proxy working with local auth across H5 modes', async () => {
-    process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
     await restartRemoteServer()
 
     const requestProxy = (authorized: boolean) => fetch(`${baseUrl}/proxy/v1/messages`, {
@@ -682,6 +682,24 @@ describe('remote H5 auth and CORS integration', () => {
     })
   })
 
+  test('allows loopback browser preflight when desktop local auth is configured', async () => {
+    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+    await restartRemoteServer()
+
+    const response = await fetch(`${baseUrl}/api/status`, {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'http://localhost:5173',
+        'Access-Control-Request-Method': 'GET',
+        'Access-Control-Request-Headers': 'authorization,content-type',
+      },
+    })
+
+    expect(response.status).toBe(204)
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('http://localhost:5173')
+    expect(response.headers.get('Access-Control-Allow-Headers')).toContain('Authorization')
+  })
+
   test('blocks remote browser capability requests while H5 access is disabled', async () => {
     const apiResponse = await fetch(`${baseUrl}/api/status`, {
       headers: {
@@ -727,12 +745,13 @@ describe('remote H5 auth and CORS integration', () => {
 
   test('allows loopback browser local-file and preview-fs requests through the H5 gate while H5 access is disabled', async () => {
     const loopbackBrowserOrigin = 'http://localhost:5173'
-    const localFileResponse = await fetch(localFileUrl(baseUrl, path.join(process.cwd(), 'package.json')), {
+    const localFileResponse = await fetch(localFileUrl(baseUrl, path.join(tmpDir, 'dist', 'index.html')), {
       headers: {
         Origin: loopbackBrowserOrigin,
       },
     })
     expect(localFileResponse.status).toBe(200)
+    await expect(localFileResponse.text()).resolves.toContain('H5 Shell')
 
     const previewResponse = await fetch(`${baseUrl}/preview-fs/h5-auth-test/index.html`, {
       headers: {
@@ -1117,7 +1136,7 @@ describe('remote H5 auth and CORS integration', () => {
     const token = await enableH5Access({
       allowedOrigins: [PHONE_ORIGIN],
     })
-    const localFile = localFileUrl(baseUrl, path.join(process.cwd(), 'package.json'))
+    const localFile = localFileUrl(baseUrl, path.join(tmpDir, 'dist', 'index.html'))
 
     const missingLocalFileToken = await fetch(localFile, {
       headers: {
@@ -1141,7 +1160,7 @@ describe('remote H5 auth and CORS integration', () => {
       },
     })
     expect(validLocalFileToken.status).toBe(200)
-    await expect(validLocalFileToken.text()).resolves.toContain('"name"')
+    await expect(validLocalFileToken.text()).resolves.toContain('H5 Shell')
 
     const missingPreviewToken = await fetch(`${baseUrl}/preview-fs/h5-auth-test/index.html`, {
       headers: {
@@ -1154,7 +1173,7 @@ describe('remote H5 auth and CORS integration', () => {
   test('keeps loopback browser local-file and preview-fs requests tokenless when H5 access is enabled', async () => {
     const loopbackBrowserOrigin = 'http://localhost:5173'
     await enableH5Access()
-    const localFile = localFileUrl(baseUrl, path.join(process.cwd(), 'package.json'))
+    const localFile = localFileUrl(baseUrl, path.join(tmpDir, 'dist', 'index.html'))
 
     const localFileResponse = await fetch(localFile, {
       headers: {
@@ -1162,7 +1181,7 @@ describe('remote H5 auth and CORS integration', () => {
       },
     })
     expect(localFileResponse.status).toBe(200)
-    await expect(localFileResponse.text()).resolves.toContain('"name"')
+    await expect(localFileResponse.text()).resolves.toContain('H5 Shell')
 
     const previewResponse = await fetch(`${baseUrl}/preview-fs/h5-auth-test/index.html`, {
       headers: {
@@ -1284,10 +1303,10 @@ describe('remote H5 auth and CORS integration', () => {
   test('keeps local loopback local-file navigations tokenless when H5 access is enabled', async () => {
     await enableH5Access()
 
-    const response = await fetch(localFileUrl(baseUrl, path.join(process.cwd(), 'package.json')))
+    const response = await fetch(localFileUrl(baseUrl, path.join(tmpDir, 'dist', 'index.html')))
 
     expect(response.status).toBe(200)
-    await expect(response.text()).resolves.toContain('"name"')
+    await expect(response.text()).resolves.toContain('H5 Shell')
   })
 
   test('blocks adapter requests from non-local browser origins when H5 access is enabled', async () => {

@@ -56,6 +56,15 @@ export const browserHost: DesktopHost = {
     async getLocalAccessToken() {
       unsupported('Resolving the bundled server access token')
     },
+    async getClaudeCode() {
+      unsupported('Claude Code runtime settings')
+    },
+    async chooseClaudeCode() {
+      unsupported('Claude Code runtime settings')
+    },
+    async setClaudeCode() {
+      unsupported('Claude Code runtime settings')
+    },
   },
   app: {
     async getVersion() {
@@ -359,6 +368,26 @@ export const browserHost: DesktopHost = {
   adapters: {
     async restartSidecar() {
       unsupported('Adapter sidecar restart')
+    },
+  },
+  deepSeekHarness: {
+    async getStatus() {
+      unsupported('DeepSeek Harness')
+    },
+    async install() {
+      unsupported('DeepSeek Harness')
+    },
+    async start() {
+      unsupported('DeepSeek Harness')
+    },
+    async stop() {
+      unsupported('DeepSeek Harness')
+    },
+    async restart() {
+      unsupported('DeepSeek Harness')
+    },
+    async open() {
+      unsupported('DeepSeek Harness')
     },
   },
   zoom: {

@@ -117,13 +117,13 @@ describe('macOS installed app enumeration', () => {
 
   it('includes the built-in host, helper, and an additional configured host like any other app', async () => {
     const metadata = new Map([
-      ['Desktop.app', { bundleId: 'com.claude-code-haha.desktop', displayName: 'Claude Code Haha' }],
-      ['Helper.app', { bundleId: 'dev.cchaha.cu-helper', displayName: 'Computer Use Helper' }],
+      ['Desktop.app', { bundleId: 'com.echoflow.code.desktop', displayName: 'EchoFlow Code' }],
+      ['Helper.app', { bundleId: 'dev.echoflow.cu-helper', displayName: 'Computer Use Helper' }],
       ['Custom.app', { bundleId: 'com.example.custom-host', displayName: 'Custom Host' }],
       ['Notes.app', { bundleId: 'com.example.notes', displayName: 'Notes' }],
     ])
-    const previousHost = process.env.CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID
-    process.env.CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID = 'com.example.custom-host'
+    const previousHost = process.env.ECHOFLOW_COMPUTER_USE_HOST_BUNDLE_ID
+    process.env.ECHOFLOW_COMPUTER_USE_HOST_BUNDLE_ID = 'com.example.custom-host'
     let apps: Awaited<ReturnType<typeof listInstalledMacApps>>
     try {
       apps = await listInstalledMacApps({
@@ -133,18 +133,18 @@ describe('macOS installed app enumeration', () => {
         readMetadata: async appPath => metadata.get(appPath.split('/').at(-1) ?? '') ?? null,
       })
     } finally {
-      if (previousHost === undefined) delete process.env.CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID
-      else process.env.CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID = previousHost
+      if (previousHost === undefined) delete process.env.ECHOFLOW_COMPUTER_USE_HOST_BUNDLE_ID
+      else process.env.ECHOFLOW_COMPUTER_USE_HOST_BUNDLE_ID = previousHost
     }
 
     expect(apps).toEqual([
       {
-        bundleId: 'com.claude-code-haha.desktop',
-        displayName: 'Claude Code Haha',
+        bundleId: 'com.echoflow.code.desktop',
+        displayName: 'EchoFlow Code',
         path: '/Applications/Desktop.app',
       },
       {
-        bundleId: 'dev.cchaha.cu-helper',
+        bundleId: 'dev.echoflow.cu-helper',
         displayName: 'Computer Use Helper',
         path: '/Applications/Helper.app',
       },

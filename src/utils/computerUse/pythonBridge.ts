@@ -44,7 +44,7 @@ export function getComputerUsePythonEnv(): NodeJS.ProcessEnv | undefined {
     ...process.env,
     PYTHONIOENCODING: 'utf-8',
     PYTHONUTF8: '1',
-    CC_HAHA_COMPUTER_USE_INPUT_TAG: String(windowsInputTag),
+    ECHOFLOW_COMPUTER_USE_INPUT_TAG: String(windowsInputTag),
   }
 }
 

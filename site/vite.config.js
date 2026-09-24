@@ -16,7 +16,7 @@ const imageMimeTypes = {
 
 function docsManifestPlugin() {
   return {
-    name: 'claude-code-haha-docs-manifest',
+    name: 'echoflow-code-docs-manifest',
     async buildStart() {
       await generateDocsManifest()
     },
@@ -60,6 +60,9 @@ function docsManifestPlugin() {
 }
 
 export default defineConfig({
+  // GitHub Pages serves this repo under /<repo>/, so the asset base has to be
+  // injected at build time. Defaults to '/' for local dev and custom domains.
+  base: process.env.DOCS_BASE || '/',
   plugins: [docsManifestPlugin()],
   build: {
     outDir: 'dist',

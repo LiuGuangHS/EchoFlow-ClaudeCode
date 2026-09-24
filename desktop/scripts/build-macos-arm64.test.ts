@@ -18,7 +18,7 @@ async function writeExecutable(pathname: string, source: string): Promise<void> 
 
 describe('macOS arm64 build dependency installation', () => {
   it('installs every package needed by the compiled sidecar in a clean worktree', async () => {
-    const fixtureRoot = await mkdtemp(path.join(tmpdir(), 'cc-haha-macos-build-'))
+    const fixtureRoot = await mkdtemp(path.join(tmpdir(), 'echoflow-code-macos-build-'))
     const desktopDir = path.join(fixtureRoot, 'desktop')
     const adaptersDir = path.join(fixtureRoot, 'adapters')
     const scriptsDir = path.join(desktopDir, 'scripts')

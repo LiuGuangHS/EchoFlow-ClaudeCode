@@ -68,7 +68,7 @@ order: 3
 「内置默认」和「继承主会话」是两回事。以 `Explore` 为例，前者是它出厂就钉着的 Haiku，后者是跟着你主对话当前用的模型走。想恢复出厂设置就选「内置默认」，或者直接点「恢复内置默认」。
 :::
 
-覆盖写进 `~/.claude/settings.json` 的 `builtInAgentOverrides`，对所有项目生效。恢复默认时这条记录会被整个删掉，不会在配置文件里留下空壳。
+覆盖写进 EchoFlow 用户设置的 `builtInAgentOverrides`。默认位置是 `<平台数据目录>/echoflow-code/settings.json`；设置 `CLAUDE_CONFIG_DIR` 时则使用 `$CLAUDE_CONFIG_DIR/echoflow-code/settings.json`。它对所有项目生效。恢复默认时这条记录会被整个删掉，不会在配置文件里留下空壳。
 
 Agent 配置只保存模型 ID，不绑定 Provider。选择器会列出当前 Provider 的可用模型；如果以后切换 Provider，别名会按新 Provider 的映射解析，完整模型 ID 则需要新 Provider 也支持。
 

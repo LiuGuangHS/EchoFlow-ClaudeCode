@@ -1,7 +1,6 @@
 import { getDesktopHost } from './desktopHost'
 
-export const APP_ZOOM_STORAGE_KEY = 'cc-haha-app-zoom'
-export const LEGACY_UI_ZOOM_STORAGE_KEY = 'cc-haha-ui-zoom'
+export const APP_ZOOM_STORAGE_KEY = 'echoflow-code-app-zoom'
 export const DEFAULT_APP_ZOOM = 1
 export const MIN_APP_ZOOM = 0.5
 export const MAX_APP_ZOOM = 2
@@ -45,9 +44,7 @@ export function isValidStoredAppZoomLevel(value: string | null): boolean {
 export function readStoredAppZoomLevel(storage: StorageLike | null = getDefaultStorage()): number {
   if (!storage) return DEFAULT_APP_ZOOM
   try {
-    const stored = storage.getItem(APP_ZOOM_STORAGE_KEY)
-    if (stored !== null) return normalizeAppZoomLevel(stored)
-    return normalizeAppZoomLevel(storage.getItem(LEGACY_UI_ZOOM_STORAGE_KEY))
+    return normalizeAppZoomLevel(storage.getItem(APP_ZOOM_STORAGE_KEY))
   } catch {
     return DEFAULT_APP_ZOOM
   }

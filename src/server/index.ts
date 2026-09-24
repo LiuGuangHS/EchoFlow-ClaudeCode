@@ -10,14 +10,14 @@ import { handleSessionCollaborationApi } from './api/sessionCollaboration.js'
 
 import { handleApiRequest } from './router.js'
 import { handleWebSocket, type WebSocketData } from './ws/handler.js'
-import { resolveCors, type CorsResolution } from './middleware/cors.js'
+import { resolveCors, isAllowedBuiltInOrigin, type CorsResolution } from './middleware/cors.js'
 import { requireAuth, requireH5Token } from './middleware/auth.js'
 import { teamWatcher } from './services/teamWatcher.js'
 import { cronScheduler } from './services/cronScheduler.js'
 import { handleProxyRequest } from './proxy/handler.js'
 import { ProviderService } from './services/providerService.js'
-import { handleHahaOAuthCallback } from './api/haha-oauth.js'
-import { handleHahaOpenAIOAuthCallback } from './api/haha-openai-oauth.js'
+import { handleEchoFlowOAuthCallback } from './api/echoflow-oauth.js'
+import { handleEchoFlowOpenAIOAuthCallback } from './api/echoflow-openai-oauth.js'
 import { handlePreviewFs } from './api/previewFs.js'
 import { handleLocalFile } from './api/localFile.js'
 import { sessionService } from './services/sessionService.js'
@@ -156,6 +156,23 @@ function withCors(response: Response, cors: CorsResolution): Response {
   })
 }
 
+function withH5PolicyCors(
+  response: Response,
+  cors: CorsResolution,
+  origin: string | null,
+  h5Enabled: boolean,
+): Response {
+  // When H5 is disabled, do not expose the policy response to arbitrary
+  // browser origins. Built-in local origins still need to read the response so
+  // the desktop renderer receives the actual API error instead of a fetch
+  // network error caused by missing CORS headers.
+  if (!origin || (!h5Enabled && !isAllowedBuiltInOrigin(origin))) {
+    return response
+  }
+
+  return withCors(response, cors)
+}
+
 function corsRejectedResponse(cors: CorsResolution): Response {
   return Response.json(
     { error: 'CORS origin not allowed' },
@@ -226,7 +243,9 @@ function originFromUrl(value: string | null): string | null {
 
 export function startServer(port = PORT, host = HOST) {
   enableConfigs()
-  const trustedRendererOrigin = resolveTrustedRendererOrigin(process.env.CC_HAHA_TRUSTED_RENDERER_ORIGIN)
+  const trustedRendererOrigin = resolveTrustedRendererOrigin(
+    process.env.ECHOFLOW_TRUSTED_RENDERER_ORIGIN ?? process.env.CC_HAHA_TRUSTED_RENDERER_ORIGIN,
+  )
   // Warm the synchronous disconnect-grace cache from managed settings so the
   // first client disconnect honors the configured value (issue #764).
   void refreshDisconnectGraceMs()
@@ -377,22 +396,54 @@ export function startServer(port = PORT, host = HOST) {
         })
         const h5AccessControlBlocked = isH5AccessControlRequest(req, url, h5RequestContext)
 
-        if (h5AccessControlBlocked) {
-          return isLocalCredentialOnlyPath(url.pathname)
-            ? localCredentialRejectedResponse()
-            : h5AccessControlRejectedResponse()
-        }
-
-        if (h5AccessDisabledBlocked) {
-          return h5AccessDisabledResponse()
-        }
-
-        // Handle CORS preflight
+        // Handle CORS preflight before capability authentication. A preflight
+        // carries no application credential by design; the actual request is
+        // still enforced by the H5 policy below. Remote preflights remain
+        // blocked while H5 access is disabled.
         if (req.method === 'OPTIONS') {
+          if (h5AccessControlBlocked) {
+            return withH5PolicyCors(
+              isLocalCredentialOnlyPath(url.pathname)
+                ? localCredentialRejectedResponse()
+                : h5AccessControlRejectedResponse(),
+              cors,
+              origin,
+              h5Settings.enabled,
+            )
+          }
+
+          if (
+            h5AccessDisabledBlocked &&
+            origin !== null &&
+            !isAllowedBuiltInOrigin(origin)
+          ) {
+            return h5AccessDisabledResponse()
+          }
+
           if (cors.rejected) {
             return corsRejectedResponse(cors)
           }
           return new Response(null, { status: 204, headers: cors.headers })
+        }
+
+        if (h5AccessControlBlocked) {
+          return withH5PolicyCors(
+            isLocalCredentialOnlyPath(url.pathname)
+              ? localCredentialRejectedResponse()
+              : h5AccessControlRejectedResponse(),
+            cors,
+            origin,
+            h5Settings.enabled,
+          )
+        }
+
+        if (h5AccessDisabledBlocked) {
+          return withH5PolicyCors(
+            h5AccessDisabledResponse(),
+            cors,
+            origin,
+            h5Settings.enabled,
+          )
         }
 
         // WebSocket upgrade
@@ -471,14 +522,14 @@ export function startServer(port = PORT, host = HOST) {
         }
 
         if (url.pathname === '/callback') {
-          return handleHahaOAuthCallback(url)
+          return handleEchoFlowOAuthCallback(url)
         }
 
         if (
           url.pathname === OPENAI_CODEX_REDIRECT_PATH ||
           url.pathname === '/callback/openai'
         ) {
-          return handleHahaOpenAIOAuthCallback(url)
+          return handleEchoFlowOpenAIOAuthCallback(url)
         }
 
         // Preview filesystem — serve sandboxed workspace files for a session.

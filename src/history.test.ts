@@ -22,7 +22,7 @@ afterEach(async () => {
 describe('prompt history persistence', () => {
   test('reconciles partial and fully committed append failures without duplicates', async () => {
     const configDir = await fsPromises.mkdtemp(
-      join(tmpdir(), 'cc-haha-history-test-'),
+      join(tmpdir(), 'echoflow-code-history-test-'),
     )
     testConfigDir = configDir
     process.env.CLAUDE_CONFIG_DIR = configDir

@@ -1752,7 +1752,7 @@ describe('anthropicToOpenaiResponses', () => {
     expect(result.reasoning).toEqual({ effort: 'high' })
   })
 
-  test('OpenAI OAuth mode restores namespaced redacted thinking as encrypted reasoning input', () => {
+  test('OpenAI OAuth mode restores legacy namespaced redacted thinking as encrypted reasoning input', () => {
     const req = {
       model: 'gpt-5.6-terra',
       max_tokens: 100,
@@ -1760,7 +1760,7 @@ describe('anthropicToOpenaiResponses', () => {
         role: 'assistant',
         content: [{
           type: 'redacted_thinking',
-          data: 'cc-haha:openai-reasoning:v1:{"id":"rs_1","summary":[],"encrypted_content":"encrypted-reasoning"}',
+          data: 'echoflow-code:openai-reasoning:v1:{"id":"rs_1","summary":[],"encrypted_content":"encrypted-reasoning"}',
         }],
       }],
     } as AnthropicRequest

@@ -9,7 +9,7 @@ import { AttachmentStore } from '../../common/attachment/attachment-store.js'
 // Import the actual entrypoint with isolated configuration. Telegram API calls
 // terminate in grammY's documented transformer; HTTP and WS use loopback only.
 describe('Telegram entrypoint session routing', () => {
-  const envKeys = ['CLAUDE_CONFIG_DIR', 'TELEGRAM_BOT_TOKEN', 'ADAPTER_SERVER_URL', 'ADAPTER_ALLOWED_PROJECT_ROOTS', 'ADAPTER_DEFAULT_PROJECT_DIR', 'CLAUDE_ADAPTER_DEFAULT_WORK_DIR', 'CC_HAHA_LOCAL_ACCESS_TOKEN']
+  const envKeys = ['CLAUDE_CONFIG_DIR', 'TELEGRAM_BOT_TOKEN', 'ADAPTER_SERVER_URL', 'ADAPTER_ALLOWED_PROJECT_ROOTS', 'ADAPTER_DEFAULT_PROJECT_DIR', 'CLAUDE_ADAPTER_DEFAULT_WORK_DIR', 'ECHOFLOW_LOCAL_ACCESS_TOKEN']
   const previousEnv = new Map<string, string | undefined>()
   let directory: string
   let project: string
@@ -127,7 +127,7 @@ describe('Telegram entrypoint session routing', () => {
     process.env.ADAPTER_ALLOWED_PROJECT_ROOTS = directory
     process.env.ADAPTER_DEFAULT_PROJECT_DIR = project
     process.env.CLAUDE_ADAPTER_DEFAULT_WORK_DIR = project
-    process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'fixture-local-token'
+    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'fixture-local-token'
     writeFileSync(join(directory, 'adapters.json'), JSON.stringify({ telegram: { allowedUsers: [7], defaultWorkDir: project, allowedProjectRoots: [directory] } }))
     store = new SessionStore(join(directory, 'adapter-sessions.json'))
     entry = await import('../index.js')

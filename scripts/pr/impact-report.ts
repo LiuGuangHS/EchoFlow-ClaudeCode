@@ -48,6 +48,9 @@ function commandList(result: ReturnType<typeof evaluateChangePolicy>) {
   if (result.checks.adapters) {
     commands.push('bun run check:adapters')
   }
+  if (result.checks.mobile) {
+    commands.push('bun run check:mobile')
+  }
   if (result.checks.desktopNative) {
     commands.push('bun run check:native')
   }

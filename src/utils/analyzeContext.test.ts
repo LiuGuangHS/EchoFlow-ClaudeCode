@@ -9,7 +9,7 @@ const originalSimpleMode = process.env.CLAUDE_CODE_SIMPLE
 
 describe('analyzeContextUsage', () => {
   beforeAll(async () => {
-    configDir = await mkdtemp(join(tmpdir(), 'cc-haha-analyze-context-'))
+    configDir = await mkdtemp(join(tmpdir(), 'echoflow-code-analyze-context-'))
     process.env.CLAUDE_CONFIG_DIR = configDir
     process.env.CLAUDE_CODE_SIMPLE = '1'
   })
@@ -76,7 +76,7 @@ describe('analyzeContextUsage', () => {
           content: [
             {
               type: 'redacted_thinking',
-              data: `cc-haha:openai-reasoning:v1:${JSON.stringify({
+              data: `echoflow-code:openai-reasoning:v1:${JSON.stringify({
                 id: 'rs_test',
                 summary: [],
                 encrypted_content: 'x'.repeat(400_000),

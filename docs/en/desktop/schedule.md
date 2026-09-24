@@ -2,7 +2,7 @@
 title: Scheduled tasks
 nav_title: Scheduled tasks
 description: Run a saved prompt on a schedule — a code review every morning, for example.
-order: 5
+order: 9
 ---
 
 # Scheduled tasks

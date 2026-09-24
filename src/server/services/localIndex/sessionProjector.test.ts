@@ -29,7 +29,7 @@ const tempDirs: string[] = []
 const exactFileTime = new Date(1_700_000_000_000)
 
 async function createTempDir(label: string): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), `cc-haha-${label}-`))
+  const directory = await mkdtemp(join(tmpdir(), `echoflow-code-${label}-`))
   tempDirs.push(directory)
   return directory
 }
@@ -171,6 +171,19 @@ describe('session projector', () => {
       projectPath: '-repo-a',
       sessionId: 'same-id',
       content: [
+        line({
+          type: 'session-meta',
+          modelConfigId: 'mc_projector',
+          modelConfig: {
+            providerId: 'provider-a',
+            modelId: 'model-a',
+            effortLevel: 'high',
+          },
+          runtimeInstanceId: 'runtime-projector',
+          runtimeProviderId: 'provider-a',
+          runtimeModelId: 'model-a',
+          effortLevel: 'high',
+        }),
         line(user('First title', '2026-01-01T00:00:00.000Z')),
         line('{malformed}'),
         line(assistant('2026-01-01T00:01:00.000Z')),
@@ -200,6 +213,13 @@ describe('session projector', () => {
             title: 'First title',
             messageCount: 2,
             modifiedAt: '2026-01-01T00:01:00.000Z',
+            modelConfigId: 'mc_projector',
+            modelConfig: {
+              providerId: 'provider-a',
+              modelId: 'model-a',
+              effortLevel: 'high',
+            },
+            runtimeInstanceId: 'runtime-projector',
           },
           malformedLineCount: 1,
         },
@@ -213,7 +233,23 @@ describe('session projector', () => {
           title: 'First title',
           messageCount: 2,
           transcriptPath: candidate.path,
+          modelConfigId: 'mc_projector',
+          modelConfig: {
+            providerId: 'provider-a',
+            modelId: 'model-a',
+            effortLevel: 'high',
+          },
+          runtimeInstanceId: 'runtime-projector',
         }],
+      })
+      expect(index.getProjectionSeed(candidate.path)?.summary).toMatchObject({
+        modelConfigId: 'mc_projector',
+        modelConfig: {
+          providerId: 'provider-a',
+          modelId: 'model-a',
+          effortLevel: 'high',
+        },
+        runtimeInstanceId: 'runtime-projector',
       })
       expect(index.getSource(candidate.path)).toMatchObject({
         path: candidate.path,
@@ -532,6 +568,7 @@ describe('session projector', () => {
         content: line({
           type: 'session-meta',
           runtimeProviderId: 'provider-a',
+          cliRuntimeId: 'installed',
           timestamp: '2026-01-01T00:02:00.000Z',
         }),
       }),
@@ -545,6 +582,7 @@ describe('session projector', () => {
       expect(Object.hasOwn(byId.get('explicit-null')!, 'runtimeProviderId')).toBe(true)
       expect(byId.get('explicit-null')!.runtimeProviderId).toBeNull()
       expect(byId.get('string')!.runtimeProviderId).toBe('provider-a')
+      expect(Object.hasOwn(byId.get('string')!, 'cliRuntimeId')).toBe(false)
     } finally {
       database.close()
     }

@@ -13,13 +13,13 @@ import type { Database } from 'bun:sqlite'
 import type { LocalIndexWriteOperation } from './database.js'
 import { LOCAL_INDEX_SCHEMA_VERSION } from './migrations.js'
 
-type EnvironmentName = 'HOME' | 'CLAUDE_CONFIG_DIR' | 'CC_HAHA_LOCAL_INDEX'
+type EnvironmentName = 'HOME' | 'CLAUDE_CONFIG_DIR' | 'ECHOFLOW_LOCAL_INDEX'
 
 const originalEnvironment: Partial<Record<EnvironmentName, string>> = {}
 const tempDirs: string[] = []
 
 async function createTempDir(label: string): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), `cc-haha-${label}-`))
+  const directory = await mkdtemp(join(tmpdir(), `echoflow-code-${label}-`))
   tempDirs.push(directory)
   return directory
 }
@@ -289,7 +289,7 @@ beforeEach(async () => {
   for (const name of [
     'HOME',
     'CLAUDE_CONFIG_DIR',
-    'CC_HAHA_LOCAL_INDEX',
+    'ECHOFLOW_LOCAL_INDEX',
   ] as const) {
     originalEnvironment[name] = process.env[name]
   }
@@ -297,13 +297,13 @@ beforeEach(async () => {
   const environmentRoot = await createTempDir('local-index-environment')
   process.env.HOME = join(environmentRoot, 'home')
   process.env.CLAUDE_CONFIG_DIR = join(environmentRoot, 'config')
-  delete process.env.CC_HAHA_LOCAL_INDEX
+  delete process.env.ECHOFLOW_LOCAL_INDEX
 })
 
 afterEach(async () => {
   restoreEnvironment('HOME')
   restoreEnvironment('CLAUDE_CONFIG_DIR')
-  restoreEnvironment('CC_HAHA_LOCAL_INDEX')
+  restoreEnvironment('ECHOFLOW_LOCAL_INDEX')
   await Promise.all(tempDirs.splice(0).map(
     directory => rm(directory, { recursive: true, force: true }),
   ))
@@ -350,7 +350,7 @@ describe('local index config', () => {
     process.env.CLAUDE_CONFIG_DIR = secondConfigDir
 
     expect(getLocalIndexDatabasePath()).toBe(
-      join(secondConfigDir, 'cc-haha', 'db', 'index-v1.sqlite'),
+      join(secondConfigDir, 'echoflow-code', 'db', 'index-v1.sqlite'),
     )
     expect(getLocalIndexDatabasePath()).not.toContain(firstConfigDir)
   })
@@ -359,13 +359,13 @@ describe('local index config', () => {
 describe('local index database', () => {
   it('creates only the configured database parent and applies connection pragmas', async () => {
     const configDir = process.env.CLAUDE_CONFIG_DIR!
-    const expectedPath = join(configDir, 'cc-haha', 'db', 'index-v1.sqlite')
+    const expectedPath = join(configDir, 'echoflow-code', 'db', 'index-v1.sqlite')
     const { openLocalIndexDatabase } = await loadDatabase()
 
     const localIndexDatabase = openLocalIndexDatabase()
     try {
       expect(await readdir(dirname(expectedPath))).toContain(basename(expectedPath))
-      expect(await readdir(configDir)).toEqual(['cc-haha'])
+      expect(await readdir(configDir)).toEqual(['echoflow-code'])
       expect(localIndexDatabase.read(operation =>
         operation.get<{ journal_mode: string }>('PRAGMA journal_mode')
           ?.journal_mode,
@@ -647,6 +647,12 @@ describe('local index database', () => {
     seed.exec('UPDATE source_files SET parser_version = 5')
     seed.exec("INSERT INTO schema_meta (key, value) VALUES ('future-extension', 'keep-me')")
     const originalSessions = queryAll<Record<string, unknown>>(seed, 'SELECT * FROM sessions')
+    const expectedSessions = originalSessions.map(session => ({
+      ...session,
+      model_config_id: null,
+      model_config_json: null,
+      runtime_instance_id: null,
+    }))
     const originalActivity = queryAll<Record<string, unknown>>(seed, 'SELECT * FROM activity_sessions')
     seed.close(true)
     const { openLocalIndexDatabase } = await loadDatabase()
@@ -654,8 +660,8 @@ describe('local index database', () => {
     try {
       expect(reopened.read(operation => operation.get<{ user_version: number }>(
         'PRAGMA user_version',
-      )?.user_version)).toBe(5)
-      expect(reopened.read(operation => operation.all('SELECT * FROM sessions'))).toEqual(originalSessions)
+      )?.user_version)).toBe(LOCAL_INDEX_SCHEMA_VERSION)
+      expect(reopened.read(operation => operation.all('SELECT * FROM sessions'))).toEqual(expectedSessions)
       expect(reopened.read(operation => operation.all('SELECT * FROM activity_sessions'))).toEqual(originalActivity)
       expect(reopened.read(operation => operation.get<{ value: string }>(
         "SELECT value FROM schema_meta WHERE key = 'future-extension'",
@@ -666,6 +672,52 @@ describe('local index database', () => {
       ))).toEqual({ title: 'Still editable', session_api_format: 'unknown' })
     } finally {
       reopened.close()
+    }
+  })
+
+  it('upgrades a frozen v5 cache with independent model and runtime metadata columns', async () => {
+    const databasePath = join(process.env.CLAUDE_CONFIG_DIR!, 'frozen-v5-model-runtime.sqlite')
+    await mkdir(dirname(databasePath), { recursive: true })
+    const seed = await openRawDatabase(databasePath)
+    seedFrozenV3(seed)
+    seed.exec('ALTER TABLE activity_sessions ADD COLUMN active_duration_ms INTEGER NOT NULL DEFAULT 0')
+    seed.exec('ALTER TABLE sessions ADD COLUMN session_api_format TEXT')
+    seed.exec('PRAGMA user_version = 5')
+    seed.exec("UPDATE sessions SET session_api_format = 'legacy'")
+    seed.close(true)
+    const { openLocalIndexDatabase } = await loadDatabase()
+
+    const upgraded = openLocalIndexDatabase({ path: databasePath })
+    try {
+      expect(upgraded.read(operation => operation.get<{ user_version: number }>(
+        'PRAGMA user_version',
+      )?.user_version)).toBe(LOCAL_INDEX_SCHEMA_VERSION)
+      expect(upgraded.read(operation => operation.all<{ name: string }>(
+        'PRAGMA table_info(sessions)',
+      ).map(row => row.name))).toEqual(expect.arrayContaining([
+        'model_config_id',
+        'model_config_json',
+        'runtime_instance_id',
+      ]))
+      expect(upgraded.read(operation => operation.get<{
+        title: string
+        session_api_format: string
+        model_config_id: string | null
+        model_config_json: string | null
+        runtime_instance_id: string | null
+      }>(
+        `SELECT title, session_api_format, model_config_id, model_config_json,
+                runtime_instance_id FROM sessions
+         WHERE transcript_path = '/fixture/session.jsonl'`,
+      ))).toEqual({
+        title: 'Frozen v1',
+        session_api_format: 'legacy',
+        model_config_id: null,
+        model_config_json: null,
+        runtime_instance_id: null,
+      })
+    } finally {
+      upgraded.close()
     }
   })
 
@@ -754,6 +806,7 @@ describe('local index database', () => {
         notnull: 1,
         dflt_value: '0',
       })
+      expect(columns.map(column => column.name)).not.toContain('cli_runtime_id')
 
       const indexColumns = (name: string) => localIndexDatabase.read(operation =>
         operation.all<{
@@ -1254,7 +1307,7 @@ describe('local index database', () => {
       seed: 20260714,
     })
     const before = await transcriptHashes(corpus.transcriptPaths)
-    const databasePath = join(corpus.configDir, 'cc-haha', 'db', 'index-v1.sqlite')
+    const databasePath = join(corpus.configDir, 'echoflow-code', 'db', 'index-v1.sqlite')
     const { openLocalIndexDatabase } = await loadDatabase()
 
     openLocalIndexDatabase({ path: databasePath }).close()

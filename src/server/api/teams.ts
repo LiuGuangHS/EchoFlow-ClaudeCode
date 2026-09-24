@@ -60,13 +60,17 @@ export async function handleTeamsApi(
     ) {
       const agentId = decodeURIComponent(segments[4])
       const url = new URL(req.url)
+      const leadSessionId = url.searchParams.get('leadSessionId') || undefined
+      if (leadSessionId?.includes('/') || leadSessionId?.includes('\\')) {
+        throw ApiError.badRequest('Invalid leadSessionId')
+      }
       if (url.searchParams.get('incremental') === 'true') {
         const rawAfterOrdinal = url.searchParams.get('afterOrdinal')
         const parsedAfterOrdinal = rawAfterOrdinal === null
           ? undefined
           : Number.parseInt(rawAfterOrdinal, 10)
         const page = await teamService.getMemberTranscriptPage(teamName, agentId, {
-          leadSessionId: url.searchParams.get('leadSessionId') || undefined,
+          leadSessionId,
           incarnationId: url.searchParams.get('incarnationId') || undefined,
           signature: url.searchParams.get('signature') || undefined,
           cursor: url.searchParams.get('cursor') || undefined,

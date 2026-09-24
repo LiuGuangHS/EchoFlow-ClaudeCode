@@ -7,7 +7,7 @@ order: 0
 
 # 安装与启动
 
-CLI 是 Claude Code Haha 的内核，桌面端每个会话背后跑的都是它。如果你只想用图形界面，装桌面端就够了，见 [下载与安装](../start/install.md)；下面这些步骤是给需要终端交互、`--print` 脚本自动化，或者准备读源码、提 PR 的人看的。
+CLI 是 EchoFlow Code 的内核，桌面端每个会话背后跑的都是它。如果你只想用图形界面，装桌面端就够了，见 [下载与安装](../start/install.md)；下面这些步骤是给需要终端交互、`--print` 脚本自动化，或者准备读源码、提 PR 的人看的。
 
 CLI 目前只从源码运行，没有单独的安装包。
 
@@ -16,8 +16,8 @@ CLI 目前只从源码运行，没有单独的安装包。
 先装好 [Git](https://git-scm.com/downloads) 和 [Bun](https://bun.sh)，然后：
 
 ```bash
-git clone https://github.com/NanmiCoder/cc-haha.git
-cd cc-haha
+git clone https://github.com/LiuGuangHS/EchoFlow-ClaudeCode.git echoflow-code
+cd echoflow-code
 bun install
 ```
 
@@ -44,8 +44,8 @@ ANTHROPIC_MODEL=provider-model
 macOS、Linux 或 Git Bash：
 
 ```bash
-./bin/claude-haha
-./bin/claude-haha -p "概括当前项目的目录结构"
+./bin/echoflow-code
+./bin/echoflow-code -p "概括当前项目的目录结构"
 ```
 
 Windows PowerShell 或 cmd：
@@ -58,16 +58,16 @@ bun --env-file=.env ./src/entrypoints/cli.tsx
 
 ## 在任意目录启动
 
-`./bin/claude-haha` 只在仓库里能用。把它加进 `PATH`，就能在任何项目目录直接敲 `claude-haha`，CLI 会自动把当前工作目录当成项目根。
+`./bin/echoflow-code` 只在仓库里能用。把它加进 `PATH`，就能在任何项目目录直接敲 `echoflow-code`，CLI 会自动把当前工作目录当成项目根。
 
 macOS 和 Linux 在 `~/.bashrc` 或 `~/.zshrc` 中添加：
 
 ```bash
 # 方式一：加入 PATH（推荐）
-export PATH="$HOME/path/to/claude-code-haha/bin:$PATH"
+export PATH="$HOME/path/to/echoflow-code/bin:$PATH"
 
 # 方式二：alias
-alias claude-haha="$HOME/path/to/claude-code-haha/bin/claude-haha"
+alias echoflow-code="$HOME/path/to/echoflow-code/bin/echoflow-code"
 ```
 
 改完重新加载：
@@ -79,19 +79,19 @@ source ~/.zshrc  # 或 source ~/.bashrc
 Windows 的 Git Bash 同样在 `~/.bashrc` 中加 `PATH`：
 
 ```bash
-export PATH="$HOME/path/to/claude-code-haha/bin:$PATH"
+export PATH="$HOME/path/to/echoflow-code/bin:$PATH"
 ```
 
 验证方式是换个目录再启动，然后问它「当前目录是什么」：
 
 ```bash
 cd ~/your-other-project
-claude-haha
+echoflow-code
 ```
 
 ### Windows 配 WSL 工具链
 
-如果 `claude-haha` 跑在 Windows 或 Git Bash 里，而 Node、Python、uv、bun 这些工具装在 WSL 中，可以显式经 WSL 调用：
+如果 `echoflow-code` 跑在 Windows 或 Git Bash 里，而 Node、Python、uv、bun 这些工具装在 WSL 中，可以显式经 WSL 调用：
 
 ```bash
 wsl -e bash -lc 'node --version && python3 --version'

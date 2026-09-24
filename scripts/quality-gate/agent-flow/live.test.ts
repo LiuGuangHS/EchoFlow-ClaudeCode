@@ -18,10 +18,10 @@ import { LIVE_AGENT_FLOW_SCENARIOS, LIVE_FLOW_COVERAGE, LIVE_FLOW_EXCLUSIONS } f
  */
 
 function configDirWith(providers: Array<{ id: string; name: string; models?: Record<string, string> }>) {
-  const dir = mkdtempSync(join(tmpdir(), 'cc-haha-live-test-'))
-  mkdirSync(join(dir, 'cc-haha'), { recursive: true })
+  const dir = mkdtempSync(join(tmpdir(), 'echoflow-live-test-'))
+  mkdirSync(join(dir, 'echoflow-code'), { recursive: true })
   writeFileSync(
-    join(dir, 'cc-haha', 'providers.json'),
+    join(dir, 'echoflow-code', 'providers.json'),
     JSON.stringify({ activeId: providers[0]?.id ?? null, providers }),
   )
   return dir
@@ -82,7 +82,7 @@ describe('live target resolution', () => {
 
     applyLiveTargetSandboxOverrides(sandboxConfigDir, target)
 
-    const stored = JSON.parse(readFileSync(join(sandboxConfigDir, 'cc-haha', 'providers.json'), 'utf8')) as {
+    const stored = JSON.parse(readFileSync(join(sandboxConfigDir, 'echoflow-code', 'providers.json'), 'utf8')) as {
       providers: Array<{ disableExperimentalBetas?: boolean }>
     }
     expect(stored.providers[0]?.disableExperimentalBetas).toBe(true)

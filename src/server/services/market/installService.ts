@@ -133,7 +133,7 @@ async function performInstall(source: MarketSource, slug: string): Promise<Insta
   const skillsDir = getMarketSkillsDir()
   const target = path.join(skillsDir, dirName)
 
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'haha-market-install-'))
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'echoflow-market-install-'))
   try {
     let actualTotalSize = 0
     for (const file of files) {

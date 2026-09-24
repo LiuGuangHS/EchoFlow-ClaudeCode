@@ -28,7 +28,7 @@ Task quality depends on the model, prompts, available tools, and runtime togethe
 
 Most agent frameworks (including LangChain) adopt the classic **ReAct** pattern:
 
-```
+```text
 Thought → Action → Observation → Thought → ...
 ```
 
@@ -95,7 +95,7 @@ Key design: **tools begin executing during streaming**, not after the model gene
 
 #### Phase 3: Decision Point (lines 1062-1358)
 
-```
+```text
 Model response complete
   │
   ├─ Has tool calls? ──→ Continue loop (Phase 4)
@@ -107,7 +107,7 @@ Model response complete
 
 Tool execution isn't simple sequential invocation — it uses a carefully designed **orchestration strategy** (`src/services/tools/toolOrchestration.ts`):
 
-```
+```text
 Tool call list
   │
   ├─ Partition: read-only vs. write
@@ -147,7 +147,7 @@ The system prompt isn't a static string — it's dynamically assembled through a
 
 ![System Prompt Pipeline](./images/13-system-prompt-pipeline.png)
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                    Static Cacheable Zone                      │
 │  ┌───────────────────────────────────────────────────────┐  │
@@ -188,7 +188,7 @@ DANGEROUS_uncachedSystemPromptSection('mcp_instructions', async () => {
 
 CLAUDE.md is the custom instruction system, loaded by **priority from low to high** (`src/utils/claudemd.ts`):
 
-```
+```text
 /etc/claude-code/CLAUDE.md          ← Global managed config (lowest priority)
   ↓
 ~/.claude/CLAUDE.md                 ← User-level global instructions
@@ -257,7 +257,7 @@ This design makes every tool **self-describing, self-validating, and self-render
 
 Tool discovery and registration happens in three stages (`src/tools.ts`):
 
-```
+```text
 Stage 1: Base Tool Pool (getAllBaseTools)
   │  ~48 built-in tools
   │  + Feature-flag-gated conditional tools
@@ -277,7 +277,7 @@ Stage 3: MCP Merge (assembleToolPool)
 
 Each tool invocation passes through a **7-step pipeline** (`src/services/tools/toolExecution.ts`):
 
-```
+```text
 1. Tool Lookup → 2. Input Parsing (Zod) → 3. Custom Validation
        │
 4. Pre-Tool Hooks → 5. Permission Check → 6. Actual Execution → 7. Post-Tool Hooks
@@ -390,7 +390,7 @@ type BundledSkillDefinition = {
 
 #### Skill Discovery Sources
 
-```
+```text
 Bundled skills (bundled)          ← Compiled into CLI, 15+
   ↓
 Plugin skills (plugin)            ← Plugin-registered
@@ -425,7 +425,7 @@ The key plugin design: **users can toggle enable/disable**, unlike directly regi
 
 Hooks are **programmable interception points** across the entire lifecycle:
 
-```
+```text
 SessionStart → UserPromptSubmit → PreToolUse → [Tool Execution]
        │                                              │
        │                                          PostToolUse
@@ -444,7 +444,7 @@ Hooks execute as shell commands, with exit codes controlling behavior:
 
 MCP is the standard protocol for Claude Code's interaction with the external world. Tool naming convention:
 
-```
+```typescript
 mcp__{normalized_server_name}__{tool_name}
 e.g.: mcp__chrome_devtools__take_screenshot
 ```
@@ -457,7 +457,7 @@ MCP tools are discovered at runtime and **seamlessly merged** into the unified t
 
 ### Layered Permission Model
 
-```
+```text
 ┌─────────────────────────────────────┐
 │         Permission Rules             │
 │  Sources: userSettings, project,     │
@@ -580,7 +580,7 @@ Claude Code's Async Generator pattern solves all these problems:
 
 ### Specific Differences from LangChain Agents
 
-```
+```typescript
 LangChain Agent:
   agent = initialize_agent(tools, llm, agent="zero-shot-react-description")
   result = agent.run("do something")
@@ -633,7 +633,7 @@ Users can see model and tool progress before the task finishes. Model responses,
 
 Three-level prompt caching system (`src/services/api/claude.ts:3213-3237`):
 
-```
+```text
 Global Cache (cross-org)      ← Static system prompt
   ↓
 Ephemeral Cache (session)     ← Dynamic system prompt
@@ -694,7 +694,7 @@ Claude Code isn't "generic agent + code plugin" — it's **deeply optimized for 
 
 ## Core Component Relationships
 
-```
+```text
 User Input
   │
   ▼

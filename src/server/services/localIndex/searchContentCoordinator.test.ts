@@ -18,7 +18,7 @@ import type {
 const tempDirs: string[] = []
 
 async function createTempScope(): Promise<string> {
-  const scope = await mkdtemp(join(tmpdir(), 'cc-haha-search-content-coordinator-'))
+  const scope = await mkdtemp(join(tmpdir(), 'echoflow-code-search-content-coordinator-'))
   tempDirs.push(scope)
   return scope
 }
@@ -151,7 +151,7 @@ describe('search content coordinator', () => {
     let stopped = false
     const coordinator = createSearchContentCoordinator({
       resolveScope: () => scope,
-      resolveDatabasePath: () => join(scope, 'cc-haha', 'db', 'search-index-v1.sqlite'),
+      resolveDatabasePath: () => join(scope, 'echoflow-code', 'db', 'search-index-v1.sqlite'),
       schedule: task => queueMicrotask(task),
       createWatcher: options => {
         watcherOptions = options
@@ -213,7 +213,7 @@ describe('search content coordinator', () => {
     const scope = await createTempScope()
     const coordinator = createSearchContentCoordinator({
       resolveScope: () => scope,
-      resolveDatabasePath: () => join(scope, 'cc-haha', 'db', 'search-index-v1.sqlite'),
+      resolveDatabasePath: () => join(scope, 'echoflow-code', 'db', 'search-index-v1.sqlite'),
       schedule: task => queueMicrotask(task),
       discoverSources: async () => ({ complete: false }),
       createWatcher: () => ({
@@ -246,7 +246,7 @@ describe('search content coordinator', () => {
     let watcherOptions: ReconciliationWatcherOptions | undefined
     const coordinator = createSearchContentCoordinator({
       resolveScope: () => scope,
-      resolveDatabasePath: () => join(scope, 'cc-haha', 'db', 'search-index-v1.sqlite'),
+      resolveDatabasePath: () => join(scope, 'echoflow-code', 'db', 'search-index-v1.sqlite'),
       createWatcher: options => {
         watcherOptions = options
         return {
@@ -282,7 +282,7 @@ describe('search content coordinator', () => {
   test('discards only a corrupt disposable search database and rebuilds it', async () => {
     const scope = await createTempScope()
     const source = join(scope, 'projects', '-repo', 'session.jsonl')
-    const databasePath = join(scope, 'cc-haha', 'db', 'search-index-v1.sqlite')
+    const databasePath = join(scope, 'echoflow-code', 'db', 'search-index-v1.sqlite')
     await mkdir(join(source, '..'), { recursive: true })
     await mkdir(join(databasePath, '..'), { recursive: true })
     await writeFile(source, userLine('rebuilt after corruption'))
@@ -323,7 +323,7 @@ describe('search content coordinator', () => {
 
     const coordinator = createSearchContentCoordinator({
       resolveScope: () => scope,
-      resolveDatabasePath: () => join(scope, 'cc-haha', 'db', 'search-index-v1.sqlite'),
+      resolveDatabasePath: () => join(scope, 'echoflow-code', 'db', 'search-index-v1.sqlite'),
       storageLimitBytes: 1,
       createWatcher: () => ({
         async start() {},
@@ -351,7 +351,7 @@ describe('search content coordinator', () => {
   test('keeps a populated projection on fallback when the projects root disappears', async () => {
     const scope = await createTempScope()
     const source = join(scope, 'projects', '-repo', 'session.jsonl')
-    const databasePath = join(scope, 'cc-haha', 'db', 'search-index-v1.sqlite')
+    const databasePath = join(scope, 'echoflow-code', 'db', 'search-index-v1.sqlite')
     await mkdir(join(source, '..'), { recursive: true })
     await writeFile(source, userLine('persisted root missing needle'))
 
@@ -403,7 +403,7 @@ describe('search content coordinator', () => {
 
     const coordinator = createSearchContentCoordinator({
       resolveScope: () => scope,
-      resolveDatabasePath: () => join(scope, 'cc-haha', 'db', 'search-index-v1.sqlite'),
+      resolveDatabasePath: () => join(scope, 'echoflow-code', 'db', 'search-index-v1.sqlite'),
       createWatcher: () => noOpWatcher(),
     })
     await coordinator.start()
@@ -435,7 +435,7 @@ describe('search content coordinator', () => {
     let watcherOptions: ReconciliationWatcherOptions | undefined
     const coordinator = createSearchContentCoordinator({
       resolveScope: () => scope,
-      resolveDatabasePath: () => join(scope, 'cc-haha', 'db', 'search-index-v1.sqlite'),
+      resolveDatabasePath: () => join(scope, 'echoflow-code', 'db', 'search-index-v1.sqlite'),
       createWatcher: options => {
         watcherOptions = options
         return noOpWatcher()
@@ -476,7 +476,7 @@ describe('search content coordinator', () => {
     let watcherCount = 0
     const coordinator = createSearchContentCoordinator({
       resolveScope: () => scope,
-      resolveDatabasePath: () => join(scope, 'cc-haha', 'db', 'search-index-v1.sqlite'),
+      resolveDatabasePath: () => join(scope, 'echoflow-code', 'db', 'search-index-v1.sqlite'),
       createWatcher: () => {
         watcherCount += 1
         const current = watcherCount
@@ -514,7 +514,7 @@ describe('search content coordinator', () => {
     let watcherStops = 0
     const coordinator = createSearchContentCoordinator({
       resolveScope: () => scope,
-      resolveDatabasePath: () => join(scope, 'cc-haha', 'db', 'search-index-v1.sqlite'),
+      resolveDatabasePath: () => join(scope, 'echoflow-code', 'db', 'search-index-v1.sqlite'),
       createWatcher: () => noOpWatcher({
         start: async () => {
           watcherStarts += 1
@@ -549,7 +549,7 @@ describe('search content coordinator', () => {
     async (failureCode) => {
       const scope = await createTempScope()
       const source = join(scope, 'projects', '-repo', 'session.jsonl')
-      const databasePath = join(scope, 'cc-haha', 'db', 'search-index-v1.sqlite')
+      const databasePath = join(scope, 'echoflow-code', 'db', 'search-index-v1.sqlite')
       await mkdir(join(source, '..'), { recursive: true })
       await writeFile(source, userLine('query recovery needle'))
       let opens = 0
@@ -603,7 +603,7 @@ describe('search content coordinator', () => {
   test('does not delete the database for an unconfirmed query failure', async () => {
     const scope = await createTempScope()
     const source = join(scope, 'projects', '-repo', 'session.jsonl')
-    const databasePath = join(scope, 'cc-haha', 'db', 'search-index-v1.sqlite')
+    const databasePath = join(scope, 'echoflow-code', 'db', 'search-index-v1.sqlite')
     await mkdir(join(source, '..'), { recursive: true })
     await writeFile(source, userLine('non corrupt query needle'))
     let removals = 0

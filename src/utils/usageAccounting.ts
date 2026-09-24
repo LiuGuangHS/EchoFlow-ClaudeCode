@@ -22,7 +22,7 @@ import {
  *
  * Deliberately does NOT reuse `calculateUSDCost()` from the CLI: that helper falls back to the
  * default model's rates for anything it doesn't recognize and fires an analytics event per call.
- * cc-haha is a multi-provider client, so a third-party model (glm, k3, deepseek, grok, gpt, ...)
+ * echoflow-code is a multi-provider client, so a third-party model (glm, k3, deepseek, grok, gpt, ...)
  * priced at Claude rates would report wildly wrong dollars, and indexing runs this tens of
  * thousands of times per rebuild. Here an unknown model returns `null` instead — callers keep its
  * tokens in the activity totals but leave it out of the cost total, matching how ccusage and
@@ -140,7 +140,7 @@ function isSemverPrefix(value: string): boolean {
 /**
  * Whether a line's `usage` should be counted at all. Mirrors ccusage's validity rules: a `version`
  * that isn't semver-ish means a foreign log format, and an id that is present but empty means a
- * malformed line. Deliberately does not reject an empty `model` the way ccusage does — cc-haha
+ * malformed line. Deliberately does not reject an empty `model` the way ccusage does — echoflow-code
  * files those under `unknown` and still shows their tokens.
  *
  * Only gates token accounting; the entry still counts toward messages and tool calls, which are

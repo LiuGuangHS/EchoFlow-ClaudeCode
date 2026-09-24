@@ -46,6 +46,13 @@ export type SessionListSummary = {
   runtimeProviderId?: string | null
   runtimeModelId?: string
   effortLevel?: string
+  modelConfigId?: string
+  modelConfig?: {
+    providerId: string | null
+    modelId: string
+    effortLevel?: string
+  }
+  runtimeInstanceId?: string
   repository?: PersistedRepositorySession
   worktreeSession?: PersistedWorktreeSession | null
 }

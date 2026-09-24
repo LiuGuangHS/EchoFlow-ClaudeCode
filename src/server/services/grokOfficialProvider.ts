@@ -18,11 +18,11 @@ import {
   GROK_OFFICIAL_PROVIDER_ID,
   type SavedProvider,
 } from '../types/provider.js'
-import { getHahaGrokOAuthFilePath } from './hahaGrokOAuthService.js'
+import { getEchoFlowGrokOAuthFilePath } from './echoFlowGrokOAuthService.js'
 
 export { GROK_OFFICIAL_PROVIDER_ID, GROK_OAUTH_FILE_ENV_KEY }
 export const GROK_OFFICIAL_PROVIDER_NAME = 'Grok Official'
-export const GROK_OAUTH_PROVIDER_ENV_KEY = 'CC_HAHA_GROK_OAUTH_PROVIDER'
+export const GROK_OAUTH_PROVIDER_ENV_KEY = 'ECHOFLOW_GROK_OAUTH_PROVIDER'
 
 export function isGrokOfficialProviderId(id: string | null | undefined): boolean {
   return id === GROK_OFFICIAL_PROVIDER_ID
@@ -68,7 +68,7 @@ export function buildGrokOfficialRuntimeEnv(): Record<string, string> {
   }
   return {
     [GROK_OAUTH_PROVIDER_ENV_KEY]: '1',
-    [GROK_OAUTH_FILE_ENV_KEY]: getHahaGrokOAuthFilePath(),
+    [GROK_OAUTH_FILE_ENV_KEY]: getEchoFlowGrokOAuthFilePath(),
     [IMAGE_GENERATION_PROVIDER_KIND_ENV_KEY]: 'grok_oauth',
     [IMAGE_GENERATION_PROVIDER_ID_ENV_KEY]: GROK_OFFICIAL_PROVIDER_ID,
     [IMAGE_GENERATION_MODEL_ENV_KEY]: GROK_IMAGE_DEFAULT_MODEL,

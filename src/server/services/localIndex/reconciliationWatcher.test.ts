@@ -11,7 +11,7 @@ import {
 const tempDirs: string[] = []
 
 async function createTempDir(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), 'cc-haha-reconciliation-watcher-'))
+  const directory = await mkdtemp(join(tmpdir(), 'echoflow-code-reconciliation-watcher-'))
   tempDirs.push(directory)
   return directory
 }
