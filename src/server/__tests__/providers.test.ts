@@ -2918,7 +2918,7 @@ describe('Providers API', () => {
   test('GET /api/providers should list added providers', async () => {
     // Seed a provider via service
     const svc = new ProviderService()
-    await svc.addProvider(sampleInput())
+    await svc.addProvider(sampleInput({ apiKey: 'sk-test' }))
 
     const { req, url, segments } = makeRequest('GET', '/api/providers')
     const res = await handleProvidersApi(req, url, segments)
@@ -2929,7 +2929,7 @@ describe('Providers API', () => {
     expect(body.providers[0].name).toBe('Test Provider')
     expect(body.providers[0].apiKey).toBe('')
     expect(body.providers[0].hasApiKey).toBe(true)
-    expect(body.providers[0].keyPreview).toBe('sk-tes****-123')
+    expect(body.providers[0].keyPreview).toBe('sk-••••')
   })
 
   // ─── POST /api/providers ─────────────────────────────────────────────────

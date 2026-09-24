@@ -307,7 +307,7 @@ function toTokenSummary(token: EchoFlowTokenOption): EchoFlowTokenSummary {
 }
 
 function maskKey(key: string): string {
-  if (key.length <= 8) return '••••••••'
+  if (key.length <= 8) return key.startsWith('sk-') ? `sk-${'•'.repeat(Math.max(4, key.length - 3))}` : '••••••••'
   // 保留 sk- 前缀（如果有的话）加上后面几个字符
   if (key.startsWith('sk-')) {
     return `sk-${key.slice(3, 6)}****${key.slice(-4)}`

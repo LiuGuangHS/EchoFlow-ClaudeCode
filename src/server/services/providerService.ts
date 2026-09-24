@@ -149,7 +149,7 @@ function buildSavedProvider(input: CreateProviderInput): SavedProvider {
 
 function maskProviderKey(key: string): string {
   if (!key) return ''
-  if (key.length <= 8) return '••••••••'
+  if (key.length <= 8) return key.startsWith('sk-') ? `sk-${'•'.repeat(Math.max(4, key.length - 3))}` : '••••••••'
   return key.startsWith('sk-')
     ? `sk-${key.slice(3, 6)}****${key.slice(-4)}`
     : `${key.slice(0, 6)}****${key.slice(-4)}`

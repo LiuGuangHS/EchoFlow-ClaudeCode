@@ -141,7 +141,7 @@ export async function handleEchoFlowApi(req: Request, _url: URL, segments: strin
       const token = await service.selectAccountToken(input.endpoint, input.tokenId)
       if (!input.providerId) {
         const keyPreview = token.key.length <= 8
-          ? '••••••••'
+          ? token.key.startsWith('sk-') ? `sk-${'•'.repeat(Math.max(4, token.key.length - 3))}` : '••••••••'
           : token.key.startsWith('sk-')
             ? `sk-${token.key.slice(3, 6)}****${token.key.slice(-4)}`
             : `${token.key.slice(0, 6)}****${token.key.slice(-4)}`

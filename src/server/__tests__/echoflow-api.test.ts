@@ -66,7 +66,7 @@ describe('EchoFlow account API', () => {
       const body = await response.json() as { account: { tokens: Array<{ key?: string; keyPreview?: string; unlimitedQuota?: boolean }> } }
 
       expect(response.status).toBe(200)
-      expect(body.account.tokens).toEqual([expect.objectContaining({ keyPreview: '••••••••', unlimitedQuota: true })])
+      expect(body.account.tokens).toEqual([expect.objectContaining({ keyPreview: 'sk-••••', unlimitedQuota: true })])
       expect(body.account.tokens[0]?.key).toBeUndefined()
     } finally {
       globalThis.fetch = originalFetch
@@ -258,7 +258,7 @@ describe('EchoFlow account API', () => {
       }
       return new Response(JSON.stringify({
         success: true,
-        data: [{ id: 'dedicated-token', name: 'Dedicated key', key: 'dedicated-api-key' }],
+        data: [{ id: 'dedicated-token', name: 'Dedicated key', key: 'sk-test' }],
       }), { headers: { 'Content-Type': 'application/json' } })
     }) as typeof fetch
 
@@ -280,7 +280,7 @@ describe('EchoFlow account API', () => {
 
       expect(selectionResponse.status).toBe(200)
       expect(selectionBody).toEqual({
-        token: expect.objectContaining({ id: 'dedicated-token', name: 'Dedicated key' }),
+        token: expect.objectContaining({ id: 'dedicated-token', name: 'Dedicated key', keyPreview: 'sk-••••' }),
       })
       expect(selectionBody).not.toHaveProperty('providerId')
       expect(selectionBody.token).not.toHaveProperty('key')

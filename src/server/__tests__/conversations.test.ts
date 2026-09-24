@@ -2670,7 +2670,7 @@ describe('WebSocket Chat Integration', () => {
 
     try {
       await fs.writeFile(
-        path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'),
+        path.join(tmpDir, 'settings.json'),
         JSON.stringify({ alwaysThinkingEnabled: false }, null, 2),
         'utf-8',
       )
@@ -2682,7 +2682,7 @@ describe('WebSocket Chat Integration', () => {
     } finally {
       conversationService.startSession = originalStartSession as typeof conversationService.startSession
       conversationService.stopSession(sessionId)
-      await fs.writeFile(path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'), '{}\n', 'utf-8')
+      await fs.writeFile(path.join(tmpDir, 'settings.json'), '{}\n', 'utf-8')
     }
   })
 
@@ -2731,7 +2731,7 @@ describe('WebSocket Chat Integration', () => {
       const disabledSessionId = `ds-think-off-${crypto.randomUUID()}`
       sessionIds.push(disabledSessionId)
       await fs.writeFile(
-        path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'),
+        path.join(tmpDir, 'settings.json'),
         JSON.stringify({ alwaysThinkingEnabled: false }, null, 2),
         'utf-8',
       )
@@ -2741,7 +2741,7 @@ describe('WebSocket Chat Integration', () => {
       const enabledSessionId = `ds-think-on-${crypto.randomUUID()}`
       sessionIds.push(enabledSessionId)
       await fs.writeFile(
-        path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'),
+        path.join(tmpDir, 'settings.json'),
         JSON.stringify({ alwaysThinkingEnabled: true }, null, 2),
         'utf-8',
       )
@@ -2767,7 +2767,7 @@ describe('WebSocket Chat Integration', () => {
       }
       await providerService.activateOfficial()
       await providerService.deleteProvider(provider.id)
-      await fs.writeFile(path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'), '{}\n', 'utf-8')
+      await fs.writeFile(path.join(tmpDir, 'settings.json'), '{}\n', 'utf-8')
     }
   }, 20_000)
 

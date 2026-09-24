@@ -5151,7 +5151,7 @@ function resolveDesktopThinkingMode(
   settings: Record<string, unknown>,
   providerId?: string | null,
 ): 'disabled' | undefined {
-  if (isOpenAIOfficialProviderId(providerId)) return undefined
+  if (isOpenAIOfficialProviderId(providerId) || isGrokOfficialProviderId(providerId)) return undefined
   return settings.alwaysThinkingEnabled === false ? 'disabled' : undefined
 }
 
