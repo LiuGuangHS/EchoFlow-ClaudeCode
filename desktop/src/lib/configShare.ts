@@ -139,6 +139,11 @@ export function generateDeepLinkUrl(config: ShareableConfig): string {
   return `echoflowcode://config/import?v=1&data=${encodeConfigPayload(config)}`
 }
 
+/** Compatibility alias for provider-oriented deep-link templates. */
+export function generateProviderDeepLinkUrl(config: ShareableConfig): string {
+  return `echoflowcode://provider/add?v=1&data=${encodeConfigPayload(config)}`
+}
+
 export function parseDeepLinkUrl(url: string): { action: string; params: URLSearchParams } | null {
   try {
     if (!url.startsWith('echoflowcode://')) return null

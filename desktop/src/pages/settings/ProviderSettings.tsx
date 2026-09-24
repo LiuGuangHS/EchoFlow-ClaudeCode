@@ -1940,31 +1940,40 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
         </label>
 
         <div className="flex flex-col gap-1">
-          <label htmlFor="provider-api-key" className="text-sm font-medium text-[var(--color-text-primary)]">
-            {t('settings.providers.apiKey')}
+          <label htmlFor={echoFlowDraft ? undefined : 'provider-api-key'} className="text-sm font-medium text-[var(--color-text-primary)]">
+            {mode === 'edit' ? t('settings.providers.apiKeyKeep') : t('settings.providers.apiKey')}
             {mode === 'create' && requiresApiKey && <span className="text-[var(--color-error)] ml-0.5">*</span>}
           </label>
-          <div className="relative">
-            <input
-              id="provider-api-key"
-              autoComplete="off"
-              spellCheck={false}
-              type={showApiKey ? 'text' : 'password'}
-              value={apiKey}
-              onChange={(e) => handleApiKeyChange(e.target.value)}
-              placeholder="sk-..."
-              className="h-10 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 pr-10 text-sm text-[var(--color-text-primary)] outline-none transition-colors duration-150 placeholder:text-[var(--color-text-tertiary)] focus:border-[var(--color-border-focus)] focus:shadow-[var(--shadow-focus-ring)]"
-            />
-            <IconButton
-              icon={showApiKey ? 'visibility_off' : 'visibility'}
-              label={t(showApiKey ? 'settings.providers.hideApiKey' : 'settings.providers.showApiKey')}
-              showTooltip={false}
-              size="sm"
-              tone="muted"
-              onClick={() => setShowApiKey((visible) => !visible)}
-              className="absolute right-1.5 top-1/2 -translate-y-1/2"
-            />
-          </div>
+          {echoFlowDraft ? (
+            <div className="flex h-10 items-center rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-3 font-mono text-sm text-[var(--color-text-secondary)]">
+              {echoFlowDraft.keyPreview}
+            </div>
+          ) : (
+            <div className="relative">
+              <input
+                id="provider-api-key"
+                autoComplete="off"
+                spellCheck={false}
+                type={showApiKey ? 'text' : 'password'}
+                value={apiKey}
+                onChange={(e) => handleApiKeyChange(e.target.value)}
+                placeholder={provider?.keyPreview || 'sk-...'}
+                className="h-10 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 pr-10 text-sm text-[var(--color-text-primary)] outline-none transition-colors duration-150 placeholder:text-[var(--color-text-tertiary)] focus:border-[var(--color-border-focus)] focus:shadow-[var(--shadow-focus-ring)]"
+              />
+              {apiKey.length > 0 && (
+                <IconButton
+                  icon={showApiKey ? 'visibility_off' : 'visibility'}
+                  label={t(showApiKey ? 'settings.providers.hideApiKey' : 'settings.providers.showApiKey')}
+                  showTooltip={false}
+                  size="sm"
+                  tone="muted"
+                  onClick={() => setShowApiKey((visible) => !visible)}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2"
+                />
+              )}
+            </div>
+          )}
+          {echoFlowDraft && <p className="text-xs text-[var(--color-text-tertiary)]">{t('settings.providers.tokenKeyManaged')}</p>}
         </div>
 
         {(apiKeyUrl || promoText) && (

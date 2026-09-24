@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/Button'
 import { Checkbox } from '@/components/ui/Checkbox'
 import { Input } from '@/components/ui/Input'
 import { Modal } from '@/components/ui/Modal'
-import { providerToShareable, generateDeepLinkUrl } from '../../lib/configShare'
+import { providerToShareable, generateDeepLinkUrl, generateProviderDeepLinkUrl } from '../../lib/configShare'
 import type { ShareableConfig } from '../../types/configShare'
 
 export function ConfigGeneratorPage() {
@@ -15,6 +15,7 @@ export function ConfigGeneratorPage() {
   const [selectedProviderIds, setSelectedProviderIds] = useState<string[]>([])
   const [source, setSource] = useState('')
   const [generatedLink, setGeneratedLink] = useState('')
+  const [providerLink, setProviderLink] = useState('')
   const [showLinkModal, setShowLinkModal] = useState(false)
   const [copied, setCopied] = useState(false)
 
@@ -37,12 +38,13 @@ export function ConfigGeneratorPage() {
       config: { providers: selectedProviders },
     }
     setGeneratedLink(generateDeepLinkUrl(config))
+    setProviderLink(generateProviderDeepLinkUrl(config))
     setShowLinkModal(true)
   }
 
-  const copyLink = async () => {
+  const copyLink = async (link: string) => {
     try {
-      await navigator.clipboard.writeText(generatedLink)
+      await navigator.clipboard.writeText(link)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     } catch (error) {
@@ -121,14 +123,21 @@ export function ConfigGeneratorPage() {
             <div className="p-3 bg-[var(--color-surface-secondary)] rounded-lg border border-[var(--color-border)] break-all font-mono text-sm">
               {generatedLink}
             </div>
+            <div className="text-xs text-[var(--color-text-secondary)]">
+              {t('configGenerator.providerCompatibilityLink')}
+            </div>
+            <div className="p-3 bg-[var(--color-surface-secondary)] rounded-lg border border-[var(--color-border)] break-all font-mono text-sm">
+              {providerLink}
+            </div>
             <div className="text-sm text-[var(--color-text-secondary)]">
               {t('configGenerator.linkExpires')}
               <div className="mt-2">{t('configGenerator.securityNote')}</div>
             </div>
             <div className="flex gap-3">
-              <Button onClick={copyLink} variant="primary">
+              <Button onClick={() => copyLink(generatedLink)} variant="primary">
                 {copied ? t('configGenerator.copied') : t('configGenerator.copy')}
               </Button>
+              <Button onClick={() => copyLink(providerLink)}>{t('configGenerator.copyProviderLink')}</Button>
               <Button onClick={() => setShowLinkModal(false)}>{t('configImport.cancel')}</Button>
             </div>
           </div>

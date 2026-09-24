@@ -9,6 +9,7 @@ interface DeepLinkHandlerOptions {
 export interface DeepLinkPayload {
   type: 'config-import'
   data: ShareableConfig
+  apiKey?: string
 }
 
 export class DeepLinkHandler {
@@ -31,7 +32,8 @@ export class DeepLinkHandler {
     if (action.type === 'config/import') {
       this.sendToRenderer(ELECTRON_EVENT_CHANNELS.deepLink, {
         type: 'config-import',
-        data: action.payload
+        data: action.payload,
+        ...(action.apiKey ? { apiKey: action.apiKey } : {}),
       })
     } else {
       console.warn('[DeepLink] Unknown action:', action.type)

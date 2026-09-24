@@ -65,7 +65,7 @@ export function DesktopSettings() {
             <TabButton icon="monitoring" label={t('settings.tab.activity')} active={activeTab === 'activity'} onClick={() => setActiveTab('activity')} />
             <TabButton icon="account_tree" label={t('settings.tab.trace')} active={activeTab === 'trace'} onClick={() => setActiveTab('trace')} />
             <TabButton icon="monitor_heart" label={t('settings.tab.diagnostics')} active={activeTab === 'diagnostics'} onClick={() => setActiveTab('diagnostics')} />
-            <TabButton icon="admin_panel_settings" label="配置生成器" active={activeTab === 'configGenerator'} onClick={() => setActiveTab('configGenerator')} />
+            <TabButton icon="admin_panel_settings" label={t('settings.tab.configGenerator')} active={activeTab === 'configGenerator'} onClick={() => setActiveTab('configGenerator')} />
           </div>
           <div className="mt-2 border-t border-[var(--color-border-separator)] pt-2">
             <TabButton icon="info" label={t('settings.tab.about')} active={activeTab === 'about'} onClick={() => setActiveTab('about')} />

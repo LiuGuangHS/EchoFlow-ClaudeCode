@@ -5,6 +5,7 @@ import {
   validateConfigPayload,
   sanitizeProviderForSharing,
   generateDeepLinkUrl,
+  generateProviderDeepLinkUrl,
   parseDeepLinkUrl,
 } from '../configShare'
 import type { ShareableConfig } from '../../types/configShare'
@@ -45,6 +46,14 @@ describe('configShare', () => {
     const parsed = parseDeepLinkUrl(link)
     expect(parsed?.action).toBe('config/import')
     expect(parsed?.params.get('v')).toBe('1')
+    expect(decodeConfigPayload(parsed!.params.get('data')!)).toEqual(config)
+  })
+
+  it('generates the provider-oriented compatibility deep link without changing the original link', () => {
+    const link = generateProviderDeepLinkUrl(config)
+    expect(link).toMatch(/^echoflowcode:\/\/provider\/add\?v=1&data=/)
+    const parsed = parseDeepLinkUrl(link)
+    expect(parsed?.action).toBe('provider/add')
     expect(decodeConfigPayload(parsed!.params.get('data')!)).toEqual(config)
   })
 

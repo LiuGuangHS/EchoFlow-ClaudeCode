@@ -16,7 +16,7 @@ export function App() {
 }
 
 function ConnectedApp() {
-  const [configToImport, setConfigToImport] = useState<ShareableConfig | null>(null)
+  const [configToImport, setConfigToImport] = useState<{ config: ShareableConfig; apiKey?: string } | null>(null)
   const t = useTranslation()
 
   useScheduledTaskDesktopNotifications()
@@ -53,7 +53,7 @@ function ConnectedApp() {
             return
           }
 
-          setConfigToImport(config)
+          setConfigToImport({ config, apiKey: payload.apiKey })
         } catch (err) {
           console.error('Failed to process config:', err)
           alert(t('configImport.invalidLink'))
@@ -75,7 +75,8 @@ function ConnectedApp() {
       {configToImport && (
         <ConfigImportModal
           open={true}
-          config={configToImport}
+          config={configToImport.config}
+          apiKey={configToImport.apiKey}
           onClose={() => setConfigToImport(null)}
         />
       )}

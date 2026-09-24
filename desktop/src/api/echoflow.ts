@@ -38,6 +38,8 @@ export type EchoFlowTokenSource = {
   tokenId: string
   tokenName: string
   keyPreview: string
+  remainQuota?: number
+  unlimitedQuota?: boolean
 }
 
 export type EchoFlowProviderCreateInput = Omit<CreateProviderInput, 'presetId' | 'apiKey'> & EchoFlowTokenSource

@@ -2,11 +2,18 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import '@testing-library/jest-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { providersApi } from '../../api/providers'
+import { ProviderSettings } from './ProviderSettings'
 import { ApiError } from '../../api/client'
 import { useProviderStore } from '../../stores/providerStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import type { SavedProvider } from '../../types/provider'
-import { ProviderSettings } from './ProviderSettings'
+
+type EchoFlowTokenSource = {
+  endpoint: 'main' | 'dedicated'
+  tokenId: string
+  tokenName: string
+  keyPreview: string
+}
 
 const {
   createProviderFromTokenMock,
@@ -17,13 +24,6 @@ const {
   testProviderFromTokenMock: vi.fn(),
   fetchModelsFromTokenMock: vi.fn(),
 }))
-
-type EchoFlowTokenSource = {
-  endpoint: 'main' | 'dedicated'
-  tokenId: string
-  tokenName: string
-  keyPreview: string
-}
 
 vi.mock('../../api/echoflow', () => ({
   echoflowApi: {
@@ -105,6 +105,9 @@ describe('EchoFlow provider setup', () => {
     const dialog = within(await screen.findByRole('dialog'))
 
     expect(dialog.getByDisplayValue('https://expapi.echoflowai.cc')).toBeInTheDocument()
+    expect(dialog.getByText('sk-dedicated…5678')).toBeInTheDocument()
+    expect(dialog.queryByRole('button', { name: 'Show API Key' })).not.toBeInTheDocument()
+    expect(dialog.getByText(/full key is not exposed/i)).toBeInTheDocument()
     expect(dialog.getByText('API Format')).toBeInTheDocument()
     expect(dialog.getByRole('button', { name: /Anthropic Messages \(native\)/ })).toBeInTheDocument()
     expect(createProviderFromTokenMock).not.toHaveBeenCalled()
@@ -158,7 +161,8 @@ describe('EchoFlow provider setup', () => {
       apiFormat: 'anthropic',
       models: { main: 'claude-test-model', haiku: 'claude-test-model', sonnet: 'claude-test-model', opus: 'claude-test-model' },
     }
-    vi.mocked(providersApi.list)
+    const listSpy = vi.spyOn(providersApi, 'list')
+    listSpy
       .mockResolvedValueOnce({ providers: [], activeId: null })
       .mockResolvedValueOnce({ providers: [provider], activeId: null })
     createProviderFromTokenMock.mockResolvedValueOnce({ provider })
@@ -176,13 +180,13 @@ describe('EchoFlow provider setup', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Select dedicated token' }))
     const tokenDialog = within(await screen.findByRole('dialog'))
-    expect(tokenDialog.getByDisplayValue('EchoFlow API · 专线')).toBeInTheDocument()
+    expect(tokenDialog.getByDisplayValue('专线 · Dedicated key')).toBeInTheDocument()
     fireEvent.click(tokenDialog.getByRole('button', { name: 'Cancel' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
 
     fireEvent.click(screen.getByRole('button', { name: /Add Model/ }))
     const regularDialog = within(screen.getByRole('dialog'))
-    expect(regularDialog.queryByDisplayValue('EchoFlow API · 专线')).not.toBeInTheDocument()
+    expect(regularDialog.queryByDisplayValue('专线 · Dedicated key')).not.toBeInTheDocument()
     fireEvent.click(regularDialog.getByRole('button', { name: 'Cancel' }))
   })
 
@@ -265,6 +269,21 @@ describe('EchoFlow provider setup', () => {
     expect(fetchModelsFromTokenMock).not.toHaveBeenCalled()
   })
 
+  it('toggles visibility for manually entered API keys', async () => {
+    render(<ProviderSettings />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /Add Model/ }))
+    const dialog = within(screen.getByRole('dialog'))
+    const keyInput = dialog.getByPlaceholderText('sk-...')
+    fireEvent.change(keyInput, { target: { value: 'sk-manual-key' } })
+
+    expect(keyInput).toHaveAttribute('type', 'password')
+    fireEvent.click(dialog.getByRole('button', { name: 'Show API Key' }))
+    expect(keyInput).toHaveAttribute('type', 'text')
+    fireEvent.click(dialog.getByRole('button', { name: 'Hide API Key' }))
+    expect(keyInput).toHaveAttribute('type', 'password')
+  })
+
   it('tests an EchoFlow token with its endpoint and token id', async () => {
     testProviderFromTokenMock.mockResolvedValue({
       result: { connectivity: { success: true, latencyMs: 12 } },
@@ -324,7 +343,7 @@ describe('saved and legacy providers', () => {
 
   it('explains why a remote endpoint change needs an explicit key and allows retry', async () => {
     const provider = { ...savedProviders[0]!, apiKey: '' }
-    vi.mocked(providersApi.list).mockResolvedValue({ providers: [provider], activeId: null })
+    vi.spyOn(providersApi, 'list').mockResolvedValue({ providers: [provider], activeId: null })
     const update = vi.spyOn(providersApi, 'update')
       .mockRejectedValueOnce(new ApiError(400, { code: 'REMOTE_PROVIDER_CREDENTIAL_REQUIRED' }))
       .mockResolvedValue({ provider })
@@ -358,10 +377,11 @@ describe('saved and legacy providers', () => {
   })
 
   it.each(savedProviders)('edits and saves an existing $presetId provider without losing its connection', async (provider) => {
+    const listSpy = vi.spyOn(providersApi, 'list')
     const update = vi.spyOn(providersApi, 'update').mockImplementation(async (id, input) => {
       expect(id).toBe(provider.id)
       const updated = { ...provider, ...input } as SavedProvider
-      vi.mocked(providersApi.list).mockResolvedValue({
+      listSpy.mockResolvedValue({
         providers: savedProviders.map((saved) => saved.id === id ? updated : saved),
         activeId: null,
       })
@@ -453,14 +473,14 @@ describe('provider request compatibility', () => {
     await waitFor(() => expect(providersApi.update).toHaveBeenCalledWith('compat-provider', expect.objectContaining({ requestCompatibility: null, baseUrl: provider.baseUrl })))
   })
   it('shows Responses capabilities without Chat-only token parameter controls', async () => {
-    vi.mocked(providersApi.list).mockResolvedValue({ providers: [{ ...provider, apiFormat: 'openai_responses' }], activeId: null })
+    vi.spyOn(providersApi, 'list').mockResolvedValue({ providers: [{ ...provider, apiFormat: 'openai_responses' }], activeId: null })
     const dialog = await open()
     fireEvent.click(dialog.getByRole('button', { name: 'Advanced compatibility' }))
     expect(dialog.queryByRole('combobox', { name: 'Output token field' })).not.toBeInTheDocument()
     expect(dialog.getByRole('combobox', { name: 'Reasoning parameters' })).toBeInTheDocument()
   })
   it('keeps compatibility controls hidden for Anthropic providers', async () => {
-    vi.mocked(providersApi.list).mockResolvedValue({ providers: [{ ...provider, apiFormat: 'anthropic' }], activeId: null })
+    vi.spyOn(providersApi, 'list').mockResolvedValue({ providers: [{ ...provider, apiFormat: 'anthropic' }], activeId: null })
     const dialog = await open()
     expect(dialog.queryByRole('textbox', { name: 'Reply output budget' })).not.toBeInTheDocument()
   })

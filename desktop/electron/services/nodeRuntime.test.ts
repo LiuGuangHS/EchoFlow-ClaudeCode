@@ -93,7 +93,7 @@ describe('Node runtime', () => {
             lts: 'Iron',
             files: [`node-v20.20.0-${target}.${extension}`],
           },
-          { version, lts: 'Jod', files: [archiveName] },
+          { version, lts: 'Jod', files: [target] },
         ]))
       }
       if (url.endsWith('/SHASUMS256.txt')) {

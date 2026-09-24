@@ -1284,6 +1284,7 @@ export const kr: Record<TranslationKey, string> = {
   'settings.providers.regionCustom': '사용자 지정',
   'settings.providers.apiKey': 'API 키',
   'settings.providers.apiKeyKeep': 'API 키 (비워 두면 현재 값 유지)',
+  'settings.providers.tokenKeyManaged': '토큰이 안전하게 연결되었습니다. 전체 키는 여기에 표시되지 않습니다.',
   'settings.providers.showApiKey': 'API 키 표시',
   'settings.providers.hideApiKey': 'API 키 숨기기',
   'settings.providers.getApiKey': 'API 키 가져오기',

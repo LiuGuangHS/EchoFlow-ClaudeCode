@@ -1282,6 +1282,7 @@ Row 9, all 8 cells: continuing from straight down, turning left through lower-le
   'settings.providers.regionCustom': 'Custom',
   'settings.providers.apiKey': 'API Key',
   'settings.providers.apiKeyKeep': 'API Key (leave blank to keep current)',
+  'settings.providers.tokenKeyManaged': 'This token is securely linked. Its full key is not exposed here.',
   'settings.providers.showApiKey': 'Show API Key',
   'settings.providers.hideApiKey': 'Hide API Key',
   'settings.providers.getApiKey': 'Get API Key',
@@ -3843,6 +3844,8 @@ Row 9, all 8 cells: continuing from straight down, turning left through lower-le
   'configGenerator.generatedLink': 'Generated Link',
   'configGenerator.linkExpires': 'Link expires in: 30 days',
   'configGenerator.securityNote': 'Note: Link does not contain sensitive info like API Keys. Users still need to configure them manually.',
+  'configGenerator.providerCompatibilityLink': 'Compatibility link (provider/add)',
+  'configGenerator.copyProviderLink': 'Copy compatibility link',
 
   'configImport.title': 'Import Configuration',
   'configImport.source': 'Source',

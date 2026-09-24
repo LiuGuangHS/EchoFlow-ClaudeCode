@@ -1283,6 +1283,7 @@ export const zh: Record<TranslationKey, string> = {
   'settings.providers.regionCustom': '自訂',
   'settings.providers.apiKey': 'API 金鑰',
   'settings.providers.apiKeyKeep': 'API 金鑰（留空保持不變）',
+  'settings.providers.tokenKeyManaged': '令牌已安全關聯；此處僅顯示脫敏預覽，不會展示完整金鑰。',
   'settings.providers.showApiKey': '顯示 API 金鑰',
   'settings.providers.hideApiKey': '隱藏 API 金鑰',
   'settings.providers.getApiKey': '獲取 API Key',

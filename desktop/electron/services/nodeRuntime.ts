@@ -99,6 +99,11 @@ function assetForRelease(version: string): NodeAsset {
   }
 }
 
+function releaseIncludesAsset(files: string[], asset: NodeAsset): boolean {
+  // Node's index.json has used both archive filenames and platform identifiers.
+  return files.includes(asset.archiveName) || files.includes(asset.target)
+}
+
 function parseNodeVersion(value: string): [number, number, number] | null {
   const match = /^v(\d+)\.(\d+)\.(\d+)$/.exec(value)
   return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null
@@ -131,7 +136,7 @@ async function resolveLatestLts(deps: NodeRuntimeDeps): Promise<{ release: NodeR
     if (!release || !release.lts) continue
     const asset = assetForRelease(release.version)
     const version = parseNodeVersion(release.version)
-    if (version && isCompatibleNodeVersion(version) && release.files.includes(asset.archiveName)) {
+    if (version && isCompatibleNodeVersion(version) && releaseIncludesAsset(release.files, asset)) {
       return { release, asset }
     }
   }

@@ -1282,6 +1282,7 @@ export const zh: Record<TranslationKey, string> = {
   'settings.providers.regionCustom': '自定义',
   'settings.providers.apiKey': 'API 密钥',
   'settings.providers.apiKeyKeep': 'API 密钥（留空保持不变）',
+  'settings.providers.tokenKeyManaged': '令牌已安全关联；此处仅显示脱敏预览，不会展示完整密钥。',
   'settings.providers.showApiKey': '显示 API 密钥',
   'settings.providers.hideApiKey': '隐藏 API 密钥',
   'settings.providers.getApiKey': '获取 API Key',
@@ -3833,6 +3834,8 @@ export const zh: Record<TranslationKey, string> = {
   'configGenerator.generatedLink': '已生成链接',
   'configGenerator.linkExpires': '链接有效期：30 天',
   'configGenerator.securityNote': '注意：链接不包含 API Key 等敏感信息，用户仍需手动配置。',
+  'configGenerator.providerCompatibilityLink': '兼容地址（provider/add）',
+  'configGenerator.copyProviderLink': '复制兼容地址',
 
   // Config Import
   'configImport.title': '导入配置',

@@ -1284,6 +1284,7 @@ export const jp: Record<TranslationKey, string> = {
   'settings.providers.regionCustom': 'カスタム',
   'settings.providers.apiKey': 'API キー',
   'settings.providers.apiKeyKeep': 'API キー（空欄のままにすると現在の値を保持）',
+  'settings.providers.tokenKeyManaged': 'トークンは安全に連携されています。完全なキーはここには表示されません。',
   'settings.providers.showApiKey': 'API キーを表示',
   'settings.providers.hideApiKey': 'API キーを非表示',
   'settings.providers.getApiKey': 'API キーを取得',

@@ -11,9 +11,10 @@ interface ConfigImportModalProps {
   open: boolean
   onClose: () => void
   config: ShareableConfig
+  apiKey?: string
 }
 
-export function ConfigImportModal({ open, onClose, config }: ConfigImportModalProps) {
+export function ConfigImportModal({ open, onClose, config, apiKey }: ConfigImportModalProps) {
   const t = useTranslation()
   const providers = useProviderStore(state => state.providers)
   const createProvider = useProviderStore(state => state.createProvider)
@@ -23,7 +24,7 @@ export function ConfigImportModal({ open, onClose, config }: ConfigImportModalPr
   const handleImport = async () => {
     setImporting(true)
     try {
-      const result = await importConfig(config, { providers, createProvider })
+      const result = await importConfig(config, { providers, createProvider }, { apiKey })
       const message = result.skipped > 0
         ? `${t('configImport.success')} ${t('configImport.skippedExisting', { count: result.skipped })}`
         : t('configImport.success')

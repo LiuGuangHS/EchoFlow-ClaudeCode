@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import {
   decodeConfigPayload,
   generateDeepLinkUrl,
+  generateProviderDeepLinkUrl,
   parseDeepLinkUrl,
   validateConfigPayload,
 } from '../configShare'
@@ -33,6 +34,22 @@ describe('configShare integration', () => {
     const decoded = decodeConfigPayload(parsed!.params.get('data')!)
     expect(validateConfigPayload(decoded).valid).toBe(true)
     expect(handleDeepLinkUrl(link)).toEqual({ type: 'config/import', payload: config })
+  })
+
+  it('accepts the provider-oriented compatibility link', () => {
+    expect(handleDeepLinkUrl(generateProviderDeepLinkUrl(config))).toEqual({
+      type: 'config/import',
+      payload: config,
+    })
+  })
+
+  it('accepts a NewAPI provider template with address and key placeholders', () => {
+    const action = handleDeepLinkUrl('echoflowcode://provider/add?v=1&base_url=https%3A%2F%2Fapi.newapi.example%2Fv1&api_key=sk-test&model=deepseek-chat')
+    expect(action?.type).toBe('config/import')
+    if (action?.type !== 'config/import') return
+    expect(action.apiKey).toBe('sk-test')
+    expect(action.payload.config.providers[0]?.baseUrl).toBe('https://api.newapi.example/v1')
+    expect(action.payload.config.providers[0]?.models.main).toBe('deepseek-chat')
   })
 
   it('rejects a link containing a nested API key', () => {

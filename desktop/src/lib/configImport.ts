@@ -3,11 +3,11 @@ import type { CreateProviderInput, SavedProvider } from '../types/provider'
 
 export type ConfigImportResult = { imported: number; skipped: number; skippedNames: string[] }
 
-export function providerToCreateInput(provider: ShareableProvider): CreateProviderInput {
+export function providerToCreateInput(provider: ShareableProvider, apiKey = ''): CreateProviderInput {
   return {
     presetId: provider.presetId,
     name: provider.name,
-    apiKey: '',
+    apiKey,
     baseUrl: provider.baseUrl,
     apiFormat: provider.apiFormat,
     authStrategy: provider.authStrategy,
@@ -31,6 +31,7 @@ export async function importConfig(
     providers: SavedProvider[]
     createProvider: (input: CreateProviderInput) => Promise<unknown>
   },
+  options: { apiKey?: string } = {},
 ): Promise<ConfigImportResult> {
   const existing = new Set(stores.providers.map(providerIdentity))
   const result: ConfigImportResult = { imported: 0, skipped: 0, skippedNames: [] }
@@ -41,7 +42,7 @@ export async function importConfig(
       result.skippedNames.push(provider.name)
       continue
     }
-    await stores.createProvider(providerToCreateInput(provider))
+    await stores.createProvider(providerToCreateInput(provider, options.apiKey))
     existing.add(providerIdentity(provider))
     result.imported += 1
   }
