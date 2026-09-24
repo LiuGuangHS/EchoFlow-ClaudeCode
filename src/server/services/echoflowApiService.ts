@@ -125,7 +125,7 @@ export class EchoFlowApiService {
     const accounts = await this.readAccounts()
     const token = accounts.accounts[endpoint]?.tokens?.find((candidate) => candidate.id === id)
     if (!token) throw new EchoFlowApiError('token_invalid')
-    return token
+    return { ...token, key: withApiKeyPrefix(token.key) }
   }
 
   async disconnectAccount(endpoint: EchoFlowEndpoint = 'main'): Promise<void> {
@@ -302,8 +302,12 @@ function toTokenSummary(token: EchoFlowTokenOption): EchoFlowTokenSummary {
     ...(token.status ? { status: token.status } : {}),
     ...(typeof token.remainQuota === 'number' ? { remainQuota: token.remainQuota } : {}),
     ...(typeof token.unlimitedQuota === 'boolean' ? { unlimitedQuota: token.unlimitedQuota } : {}),
-    keyPreview: maskKey(token.key),
+    keyPreview: maskKey(withApiKeyPrefix(token.key)),
   }
+}
+
+function withApiKeyPrefix(key: string): string {
+  return key.startsWith('sk-') ? key : `sk-${key}`
 }
 
 function maskKey(key: string): string {

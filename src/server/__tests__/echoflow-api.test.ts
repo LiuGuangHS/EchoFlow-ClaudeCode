@@ -362,7 +362,7 @@ describe('EchoFlow account API', () => {
       expect(stored.providers).toEqual([expect.objectContaining({
         presetId: 'echoflowai',
         baseUrl: 'https://expapi.echoflowai.cc',
-        apiKey: 'server-dedicated-key',
+        apiKey: 'sk-server-dedicated-key',
       })])
     } finally {
       globalThis.fetch = originalFetch
@@ -398,7 +398,7 @@ describe('EchoFlow account API', () => {
       })
       expect(requests).toContainEqual({
         url: 'https://expapi.echoflowai.cc/v1/models',
-        authorization: 'Bearer server-model-key',
+        authorization: 'Bearer sk-server-model-key',
       })
     } finally {
       globalThis.fetch = originalFetch
@@ -521,7 +521,7 @@ describe('EchoFlow account API', () => {
       expect(response.status).toBe(200)
       expect(body.result.connectivity.success).toBe(true)
       expect(requests.length).toBeGreaterThan(0)
-      expect(requests.every(({ url, authorization }) => url === 'https://expapi.echoflowai.cc/v1/responses' && authorization === 'Bearer server-responses-key')).toBe(true)
+      expect(requests.every(({ url, authorization }) => url === 'https://expapi.echoflowai.cc/v1/responses' && authorization === 'Bearer sk-server-responses-key')).toBe(true)
     } finally {
       globalThis.fetch = originalFetch
     }
@@ -561,7 +561,7 @@ describe('EchoFlow account API', () => {
       expect(response.status).toBe(200)
       expect(body).toEqual({ provider: { id: provider.id } })
       await expect(new ProviderService().getProvider(provider.id)).resolves.toMatchObject({
-        apiKey: 'dedicated-api-key',
+        apiKey: 'sk-dedicated-api-key',
         baseUrl: 'https://expapi.echoflowai.cc',
         presetId: 'echoflowai',
       })
@@ -606,7 +606,7 @@ describe('EchoFlow account API', () => {
       expect(requests).toContainEqual(expect.objectContaining({
         url: 'https://expapi.echoflowai.cc/v1/messages',
       }))
-      expect(requests.find((request) => request.url.endsWith('/v1/messages'))?.headers.get('authorization')).toBe('Bearer server-test-key')
+      expect(requests.find((request) => request.url.endsWith('/v1/messages'))?.headers.get('authorization')).toBe('Bearer sk-server-test-key')
       expect(requests.some((request) => request.url.startsWith('https://api.echoflowai.cc/'))).toBe(false)
     } finally {
       globalThis.fetch = originalFetch
