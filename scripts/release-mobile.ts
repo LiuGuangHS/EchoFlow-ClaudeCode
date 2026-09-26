@@ -8,9 +8,7 @@ const mobilePackagePath = path.join(root, 'mobile', 'package.json')
 const mobileAppPath = path.join(root, 'mobile', 'app.json')
 
 type MobileAppConfig = {
-  expo?: {
-    version?: string
-  }
+  version?: string
 }
 
 function bumpVersion(current: string, bump: string): string {
@@ -43,7 +41,7 @@ if (!bump) throw new Error('Usage: bun run scripts/release-mobile.ts <patch|mino
 const mobilePackage = JSON.parse(readFileSync(mobilePackagePath, 'utf-8')) as { version?: string }
 const mobileApp = JSON.parse(readFileSync(mobileAppPath, 'utf-8')) as MobileAppConfig
 const currentVersion = mobilePackage.version
-if (!currentVersion || mobileApp.expo?.version !== currentVersion) {
+if (!currentVersion || mobileApp.version !== currentVersion) {
   throw new Error('mobile/package.json and mobile/app.json versions must match before release')
 }
 
@@ -56,7 +54,7 @@ console.log(`Dry run: ${dryRun}`)
 if (dryRun) process.exit(0)
 
 mobilePackage.version = nextVersion
-mobileApp.expo!.version = nextVersion
+mobileApp.version = nextVersion
 writeFileSync(mobilePackagePath, `${JSON.stringify(mobilePackage, null, 2)}\n`)
 writeFileSync(mobileAppPath, `${JSON.stringify(mobileApp, null, 2)}\n`)
 

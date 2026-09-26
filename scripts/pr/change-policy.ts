@@ -236,11 +236,9 @@ function areasForPath(path: string): ChangeArea[] {
     areas.add('desktop')
   }
 
-  // `mobile/` is its own Expo app with its own `bun run check` (typecheck,
-  // typecheck:tests, bun test) and its own release workflow. It shares no
-  // tsconfig and no module graph with the rest of the repository, so before
-  // this area existed a diff there selected no surface check and triage gave
-  // it no area label at all.
+  // `mobile/` is its own native Android app with its own `bun run check` and
+  // release workflow. It shares no module graph with the rest of the
+  // repository, so a diff there selects the mobile surface check.
   if (path.startsWith('mobile/')) {
     areas.add('mobile')
   }

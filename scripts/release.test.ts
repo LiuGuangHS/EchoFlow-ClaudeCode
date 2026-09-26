@@ -35,7 +35,7 @@ function makeReleaseRepo() {
     JSON.stringify({ version: '0.4.1' }, null, 2) + '\n',
   )
   writeFileSync(join(root, 'mobile', 'package.json'), JSON.stringify({ version: '0.4.1' }, null, 2) + '\n')
-  writeFileSync(join(root, 'mobile', 'app.json'), JSON.stringify({ expo: { version: '0.4.1' } }, null, 2) + '\n')
+  writeFileSync(join(root, 'mobile', 'app.json'), JSON.stringify({ version: '0.4.1' }, null, 2) + '\n')
   writeFileSync(join(root, 'release-notes', 'v0.4.1.md'), '# EchoFlow Code v0.4.1\n')
   git(root, ['init'])
   git(root, ['config', 'user.email', 'release-test@example.com'])

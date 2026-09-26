@@ -31,7 +31,7 @@ const VERSION_FILES = [
   {
     path: path.join(root, 'mobile/app.json'),
     update(content: string, version: string) {
-      return content.replace(/("expo"\s*:\s*\{[\s\S]*?"version":\s*)"[^"]*"/, `$1"${version}"`)
+      return content.replace(/("version":\s*)"[^"]*"/, `$1"${version}"`)
     },
   },
 ]

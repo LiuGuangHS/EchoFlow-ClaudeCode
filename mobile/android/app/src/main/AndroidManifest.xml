@@ -1,28 +1,30 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-permission android:name="android.permission.INTERNET" />
 
-  <uses-permission android:name="android.permission.INTERNET"/>
-  <!-- OPTIONAL PERMISSIONS, REMOVE WHATEVER YOU DO NOT NEED -->
-  <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
-  <uses-permission android:name="android.permission.VIBRATE"/>
-  <!-- These require runtime permissions on M -->
-  <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
-  <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
-  <!-- END OPTIONAL PERMISSIONS -->
-
-  <queries>
-    <!-- Support checking for http(s) links via the Linking API -->
-    <intent>
-      <action android:name="android.intent.action.VIEW" />
-      <category android:name="android.intent.category.BROWSABLE" />
-      <data android:scheme="https" />
-    </intent>
-  </queries>
-
-  <application android:name=".MainApplication" android:label="@string/app_name" android:icon="@mipmap/echoflow_launcher" android:roundIcon="@mipmap/echoflow_launcher_round" android:allowBackup="false" android:theme="@style/AppTheme" android:supportsRtl="true" android:usesCleartextTraffic="true">
-    <activity android:name=".MainActivity" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|uiMode" android:launchMode="singleTask" android:windowSoftInputMode="adjustResize" android:theme="@style/Theme.App.SplashScreen" android:exported="true">
+  <application
+    android:allowBackup="false"
+    android:icon="@mipmap/echoflow_launcher"
+    android:label="@string/app_name"
+    android:roundIcon="@mipmap/echoflow_launcher_round"
+    android:supportsRtl="true"
+    android:theme="@style/AppTheme"
+    android:usesCleartextTraffic="true">
+    <meta-data android:name="com.google.mlkit.vision.DEPENDENCIES" android:value="barcode_ui" />
+    <activity
+      android:name="com.echoflow.code.mobile.MainActivity"
+      android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|uiMode"
+      android:exported="true"
+      android:launchMode="singleTask"
+      android:windowSoftInputMode="adjustResize">
       <intent-filter>
-        <action android:name="android.intent.action.MAIN"/>
-        <category android:name="android.intent.category.LAUNCHER"/>
+        <action android:name="android.intent.action.MAIN" />
+        <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="codemobile" />
       </intent-filter>
     </activity>
   </application>

@@ -15,7 +15,7 @@ order: 11
 
 - `desktop/package.json` 的 `version`
 - `mobile/package.json` 的 `version`
-- `mobile/app.json` 的 `expo.version`
+- `mobile/app.json` 的 `version`
 - `release-notes/vX.Y.Z.md`
 - fork 的 `vX.Y.Z` tag
 

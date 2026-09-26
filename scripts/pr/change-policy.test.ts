@@ -73,7 +73,7 @@ describe('evaluateChangePolicy', () => {
     expect(result.missingTestSignals).toEqual(['Adapter product files changed without an adapter test file in the PR.'])
   })
 
-  test('routes the Expo mobile shell to its own lane without widening coverage or native packaging', () => {
+  test('routes the native mobile shell to its own lane without widening coverage or native packaging', () => {
     const result = evaluateChangePolicy(['mobile/src/lib/credentials.ts'])
 
     expect(result.areas).toEqual(['mobile'])

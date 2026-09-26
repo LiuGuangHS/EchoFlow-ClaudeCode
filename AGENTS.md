@@ -66,7 +66,7 @@ Use the narrowest meaningful check while iterating; do not silently escalate a s
 | Desktop UI/store/API | `bun run check:desktop` |
 | Server/API/provider/runtime/MCP/OAuth/WebSocket | `bun run check:server` |
 | IM adapters | `bun run check:adapters` |
-| Expo mobile shell (Android) | `bun run check:mobile` |
+| Kotlin Android shell (mobile) | `bun run check:mobile` |
 | Electron/native/packaging/version | `bun run check:native` |
 | Docs/README/release notes/workflows | `bun run check:docs` |
 | JSON/localStorage/app-config migration | `bun run check:persistence-upgrade` |
@@ -88,7 +88,7 @@ Bun-based Coding Agent product with a CLI, local server, desktop app, IM adapter
 - `desktop/` is the desktop product: React UI in `desktop/src/`, Electron host code in `desktop/electron/`, build scripts in `desktop/scripts/`.
 - Desktop is Electron-first. `desktop/src-tauri/` is retained for icons, sidecar binaries, preview-agent resources, and compatibility assets. Do not treat `desktop/src-tauri/tauri.conf.json` as the release source of truth unless a task explicitly revives Tauri packaging.
 - `adapters/` holds IM adapter sidecars for Telegram, Feishu, WeChat, and DingTalk. `site/` is the React documentation site; `docs/` and `docs/en/` are its Chinese and English Markdown sources.
-- `mobile/` is the separate Expo Android shell. Rules in `mobile/AGENTS.md`.
+- `mobile/` is the separate native Kotlin Android shell. Rules in `mobile/AGENTS.md`.
 - `native/` holds the Computer Use native helper (`native/cu-helper`, Swift). Its gates are `bun run check:swift`, `check:computer-use-live-smoke`, and `check:computer-use-signed-chain`.
 - `.github/workflows/`, `scripts/pr/`, and `scripts/quality-gate/` define CI routing and quality policy. `scripts/harness-audit.js` audits this contract itself.
 - `release-notes/`, `scripts/release.ts`, and `.github/workflows/release-desktop.yml` define release behavior. Treat workflow changes as product changes because they alter what future agents and contributors can safely ship.

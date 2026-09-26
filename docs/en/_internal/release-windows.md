@@ -15,7 +15,7 @@ A product release version must match across:
 
 - `desktop/package.json` `version`
 - `mobile/package.json` `version`
-- `mobile/app.json` `expo.version`
+- `mobile/app.json` `version`
 - `release-notes/vX.Y.Z.md`
 - the fork's `vX.Y.Z` tag
 
