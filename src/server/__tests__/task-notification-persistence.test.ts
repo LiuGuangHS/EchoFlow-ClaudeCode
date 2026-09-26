@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test'
+import { constants } from 'node:fs'
 import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
@@ -182,6 +183,9 @@ describe('background task notification persistence', () => {
     })
     spyOn(fs, 'open').mockImplementation(async (...args) => {
       const handle = await realOpen(...args)
+      const flags = args[1]
+      const isAppend = typeof flags === 'number' && (flags & constants.O_APPEND) !== 0
+      if (!isAppend) return handle
       appendAttempts++
       if (appendAttempts > 1) return handle
       const realClose = handle.close.bind(handle)
