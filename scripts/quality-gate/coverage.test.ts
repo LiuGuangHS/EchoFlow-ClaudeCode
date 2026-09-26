@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import {
   buildRootCoverageCommand,
   collectServerTestFiles,
+  coverageScopesForFiles,
   evaluateChangedLineCoverage,
   evaluateThresholds,
   hasUsableCoverageSummary,
@@ -18,6 +19,29 @@ import {
 } from './coverage'
 
 describe('coverage gate helpers', () => {
+  test('selects coverage scopes from changed paths and falls back to all for policy changes', () => {
+    expect(coverageScopesForFiles(['desktop/src/App.tsx'])).toEqual({
+      root: false,
+      adapters: false,
+      desktop: true,
+      fullRun: false,
+    })
+    expect(coverageScopesForFiles(['src/server/routes.ts', 'desktop/src/App.tsx'])).toEqual({
+      root: true,
+      adapters: false,
+      desktop: true,
+      fullRun: false,
+    })
+    expect(coverageScopesForFiles(['scripts/quality-gate/coverage.ts'])).toEqual({
+      root: true,
+      adapters: true,
+      desktop: true,
+      fullRun: true,
+    })
+    expect(coverageScopesForFiles([]).fullRun).toBe(true)
+    expect(coverageScopesForFiles(['docs/readme.md']).fullRun).toBe(true)
+  })
+
   test('collects root coverage with the transcript classifier build feature enabled', () => {
     expect(buildRootCoverageCommand('/tmp/coverage', ['src/example.test.ts'])).toEqual([
       'bun',
@@ -122,6 +146,7 @@ describe('coverage gate helpers', () => {
   test('requires Bun coverage to report every discovered test file', () => {
     expect(parseBunTestFileCount('Ran 1605 tests across 141 files. [187.20s]')).toBe(141)
     expect(parseBunTestFileCount('Ran 1 test across 1 file. [10.00ms]')).toBe(1)
+    expect(parseBunTestFileCount('Ran 1 test across 1 file.\nRan 5640 tests across 479 files.')).toBe(479)
     expect(parseBunTestFileCount('process terminated before summary')).toBeNull()
   })
 

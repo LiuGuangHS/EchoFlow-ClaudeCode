@@ -465,7 +465,7 @@ export const SettingsSchema = lazySchema(() =>
       agentTeamsEnabled: z
         .boolean()
         .optional()
-        .describe('Enable Agent Teams for new cc-haha managed sessions. Overrides the legacy team environment setting.'),
+        .describe('Enable Agent Teams for new EchoFlow managed sessions. Overrides the legacy team environment setting.'),
       workflowKeywordTriggerEnabled: z
         .boolean()
         .optional()

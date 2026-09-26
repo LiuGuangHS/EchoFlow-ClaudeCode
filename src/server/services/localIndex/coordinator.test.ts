@@ -417,7 +417,7 @@ describe('local index coordinator', () => {
   it('keeps serving a ready snapshot while a watched batch reconciles', async () => {
     const root = await createTempDir('coordinator-stable-ready')
     const configDir = join(root, 'config')
-    const databasePath = join(configDir, 'cc-haha', 'db', 'index-v1.sqlite')
+    const databasePath = join(configDir, 'echoflow-code', 'db', 'index-v1.sqlite')
     const first = await createRealTranscript(configDir, '-repo', 'first', 'First')
     let watcherOptions!: ReconciliationWatcherOptions
     let releaseProjection!: () => void
@@ -490,7 +490,7 @@ describe('local index coordinator', () => {
     const coordinator = createLocalIndexCoordinator({
       resolveMode: () => ({ mode: 'on', warningCode: null }),
       resolveScope: () => '/tmp/config',
-      resolveDatabasePath: () => '/tmp/config/cc-haha/db/index-v1.sqlite',
+      resolveDatabasePath: () => '/tmp/config/echoflow-code/db/index-v1.sqlite',
       openDatabase: () => database,
       createIndex: () => index,
       discoverSources: async () => [],

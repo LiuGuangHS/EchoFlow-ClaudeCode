@@ -916,7 +916,7 @@ export class ProviderService {
  */
 function connectivityProbeSessionId(): string {
   const random = globalThis.crypto?.randomUUID?.()
-  return random ? `cc-haha-probe-${random}` : 'cc-haha-probe'
+  return random ? `echoflow-probe-${random}` : 'echoflow-probe'
 }
 
 function buildDirectTestRequest(

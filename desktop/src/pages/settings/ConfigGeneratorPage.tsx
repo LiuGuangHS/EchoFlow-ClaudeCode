@@ -120,13 +120,13 @@ export function ConfigGeneratorPage() {
           title={t('configGenerator.generatedLink')}
         >
           <div className="space-y-4">
-            <div className="p-3 bg-[var(--color-surface-secondary)] rounded-lg border border-[var(--color-border)] break-all font-mono text-sm">
+            <div className="p-3 bg-[var(--color-surface-container-low)] rounded-lg border border-[var(--color-border)] break-all font-mono text-sm">
               {generatedLink}
             </div>
             <div className="text-xs text-[var(--color-text-secondary)]">
               {t('configGenerator.providerCompatibilityLink')}
             </div>
-            <div className="p-3 bg-[var(--color-surface-secondary)] rounded-lg border border-[var(--color-border)] break-all font-mono text-sm">
+            <div className="p-3 bg-[var(--color-surface-container-low)] rounded-lg border border-[var(--color-border)] break-all font-mono text-sm">
               {providerLink}
             </div>
             <div className="text-sm text-[var(--color-text-secondary)]">

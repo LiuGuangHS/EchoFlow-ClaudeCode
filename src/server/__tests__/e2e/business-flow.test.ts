@@ -10,7 +10,6 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
 import { fileURLToPath } from 'node:url'
-import { getEchoFlowInternalDir } from '../../services/echoFlowConfigRoot.js'
 
 let server: ReturnType<typeof Bun.serve>
 let baseUrl: string
@@ -36,7 +35,7 @@ const originalModelEnv = Object.fromEntries(
 ) as Record<(typeof MODEL_ENV_KEYS)[number], string | undefined>
 
 function echoFlowSettingsPath() {
-  return path.join(getEchoFlowInternalDir(tmpDir), 'settings.json')
+  return path.join(tmpDir, 'settings.json')
 }
 
 function restoreEnv() {

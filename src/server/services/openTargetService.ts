@@ -741,7 +741,7 @@ function assertSafeSystemOpen(target: ResolvedOpenPath): void {
  * in `.app` from being swept up with it.
  */
 function isHiddenApplication(application: NativeApplication): boolean {
-  if (application.bundleId === 'com.claude-code-haha.desktop') return true
+  if (application.bundleId === 'com.echoflow.code.desktop') return true
   return `${application.appPath}/`.includes('.app/Contents/')
 }
 

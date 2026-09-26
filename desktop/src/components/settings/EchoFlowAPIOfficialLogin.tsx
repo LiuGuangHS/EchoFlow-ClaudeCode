@@ -8,14 +8,12 @@ import {
   type EchoFlowTokenSource,
 } from '../../api/echoflow'
 import { useProviderStore } from '../../stores/providerStore'
-import type { SavedProvider } from '../../types/provider'
 import { normalizeProviderBaseUrl } from '../../config/providerPresets'
 
 
 type Props = {
   onAddFromToken: (source: EchoFlowTokenSource) => void
   onBindingChange?: (hasAccount: boolean) => void
-  onEditProvider?: (provider: SavedProvider) => void
 }
 
 type Credentials = {
@@ -47,8 +45,8 @@ function formatQuota(remainQuota?: number, unlimitedQuota?: boolean): string {
   return ''
 }
 
-export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, onEditProvider }: Props) {
-  const { providers, activeId } = useProviderStore()
+export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Props) {
+  const { providers } = useProviderStore()
   const [accounts, setAccounts] = useState<Accounts>(EMPTY_ACCOUNTS)
   const [selectedEndpoint, setSelectedEndpoint] = useState<EchoFlowEndpoint>('main')
   const [credentials, setCredentials] = useState<Record<EchoFlowEndpoint, Credentials>>({
@@ -71,12 +69,6 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, onEd
   const endpointProviders = providers.filter((provider) =>
     normalizeProviderBaseUrl(provider.baseUrl) === endpointBaseUrl
   )
-
-  // Get all EchoFlow providers (for showing default across endpoints)
-  const allEchoFlowProviders = providers.filter((provider) => {
-    const normalized = normalizeProviderBaseUrl(provider.baseUrl)
-    return Object.values(ECHOFLOW_BASE_URLS).some(url => normalizeProviderBaseUrl(url) === normalized)
-  })
 
   useEffect(() => {
     void echoflowApi.getAccounts()
@@ -173,40 +165,8 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange, onEd
     ? `用户 ID：${account.userId}${account.username ? ` · ${account.username}` : ''}${account.balance !== undefined ? ` · 余额 ${formatQuota(account.balance)}` : ''} · ${account.refreshedAt ? formatRefreshedAt(account.refreshedAt) : '尚未同步'}`
     : '尚未同步'
 
-  // Find active provider across all EchoFlow endpoints
-  const activeProvider = allEchoFlowProviders.find((p) => p.id === activeId)
-  const hasActiveProvider = Boolean(activeProvider)
-
   return (
     <div className="flex flex-col gap-3">
-      {hasActiveProvider && activeProvider && (
-        <div className="rounded-lg border border-[var(--color-primary-fixed-dim)] bg-[var(--color-surface-container-low)] px-4 py-2.5">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex min-w-0 flex-1 items-center gap-2.5">
-              <span className="h-2 w-2 shrink-0 rounded-full bg-[var(--color-success)]" />
-              <span className="truncate text-sm font-medium text-[var(--color-text-primary)]">{activeProvider.name}</span>
-              {(activeProvider.keyPreview || activeProvider.apiKey) && (
-                <span className="shrink-0 font-mono text-xs text-[var(--color-text-tertiary)]">
-                  {activeProvider.keyPreview || activeProvider.apiKey}
-                </span>
-              )}
-              <span className="shrink-0 rounded border border-[var(--color-brand)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-brand)]">默认</span>
-              <span className="shrink-0 rounded bg-[var(--color-surface-container)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-tertiary)]">官方</span>
-            </div>
-            <div className="flex shrink-0 items-center gap-1">
-              <button
-                type="button"
-                onClick={() => onEditProvider?.(activeProvider)}
-                className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-surface-container-high)] hover:text-[var(--color-text-secondary)]"
-                aria-label="配置"
-              >
-                <span className="material-symbols-outlined text-[18px]">settings</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       <div className="flex gap-1 rounded-lg bg-[var(--color-surface-container-low)] p-1">
         {(['main', 'dedicated'] as const).map((endpoint) => {
           const endpointAccount = accounts[endpoint]

@@ -1,4 +1,5 @@
 import { SettingsService } from './settingsService.js'
+import { ManagedSettingsService } from './managedSettingsService.js'
 import { getProxyFetchOptions, getProxyUrl } from '../../utils/proxy.js'
 
 export type NetworkProxyMode = 'direct' | 'system' | 'manual'
@@ -202,6 +203,20 @@ export function getNetworkProxyFetchOptions(
 }
 
 export async function loadNetworkSettings(): Promise<NetworkSettings> {
-  const settings = await new SettingsService().getUserSettings()
+  const [userSettings, managedSettings] = await Promise.all([
+    new SettingsService().getUserSettings(),
+    new ManagedSettingsService().readSettings(),
+  ])
+  const userNetwork = userSettings.network && typeof userSettings.network === 'object'
+    ? userSettings.network
+    : {}
+  const managedNetwork = managedSettings.network && typeof managedSettings.network === 'object'
+    ? managedSettings.network
+    : {}
+  const settings = {
+    ...userSettings,
+    ...managedSettings,
+    network: { ...userNetwork, ...managedNetwork },
+  }
   return normalizeNetworkSettings(settings)
 }

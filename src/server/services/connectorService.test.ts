@@ -289,11 +289,11 @@ test('legacy missing installed version advertises an update; invalid stored vers
     const versions: string[] = []
     f.deps.createAdapter = (def, root) => { versions.push(def.version); return baseAdapter(def, root) }
     legacy.action('feishu', 'check'); await settled(legacy)
-    expect(versions).toEqual(['0.9.0'])
+    expect(versions).toEqual(['1.0.0'])
     writeFileSync(join(f.deps.root, 'state.json'), JSON.stringify({ schemaVersion: 1, connectors: { feishu: { ...record, installedVersion: '../../outside' } } }))
     const invalid = new ConnectorService(f.deps)
     invalid.action('feishu', 'check'); await settled(invalid)
-    expect(versions).toEqual(['0.9.0'])
+    expect(versions).toEqual(['1.0.0'])
     expect(invalid.get('feishu').status).toBe('error')
   } finally { f.cleanup() }
 })

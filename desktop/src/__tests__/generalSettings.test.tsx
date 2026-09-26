@@ -76,7 +76,6 @@ const ZHIPU_REGIONAL_PRESET: ProviderPreset = {
   needsApiKey: true,
   websiteUrl: 'https://open.bigmodel.cn',
   apiKeyUrl: 'https://www.bigmodel.cn/api-keys',
-  promoText: 'Mainland China promotion',
 }
 
 vi.mock('../api/agents', () => ({
@@ -2434,14 +2433,13 @@ describe('Settings > Providers tab', () => {
       const baseUrlInput = within(dialog).getByRole('textbox', { name: /Base URL/i })
       expect(baseUrlInput).toHaveValue('https://open.bigmodel.cn/api/anthropic')
       expect(within(dialog).getByRole('button', { name: /Get API Key/i })).toBeInTheDocument()
-      expect(within(dialog).getByRole('button', { name: 'Mainland China promotion' })).toBeInTheDocument()
+      expect(within(dialog).queryByText(/promotion/i)).not.toBeInTheDocument()
 
       fireEvent.click(regionTrigger)
       fireEvent.click(within(dialog).getByRole('option', { name: /Global/ }))
 
       expect(baseUrlInput).toHaveValue('https://api.z.ai/api/anthropic')
       expect(within(dialog).queryByRole('button', { name: /Get API Key/i })).not.toBeInTheDocument()
-      expect(within(dialog).queryByText('Mainland China promotion')).not.toBeInTheDocument()
       await act(async () => settleSettings?.())
       await waitFor(() => {
         expect(dialog.querySelector('textarea')?.value).toContain(
@@ -2546,10 +2544,13 @@ describe('Settings > Providers tab', () => {
     render(<Settings />)
     fireEvent.click(screen.getByRole('button', { name: /Add Model/i }))
 
-    const dialog = screen.getByRole('dialog')
-    const mediaSupport = within(dialog).getByRole('checkbox', { name: 'Preserve nested tool result media' })
-    expect(mediaSupport).toBeChecked()
-    fireEvent.click(mediaSupport)
+      const dialog = screen.getByRole('dialog')
+      const mediaSupport = within(dialog).getAllByRole('checkbox', { name: 'Preserve nested tool result media' })
+      expect(mediaSupport).toHaveLength(2)
+      expect(mediaSupport[0]).toBeChecked()
+      expect(mediaSupport[1]).toBeChecked()
+      fireEvent.click(mediaSupport[0]!)
+      expect(mediaSupport[1]).not.toBeChecked()
 
     const settingsTextarea = await waitFor(() => {
       const textarea = dialog.querySelector('textarea') as HTMLTextAreaElement
@@ -2943,7 +2944,9 @@ describe('Settings > Providers tab', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Add Model/i }))
     const dialog = screen.getByRole('dialog')
-    const toolSearchCheckbox = within(dialog).getByRole('checkbox', { name: 'Enable Tool Search' })
+    const toolSearchCheckboxes = within(dialog).getAllByRole('checkbox', { name: 'Enable Tool Search' })
+    expect(toolSearchCheckboxes).toHaveLength(2)
+    const toolSearchCheckbox = toolSearchCheckboxes[0]!
 
     expect(toolSearchCheckbox).not.toBeChecked()
     await waitFor(() => {
@@ -3021,8 +3024,10 @@ describe('Settings > Providers tab', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Add Model/i }))
     const dialog = screen.getByRole('dialog')
-    const disableBetasCheckbox = within(dialog).getByRole('checkbox', { name: 'Disable experimental beta headers' })
-    fireEvent.focus(within(dialog).getByRole('button', { name: 'Disable experimental beta headers' }))
+    const disableBetasCheckboxes = within(dialog).getAllByRole('checkbox', { name: 'Disable experimental beta headers' })
+    expect(disableBetasCheckboxes).toHaveLength(2)
+    const disableBetasCheckbox = disableBetasCheckboxes[0]!
+    fireEvent.focus(within(dialog).getAllByRole('button', { name: 'Disable experimental beta headers' })[0]!)
     expect(await screen.findByRole('tooltip')).toHaveTextContent(
       /GPT and o-series models still receive the reasoning effort selected for the Session/i,
     )
@@ -3165,6 +3170,7 @@ describe('Settings > Providers tab', () => {
     const apiKeyInput = within(dialog).getByPlaceholderText('sk-...')
 
     expect(apiKeyInput).toHaveAttribute('type', 'password')
+    fireEvent.change(apiKeyInput, { target: { value: 'sk-test' } })
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Show API Key' }))
 

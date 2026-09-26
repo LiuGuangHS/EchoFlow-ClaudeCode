@@ -1,87 +1,45 @@
 ---
 title: DeepSeek Harness
 nav_title: DeepSeek Harness
-description: Install and run the original DeepSeek Harness from inside EchoFlow — no environment setup, no terminal.
+description: Run the original DeepSeek Harness on demand through the official npx package.
 order: 10
 ---
 
 # DeepSeek Harness
 
-The original DeepSeek Harness (`@deepseek-ai/dsh`) is installed and run from inside the desktop app. No Node environment to prepare, no npm packages, no terminal. The entry point is **DeepSeek Harness** in the sidebar, which opens as its own tab.
+The desktop app starts the original DeepSeek Harness from the official npm package, `@deepseek-ai/dsh`, on demand. EchoFlow does not bundle a pinned DSH release. Open **DeepSeek Harness** from the sidebar to launch it in its own window.
 
-## How it relates to EchoFlow
+The first start needs network access so `npx` can resolve and download the official package. Normal starts use npm's cache. **Check official update and restart** asks npm to check online again. DSH is still in preview, so upgrades can introduce compatibility changes; EchoFlow does not update it on every launch.
 
-This comes first because it decides how you will actually use the thing.
+## Node.js runtime
 
-**DeepSeek Harness keeps its data entirely separate, and the two sides do not interfere.** It has its own configuration directory, sessions, and plugins, and it does **not** sync with EchoFlow's providers, sessions, Skills, MCP servers, or agents. A model channel you configure in EchoFlow is invisible to Harness, and vice versa.
+EchoFlow checks system Node.js first, then its app-managed runtime. If neither meets the requirement, the first start downloads and verifies a compatible Node.js LTS in EchoFlow's app data directory. The current minimum is Node.js 22.19.0. EchoFlow does not install or modify system Node.js.
 
-**It is also not wired into EchoFlow's agent loop.** Harness keeps its own sessions and plugin capabilities. Do not expect work done in Harness to show up in EchoFlow's session history or to be reusable by EchoFlow subagents.
+The panel shows the Node.js version and whether it comes from the system or EchoFlow. This is the runtime used by DSH; it is not a general Node.js runtime manager in Settings.
 
-There is **no plugin market at this stage**; plugin management will be designed separately.
+## Authentication and data isolation
 
-In one line: **it is closer to an independent tool window opened inside the app than to a feature module of EchoFlow.**
+DSH configuration, sessions, and plugin data live in its own `deepseek-harness` directory. They are not synchronized with EchoFlow providers, sessions, Skills, MCP servers, or agents. DSH's one-time authenticated URL is held briefly in Electron's main-process memory for the initial navigation. It is discarded after the authentication redirect and is never written to config, logs, or renderer state.
 
-## One-click install
+DSH sessions and plugins remain independent and are not connected to EchoFlow's agent loop. A plugin market and importing EchoFlow project context are outside this implementation.
 
-The first time you open the panel the state is **Not installed**, with a single **Install DeepSeek Harness** button. Click it — both the Node runtime and the Harness package are managed by the desktop app.
+## Lifecycle
 
-If the button instead reads **Install runtime and DeepSeek Harness**, the machine has no usable Node runtime. Clicking it prepares the runtime first, then installs Harness. See the next section.
-
-## Runtime requirements
-
-The bundled runtime requires **Node.js 22.19.0 or newer**.
-
-As of 0.5.6, when that is not met the app **downloads the latest compatible LTS release automatically**, verifies its SHA-256, and only then switches over — with **automatic rollback on failure**. Progress is visible in the panel and needs no intervention.
-
-If even the automatic setup fails, the panel reports **Runtime unavailable** plainly rather than failing silently. In that case, read the error in the panel, or check [Won't install, won't open, won't connect](../start/troubleshooting.md).
-
-## Lifecycle control
-
-Once installed, the buttons change with the state:
-
-| State | What you can do |
+| State | Actions |
 |---|---|
-| Not installed | Install (or install the runtime first) |
-| Stopped | Start · Update / Reinstall |
-| Running | Open DeepSeek Harness · Restart · Stop |
+| Stopped | Start; check official update and start |
+| Preparing / starting | Wait for npx to resolve the package and start the local service |
+| Running | Open DSH; restart; stop; check official update and restart |
+| Runtime unavailable | Starting prepares EchoFlow-managed Node.js; read the panel error if that fails |
 
-**Open DeepSeek Harness** lands you in the **original interface**, not an EchoFlow-wrapped version.
-
-Ports are allocated on demand — you never pick one — and startup is protected by a timeout, so a hung start does not wait forever.
-
-## Status and version
-
-The badge in the top-right of the panel is the thing to watch:
-
-- **Running** — the service is up
-- **Installing runtime** — Node is being prepared; just wait
-- **Runtime unavailable** — the Node version is unmet, or preparation failed
-- **Stopped** — installed but not started
-- **Not installed** — nothing yet
-
-Once installed, the panel shows **Current version: x.y.z**.
-
-**Errors surface in place** — there is no log file to dig through.
-
-## Updating and reinstalling
-
-**Update / Reinstall** pulls the Harness package again, moving you to the latest version, and also repairs a broken install. It does not touch Harness's own data directory.
+The service binds to `127.0.0.1` on an automatically allocated port. The panel shows a DSH version when it can identify one from startup output, the Node.js version and source, and startup errors.
 
 ## Troubleshooting
 
-**"Runtime unavailable."** Node.js 22.19.0+ is required. From 0.5.6 the app downloads a compatible LTS and verifies it, rolling back on failure; upgrade the app if you are on an older build.
+**The first start fails or downloads slowly.** Check that the network can reach the npm registry, then retry. The package download uses the official npm flow.
 
-**Startup times out.** Ports are allocated on demand and startup is guarded by a timeout, so this usually means the port is taken or the first start is slow. Wait and retry, or hit **Restart**.
+**Behavior changed after an update.** DSH is still preview software. Review its data compatibility before selecting **Check official update and restart**. EchoFlow does not migrate or delete DSH data.
 
-**My EchoFlow models aren't in Harness.** That is by design. The two sides keep separate data, and Harness models and plugins are configured in its own interface.
+**My EchoFlow models are not in DSH.** Their data directories are separate; configure models in DSH itself.
 
-**Will Harness sessions show up in EchoFlow's session list?** No. It has its own session store and is not wired into the agent loop.
-
-**Does this work on mobile?** No. The entry point only appears when the desktop runtime is available.
-
-## Related
-
-- [Workspace](./workspace.md) — Harness is one of the workspace tabs
-- [Settings reference](./settings.md) — app-level settings live there
-- [Won't install, won't open, won't connect](../start/troubleshooting.md) — order to check for environment errors
-- [Connect a model](../start/models.md) — how EchoFlow's own models are configured
+**Will DSH sessions appear in EchoFlow?** No. DSH has its own session store and does not use EchoFlow's agent loop.

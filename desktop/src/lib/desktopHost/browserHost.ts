@@ -374,9 +374,6 @@ export const browserHost: DesktopHost = {
     async getStatus() {
       unsupported('DeepSeek Harness')
     },
-    async install() {
-      unsupported('DeepSeek Harness')
-    },
     async start() {
       unsupported('DeepSeek Harness')
     },
@@ -384,6 +381,9 @@ export const browserHost: DesktopHost = {
       unsupported('DeepSeek Harness')
     },
     async restart() {
+      unsupported('DeepSeek Harness')
+    },
+    async update() {
       unsupported('DeepSeek Harness')
     },
     async open() {

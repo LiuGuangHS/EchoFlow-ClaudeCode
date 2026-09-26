@@ -60,8 +60,8 @@ export function ConfigImportModal({ open, onClose, config, apiKey }: ConfigImpor
 
         <div style={{
           padding: '12px',
-          backgroundColor: 'var(--color-warning-bg)',
-          border: '1px solid var(--color-warning-border)',
+          backgroundColor: 'var(--color-warning-container)',
+          border: '1px solid var(--color-warning)',
           borderRadius: '8px',
           fontSize: '13px',
         }}>

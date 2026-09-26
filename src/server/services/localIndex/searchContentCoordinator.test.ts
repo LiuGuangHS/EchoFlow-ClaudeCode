@@ -645,7 +645,7 @@ describe('worker write-lock coordination', () => {
     const source = join(scope, 'projects', '-repo', 'session.jsonl')
     await mkdir(join(source, '..'), { recursive: true })
     await writeFile(source, userLine('lock fixture'))
-    const databasePath = join(scope, 'cc-haha', 'db', 'search-index-v1.sqlite')
+    const databasePath = join(scope, 'echoflow-code', 'db', 'search-index-v1.sqlite')
     let watcherOptions: ReconciliationWatcherOptions | undefined
     let worker: Worker | undefined
     let locked!: () => void

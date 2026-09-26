@@ -90,7 +90,7 @@ final class ResolvedTargetAuthorizationTests: XCTestCase {
             "com.spotify.client",
             "com.apple.Music",
             "com.amazon.Kindle",
-            "com.claude-code-haha.desktop",
+            "com.echoflow.code.desktop",
             "dev.cchaha.cu-helper",
             "com.example.custom-host",
             "com.example.new-app",
@@ -141,7 +141,7 @@ final class ResolvedTargetAuthorizationTests: XCTestCase {
     func testWorktreeHostPathResolutionAuthorizesExactProcess() throws {
         let installed = AppTargetCandidate(
             pid: 100,
-            bundleIdentifier: "com.claude-code-haha.desktop",
+            bundleIdentifier: "com.echoflow.code.desktop",
             bundleURL: URL(fileURLWithPath: "/Applications/EchoFlow Code.app"),
             localizedName: "EchoFlow Code",
             executableName: "EchoFlow Code"

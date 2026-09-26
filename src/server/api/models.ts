@@ -8,6 +8,7 @@
  * PUT  /api/effort          — 设置 Effort 等级
  */
 
+import { ManagedSettingsService } from '../services/managedSettingsService.js'
 import { SettingsService } from '../services/settingsService.js'
 import { ProviderService } from '../services/providerService.js'
 import { attributionHeaderEnvForModel } from '../services/attributionHeaderPolicy.js'
@@ -24,6 +25,7 @@ import {
   OPENAI_OFFICIAL_PROVIDER_NAME,
   isOpenAIOfficialProviderId,
 } from '../services/openaiOfficialProvider.js'
+import { CLAUDE_OFFICIAL_PROVIDER_ID } from '../types/provider.js'
 import { getGrokModelCatalog } from '../../services/grokAuth/modelCatalog.js'
 import {
   GROK_DEFAULT_MAIN_MODEL,
@@ -103,6 +105,7 @@ const DEFAULT_MODEL = 'claude-opus-5'
 const DEFAULT_EFFORT = 'max'
 
 const settingsService = new SettingsService()
+const managedSettingsService = new ManagedSettingsService()
 const providerService = new ProviderService()
 
 type ApiModelInfo = {
@@ -352,6 +355,8 @@ async function handleCurrentModel(req: Request): Promise<Response> {
   if (req.method === 'GET') {
     // Build the full model list: prefer active provider's models, fall back to defaults
     const { providers, activeId } = await providerService.listProviders()
+    const isClaudeOfficialProviderActive =
+      activeId === null || activeId === CLAUDE_OFFICIAL_PROVIDER_ID
     const isOpenAIProviderActive = isOpenAIOfficialProviderId(activeId)
     const isGrokProviderActive = isGrokOfficialProviderId(activeId)
     const activeProvider = activeId ? providers.find((p) => p.id === activeId) : null
@@ -365,7 +370,7 @@ async function handleCurrentModel(req: Request): Promise<Response> {
     const settingsEnvModel = typeof env.ANTHROPIC_MODEL === 'string'
       ? env.ANTHROPIC_MODEL.trim()
       : ''
-    const claudeOfficialModel = activeId === null
+    const claudeOfficialModel = isClaudeOfficialProviderActive
       ? await resolveClaudeOfficialRuntimeModel(
           explicitModel || runtimeEnvModel || settingsEnvModel,
         )
@@ -452,7 +457,7 @@ async function handleCurrentModel(req: Request): Promise<Response> {
       updates.modelContext = undefined
     }
     const { activeId } = await providerService.listProviders()
-    if (activeId) {
+    if (activeId && activeId !== CLAUDE_OFFICIAL_PROVIDER_ID) {
       const currentManagedSettings = await providerService.getManagedSettings()
       const currentEnv =
         (currentManagedSettings.env as Record<string, string> | undefined) ?? {}
@@ -463,8 +468,13 @@ async function handleCurrentModel(req: Request): Promise<Response> {
           ...attributionHeaderEnvForModel(baseId),
         },
       })
-    } else {
+    } else if (activeId === null || activeId === CLAUDE_OFFICIAL_PROVIDER_ID) {
       await settingsService.updateUserSettings(updates)
+    } else {
+      await managedSettingsService.updateSettings(current => ({
+        settings: { ...current, ...updates },
+        result: undefined,
+      }))
     }
     return Response.json({ ok: true, model: modelId })
   }
@@ -474,7 +484,10 @@ async function handleCurrentModel(req: Request): Promise<Response> {
 
 async function handleEffort(req: Request): Promise<Response> {
   if (req.method === 'GET') {
-    const settings = await settingsService.getUserSettings()
+    const { activeId } = await providerService.listProviders()
+    const settings = activeId === null || activeId === CLAUDE_OFFICIAL_PROVIDER_ID
+      ? await settingsService.getUserSettings()
+      : await managedSettingsService.readSettings()
     const level = normalizeEffortLevel(settings.effort)
     return Response.json({ level, available: EFFORT_LEVELS })
   }
@@ -490,7 +503,15 @@ async function handleEffort(req: Request): Promise<Response> {
         `Invalid effort level: "${level}". Valid levels: ${EFFORT_LEVELS.join(', ')}`,
       )
     }
-    await settingsService.updateUserSettings({ effort: level })
+    const { activeId } = await providerService.listProviders()
+    if (activeId === null || activeId === CLAUDE_OFFICIAL_PROVIDER_ID) {
+      await settingsService.updateUserSettings({ effort: level })
+    } else {
+      await managedSettingsService.updateSettings(current => ({
+        settings: { ...current, effort: level },
+        result: undefined,
+      }))
+    }
     return Response.json({ ok: true, level })
   }
 

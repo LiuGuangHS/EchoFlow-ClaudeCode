@@ -1,5 +1,5 @@
 /**
- * MCP schemas for CC-haha's macOS native semantic API and batch sequence:
+ * MCP schemas for EchoFlow's macOS native semantic API and batch sequence:
  *
  *   list_apps, get_app_state, click, perform_secondary_action, set_value,
  *   select_text, scroll, drag, press_key, type_text, paste, sequence

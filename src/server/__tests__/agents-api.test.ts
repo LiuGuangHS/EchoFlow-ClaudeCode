@@ -1532,7 +1532,7 @@ describe('Agents API built-in overrides', () => {
   async function readUserSettings(): Promise<Record<string, any>> {
     try {
       return JSON.parse(
-        await fs.readFile(path.join(configDir, 'echoflow-code', 'settings.json'), 'utf-8'),
+        await fs.readFile(path.join(configDir, 'settings.json'), 'utf-8'),
       )
     } catch {
       return {}
@@ -1540,7 +1540,7 @@ describe('Agents API built-in overrides', () => {
   }
 
   async function writeUserSettings(settings: unknown): Promise<void> {
-    const settingsPath = path.join(configDir, 'echoflow-code', 'settings.json')
+    const settingsPath = path.join(configDir, 'settings.json')
     await fs.mkdir(path.dirname(settingsPath), { recursive: true })
     await fs.writeFile(settingsPath, JSON.stringify(settings))
     resetSettingsCache()

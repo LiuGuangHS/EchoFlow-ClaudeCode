@@ -276,13 +276,13 @@ function getServerRuntime() {
 function getDeepSeekHarnessRuntime() {
   deepSeekHarnessRuntime ??= new DeepSeekHarnessRuntime({
     userDataPath: app.getPath('userData'),
-    resourcesPath: process.resourcesPath,
   })
   return deepSeekHarnessRuntime
 }
 
 async function openDeepSeekHarnessWindow() {
-  const status = await getDeepSeekHarnessRuntime().getStatus()
+  const runtime = getDeepSeekHarnessRuntime()
+  const status = await runtime.getStatus()
   if (status.state !== 'running' || !status.url) {
     throw new Error('Start DeepSeek Harness before opening it')
   }
@@ -291,7 +291,8 @@ async function openDeepSeekHarnessWindow() {
     return
   }
 
-  const targetUrl = status.url
+  const targetUrl = runtime.getOpenUrl() ?? status.url
+  const serviceUrl = new URL(status.url)
   const window = new BrowserWindow({
     title: 'DeepSeek Harness',
     width: 1280,
@@ -308,7 +309,14 @@ async function openDeepSeekHarnessWindow() {
     if (deepSeekHarnessWindow === window) deepSeekHarnessWindow = null
   })
   configurePreviewSessionPermissions(window.webContents.session)
-  const isHarnessUrl = (url: string) => url === targetUrl || url.startsWith(`${targetUrl}/`)
+  const isHarnessUrl = (url: string) => {
+    try {
+      const candidate = new URL(url)
+      return candidate.origin === serviceUrl.origin && (candidate.pathname === serviceUrl.pathname || candidate.pathname.startsWith(`${serviceUrl.pathname}/`))
+    } catch {
+      return false
+    }
+  }
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (isHttpUrl(url)) openExternalUrl(url)
     return { action: 'deny' }
@@ -323,7 +331,16 @@ async function openDeepSeekHarnessWindow() {
     event.preventDefault()
     if (isHttpUrl(url)) openExternalUrl(url)
   })
-  await window.loadURL(targetUrl)
+  window.webContents.on('did-navigate', (_event, url) => {
+    if (isHarnessUrl(url) && !new URL(url).searchParams.has('token')) runtime.clearLaunchUrl()
+  })
+  try {
+    await window.loadURL(targetUrl)
+  } catch {
+    runtime.clearLaunchUrl()
+    window.close()
+    throw new Error('Could not open DeepSeek Harness. Restart it and try again.')
+  }
 }
 
 function getPublicAccessManager() {
@@ -1009,10 +1026,6 @@ function registerIpcHandlers() {
     requireMainWindow(event)
     return getDeepSeekHarnessRuntime().getStatus()
   })
-  registerHandler(ELECTRON_IPC_CHANNELS.deepSeekHarnessInstall, event => {
-    requireMainWindow(event)
-    return getDeepSeekHarnessRuntime().install()
-  })
   registerHandler(ELECTRON_IPC_CHANNELS.deepSeekHarnessStart, event => {
     requireMainWindow(event)
     return getDeepSeekHarnessRuntime().start()
@@ -1024,6 +1037,10 @@ function registerIpcHandlers() {
   registerHandler(ELECTRON_IPC_CHANNELS.deepSeekHarnessRestart, event => {
     requireMainWindow(event)
     return getDeepSeekHarnessRuntime().restart()
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.deepSeekHarnessUpdate, event => {
+    requireMainWindow(event)
+    return getDeepSeekHarnessRuntime().update()
   })
   registerHandler(ELECTRON_IPC_CHANNELS.deepSeekHarnessOpen, async event => {
     requireMainWindow(event)

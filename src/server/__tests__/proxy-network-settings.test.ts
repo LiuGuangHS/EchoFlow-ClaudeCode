@@ -9,21 +9,26 @@ import {
   drainTraceCaptureForTests,
   traceCaptureService,
 } from '../services/traceCaptureService.js'
-import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 import { resetSettingsCache } from '../../utils/settings/settingsCache.js'
 
 let tmpDir: string
 let originalConfigDir: string | undefined
+const proxyEnvKeys = ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY', 'all_proxy', 'NO_PROXY', 'no_proxy'] as const
+let originalProxyEnv: Partial<Record<typeof proxyEnvKeys[number], string>>
 
 function settingsPath(): string {
-  return path.join(getEchoFlowInternalDir(tmpDir), 'settings.json')
+  return path.join(tmpDir, 'settings.json')
 }
 
 async function setup() {
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'proxy-network-test-'))
   originalConfigDir = process.env.CLAUDE_CONFIG_DIR
+  originalProxyEnv = {}
+  for (const key of proxyEnvKeys) {
+    if (process.env[key] !== undefined) originalProxyEnv[key] = process.env[key]
+    delete process.env[key]
+  }
   process.env.CLAUDE_CONFIG_DIR = tmpDir
-  await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
   resetSettingsCache()
   clearTraceCaptureStateForTests()
 }
@@ -33,6 +38,11 @@ async function teardown() {
     process.env.CLAUDE_CONFIG_DIR = originalConfigDir
   } else {
     delete process.env.CLAUDE_CONFIG_DIR
+  }
+  for (const key of proxyEnvKeys) {
+    const value = originalProxyEnv[key]
+    if (value === undefined) delete process.env[key]
+    else process.env[key] = value
   }
   resetSettingsCache()
   await drainTraceCaptureForTests()

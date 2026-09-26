@@ -834,7 +834,7 @@ describe('trace capture service', () => {
 
   test('audits trusted OAuth plaintext while the actual transport receives zstd bytes', async () => {
     const originalFetch = globalThis.fetch
-    const overrides = { CC_HAHA_TRACE_API_CALLS: '1', OPENAI_CODEX_OAUTH_FILE: path.join(tmpDir, 'oauth-fixture.json'), CC_HAHA_OPENAI_REQUEST_COMPRESSION: 'true' }
+    const overrides = { ECHOFLOW_TRACE_API_CALLS: '1', OPENAI_CODEX_OAUTH_FILE: path.join(tmpDir, 'oauth-fixture.json'), ECHOFLOW_OPENAI_REQUEST_COMPRESSION: 'true' }
     const prior = Object.fromEntries(Object.keys(overrides).map(key => [key, process.env[key]]))
     Object.assign(process.env, overrides)
     clearOpenAIOAuthTokenCache()
@@ -1340,7 +1340,7 @@ describe('session trace API', () => {
 
   test('streams original trace bytes, rejects oversized detail, and validates overview offsets', async () => {
     const sessionId = 'route-resource-bounds'
-    const traceDir = path.join(tmpDir, 'cc-haha', 'traces')
+    const traceDir = path.join(tmpDir, 'echoflow-code', 'traces')
     await fs.mkdir(traceDir, { recursive: true })
     const raw = Buffer.from(JSON.stringify({ type: 'call', record: {
       id: 'huge-call', sessionId, source: 'proxy', startedAt: '2026-01-01T00:00:00Z',
@@ -1435,7 +1435,7 @@ describe('session trace API', () => {
 
   test('serves the session trace overview for a cold giant file with a one-time index rebuild', async () => {
     const sessionId = 'session-cold-overview'
-    const traceDir = path.join(tmpDir, 'cc-haha', 'traces')
+    const traceDir = path.join(tmpDir, 'echoflow-code', 'traces')
     await fs.mkdir(traceDir, { recursive: true })
     const callLine = JSON.stringify({
       type: 'call',
@@ -1503,7 +1503,7 @@ describe('session trace API', () => {
       response: { status: 200, body: { ok: true } },
     })
     // An unindexed JSONL: present on disk, absent from the index.
-    const traceDir = path.join(tmpDir, 'cc-haha', 'traces')
+    const traceDir = path.join(tmpDir, 'echoflow-code', 'traces')
     const coldSessionId = 'session-list-cold'
     await fs.writeFile(
       path.join(traceDir, `${coldSessionId}.jsonl`),
@@ -2026,7 +2026,7 @@ describe('trace read cache', () => {
 
   test('rebuilds cold trace summaries with bounded reads instead of hydrating the whole file', async () => {
     const sessionId = 'session-streamed-projection'
-    const traceDir = path.join(tmpDir, 'cc-haha', 'traces')
+    const traceDir = path.join(tmpDir, 'echoflow-code', 'traces')
     const filePath = path.join(traceDir, `${sessionId}.jsonl`)
     await fs.mkdir(traceDir, { recursive: true })
     // Each UTF-8 record crosses chunk boundaries; the final version of call-a
@@ -2199,7 +2199,7 @@ describe('trace read cache', () => {
 
   test.skipIf(process.platform === 'win32')('rebuilds when an append target is replaced after change detection with identical sampled windows', async () => {
     const sessionId = 'session-append-replaced-inode'
-    const dir = path.join(tmpDir, 'cc-haha', 'traces')
+    const dir = path.join(tmpDir, 'echoflow-code', 'traces')
     const filePath = path.join(dir, `${sessionId}.jsonl`)
     await fs.mkdir(dir, { recursive: true })
     const middle = JSON.parse(buildTraceCallLine('middle', sessionId))

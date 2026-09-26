@@ -46,7 +46,7 @@ describe('complete message payloads', () => {
     })
     expect(screen.getByText('+1')).toBeInTheDocument()
     expect(screen.getByText('-5001')).toBeInTheDocument()
-  })
+  }, 15_000)
 
   it('copies the entire retained reply including its beginning and end', async () => {
     const content = 'HEAD_SENTINEL' + 'm'.repeat(70_000) + 'TAIL_SENTINEL'

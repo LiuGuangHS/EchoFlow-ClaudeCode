@@ -74,8 +74,8 @@ final class VirtualCursorResourceTests: XCTestCase {
     func testPackagedSequenceTakesPrecedenceOverLegacyLocationsEvenWithoutFrames() throws {
         let fixture = try ResourceFixture()
         defer { fixture.remove() }
-        let packaged = try fixture.sequence(at: "Contents/Resources/cu-helper_cc-haha-computer-use.bundle")
-        let sibling = try fixture.sequence(at: "Contents/MacOS/cu-helper_cc-haha-computer-use.bundle")
+        let packaged = try fixture.sequence(at: "Contents/Resources/cu-helper_echoflow-code-computer-use.bundle")
+        let sibling = try fixture.sequence(at: "Contents/MacOS/cu-helper_echoflow-code-computer-use.bundle")
         try fixture.png(width: 3, to: sibling.appendingPathComponent("frame_1.png"))
 
         let resources = VirtualCursor.loadLensSequence(from: fixture.bundle)

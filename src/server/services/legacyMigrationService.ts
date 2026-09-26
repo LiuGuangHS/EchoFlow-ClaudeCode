@@ -5,9 +5,8 @@ import * as path from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { ensureEchoFlowConfigRoot, getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 import { diagnosticsService } from './diagnosticsService.js'
-import { normalizeLegacyImageGenerationEnv } from '../../utils/providerManagedEnvCompat.js'
 
-type LegacyMigrationSource = 'current-echoflow-code' | 'legacy-home-echoflow-code' | 'current-root-providers' | 'legacy-home-root-providers'
+type LegacyMigrationSource = 'current-cc-haha' | 'legacy-home-echoflow-code' | 'current-root-providers' | 'legacy-home-root-providers'
 type LegacyMigrationTarget = 'providers' | 'settings' | 'oauth' | 'openai-oauth' | 'desktop-ui'
 type LegacyMigrationStatus = 'ready' | 'target-exists' | 'missing' | 'invalid' | 'failed' | 'migrated' | 'skipped'
 
@@ -32,7 +31,7 @@ type LegacyMigrationOptions = {
 
 type JsonObject = Record<string, unknown>
 type EchoFlowSourceEntry = {
-  source: Extract<LegacyMigrationSource, 'current-echoflow-code' | 'legacy-home-echoflow-code'>
+  source: Extract<LegacyMigrationSource, 'current-cc-haha' | 'legacy-home-echoflow-code'>
   dir: string
 }
 type RootProviderSourceEntry = {
@@ -174,13 +173,6 @@ async function isSymbolicLink(filePath: string): Promise<boolean> {
 
 async function readJsonFile(filePath: string): Promise<unknown> {
   return JSON.parse(await fs.readFile(filePath, 'utf-8'))
-}
-
-function migrateLegacyImageEnv(value: unknown): unknown {
-  if (!isRecord(value) || !isRecord(value.env)) return value
-
-  const { env, changed } = normalizeLegacyImageGenerationEnv(value.env)
-  return changed ? { ...value, env } : value
 }
 
 async function writeJsonFileIfMissing(filePath: string, value: unknown): Promise<void> {
@@ -399,7 +391,7 @@ export class LegacyMigrationService {
 
   private sourceDirs(): EchoFlowSourceEntry[] {
     const entries: EchoFlowSourceEntry[] = [
-      { source: 'current-echoflow-code', dir: path.join(this.configDir, 'echoflow-code') },
+      { source: 'current-cc-haha', dir: path.join(this.configDir, 'cc-haha') },
     ]
     const legacyEchoFlow = path.join(this.legacyHomeConfigDir, 'echoflow-code')
     if (path.resolve(legacyEchoFlow) !== path.resolve(entries[0]!.dir)) {
@@ -499,7 +491,7 @@ export class LegacyMigrationService {
   }
 
   private async handleEchoFlowFile(
-    source: Extract<LegacyMigrationSource, 'current-echoflow-code' | 'legacy-home-echoflow-code'>,
+    source: Extract<LegacyMigrationSource, 'current-cc-haha' | 'legacy-home-echoflow-code'>,
     sourceDir: string,
     target: LegacyMigrationTarget,
     run: boolean,
@@ -533,7 +525,7 @@ export class LegacyMigrationService {
       } else {
         if (!run) return { id, label, source, target, status: 'ready' }
         if (target === 'settings') {
-          await writeJsonFileIfMissing(targetPath, migrateLegacyImageEnv(await readJsonFile(sourcePath)))
+          await writeJsonFileIfMissing(targetPath, await readJsonFile(sourcePath))
         } else {
           await copyFileIfMissing(sourcePath, targetPath)
         }

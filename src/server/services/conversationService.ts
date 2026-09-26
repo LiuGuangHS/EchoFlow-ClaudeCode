@@ -1669,8 +1669,6 @@ export class ConversationService {
       networkRuntimeMetadata.streamMaxDurationDerived =
         !cleanEnv.CLAUDE_STREAM_MAX_DURATION_MS
     }
-    delete cleanEnv.CC_HAHA_SESSION_COLLABORATION_TOKEN
-    delete cleanEnv.CC_HAHA_SESSION_ID
     delete cleanEnv.ECHOFLOW_SESSION_COLLABORATION_TOKEN
     delete cleanEnv.ECHOFLOW_SESSION_ID
     delete cleanEnv.CLAUDE_CODE_OAUTH_TOKEN
@@ -1821,10 +1819,6 @@ export class ConversationService {
             ECHOFLOW_DESKTOP_SERVER_URL: desktopServerUrl,
             ECHOFLOW_SESSION_COLLABORATION_TOKEN: new URL(sdkUrl!).searchParams.get('token') ?? '',
             ECHOFLOW_SESSION_ID: new URL(sdkUrl!).pathname.split('/').pop() ?? '',
-            // Keep the upstream names as a compatibility fallback for older
-            // SessionCollaborationTool processes.
-            CC_HAHA_SESSION_COLLABORATION_TOKEN: new URL(sdkUrl!).searchParams.get('token') ?? '',
-            CC_HAHA_SESSION_ID: new URL(sdkUrl!).pathname.split('/').pop() ?? '',
           }
         : {}),
       ...(sdkUrl

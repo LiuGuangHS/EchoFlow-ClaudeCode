@@ -244,7 +244,7 @@ function originFromUrl(value: string | null): string | null {
 export function startServer(port = PORT, host = HOST) {
   enableConfigs()
   const trustedRendererOrigin = resolveTrustedRendererOrigin(
-    process.env.ECHOFLOW_TRUSTED_RENDERER_ORIGIN ?? process.env.CC_HAHA_TRUSTED_RENDERER_ORIGIN,
+    process.env.ECHOFLOW_TRUSTED_RENDERER_ORIGIN,
   )
   // Warm the synchronous disconnect-grace cache from managed settings so the
   // first client disconnect honors the configured value (issue #764).

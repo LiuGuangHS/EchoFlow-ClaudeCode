@@ -1312,6 +1312,10 @@ export class SessionService {
         permissionMode: undefined as string | undefined,
         runtimeProviderId: undefined as string | null | undefined,
         runtimeModelId: undefined as string | undefined, effortLevel: undefined as string | undefined,
+        modelConfigId: undefined as string | undefined,
+        modelConfig: undefined as SessionModelConfigSnapshot | undefined,
+        runtimeInstanceId: undefined as string | undefined,
+        cliRuntimeId: undefined as 'bundled' | 'installed' | undefined,
         customTitle: null as string | null, nonemptyCustomTitle: null as string | null,
         goalTitle: null as string | null, aiTitle: null as string | null, firstUserTitle: null as string | null,
         createdAt: null as string | null, modifiedAt: null as string | null,
@@ -1334,6 +1338,20 @@ export class SessionService {
           if (record.runtimeProviderId === null || typeof record.runtimeProviderId === 'string') state.runtimeProviderId = record.runtimeProviderId as string | null
           if (typeof record.runtimeModelId === 'string') state.runtimeModelId = record.runtimeModelId
           if (typeof record.effortLevel === 'string' && VALID_SESSION_EFFORT_LEVELS.has(record.effortLevel)) state.effortLevel = record.effortLevel
+          if (typeof record.modelConfigId === 'string' && record.modelConfigId.trim()) state.modelConfigId = record.modelConfigId
+          const snapshot = record.modelConfig
+          if (snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot)) {
+            const value = snapshot as Record<string, unknown>
+            if (typeof value.modelId === 'string' && (value.providerId === null || typeof value.providerId === 'string')) {
+              state.modelConfig = {
+                providerId: value.providerId as string | null,
+                modelId: value.modelId,
+                ...(typeof value.effortLevel === 'string' ? { effortLevel: value.effortLevel } : {}),
+              }
+            }
+          }
+          if (typeof record.runtimeInstanceId === 'string' && record.runtimeInstanceId.trim()) state.runtimeInstanceId = record.runtimeInstanceId
+          if (record.cliRuntimeId === 'bundled' || record.cliRuntimeId === 'installed') state.cliRuntimeId = record.cliRuntimeId
         }
         state.repository = this.resolveRepositoryFromEntries([entry]) ?? state.repository
         const worktree = this.resolveWorktreeSessionFromEntries([entry])
@@ -1356,8 +1374,12 @@ export class SessionService {
       const shared = (state: typeof summary) => ({
         ...(state.permissionMode ? { permissionMode: state.permissionMode } : {}),
         ...(state.runtimeProviderId !== undefined ? { runtimeProviderId: state.runtimeProviderId } : {}),
-        ...(state.runtimeModelId ? { runtimeModelId: state.runtimeModelId } : {}),
-        ...(state.effortLevel ? { effortLevel: state.effortLevel } : {}),
+          ...(state.runtimeModelId ? { runtimeModelId: state.runtimeModelId } : {}),
+          ...(state.effortLevel ? { effortLevel: state.effortLevel } : {}),
+          ...(state.modelConfigId ? { modelConfigId: state.modelConfigId } : {}),
+          ...(state.modelConfig ? { modelConfig: state.modelConfig } : {}),
+          ...(state.runtimeInstanceId ? { runtimeInstanceId: state.runtimeInstanceId } : {}),
+          ...(state.cliRuntimeId ? { cliRuntimeId: state.cliRuntimeId } : {}),
         ...(state.repository ? { repository: state.repository } : {}),
         ...(state.worktreeSession !== undefined ? { worktreeSession: state.worktreeSession } : {}),
       })
@@ -1859,6 +1881,14 @@ export class SessionService {
       if (!entry.isMeta) return true
       return entry.type === 'user' && parseSessionCollaborationEnvelope(entry.message.content) !== null
     })
+  }
+
+  private async hasConversationTranscriptFile(filePath: string): Promise<boolean> {
+    let hasTranscript = false
+    await streamBoundedHistory(filePath, entry => {
+      if (!hasTranscript && this.hasConversationTranscript([entry as RawEntry])) hasTranscript = true
+    })
+    return hasTranscript
   }
 
   // --------------------------------------------------------------------------
@@ -2689,11 +2719,10 @@ export class SessionService {
                 sessionId,
                 projectsRoot!,
               )
-              const entries = await this.readJsonlFile(match.filePath)
               hydratedMatches.push({
                 ...match,
                 mtimeMs: stat.mtimeMs,
-                hasTranscript: this.hasConversationTranscript(entries),
+                hasTranscript: await this.hasConversationTranscriptFile(match.filePath),
               })
             } catch (error) {
               if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
@@ -2740,12 +2769,11 @@ export class SessionService {
       const filePath = path.join(projectsDir, dir, `${sessionId}.jsonl`)
       try {
         const stat = await fs.stat(filePath)
-        const entries = await this.readJsonlFile(filePath)
         matches.push({
           filePath,
           projectDir: dir,
           mtimeMs: stat.mtimeMs,
-          hasTranscript: this.hasConversationTranscript(entries),
+          hasTranscript: await this.hasConversationTranscriptFile(filePath),
         })
       } catch {
         continue
@@ -4680,84 +4708,11 @@ export class SessionService {
     const memory = this.memoryLaunchInfo.get(this.memorySessionKey(sessionId))
     const found = await this.findSessionFile(sessionId)
     if (!found) return memory ? { ...memory, transcriptMessageCount: 0 } : null
-
-    const entries = await this.readJsonlFile(found.filePath)
-    const workDir = this.resolveWorkDirFromEntries(entries, found.projectDir) || process.cwd()
-    const repository = this.resolveRepositoryFromEntries(entries)
-    const worktreeSession = this.resolveWorktreeSessionFromEntries(entries)
-    const permissionMode = this.resolvePermissionModeFromEntries(entries)
-    let customTitle: string | null = null
-    let runtimeProviderId: string | null | undefined
-    let runtimeModelId: string | undefined
-    let effortLevel: string | undefined
-    let modelConfigId: string | undefined
-    let modelConfig: SessionModelConfigSnapshot | undefined
-    let runtimeInstanceId: string | undefined
-    let cliRuntimeId: 'bundled' | 'installed' | undefined
-
-    for (const entry of entries) {
-      if (entry.type === 'custom-title' && typeof entry.customTitle === 'string') {
-        customTitle = entry.customTitle
-      }
-      if (entry.type === 'session-meta') {
-        const record = entry as Record<string, unknown>
-        if (record.runtimeProviderId === null || typeof record.runtimeProviderId === 'string') {
-          runtimeProviderId = record.runtimeProviderId as string | null
-        }
-        if (typeof record.runtimeModelId === 'string') {
-          runtimeModelId = record.runtimeModelId
-        }
-        if (
-          typeof record.effortLevel === 'string' &&
-          VALID_SESSION_EFFORT_LEVELS.has(record.effortLevel)
-        ) {
-          effortLevel = record.effortLevel
-        }
-        if (typeof record.modelConfigId === 'string' && record.modelConfigId.trim()) {
-          modelConfigId = record.modelConfigId
-        }
-        const snapshot = record.modelConfig
-        if (snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot)) {
-          const value = snapshot as Record<string, unknown>
-          if (
-            typeof value.modelId === 'string' &&
-            (value.providerId === null || typeof value.providerId === 'string')
-          ) {
-            modelConfig = {
-              providerId: value.providerId as string | null,
-              modelId: value.modelId,
-              ...(typeof value.effortLevel === 'string' ? { effortLevel: value.effortLevel } : {}),
-            }
-          }
-        }
-        if (typeof record.runtimeInstanceId === 'string' && record.runtimeInstanceId.trim()) {
-          runtimeInstanceId = record.runtimeInstanceId
-        }
-        if (record.cliRuntimeId === 'bundled' || record.cliRuntimeId === 'installed') {
-          cliRuntimeId = record.cliRuntimeId
-        }
-      }
+    const projection = await this.getMetadataProjection(found.filePath, found.projectDir)
+    if (!projection.complete) {
+      throw new ApiError(413, 'Session metadata exceeds its inspection limit', 'HISTORY_INSPECTION_LIMIT')
     }
-    const transcriptMessageCount = this.countTranscriptMessages(entries)
-
-    return {
-      filePath: found.filePath,
-      projectDir: found.projectDir,
-      workDir,
-      repository,
-      worktreeSession,
-      customTitle,
-      permissionMode,
-      ...(runtimeProviderId !== undefined ? { runtimeProviderId } : {}),
-      ...(runtimeModelId ? { runtimeModelId } : {}),
-      ...(effortLevel ? { effortLevel } : {}),
-      ...(modelConfigId ? { modelConfigId } : {}),
-      ...(modelConfig ? { modelConfig } : {}),
-      ...(runtimeInstanceId ? { runtimeInstanceId } : {}),
-      ...(cliRuntimeId ? { cliRuntimeId } : {}),
-      ...memory,
-      transcriptMessageCount,
-    }
+    return { ...projection.launchInfo, ...memory, transcriptMessageCount: projection.launchInfo.transcriptMessageCount }
   }
 
   async deleteSessionFile(sessionId: string): Promise<void> {
@@ -4821,12 +4776,26 @@ export class SessionService {
       // record at a time so a large session is not parsed into one array.
       const preserved = { workDir: undefined as string | undefined, cwd: undefined as string | undefined,
         repository: undefined as PreparedSessionWorkspace['repository'] | undefined,
-        permissionMode: undefined as string | undefined }
+        permissionMode: undefined as string | undefined,
+        runtimeProviderId: undefined as string | null | undefined,
+        runtimeModelId: undefined as string | undefined,
+        effortLevel: undefined as string | undefined,
+        cliRuntimeId: undefined as 'bundled' | 'installed' | undefined }
       await streamBoundedHistory(found.filePath, entry => {
         const record = entry as RawEntry
         if (record.type === 'session-meta') {
           if (typeof (record as Record<string, unknown>).workDir === 'string') preserved.workDir = (record as Record<string, unknown>).workDir as string
           if (typeof record.permissionMode === 'string' && VALID_SESSION_PERMISSION_MODES.has(record.permissionMode)) preserved.permissionMode = record.permissionMode
+          if (record.runtimeProviderId === null || typeof record.runtimeProviderId === 'string') {
+            preserved.runtimeProviderId = record.runtimeProviderId as string | null
+          }
+          if (typeof record.runtimeModelId === 'string') preserved.runtimeModelId = record.runtimeModelId
+          if (typeof record.effortLevel === 'string' && VALID_SESSION_EFFORT_LEVELS.has(record.effortLevel)) {
+            preserved.effortLevel = record.effortLevel
+          }
+          if (record.cliRuntimeId === 'bundled' || record.cliRuntimeId === 'installed') {
+            preserved.cliRuntimeId = record.cliRuntimeId
+          }
         }
         if (typeof record.cwd === 'string' && record.cwd.trim()) preserved.cwd = record.cwd
         const repository = (record as Record<string, unknown>).repository
@@ -4843,25 +4812,8 @@ export class SessionService {
         VALID_SESSION_PERMISSION_MODES.has(preservedPermissionMode)
       )
         ? preservedPermissionMode
-        : this.resolvePermissionModeFromEntries(entries)
-      let runtimeProviderId: string | null | undefined
-      let runtimeModelId: string | undefined
-      let effortLevel: string | undefined
-      let cliRuntimeId: 'bundled' | 'installed' | undefined
-      for (const entry of entries) {
-        if (entry.type !== 'session-meta') continue
-        const record = entry as Record<string, unknown>
-        if (record.runtimeProviderId === null || typeof record.runtimeProviderId === 'string') {
-          runtimeProviderId = record.runtimeProviderId as string | null
-        }
-        if (typeof record.runtimeModelId === 'string') runtimeModelId = record.runtimeModelId
-        if (typeof record.effortLevel === 'string' && VALID_SESSION_EFFORT_LEVELS.has(record.effortLevel)) {
-          effortLevel = record.effortLevel
-        }
-        if (record.cliRuntimeId === 'bundled' || record.cliRuntimeId === 'installed') {
-          cliRuntimeId = record.cliRuntimeId
-        }
-      }
+        : preserved.permissionMode
+      const { runtimeProviderId, runtimeModelId, effortLevel, cliRuntimeId } = preserved
       const now = new Date().toISOString()
 
       const initialEntry = {

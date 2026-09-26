@@ -7,12 +7,12 @@ import { clearTraceCaptureStateForTests, traceCaptureService } from './traceCapt
 for (const mode of ['on', 'off', 'shadow']) {
   test(`trace overview streams locator shells with index ${mode}`, async () => {
     const previousConfig = process.env.CLAUDE_CONFIG_DIR
-    const previousMode = process.env.CC_HAHA_LOCAL_INDEX
+    const previousMode = process.env.ECHOFLOW_LOCAL_INDEX
     const scope = await fs.mkdtemp(join(tmpdir(), 'trace-bounded-'))
     process.env.CLAUDE_CONFIG_DIR = scope
-    process.env.CC_HAHA_LOCAL_INDEX = mode
+    process.env.ECHOFLOW_LOCAL_INDEX = mode
     clearTraceCaptureStateForTests()
-    const dir = join(scope, 'cc-haha', 'traces')
+    const dir = join(scope, 'echoflow-code', 'traces')
     const filePath = join(dir, 'fixture.jsonl')
     const line = (id: string) => JSON.stringify({ type: 'call', record: {
       id, sessionId: 'fixture', source: 'proxy', status: 'error',
@@ -76,8 +76,8 @@ for (const mode of ['on', 'off', 'shadow']) {
       clearTraceCaptureStateForTests()
       if (previousConfig === undefined) delete process.env.CLAUDE_CONFIG_DIR
       else process.env.CLAUDE_CONFIG_DIR = previousConfig
-      if (previousMode === undefined) delete process.env.CC_HAHA_LOCAL_INDEX
-      else process.env.CC_HAHA_LOCAL_INDEX = previousMode
+      if (previousMode === undefined) delete process.env.ECHOFLOW_LOCAL_INDEX
+      else process.env.ECHOFLOW_LOCAL_INDEX = previousMode
       await fs.rm(scope, { recursive: true, force: true })
     }
   })

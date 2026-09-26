@@ -749,7 +749,7 @@ describe('Sidebar', () => {
     expect(projectGroupNames().slice(0, 3)).toEqual(['beta', 'alpha', 'gamma'])
   })
 
-  it('does not auto-read or migrate legacy echoflow-code sidebar storage', () => {
+  it('restores active EchoFlow sidebar preferences without rewriting them', () => {
     window.localStorage.setItem(LEGACY_PROJECT_ORDER_STORAGE_KEY, JSON.stringify([
       '/workspace/beta',
       '/workspace/alpha',
@@ -774,13 +774,16 @@ describe('Sidebar', () => {
 
     render(<Sidebar />)
 
-    expect(projectGroupNames().slice(0, 2)).toEqual(['alpha', 'beta'])
-    expect(screen.getByText('beta')).toBeInTheDocument()
-    expect(window.localStorage.getItem(PROJECT_ORDER_STORAGE_KEY)).toBeNull()
-    expect(window.localStorage.getItem(PROJECT_PINNED_STORAGE_KEY)).toBeNull()
-    expect(window.localStorage.getItem(PROJECT_HIDDEN_STORAGE_KEY)).toBeNull()
-    expect(window.localStorage.getItem(PROJECT_ORGANIZATION_STORAGE_KEY)).toBeNull()
-    expect(window.localStorage.getItem(PROJECT_SORT_STORAGE_KEY)).toBeNull()
+    expect(projectGroupNames()).toEqual(['alpha'])
+    expect(screen.queryByText('beta')).not.toBeInTheDocument()
+    expect(window.localStorage.getItem(PROJECT_ORDER_STORAGE_KEY)).toBe(JSON.stringify([
+      '/workspace/beta',
+      '/workspace/alpha',
+    ]))
+    expect(window.localStorage.getItem(PROJECT_PINNED_STORAGE_KEY)).toBe(JSON.stringify(['/workspace/beta']))
+    expect(window.localStorage.getItem(PROJECT_HIDDEN_STORAGE_KEY)).toBe(JSON.stringify(['/workspace/beta']))
+    expect(window.localStorage.getItem(PROJECT_ORGANIZATION_STORAGE_KEY)).toBe('project')
+    expect(window.localStorage.getItem(PROJECT_SORT_STORAGE_KEY)).toBe('createdAt')
     expect(window.localStorage.getItem(LEGACY_PROJECT_HIDDEN_STORAGE_KEY)).toBe(JSON.stringify(['/workspace/beta']))
   })
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test'
+import { describe, expect, it } from 'vitest'
 import { importConfig } from '../configImport'
 import type { ShareableConfig } from '../../types/configShare'
 import type { SavedProvider } from '../../types/provider'

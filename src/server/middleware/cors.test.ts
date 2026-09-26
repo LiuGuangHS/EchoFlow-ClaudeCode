@@ -87,6 +87,7 @@ describe('resolveCors', () => {
         'Access-Control-Allow-Origin': 'https://localhost',
         'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Expose-Headers': 'Server-Timing, X-Request-Id',
         'Access-Control-Max-Age': '86400',
         Vary: 'Origin',
       },

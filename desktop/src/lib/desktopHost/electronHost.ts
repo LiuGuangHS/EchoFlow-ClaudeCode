@@ -249,10 +249,10 @@ export function createElectronHost(bridge: ElectronHostBridge): DesktopHost {
     },
     deepSeekHarness: {
       getStatus: () => invoke(ELECTRON_IPC_CHANNELS.deepSeekHarnessGetStatus),
-      install: () => invoke(ELECTRON_IPC_CHANNELS.deepSeekHarnessInstall),
       start: () => invoke(ELECTRON_IPC_CHANNELS.deepSeekHarnessStart),
       stop: () => invoke(ELECTRON_IPC_CHANNELS.deepSeekHarnessStop),
       restart: () => invoke(ELECTRON_IPC_CHANNELS.deepSeekHarnessRestart),
+      update: () => invoke(ELECTRON_IPC_CHANNELS.deepSeekHarnessUpdate),
       open: () => invoke(ELECTRON_IPC_CHANNELS.deepSeekHarnessOpen),
     },
     zoom: {

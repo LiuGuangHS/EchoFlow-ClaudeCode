@@ -194,6 +194,74 @@ describe('runQualityGate', () => {
     }
   })
 
+  test('runs isolated lanes in parallel and serializes shared-resource lanes', async () => {
+    const artifactsDir = mkdtempSync(join(tmpdir(), 'quality-gate-test-'))
+    const events: string[] = []
+    try {
+      const lanes: LaneDefinition[] = [
+        {
+          id: 'impact-report',
+          title: 'Impact',
+          description: 'Impact',
+          kind: 'command',
+          command: ['true'],
+          requiredForModes: ['pr'],
+        },
+        {
+          id: 'policy-checks',
+          title: 'Policy',
+          description: 'Policy',
+          kind: 'command',
+          command: ['true'],
+          requiredForModes: ['pr'],
+        },
+        {
+          id: 'server-checks',
+          title: 'Server',
+          description: 'Server',
+          kind: 'command',
+          command: ['true'],
+          requiredForModes: ['pr'],
+        },
+        {
+          id: 'docs-checks',
+          title: 'Docs',
+          description: 'Docs',
+          kind: 'command',
+          command: ['true'],
+          requiredForModes: ['pr'],
+        },
+      ]
+      const { report } = await runQualityGateLanes({
+        mode: 'pr',
+        dryRun: false,
+        allowLive: false,
+        baselineTargets: [],
+        rootDir: process.cwd(),
+        artifactsDir,
+        runId: 'parallel-lanes-test',
+      }, lanes, async (lane) => {
+        events.push(`start:${lane.id}`)
+        await new Promise((resolve) => setTimeout(resolve, lane.id === 'impact-report' ? 5 : 15))
+        events.push(`end:${lane.id}`)
+        return { id: lane.id, title: lane.title, status: 'passed', command: lane.command, durationMs: 1, exitCode: 0 }
+      })
+
+      expect(report.results.map((result) => result.id)).toEqual([
+        'impact-report',
+        'policy-checks',
+        'server-checks',
+        'docs-checks',
+      ])
+      expect(events.indexOf('start:policy-checks')).toBeLessThan(events.indexOf('end:docs-checks'))
+      expect(events.indexOf('start:docs-checks')).toBeLessThan(events.indexOf('end:policy-checks'))
+      expect(events.indexOf('start:server-checks')).toBeGreaterThan(events.indexOf('end:policy-checks'))
+      expect(events.indexOf('start:server-checks')).toBeGreaterThan(events.indexOf('end:docs-checks'))
+    } finally {
+      rmSync(artifactsDir, { recursive: true, force: true })
+    }
+  })
+
   test('filters lanes by exact id or prefix selector', async () => {
     const artifactsDir = mkdtempSync(join(tmpdir(), 'quality-gate-test-'))
     try {

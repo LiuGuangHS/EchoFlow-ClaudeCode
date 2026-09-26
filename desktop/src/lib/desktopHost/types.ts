@@ -118,13 +118,15 @@ export type DesktopUpdateCheckOptions = {
   proxy?: string
 }
 
-export type DeepSeekHarnessState = 'unavailable' | 'not-installed' | 'installing' | 'installed' | 'starting' | 'running' | 'stopped' | 'error'
+export type DeepSeekHarnessState = 'unavailable' | 'installing' | 'starting' | 'running' | 'stopped' | 'error'
 
 export type DeepSeekHarnessStatus = {
   state: DeepSeekHarnessState
   version: string | null
   url: string | null
   error: string | null
+  nodeVersion: string | null
+  nodeSource: 'system' | 'managed' | null
 }
 
 export type TerminalSpawnOptions = {
@@ -562,10 +564,10 @@ export type DesktopHost = {
   }
   deepSeekHarness: {
     getStatus(): Promise<DeepSeekHarnessStatus>
-    install(): Promise<DeepSeekHarnessStatus>
     start(): Promise<DeepSeekHarnessStatus>
     stop(): Promise<DeepSeekHarnessStatus>
     restart(): Promise<DeepSeekHarnessStatus>
+    update(): Promise<DeepSeekHarnessStatus>
     open(): Promise<void>
   }
   zoom: {

@@ -472,10 +472,14 @@ describe('tabStore', () => {
   )
 
   it('hydrates restored tabs with authoritative transcript runtime metadata', async () => {
-    useSessionRuntimeStore.getState().setSelection('session-1', {
-      providerId: null,
-      modelId: 'gpt-5.4',
-      effortLevel: 'max',
+    useSessionRuntimeStore.setState({
+      selections: {
+        'session-1': {
+          providerId: null,
+          modelId: 'gpt-5.4',
+          effortLevel: 'max',
+        },
+      },
     })
     localStorage.setItem('echoflow-code-open-tabs', JSON.stringify({
       openTabs: [{ sessionId: 'session-1', title: 'Runtime session', type: 'session' }],

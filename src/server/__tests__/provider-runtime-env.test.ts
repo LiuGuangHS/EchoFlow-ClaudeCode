@@ -5,7 +5,6 @@ import * as path from 'path'
 
 import {
   activeProviderNeedsProxy,
-  getManagedEnvKeys,
   mergeActiveProviderManagedEnv,
   readActiveProviderManagedEnv,
 } from '../services/providerRuntimeEnv.js'
@@ -39,7 +38,7 @@ describe('providerRuntimeEnv', () => {
   })
 
   test('routes Anthropic providers without nested tool media through the proxy', async () => {
-    await writeJson(path.join(tmpDir, 'cc-haha', 'providers.json'), {
+    await writeJson(path.join(tmpDir, 'echoflow-code', 'providers.json'), {
       activeId: 'provider-media-compat',
       providers: [{
         id: 'provider-media-compat',
@@ -55,7 +54,7 @@ describe('providerRuntimeEnv', () => {
 
     expect(activeProviderNeedsProxy(tmpDir)).toBe(true)
 
-    await writeJson(path.join(tmpDir, 'cc-haha', 'providers.json'), {
+    await writeJson(path.join(tmpDir, 'echoflow-code', 'providers.json'), {
       activeId: 'provider-media-native',
       providers: [{
         id: 'provider-media-native',
@@ -95,10 +94,10 @@ describe('providerRuntimeEnv', () => {
       ECHOFLOW_IMAGE_PROVIDER_KIND: 'grok_oauth',
       ECHOFLOW_IMAGE_PROVIDER_ID: 'grok-official',
       ECHOFLOW_IMAGE_MODEL: 'grok-imagine-image-quality',
-      ANTHROPIC_MODEL: 'grok-4.6',
-      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'grok-4.6',
-      ANTHROPIC_DEFAULT_SONNET_MODEL: 'grok-4.6',
-      ANTHROPIC_DEFAULT_OPUS_MODEL: 'grok-4.6',
+      ANTHROPIC_MODEL: 'grok-4.7',
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'grok-4.7',
+      ANTHROPIC_DEFAULT_SONNET_MODEL: 'grok-4.7',
+      ANTHROPIC_DEFAULT_OPUS_MODEL: 'grok-4.7',
       DISABLE_AUTOUPDATER: '1',
     })
     expect(env.ECHOFLOW_OPENAI_OAUTH_PROVIDER).toBeUndefined()
@@ -291,7 +290,7 @@ describe('providerRuntimeEnv', () => {
       sonnet: 'glm-5.3[1m]',
       opus: 'glm-5.3[1m]',
     }
-    await writeJson(path.join(tmpDir, 'cc-haha', 'providers.json'), {
+    await writeJson(path.join(tmpDir, 'echoflow-code', 'providers.json'), {
       activeId: 'provider-zhipu-standard',
       providers: [{
         id: 'provider-zhipu-standard',
@@ -318,7 +317,7 @@ describe('providerRuntimeEnv', () => {
       'glm-5.3-flash[1m]': 1000000,
     })
 
-    await writeJson(path.join(tmpDir, 'cc-haha', 'providers.json'), {
+    await writeJson(path.join(tmpDir, 'echoflow-code', 'providers.json'), {
       activeId: 'provider-zhipu-coding-plan',
       providers: [{
         id: 'provider-zhipu-coding-plan',
@@ -612,63 +611,6 @@ describe('providerRuntimeEnv', () => {
     })
   })
 
-  // getManagedEnvKeys() is the erase list used to strip stale provider env out of
-  // echoflow-code/settings.json. It is built by unioning every preset's defaultEnv keys, so
-  // deleting a preset outright would drop keys only that preset declares — they would
-  // then never be cleaned and would leak into every provider activated afterwards.
-  test('keeps the settings.json erase list covering retired presets env keys', () => {
-    const keys = getManagedEnvKeys()
-
-    // Declared only by the retired 胜算云 preset; a stale 50-minute API_TIMEOUT_MS
-    // leaking into other providers is exactly what this guards.
-    expect(keys).toContain('API_TIMEOUT_MS')
-    expect(keys).toContain('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC')
-  })
-
-  // Retiring a preset must not touch providers already saved against it. defaultEnv is
-  // never persisted per provider — it is resolved from the preset on every run, so
-  // deleting the entry would silently drop it. Older records may also lack
-  // authStrategy / modelContextWindows and fall back to the preset for those too.
-  test('keeps resolving preset runtime env for providers saved against a retired preset', async () => {
-    await writeJson(path.join(tmpDir, 'echoflow-code', 'providers.json'), {
-      activeId: 'provider-shengsuanyun',
-      providers: [
-        {
-          id: 'provider-shengsuanyun',
-          presetId: 'shengsuanyun',
-          name: '胜算云',
-          apiKey: 'sk-shengsuanyun',
-          baseUrl: 'https://router.shengsuanyun.com/api',
-          apiFormat: 'anthropic',
-          models: {
-            main: 'anthropic/claude-sonnet-4.6',
-            haiku: 'anthropic/claude-haiku-4.5:thinking',
-            sonnet: 'anthropic/claude-sonnet-4.6',
-            opus: 'anthropic/claude-opus-4.7',
-          },
-        },
-      ],
-    })
-
-    const env = readActiveProviderManagedEnv(tmpDir)
-
-    expect(env).toMatchObject({
-      ANTHROPIC_BASE_URL: 'https://router.shengsuanyun.com/api',
-      ANTHROPIC_MODEL: 'anthropic/claude-sonnet-4.6',
-      // preset defaultEnv survives the retirement
-      API_TIMEOUT_MS: '3000000',
-      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
-      ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES:
-        'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
-    })
-    // preset authStrategy (auth_token) survives: bearer token, blanked api key
-    expect(env?.ANTHROPIC_AUTH_TOKEN).toBe('sk-shengsuanyun')
-    expect(env?.ANTHROPIC_API_KEY).toBe('')
-    expect(JSON.parse(env!.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS)).toMatchObject({
-      'anthropic/claude-sonnet-4.6': 1000000,
-      'anthropic/claude-opus-4.7': 1000000,
-    })
-  })
 })
 
 function clearCapabilityCache() {

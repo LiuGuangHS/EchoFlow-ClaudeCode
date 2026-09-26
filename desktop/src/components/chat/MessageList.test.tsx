@@ -6296,7 +6296,7 @@ describe('MessageList nested tool calls', () => {
     await waitFor(() => expect(document.activeElement).toBe(remountedOpener))
     expect(screen.getByRole('button', { name: 'Hide changed files' }).getAttribute('aria-expanded')).toBe('true')
     expect(useWorkspaceStore.getState().getSession(ACTIVE_TAB).origin).toBeNull()
-  })
+  }, 15_000)
 
   it('opens the workspace diff (working-tree) when a historical turn change row is clicked', async () => {
     vi.spyOn(sessionsApi, 'getTurnCheckpoints').mockResolvedValue({

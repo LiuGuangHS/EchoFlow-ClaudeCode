@@ -4,10 +4,10 @@ import { getConfiguredProviderOutputBudget, getOutputBudgetHeaders, markOutputBu
 test('only the local protocol proxy receives budget provenance headers', () => {
   const body = markOutputBudgetSource({ max_tokens: 32000 }, 'default')
   expect(getOutputBudgetHeaders(body, 'http://127.0.0.1:3131/proxy/providers/fixture')).toEqual({
-    'x-cc-haha-output-budget-source': 'default',
+    'x-echoflow-output-budget-source': 'default',
   })
   expect(getOutputBudgetHeaders({ max_tokens: 256 }, 'http://localhost:3131/proxy/providers/fixture')).toEqual({
-    'x-cc-haha-output-budget-source': 'explicit',
+    'x-echoflow-output-budget-source': 'explicit',
   })
   expect(getOutputBudgetHeaders(body, 'https://api.anthropic.com')).toEqual({})
   expect(getOutputBudgetHeaders(body, 'https://third-party.test/proxy/providers/fixture')).toEqual({})
@@ -18,7 +18,7 @@ test('only the local protocol proxy receives budget provenance headers', () => {
 test('explicit provenance is not guessed from the default numeric value', () => {
   const body = markOutputBudgetSource({ max_tokens: 32000 }, 'explicit')
   expect(getOutputBudgetHeaders(body, 'http://[::1]:3131/proxy/providers/test')).toEqual({
-    'x-cc-haha-output-budget-source': 'explicit',
+    'x-echoflow-output-budget-source': 'explicit',
   })
 })
 

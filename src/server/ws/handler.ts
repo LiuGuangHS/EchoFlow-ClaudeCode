@@ -25,6 +25,7 @@ import type {
 import { CLI_RUNTIME_APPLIED_EVENT, RUNTIME_CONFIG_APPLIED_EVENT, MODEL_CONFIG_APPLIED_EVENT, MODEL_CONFIG_APPLY_FAILED_EVENT, RUNTIME_STATUS_EVENT } from './events.js'
 import { modelConfigService, type ModelConfig } from '../services/modelConfigService.js'
 import { PLAN_EXECUTION_CONTINUE_MESSAGE } from '../../constants/messages.js'
+import { EXIT_PLAN_MODE_TOOL_NAME } from '../../tools/ExitPlanModeTool/constants.js'
 import * as os from 'node:os'
 import {
   ConversationStartupError,
@@ -911,17 +912,24 @@ async function handleUserMessage(
     activeTurn.admissionPending = false
     if (!collaboration) emitSessionTurnEvent({ type: 'user-input', sessionId })
 
-    const initialRuntimeTransition = await waitForRuntimeTransitionBeforeUserTurn(ws, sessionId)
-    if (
-      !initialRuntimeTransition.ok ||
-      activeUserTurns.get(sessionId) !== activeTurn ||
-      activeTurn.cancelled
-    ) {
-      clearActiveUserTurn(sessionId, activeTurn)
-      return
-    }
-    if (initialRuntimeTransition.waited) {
-      sendMessage(ws, { type: 'status', state: 'thinking', verb: 'Thinking' })
+    // A prewarm startup is itself part of the transition barrier. Let the
+    // first turn join that startup, then apply a queued runtime change at the
+    // second barrier below; waiting here would deadlock when the change waits
+    // for the same startup promise to settle.
+    const startupInFlight = sessionStartupPromises.has(sessionId)
+    if (!startupInFlight) {
+      const initialRuntimeTransition = await waitForRuntimeTransitionBeforeUserTurn(ws, sessionId)
+      if (
+        !initialRuntimeTransition.ok ||
+        activeUserTurns.get(sessionId) !== activeTurn ||
+        activeTurn.cancelled
+      ) {
+        clearActiveUserTurn(sessionId, activeTurn)
+        return
+      }
+      if (initialRuntimeTransition.waited) {
+        sendMessage(ws, { type: 'status', state: 'thinking', verb: 'Thinking' })
+      }
     }
 
     // Track and emit the first placeholder title before CLI startup/streaming.
@@ -1611,29 +1619,6 @@ async function handlePrewarmSession(ws: SessionConnection) {
     })
 }
 
-function handlePermissionResponse(
-  ws: ServerWebSocket<WebSocketData>,
-  message: Extract<ClientMessage, { type: 'permission_response' }>
-) {
-  const { sessionId } = ws.data
-  if (
-    message.allowed &&
-    message.runtimeOverride &&
-    conversationService.getPendingPermissionToolName(sessionId, message.requestId) === 'ExitPlanMode'
-  ) {
-    void handlePlanApprovalWithRuntimeOverride(ws, message).catch((error) => {
-      console.error(`[WS] Plan approval with runtime override failed for ${sessionId}:`, error)
-      sendMessage(ws, {
-        type: 'error',
-        message: 'Failed to apply the execution model. The plan is still waiting for approval.',
-        code: 'RUNTIME_CONFIG_INVALID',
-      })
-    })
-    return
-  }
-  finalizePermissionResponse(ws, message)
-}
-
 function finalizePermissionResponse(
   ws: SessionConnection,
   message: Extract<ClientMessage, { type: 'permission_response' }>,
@@ -2038,8 +2023,9 @@ async function handleSetModelConfig(
   legacyRuntimeConfig = false,
 ): Promise<void> {
   const { sessionId } = ws.data
-  let config: ModelConfig
-  try {
+  await enqueueRuntimeTransition(sessionId, async () => {
+    let config: ModelConfig
+    try {
     if (message.config) {
       let modelId = message.config.modelId.trim()
       const providerId = message.config.providerId ?? null
@@ -2068,25 +2054,25 @@ async function handleSetModelConfig(
     } else {
       throw new Error('Model configuration is required')
     }
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error)
-    if (legacyRuntimeConfig) {
-      sendMessage(ws, {
-        type: 'error',
-        message: errorMessage,
-        code: 'RUNTIME_CONFIG_INVALID',
-      })
-    } else {
-      sendMessage(ws, {
-        type: MODEL_CONFIG_APPLY_FAILED_EVENT,
-        requestId: message.requestId,
-        configId: message.configId ?? '',
-        code: 'MODEL_CONFIG_INVALID',
-        message: errorMessage,
-      })
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      if (legacyRuntimeConfig) {
+        sendMessage(ws, {
+          type: 'error',
+          message: errorMessage,
+          code: 'RUNTIME_CONFIG_INVALID',
+        })
+      } else {
+        sendMessage(ws, {
+          type: MODEL_CONFIG_APPLY_FAILED_EVENT,
+          requestId: message.requestId,
+          configId: message.configId ?? '',
+          code: 'MODEL_CONFIG_INVALID',
+          message: errorMessage,
+        })
+      }
+      return
     }
-    return
-  }
 
   const pendingStartup = sessionStartupPromises.get(sessionId)
   const generation = (modelApplyGenerations.get(sessionId) ?? 0) + 1
@@ -2094,7 +2080,6 @@ async function handleSetModelConfig(
   desiredModelConfigIds.set(sessionId, config.id)
   modelConfigRequests.set(sessionId, { requestId: message.requestId, configId: config.id })
 
-  await enqueueRuntimeTransition(sessionId, async () => {
     if (modelApplyGenerations.get(sessionId) !== generation) return
 
     const previousConfigId = appliedModelConfigIds.get(sessionId)
@@ -2117,7 +2102,7 @@ async function handleSetModelConfig(
       previousRuntime?.providerId === config.providerId &&
       previousRuntime?.effort === config.effortLevel
 
-    if (canApplyInPlace) {
+    if (canApplyInPlace && !legacyRuntimeConfig) {
       try {
         await conversationService.requestControl(sessionId, {
           subtype: 'set_model',
@@ -2162,7 +2147,13 @@ async function handleSetModelConfig(
       return
     }
 
-    if (!conversationService.hasSession(sessionId) && pendingStartup) {
+    if (pendingStartup) {
+      // Publish the desired runtime before waiting for the prewarm handshake.
+      // This lets startup finish naturally while keeping the restart queued
+      // behind it; otherwise a first turn and its config change can wait on
+      // each other indefinitely.
+      runtimeOverrides.set(sessionId, nextRuntime)
+      await persistSessionModelConfig(sessionId, config)
       await pendingStartup.catch(() => undefined)
       if (modelApplyGenerations.get(sessionId) !== generation) return
     }
@@ -2566,10 +2557,12 @@ async function restartSessionWithRuntimeConfig(
     markActiveAgentsStopping(sessionId)
     runtimeExitStoppedSessions.add(sessionId)
 
-    // stopSessionAndWait removes the session before waiting for the process to
-    // exit, so the rollback path must be armed before awaiting it.
+    // Remove the session from admission immediately, then drain the process
+    // before starting its replacement. The explicit stop call also preserves
+    // the lifecycle signal consumed by existing clients.
     sessionStopped = true
-    await conversationService.stopSession(sessionId)
+    conversationService.stopSession(sessionId)
+    await conversationService.stopSessionAndWait(sessionId)
     await emitAuthoritativeStoppedForActiveAgents(sessionId)
     await emitStoppedForNonAgentTasksAfterRuntimeExit(sessionId)
 

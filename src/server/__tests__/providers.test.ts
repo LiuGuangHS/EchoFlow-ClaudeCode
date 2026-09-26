@@ -744,10 +744,10 @@ describe('ProviderService', () => {
         expect(env.GROK_OAUTH_FILE).toBe(
           path.join(tmpDir, 'echoflow-code', 'grok-oauth.json'),
         )
-        expect(env.ANTHROPIC_MODEL).toBe('grok-4.6')
-        expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('grok-4.6')
-        expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('grok-4.6')
-        expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('grok-4.6')
+        expect(env.ANTHROPIC_MODEL).toBe('grok-4.7')
+        expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('grok-4.7')
+        expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('grok-4.7')
+        expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('grok-4.7')
         expect(env.ECHOFLOW_OPENAI_OAUTH_PROVIDER).toBeUndefined()
         expect(env.OPENAI_CODEX_OAUTH_FILE).toBeUndefined()
       })
@@ -2779,9 +2779,9 @@ describe('ProviderService', () => {
     })
 
     test('bypasses inherited system proxy when testing direct provider endpoints', async () => {
-      await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
+      await fs.mkdir(tmpDir, { recursive: true })
       await fs.writeFile(
-        path.join(getEchoFlowInternalDir(tmpDir), 'settings.json'),
+        path.join(tmpDir, 'settings.json'),
         JSON.stringify({
           network: {
             proxy: { mode: 'direct', url: '' },
@@ -2848,9 +2848,9 @@ describe('ProviderService', () => {
     })
 
     test.each([180_000, 14_400_000, 21_600_000])('should use the configured network timeout for provider tests (%i ms)', async timeoutMs => {
-      await fs.mkdir(echoFlowDir(), { recursive: true })
+      await fs.mkdir(tmpDir, { recursive: true })
       await fs.writeFile(
-        path.join(echoFlowDir(), 'settings.json'),
+        path.join(tmpDir, 'settings.json'),
         JSON.stringify({
           network: {
             aiRequestTimeoutMs: timeoutMs,

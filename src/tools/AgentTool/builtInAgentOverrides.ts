@@ -1,15 +1,13 @@
-import { join } from 'node:path'
 import { EFFORT_LEVELS, type EffortValue, parseEffortValue } from '../../utils/effort.js'
 import {
   getEnabledSettingSources,
   type SettingSource,
 } from '../../utils/settings/constants.js'
-import { getEchoFlowConfigDir, getEchoFlowInternalDir } from '../../utils/echoFlowConfigRoot.js'
 import {
   isRestrictedToPluginOnly,
   isSourceAdminTrusted,
 } from '../../utils/settings/pluginOnlyPolicy.js'
-import { getSettingsForSource, parseSettingsFile } from '../../utils/settings/settings.js'
+import { getSettingsForSource } from '../../utils/settings/settings.js'
 import type { AgentDefinition } from './loadAgentsDir.js'
 
 /**
@@ -48,12 +46,6 @@ export type ResolvedBuiltInAgentOverride = {
 function getBuiltInOverridesForSource(
   source: SettingSource,
 ): Record<string, unknown> | undefined {
-  if (source === 'userSettings') {
-    return parseSettingsFile(
-      join(getEchoFlowInternalDir(getEchoFlowConfigDir()), 'settings.json'),
-    ).settings?.builtInAgentOverrides
-  }
-
   return getSettingsForSource(source)?.builtInAgentOverrides
 }
 

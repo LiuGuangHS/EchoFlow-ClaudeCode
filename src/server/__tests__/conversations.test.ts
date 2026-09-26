@@ -2239,11 +2239,21 @@ describe('WebSocket Chat Integration', () => {
   }
 
   async function configureInstalledCliRuntime(): Promise<string> {
-    const installedPath = path.join(tmpDir, 'installed-claude-runtime.ts')
+    const installedPath = path.join(tmpDir, 'runtime', 'a', 'b', 'installed-claude-runtime.ts')
     const configPath = path.join(tmpDir, 'claude-code-runtime.json')
+    await fs.mkdir(path.dirname(installedPath), { recursive: true })
     await fs.copyFile(
       fileURLToPath(new URL('./fixtures/mock-sdk-cli.ts', import.meta.url)),
       installedPath,
+    )
+    await fs.mkdir(path.join(tmpDir, 'utils'), { recursive: true })
+    await fs.copyFile(
+      fileURLToPath(new URL('../../utils/sessionCollaborationEnvelope.ts', import.meta.url)),
+      path.join(tmpDir, 'utils', 'sessionCollaborationEnvelope.ts'),
+    )
+    await fs.writeFile(
+      path.join(tmpDir, 'utils', 'json.ts'),
+      'export function safeParseJSON(value: string) { try { return JSON.parse(value) } catch { return null } }\n',
     )
     await fs.chmod(installedPath, 0o755)
     await fs.writeFile(configPath, JSON.stringify({
@@ -6058,7 +6068,7 @@ describe('WebSocket Chat Integration', () => {
     }
   }, 20_000)
 
-  it('should omit unsupported xhigh effort for a K3 provider', async () => {
+  it('should preserve xhigh effort for a K3 provider', async () => {
     const providerService = new ProviderService()
     const provider = await providerService.addProvider({
       presetId: 'kimi',
@@ -6124,7 +6134,7 @@ describe('WebSocket Chat Integration', () => {
         providerId: provider.id,
         model: 'k3',
       })
-      expect(startCalls.find((call) => call.options?.providerId === provider.id)?.options?.effort).toBeUndefined()
+      expect(startCalls.find((call) => call.options?.providerId === provider.id)?.options?.effort).toBe('xhigh')
     } finally {
       conversationService.startSession = originalStartSession
       conversationService.stopSession(sessionId)

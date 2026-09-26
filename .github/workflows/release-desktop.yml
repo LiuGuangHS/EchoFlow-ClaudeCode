@@ -94,7 +94,8 @@ jobs:
             printf '::warning::SignPath configuration missing (%s): the Windows build will be unsigned.\n' "${win_missing[*]}"
             echo "windows_signed=false" >> "$GITHUB_OUTPUT"
             if [ "$RELEASE_DRAFT" != "true" ]; then
-              echo "::warning::Publishing release with unsigned Windows build. Configure SignPath for production-ready signed binaries."
+              echo "::error::Refusing to publish a non-draft desktop release without SignPath Windows signing."
+              exit 1
             fi
           else
             echo "windows_signed=true" >> "$GITHUB_OUTPUT"
@@ -633,7 +634,7 @@ jobs:
         run: bun run scripts/refresh-windows-update-metadata.ts --installer "${{ steps.stage-signpath-installer.outputs.installer_path }}" --metadata desktop/build-artifacts/electron/latest.yml
 
       - name: Verify Windows installer execution
-        if: matrix.smoke_platform == 'windows' && matrix.arch == 'x64' && needs.signing-preflight.outputs.windows_signed == 'true'
+        if: matrix.smoke_platform == 'windows' && matrix.arch == 'x64'
         timeout-minutes: 10
         working-directory: desktop
         run: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/windows-installer-smoke.ps1 -ArtifactsDir ./build-artifacts/electron -Arch x64

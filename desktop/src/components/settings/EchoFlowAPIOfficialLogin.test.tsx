@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import '@testing-library/jest-dom'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { useProviderStore } from '../../stores/providerStore'
 
 vi.mock('../../api/echoflow')
 let EchoFlowAPIOfficialLogin: typeof import('./EchoFlowAPIOfficialLogin').EchoFlowAPIOfficialLogin
@@ -39,6 +40,7 @@ describe('EchoFlowAPIOfficialLogin', () => {
     echoflowApi.disconnectAccount = vi.fn()
   })
   beforeEach(() => {
+    useProviderStore.setState({ providers: [], activeId: null })
     vi.mocked(echoflowApi.getAccounts).mockReset()
     vi.mocked(echoflowApi.bindAccount).mockReset()
     vi.mocked(echoflowApi.refreshAccount).mockReset()
@@ -48,7 +50,30 @@ describe('EchoFlowAPIOfficialLogin', () => {
 
   afterEach(() => {
     cleanup()
+    useProviderStore.setState({ providers: [], activeId: null })
     vi.restoreAllMocks()
+  })
+
+  it('keeps account management focused on accounts instead of repeating the active token provider', async () => {
+    const activeProvider = {
+      id: 'echoflow-dedicated',
+      presetId: 'echoflowai',
+      name: '专线 · Code',
+      apiKey: '',
+      keyPreview: 'sk-mc****Dbj8',
+      baseUrl: 'https://expapi.echoflowai.cc',
+      apiFormat: 'anthropic' as const,
+      models: { main: 'code', haiku: 'code', sonnet: 'code', opus: 'code' },
+    }
+    useProviderStore.setState({ providers: [activeProvider], activeId: activeProvider.id })
+
+    render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
+
+    expect(await screen.findByText(/用户 ID：main-user/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Main key.*sk-main…1234/ })).toBeInTheDocument()
+    expect(screen.queryByText('专线 · Code')).not.toBeInTheDocument()
+    expect(screen.queryByText('sk-mc****Dbj8')).not.toBeInTheDocument()
+    expect(useProviderStore.getState().providers).toContainEqual(activeProvider)
   })
 
   it('shows one endpoint account at a time and keeps the account data isolated', async () => {

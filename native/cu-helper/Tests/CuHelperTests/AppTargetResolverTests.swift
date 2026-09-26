@@ -29,14 +29,14 @@ final class AppTargetResolverTests: XCTestCase {
     func testFullPathSelectsOnlyThatBundleWhenRunningCopiesShareAName() throws {
         let installed = AppTargetCandidate(
             pid: 100,
-            bundleIdentifier: "com.claude-code-haha.desktop",
+            bundleIdentifier: "com.echoflow.code.desktop",
             bundleURL: URL(fileURLWithPath: "/Applications/EchoFlow Code.app"),
             localizedName: "EchoFlow Code",
             executableName: "EchoFlow Code"
         )
         let worktree = AppTargetCandidate(
             pid: 200,
-            bundleIdentifier: "com.claude-code-haha.desktop",
+            bundleIdentifier: "com.echoflow.code.desktop",
             bundleURL: URL(fileURLWithPath: "/Users/test/worktree/desktop/build-artifacts/macos-arm64/EchoFlow Code.app"),
             localizedName: "EchoFlow Code",
             executableName: "EchoFlow Code"
@@ -63,7 +63,7 @@ final class AppTargetResolverTests: XCTestCase {
         let path = "/Users/test/worktree/desktop/build-artifacts/macos-arm64/EchoFlow Code.app"
         let main = AppTargetCandidate(
             pid: 200,
-            bundleIdentifier: "com.claude-code-haha.desktop",
+            bundleIdentifier: "com.echoflow.code.desktop",
             bundleURL: URL(fileURLWithPath: path),
             localizedName: "EchoFlow Code",
             executableName: "EchoFlow Code"

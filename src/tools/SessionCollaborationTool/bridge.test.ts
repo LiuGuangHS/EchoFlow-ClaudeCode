@@ -27,12 +27,15 @@ describe('desktop session bridge', () => {
     await expect(callSessionBridge('list', {})).rejects.toThrow('loopback')
   })
 
-  test('accepts legacy CC_HAHA variables as a compatibility fallback', () => {
+  test('does not accept retired CC_HAHA variables', () => {
     for (const key of keys) delete process.env[key]
     process.env.CC_HAHA_DESKTOP_SERVER_URL = 'http://127.0.0.1:1234'
     process.env.CC_HAHA_SESSION_COLLABORATION_TOKEN = 'legacy-token'
     process.env.CC_HAHA_SESSION_ID = 'legacy-session'
-    expect(isSessionBridgeAvailable()).toBe(true)
+    expect(isSessionBridgeAvailable()).toBe(false)
+    delete process.env.CC_HAHA_DESKTOP_SERVER_URL
+    delete process.env.CC_HAHA_SESSION_COLLABORATION_TOKEN
+    delete process.env.CC_HAHA_SESSION_ID
   })
 
   test('authenticates loopback requests and forwards data', async () => {

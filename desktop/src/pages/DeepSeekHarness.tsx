@@ -6,10 +6,12 @@ import type { DeepSeekHarnessStatus } from '../lib/desktopHost/types'
 const desktopHost = getDesktopHost()
 
 const initialStatus: DeepSeekHarnessStatus = {
-  state: 'not-installed',
+  state: 'unavailable',
   version: null,
   url: null,
   error: null,
+  nodeVersion: null,
+  nodeSource: null,
 }
 
 export function DeepSeekHarness() {
@@ -47,9 +49,8 @@ export function DeepSeekHarness() {
     }
   }, [refresh])
 
-  const installed = status.version !== null
   const running = status.state === 'running'
-  const installing = status.state === 'installing'
+  const installing = status.state === 'installing' || status.state === 'starting'
   const unavailable = status.state === 'unavailable'
 
   return (
@@ -62,29 +63,19 @@ export function DeepSeekHarness() {
               ? 'bg-[var(--color-success-container)] text-[var(--color-on-success-container)]'
               : 'bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)]'}`}
             >
-              {running ? '正在运行' : installing ? '正在安装运行环境' : unavailable ? '运行环境不可用' : installed ? '已停止' : '未安装'}
+              {running ? '正在运行' : installing ? '正在准备并启动' : unavailable ? '缺少兼容的 Node.js' : status.state === 'error' ? '启动失败' : '已停止'}
             </span>
           </div>
           <p className="max-w-2xl text-sm leading-6 text-[var(--color-text-secondary)]">
-            在 EchoFlow 中安装、启动和打开原版 DeepSeek Harness。DeepSeek Harness 的会话和插件能力保持独立，不接入 EchoFlow 的 Agent Loop。
+            使用官方 npm 包启动原版 DeepSeek Harness。首次启动会按需下载；EchoFlow 提供隔离的 Node.js 运行环境与数据目录，Harness 的会话和插件能力保持独立。
           </p>
         </header>
 
         <div className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-container-low)] p-5">
           <div className="flex flex-wrap items-center gap-3">
-            {!installed && !installing && (
-              <Button loading={loading} onClick={() => void run(() => desktopHost.deepSeekHarness.install())}>
-                {unavailable ? '安装运行环境并安装 DeepSeek Harness' : '安装 DeepSeek Harness'}
-              </Button>
-            )}
-            {installed && !running && (
+            {!running && !installing && (
               <Button loading={loading} onClick={() => void run(() => desktopHost.deepSeekHarness.start())}>
-                启动
-              </Button>
-            )}
-            {installed && !running && (
-              <Button variant="secondary" loading={loading} onClick={() => void run(() => desktopHost.deepSeekHarness.install())}>
-                更新 / 重新安装
+                {unavailable ? '准备运行环境并启动' : '启动'}
               </Button>
             )}
             {running && (
@@ -106,10 +97,14 @@ export function DeepSeekHarness() {
             )}
           </div>
 
-          {installed && (
-            <p className="mt-4 text-sm text-[var(--color-text-secondary)]">
-              当前版本：{status.version}
-            </p>
+          <dl className="mt-4 grid gap-1 text-sm text-[var(--color-text-secondary)] sm:grid-cols-2">
+            <div>DeepSeek Harness：{status.version ?? '由 npm 按需解析'}</div>
+            <div>Node.js：{status.nodeVersion ?? (unavailable ? '未就绪' : '检测中')}{status.nodeSource === 'managed' ? '（EchoFlow 管理）' : status.nodeSource === 'system' ? '（系统）' : ''}</div>
+          </dl>
+          {((running) || status.state === 'stopped') && (
+            <Button className="mt-4" variant="secondary" loading={loading} onClick={() => void run(() => desktopHost.deepSeekHarness.update())}>
+              {running ? '检查官方更新并重启' : '检查官方更新并启动'}
+            </Button>
           )}
           {status.error && (
             <p role="alert" className="mt-4 text-sm text-[var(--color-error)]">

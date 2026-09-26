@@ -107,7 +107,7 @@ artifacts/coverage/<timestamp>/coverage-report.json
 
 PR 描述里请贴出你实际运行的命令和 summary。`quality:pr` / `quality:verify` 仍然保留给习惯显式质量命名的用户，但推荐文档和 AI prompt 都使用 `bun run verify`。
 
-覆盖率门禁同时执行四件事：按源码口径统计覆盖率、执行 baseline ratchet、报告 75-80%+ 的目标差距，并对新增/变更的可执行生产代码行执行 changed-line coverage。当前 baseline 记录在 `scripts/quality-gate/coverage-baseline.json`，CI 会优先对比 base branch 的 baseline，新增 PR 不允许覆盖率下降超过允许窗口。`coverage-baseline.json` 或 `coverage-thresholds.json` 变更必须由维护者加 `allow-coverage-baseline-change` 后才能合并。Quarantine 只用于维护者的 baseline/release 追踪，不得隐藏确定性的 provider/chat 契约测试；当前普通 PR gate 不依赖 quarantine 才能通过。
+覆盖率门禁按本次改动的源码区域运行 root、desktop、adapters 对应套件，并执行 baseline ratchet、报告目标差距和检查变更行覆盖率；未改动区域不重复跑。没有可识别的源码区域变更，或覆盖率策略及依赖清单变化时会运行全部区域。当前 baseline 记录在 `scripts/quality-gate/coverage-baseline.json`，CI 会优先对比 base branch 的 baseline，改动区域的覆盖率不得低于允许窗口。`coverage-baseline.json` 或 `coverage-thresholds.json` 变更必须由维护者加 `allow-coverage-baseline-change` 后才能合并。Quarantine 只用于维护者的 baseline/release 追踪，不得隐藏确定性的 provider/chat 契约测试；当前普通 PR gate 不依赖 quarantine 才能通过。
 
 ## AI Coding Agent 修复循环
 
@@ -250,7 +250,7 @@ bun run check:chat-contract     # WebSocket、会话与桌面 chat store 契约�
 bun run check:persistence-upgrade # 持久化迁移和旧 fixture 兼容性
 bun run check:docs        # 独立安装、构建并检查 site/ React 文档站
 bun run check:quarantine  # 维护者 baseline/release quarantine 审计
-bun run check:coverage    # root、desktop、adapters 覆盖率报告和 ratchet 门禁
+bun run check:coverage    # 按改动区域运行 root、desktop、adapters 覆盖率与 ratchet 门禁；必要时全量
 ```
 
 如果只改了很窄的文件，先跑对应的定向测试即可；只有在声明 PR-ready/full validation 时才需要本地再跑 `bun run verify`，托管 CI 仍会执行所有被选中的必需 lane。

@@ -181,6 +181,7 @@ Explain this command in context.`
       messages: [{ role: 'user', content: userPrompt }],
       tools: [EXPLAIN_COMMAND_TOOL],
       tool_choice: { type: 'tool', name: 'explain_command' },
+      thinking: false,
       signal,
       querySource: 'permission_explainer',
     })

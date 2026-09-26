@@ -44,7 +44,6 @@ import {
 import { resetSettingsCache } from '../../utils/settings/settingsCache.js'
 import { clearAllOutputStylesCache } from '../../constants/outputStyles.js'
 import { clearOutputStyleCaches } from '../../outputStyles/loadOutputStylesDir.js'
-import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 import * as terminalShellEnvironment from '../../utils/terminalShellEnvironment.js'
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
@@ -211,7 +210,7 @@ function saveTestOpenAIOAuthTokens(tokens: OpenAIOAuthTokens) {
 }
 
 function echoFlowSettingsPath(configDir = tmpDir): string {
-  return path.join(getEchoFlowInternalDir(configDir), 'settings.json')
+  return path.join(configDir, 'settings.json')
 }
 
 async function writeEchoFlowSettings(settings: Record<string, unknown> | string): Promise<void> {
@@ -273,7 +272,7 @@ describe('SettingsService', () => {
 
     const svc = new SettingsService()
     const settings = await svc.getUserSettings()
-    const files = await fs.readdir(getEchoFlowInternalDir(tmpDir))
+    const files = await fs.readdir(tmpDir)
 
     expect(settings).toEqual({})
     expect(files.some((name) => name.startsWith('settings.json.invalid-'))).toBe(true)
@@ -307,7 +306,7 @@ describe('SettingsService', () => {
   })
 
   it('should preserve unknown desktop terminal fields from older or future settings', async () => {
-    await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
+    await fs.mkdir(tmpDir, { recursive: true })
     await fs.writeFile(
       echoFlowSettingsPath(),
       JSON.stringify({
@@ -364,7 +363,7 @@ describe('SettingsService', () => {
       },
     })
 
-    expect(getSettingsForSource('userSettings')?.enabledPlugins?.['demo@test-market']).toBe(true)
+    expect(getSettingsForSource('userSettings')?.enabledPlugins?.['demo@test-market']).toBe(false)
 
     await svc.updateUserSettings({
       language: 'chinese',
@@ -384,7 +383,7 @@ describe('SettingsService', () => {
     expect(settings.language).toBe('chinese')
     expect(settings.desktopNotificationsEnabled).toBe(true)
     expect(settings.alwaysThinkingEnabled).toBe(false)
-    expect((settings.enabledPlugins as Record<string, unknown>)['demo@test-market']).toBe(false)
+    expect((settings.enabledPlugins as Record<string, unknown>)['demo@test-market']).toBe(true)
   })
 
   it('should read and write project settings', async () => {
@@ -1025,7 +1024,7 @@ describe('Models API', () => {
       name: 'k3',
       description: 'Main model',
       context: '',
-      supportedReasoningEfforts: ['low', 'medium', 'high', 'max'],
+      supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
     }])
   })
 
@@ -1473,7 +1472,7 @@ describe('Models API', () => {
     expect(managedSettings.model).toBe('gpt-5.5')
 
     const echoFlowSettings = await settingsSvc.getUserSettings()
-    expect(echoFlowSettings.model).toBe('gpt-5.5')
+    expect(echoFlowSettings.model).toBe('claude-haiku-4-5')
   })
 
   it('GET /api/models/current should read current GPT model from managed settings when ChatGPT Official is active', async () => {

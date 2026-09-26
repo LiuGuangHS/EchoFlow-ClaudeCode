@@ -107,7 +107,7 @@ artifacts/coverage/<timestamp>/coverage-report.json
 
 Include the commands you ran and the report summary in your PR description. `quality:pr` / `quality:verify` remain available for contributors who prefer explicit quality command names, but docs and AI prompts should prefer `bun run verify`.
 
-The coverage gate does four things: measures source-only coverage, enforces the baseline ratchet, reports target gaps against 75-80%+ maintained-area goals, and enforces changed-line coverage for new or modified executable production lines. The current baseline lives in `scripts/quality-gate/coverage-baseline.json`, and CI compares against the base branch baseline when available. New PRs must not lower coverage beyond the allowed window. Changes to `coverage-baseline.json` or `coverage-thresholds.json` require the maintainer-only `allow-coverage-baseline-change` label. Quarantine is reserved for maintainer baseline/release tracking and must never hide deterministic provider/chat contract tests; the normal PR gate does not depend on quarantine to pass.
+The coverage gate runs root, desktop, and adapter suites for the source areas changed in the diff, then enforces the baseline ratchet, reports target gaps, and checks changed-line coverage. Unchanged areas are skipped. If no source area can be selected, or the coverage policy or dependency manifests changed, it runs every area. The current baseline lives in `scripts/quality-gate/coverage-baseline.json`, and CI compares the affected suites against the base branch baseline when available. Changed areas must not lower coverage beyond the allowed window. Changes to `coverage-baseline.json` or `coverage-thresholds.json` require the maintainer-only `allow-coverage-baseline-change` label. Quarantine is reserved for maintainer baseline/release tracking and must never hide deterministic provider/chat contract tests; the normal PR gate does not depend on quarantine to pass.
 
 ## AI Coding Agent Fix Loop
 
@@ -250,7 +250,7 @@ bun run check:chat-contract     # WebSocket, session, and desktop chat-store con
 bun run check:persistence-upgrade # Persistence migrations and old-fixture compatibility
 bun run check:docs        # Isolated install, build, and validation for the site/ React docs
 bun run check:quarantine  # Maintainer baseline/release quarantine audit
-bun run check:coverage    # Root, desktop, and adapter coverage reports plus ratchet enforcement
+bun run check:coverage    # Coverage and ratchet for changed root, desktop, and adapter areas; full when needed
 ```
 
 Focused tests are the normal development loop. Run `bun run verify` locally when claiming PR-ready/full validation; hosted CI still executes every selected required lane.

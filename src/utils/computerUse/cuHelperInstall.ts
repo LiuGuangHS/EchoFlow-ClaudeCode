@@ -48,7 +48,7 @@ import { resolveCuHelperAppBundle } from './cuHelperBridge.js'
 const APP_NAME = 'echoflow-code-computer-use.app'
 const INNER_REL = path.join('Contents', 'MacOS', 'echoflow-code-computer-use')
 const HELPER_IDENTIFIER = 'dev.echoflow.cu-helper'
-const SIDECAR_IDENTIFIER = 'com.claude-code-haha.desktop.sidecar'
+const SIDECAR_IDENTIFIER = 'com.echoflow.code.desktop.sidecar'
 const SIGNED_FINGERPRINT_FILES = [
   INNER_REL,
   path.join('Contents', 'Info.plist'),
@@ -234,7 +234,7 @@ function codesignOutput(args: string[]): { ok: boolean; output: string } {
 }
 
 function leafCertificateFingerprint(target: string): string | undefined {
-  const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'cc-haha-cu-signature-'))
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'echoflow-cu-signature-'))
   try {
     const prefix = path.join(tempRoot, 'cert-')
     const extracted = codesignOutput([

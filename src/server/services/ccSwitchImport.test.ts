@@ -1615,7 +1615,9 @@ describe('cc-switch REST routes', () => {
     expect(imported.map((provider) => provider.name)).toEqual(['First Import', 'Second Import'])
     expect(imported[0]).toMatchObject({
       presetId: 'custom',
-      apiKey: FULL_KEY,
+      apiKey: '',
+      hasApiKey: true,
+      keyPreview: 'sk-ant****4f2a',
       authStrategy: 'auth_token',
       apiFormat: 'anthropic',
       runtimeKind: 'anthropic_compatible',
@@ -1633,7 +1635,8 @@ describe('cc-switch REST routes', () => {
     const config = await readProvidersConfig()
     const persisted = config.providers as SavedProvider[]
     expect(persisted.map((provider) => provider.name)).toEqual(['First Import', 'Second Import'])
-    expect(config.activeId).toBeNull()
+    expect(persisted[0].apiKey).toBe(FULL_KEY)
+    expect(config.activeId).toBe('claude-official')
     expect(config.providerOrder).toEqual([
       imported[0].id,
       imported[1].id,

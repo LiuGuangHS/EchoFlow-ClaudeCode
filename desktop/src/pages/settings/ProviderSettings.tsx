@@ -176,10 +176,6 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
     setShowCreateModal(true)
   }
 
-  const openEditProviderModal = (provider: SavedProvider) => {
-    setEditingProvider(provider)
-  }
-
   const handleDelete = async (provider: SavedProvider) => {
     if (activeId === provider.id) return
     setPendingDeleteProvider(provider)
@@ -294,7 +290,6 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
             <EchoFlowAPIOfficialLogin
               onAddFromToken={openEchoFlowProviderModal}
               onBindingChange={setEchoFlowHasAccount}
-              onEditProvider={openEditProviderModal}
             />
         </div>
       </div>
@@ -1084,6 +1079,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
   )
 
   const [selectedPreset, setSelectedPreset] = useState<ProviderPreset>(initialPreset)
+  const presetDrivesApiFormat = Boolean(selectedPreset.modelApiFormats?.length)
   const [name, setName] = useState(
     provider?.name ??
     (echoFlowDraft
@@ -1833,57 +1829,6 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
           <Input id={baseUrlInputId} required value={baseUrl} onChange={(e) => handleBaseUrlChange(e.target.value)} placeholder={t('settings.providers.baseUrlPlaceholder')} className="font-mono text-[13px]" />
         </div>
 
-        {/* API Format */}
-        {(isCustom || mode === 'edit' || Boolean(echoFlowDraft)) ? (
-          <div>
-            <label className="text-sm font-medium text-[var(--color-text-primary)] mb-1 block">{t('settings.providers.apiFormat')}</label>
-            <Dropdown<ApiFormat>
-              items={apiFormatItems}
-              value={apiFormat}
-              onChange={handleApiFormatChange}
-              width="100%"
-              className="block w-full"
-              trigger={
-                <Button variant="secondary" size="md" block className="h-10 gap-3">
-                  <span className="min-w-0 flex-1 truncate text-left">{selectedApiFormatLabel}</span>
-                  <span className="material-symbols-outlined flex-shrink-0 text-[18px] text-[var(--color-text-secondary)]">expand_more</span>
-                </Button>
-              }
-            />
-            {apiFormat !== 'anthropic' && (
-              <p className="text-[11px] text-[var(--color-text-tertiary)] mt-1">{t('settings.providers.proxyHint')}</p>
-            )}
-          </div>
-        ) : apiFormat !== 'anthropic' ? (
-          <div>
-            <label className="text-sm font-medium text-[var(--color-text-primary)] mb-1 block">{t('settings.providers.apiFormat')}</label>
-            <div className="text-xs text-[var(--color-text-tertiary)] px-3 py-2 rounded-[var(--radius-md)] bg-[var(--color-surface-container-low)] border border-[var(--color-border)]">
-              {apiFormat === 'openai_chat' ? t('settings.providers.apiFormatOpenaiChat') : t('settings.providers.apiFormatOpenaiResponses')}
-            </div>
-          </div>
-        ) : null}
-
-        <ProviderRequestCompatibilityFields value={compatibility} apiFormat={apiFormat} onChange={handleCompatibilityChange} />
-
-        {apiFormat === 'anthropic' && (
-          <div>
-            <label className="text-sm font-medium text-[var(--color-text-primary)] mb-1 block">{t('settings.providers.authStrategy')}</label>
-            <Dropdown<ProviderAuthStrategy>
-              items={authStrategyItems}
-              value={authStrategy}
-              onChange={handleAuthStrategyChange}
-              width="100%"
-              className="block w-full"
-              trigger={
-                <Button variant="secondary" size="md" block className="h-auto min-h-10 gap-3 py-2">
-                  <span className="min-w-0 flex-1 truncate text-left">{selectedAuthStrategyLabel}</span>
-                  <span className="material-symbols-outlined flex-shrink-0 text-[18px] text-[var(--color-text-secondary)]">expand_more</span>
-                </Button>
-              }
-            />
-          </div>
-        )}
-
         <label
           className={`relative flex items-start gap-3 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-3 py-3 transition-colors ${
             toolSearchUnsupported
@@ -1951,7 +1896,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
 
         <div className="flex flex-col gap-1">
           <label htmlFor={echoFlowDraft ? undefined : 'provider-api-key'} className="text-sm font-medium text-[var(--color-text-primary)]">
-            {mode === 'edit' ? t('settings.providers.apiKeyKeep') : t('settings.providers.apiKey')}
+            {mode === 'edit' && !browserMode ? t('settings.providers.apiKeyKeep') : t('settings.providers.apiKey')}
             {mode === 'create' && requiresApiKey && <span className="text-[var(--color-error)] ml-0.5">*</span>}
           </label>
           {echoFlowDraft ? (

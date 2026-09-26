@@ -73,14 +73,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isShareableProvider(value: unknown): value is ShareableProvider {
   if (!isRecord(value) || Object.keys(value).some(key => !PROVIDER_FIELDS.has(key))) return false
+  const models = value.models
+  if (!isRecord(models)) return false
   return typeof value.name === 'string' && value.name.trim().length > 0
     && typeof value.presetId === 'string'
     && typeof value.baseUrl === 'string'
     && isHttpUrl(value.baseUrl)
     && typeof value.apiFormat === 'string' && ALLOWED_API_FORMATS.has(value.apiFormat)
     && (value.authStrategy === undefined || (typeof value.authStrategy === 'string' && ALLOWED_AUTH_STRATEGIES.has(value.authStrategy)))
-    && isRecord(value.models)
-    && ['main', 'haiku', 'sonnet', 'opus'].every(key => typeof value.models[key] === 'string')
+    && ['main', 'haiku', 'sonnet', 'opus'].every(key => typeof models[key] === 'string')
 }
 
 function isHttpUrl(value: string): boolean {
