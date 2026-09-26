@@ -241,6 +241,15 @@ function originFromUrl(value: string | null): string | null {
   }
 }
 
+function isLoopbackBrowserOriginForPolicy(value: string): boolean {
+  try {
+    const hostname = new URL(value).hostname.replace(/^\[/, '').replace(/\]$/, '').toLowerCase()
+    return hostname === 'localhost' || hostname === '::1' || /^127(?:\.\d{1,3}){3}$/.test(hostname)
+  } catch {
+    return false
+  }
+}
+
 export function startServer(port = PORT, host = HOST) {
   enableConfigs()
   const trustedRendererOrigin = resolveTrustedRendererOrigin(
@@ -401,6 +410,15 @@ export function startServer(port = PORT, host = HOST) {
         // still enforced by the H5 policy below. Remote preflights remain
         // blocked while H5 access is disabled.
         if (req.method === 'OPTIONS') {
+          if (
+            h5RequestContext.localAccessTokenConfigured &&
+            h5RequestContext.trustedRendererOrigin &&
+            origin &&
+            isLoopbackBrowserOriginForPolicy(origin) &&
+            origin !== h5RequestContext.trustedRendererOrigin
+          ) {
+            return localCredentialRejectedResponse()
+          }
           if (h5AccessControlBlocked) {
             return withH5PolicyCors(
               isLocalCredentialOnlyPath(url.pathname)

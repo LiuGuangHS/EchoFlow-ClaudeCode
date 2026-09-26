@@ -222,6 +222,7 @@ beforeEach(async () => {
   originalClaudeAppRoot = process.env.CLAUDE_APP_ROOT
   originalServerAuthRequired = process.env.SERVER_AUTH_REQUIRED
   originalLocalAccessToken = process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
+  originalTrustedRendererOrigin = process.env.ECHOFLOW_TRUSTED_RENDERER_ORIGIN
   originalPetAccessToken = process.env.ECHOFLOW_PET_ACCESS_TOKEN
   originalServerPort = ProviderService.getServerPort()
   process.env.CLAUDE_CONFIG_DIR = tmpDir
@@ -258,6 +259,8 @@ afterEach(async () => {
   else process.env.SERVER_AUTH_REQUIRED = originalServerAuthRequired
   if (originalLocalAccessToken === undefined) delete process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
   else process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = originalLocalAccessToken
+  if (originalTrustedRendererOrigin === undefined) delete process.env.ECHOFLOW_TRUSTED_RENDERER_ORIGIN
+  else process.env.ECHOFLOW_TRUSTED_RENDERER_ORIGIN = originalTrustedRendererOrigin
   if (originalPetAccessToken === undefined) delete process.env.ECHOFLOW_PET_ACCESS_TOKEN
   else process.env.ECHOFLOW_PET_ACCESS_TOKEN = originalPetAccessToken
 

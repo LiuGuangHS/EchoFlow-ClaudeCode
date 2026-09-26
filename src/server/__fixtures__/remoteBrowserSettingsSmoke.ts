@@ -3,6 +3,7 @@ import path from 'node:path'
 import { startServer, stopServerRuntimeForShutdown } from '../index.js'
 import { H5AccessService } from '../services/h5AccessService.js'
 import { ProviderService } from '../services/providerService.js'
+import { getEchoFlowInternalDir } from '../../utils/echoFlowConfigRoot.js'
 
 const origin = 'https://fixture.ngrok-free.app'
 const nativeFetch = globalThis.fetch
@@ -42,7 +43,7 @@ try {
     check(created.status === 201 && createdBody.provider.hasApiKey && createdBody.provider.apiKey === '', `${transport}: provider creation/redaction failed`)
     const id = createdBody.provider.id
     // Seed desktop-owned extensions as an existing store fixture, not via the remote API.
-    const providersPath = path.join(process.env.CLAUDE_CONFIG_DIR!, 'echoflow', 'providers.json')
+    const providersPath = path.join(getEchoFlowInternalDir(process.env.CLAUDE_CONFIG_DIR!), 'providers.json')
     const stored = JSON.parse(await readFile(providersPath, 'utf8'))
     const oldProvider = stored.providers.find((provider: { id: string }) => provider.id === id)
     check(!oldProvider.requestCompatibility.privateFutureKey, 'Remote creation injected a hidden compatibility field')

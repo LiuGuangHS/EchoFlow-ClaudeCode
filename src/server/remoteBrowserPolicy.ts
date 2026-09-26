@@ -53,7 +53,7 @@ export function projectRemoteProvider(provider: SavedProvider) {
   return {
     ...Object.fromEntries(publicKeys.filter(key => provider[key] !== undefined).map(key => [key, provider[key]])),
     apiKey: '',
-    hasApiKey: !!provider.apiKey,
+    hasApiKey: provider.hasApiKey ?? !!provider.apiKey,
     ...(provider.requestCompatibility ? {
       requestCompatibility: Object.fromEntries([...REMOTE_COMPATIBILITY_KEYS].filter(key => provider.requestCompatibility![key] !== undefined).map(key => [key, provider.requestCompatibility![key]])),
     } : {}),
@@ -61,7 +61,7 @@ export function projectRemoteProvider(provider: SavedProvider) {
       imageGeneration: {
         model: provider.imageGeneration.model,
         ...(provider.imageGeneration.baseUrl !== undefined ? { baseUrl: provider.imageGeneration.baseUrl } : {}),
-        apiKey: '', hasApiKey: !!provider.imageGeneration.apiKey,
+        apiKey: '', hasApiKey: provider.imageGeneration.hasApiKey ?? !!provider.imageGeneration.apiKey,
       },
     } : {}),
   }

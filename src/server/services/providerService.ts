@@ -161,7 +161,13 @@ export function toPublicProvider(provider: SavedProvider): SavedProvider {
     apiKey: '',
     hasApiKey: Boolean(provider.apiKey),
     keyPreview: maskProviderKey(provider.apiKey),
-    ...(provider.imageGeneration ? { imageGeneration: { ...provider.imageGeneration, apiKey: undefined } } : {}),
+    ...(provider.imageGeneration ? {
+      imageGeneration: {
+        ...provider.imageGeneration,
+        apiKey: undefined,
+        hasApiKey: Boolean(provider.imageGeneration.apiKey),
+      },
+    } : {}),
   }
 }
 

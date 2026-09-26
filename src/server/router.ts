@@ -51,7 +51,7 @@ export async function handleApiRequest(req: Request, url: URL, context: ApiReque
 }
 
 async function handleApiRequestWithoutPerformance(req: Request, url: URL, context: ApiRequestContext = {}): Promise<Response> {
-  if (!context.remoteBrowser) return routeApiRequest(req, url)
+  if (!context.remoteBrowser) return routeApiRequest(req, url, { projectProviderSecrets: false })
   const parts = url.pathname.split('/').filter(Boolean)
   const isProvider = parts[1] === 'providers'
   const isSettings = parts[1] === 'settings'
@@ -101,7 +101,11 @@ async function handleApiRequestWithoutPerformance(req: Request, url: URL, contex
   }
 }
 
-async function routeApiRequest(req: Request, url: URL): Promise<Response> {
+async function routeApiRequest(
+  req: Request,
+  url: URL,
+  options: { projectProviderSecrets?: boolean } = {},
+): Promise<Response> {
   const path = url.pathname
   const segments = path.split('/').filter(Boolean) // ['api', 'sessions', ...]
 
@@ -153,7 +157,7 @@ async function routeApiRequest(req: Request, url: URL): Promise<Response> {
       return handleWorkflowsApi(req, url, segments)
 
     case 'providers':
-      return handleProvidersApi(req, url, segments)
+      return handleProvidersApi(req, url, segments, { projectSecrets: options.projectProviderSecrets })
 
     case 'echoflow-oauth':
       return handleEchoFlowOAuthApi(req, url, segments)

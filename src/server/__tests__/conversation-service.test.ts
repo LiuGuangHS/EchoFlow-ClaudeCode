@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { execFileSync } from 'node:child_process'
 import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
@@ -340,6 +341,7 @@ describe('ConversationService', () => {
     const service = new ConversationService() as any
     const workDir = path.join(tmpDir, 'workspace', 'myself_code', 'echoflow-code')
     await fs.mkdir(workDir, { recursive: true })
+    execFileSync('git', ['init', '--quiet'], { cwd: workDir })
 
     const env = (await service.buildChildEnv(workDir)) as Record<string, string>
 

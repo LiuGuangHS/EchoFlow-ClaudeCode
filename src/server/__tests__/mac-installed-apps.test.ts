@@ -139,11 +139,6 @@ describe('macOS installed app enumeration', () => {
 
     expect(apps).toEqual([
       {
-        bundleId: 'com.echoflow.code.desktop',
-        displayName: 'EchoFlow Code',
-        path: '/Applications/Desktop.app',
-      },
-      {
         bundleId: 'dev.echoflow.cu-helper',
         displayName: 'Computer Use Helper',
         path: '/Applications/Helper.app',
@@ -152,6 +147,11 @@ describe('macOS installed app enumeration', () => {
         bundleId: 'com.example.custom-host',
         displayName: 'Custom Host',
         path: '/Applications/Custom.app',
+      },
+      {
+        bundleId: 'com.echoflow.code.desktop',
+        displayName: 'EchoFlow Code',
+        path: '/Applications/Desktop.app',
       },
       {
         bundleId: 'com.example.notes',

@@ -56,6 +56,7 @@ export async function handleProvidersApi(
   req: Request,
   _url: URL,
   segments: string[],
+  options: { projectSecrets?: boolean } = {},
 ): Promise<Response> {
   try {
     const id = segments[2]
@@ -125,7 +126,9 @@ export async function handleProvidersApi(
     // /api/providers (no ID)
     if (!id) {
       if (req.method === 'GET') {
-        const { providers, activeId, providerOrder } = await providerService.listPublicProviders()
+        const { providers, activeId, providerOrder } = options.projectSecrets === false
+          ? await providerService.listProviders()
+          : await providerService.listPublicProviders()
         return Response.json({ providers, activeId, providerOrder })
       }
       if (req.method === 'POST') {
@@ -185,7 +188,9 @@ export async function handleProvidersApi(
 
     // /api/providers/:id
     if (req.method === 'GET') {
-      const provider = await providerService.getPublicProvider(id)
+      const provider = options.projectSecrets === false
+        ? await providerService.getProvider(id)
+        : await providerService.getPublicProvider(id)
       return Response.json({ provider })
     }
     if (req.method === 'PUT') {

@@ -1004,8 +1004,8 @@ class WorkflowService {
     }
 
     const persisted = (
-      entry.type === 'echoflow-code-task-notification' ||
-      entry.type === 'echoflow-code-task-notification'
+      (entry.type === 'echoflow-code-task-notification' ||
+        entry.type === 'cc-haha-task-notification')
     ) && isObjectRecord(entry.taskNotification)
       ? entry.taskNotification
       : undefined
