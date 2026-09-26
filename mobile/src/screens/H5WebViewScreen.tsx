@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ActivityIndicator, Platform, Pressable, SafeAreaView, StatusBar, StyleSheet, Text, View } from 'react-native'
+import Ionicons from '@expo/vector-icons/Ionicons'
 import { WebView } from 'react-native-webview'
 import type { WebViewNavigation } from 'react-native-webview'
 import { ConnectionSnackbar } from '../components/ConnectionSnackbar'
@@ -11,6 +12,8 @@ import { createFilePickerScript, isFilePickRequest, launchNativeFilePicker } fro
 import { createWsMonitorScript, isWsBridgeMessage } from '../lib/webViewBridge'
 import type { Credentials } from '../lib/types'
 import type { WsConnectionStatus } from '../lib/webViewBridge'
+import { useTheme } from '../lib/theme'
+import { t } from '../lib/i18n'
 
 type H5WebViewScreenProps = {
   credentials: Credentials
@@ -22,6 +25,8 @@ function buildLaunchUrl({ serverUrl, h5Token }: Credentials): string {
 }
 
 export function H5WebViewScreen({ credentials, onDisconnect }: H5WebViewScreenProps) {
+  const theme = useTheme()
+  const styles = useMemo(() => createStyles(theme), [theme])
   const webViewRef = useRef<WebView>(null)
   const permissionClientRef = useRef<PermissionClient | null>(null)
   const [canGoBack, setCanGoBack] = useState(false)
@@ -146,10 +151,17 @@ export function H5WebViewScreen({ credentials, onDisconnect }: H5WebViewScreenPr
 
   // Show the first pending permission request
   const activeRequest = pendingRequests.length > 0 ? pendingRequests[0] : null
+  const statusLabel = wsStatus === 'connected'
+    ? t('webview.status.connected')
+    : wsStatus === 'reconnecting'
+      ? t('webview.status.reconnecting')
+      : wsStatus === 'disconnected'
+        ? t('webview.status.disconnected')
+        : t('webview.loading')
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="light-content" backgroundColor="#0f172a" />
+      <StatusBar barStyle="light-content" backgroundColor={theme.toolbar} />
       <ConnectionSnackbar status={wsStatus} />
 
       <View style={styles.toolbar}>
@@ -157,11 +169,15 @@ export function H5WebViewScreen({ credentials, onDisconnect }: H5WebViewScreenPr
           <Text style={styles.title}>EchoFlow Code</Text>
           <Text numberOfLines={1} style={styles.subtitle}>{credentials.serverUrl}</Text>
         </View>
+        <View style={styles.statusPill}>
+          <View style={[styles.statusDot, wsStatus === 'disconnected' ? styles.statusDotDanger : null, wsStatus === 'reconnecting' ? styles.statusDotWarning : null]} />
+          <Text style={styles.statusText}>{statusLabel}</Text>
+        </View>
         <Pressable accessibilityLabel={canGoBack ? '返回' : '重新加载'} onPress={handleBack} style={styles.secondaryButton}>
-          <Text style={styles.secondaryButtonText}>{canGoBack ? '返回' : '重载'}</Text>
+          <Ionicons name={canGoBack ? 'arrow-back' : 'refresh'} size={17} color={theme.secondaryButtonText} />
         </Pressable>
         <Pressable accessibilityLabel="断开连接" onPress={handleDisconnect} style={styles.dangerButton}>
-          <Text style={styles.dangerButtonText}>断开</Text>
+          <Ionicons name="log-out-outline" size={17} color={theme.dangerButtonText} />
         </Pressable>
       </View>
 
@@ -219,16 +235,17 @@ export function H5WebViewScreen({ credentials, onDisconnect }: H5WebViewScreenPr
   )
 }
 
-const styles = StyleSheet.create({
+function createStyles(theme: ReturnType<typeof useTheme>) {
+  return StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#0f172a',
+    backgroundColor: theme.toolbar,
     paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight ?? 0 : 0,
   },
   toolbar: {
     alignItems: 'center',
-    backgroundColor: '#0f172a',
-    borderBottomColor: '#1e293b',
+    backgroundColor: theme.toolbar,
+    borderBottomColor: theme.toolbarBorder,
     borderBottomWidth: 1,
     flexDirection: 'row',
     gap: 8,
@@ -239,19 +256,42 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
+  statusPill: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 5,
+    marginRight: 2,
+  },
+  statusDot: {
+    backgroundColor: theme.primary,
+    borderRadius: 5,
+    height: 8,
+    width: 8,
+  },
+  statusDotWarning: {
+    backgroundColor: theme.warningText,
+  },
+  statusDotDanger: {
+    backgroundColor: theme.dangerText,
+  },
+  statusText: {
+    color: theme.toolbarSubtext,
+    fontSize: 11,
+    fontWeight: '700',
+  },
   title: {
-    color: '#ffffff',
+    color: theme.toolbarText,
     fontSize: 16,
     fontWeight: '800',
   },
   subtitle: {
-    color: '#94a3b8',
+    color: theme.toolbarSubtext,
     fontSize: 12,
     marginTop: 2,
   },
   secondaryButton: {
     alignItems: 'center',
-    backgroundColor: '#1e293b',
+    backgroundColor: theme.secondaryButtonBg,
     borderRadius: 10,
     justifyContent: 'center',
     minHeight: 40,
@@ -260,13 +300,13 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   secondaryButtonText: {
-    color: '#e2e8f0',
+    color: theme.secondaryButtonText,
     fontSize: 12,
     fontWeight: '700',
   },
   dangerButton: {
     alignItems: 'center',
-    backgroundColor: '#7f1d1d',
+    backgroundColor: theme.dangerButtonBg,
     borderRadius: 10,
     justifyContent: 'center',
     minHeight: 40,
@@ -275,7 +315,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   dangerButtonText: {
-    color: '#fee2e2',
+    color: theme.dangerButtonText,
     fontSize: 12,
     fontWeight: '700',
   },
@@ -288,7 +328,7 @@ const styles = StyleSheet.create({
   },
   loadingOverlay: {
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.88)',
+    backgroundColor: theme.surface,
     bottom: 0,
     justifyContent: 'center',
     left: 0,
@@ -297,8 +337,9 @@ const styles = StyleSheet.create({
     top: 0,
   },
   loadingText: {
-    color: '#334155',
+    color: theme.textSecondary,
     fontSize: 14,
     marginTop: 12,
   },
-})
+  })
+}

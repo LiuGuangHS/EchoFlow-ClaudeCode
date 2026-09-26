@@ -1,4 +1,5 @@
 import { Pressable, ScrollView, StyleSheet, Text } from 'react-native'
+import { useTheme } from '../lib/theme'
 
 type ServerChipListProps = {
   servers: string[]
@@ -6,6 +7,8 @@ type ServerChipListProps = {
 }
 
 export function ServerChipList({ servers, onSelect }: ServerChipListProps) {
+  const theme = useTheme()
+  const styles = createStyles(theme)
   if (servers.length === 0) return null
 
   return (
@@ -29,14 +32,15 @@ export function ServerChipList({ servers, onSelect }: ServerChipListProps) {
   )
 }
 
-const styles = StyleSheet.create({
+function createStyles(theme: ReturnType<typeof useTheme>) {
+  return StyleSheet.create({
   container: {
     gap: 8,
     paddingBottom: 8,
   },
   chip: {
-    backgroundColor: '#f1f5f9',
-    borderColor: '#e2e8f0',
+    backgroundColor: theme.chipBg,
+    borderColor: theme.chipBorder,
     borderRadius: 10,
     borderWidth: 1,
     maxWidth: 220,
@@ -44,8 +48,9 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   chipText: {
-    color: '#334155',
+    color: theme.chipText,
     fontSize: 13,
     fontWeight: '600',
   },
-})
+  })
+}

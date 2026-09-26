@@ -24,10 +24,26 @@ describe('theme', () => {
   })
 
   test('themes have all required color keys', () => {
-    const required = ['background', 'surface', 'text', 'primary', 'inputBg', 'inputBorder']
+    const required = [
+      'background',
+      'surface',
+      'text',
+      'primary',
+      'inputBg',
+      'inputBorder',
+      'toolbar',
+      'toolbarBorder',
+      'modalBackdrop',
+      'codeBg',
+    ]
     for (const key of required) {
       expect(lightColors).toHaveProperty(key)
       expect(darkColors).toHaveProperty(key)
     }
+  })
+
+  test('dark approval surfaces stay distinct from the app background', () => {
+    expect(darkColors.codeBg).not.toBe(darkColors.surface)
+    expect(darkColors.modalBackdrop).toContain('rgba')
   })
 })

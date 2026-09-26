@@ -1,5 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native'
 import { t } from '../lib/i18n'
+import { useTheme } from '../lib/theme'
 
 type ErrorBannerProps = {
   message: string
@@ -7,6 +8,8 @@ type ErrorBannerProps = {
 }
 
 export function ErrorBanner({ message, onRetry }: ErrorBannerProps) {
+  const theme = useTheme()
+  const styles = createStyles(theme)
   return (
     <View style={styles.container} accessibilityRole="alert">
       <Text style={styles.message}>{message}</Text>
@@ -23,11 +26,12 @@ export function ErrorBanner({ message, onRetry }: ErrorBannerProps) {
   )
 }
 
-const styles = StyleSheet.create({
+function createStyles(theme: ReturnType<typeof useTheme>) {
+  return StyleSheet.create({
   container: {
     alignItems: 'center',
-    backgroundColor: '#fef2f2',
-    borderBottomColor: '#fecaca',
+    backgroundColor: theme.dangerBg,
+    borderBottomColor: theme.dangerBorder,
     borderBottomWidth: 1,
     flexDirection: 'row',
     gap: 10,
@@ -35,20 +39,21 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   message: {
-    color: '#991b1b',
+    color: theme.dangerText,
     flex: 1,
     fontSize: 13,
     lineHeight: 18,
   },
   retryButton: {
-    backgroundColor: '#dc2626',
+    backgroundColor: theme.dangerButtonBg,
     borderRadius: 8,
     paddingHorizontal: 14,
     paddingVertical: 6,
   },
   retryText: {
-    color: '#fff',
+    color: theme.dangerButtonText,
     fontSize: 12,
     fontWeight: '700',
   },
-})
+  })
+}

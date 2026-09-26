@@ -1,12 +1,16 @@
 import { useEffect, useRef } from 'react'
 import { Animated, Platform, StatusBar, StyleSheet, Text } from 'react-native'
 import type { WsConnectionStatus } from '../lib/webViewBridge'
+import { useTheme } from '../lib/theme'
+import { t } from '../lib/i18n'
 
 type ConnectionSnackbarProps = {
   status: WsConnectionStatus | null
 }
 
 export function ConnectionSnackbar({ status }: ConnectionSnackbarProps) {
+  const theme = useTheme()
+  const styles = createStyles(theme)
   const translateY = useRef(new Animated.Value(-100)).current
 
   useEffect(() => {
@@ -34,14 +38,15 @@ export function ConnectionSnackbar({ status }: ConnectionSnackbarProps) {
     >
       <Text style={styles.text}>
         {isDisconnected
-          ? '与服务器连接已断开，请重新加载页面。'
-          : '正在重新连接...'}
+          ? t('snackbar.disconnected')
+          : t('snackbar.reconnecting')}
       </Text>
     </Animated.View>
   )
 }
 
-const styles = StyleSheet.create({
+function createStyles(theme: ReturnType<typeof useTheme>) {
+  return StyleSheet.create({
   container: {
     alignItems: 'center',
     left: 0,
@@ -53,14 +58,15 @@ const styles = StyleSheet.create({
     zIndex: 100,
   },
   disconnected: {
-    backgroundColor: '#dc2626',
+    backgroundColor: theme.dangerText,
   },
   reconnecting: {
-    backgroundColor: '#d97706',
+    backgroundColor: theme.warningText,
   },
   text: {
-    color: '#fff',
+    color: theme.toolbarText,
     fontSize: 13,
     fontWeight: '700',
   },
-})
+  })
+}

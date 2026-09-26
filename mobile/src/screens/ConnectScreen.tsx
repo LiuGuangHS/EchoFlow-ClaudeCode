@@ -5,6 +5,7 @@ import {
   Platform,
   Pressable,
   SafeAreaView,
+  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
@@ -12,6 +13,7 @@ import {
   View,
 } from 'react-native'
 import * as Clipboard from 'expo-clipboard'
+import Ionicons from '@expo/vector-icons/Ionicons'
 import { QrCameraModal } from '../components/QrCameraModal'
 import { ServerChipList } from '../components/ServerChipList'
 import { isPlainHttp, isPrivateLanHttp, normalizeServerUrl, verifyH5Connection } from '../lib/h5Access'
@@ -120,6 +122,11 @@ export function ConnectScreen({ initialServerUrl = '', error: initialError, onCo
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="dark-content" backgroundColor={theme.background} />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.container}>
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
         <View style={styles.card}>
           <Text style={styles.eyebrow}>{t('connect.eyebrow')}</Text>
           <Text style={styles.title}>{t('connect.title')}</Text>
@@ -132,6 +139,7 @@ export function ConnectScreen({ initialServerUrl = '', error: initialError, onCo
             onPress={() => { setCameraVisible(true); setCameraError('') }}
             style={styles.scanButton}
           >
+            <Ionicons name="qr-code-outline" size={18} color={theme.primary} />
             <Text style={styles.scanButtonText}>{t('connect.scanQr')}</Text>
           </Pressable>
 
@@ -213,6 +221,7 @@ export function ConnectScreen({ initialServerUrl = '', error: initialError, onCo
             {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>{t('connect.connect')}</Text>}
           </Pressable>
         </View>
+        </ScrollView>
       </KeyboardAvoidingView>
 
       <QrCameraModal
@@ -234,6 +243,10 @@ function createStyles(t: typeof import('../lib/theme').lightColors) {
     },
     container: {
       flex: 1,
+      justifyContent: 'center',
+    },
+    scrollContent: {
+      flexGrow: 1,
       justifyContent: 'center',
       padding: 20,
     },
@@ -329,6 +342,8 @@ function createStyles(t: typeof import('../lib/theme').lightColors) {
       borderColor: t.scanButtonBorder,
       borderRadius: 14,
       borderWidth: 1.5,
+      flexDirection: 'row',
+      gap: 8,
       marginBottom: 16,
       paddingVertical: 12,
     },

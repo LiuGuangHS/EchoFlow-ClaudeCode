@@ -29,12 +29,15 @@ export const zh = {
   'webview.back': '返回',
   'webview.reload': '重载',
   'webview.disconnect': '断开',
+  'webview.status.connected': '已连接',
+  'webview.status.reconnecting': '正在重连',
+  'webview.status.disconnected': '连接断开',
   'webview.loading': '正在加载 EchoFlow H5...',
   'webview.loadError': '无法加载 EchoFlow H5。',
   'webview.httpError': 'H5 返回 HTTP',
 
   // ConnectionSnackbar
-  'snackbar.disconnected': '与服务器连接已断开，请重新加载页面。',
+  'snackbar.disconnected': '与服务器连接已断开，正在等待重试。',
   'snackbar.reconnecting': '正在重新连接...',
 
   // ErrorBanner

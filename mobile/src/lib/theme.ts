@@ -27,6 +27,20 @@ export type ThemeColors = {
   clipboardBorder: string
   clipboardText: string
   shadowColor: string
+  toolbar: string
+  toolbarBorder: string
+  toolbarText: string
+  toolbarSubtext: string
+  secondaryButtonBg: string
+  secondaryButtonText: string
+  dangerButtonBg: string
+  dangerButtonText: string
+  modalBackdrop: string
+  codeBg: string
+  codeBorder: string
+  codeText: string
+  mutedButtonBg: string
+  mutedButtonText: string
 }
 
 export const lightColors: ThemeColors = {
@@ -56,6 +70,20 @@ export const lightColors: ThemeColors = {
   clipboardBorder: '#bbf7d0',
   clipboardText: '#166534',
   shadowColor: '#0f172a',
+  toolbar: '#0f172a',
+  toolbarBorder: '#e2e8f0',
+  toolbarText: '#ffffff',
+  toolbarSubtext: '#cbd5e1',
+  secondaryButtonBg: '#e2e8f0',
+  secondaryButtonText: '#334155',
+  dangerButtonBg: '#fee2e2',
+  dangerButtonText: '#b91c1c',
+  modalBackdrop: 'rgba(15, 23, 42, 0.62)',
+  codeBg: '#f8fafc',
+  codeBorder: '#e2e8f0',
+  codeText: '#0f172a',
+  mutedButtonBg: '#f1f5f9',
+  mutedButtonText: '#475569',
 }
 
 export const darkColors: ThemeColors = {
@@ -85,6 +113,20 @@ export const darkColors: ThemeColors = {
   clipboardBorder: '#14532d',
   clipboardText: '#86efac',
   shadowColor: '#000000',
+  toolbar: '#0b1220',
+  toolbarBorder: '#26354a',
+  toolbarText: '#f8fafc',
+  toolbarSubtext: '#91a2b8',
+  secondaryButtonBg: '#1e293b',
+  secondaryButtonText: '#e2e8f0',
+  dangerButtonBg: '#451a1a',
+  dangerButtonText: '#fca5a5',
+  modalBackdrop: 'rgba(0, 0, 0, 0.72)',
+  codeBg: '#0b1220',
+  codeBorder: '#26354a',
+  codeText: '#e7eef8',
+  mutedButtonBg: '#26354a',
+  mutedButtonText: '#cbd5e1',
 }
 
 export function useTheme(): ThemeColors {

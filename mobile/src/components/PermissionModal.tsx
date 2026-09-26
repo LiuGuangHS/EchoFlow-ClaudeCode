@@ -1,6 +1,7 @@
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import type { PermissionRequest } from '../lib/permissionClient'
 import { t } from '../lib/i18n'
+import { useTheme } from '../lib/theme'
 
 type PermissionModalProps = {
   request: PermissionRequest
@@ -9,20 +10,22 @@ type PermissionModalProps = {
 }
 
 export function PermissionModal({ request, onAllow, onDeny }: PermissionModalProps) {
+  const theme = useTheme()
+  const styles = createStyles(theme)
   const inputKeys = Object.keys(request.input).filter((k) => k !== 'command')
   const command = typeof request.input.command === 'string' ? request.input.command : null
 
   return (
     <Modal
       visible
-      animationType="fade"
+      animationType="slide"
       transparent
       onRequestClose={onDeny}
     >
       <View style={styles.backdrop}>
         <View style={styles.card}>
           <View style={styles.header}>
-            <View style={[styles.badge, styles.toolBadge]}>
+            <View style={styles.badge}>
               <Text style={styles.badgeText}>{request.toolName}</Text>
             </View>
             <Text style={styles.title}>{t('permission.title')}</Text>
@@ -81,22 +84,25 @@ export function PermissionModal({ request, onAllow, onDeny }: PermissionModalPro
   )
 }
 
-const styles = StyleSheet.create({
+function createStyles(theme: ReturnType<typeof useTheme>) {
+  return StyleSheet.create({
   backdrop: {
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'stretch',
+    backgroundColor: theme.modalBackdrop,
     flex: 1,
-    justifyContent: 'center',
-    padding: 24,
+    justifyContent: 'flex-end',
+    padding: 12,
   },
   card: {
-    backgroundColor: '#ffffff',
-    borderRadius: 20,
-    maxHeight: '80%',
+    backgroundColor: theme.surface,
+    borderRadius: 22,
+    borderBottomLeftRadius: 10,
+    borderBottomRightRadius: 10,
+    maxHeight: '82%',
     maxWidth: 400,
     padding: 22,
     width: '100%',
-    shadowColor: '#0f172a',
+    shadowColor: theme.shadowColor,
     shadowOffset: { width: 0, height: 12 },
     shadowOpacity: 0.15,
     shadowRadius: 24,
@@ -107,42 +113,40 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   badge: {
+    backgroundColor: theme.scanButtonBg,
     borderRadius: 8,
     marginBottom: 10,
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
-  toolBadge: {
-    backgroundColor: '#dbeafe',
-  },
   badgeText: {
-    color: '#1e40af',
+    color: theme.primary,
     fontSize: 14,
     fontWeight: '800',
   },
   title: {
-    color: '#0f172a',
+    color: theme.text,
     fontSize: 20,
     fontWeight: '800',
     textAlign: 'center',
   },
   description: {
-    color: '#475569',
+    color: theme.textSecondary,
     fontSize: 14,
     lineHeight: 20,
     marginBottom: 16,
     textAlign: 'center',
   },
   commandBox: {
-    backgroundColor: '#f8fafc',
-    borderColor: '#e2e8f0',
+    backgroundColor: theme.codeBg,
+    borderColor: theme.codeBorder,
     borderRadius: 12,
     borderWidth: 1,
     marginBottom: 12,
     padding: 12,
   },
   commandLabel: {
-    color: '#64748b',
+    color: theme.textMuted,
     fontSize: 11,
     fontWeight: '700',
     letterSpacing: 0.4,
@@ -153,7 +157,7 @@ const styles = StyleSheet.create({
     maxHeight: 80,
   },
   commandText: {
-    color: '#0f172a',
+    color: theme.codeText,
     fontFamily: 'monospace',
     fontSize: 13,
     lineHeight: 19,
@@ -165,13 +169,13 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   inputKey: {
-    color: '#64748b',
+    color: theme.textMuted,
     fontSize: 11,
     fontWeight: '700',
     marginBottom: 2,
   },
   inputValue: {
-    color: '#334155',
+    color: theme.textSecondary,
     fontSize: 13,
   },
   actions: {
@@ -181,28 +185,29 @@ const styles = StyleSheet.create({
   },
   denyButton: {
     alignItems: 'center',
-    backgroundColor: '#f1f5f9',
+    backgroundColor: theme.mutedButtonBg,
     borderRadius: 12,
     flex: 1,
     minHeight: 46,
     justifyContent: 'center',
   },
   denyButtonText: {
-    color: '#475569',
+    color: theme.mutedButtonText,
     fontSize: 15,
     fontWeight: '700',
   },
   allowButton: {
     alignItems: 'center',
-    backgroundColor: '#2563eb',
+    backgroundColor: theme.primary,
     borderRadius: 12,
     flex: 1,
     minHeight: 46,
     justifyContent: 'center',
   },
   allowButtonText: {
-    color: '#ffffff',
+    color: theme.toolbarText,
     fontSize: 15,
     fontWeight: '700',
   },
-})
+  })
+}
