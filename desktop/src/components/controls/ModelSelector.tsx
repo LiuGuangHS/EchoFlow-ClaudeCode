@@ -1,4 +1,4 @@
-import { MODEL_SLOTS, type ModelSlot } from '@/lib/providerModelContext'
+import type { ModelSlot } from '@/lib/providerModelContext'
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
