@@ -77,7 +77,7 @@ describe('useSidebarResize', () => {
 
   it('publishes the stored width onto the shell', () => {
     render(<Harness />)
-    expect(SIDEBAR_DEFAULT_WIDTH).toBe(280)
+    expect(SIDEBAR_DEFAULT_WIDTH).toBe(320)
     expect(shellWidth()).toBe(SIDEBAR_DEFAULT_WIDTH)
   })
 
@@ -101,7 +101,7 @@ describe('useSidebarResize', () => {
 
     expect(shellWidth()).toBe(360)
     expect(useUIStore.getState().sidebarWidth).toBe(360)
-    expect(localStorage.getItem('cc-haha-sidebar-width')).toBe('360')
+    expect(localStorage.getItem('echoflow-code-sidebar-width')).toBe('360')
   })
 
   it('clamps the width to the safe range instead of following the pointer past it', () => {

@@ -1,14 +1,14 @@
 /**
  * Provider Service — preset-based provider configuration
  *
- * Storage: ~/.claude/cc-haha/providers.json (lightweight index)
- * Active provider env vars written to ~/.claude/cc-haha/settings.json
+ * Storage: <EchoFlow AppData>/echoflow-code/providers.json (lightweight index)
+ * Active provider env vars written to <EchoFlow AppData>/echoflow-code/settings.json
  * (isolated from the original Claude Code's ~/.claude/settings.json)
  */
 
 import * as fs from 'fs/promises'
+import { existsSync } from 'node:fs'
 import * as path from 'path'
-import * as os from 'os'
 import { ApiError } from '../middleware/errorHandler.js'
 import { buildOpenaiEndpoint } from '../proxy/openaiEndpoint.js'
 import { normalizeAnthropicBaseUrl } from '../../services/api/anthropicBaseUrl.js'
@@ -25,8 +25,8 @@ import {
   OPENAI_OFFICIAL_PROVIDER,
   isOpenAIOfficialProviderId,
 } from './openaiOfficialProvider.js'
-import { hahaOpenAIOAuthService } from './hahaOpenAIOAuthService.js'
-import { hahaOAuthService } from './hahaOAuthService.js'
+import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
+import { echoFlowOpenAIOAuthService } from './echoFlowOpenAIOAuthService.js'
 import {
   GROK_OFFICIAL_PROVIDER,
   isGrokOfficialProviderId,
@@ -35,7 +35,7 @@ import {
   CLAUDE_OFFICIAL_DEFAULT_MODELS,
 } from './claudeOfficialRuntime.js'
 import { SettingsService } from './settingsService.js'
-import { hahaGrokOAuthService } from './hahaGrokOAuthService.js'
+import { echoFlowGrokOAuthService } from './echoFlowGrokOAuthService.js'
 import {
   CURRENT_PROVIDER_INDEX_SCHEMA_VERSION,
   ensurePersistentStorageUpgraded,
@@ -87,7 +87,7 @@ import {
 
 const DEFAULT_INDEX: ProvidersIndex = {
   schemaVersion: CURRENT_PROVIDER_INDEX_SCHEMA_VERSION,
-  activeId: null,
+  activeId: 'claude-official',
   providers: [],
   providerOrder: [...BUILT_IN_PROVIDER_IDS],
   officialProviderModels: {},
@@ -152,6 +152,32 @@ function buildSavedProvider(input: CreateProviderInput): SavedProvider {
     ...(input.requestCompatibility !== undefined && { requestCompatibility: input.requestCompatibility }),
     ...(imageGeneration !== undefined && { imageGeneration }),
     ...(input.notes !== undefined && { notes: input.notes }),
+    ...(input.credentialSource !== undefined && { credentialSource: input.credentialSource }),
+    ...(input.availableModels !== undefined && { availableModels: input.availableModels }),
+  }
+}
+
+function maskProviderKey(key: string): string {
+  if (!key) return ''
+  if (key.length <= 8) return key.startsWith('sk-') ? `sk-${'•'.repeat(Math.max(4, key.length - 3))}` : '••••••••'
+  return key.startsWith('sk-')
+    ? `sk-${key.slice(3, 6)}****${key.slice(-4)}`
+    : `${key.slice(0, 6)}****${key.slice(-4)}`
+}
+
+export function toPublicProvider(provider: SavedProvider): SavedProvider {
+  return {
+    ...provider,
+    apiKey: '',
+    hasApiKey: Boolean(provider.apiKey),
+    keyPreview: maskProviderKey(provider.apiKey),
+    ...(provider.imageGeneration ? {
+      imageGeneration: {
+        ...provider.imageGeneration,
+        apiKey: undefined,
+        hasApiKey: Boolean(provider.imageGeneration.apiKey),
+      },
+    } : {}),
   }
 }
 
@@ -191,15 +217,27 @@ export class ProviderService {
     return ProviderService.serverPort
   }
   private getConfigDir(): string {
-    return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
+    return getEchoFlowConfigDir()
   }
 
-  private getCcHahaDir(): string {
-    return path.join(this.getConfigDir(), 'cc-haha')
+  private getEchoFlowDir(): string {
+    const configDir = this.getConfigDir()
+    const currentDir = getEchoFlowInternalDir(configDir)
+    const legacyDir = path.join(configDir, 'echoflow')
+    // Keep an intermediate EchoFlow store usable when it has not yet been
+    // replaced by the canonical echoflow-code index.
+    if (
+      legacyDir !== currentDir &&
+      existsSync(path.join(legacyDir, 'providers.json')) &&
+      !existsSync(path.join(currentDir, 'providers.json'))
+    ) {
+      return legacyDir
+    }
+    return currentDir
   }
 
   private getIndexPath(): string {
-    return path.join(this.getCcHahaDir(), 'providers.json')
+    return path.join(this.getEchoFlowDir(), 'providers.json')
   }
 
   private async readIndex(): Promise<ProvidersIndex> {
@@ -251,6 +289,11 @@ export class ProviderService {
       activeId: index.activeId,
       providerOrder: index.providerOrder,
     }
+  }
+
+  async listPublicProviders(): Promise<{ providers: SavedProvider[]; activeId: string | null; providerOrder: string[] }> {
+    const result = await this.listProviders()
+    return { ...result, providers: result.providers.map(toPublicProvider) }
   }
 
   async getProvider(id: string): Promise<SavedProvider> {
@@ -309,7 +352,7 @@ export class ProviderService {
     await this.writeIndex(index)
 
     if (id === CLAUDE_OFFICIAL_PROVIDER_ID) {
-      if (index.activeId === null) {
+      if (index.activeId === null || index.activeId === CLAUDE_OFFICIAL_PROVIDER_ID) {
         await this.settingsService.updateOfficialModelMapping(normalized)
       }
       return normalized
@@ -324,6 +367,10 @@ export class ProviderService {
     }
 
     return normalized
+  }
+
+  async getPublicProvider(id: string): Promise<SavedProvider> {
+    return toPublicProvider(await this.getProvider(id))
   }
 
   async addProvider(input: CreateProviderInput): Promise<SavedProvider> {
@@ -388,6 +435,8 @@ export class ProviderService {
       ...(input.disableExperimentalBetas === true && { disableExperimentalBetas: true }),
       ...(imageGeneration !== undefined && imageGeneration !== null && { imageGeneration }),
       ...(input.notes !== undefined && { notes: input.notes }),
+      ...(input.credentialSource !== undefined && input.credentialSource !== null && { credentialSource: input.credentialSource }),
+      ...(input.availableModels !== undefined && input.availableModels !== null && { availableModels: input.availableModels }),
     }
     if (input.model1mSupport === null) {
       delete updated.model1mSupport
@@ -406,6 +455,12 @@ export class ProviderService {
     }
     if (imageGeneration === null) {
       delete updated.imageGeneration
+    }
+    if (input.credentialSource === null) {
+      delete updated.credentialSource
+    }
+    if (input.availableModels === null) {
+      delete updated.availableModels
     }
 
     index.providers[idx] = updated
@@ -573,22 +628,21 @@ export class ProviderService {
 
   /**
    * Check whether any usable auth exists:
-   *  1. The active cc-haha provider or built-in OAuth provider has auth
-   *  2. Claude Official has a desktop-managed OAuth token
-   *  3. process.env already has ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN
-   *  4. Original ~/.claude/settings.json contains one of those auth variables
-   *  5. None of the above → needs setup
+   *  1. An EchoFlow provider is active → has auth
+   *  2. process.env already has ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN → has auth
+   *  3. EchoFlow Code settings.json has ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY → has auth
+   *  4. None of the above → needs setup
    */
   async checkAuthStatus(): Promise<{
     hasAuth: boolean
-    source: 'cc-haha-provider' | 'claude-oauth' | 'openai-oauth' | 'grok-oauth' | 'original-settings' | 'env' | 'none'
+    source: 'echoflow-provider' | 'openai-oauth' | 'grok-oauth' | 'echoflow-settings' | 'env' | 'none'
     activeProvider?: string
   }> {
-    // 1–2. Check the selected provider, including Claude Official (activeId=null).
+    // 1. Check EchoFlow active provider
     const index = await this.readIndex()
     if (index.activeId) {
       if (isOpenAIOfficialProviderId(index.activeId)) {
-        const tokens = await hahaOpenAIOAuthService.ensureFreshTokens()
+        const tokens = await echoFlowOpenAIOAuthService.ensureFreshTokens()
         if (tokens?.accessToken && tokens.refreshToken) {
           return {
             hasAuth: true,
@@ -603,7 +657,7 @@ export class ProviderService {
         }
       }
       if (isGrokOfficialProviderId(index.activeId)) {
-        const tokens = await hahaGrokOAuthService.ensureFreshTokens()
+        const tokens = await echoFlowGrokOAuthService.ensureFreshTokens()
         if (tokens?.accessToken && tokens.refreshToken) {
           return {
             hasAuth: true,
@@ -627,33 +681,24 @@ export class ProviderService {
         )
         const authEnv = buildProviderAuthEnv(provider, presetDefaultEnv, needsProxy)
         if (Object.values(authEnv).some(value => value.length > 0)) {
-          return { hasAuth: true, source: 'cc-haha-provider', activeProvider: provider.name }
-        }
-      }
-    } else {
-      const tokens = await hahaOAuthService.ensureFreshTokens()
-      if (tokens?.accessToken) {
-        return {
-          hasAuth: true,
-          source: 'claude-oauth',
-          activeProvider: 'Claude Official',
+          return { hasAuth: true, source: 'echoflow-provider', activeProvider: provider.name }
         }
       }
     }
 
-    // 3. Check process.env (covers .env file + inherited env)
+    // 2. Check process.env (covers .env file + inherited env)
     if (process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN) {
       return { hasAuth: true, source: 'env' }
     }
 
-    // 4. Check original ~/.claude/settings.json
+    // 3. Check EchoFlow Code settings.json
     try {
-      const originalPath = path.join(this.getConfigDir(), 'settings.json')
-      const raw = await fs.readFile(originalPath, 'utf-8')
+      const settingsPath = path.join(this.getEchoFlowDir(), 'settings.json')
+      const raw = await fs.readFile(settingsPath, 'utf-8')
       const settings = JSON.parse(raw) as { env?: Record<string, string> }
       const env = settings.env ?? {}
       if (env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_API_KEY) {
-        return { hasAuth: true, source: 'original-settings' }
+        return { hasAuth: true, source: 'echoflow-settings' }
       }
     } catch {
       // File doesn't exist or invalid
@@ -957,7 +1002,7 @@ export class ProviderService {
  */
 function connectivityProbeSessionId(): string {
   const random = globalThis.crypto?.randomUUID?.()
-  return random ? `cc-haha-probe-${random}` : 'cc-haha-probe'
+  return random ? `echoflow-probe-${random}` : 'echoflow-probe'
 }
 
 function buildDirectTestRequest(

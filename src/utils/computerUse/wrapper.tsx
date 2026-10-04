@@ -73,13 +73,14 @@ function formatLockHeld(holder: string): string {
 
 export function buildSessionContext(): ComputerUseSessionContext {
   return {
-    // ── Read state fresh via the per-call ref ─────────────────────────────
-    // App authorization is feature-wide once Computer Use is enabled. Keep
-    // returning the legacy shapes for protocol compatibility, but do not
-    // consume persisted app grants or open runtime permission prompts.
-    getAllowedApps: () => [],
+    // ── Read state fresh via the async-local context ──────────────────────
+    // During dispatch, consume persisted desktop grants (pre-authorized apps +
+    // grant flags) written by the EchoFlow desktop settings page. Outside a
+    // dispatch there is no per-call context, so fall back to upstream's
+    // feature-wide defaults (every app, flags enabled).
+    getAllowedApps: () => toolUseContexts.getStore()?.getAppState().computerUseMcpState?.allowedApps ?? [],
     isAborted: () => tuc().abortController.signal.aborted,
-    getGrantFlags: () => ENABLED_GRANT_FLAGS,
+    getGrantFlags: () => toolUseContexts.getStore()?.getAppState().computerUseMcpState?.grantFlags ?? ENABLED_GRANT_FLAGS,
     getUserDeniedBundleIds: () => [],
     getSelectedDisplayId: () => tuc().getAppState().computerUseMcpState?.selectedDisplayId,
     getDisplayPinnedByModel: () => tuc().getAppState().computerUseMcpState?.displayPinnedByModel ?? false,

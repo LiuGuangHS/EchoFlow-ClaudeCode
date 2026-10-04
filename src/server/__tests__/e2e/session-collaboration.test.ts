@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test'
-import { mkdtemp, mkdir, rm } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -32,6 +33,12 @@ test('desktop host dispatches independent sessions, exchanges messages, exposes 
   try {
     const workDir = join(home, 'project')
     await mkdir(workDir)
+    execFileSync('git', ['init', '--quiet', '-b', 'main'], { cwd: workDir })
+    execFileSync('git', ['config', 'user.name', 'EchoFlow Test'], { cwd: workDir })
+    execFileSync('git', ['config', 'user.email', 'echoflow-test@example.invalid'], { cwd: workDir })
+    await writeFile(join(workDir, 'README.md'), 'isolated test repository\n')
+    execFileSync('git', ['add', 'README.md'], { cwd: workDir })
+    execFileSync('git', ['commit', '--quiet', '-m', 'test fixture'], { cwd: workDir })
     const runtime = await import('../../index.js')
     shutdown = runtime.stopServerRuntimeForShutdown
     server = runtime.startServer(0, '127.0.0.1')

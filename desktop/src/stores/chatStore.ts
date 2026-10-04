@@ -14,6 +14,7 @@ import { useSessionStore } from './sessionStore'
 import { useCLITaskStore } from './cliTaskStore'
 import { useWorkflowStore } from './workflowStore'
 import { useSessionRuntimeStore } from './sessionRuntimeStore'
+import { useSessionCliRuntimeStore } from './sessionCliRuntimeStore'
 import { useProviderStore } from './providerStore'
 import { reconcileRuntimeSelection, resolveActiveProviderRuntimeSelection } from '../lib/runtimeSelection'
 import { useSettingsStore } from './settingsStore'
@@ -34,7 +35,7 @@ import type { ComposerAttachment } from '../lib/composerAttachments'
 import type { ComposerMention } from '../lib/composerMentions'
 import type { MessageEntry } from '../types/session'
 import type { PermissionMode } from '../types/settings'
-import type { RuntimeSelection } from '../types/runtime'
+import type { ModelConfig, RuntimeSelection } from '../types/runtime'
 import type {
   ActiveGoalState,
   AgentTaskNotification,
@@ -428,7 +429,14 @@ type ChatStore = {
     requestId: string,
     response: ComputerUsePermissionResponse,
   ) => void
-  setSessionRuntime: (sessionId: string, selection: RuntimeSelection) => void
+  setSessionRuntime: (
+    sessionId: string,
+    selection: RuntimeSelection,
+    options?: { markPending?: boolean },
+  ) => void
+  setSessionModelConfig: (sessionId: string, config: ModelConfig) => void
+  restartSessionRuntime: (sessionId: string, reason?: string) => void
+  setSessionCliRuntime: (sessionId: string, runtimeId: 'bundled' | 'installed') => void
   setSessionPermissionMode: (sessionId: string, mode: PermissionMode) => void
   stopGeneration: (sessionId: string) => void
   stopBackgroundTask: (sessionId: string, taskId: string) => void
@@ -2138,7 +2146,7 @@ function buildAgentCompletionNotification(
   const lastAssistant = [...messages].reverse().find((message) => message.type === 'assistant_text')
   const suffix = preview.length > AGENT_COMPLETION_NOTIFICATION_PREVIEW_CHARS ? '...' : ''
   return {
-    title: 'Claude Code Haha 已完成回复',
+    title: 'EchoFlow Code 已完成回复',
     body: preview.slice(0, AGENT_COMPLETION_NOTIFICATION_PREVIEW_CHARS) + suffix,
     dedupeKey: `agent-completion:${sessionId}:${lastAssistant?.id ?? Date.now()}`,
   }
@@ -3191,7 +3199,7 @@ export const useChatStore = create<ChatStore>((setState, get) => {
 
     const runtimeSelection = useSessionRuntimeStore.getState().selections[sessionId]
     if (runtimeSelection && options?.applyRuntimeSelection !== false) {
-      get().setSessionRuntime(sessionId, runtimeSelection)
+      get().setSessionRuntime(sessionId, runtimeSelection, { markPending: false })
     }
     if (
       options?.prewarm !== false &&
@@ -3493,7 +3501,29 @@ export const useChatStore = create<ChatStore>((setState, get) => {
     }))
   },
 
-  setSessionRuntime: (sessionId, selection) => {
+  setSessionModelConfig: (sessionId, config) => {
+    const selection: RuntimeSelection = {
+      providerId: config.providerId,
+      modelId: config.modelId,
+      ...(config.effortLevel ? { effortLevel: config.effortLevel } : {}),
+    }
+    const reconciled = reconcileProviderRuntimeSelection(sessionId, selection)
+    useSessionRuntimeStore.getState().setSelection(sessionId, reconciled)
+    const requestId = nextId()
+    wsManager.send(sessionId, {
+      type: 'set_model_config',
+      ...(config.id ? { configId: config.id } : {}),
+      config: reconciled,
+      requestId,
+    })
+    useSessionRuntimeStore.getState().markRequestPending(sessionId, requestId)
+  },
+
+  restartSessionRuntime: (sessionId, reason) => {
+    wsManager.send(sessionId, { type: 'restart_runtime', requestId: nextId(), reason })
+  },
+
+  setSessionRuntime: (sessionId, selection, options) => {
     const reconciled = reconcileProviderRuntimeSelection(sessionId, selection)
     if (reconciled !== selection) {
       useSessionRuntimeStore.getState().setSelection(sessionId, reconciled)
@@ -3502,6 +3532,14 @@ export const useChatStore = create<ChatStore>((setState, get) => {
       type: 'set_runtime_config',
       ...reconciled,
     })
+    if (options?.markPending !== false) {
+      useSessionRuntimeStore.getState().markRequestPending(sessionId)
+    }
+  },
+
+  setSessionCliRuntime: (sessionId, runtimeId) => {
+    wsManager.send(sessionId, { type: 'set_cli_runtime', cliRuntimeId: runtimeId })
+    useSessionCliRuntimeStore.getState().request(sessionId, runtimeId)
   },
 
   setSessionPermissionMode: (sessionId, mode) => {
@@ -4863,6 +4901,7 @@ export const useChatStore = create<ChatStore>((setState, get) => {
         if (msg.state !== 'idle') ensureElapsedTimer()
         if (msg.state === 'idle') {
           clearElapsedTimer()
+          useSessionRuntimeStore.getState().markRequestUnconfirmed(sessionId)
         }
         // Sync tab status
         useTabStore.getState().updateTabStatus(
@@ -4872,6 +4911,32 @@ export const useChatStore = create<ChatStore>((setState, get) => {
             : 'running',
         )
         break
+
+      case 'cli_runtime_applied':
+        useSessionCliRuntimeStore.getState().apply(sessionId, msg.cliRuntimeId)
+        break
+
+      case 'model_config_applied': {
+        const runtimeStore = useSessionRuntimeStore.getState()
+        const latestRequestId = runtimeStore.latestRequestIdBySessionId[sessionId]
+        if (latestRequestId && latestRequestId !== msg.requestId) break
+        runtimeStore.markRequestApplied(sessionId, msg.requestId)
+        runtimeStore.setSelection(sessionId, {
+          providerId: msg.providerId,
+          modelId: msg.modelId,
+          ...(msg.effortLevel ? { effortLevel: msg.effortLevel as RuntimeSelection['effortLevel'] } : {}),
+        })
+        break
+      }
+
+      case 'model_config_apply_failed':
+        useSessionRuntimeStore.getState().markRequestFailed(sessionId, msg.requestId)
+        break
+
+      case 'runtime_status':
+        // Runtime lifecycle is intentionally not used to block model selection.
+        break
+
 
       case 'runtime_config_applied': {
         const selected = useSessionRuntimeStore.getState().selections[sessionId]
@@ -4895,7 +4960,6 @@ export const useChatStore = create<ChatStore>((setState, get) => {
         }
         break
       }
-
       case 'permission_mode_changed': {
         // CLI 是权限模式的真相来源。这里把它恢复/切换后的权威值校正到本地镜像。
         // 注意：只更新本地状态，**不要**走 setSessionPermissionMode —— 那会把
@@ -5285,7 +5349,7 @@ export const useChatStore = create<ChatStore>((setState, get) => {
           dedupeKey: `permission:${msg.requestId}`,
           cooldownScope: 'permission-prompt',
           requestAttention: true,
-          title: 'Claude Code Haha 需要你的确认',
+          title: 'EchoFlow Code 需要你的确认',
           body: msg.displayName && msg.toolName
             ? `${msg.displayName} 请求使用 ${msg.toolName}，正在等待允许。`
             : msg.toolName
@@ -5353,7 +5417,7 @@ export const useChatStore = create<ChatStore>((setState, get) => {
           dedupeKey: `computer-use-permission:${msg.requestId}`,
           cooldownScope: 'permission-prompt',
           requestAttention: true,
-          title: 'Claude Code Haha 需要你的确认',
+          title: 'EchoFlow Code 需要你的确认',
           body: msg.request.reason || 'Computer Use 正在等待允许。',
           target: { type: 'session', sessionId },
         })
@@ -5587,9 +5651,13 @@ export const useChatStore = create<ChatStore>((setState, get) => {
           ...(msg.businessErrorCode ? { businessErrorCode: msg.businessErrorCode } : {}),
           timestamp: Date.now(),
         }
+        if (msg.code === 'CLI_RUNTIME_INVALID' || msg.code === 'CLI_RUNTIME_PERSIST_FAILED' || msg.code === 'CLI_RUNTIME_RESTART_FAILED') {
+          useSessionCliRuntimeStore.getState().fail(sessionId)
+        }
         if (msg.code === 'RUNTIME_CONFIG_INVALID') {
           // Validation rejects the selection before changing the runtime. It
           // neither ends the active turn nor invalidates an in-flight history load.
+          useSessionRuntimeStore.getState().markRequestFailed(sessionId)
           update((s) => ({ messages: [...s.messages, errorMessage] }))
           break
         }

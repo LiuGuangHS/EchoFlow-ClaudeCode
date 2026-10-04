@@ -1,8 +1,8 @@
 ---
 title: Computer Use
 nav_title: Computer Use
-description: Let Claude use other apps on macOS without taking over your physical mouse or keyboard.
-order: 7
+description: Let Claude read your screen, move the mouse, and type into other apps.
+order: 8
 ---
 
 # Computer Use
@@ -13,7 +13,7 @@ With Computer Use enabled, Claude can take screenshots, click, and type in appli
 
 It acts on this computer, so read what you're authorizing before you turn it on.
 
-macOS and Windows are supported. There is no Linux executor yet.
+macOS and Windows are supported. There is no Linux executor yet. The full **background-operation** experience needs macOS 14.4 or newer — see "How Windows differs" below.
 
 ## Check the environment
 
@@ -38,13 +38,30 @@ The page has **Open accessibility settings** and **Open screen recording setting
 After granting either one you must **fully quit and reopen the app**. macOS reads these permissions once at process start, so without a restart the page will keep reporting them as not granted.
 :::
 
-Make sure you're granting the permission to the app that actually launches cc-haha. Screen Recording detection is occasionally unreliable — if the system settings clearly show it granted but the page still says otherwise, it generally works anyway.
+Make sure you're granting the permission to the app that actually launches EchoFlow Code. Screen Recording detection is occasionally unreliable — if the system settings clearly show it granted but the page still says otherwise, it generally works anyway.
 
-## Enable Computer Use
+## One global consent when you enable it
 
-Turn on **Enable** and read the confirmation dialog. **Once you confirm, Computer Use may control every supported app on this computer without another approval for each app.** macOS Accessibility and Screen Recording are still granted separately by the OS. The global switch, OS permissions, and target-process checks continue to apply.
+**As of 0.5.5, the per-app prompt for every new app is gone.** What replaces it is **a single global consent** when you enable Computer Use: ticking **Enable** raises a risk summary, and you click **Confirm and enable** after reading it.
 
-Before starting, close windows with information you do not want shown, state the task's boundaries clearly, and use the session stop button or Esc to interrupt control when needed. Turn **Enable** off here when you are finished.
+That summary states what you are accepting. Three points matter most:
+
+- Claude can capture your screen and may see sensitive or private information on it.
+- Claude can click, type, use the clipboard and system shortcuts, and can send, modify, or delete content.
+- **Once enabled, Claude can control all supported apps directly without asking per app**; product safety limits still apply.
+
+There are two ways out: stop or press `Esc` in the session to interrupt control, or turn Computer Use off here. With it off, **new sessions do not inject the computer-use MCP**, and desktop-control tools are not exposed to the coding agent.
+
+Settings still keeps an **Authorized Apps** list with a search box. Its role has changed from "approve one at a time" to "declare up front" — tick the apps you use constantly and there will be no confirmation step when they're needed.
+
+Two more grants are separate and never come along with enabling Computer Use:
+
+- **Clipboard access** — reading and writing the system clipboard.
+- **System key combos** — sending system-level shortcuts.
+
+:::danger
+With the global consent there is no per-request interception left, so the boundary is yours to draw. Be careful with password managers, banking apps, and corporate chat — don't leave them permanently controllable.
+:::
 
 ## Getting started
 
@@ -60,22 +77,43 @@ Claude works in a screenshot → decide → act → screenshot loop, so it's slo
 
 Only one session can use Computer Use at a time. If another session holds the control lock, stop or finish it first. On macOS, this does not mean your physical mouse or keyboard is occupied.
 
+## Background operation: it doesn't take over your input
+
+On macOS, Claude can click, type, scroll and drag **in the background** while you keep working in other applications.
+
+- **An independent virtual cursor** shows what the agent is doing on screen. It is separate from your real pointer, which never gets pulled away.
+- **Occlusion-proof** — the target window stays capturable while another app covers it.
+- **Batched execution** — native actions run in a long-lived worker process, so known operations complete back to back instead of waiting for a model round trip each time.
+- **Cancellable at any point** — cancellation propagates through the worker rather than silently failing.
+
+### How Windows differs
+
+**On Windows the system mouse and keyboard are still used** — background input is a macOS-only capability. If you try this on Windows and it seems not to work, that is why, not a fault.
+
+Windows did gain more reliable input handling, target validation, and a consistent virtual cursor in this release, but those background capabilities are not part of it.
+
 ## Known limits
 
 - **Only one session can use Computer Use at a time.** Let another session finish or stop it before trying to take control.
 - **Screenshots can contain sensitive information.** Every visible window may appear in a Windows screenshot; tidy windows and the desktop on any platform before capture.
-- **Observe again after the UI changes.** Old coordinates or element state may no longer be valid.
 - **To stop control,** use the session stop button, Esc, or the **Enable** switch in Settings.
+- **Re-read the UI after it changes.** Old coordinates don't survive a page change.
+- **Windows screenshots aren't filtered.** On macOS a screenshot keeps only authorized apps and the desktop; on Windows every visible window is captured. Close or minimize anything sensitive first.
+- **Browsers and terminals are restricted.** Browsers are read-only (visible but not clickable) and terminals and IDEs are click-only (no typing). Use the browser extension for web pages and the Bash tool for commands.
 
 ## Troubleshooting
 
 **The page keeps saying permissions are missing**
-Confirm you granted them to the app that actually launches cc-haha, fully quit and reopen, then click **Re-check**.
+Confirm you granted them to the app that actually launches EchoFlow Code, fully quit and reopen, then click **Re-check**.
 
 **The environment won't install**
 If your page shows Python checks, choose a Python 3 installation that supports `venv` and click **Install Environment** again. If the native runtime component is missing, update or reinstall the app. For other failures, check **Settings → Diagnostics**.
 
 **Screenshots work but clicks don't**
 Check that Computer Use is still enabled, that macOS Accessibility permission is granted, and that the target app is still running. After changing OS permissions, fully quit and reopen the app, then click **Re-check**.
+Make sure the target app is within the allowed set and is currently in the foreground. Browsers and terminals are subject to the tier restrictions above.
 
-For global consent, the native runtime component, and compatible executors, see [Computer Use architecture](../internals/computer-use.md).
+**Background operation doesn't work on Windows**
+Expected. Background clicking and typing are macOS-only; on Windows the app uses your system mouse and keyboard.
+
+For global consent, the permission tiers, the native runtime component, and the Python bridge, see [Computer Use architecture](../internals/computer-use.md).

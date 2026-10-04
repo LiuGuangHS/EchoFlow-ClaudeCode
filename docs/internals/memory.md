@@ -34,7 +34,7 @@ Claude Code 将记忆严格分为四类：
 
 记录你的角色、目标、技能水平和偏好，帮助 Claude 调整协作方式。
 
-```
+```text
 用户说：我写了十年 Go，但这是第一次碰这个仓库的 React 部分
 Claude 保存：深厚 Go 经验，React 新手 — 用后端类比解释前端概念
 ```
@@ -43,7 +43,7 @@ Claude 保存：深厚 Go 经验，React 新手 — 用后端类比解释前端�
 
 你对 Claude 工作方式的纠正或肯定。这类记忆让 Claude 不会犯同样的错。
 
-```
+```text
 用户说：别在回复末尾总结你做了什么，我能看 diff
 Claude 保存：用户要求简洁回复，不要尾部摘要
 ```
@@ -54,7 +54,7 @@ Claude 保存：用户要求简洁回复，不要尾部摘要
 
 无法从代码或 Git 历史中推导出的项目上下文：谁在做什么、为什么、截止日期。
 
-```
+```text
 用户说：我们周四后冻结所有非关键合并，移动团队要切发布分支
 Claude 保存：2026-03-05 起合并冻结，标记该日期后的非关键 PR 工作
 ```
@@ -65,7 +65,7 @@ Claude 保存：2026-03-05 起合并冻结，标记该日期后的非关键 PR �
 
 指向外部系统中信息的指针：仪表板、工单系统、Slack 频道。
 
-```
+```text
 用户说：oncall 看的是 grafana.internal/d/api-latency 这个面板
 Claude 保存：grafana.internal/d/api-latency 是 oncall 延迟仪表板 — 编辑请求路径代码时检查
 ```
@@ -87,7 +87,7 @@ Claude 保存：grafana.internal/d/api-latency 是 oncall 延迟仪表板 — �
 6. 写入记忆文件 + 更新 MEMORY.md 索引
 
 终端会显示通知：
-```
+```text
 Memory updated in ~/.claude/projects/.../memory/feedback_testing.md · /memory to edit
 ```
 
@@ -95,7 +95,7 @@ Memory updated in ~/.claude/projects/.../memory/feedback_testing.md · /memory t
 
 直接告诉 Claude "记住这个"：
 
-```
+```text
 用户：记住，这个项目部署前必须运行 bun test
 Claude：[立即保存为 feedback 类型记忆]
 ```
@@ -104,7 +104,7 @@ Claude：[立即保存为 feedback 类型记忆]
 
 在终端输入 `/memory` 命令，会打开一个文件选择器，让你在编辑器中直接编辑记忆文件。
 
-```
+```text
 > /memory
 ```
 
@@ -122,7 +122,7 @@ Claude：[立即保存为 feedback 类型记忆]
 
 ### 目录结构
 
-```
+```text
 ~/.claude/
 └── projects/
     └── {项目路径哈希}/
@@ -172,14 +172,14 @@ MEMORY.md 是索引而不是内容。它**始终加载到上下文**中，每行
 
 ### 让 Claude 遗忘
 
-```
+```text
 用户：忘记关于合并冻结的记忆
 Claude：[找到并删除相关记忆文件和索引条目]
 ```
 
 ### 让 Claude 忽略记忆
 
-```
+```text
 用户：忽略记忆，从零开始
 Claude：[本次对话中不使用任何记忆内容]
 ```
@@ -212,7 +212,7 @@ Claude：[本次对话中不使用任何记忆内容]
 
 ![记忆生命周期](./images/04-memory-lifecycle.png)
 
-```
+```text
 对话中学到新信息
       ↓
  自动提取 / 显式保存

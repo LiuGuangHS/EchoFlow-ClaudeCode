@@ -5,8 +5,8 @@ import { rememberLocale } from '../lib/locale'
 import { useTheme } from '../lib/theme'
 import SearchDialog from './SearchDialog'
 
-export const GITHUB_URL = 'https://github.com/NanmiCoder/cc-haha'
-export const DOWNLOAD_URL = 'https://github.com/NanmiCoder/cc-haha/releases/latest'
+export const GITHUB_URL = 'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode'
+export const DOWNLOAD_URL = 'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest'
 
 const copy = {
   zh: {
@@ -14,9 +14,11 @@ const copy = {
     download: '下载',
     entries: [
       ['/start', '开始使用'],
-      ['/cases', '实战案例'],
-      ['/desktop/settings', '配置指南'],
-      ['/desktop', '桌面端功能']
+      ['/desktop', '桌面端功能'],
+      ['/mobile', '移动端'],
+      ['/im', 'IM 接入'],
+      ['/cli', '命令行'],
+      ['/internals', '深入原理']
     ],
     menu: '打开导航',
     // 页脚也有一栏叫「文档」，主导航得换个名字，否则地标列表里两个 nav 同名。
@@ -31,9 +33,11 @@ const copy = {
     download: 'Download',
     entries: [
       ['/en/start', 'Get started'],
-      ['/en/cases', 'Cases'],
-      ['/en/desktop/settings', 'Settings'],
-      ['/en/desktop', 'Desktop app']
+      ['/en/desktop', 'Desktop app'],
+      ['/en/mobile', 'Mobile'],
+      ['/en/im', 'Messaging'],
+      ['/en/cli', 'Command line'],
+      ['/en/internals', 'Internals']
     ],
     menu: 'Open navigation',
     nav: 'Main',
@@ -74,7 +78,7 @@ export default function SiteHeader({ activeSection, locale = 'zh', localeHref })
         <div className="site-header__inner">
           <a className="brand" href={toSiteHref(home)}>
             <img alt="" src={toSiteHref('/images/app-icon.png')} width="26" height="26" />
-            <span>cc-haha</span>
+            <span>EchoFlow Code</span>
           </a>
 
           <nav aria-label={c.nav} className="site-nav" data-open={open} id="site-nav">

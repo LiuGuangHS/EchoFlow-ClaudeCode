@@ -64,7 +64,7 @@ let originalConfigDir: string | undefined
 let originalLocalAccessToken: string | undefined
 
 async function tempRoot(label: string): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), `cc-haha-${label}-`))
+  const root = await mkdtemp(join(tmpdir(), `echoflow-code-${label}-`))
   tempDirs.push(root)
   return root
 }
@@ -75,7 +75,7 @@ async function createLocalIndexCorpus(options: LocalIndexCorpusOptions) {
 }
 
 function restoreEnvironment(
-  name: 'HOME' | 'CLAUDE_CONFIG_DIR' | 'CC_HAHA_LOCAL_ACCESS_TOKEN',
+  name: 'HOME' | 'CLAUDE_CONFIG_DIR' | 'ECHOFLOW_LOCAL_ACCESS_TOKEN',
   value: string | undefined,
 ): void {
   if (value === undefined) {
@@ -88,7 +88,7 @@ function restoreEnvironment(
 beforeEach(async () => {
   originalHome = process.env.HOME
   originalConfigDir = process.env.CLAUDE_CONFIG_DIR
-  originalLocalAccessToken = process.env.CC_HAHA_LOCAL_ACCESS_TOKEN
+  originalLocalAccessToken = process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
   const environmentRoot = await tempRoot('local-index-test-environment')
   process.env.HOME = join(environmentRoot, 'home')
   process.env.CLAUDE_CONFIG_DIR = join(environmentRoot, 'home', '.claude')
@@ -97,7 +97,7 @@ beforeEach(async () => {
 afterEach(async () => {
   restoreEnvironment('HOME', originalHome)
   restoreEnvironment('CLAUDE_CONFIG_DIR', originalConfigDir)
-  restoreEnvironment('CC_HAHA_LOCAL_ACCESS_TOKEN', originalLocalAccessToken)
+  restoreEnvironment('ECHOFLOW_LOCAL_ACCESS_TOKEN', originalLocalAccessToken)
   await Promise.all(tempDirs.splice(0).map(
     dir => rm(dir, { recursive: true, force: true }),
   ))
@@ -301,7 +301,7 @@ describe('local index file benchmark', () => {
     const originalEnvironment = {
       HOME: process.env.HOME,
       CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR,
-      CC_HAHA_LOCAL_INDEX: process.env.CC_HAHA_LOCAL_INDEX,
+      ECHOFLOW_LOCAL_INDEX: process.env.ECHOFLOW_LOCAL_INDEX,
     }
     for (const expectedPhase of ['warmup', 'measured'] as const) {
       const contexts: Array<{
@@ -361,7 +361,7 @@ describe('local index file benchmark', () => {
       expect(await stat(contexts[0]!.rootDir).then(() => true, () => false)).toBe(false)
       expect(process.env.HOME).toBe(originalEnvironment.HOME)
       expect(process.env.CLAUDE_CONFIG_DIR).toBe(originalEnvironment.CLAUDE_CONFIG_DIR)
-      expect(process.env.CC_HAHA_LOCAL_INDEX).toBe(originalEnvironment.CC_HAHA_LOCAL_INDEX)
+      expect(process.env.ECHOFLOW_LOCAL_INDEX).toBe(originalEnvironment.ECHOFLOW_LOCAL_INDEX)
     }
   })
 
@@ -484,10 +484,10 @@ describe('local index file benchmark', () => {
     const originalEnvironment = {
       HOME: process.env.HOME,
       CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR,
-      CC_HAHA_LOCAL_INDEX: process.env.CC_HAHA_LOCAL_INDEX,
-      CC_HAHA_LOCAL_ACCESS_TOKEN: process.env.CC_HAHA_LOCAL_ACCESS_TOKEN,
+      ECHOFLOW_LOCAL_INDEX: process.env.ECHOFLOW_LOCAL_INDEX,
+      ECHOFLOW_LOCAL_ACCESS_TOKEN: process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN,
     }
-    process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'benchmark-parent-local-access-token'
+    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'benchmark-parent-local-access-token'
     const options = benchmark.parseBenchmarkArgs!([
       '--sessions',
       '50',
@@ -526,8 +526,8 @@ describe('local index file benchmark', () => {
     expect(await stat(rootDir!).then(() => true, () => false)).toBe(false)
     expect(process.env.HOME).toBe(originalEnvironment.HOME)
     expect(process.env.CLAUDE_CONFIG_DIR).toBe(originalEnvironment.CLAUDE_CONFIG_DIR)
-    expect(process.env.CC_HAHA_LOCAL_INDEX).toBe(originalEnvironment.CC_HAHA_LOCAL_INDEX)
-    expect(process.env.CC_HAHA_LOCAL_ACCESS_TOKEN).toBe(
+    expect(process.env.ECHOFLOW_LOCAL_INDEX).toBe(originalEnvironment.ECHOFLOW_LOCAL_INDEX)
+    expect(process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN).toBe(
       'benchmark-parent-local-access-token',
     )
   })
@@ -870,7 +870,7 @@ describe('local index file benchmark', () => {
       const firstSource = join(report.fixture.configDir, manifest.sources[0]!.path)
       const databasePath = join(
         report.fixture.configDir,
-        'cc-haha',
+        'echoflow-code',
         'db',
         'index-v1.sqlite',
       )

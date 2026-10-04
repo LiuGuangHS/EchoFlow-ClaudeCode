@@ -3,7 +3,7 @@
 The compatibility reference is the installed **official** Codex Computer Use
 plugin, its shipped JavaScript client, and its native service. Third-party
 replicas are historical references, not specifications for current Codex.
-`docs/internals/computer-use-codex-impl-blueprint.md` describes the verified
+`docs/_internal/computer-use-codex-impl-blueprint.md` describes the verified
 contracts and the boundaries of our implementation.
 
 ## Reference inspected on 2026-09-09

@@ -20,7 +20,7 @@ afterEach(async () => {
 })
 
 async function databasePath(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), 'cc-haha-search-schema-'))
+  const root = await mkdtemp(join(tmpdir(), 'echoflow-code-search-schema-'))
   tempDirs.push(root)
   return join(root, 'search-index-v1.sqlite')
 }

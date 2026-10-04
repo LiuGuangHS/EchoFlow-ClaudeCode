@@ -11,7 +11,7 @@ let originalEnv: {
   PATH?: string
   SHELL?: string
   ZDOTDIR?: string
-  CC_HAHA_DISABLE_TERMINAL_SHELL_ENV?: string
+  ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV?: string
 }
 
 async function writeExecutable(filePath: string, content: string) {
@@ -49,10 +49,10 @@ describe('MCP host preflight', () => {
       PATH: process.env.PATH,
       SHELL: process.env.SHELL,
       ZDOTDIR: process.env.ZDOTDIR,
-      CC_HAHA_DISABLE_TERMINAL_SHELL_ENV:
-        process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV,
+      ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV:
+        process.env.ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV,
     }
-    delete process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV
+    delete process.env.ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV
     resetMcpStdioEnvironmentCacheForTests()
   })
 
@@ -71,10 +71,11 @@ describe('MCP host preflight', () => {
   it.skipIf(process.platform === 'win32')('finds npx from user shell PATH when the desktop process PATH is minimal', async () => {
     const shellPath = path.join(tmpDir, 'zsh')
     const nodeBin = path.join(tmpDir, 'node-bin')
-    const npxPath = path.join(nodeBin, 'npx')
+    const commandName = process.platform === 'win32' ? 'fake-shell-only-npx' : 'npx'
+    const npxPath = path.join(nodeBin, process.platform === 'win32' ? `${commandName}.cmd` : commandName)
     await mkdir(nodeBin, { recursive: true })
     await writeFakeZsh(shellPath)
-    await writeExecutable(npxPath, '#!/bin/sh\nexit 0\n')
+    await writeExecutable(npxPath, process.platform === 'win32' ? '@echo off\r\nexit /b 0\r\n' : '#!/bin/sh\nexit 0\n')
     await writeFile(
       path.join(tmpDir, '.zshrc'),
       `export PATH="${nodeBin}:$PATH"\n`,
@@ -82,10 +83,17 @@ describe('MCP host preflight', () => {
 
     process.env.HOME = tmpDir
     process.env.SHELL = shellPath
+    if (process.platform === 'win32') {
+      await expect(inspectMcpHostCommand(commandName, tmpDir, {})).resolves.toMatchObject({
+        ok: false,
+      })
+      return
+    }
+
     process.env.PATH = '/usr/bin:/bin'
     delete process.env.ZDOTDIR
 
-    await expect(inspectMcpHostCommand('npx', tmpDir, {})).resolves.toEqual({
+    await expect(inspectMcpHostCommand(commandName, tmpDir, {})).resolves.toEqual({
       ok: true,
       resolvedCommand: npxPath,
     })
@@ -100,6 +108,15 @@ describe('MCP host preflight', () => {
     process.env.HOME = tmpDir
     process.env.SHELL = '/bin/zsh'
     process.env.PATH = processBin
+    if (process.platform === 'win32') {
+      await expect(
+        inspectMcpHostCommand('mcp-tool', tmpDir, { PATH: processBin }),
+      ).resolves.toEqual({
+        ok: true,
+        resolvedCommand: toolPath,
+      })
+      return
+    }
 
     await expect(
       inspectMcpHostCommand('mcp-tool', tmpDir, {}),
@@ -117,7 +134,6 @@ describe('MCP host preflight', () => {
 
     process.env.HOME = tmpDir
     process.env.SHELL = '/bin/zsh'
-    process.env.PATH = '/usr/bin:/bin'
 
     await expect(
       inspectMcpHostCommand('mcp-tool', tmpDir, { PATH: configuredBin }),
@@ -143,7 +159,6 @@ describe('MCP host preflight', () => {
 
     process.env.HOME = tmpDir
     process.env.SHELL = shellPath
-    process.env.PATH = '/usr/bin:/bin'
     delete process.env.ZDOTDIR
 
     await expect(

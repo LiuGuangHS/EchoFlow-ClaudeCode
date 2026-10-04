@@ -34,8 +34,8 @@ describe('desktop bootstrap', () => {
   afterEach(() => {
     cleanup()
     document.body.innerHTML = ''
-    delete window.__CC_HAHA_BOOTSTRAPPED__
-    delete window.__CC_HAHA_SHOW_STARTUP_ERROR__
+    delete window.__ECHOFLOW_BOOTSTRAPPED__
+    delete window.__ECHOFLOW_SHOW_STARTUP_ERROR__
     vi.restoreAllMocks()
     vi.clearAllMocks()
   })
@@ -50,7 +50,7 @@ describe('desktop bootstrap', () => {
 
     expect(await screen.findByText('Auto boot app')).toBeInTheDocument()
     expect(mocks.runDesktopPersistenceMigrations).toHaveBeenCalledTimes(1)
-    expect(window.__CC_HAHA_BOOTSTRAPPED__).toBe(true)
+    expect(window.__ECHOFLOW_BOOTSTRAPPED__).toBe(true)
   })
 
   it('recognizes only the dedicated pet window query', async () => {
@@ -79,7 +79,7 @@ describe('desktop bootstrap', () => {
     const root = document.createElement('div')
     const showStartupError = vi.fn()
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
-    window.__CC_HAHA_SHOW_STARTUP_ERROR__ = showStartupError
+    window.__ECHOFLOW_SHOW_STARTUP_ERROR__ = showStartupError
 
     await bootstrapDesktopApp(root, async () => {
       throw new Error('module failed')

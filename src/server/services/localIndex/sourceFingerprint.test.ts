@@ -17,7 +17,7 @@ import {
 const tempDirs: string[] = []
 
 async function tempFile(contents: string | Buffer): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), 'cc-haha-source-fingerprint-'))
+  const root = await mkdtemp(join(tmpdir(), 'echoflow-code-source-fingerprint-'))
   tempDirs.push(root)
   const path = join(root, 'session.jsonl')
   await writeFile(path, contents)
@@ -435,12 +435,12 @@ describe('source fingerprint transitions', () => {
 
     const stored = serializeSourceFingerprint(fingerprint)
 
-    expect(stored.startsWith('cc-haha-source-fingerprint:v2:')).toBe(true)
+    expect(stored.startsWith('echoflow-code-source-fingerprint:v2:')).toBe(true)
     expect(serializeSourceFingerprint(fingerprint)).toBe(stored)
     expect(deserializeSourceFingerprint(stored)).toEqual(fingerprint)
     expect(deserializeSourceFingerprint(
       stored.replace(':v2:', ':v1:'),
     )).toBeNull()
-    expect(deserializeSourceFingerprint('cc-haha-source-fingerprint:v2:not-json')).toBeNull()
+    expect(deserializeSourceFingerprint('echoflow-code-source-fingerprint:v2:not-json')).toBeNull()
   })
 })

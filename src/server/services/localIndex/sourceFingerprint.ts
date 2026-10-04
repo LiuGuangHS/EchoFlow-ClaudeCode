@@ -76,7 +76,7 @@ type VerifySourceFingerprintOptions = {
 }
 
 const FINGERPRINT_WINDOW_BYTES = 64 * 1024
-const STORED_FINGERPRINT_PREFIX = 'cc-haha-source-fingerprint:v2:'
+const STORED_FINGERPRINT_PREFIX = 'echoflow-code-source-fingerprint:v2:'
 
 const defaultIo: SourceFingerprintIo = {
   openReadonly(path, flags): Promise<FileHandle> {

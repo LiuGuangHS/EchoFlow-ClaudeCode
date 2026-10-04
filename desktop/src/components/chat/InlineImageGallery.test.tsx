@@ -22,7 +22,7 @@ describe('InlineImageGallery', () => {
   it('suppresses host-managed ImageGen paths when their dedicated card owns the image', () => {
     render(
       <InlineImageGallery
-        text={'已生成：/Users/me/.claude/cc-haha/generated-images/session/result.png'}
+        text={'已生成：/Users/me/.claude/echoflow-code/generated-images/session/result.png'}
         suppressManagedGeneratedImages
       />,
     )

@@ -57,7 +57,7 @@ export async function createWhatsAppSocket(options: {
     version,
     logger,
     printQRInTerminal: false,
-    browser: ['cc-haha', 'desktop', '1.0'],
+    browser: ['EchoFlow Code', 'Desktop', '1.0'],
     syncFullHistory: false,
     markOnlineOnConnect: false,
   })

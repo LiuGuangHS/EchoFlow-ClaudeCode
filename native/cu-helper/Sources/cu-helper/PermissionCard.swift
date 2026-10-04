@@ -292,7 +292,7 @@ private final class PermissionCardController: NSObject, NSWindowDelegate {
         if let path = Bundle.main.executablePath {
             return URL(fileURLWithPath: path).resolvingSymlinksInPath()
         }
-        return URL(fileURLWithPath: CommandLine.arguments.first ?? "cc-haha-computer-use")
+        return URL(fileURLWithPath: CommandLine.arguments.first ?? "echoflow-code-computer-use")
             .resolvingSymlinksInPath()
     }
 
@@ -1062,7 +1062,7 @@ private final class DragAccessoryWindow: NSObject {
         arrowView = arrow
 
         // The action line (set per-permission in show()): names the app + says
-        // "卡片" (drag the whole card), e.g. "把这张「cc-haha-computer-use」卡片拖到…".
+        // "卡片" (drag the whole card), e.g. "把这张「echoflow-code-computer-use」卡片拖到…".
         let prompt = PermissionCardController.label("把下面这张卡片拖到上方列表", size: 13, weight: .medium)
         prompt.lineBreakMode = .byWordWrapping
         prompt.maximumNumberOfLines = 2

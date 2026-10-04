@@ -312,7 +312,7 @@ public enum Injection {
     /// Prefers the pid of the app the most recent COORDINATE injection drove
     /// (`lastResolvedTargetPid`) so the canonical "click a field, then type"
     /// lands the text in THAT app — even when the frontmost app is the host
-    /// (Claude Code Haha) or some other window. Posting keyboard events to the
+    /// (EchoFlow Code) or some other window. Posting keyboard events to the
     /// frontmost app (the old behavior) is exactly why typed text went nowhere /
     /// to the wrong window when the driven app wasn't frontmost.
     ///

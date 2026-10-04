@@ -41,7 +41,7 @@ export function DocSidebar({ activeRoute, label = 'Documentation', locale = 'zh'
   }
 
   return <nav aria-label={label} className="doc-nav" data-open={open} id="doc-nav" onKeyDown={onKeyDown} ref={scope}>
-    <div className="doc-nav__intro"><span>cc-haha</span><strong>{locale === 'en' ? 'A field guide to\nbetter work.' : '让每一个想法，\n找到实现的路径。'}</strong><small>{locale === 'en' ? 'EXPLORE AT YOUR OWN PACE' : '按你的节奏，慢慢探索'}</small></div>
+    <div className="doc-nav__intro"><span>EchoFlow Code</span><strong>{locale === 'en' ? 'A field guide to\nbetter work.' : '让每一个想法，\n找到实现的路径。'}</strong><small>{locale === 'en' ? 'EXPLORE AT YOUR OWN PACE' : '按你的节奏，慢慢探索'}</small></div>
     <div className="doc-nav__mobile-heading"><span>{label}</span><button aria-label={locale === 'en' ? 'Close contents' : '关闭目录'} onClick={onRequestClose} type="button"><Icon name="close" /></button></div>
     {navigation.map((group, index) => <div className="doc-nav__group" key={group.id}>
       <button className="doc-nav__title" aria-expanded={expanded.has(group.id)} aria-controls={`doc-group-${group.id}`} onClick={() => setExpanded(current => { const next=new Set(current); next.has(group.id) ? next.delete(group.id) : next.add(group.id); return next })} type="button"><span className="doc-nav__number">0{index + 1}</span><span>{group.label}</span><span className="doc-nav__chevron" aria-hidden="true">⌄</span></button>

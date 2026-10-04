@@ -82,7 +82,7 @@ function project(entries: unknown[], isSubagent = false) {
 }
 
 async function withIndex(options: { shotStatsEnabled?: boolean } = {}) {
-  const root = await mkdtemp(join(tmpdir(), 'cc-haha-activity-index-'))
+  const root = await mkdtemp(join(tmpdir(), 'echoflow-code-activity-index-'))
   tempDirs.push(root)
   const database = openLocalIndexDatabase({ path: join(root, 'index.sqlite') })
   const index = createActivityIndex(database, options)
@@ -150,7 +150,7 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 
 describe('local index activity parity', () => {
   it('routes off, shadow, and on without reading an unready index', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'cc-haha-activity-modes-'))
+    const root = await mkdtemp(join(tmpdir(), 'echoflow-code-activity-modes-'))
     tempDirs.push(root)
     const previousConfig = process.env.CLAUDE_CONFIG_DIR
     process.env.CLAUDE_CONFIG_DIR = root
@@ -217,7 +217,7 @@ describe('local index activity parity', () => {
   })
 
   it('coalesces file fallbacks only within the active config scope', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'cc-haha-activity-fallback-scope-'))
+    const root = await mkdtemp(join(tmpdir(), 'echoflow-code-activity-fallback-scope-'))
     tempDirs.push(root)
     const firstConfigDir = join(root, 'first')
     const secondConfigDir = join(root, 'second')
@@ -271,7 +271,7 @@ describe('local index activity parity', () => {
   })
 
   it('uses independent activity readiness without admitting subagents to the sidebar', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'cc-haha-activity-coordinator-'))
+    const root = await mkdtemp(join(tmpdir(), 'echoflow-code-activity-coordinator-'))
     tempDirs.push(root)
     const configDir = join(root, 'config')
     const previousConfig = process.env.CLAUDE_CONFIG_DIR
@@ -314,7 +314,7 @@ describe('local index activity parity', () => {
     const coordinator = createLocalIndexCoordinator({
       resolveMode: () => ({ mode: 'on', warningCode: null }),
       resolveScope: () => configDir,
-      resolveDatabasePath: () => join(configDir, 'cc-haha', 'db', 'index-v1.sqlite'),
+      resolveDatabasePath: () => join(configDir, 'echoflow-code', 'db', 'index-v1.sqlite'),
       createWatcher: options => {
         watcherOptions = options
         return watcher
@@ -474,7 +474,7 @@ describe('local index activity parity', () => {
   })
 
   it('matches canonical user, assistant, attachment, and system message semantics', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'cc-haha-activity-message-types-'))
+    const root = await mkdtemp(join(tmpdir(), 'echoflow-code-activity-message-types-'))
     tempDirs.push(root)
     const previousConfig = process.env.CLAUDE_CONFIG_DIR
     process.env.CLAUDE_CONFIG_DIR = root
@@ -543,7 +543,7 @@ describe('local index activity parity', () => {
   })
 
   it('uses the canonical unknown-model fallback for empty model names', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'cc-haha-activity-empty-model-'))
+    const root = await mkdtemp(join(tmpdir(), 'echoflow-code-activity-empty-model-'))
     tempDirs.push(root)
     const previousConfig = process.env.CLAUDE_CONFIG_DIR
     process.env.CLAUDE_CONFIG_DIR = root
@@ -599,7 +599,7 @@ describe('local index activity parity', () => {
       for (const isSubagent of [false, true]) {
         for (const isSidechain of [false, true]) {
           for (const timestampMode of timestampModes) {
-            const root = await mkdtemp(join(tmpdir(), 'cc-haha-activity-differential-'))
+            const root = await mkdtemp(join(tmpdir(), 'echoflow-code-activity-differential-'))
             tempDirs.push(root)
             process.env.CLAUDE_CONFIG_DIR = root
             const projectDir = join(root, 'projects', 'test-project')
@@ -707,7 +707,7 @@ describe('local index activity parity', () => {
   })
 
   it('matches a fresh all-time cache split across historical, today, and future sources', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'cc-haha-activity-all-fresh-'))
+    const root = await mkdtemp(join(tmpdir(), 'echoflow-code-activity-all-fresh-'))
     tempDirs.push(root)
     const previousConfig = process.env.CLAUDE_CONFIG_DIR
     process.env.CLAUDE_CONFIG_DIR = root
@@ -786,7 +786,7 @@ describe('local index activity parity', () => {
   })
 
   it('uses canonical source-mtime eligibility for source-wide speculation totals', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'cc-haha-activity-speculation-'))
+    const root = await mkdtemp(join(tmpdir(), 'echoflow-code-activity-speculation-'))
     tempDirs.push(root)
     const previousConfig = process.env.CLAUDE_CONFIG_DIR
     process.env.CLAUDE_CONFIG_DIR = root
@@ -892,7 +892,7 @@ describe('local index activity parity', () => {
   })
 
   it('matches canonical empty-source SHOT_STATS response shapes', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'cc-haha-activity-empty-shot-'))
+    const root = await mkdtemp(join(tmpdir(), 'echoflow-code-activity-empty-shot-'))
     tempDirs.push(root)
     const previousConfig = process.env.CLAUDE_CONFIG_DIR
     process.env.CLAUDE_CONFIG_DIR = root

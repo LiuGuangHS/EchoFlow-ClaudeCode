@@ -12,7 +12,7 @@ order: 3
 ```text
 .
 ├── bin/
-│   └── claude-haha                 # CLI 启动脚本
+│   └── echoflow-code                 # CLI 启动脚本
 ├── preload.ts                      # Bun preload 与构建期兼容入口
 ├── package.json                    # 根项目脚本和依赖
 ├── src/

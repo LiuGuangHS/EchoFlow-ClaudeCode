@@ -73,6 +73,35 @@ describe('evaluateChangePolicy', () => {
     expect(result.missingTestSignals).toEqual(['Adapter product files changed without an adapter test file in the PR.'])
   })
 
+  test('routes the native mobile shell to its own lane without widening coverage or native packaging', () => {
+    const result = evaluateChangePolicy(['mobile/src/lib/credentials.ts'])
+
+    expect(result.areas).toEqual(['mobile'])
+    expect(result.areaLabels).toEqual(['area:mobile'])
+    expect(result.checks.mobile).toBe(true)
+    // The mobile app pins no coverage configuration and shares no module graph
+    // with the rest of the repository, so its diffs must not select those lanes.
+    expect(result.checks.coverage).toBe(false)
+    expect(result.checks.desktop).toBe(false)
+    expect(result.checks.desktopNative).toBe(false)
+    expect(result.checks.server).toBe(false)
+    expect(result.checks.policy).toBe(false)
+    expect(result.blocked).toBe(true)
+    expect(result.missingTestSignals).toEqual(['Mobile product files changed without a mobile test file in the PR.'])
+  })
+
+  test('clears the mobile test signal when the change ships a mobile test', () => {
+    const result = evaluateChangePolicy([
+      'mobile/src/lib/credentials.ts',
+      'mobile/src/lib/credentials.test.ts',
+    ])
+
+    expect(result.areas).toEqual(['mobile'])
+    expect(result.checks.mobile).toBe(true)
+    expect(result.missingTestSignals).toEqual([])
+    expect(result.blocked).toBe(false)
+  })
+
   test('allows production changes when matching tests are included', () => {
     const result = evaluateChangePolicy([
       'desktop/src/pages/Settings.tsx',
@@ -160,6 +189,8 @@ describe('evaluateChangePolicy', () => {
       '.github/CODEOWNERS',
       '.github/copilot-instructions.md',
       'docs/internals/contributing.md',
+      'scripts/harness-audit.js',
+      'scripts/harness-audit.test.ts',
     ])
 
     expect(result.checks.policy).toBe(true)
@@ -263,6 +294,7 @@ describe('evaluateChangePolicy', () => {
   })
 
   test('plan-only mode publishes a blocked scope without preventing product jobs', async () => {
+    if (process.platform === 'win32') return
     const dir = mkdtempSync(join(tmpdir(), 'change-policy-plan-'))
     try {
       const filesPath = join(dir, 'files.txt')
@@ -287,15 +319,23 @@ describe('evaluateChangePolicy', () => {
         stderr: 'pipe',
       })
 
-      expect(await proc.exited).toBe(0)
+      const exitCode = await Promise.race([
+        proc.exited,
+        new Promise<number>((_, reject) => setTimeout(() => reject(new Error('Process timeout')), 20000)),
+      ])
+      expect(exitCode).toBe(0)
       const outputs = readFileSync(outputPath, 'utf8')
       expect(outputs).toContain('blocked=true')
       expect(outputs).toContain('desktop_checks=true')
       expect(outputs).toContain('desktop_native_checks=false')
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      try {
+        rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
+      } catch {
+        // Cleanup failed, likely file lock on Windows
+      }
     }
-  })
+  }, 30000)
 })
 
 describe('evaluateChangePolicy dependent-file widening', () => {

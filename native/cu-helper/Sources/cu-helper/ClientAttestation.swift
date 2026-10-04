@@ -21,9 +21,9 @@ enum HelperAuthorizationDecision: Equatable, Sendable {
 /// Live process inspection is deliberately kept outside this type so signature,
 /// ancestry and command policy stay exhaustively unit-testable.
 enum HelperClientPolicy {
-    static let helperIdentifier = "dev.cchaha.cu-helper"
-    static let desktopIdentifier = "com.claude-code-haha.desktop"
-    static let sidecarIdentifier = "com.claude-code-haha.desktop.sidecar"
+    static let helperIdentifier = "dev.echoflow.cu-helper"
+    static let desktopIdentifier = "com.echoflow.code.desktop"
+    static let sidecarIdentifier = "com.echoflow.code.desktop.sidecar"
 
     private static let daemonCommands: Set<String> = [
         // Codex semantic tool contract. `resolve_app_target` is the mandatory

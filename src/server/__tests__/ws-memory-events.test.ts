@@ -68,6 +68,42 @@ describe('WebSocket memory events', () => {
     ])
   })
 
+  it('marks gateway context-window errors as recoverable prompt overflows', () => {
+    const message = '502 Your input exceeds the context window of this model. Please adjust your input and try again.'
+
+    expect(translateCliMessage({
+      type: 'assistant',
+      error: 'server_error',
+      isApiErrorMessage: true,
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: message }],
+      },
+    }, 'session-1')).toEqual([
+      {
+        type: 'error',
+        message,
+        code: 'server_error',
+        businessErrorCode: 'prompt_too_long',
+      },
+    ])
+
+    expect(translateCliMessage({
+      type: 'result',
+      is_error: true,
+      result: message,
+      usage: { input_tokens: 0, output_tokens: 0 },
+    }, 'session-2')).toEqual([
+      {
+        type: 'error',
+        message,
+        code: 'CLI_ERROR',
+        businessErrorCode: 'prompt_too_long',
+      },
+      { type: 'message_complete', usage: { input_tokens: 0, output_tokens: 0 } },
+    ])
+  })
+
   it('maps watchdog API errors to stable desktop error codes', () => {
     expect(translateCliMessage({
       type: 'assistant',

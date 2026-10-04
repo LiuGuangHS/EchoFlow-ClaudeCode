@@ -179,7 +179,7 @@ export default function SearchDialog({ locale = 'zh', onClose }) {
         role="dialog"
       >
         <div className="search-dialog__heading">
-          <span className="search-dialog__eyebrow">cc-haha / {c.label}</span>
+          <span className="search-dialog__eyebrow">EchoFlow Code / {c.label}</span>
           <button aria-label={c.close} className="icon-btn" onClick={onClose} type="button">
             <Icon name="close" size={18} />
           </button>

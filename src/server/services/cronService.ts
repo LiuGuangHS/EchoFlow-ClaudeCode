@@ -7,9 +7,9 @@
 
 import * as fs from 'fs/promises'
 import * as path from 'path'
-import * as os from 'os'
 import * as crypto from 'crypto'
 import { ApiError } from '../middleware/errorHandler.js'
+import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
 
 export type TaskNotificationConfig = {
   enabled: boolean
@@ -68,8 +68,7 @@ function runExclusive<T>(filePath: string, operation: () => Promise<T>): Promise
 export class CronService {
   /** 任务文件路径 */
   private getTasksFilePath(): string {
-    const configDir =
-      process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
+    const configDir = getClaudeConfigHomeDir()
     return path.join(configDir, 'scheduled_tasks.json')
   }
 

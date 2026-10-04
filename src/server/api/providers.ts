@@ -4,12 +4,12 @@
  * GET    /api/providers                  — list all saved providers + activeId
  * GET    /api/providers/presets           — list available presets
  * GET    /api/providers/auth-status       — check whether any usable auth exists
- * GET    /api/providers/settings          — read cc-haha managed settings.json
+ * GET    /api/providers/settings          — read EchoFlow managed settings.json
  * GET    /api/providers/cc-switch/scan    — scan a local cc-switch install
  * POST   /api/providers                  — add a provider
  * POST   /api/providers/cc-switch/import  — import scanned cc-switch providers
  * POST   /api/providers/models            — list upstream models for a config
- * PUT    /api/providers/settings          — update cc-haha managed settings.json
+ * PUT    /api/providers/settings          — update EchoFlow managed settings.json
  * PUT    /api/providers/:id              — update a provider
  * DELETE /api/providers/:id              — delete a provider
  * POST   /api/providers/:id/activate     — activate a saved provider
@@ -21,7 +21,7 @@
  */
 
 import { z } from 'zod'
-import { ProviderService } from '../services/providerService.js'
+import { ProviderService, toPublicProvider } from '../services/providerService.js'
 import { PROVIDER_PRESETS } from '../config/providerPresets.js'
 import {
   CreateProviderSchema,
@@ -65,6 +65,7 @@ export async function handleProvidersApi(
   req: Request,
   _url: URL,
   segments: string[],
+  options: { projectSecrets?: boolean } = {},
 ): Promise<Response> {
   try {
     const id = segments[2]
@@ -134,8 +135,10 @@ export async function handleProvidersApi(
     // /api/providers (no ID)
     if (!id) {
       if (req.method === 'GET') {
-        const { providers, activeId } = await providerService.listProviders()
-        return Response.json({ providers, activeId })
+        const { providers, activeId, providerOrder } = options.projectSecrets === false
+          ? await providerService.listProviders()
+          : await providerService.listPublicProviders()
+        return Response.json({ providers, activeId, providerOrder })
       }
       if (req.method === 'POST') {
         return await handleCreate(req)
@@ -211,7 +214,9 @@ export async function handleProvidersApi(
 
     // /api/providers/:id
     if (req.method === 'GET') {
-      const provider = await providerService.getProvider(id)
+      const provider = options.projectSecrets === false
+        ? await providerService.getProvider(id)
+        : await providerService.getPublicProvider(id)
       return Response.json({ provider })
     }
     if (req.method === 'PUT') {
@@ -233,7 +238,7 @@ async function handleCreate(req: Request): Promise<Response> {
   try {
     const input = CreateProviderSchema.parse(body)
     const provider = await providerService.addProvider(input)
-    return Response.json({ provider }, { status: 201 })
+    return Response.json({ provider: toPublicProvider(provider) }, { status: 201 })
   } catch (err) {
     if (err instanceof z.ZodError) throw ApiError.badRequest(err.issues.map((i) => i.message).join('; '))
     throw err
@@ -245,7 +250,7 @@ async function handleUpdate(req: Request, id: string): Promise<Response> {
   try {
     const input = UpdateProviderSchema.parse(body)
     const provider = await providerService.updateProvider(id, input)
-    return Response.json({ provider })
+    return Response.json({ provider: toPublicProvider(provider) })
   } catch (err) {
     if (err instanceof z.ZodError) throw ApiError.badRequest(err.issues.map((i) => i.message).join('; '))
     throw err
@@ -267,7 +272,7 @@ async function handleCcSwitchImport(req: Request): Promise<Response> {
     const scan = await readCcSwitchProviders({ existingProviders: providers })
     const { inputs, skipped } = resolveCcSwitchImports(scan, input.sourceIds)
     const imported = await providerService.importProviders(inputs)
-    return Response.json({ imported, skipped })
+    return Response.json({ imported: imported.map(toPublicProvider), skipped })
   } catch (err) {
     if (err instanceof z.ZodError) throw ApiError.badRequest(err.issues.map((i) => i.message).join('; '))
     throw err
@@ -291,7 +296,7 @@ async function handleReorder(req: Request): Promise<Response> {
   try {
     const input = ReorderProvidersSchema.parse(body)
     const { providers, providerOrder } = await providerService.reorderProviders(input.orderedIds)
-    return Response.json({ providers, providerOrder })
+    return Response.json({ providers: providers.map(toPublicProvider), providerOrder })
   } catch (err) {
     if (err instanceof z.ZodError) throw ApiError.badRequest(err.issues.map((i) => i.message).join('; '))
     throw err

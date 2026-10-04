@@ -1,17 +1,19 @@
 ---
 title: Settings guide
 nav_title: Settings
-description: Choose the settings needed for a first session, then find advanced options by task.
-order: 6
+description: All 17 settings tabs — what each one configures and when you'd need it.
+order: 13
 ---
 
 # Settings guide
 
-Click **Settings** at the bottom of the sidebar. For your first session, connect a model in **Providers**, check permissions and language in **General**, then follow [Your first session](../start/first-session.md). Open the other tabs when a task calls for them.
+Click **Settings** at the bottom of the sidebar. Seventeen tabs appear on the left in a fixed order. This page walks through them in that order; for your first session, connect a model in **Model Settings**, check permissions and language in **General**, then follow [Your first session](../start/first-session.md).
 
-## Providers
+## Model Settings
 
-Model access. Sign in to Claude, ChatGPT, or Grok with an account (no API key required), or add any Anthropic- or OpenAI-compatible service with an API key.
+Shared model configuration. This tab was called **Providers** before 0.5.5, when it was renamed to Model Settings / Model Management — same place, same contents.
+
+Sign in to Claude, ChatGPT, or Grok with an account (no API key required), add any Anthropic- or OpenAI-compatible service with an API key, or bind an [official EchoFlow account](../start/account.md) and build channels from its call tokens. This is where service credentials, endpoints, and model mappings live; it is not the execution runtime for a session. Choosing a provider, model, or effort inside a session creates a session-level override without replacing this shared configuration.
 
 You'll come here once during setup and rarely again. Full steps in [Connecting a model](../start/models.md).
 
@@ -49,6 +51,7 @@ General covers four areas: appearance and replies, how the agent works, network 
 | Auto-answer questions | Off by default. After 1, 5, 10, or 30 minutes without an answer to an agent's multiple-choice question, it can choose a recommended option. If it cannot choose reliably, it keeps waiting. Use only when you want unattended work to continue. |
 | Auto-dream | Off by default. After enough sessions have accumulated, it can organize auto-memory in the background, using additional model calls and tokens. |
 | Agent Trace | On by default. New sessions write condensed request, response, and status events to a local traces directory. Use the **Trace** tab to investigate a failure; turning it off stops new records, while old ones remain readable. |
+| Claude Code runtime | Switch to **Installed** when new sessions should start from your own local Claude Code; **Bundled**, shipped with the app, is the default. **Installed** is disabled when no usable install exists, and selecting it opens **Choose installed runtime** (that block stays English in the Chinese UI). Switching shows a loading state, and failures appear as an inline error beneath it. |
 
 ### Network, web search, and notifications
 
@@ -67,7 +70,12 @@ Product screenshots in this guide consistently use the **Pure White** theme so t
 
 ## H5 Access
 
-Continue the same session in your phone's browser. Off by default. See [Phone (H5) and IM](./remote.md).
+Continue the same session in your phone's browser. Off by default; enabling it makes the desktop server listen on a LAN address. This tab covers two things:
+
+- **LAN access** — generate an H5 token and QR code so a phone on the same network can join.
+- **Public access · ngrok** — with no public IP, connect your own ngrok account (enter the **ngrok Authtoken**) so your phone can reach this machine over the internet.
+
+A newly generated token is shown once — copy it immediately. Tokens from older builds cannot be recovered; regenerate once and it is stored long-term. Full steps in [Phone (H5) and IM](./remote.md).
 
 ## IM Adapters
 
@@ -75,7 +83,7 @@ Talk to Claude from WeChat, DingTalk, WhatsApp, Telegram, Feishu, WeCom, QQ, or 
 
 ## Terminal
 
-A real host shell embedded in the app, for installing plugins, skills, MCP servers, and anything else that needs a command line. The desktop app bundles `claude-haha`, so anywhere the docs say `claude <args>` you can run `claude-haha <args>`.
+A real host shell embedded in the app, for installing plugins, skills, MCP servers, and anything else that needs a command line. The desktop app bundles `echoflow-code`, so anywhere the docs say `claude <args>` you can run `echoflow-code <args>`.
 
 On Windows you can also choose the startup shell (system default, PowerShell 7, Windows PowerShell, Command Prompt, or a custom executable) and set a Bash path — used when a tool calls Unix commands like `grep` or `sed`, usually pointing at Git Bash.
 
@@ -147,6 +155,10 @@ Where to go when something breaks. Logs server and CLI startup, provider, and se
 :::info
 Issue reports and exported bundles are redacted on a best-effort basis — chat contents, file contents, full environment variables, and API keys are omitted. Still give them a read before sharing, in case an internal hostname, username, or path slipped through.
 :::
+
+## Config Generator
+
+Package the providers you configured under Model settings into a link someone else can import in one click. It shares connection parameters and model mappings, **not API keys** — the recipient supplies their own. See [Config sharing](./config-sharing.md).
 
 ## About
 

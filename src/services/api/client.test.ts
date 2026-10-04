@@ -104,6 +104,18 @@ describe('resolveManagedProviderProxyAccessToken', () => {
 })
 
 describe('shouldUseOpenAICodexTransport', () => {
+  test('detects current and legacy ChatGPT Official provider markers', async () => {
+    const { shouldForceOpenAICodexProvider } = await import('./client.js')
+
+    expect(shouldForceOpenAICodexProvider({
+      ECHOFLOW_OPENAI_OAUTH_PROVIDER: '1',
+    })).toBe(true)
+    expect(shouldForceOpenAICodexProvider({
+      ECHOFLOW_OPENAI_OAUTH_PROVIDER: '1',
+    })).toBe(true)
+    expect(shouldForceOpenAICodexProvider({})).toBe(false)
+  })
+
   test('lets ChatGPT Official marker override a saved Claude subscriber login', async () => {
     const { shouldUseOpenAICodexTransport } = await import('./client.js')
 
@@ -212,25 +224,29 @@ describe('getAnthropicClient', () => {
       expiresAt: Date.now() + 3600_000,
     }))
     const previous = {
-      marker: process.env.CC_HAHA_GROK_OAUTH_PROVIDER,
+      marker: process.env.ECHOFLOW_GROK_OAUTH_PROVIDER,
       tokenFile: process.env.GROK_OAUTH_FILE,
       configDir: process.env.CLAUDE_CONFIG_DIR,
+      authToken: process.env.ANTHROPIC_AUTH_TOKEN,
     }
-    process.env.CC_HAHA_GROK_OAUTH_PROVIDER = '1'
+    process.env.ECHOFLOW_GROK_OAUTH_PROVIDER = '1'
     process.env.GROK_OAUTH_FILE = tokenFile
     process.env.CLAUDE_CONFIG_DIR = tempDir
+    delete process.env.ANTHROPIC_AUTH_TOKEN
     try {
       const client = await getAnthropicClient({ maxRetries: 0, model: 'grok-4.5' })
       expect(client.apiKey).toBe(GROK_OAUTH_DUMMY_KEY)
       expect(client.authToken).toBeNull()
       expect(client._options.fetch).toBeFunction()
     } finally {
-      if (previous.marker === undefined) delete process.env.CC_HAHA_GROK_OAUTH_PROVIDER
-      else process.env.CC_HAHA_GROK_OAUTH_PROVIDER = previous.marker
+      if (previous.marker === undefined) delete process.env.ECHOFLOW_GROK_OAUTH_PROVIDER
+      else process.env.ECHOFLOW_GROK_OAUTH_PROVIDER = previous.marker
       if (previous.tokenFile === undefined) delete process.env.GROK_OAUTH_FILE
       else process.env.GROK_OAUTH_FILE = previous.tokenFile
       if (previous.configDir === undefined) delete process.env.CLAUDE_CONFIG_DIR
       else process.env.CLAUDE_CONFIG_DIR = previous.configDir
+      if (previous.authToken === undefined) delete process.env.ANTHROPIC_AUTH_TOKEN
+      else process.env.ANTHROPIC_AUTH_TOKEN = previous.authToken
       await fs.rm(tempDir, { recursive: true, force: true })
     }
   })
@@ -274,7 +290,7 @@ describe('getAnthropicClient', () => {
       authToken: process.env.ANTHROPIC_AUTH_TOKEN,
       apiKey: process.env.ANTHROPIC_API_KEY,
       baseUrl: process.env.ANTHROPIC_BASE_URL,
-      localAccessToken: process.env.CC_HAHA_LOCAL_ACCESS_TOKEN,
+      localAccessToken: process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN,
       providerManagedByHost: process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST,
       simple: process.env.CLAUDE_CODE_SIMPLE,
     }
@@ -282,7 +298,7 @@ describe('getAnthropicClient', () => {
     process.env.ANTHROPIC_AUTH_TOKEN = 'stale-provider-token'
     process.env.ANTHROPIC_API_KEY = 'proxy-managed'
     process.env.ANTHROPIC_BASE_URL = 'http://127.0.0.1:3456/proxy/providers/provider-1'
-    process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
     process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST = '1'
     process.env.CLAUDE_CODE_SIMPLE = '1'
 
@@ -318,7 +334,7 @@ describe('getAnthropicClient', () => {
         ['ANTHROPIC_AUTH_TOKEN', previous.authToken],
         ['ANTHROPIC_API_KEY', previous.apiKey],
         ['ANTHROPIC_BASE_URL', previous.baseUrl],
-        ['CC_HAHA_LOCAL_ACCESS_TOKEN', previous.localAccessToken],
+        ['ECHOFLOW_LOCAL_ACCESS_TOKEN', previous.localAccessToken],
         ['CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST', previous.providerManagedByHost],
         ['CLAUDE_CODE_SIMPLE', previous.simple],
       ] as const) {

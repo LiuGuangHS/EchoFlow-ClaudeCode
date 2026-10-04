@@ -6,7 +6,7 @@ These rules apply to the public landing page and documentation experience under 
 
 - Keep the site independently installable with `npm ci` and buildable with `npm run build`.
 - Keep `npm run check` deterministic, offline, and responsible for site-specific validation beyond compilation.
-- Preserve the GitHub Pages custom-domain contract; production assets and routes must work from the root of `cchaha.ai`. `scripts/prepare-static-output.mjs` hard-fails when the CNAME drifts.
+- Preserve the GitHub Pages custom-domain contract; production assets and routes must work from the root of `code.echoflow.cn`. `scripts/prepare-static-output.mjs` hard-fails when the CNAME drifts.
 - Treat files under `docs/` as the source of truth for long-form Chinese and English documentation. Keep paired public routes aligned when both languages exist.
 - Do not copy private user state, credentials, local filesystem paths, or unredacted product screenshots into the site.
 - Run `bun run check:docs` after site or docs changes and include desktop plus narrow-mobile browser evidence for user-visible layout changes.
@@ -25,7 +25,7 @@ Sidebar grouping comes from the `sections` array in the generator — register a
 
 ## Design system
 
-`src/styles/base.css` holds shared tokens. The landing page uses the user-provided Wandor direction throughout: warm paper illustrations, a white-faded ambient video, Geist typography, Special Elite wordmark, liquid glass surfaces and black capsule controls. Keep the entire landing journey consistent, including features, onboarding, FAQ and download. Documentation uses the same paper, illustration, typography and terracotta palette, scoped through `src/docs/doc-wandor.css` so its reading surfaces remain legible in both themes. The public display name is `cc-haha`; preserve legacy executable paths and release filenames when they must match actual artifacts. Rules:
+`src/styles/base.css` holds shared tokens. The landing page uses the user-provided Wandor direction throughout: warm paper illustrations, a white-faded ambient video, Geist typography, Special Elite wordmark, liquid glass surfaces and black capsule controls. Keep the entire landing journey consistent, including features, onboarding, FAQ and download. Documentation uses the same paper, illustration, typography and terracotta palette, scoped through `src/docs/doc-wandor.css` so its reading surfaces remain legible in both themes. The public display name is `EchoFlow Code`; the CLI executable is `echoflow-code` and release artifacts are `EchoFlow-Code-<version>-*`. Keep the legacy `cc-haha` / `claude-haha` names only where they must match already-published artifacts, and never as the current product name. Rules:
 
 On a first visit to `/`, show Chinese when the browser's preferred language is Chinese; use English for every other language. `/en` and `/en/start` are the English entries; `/` and `/start` remain Chinese routes. A saved manual language choice takes precedence when opening `/`.
 
@@ -41,4 +41,4 @@ On a first visit to `/`, show Chinese when the browser's preferred language is C
 
 ## Fonts
 
-Self-hosted in `public/fonts/`, copied from `desktop/public/fonts/`. The landing reference explicitly requests the Geist and Special Elite Google Fonts link. Keep local font fallbacks so the layout still works when the font CDN is unreachable. Only the latin subsets are hosted; Chinese glyphs fall through to the platform font on purpose, exactly as the desktop app does.
+Self-hosted in `public/fonts/`, copied from `desktop/public/fonts/`. The landing reference asks for Geist and Special Elite; both resolve through local fallbacks (`Inter`, monospace) declared in `src/pages/home/home.css` and must never be pulled from a CDN. **Never add a Google Fonts `@import` or `<link>`** — it is unreachable from mainland China and would leave every heading in a fallback serif. Only the latin subsets are hosted; Chinese glyphs fall through to the platform font on purpose, exactly as the desktop app does.

@@ -52,8 +52,8 @@ test('a fresh history service restores reference pills from persisted string and
   expect(restoredRead.messages.find(message => message.id === 'legacy')?.sessionReferences).toBeUndefined()
 })
 
-test('collaboration cursors traverse real bounded history pages without dropping turns', async () => {
-  await writeFile(file, Array.from({ length: 70 }, (_, index) => JSON.stringify(entry(`user-${index}`, `turn ${index}`))).join('\n') + '\n')
+test('collaboration cursors traverse the bounded history window without dropping turns', async () => {
+  await writeFile(file, Array.from({ length: 130 }, (_, index) => JSON.stringify(entry(`user-${index}`, `turn ${index}`))).join('\n') + '\n')
   const sessions = historyService()
   const collaboration = new SessionCollaborationService({
     statePath: join(directory, 'collaboration.json'),
@@ -73,9 +73,11 @@ test('collaboration cursors traverse real bounded history pages without dropping
     cursor = result.page.nextCursor ?? undefined
     longestCursor = Math.max(longestCursor, cursor?.length ?? 0)
   } while (cursor)
-  expect(ids).toEqual(Array.from({ length: 70 }, (_, index) => `user-${index}`))
-  // The continuation stays bounded while preserving all turns on this chain.
-  expect(longestCursor).toBeGreaterThan(0)
+  // Collaboration reads are deliberately capped at eight pages so a model
+  // cannot walk an unbounded transcript by repeatedly following cursors.
+  expect(ids).toEqual(Array.from({ length: 80 }, (_, index) => `user-${index + 50}`))
+  // Collaboration cursors wrap the storage cursor and stay within the tool schema.
+  expect(longestCursor).toBeGreaterThan(100)
   expect(longestCursor).toBeLessThan(32_000)
 })
 

@@ -2,7 +2,7 @@ import AppKit
 import CoreGraphics
 import XCTest
 
-@testable import cc_haha_computer_use
+@testable import echoflow_code_computer_use
 
 /// Exercises the events allocated by the production drag path without posting
 /// them to any application. The sequence comes from the installed official

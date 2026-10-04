@@ -57,7 +57,7 @@ export class WsBridge {
   constructor(
     serverUrl: string,
     platform: string,
-    localAccessToken = process.env.CC_HAHA_LOCAL_ACCESS_TOKEN,
+    localAccessToken = process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN,
   ) {
     this.serverUrl = serverUrl.replace(/\/$/, '')
     this.platform = platform
@@ -249,24 +249,9 @@ export class WsBridge {
     if (ws.readyState === WebSocket.CLOSED) return
 
     if (ws.readyState === WebSocket.CONNECTING) {
-      // Bun's `ws` compatibility layer can remain stuck in CLOSING when a
-      // handshake is aborted. Let the handshake settle, consuming its natural
-      // error, and close normally if the connection opens first.
-      const cleanup = () => {
-        ws.removeListener('open', onOpen)
-        ws.removeListener('error', onError)
-        ws.removeListener('close', onClose)
-      }
-      const onOpen = () => {
-        ws.removeListener('open', onOpen)
-        ws.close(code, reason)
-      }
-      const onError = () => cleanup()
-      const onClose = () => cleanup()
-
-      ws.once('open', onOpen)
-      ws.once('error', onError)
-      ws.once('close', onClose)
+      const swallowTeardownError = () => ws.removeAllListeners()
+      ws.once('error', swallowTeardownError)
+      ws.terminate()
       return
     }
 

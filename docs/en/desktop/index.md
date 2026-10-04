@@ -28,6 +28,8 @@ To learn by doing, choose a task from the [practical guides](../cases/index.md).
 ## Getting more work out of it
 
 - [Subagents](./agents.md) — when to delegate, which agents ship built in, how to write your own.
+- [Agent Teams workbench](./agent-teams.md) — see members, shared tasks, communication, and dependencies in one panel.
+- [Dynamic Workflow](./dynamic-workflow.md) — orchestrate agents in parallel or pipelines, then observe, interrupt, and recover runs.
 - [Skills and the Skills Market](./skills.md) — what a skill is, how it differs from an agent, what to check before installing one.
 - [Scheduled tasks](./schedule.md) — have Claude review yesterday's commits every morning.
 - [Computer Use](./computer-use.md) — control other apps on macOS without taking over your physical mouse or keyboard.

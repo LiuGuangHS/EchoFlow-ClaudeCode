@@ -63,7 +63,7 @@ for (const [index, suite] of suites.entries()) {
   console.log(`[chat-contract] cwd: ${suite.cwd}`)
   console.log(`[chat-contract] $ ${suite.command.join(' ')}`)
 
-  const sandboxHome = mkdtempSync(resolve(tmpdir(), 'cc-haha-chat-contract-'))
+  const sandboxHome = mkdtempSync(resolve(tmpdir(), 'echoflow-code-chat-contract-'))
   let exitCode = 1
   try {
     const proc = Bun.spawn(suite.command, {

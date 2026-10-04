@@ -20,7 +20,7 @@ import path from 'node:path'
 export const PET_WINDOW_WIDTH = 384
 export const PET_WINDOW_HEIGHT = 400
 export const PET_WINDOW_MARGIN = 24
-export const PET_WINDOW_PARTITION = 'cc-haha-pet'
+export const PET_WINDOW_PARTITION = 'echoflow-code-pet'
 export const PET_WINDOW_STATE_FILE = 'pet-window.json'
 
 const MAX_ABSOLUTE_SCREEN_COORDINATE = 1_000_000
@@ -152,7 +152,7 @@ export function petWindowStatePath(
   const configRoot = configuredRoot
     ? path.resolve(resolveHomePath(configuredRoot, normalizedHome))
     : path.join(normalizedHome, '.claude')
-  return path.join(configRoot, 'cc-haha', PET_WINDOW_STATE_FILE)
+  return path.join(configRoot, 'echoflow-code', PET_WINDOW_STATE_FILE)
 }
 
 export function readPetWindowPosition(

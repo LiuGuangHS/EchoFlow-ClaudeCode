@@ -37,7 +37,7 @@ export const landingContent: Record<LandingLocale, LandingContent> = {
     hero: {
       eyebrow: '你的桌面 AI 搭档 · 免费开源',
       headline: ['把琐碎交给 AI，', '把时间留给生活。'],
-      description: '写代码、操作应用、审阅改动。给 cc-haha 一个目标，让想法开始发生。',
+      description: '写代码、操作应用、审阅改动。给 EchoFlow Code 一个目标，让想法开始发生。',
       promptDefault: '帮我把这个项目的首页做得更好看。先了解现有风格，再完成页面，检查手机端，并告诉我改了什么。'
     },
     taskSuggestions: [
@@ -50,7 +50,7 @@ export const landingContent: Record<LandingLocale, LandingContent> = {
         id: 'code',
         kicker: '01 / 从一句话开始',
         title: '想法有了，剩下的一起做。',
-        body: '一个新功能，一个恼人的 Bug，或者迟迟没动手的个人项目。说出目标，cc-haha 会读取代码、编辑文件、运行命令，把过程留在同一条会话里。',
+        body: '一个新功能，一个恼人的 Bug，或者迟迟没动手的个人项目。说出目标，EchoFlow Code 会读取代码、编辑文件、运行命令，把过程留在同一条会话里。',
         detail: '你的项目 · 你的模型 · 清晰可见的过程',
         route: '/start/first-session',
         imageKey: 'session'
@@ -81,7 +81,7 @@ export const landingContent: Record<LandingLocale, LandingContent> = {
       { title: '看看它做得怎样', body: '检查结果，留下反馈，再决定下一步。', route: '/desktop/workspace' }
     ],
     faqs: [
-      { question: 'cc-haha 免费吗？', answer: 'cc-haha 免费、开源。模型服务不包含在应用中：使用官方账号或 API 时，订阅和调用费用由相应服务商收取。也可以连接本机运行的 LM Studio 或 Ollama。' },
+      { question: 'EchoFlow Code 免费吗？', answer: 'EchoFlow Code 免费、开源。模型服务不包含在应用中：使用官方账号或 API 时，订阅和调用费用由相应服务商收取。也可以连接本机运行的 LM Studio 或 Ollama。' },
       { question: '我的电脑能用吗？', answer: '桌面应用提供 macOS、Windows 和 Linux 安装包，支持对应的 Intel / AMD 与 ARM 架构。按下载指南选择适合系统的版本即可。Computer Use 的平台支持有所不同，见下方说明。' },
       { question: '可以用我已经有的模型吗？', answer: '可以。支持通过 Claude、ChatGPT、Grok 官方账号登录，也可配置第三方 API 或连接本地模型。可用模型取决于账号权限和服务商；完整的 Agent 工作流还需要模型支持工具调用。' },
       { question: 'Computer Use 会抢我的鼠标吗？', answer: 'macOS 14.4 及更新版本的原生运行组件通过独立虚拟光标操作，不占用真实鼠标和键盘；少数操作可能改变应用焦点。Windows 的兼容执行器会移动真实鼠标。Linux 暂无执行器。启用前需要完成应用内确认及相应系统授权。' },
@@ -96,7 +96,7 @@ export const landingContent: Record<LandingLocale, LandingContent> = {
     hero: {
       eyebrow: 'Your desktop AI companion · Free & open source',
       headline: ['Less busywork.', 'More room for life.'],
-      description: 'Write code, work across apps, and review every change. Give cc-haha a goal and put your ideas in motion.',
+      description: 'Write code, work across apps, and review every change. Give EchoFlow Code a goal and put your ideas in motion.',
       promptDefault: 'Give this project a better homepage. Get to know its existing style, build the page, check it on mobile, and show me what changed.'
     },
     taskSuggestions: [
@@ -109,7 +109,7 @@ export const landingContent: Record<LandingLocale, LandingContent> = {
         id: 'code',
         kicker: '01 / Start with a thought',
         title: 'You have the idea. Build it together.',
-        body: 'A new feature, a stubborn bug, or that personal project waiting to happen. Describe the goal. cc-haha reads code, edits files, and runs commands, with the work visible in one conversation.',
+        body: 'A new feature, a stubborn bug, or that personal project waiting to happen. Describe the goal. EchoFlow Code reads code, edits files, and runs commands, with the work visible in one conversation.',
         detail: 'Your project · Your model · A process you can follow',
         route: '/en/start/first-session',
         imageKey: 'session'
@@ -140,7 +140,7 @@ export const landingContent: Record<LandingLocale, LandingContent> = {
       { title: 'See how it turned out', body: 'Review the result, leave feedback, and choose what comes next.', route: '/en/desktop/workspace' }
     ],
     faqs: [
-      { question: 'Is cc-haha free?', answer: 'cc-haha is free and open source. Model services are separate: subscriptions and API usage are billed by the provider you choose. You can also connect to a model running locally through LM Studio or Ollama.' },
+      { question: 'Is EchoFlow Code free?', answer: 'EchoFlow Code is free and open source. Model services are separate: subscriptions and API usage are billed by the provider you choose. You can also connect to a model running locally through LM Studio or Ollama.' },
       { question: 'Will it work on my computer?', answer: 'Desktop packages are available for macOS, Windows, and Linux, with supported Intel / AMD and ARM builds. Choose the right package in the installation guide. Computer Use has separate platform requirements, described below.' },
       { question: 'Can I use a model I already have?', answer: 'Yes. Sign in with an official Claude, ChatGPT, or Grok account, configure a third-party API, or connect a local model. Available models depend on your account and provider. Agent workflows also require a model that supports tool calling.' },
       { question: 'Will Computer Use take over my mouse?', answer: 'On macOS 14.4 and later, the native runtime uses an independent virtual cursor and leaves your physical mouse and keyboard free, although some actions may change app focus. The Windows compatibility executor moves the physical mouse. Linux does not currently have an executor. Enabling the feature requires in-app consent and the relevant system permissions.' },

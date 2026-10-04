@@ -1,14 +1,21 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { callSessionBridge, isSessionBridgeAvailable } from './bridge.js'
 
-const keys = ['CC_HAHA_DESKTOP_SERVER_URL', 'CC_HAHA_SESSION_COLLABORATION_TOKEN', 'CC_HAHA_SESSION_ID'] as const
+const keys = [
+  'ECHOFLOW_DESKTOP_SERVER_URL',
+  'ECHOFLOW_SESSION_COLLABORATION_TOKEN',
+  'ECHOFLOW_SESSION_ID',
+  'CC_HAHA_DESKTOP_SERVER_URL',
+  'CC_HAHA_SESSION_COLLABORATION_TOKEN',
+  'CC_HAHA_SESSION_ID',
+] as const
 const original = Object.fromEntries(keys.map(key => [key, process.env[key]]))
 afterEach(() => { for (const key of keys) { if (original[key] === undefined) delete process.env[key]; else process.env[key] = original[key] } })
 
 function configure(url: string) {
-  process.env.CC_HAHA_DESKTOP_SERVER_URL = url
-  process.env.CC_HAHA_SESSION_COLLABORATION_TOKEN = 'fixture-token'
-  process.env.CC_HAHA_SESSION_ID = 'fixture-session'
+  process.env.ECHOFLOW_DESKTOP_SERVER_URL = url
+  process.env.ECHOFLOW_SESSION_COLLABORATION_TOKEN = 'fixture-token'
+  process.env.ECHOFLOW_SESSION_ID = 'fixture-session'
 }
 
 describe('desktop session bridge', () => {
@@ -18,6 +25,17 @@ describe('desktop session bridge', () => {
     configure('https://example.com')
     expect(isSessionBridgeAvailable()).toBe(false)
     await expect(callSessionBridge('list', {})).rejects.toThrow('loopback')
+  })
+
+  test('does not accept retired CC_HAHA variables', () => {
+    for (const key of keys) delete process.env[key]
+    process.env.CC_HAHA_DESKTOP_SERVER_URL = 'http://127.0.0.1:1234'
+    process.env.CC_HAHA_SESSION_COLLABORATION_TOKEN = 'legacy-token'
+    process.env.CC_HAHA_SESSION_ID = 'legacy-session'
+    expect(isSessionBridgeAvailable()).toBe(false)
+    delete process.env.CC_HAHA_DESKTOP_SERVER_URL
+    delete process.env.CC_HAHA_SESSION_COLLABORATION_TOKEN
+    delete process.env.CC_HAHA_SESSION_ID
   })
 
   test('authenticates loopback requests and forwards data', async () => {

@@ -5,9 +5,9 @@ param(
   [string]$CandidateInstallDir = '',
   [string]$UserDataDir = '',
   [string]$RecoveryRoot = '',
-  [string]$ProcessName = 'Claude Code Haha.exe',
+  [string]$ProcessName = 'EchoFlow Code.exe',
   [string]$ActiveConfigDir = $env:CLAUDE_CONFIG_DIR,
-  [string]$ActiveConfigManaged = $env:CC_HAHA_APP_PORTABLE_DIR,
+  [string]$ActiveConfigManaged = $env:ECHOFLOW_APP_PORTABLE_DIR,
   [ValidateSet('trusted-user', 'trusted-uac-outer', 'untrusted-elevated')]
   [string]$InstallerIdentitySafety = 'trusted-user',
   [switch]$SkipProcessCheck,
@@ -259,7 +259,7 @@ function Test-LegacyPortableData {
       return $true
     }
   }
-  foreach ($childDir in @('Cache', 'EBWebView', 'projects', 'skills', 'plugins', 'cowork_plugins', 'cc-haha')) {
+  foreach ($childDir in @('Cache', 'EBWebView', 'projects', 'skills', 'plugins', 'cowork_plugins', 'echoflow-code')) {
     if (Test-Path -LiteralPath (Join-Path $Dir $childDir) -PathType Container) {
       return $true
     }
@@ -376,7 +376,7 @@ function Get-UnsafeLegacySource {
       if (Test-PathMayBeDeleted -InstallDir $installDir -Candidate $active) {
         $activeInsideInstall = $true
         if ($ActiveConfigManaged -ne '1') {
-          throw "Active CLAUDE_CONFIG_DIR is managed outside Claude Code Haha and points inside an application install directory. Move or remove that environment variable before upgrading: $active"
+          throw "Active CLAUDE_CONFIG_DIR is managed outside EchoFlow Code and points inside an application install directory. Move or remove that environment variable before upgrading: $active"
         }
         if (Test-SamePath -Left $installDir -Right $active) {
           throw "The active data directory is the application install root itself: $active"
@@ -779,7 +779,7 @@ function Write-TestMode {
 }
 
 function Run-SelfTest {
-  $testRoot = Join-Path ([IO.Path]::GetTempPath()) "cc-haha-storage-recovery-$([Guid]::NewGuid().ToString('N'))"
+  $testRoot = Join-Path ([IO.Path]::GetTempPath()) "echoflow-code-storage-recovery-$([Guid]::NewGuid().ToString('N'))"
   New-Item -ItemType Directory -Path $testRoot | Out-Null
   try {
     $canonicalTestRoot = Get-CanonicalPathIdentity $testRoot
@@ -885,7 +885,7 @@ function Run-SelfTest {
         -RecoveryRoot (Join-Path $testRoot 'unmanaged recovery') -ProcessName $ProcessName `
         -ActiveConfigDir $managedLegacy -ActiveConfigManaged '' -SkipProcessCheck | Out-Null
     } catch {
-      $unmanagedFailed = $_.Exception.Message.Contains('managed outside Claude Code Haha')
+      $unmanagedFailed = $_.Exception.Message.Contains('managed outside EchoFlow Code')
     }
     Assert-SelfTest -Condition $unmanagedFailed -Message 'unsafe external CLAUDE_CONFIG_DIR did not fail closed'
 

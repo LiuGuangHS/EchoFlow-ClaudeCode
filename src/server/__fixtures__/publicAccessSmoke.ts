@@ -13,13 +13,14 @@ globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
   if (url.hostname !== '127.0.0.1') throw new Error('Public network disabled in remote smoke')
   return requestFetch(input, init)
 }) as typeof fetch
-await mkdir(process.env.CLAUDE_CONFIG_DIR!, { recursive: true })
-await writeFile(path.join(process.env.CLAUDE_CONFIG_DIR!, 'settings.json'), JSON.stringify({ env: { ANTHROPIC_API_KEY: 'fake-never-expose' }, language: 'en', alwaysThinkingEnabled: true }))
+const managedSettingsDir = path.join(process.env.CLAUDE_CONFIG_DIR!, 'echoflow-code')
+await mkdir(managedSettingsDir, { recursive: true })
+await writeFile(path.join(managedSettingsDir, 'settings.json'), JSON.stringify({ env: { ANTHROPIC_API_KEY: 'fake-never-expose' }, language: 'en', alwaysThinkingEnabled: true }))
 process.env.CLAUDE_CLI_PATH = path.join(import.meta.dir, '../__tests__/fixtures/mock-sdk-cli.ts')
 const server = startServer(0, '127.0.0.1')
 const base = `http://127.0.0.1:${server.port}`
 const control = (route: string, body?: unknown) => fetch(`${base}/api/public-access${route}`, {
-  method: body === undefined ? 'GET' : 'POST', headers: { Authorization: `Bearer ${process.env.CC_HAHA_LOCAL_ACCESS_TOKEN}` }, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  method: body === undefined ? 'GET' : 'POST', headers: { Authorization: `Bearer ${process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN}` }, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
 })
 let socket: WebSocket | undefined
 try {
@@ -41,7 +42,7 @@ try {
     if (body.includes('fake-never-expose') || body.includes('ANTHROPIC_API_KEY')) throw new Error(`Secret leaked from ${route}`)
   }
   const authStatus = await (await fetch(`${remote}/api/providers/auth-status`, { headers: { Origin: origin, Cookie: cookie } })).json()
-  if (!authStatus.hasAuth || authStatus.source !== 'original-settings') throw new Error('Remote new-session auth check failed')
+  if (!authStatus.hasAuth || authStatus.source !== 'echoflow-settings') throw new Error('Remote new-session auth check failed')
   const createdResponse = await fetch(`${remote}/api/sessions`, {
     method: 'POST', headers: { Origin: origin, Cookie: cookie, 'Content-Type': 'application/json' },
     body: JSON.stringify({ workDir: process.env.HOME, permissionMode: 'default' }),

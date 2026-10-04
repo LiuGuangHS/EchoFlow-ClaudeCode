@@ -588,7 +588,7 @@ class TestCursorBadge(unittest.TestCase):
     def test_overlay_and_helper_share_a_session_input_tag(self):
         overlay = CURSOR_BADGE.read_text(encoding="utf-8")
         helper = _win_source()
-        env_name = "CC_HAHA_COMPUTER_USE_INPUT_TAG"
+        env_name = "ECHOFLOW_COMPUTER_USE_INPUT_TAG"
         self.assertIn(env_name, overlay)
         self.assertIn(env_name, helper)
         self.assertIn("dwExtraInfo", overlay)

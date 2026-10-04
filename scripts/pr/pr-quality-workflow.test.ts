@@ -35,6 +35,8 @@ describe('PR quality workflow', () => {
     const workflow = readFileSync('.github/workflows/pr-quality.yml', 'utf8')
 
     expect(workflow).toContain('scope-plan:')
+    expect(workflow).toContain('harness-audit:')
+    expect(workflow).toContain('node scripts/harness-audit.js repo --format json')
     expect(workflow).toContain('--plan-only')
     expect(workflow).toContain("if: needs.scope-plan.outputs.desktop_checks == 'true'")
     expect(workflow).toContain("if: needs.scope-plan.outputs.server_checks == 'true'")
@@ -42,6 +44,7 @@ describe('PR quality workflow', () => {
     expect(workflow).toContain("if: needs.scope-plan.outputs.chat_contract_checks == 'true'")
     expect(workflow).toContain("if: needs.scope-plan.outputs.persistence_checks == 'true'")
     expect(workflow).toContain("if: needs.scope-plan.outputs.adapter_checks == 'true'")
+    expect(workflow).toContain("if: needs.scope-plan.outputs.mobile_checks == 'true'")
     expect(workflow).toContain("if: needs.scope-plan.outputs.desktop_native_checks == 'true'")
     expect(workflow).toContain("if: needs.scope-plan.outputs.docs_checks == 'true'")
     expect(workflow).toContain("if: needs.scope-plan.outputs.coverage_checks == 'true'")
@@ -64,6 +67,7 @@ describe('PR quality workflow', () => {
       'chat-contract-checks',
       'agent-flow-checks',
       'adapter-checks',
+      'mobile-checks',
       'desktop-native-checks',
       'macos-swift-checks',
       'persistence-checks',
@@ -137,7 +141,7 @@ describe('PR quality workflow', () => {
       if (expression.startsWith('needs.scope-plan.outputs.')) return 'false'
       if (expression === 'needs.macos-swift-checks.result') return scenario.macos
       if (expression === 'needs.desktop-native-checks.result') return scenario.linux
-      if (expression === 'needs.scope-plan.result' || expression === 'needs.policy-enforcement.result') return 'success'
+      if (expression === 'needs.scope-plan.result' || expression === 'needs.policy-enforcement.result' || expression === 'needs.harness-audit.result') return 'success'
       return 'skipped'
     })
     const result = Bun.spawnSync(['bash', '-c', script], {
@@ -152,7 +156,7 @@ describe('PR quality workflow', () => {
 
     expect(workflow).toContain('COVERAGE_BASE_REF: origin/${{ github.base_ref }}')
     expect(workflow).toContain('cat "$latest_report" >> "$GITHUB_STEP_SUMMARY"')
-    expect(workflow).toContain('uses: actions/upload-artifact@v4')
+    expect(workflow).toContain('uses: actions/upload-artifact@v5')
     expect(workflow).toContain('path: artifacts/coverage/')
     expect(workflow).toContain('retention-days: 14')
   })
@@ -177,9 +181,9 @@ describe('PR quality workflow', () => {
     expect(workflow).not.toContain('QUALITY_GATE_PROVIDER_API_KEY')
     expect(workflow).not.toContain('secrets.')
     expect(workflow).not.toContain('pull_request_target')
-    expect(workflow.match(/uses: actions\/checkout@v4/g)?.length).toBeGreaterThan(0)
+    expect(workflow.match(/uses: actions\/checkout@v5/g)?.length).toBeGreaterThan(0)
     expect(workflow.match(/persist-credentials: false/g)?.length).toBe(
-      workflow.match(/uses: actions\/checkout@v4/g)?.length,
+      workflow.match(/uses: actions\/checkout@v5/g)?.length,
     )
   })
 
@@ -190,6 +194,7 @@ describe('PR quality workflow', () => {
     expect(workflow).toContain('name: pr-quality-gate')
     expect(workflow).toContain('if: always()')
     expect(workflow).toContain('require_success "scope-plan" "${{ needs.scope-plan.result }}"')
+    expect(workflow).toContain('require_success "harness-audit" "${{ needs.harness-audit.result }}"')
     expect(workflow).toContain('require_success "policy-enforcement" "${{ needs.policy-enforcement.result }}"')
     expect(workflow).toContain('require_selected "provider-contract-checks"')
     expect(workflow).toContain('require_selected "chat-contract-checks"')
@@ -242,7 +247,7 @@ describe('full quality workflow', () => {
     expect(workflow).not.toContain('--allow-live')
     expect(workflow).not.toContain('secrets.')
     expect(workflow.match(/persist-credentials: false/g)?.length).toBe(
-      workflow.match(/uses: actions\/checkout@v4/g)?.length,
+      workflow.match(/uses: actions\/checkout@v5/g)?.length,
     )
   })
 

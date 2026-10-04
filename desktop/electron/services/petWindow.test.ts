@@ -178,8 +178,8 @@ describe('Electron pet window service', () => {
     })
   })
 
-  it('persists position only in the app-owned cc-haha config root', () => {
-    const root = mkdtempSync(path.join(tmpdir(), 'cc-haha-pet-position-'))
+  it('persists position only in the app-owned echoflow-code config root', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'echoflow-code-pet-position-'))
     const configDir = path.join(root, 'portable')
     const env = {
       CLAUDE_CONFIG_DIR: configDir,
@@ -188,7 +188,7 @@ describe('Electron pet window service', () => {
     try {
       expect(petWindowStatePath(env, root)).toBe(path.join(
         configDir,
-        'cc-haha',
+        'echoflow-code',
         'pet-window.json',
       ))
       writePetWindowPosition({ x: -420.4, y: 85.7 }, env, root)
@@ -200,7 +200,7 @@ describe('Electron pet window service', () => {
   })
 
   it('persists the mascot box with the position and tolerates state without one', () => {
-    const root = mkdtempSync(path.join(tmpdir(), 'cc-haha-pet-region-'))
+    const root = mkdtempSync(path.join(tmpdir(), 'echoflow-code-pet-region-'))
     const env = { CLAUDE_CONFIG_DIR: path.join(root, 'portable') }
     try {
       writePetWindowPosition(
@@ -270,7 +270,7 @@ describe('Electron pet window service', () => {
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,
-        partition: 'cc-haha-pet',
+        partition: 'echoflow-code-pet',
         preload: '/app/electron-dist/preload.cjs',
         sandbox: true,
       },

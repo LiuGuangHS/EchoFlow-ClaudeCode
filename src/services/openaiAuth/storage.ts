@@ -1,10 +1,10 @@
 import * as fs from 'fs'
-import * as os from 'os'
 import * as path from 'path'
 import memoize from 'lodash-es/memoize.js'
 import { getSecureStorage } from '../../utils/secureStorage/index.js'
 import { errorMessage } from '../../utils/errors.js'
 import { logError } from '../../utils/log.js'
+import { getEchoFlowConfigDir, getEchoFlowInternalDir } from '../../utils/echoFlowConfigRoot.js'
 import type { OpenAIOAuthTokens } from './types.js'
 
 const STORAGE_KEY = 'openaiCodexOauth'
@@ -23,19 +23,17 @@ function getDesktopTokenFilePath(): string | null {
   return filePath ? filePath : null
 }
 
-function getCcHahaDir(): string {
-  const configDir =
-    process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
-  return path.join(configDir, 'cc-haha')
+function getEchoFlowOAuthDir(): string {
+  return getEchoFlowInternalDir(getEchoFlowConfigDir())
 }
 
 function getFileBackedStorageMarkerPath(): string {
-  return path.join(getCcHahaDir(), FILE_BACKED_STORAGE_MARKER_FILE)
+  return path.join(getEchoFlowOAuthDir(), FILE_BACKED_STORAGE_MARKER_FILE)
 }
 
 function markFileBackedStorageUsed(): void {
   try {
-    fs.mkdirSync(getCcHahaDir(), { recursive: true })
+    fs.mkdirSync(getEchoFlowOAuthDir(), { recursive: true })
     fs.writeFileSync(getFileBackedStorageMarkerPath(), '1\n', { mode: 0o600 })
   } catch (error) {
     logError(error)

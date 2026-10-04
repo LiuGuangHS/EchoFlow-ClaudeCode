@@ -84,7 +84,7 @@ describe('createAgentWorktree', () => {
     originalCwd = getOriginalCwd()
     originalConfigDir = process.env.CLAUDE_CONFIG_DIR
 
-    tempDir = mkdtempSync(join(tmpdir(), 'cc-haha-agent-worktree-'))
+    tempDir = mkdtempSync(join(tmpdir(), 'echoflow-code-agent-worktree-'))
     repoDir = join(tempDir, 'repo')
     const originDir = join(tempDir, 'origin.git')
     mkdirSync(repoDir, { recursive: true })
@@ -241,7 +241,7 @@ describe('agent worktree isolation outside a repository', () => {
     savedOriginalCwd = getOriginalCwd()
     savedConfigDir = process.env.CLAUDE_CONFIG_DIR
 
-    plainTempDir = mkdtempSync(join(tmpdir(), 'cc-haha-plain-dir-'))
+    plainTempDir = mkdtempSync(join(tmpdir(), 'echoflow-code-plain-dir-'))
     plainDir = join(plainTempDir, 'stock')
     mkdirSync(plainDir, { recursive: true })
 

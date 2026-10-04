@@ -20,9 +20,10 @@ describe('applyWindowsAppUserModelId', () => {
     }
   })
 
-  it('keeps the AppUserModelID in sync with build.appId in package.json', () => {
+  it('uses the desktop package identifier consistently', () => {
     const packageJsonPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'package.json')
     const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as { build?: { appId?: string } }
+    expect(WINDOWS_APP_USER_MODEL_ID).toBe('com.echoflow.code.desktop')
     expect(WINDOWS_APP_USER_MODEL_ID).toBe(pkg.build?.appId)
   })
 })

@@ -459,6 +459,13 @@ function enforceBlockedImpact(
   })
 }
 
+function canRunInParallel(lane: LaneDefinition) {
+  // These lanes are read-only with respect to the runtime workspaces used by
+  // the product checks. The other lanes may bind local ports, build shared
+  // package trees, or write coverage/temp state, so keep them serialized.
+  return new Set(['policy-checks', 'docs-checks', 'quarantine', 'baseline-catalog']).has(lane.id)
+}
+
 export async function runQualityGate(options: QualityGateOptions) {
   return runQualityGateLanes(options, lanesForMode(options.mode, options.baselineTargets))
 }
@@ -476,11 +483,34 @@ export async function runQualityGateLanes(
   const selectedLanes = filterLanesForOptions(lanes, options)
 
   const runOptions = { ...options, runId, runOutputDir: outputDir }
-  const rawResults: LaneResult[] = []
-  for (const lane of selectedLanes) {
-    const result = await executeLane(lane, runOptions)
-    rawResults.push(withLaneMetadata(lane, result))
+  // The impact report must finish first because later lanes use it to decide
+  // whether their check is required. Only explicitly isolated governance and
+  // docs lanes run concurrently. Runtime, server, desktop, adapter, native,
+  // persistence, and coverage lanes share ports or workspace state and stay
+  // serialized to avoid false failures from resource contention.
+  const impactLane = selectedLanes.find((lane) => lane.id === 'impact-report')
+  const rawById = new Map<string, LaneResult>()
+  if (impactLane) {
+    const result = await executeLane(impactLane, runOptions)
+    rawById.set(impactLane.id, withLaneMetadata(impactLane, result))
   }
+
+  const remainingLanes = selectedLanes.filter((lane) => lane !== impactLane)
+  const parallelLanes = remainingLanes.filter(canRunInParallel)
+  const serialLanes = remainingLanes.filter((lane) => !canRunInParallel(lane))
+  const parallelResults = await Promise.all(
+    parallelLanes.map(async (lane) => [
+      lane.id,
+      withLaneMetadata(lane, await executeLane(lane, runOptions)),
+    ] as const),
+  )
+  for (const [id, result] of parallelResults) rawById.set(id, result)
+  for (const lane of serialLanes) {
+    rawById.set(lane.id, withLaneMetadata(lane, await executeLane(lane, runOptions)))
+  }
+  const rawResults = selectedLanes
+    .map((lane) => rawById.get(lane.id))
+    .filter((result): result is LaneResult => result !== undefined)
   const releaseResults = enforceReleaseLiveLanes(options, selectedLanes, rawResults)
   const results = enforceBlockedImpact(options, releaseResults)
 

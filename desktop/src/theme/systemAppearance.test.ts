@@ -164,39 +164,39 @@ describe('stored appearance preferences', () => {
 
   it('leaves an existing install on its fixed theme until it opts in', () => {
     // Upgrading must never silently repaint someone's app.
-    window.localStorage.setItem('cc-haha-theme', 'warm-classic')
+    window.localStorage.setItem('echoflow-code-theme', 'warm-classic')
     expect(readStoredFollowSystemTheme(window.localStorage)).toBe(false)
   })
 
   it('honours an explicit opt-in and opt-out', () => {
-    window.localStorage.setItem('cc-haha-theme', 'warm-classic')
-    window.localStorage.setItem('cc-haha-follow-system-theme', '1')
+    window.localStorage.setItem('echoflow-code-theme', 'warm-classic')
+    window.localStorage.setItem('echoflow-code-follow-system-theme', '1')
     expect(readStoredFollowSystemTheme(window.localStorage)).toBe(true)
 
-    window.localStorage.setItem('cc-haha-follow-system-theme', '0')
+    window.localStorage.setItem('echoflow-code-follow-system-theme', '0')
     expect(readStoredFollowSystemTheme(window.localStorage)).toBe(false)
   })
 
   it('seeds each ground from a manual theme sitting on it', () => {
-    window.localStorage.setItem('cc-haha-theme', 'celadon')
+    window.localStorage.setItem('echoflow-code-theme', 'celadon')
     expect(readStoredLightTheme(window.localStorage)).toBe('celadon')
 
-    window.localStorage.setItem('cc-haha-theme', 'ink-blue')
+    window.localStorage.setItem('echoflow-code-theme', 'ink-blue')
     expect(readStoredDarkTheme(window.localStorage)).toBe('ink-blue')
   })
 
   it('falls back to the defaults when the manual theme is on the other ground', () => {
-    window.localStorage.setItem('cc-haha-theme', 'ink-blue')
+    window.localStorage.setItem('echoflow-code-theme', 'ink-blue')
     expect(readStoredLightTheme(window.localStorage)).toBe('white')
 
-    window.localStorage.setItem('cc-haha-theme', 'celadon')
+    window.localStorage.setItem('echoflow-code-theme', 'celadon')
     expect(readStoredDarkTheme(window.localStorage)).toBe('dark')
   })
 
   it('rejects stored values outside their own ground', () => {
-    window.localStorage.setItem('cc-haha-theme', 'solarized')
-    window.localStorage.setItem('cc-haha-light-theme', 'ink-blue')
-    window.localStorage.setItem('cc-haha-dark-theme', 'celadon')
+    window.localStorage.setItem('echoflow-code-theme', 'solarized')
+    window.localStorage.setItem('echoflow-code-light-theme', 'ink-blue')
+    window.localStorage.setItem('echoflow-code-dark-theme', 'celadon')
 
     expect(readStoredTheme(window.localStorage)).toBe('white')
     expect(readStoredLightTheme(window.localStorage)).toBe('white')

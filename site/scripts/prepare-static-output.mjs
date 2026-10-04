@@ -4,7 +4,7 @@ import path from 'node:path'
 import { generateDocsManifest, paths } from './generate-docs-manifest.mjs'
 
 const distDir = path.join(paths.siteDir, 'dist')
-const expectedCustomDomain = 'cchaha.ai'
+const expectedCustomDomain = 'code.echoflow.cn'
 
 async function pathExists(targetPath) {
   return fs.access(targetPath).then(() => true, () => false)
@@ -233,15 +233,15 @@ async function main() {
       alternate: alternateFor(record, records),
       description: record.description,
       path: record.path,
-      title: `${record.title} · cc-haha`
+      title: `${record.title} · EchoFlow Code`
     })
   }
 
   await createRouteEntry('/en', shell, {
     alternate: '/',
-    description: 'Write code, work across apps, and review every change. Give cc-haha a goal and put your ideas in motion.',
+    description: 'EchoFlow Code — a local-first desktop client for Claude Code.',
     path: '/en',
-    title: 'cc-haha — Less busywork. More room for life.'
+    title: 'EchoFlow Code — a local-first desktop client for Claude Code'
   })
 
   for (const legacy of legacyRoutes) {

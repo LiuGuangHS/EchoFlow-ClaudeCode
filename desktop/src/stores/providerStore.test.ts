@@ -116,6 +116,7 @@ describe('providerStore runtime refresh', () => {
           ? { main: 'grok-4.7-fast', haiku: 'grok-4.7-mini', sonnet: 'grok-4.7-fast', opus: 'grok-4.7' }
           : { main: 'claude-sonnet-5', haiku: 'claude-haiku-4-5', sonnet: 'claude-sonnet-5', opus: 'claude-opus-5-5' },
     }))
+    providersApiMock.activate.mockResolvedValue({ ok: true })
   })
 
   it('reapplies an updated active provider to idle connected sessions using default runtime', async () => {

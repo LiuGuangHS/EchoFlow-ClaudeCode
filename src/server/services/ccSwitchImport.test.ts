@@ -300,7 +300,7 @@ function candidateById(candidates: CcSwitchCandidate[], sourceId: string): CcSwi
 }
 
 async function readProvidersConfig(): Promise<Record<string, unknown>> {
-  const raw = await fs.readFile(path.join(tmpDir, 'cc-haha', 'providers.json'), 'utf-8')
+  const raw = await fs.readFile(path.join(tmpDir, 'echoflow-code', 'providers.json'), 'utf-8')
   return JSON.parse(raw) as Record<string, unknown>
 }
 
@@ -1377,7 +1377,7 @@ describe('cc-switch candidate mapping', () => {
   })
 
   test('refuses a provider whose base URL is a full endpoint', async () => {
-    // cc-haha always appends /v1/messages etc., so importing one of these would
+    // echoflow-code always appends /v1/messages etc., so importing one of these would
     // produce an entry that 404s on every request.
     await writeFixtureDb([{
       id: 'full',
@@ -1619,7 +1619,9 @@ describe('cc-switch REST routes', () => {
     expect(imported.map((provider) => provider.name)).toEqual(['First Import', 'Second Import'])
     expect(imported[0]).toMatchObject({
       presetId: 'custom',
-      apiKey: FULL_KEY,
+      apiKey: '',
+      hasApiKey: true,
+      keyPreview: 'sk-ant****4f2a',
       authStrategy: 'auth_token',
       apiFormat: 'anthropic',
       runtimeKind: 'anthropic_compatible',
@@ -1637,7 +1639,8 @@ describe('cc-switch REST routes', () => {
     const config = await readProvidersConfig()
     const persisted = config.providers as SavedProvider[]
     expect(persisted.map((provider) => provider.name)).toEqual(['First Import', 'Second Import'])
-    expect(config.activeId).toBeNull()
+    expect(persisted[0].apiKey).toBe(FULL_KEY)
+    expect(config.activeId).toBe('claude-official')
     expect(config.providerOrder).toEqual([
       imported[0].id,
       imported[1].id,

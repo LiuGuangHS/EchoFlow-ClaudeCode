@@ -7,16 +7,16 @@ import workspaceEn from '../../../../docs/images/app/en/workspace-diff.webp'
 
 export const guideContent = {
   zh: {
-    eyebrow: 'cc-haha / 开源使用指南',
+    eyebrow: 'EchoFlow Code / 开源使用指南',
     title: '让第一件事真正做成。', titleLines: ['让第一件事', '真正做成。'],
     intro: '给它一个目标，Agent 在代码与应用之间完成任务；你审阅每一步。macOS 的 Computer Use 不占用真实鼠标和键盘。',
     mobileIntro: '一句话交代任务，Agent 帮你写代码、操作应用；过程和改动随时可审阅。macOS 上的 Computer Use 不占用真实鼠标和键盘。',
     primary: '从 0 到 1 开始', secondary: '先看真实案例', note: '从下载到第一条会话 · 约 20 分钟',
     showcaseLabel: '查看产品界面',
     showcase: [
-      { label: '写代码', window: '新建会话', kicker: '01 / 开始', title: '一句话，交代清楚任务。', body: '选好项目、模型与权限，从一条真实会话开始。', alt: 'cc-haha 新建会话界面', href: '/start/first-session', action: '查看首次会话教程' },
-      { label: '操作应用', window: 'Computer Use', kicker: '02 / 特色能力', title: '让 Agent 走出代码编辑器。', body: 'macOS 原生操控其他应用，真实鼠标和键盘仍归你使用。', alt: 'cc-haha 的 Computer Use 设置界面', href: '/desktop/computer-use', action: '查看 Computer Use 指南' },
-      { label: '审阅改动', window: '工作区', kicker: '03 / 交付', title: '看清每一处修改。', body: '从调用记录到文件差异，检查结果后再决定下一步。', alt: 'cc-haha 工作区差异审阅界面', href: '/desktop/workspace', action: '查看工作区指南' }
+      { label: '写代码', window: '新建会话', kicker: '01 / 开始', title: '一句话，交代清楚任务。', body: '选好项目、模型与权限，从一条真实会话开始。', alt: 'EchoFlow Code 新建会话界面', href: '/start/first-session', action: '查看首次会话教程' },
+      { label: '操作应用', window: 'Computer Use', kicker: '02 / 特色能力', title: '让 Agent 走出代码编辑器。', body: 'macOS 原生操控其他应用，真实鼠标和键盘仍归你使用。', alt: 'EchoFlow Code 的 Computer Use 设置界面', href: '/desktop/computer-use', action: '查看 Computer Use 指南' },
+      { label: '审阅改动', window: '工作区', kicker: '03 / 交付', title: '看清每一处修改。', body: '从调用记录到文件差异，检查结果后再决定下一步。', alt: 'EchoFlow Code 工作区差异审阅界面', href: '/desktop/workspace', action: '查看工作区指南' }
     ],
     thesis: '先完成一件事，再理解每一个开关。',
     thesisBody: '不需要先读完所有功能。照着路径装好应用、接上模型、完成首次任务；遇到具体需求，再查设置和案例。',
@@ -46,15 +46,15 @@ export const guideContent = {
     footer: '开源、本地优先的 AI 编程工作台。文档随产品持续更新。'
   },
   en: {
-    eyebrow: 'cc-haha / OPEN GUIDE', title: 'Make the first task real.', titleLines: ['Make the', 'first task real.'],
+    eyebrow: 'EchoFlow Code / OPEN GUIDE', title: 'Make the first task real.', titleLines: ['Make the', 'first task real.'],
     intro: 'Give it a goal. The agent works across code and apps while you review every step. On macOS, Computer Use leaves your physical mouse and keyboard free.',
     mobileIntro: 'Give it a task. The agent works across code and apps while you review every change. On macOS, Computer Use leaves your physical mouse and keyboard free.',
     primary: 'Start from zero', secondary: 'Explore real examples', note: 'Download to first session · about 20 minutes',
     showcaseLabel: 'Explore the product UI',
     showcase: [
-      { label: 'Code', window: 'New session', kicker: '01 / BEGIN', title: 'Give it a real task.', body: 'Pick a project, model, and permission mode, then start a session.', alt: 'cc-haha new session screen', href: '/en/start/first-session', action: 'Read the first session guide' },
-      { label: 'Use apps', window: 'Computer Use', kicker: '02 / DISTINCTIVE', title: 'Move beyond the editor.', body: 'On macOS, native app control leaves your physical mouse and keyboard free.', alt: 'cc-haha Computer Use settings screen', href: '/en/desktop/computer-use', action: 'Read the Computer Use guide' },
-      { label: 'Review', window: 'Workspace', kicker: '03 / DELIVER', title: 'Inspect every change.', body: 'Follow tool calls and file diffs before deciding what to do next.', alt: 'cc-haha workspace diff review screen', href: '/en/desktop/workspace', action: 'Read the workspace guide' }
+      { label: 'Code', window: 'New session', kicker: '01 / BEGIN', title: 'Give it a real task.', body: 'Pick a project, model, and permission mode, then start a session.', alt: 'EchoFlow Code new session screen', href: '/en/start/first-session', action: 'Read the first session guide' },
+      { label: 'Use apps', window: 'Computer Use', kicker: '02 / DISTINCTIVE', title: 'Move beyond the editor.', body: 'On macOS, native app control leaves your physical mouse and keyboard free.', alt: 'EchoFlow Code Computer Use settings screen', href: '/en/desktop/computer-use', action: 'Read the Computer Use guide' },
+      { label: 'Review', window: 'Workspace', kicker: '03 / DELIVER', title: 'Inspect every change.', body: 'Follow tool calls and file diffs before deciding what to do next.', alt: 'EchoFlow Code workspace diff review screen', href: '/en/desktop/workspace', action: 'Read the workspace guide' }
     ],
     thesis: 'Finish one task. Then learn the switches.', thesisBody: 'You do not need to learn every feature first. Install the app, connect one model, and complete a small task. Return to settings and examples when a need appears.',
     chapters: [['01', 'Discover', 'What it is and what it can do', '/en/start'], ['02', 'Begin', 'Install, connect, complete a session', '/en/start/first-session'], ['03', 'Configure', 'Everyday settings and advanced tools', '/en/desktop/settings'], ['04', 'Practice', 'Reproduce a complete workflow', '/en/cases']],

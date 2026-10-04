@@ -25,12 +25,12 @@ afterEach(async () => {
 
 describe('search content database', () => {
   it('uses a dedicated managed database and exposes bounded storage operations', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'cc-haha-search-database-'))
+    const root = await mkdtemp(join(tmpdir(), 'echoflow-code-search-database-'))
     tempDirs.push(root)
     process.env.CLAUDE_CONFIG_DIR = join(root, 'config')
 
     expect(getSearchContentDatabasePath()).toBe(
-      join(root, 'config', 'cc-haha', 'db', 'search-index-v1.sqlite'),
+      join(root, 'config', 'echoflow-code', 'db', 'search-index-v1.sqlite'),
     )
     const database = openSearchContentDatabase()
     try {
@@ -54,7 +54,7 @@ describe('search content database', () => {
   })
 
   it('classifies a partially missing current schema as confirmed corruption', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'cc-haha-search-database-corrupt-'))
+    const root = await mkdtemp(join(tmpdir(), 'echoflow-code-search-database-corrupt-'))
     tempDirs.push(root)
     const path = join(root, 'search-index-v1.sqlite')
     const created = openSearchContentDatabase({ path })
@@ -72,7 +72,7 @@ describe('search content database', () => {
   })
 
   it('does not classify or rebuild a future schema as corruption', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'cc-haha-search-database-future-'))
+    const root = await mkdtemp(join(tmpdir(), 'echoflow-code-search-database-future-'))
     tempDirs.push(root)
     const path = join(root, 'search-index-v1.sqlite')
     const future = new Database(path)

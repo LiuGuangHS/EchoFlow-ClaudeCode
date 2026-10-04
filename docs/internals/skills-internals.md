@@ -15,7 +15,7 @@ order: 8
 
 Skills 系统由 5 个核心模块协同工作：
 
-```
+```text
 ┌─────────────────────────────────────────────────────┐
 │                   Skills 系统                        │
 │                                                     │
@@ -87,7 +87,7 @@ const loadAllCommands = memoize(async (cwd: string): Promise<Command[]> => {
 
 `getSkillDirCommands()` 是目录 Skills 的核心加载函数：
 
-```
+```text
 getSkillDirCommands(cwd)
 ├─ 确定加载路径
 │  ├─ managed: ${MANAGED_PATH}/.claude/skills/
@@ -184,7 +184,7 @@ export function initBundledSkills(): void {
 
 ### Plugin Skill 加载
 
-```
+```text
 插件系统
 ├─ loadAllPluginsCacheOnly()
 │  └─ 获取所有已启用插件
@@ -228,7 +228,7 @@ async function fetchCommandsForClient(client) {
 
 ### 解析流程
 
-```
+```text
 SKILL.md 文件
     ↓
 parseFrontmatter()              ← frontmatterParser.ts
@@ -314,7 +314,7 @@ async getPromptForCommand(args, toolUseContext) {
 
 Skills 通过 `system-reminder` 消息注入到对话中：
 
-```
+```text
 每轮对话开始
     ↓
 getSkillListingAttachments()          ← attachments.ts:2600-2747
@@ -347,7 +347,7 @@ export const MAX_LISTING_DESC_CHARS = 250          // 每条描述上限
 
 **截断策略：**
 
-```
+```text
 formatCommandsWithinBudget(commands, contextWindowTokens)
     ├─ 所有条目的 description + whenToUse 先限制为 250 字符（含 Bundled）
     ├─ 计算总预算 = contextWindowTokens × 4 × 1%
@@ -412,7 +412,7 @@ export const SkillTool = buildTool({
 
 ![SkillTool 执行流程](./images/07-skill-execution.png)
 
-```
+```text
 SkillTool.call({ skill, args })
     │
     ├─ 1. 标准化输入
@@ -498,7 +498,7 @@ async function getAllCommands(context: ToolUseContext): Promise<Command[]> {
 
 ### 执行流程
 
-```
+```text
 executeForkedSkill(command, commandName, args, context, ...)
     │
     ├─ 1. 创建子代理 ID
@@ -605,7 +605,7 @@ export async function prepareForkedCommandContext(
 
 带 `paths` frontmatter 的 Skills 不会立即暴露给模型：
 
-```
+```text
 启动时
 ├─ 加载所有 Skills
 ├─ 有 paths 的 → conditionalSkills Map
@@ -657,7 +657,7 @@ export async function discoverSkillDirsForPaths(
 
 ### 缓存失效链
 
-```
+```text
 动态 Skill 变化
     ↓
 skillsLoaded.emit()
@@ -705,7 +705,7 @@ export function registerSkillHooks(
 
 ### Hook 生命周期
 
-```
+```text
 Skill 调用
     ↓
 processPromptSlashCommand()
@@ -726,7 +726,7 @@ processPromptSlashCommand()
 
 ### 检查流程
 
-```
+```text
 checkPermissions({ skill, args }, context)
     │
     ├─ 1. Deny 规则检查（最高优先级）
@@ -752,7 +752,7 @@ checkPermissions({ skill, args }, context)
 
 如果 Skill 只包含以下属性（无 hooks、无 allowedTools、无 fork），自动允许：
 
-```
+```typescript
 SAFE_SKILL_PROPERTIES = {
   type, name, description, contentLength, source,
   loadedFrom, progressMessage, userInvocable,
@@ -769,7 +769,7 @@ SAFE_SKILL_PROPERTIES = {
 
 ![完整生命周期](./images/09-skill-lifecycle.png)
 
-```
+```text
 第一阶段: 发现与注册
 ──────────────────
 CLI 启动
@@ -817,7 +817,7 @@ CLI 启动
 
 Inline Skills 的内容通过 `addInvokedSkill()` 记录到会话状态，确保在上下文压缩后仍可恢复：
 
-```
+```text
 addInvokedSkill(name, path, content, agentId)
     ↓
 存储在 session state 中

@@ -1,6 +1,6 @@
 import CoreGraphics
 import XCTest
-@testable import cc_haha_computer_use
+@testable import echoflow_code_computer_use
 
 /// Regression cover for the field that decides whether a synthesized pointer
 /// event counts as part of a click.

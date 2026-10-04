@@ -1,6 +1,6 @@
 import { ApiError } from '../middleware/errorHandler.js'
 import * as fs from 'node:fs/promises'
-import { watch, type FSWatcher } from 'node:fs'
+import { readdirSync, watch, type FSWatcher } from 'node:fs'
 import { execFile as execFileCallback } from 'node:child_process'
 import * as path from 'node:path'
 import { promisify } from 'node:util'
@@ -528,6 +528,14 @@ export class WorkspaceService {
     const watchers: FSWatcher[] = []
     const paths = new Set<string>()
     const directories = new Set<string>()
+    const knownNames = new Map<string, Set<string>>()
+    for (const target of targets.values()) {
+      try {
+        knownNames.set(target.absolutePath, new Set(readdirSync(target.absolutePath)))
+      } catch {
+        knownNames.set(target.absolutePath, new Set())
+      }
+    }
     let timer: ReturnType<typeof setTimeout> | undefined
     let stopped = false
     const stop = () => {
@@ -550,6 +558,25 @@ export class WorkspaceService {
           if (name) paths.add(this.normalizeRelativePath(path.join(target.relativePath, name)))
           if (timer !== undefined) return
           timer = setTimeout(() => {
+            if (stopped || signal.aborted) return
+            const previousNames = knownNames.get(target.absolutePath) ?? new Set<string>()
+            let currentNames: Set<string>
+            try {
+              currentNames = new Set(readdirSync(target.absolutePath))
+            } catch {
+              currentNames = new Set()
+            }
+            for (const changedName of currentNames) {
+              if (!previousNames.has(changedName)) {
+                paths.add(this.normalizeRelativePath(path.join(target.relativePath, changedName)))
+              }
+            }
+            for (const removedName of previousNames) {
+              if (!currentNames.has(removedName)) {
+                paths.add(this.normalizeRelativePath(path.join(target.relativePath, removedName)))
+              }
+            }
+            knownNames.set(target.absolutePath, currentNames)
             timer = undefined
             if (stopped || signal.aborted) return
             const event = { paths: [...paths], directories: [...directories] }

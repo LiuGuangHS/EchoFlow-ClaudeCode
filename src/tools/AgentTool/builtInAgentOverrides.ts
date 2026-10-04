@@ -43,6 +43,12 @@ export type ResolvedBuiltInAgentOverride = {
  *      it. Blocking only the write path would not be enough — settings.json is
  *      user-writable by definition.
  */
+function getBuiltInOverridesForSource(
+  source: SettingSource,
+): Record<string, unknown> | undefined {
+  return getSettingsForSource(source)?.builtInAgentOverrides
+}
+
 export function resolveBuiltInAgentOverrides(): Map<
   string,
   ResolvedBuiltInAgentOverride
@@ -53,7 +59,7 @@ export function resolveBuiltInAgentOverrides(): Map<
   for (const source of getEnabledSettingSources()) {
     if (agentsLocked && !isSourceAdminTrusted(source)) continue
 
-    const overrides = getSettingsForSource(source)?.builtInAgentOverrides
+    const overrides = getBuiltInOverridesForSource(source)
     if (!overrides) continue
 
     for (const [agentType, entry] of Object.entries(overrides)) {

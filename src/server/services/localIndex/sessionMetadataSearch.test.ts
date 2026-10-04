@@ -11,7 +11,7 @@ let index: SessionIndex
 
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), 'metadata-search-'))
-  database = openLocalIndexDatabase({ scope: directory, path: join(directory, 'cc-haha/db/index-v1.sqlite') })
+  database = openLocalIndexDatabase({ scope: directory, path: join(directory, 'echoflow-code/db/index-v1.sqlite') })
   index = createSessionIndex(database)
 })
 
