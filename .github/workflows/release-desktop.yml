@@ -81,8 +81,10 @@ jobs:
             echo "windows_signed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # Drafts may remain unsigned while SignPath onboarding is being tested. Tags and
-          # non-draft releases otherwise require the full GitHub connector configuration.
+          # Drafts may remain unsigned while SignPath onboarding is being tested. A tag
+          # release also ships unsigned when SignPath is not configured at all, which is
+          # this fork's state today; a partially configured pipeline is a real
+          # misconfiguration and still refuses to publish.
           win_missing=()
           [ -n "$SIGNPATH_API_TOKEN" ] || win_missing+=("SIGNPATH_API_TOKEN secret")
           [ -n "$SIGNPATH_ORGANIZATION_ID" ] || win_missing+=("SIGNPATH_ORGANIZATION_ID variable")
@@ -90,12 +92,19 @@ jobs:
           [ -n "$SIGNPATH_SIGNING_POLICY_SLUG" ] || win_missing+=("selected SignPath signing policy variable")
           [ -n "$SIGNPATH_APPLICATION_ARTIFACT_CONFIGURATION_SLUG" ] || win_missing+=("SIGNPATH_APPLICATION_ARTIFACT_CONFIGURATION_SLUG variable")
           [ -n "$SIGNPATH_INSTALLER_ARTIFACT_CONFIGURATION_SLUG" ] || win_missing+=("SIGNPATH_INSTALLER_ARTIFACT_CONFIGURATION_SLUG variable")
+          # Six settings make up a usable SignPath pipeline. None of them are present in
+          # this repository, so an unsigned release is the expected state rather than an
+          # accident; half of them present is a mistake and must not ship silently.
+          signpath_present=$((6 - ${#win_missing[@]}))
           if [ "${#win_missing[@]}" -gt 0 ]; then
             printf '::warning::SignPath configuration missing (%s): the Windows build will be unsigned.\n' "${win_missing[*]}"
             echo "windows_signed=false" >> "$GITHUB_OUTPUT"
             if [ "$RELEASE_DRAFT" != "true" ]; then
-              echo "::error::Refusing to publish a non-draft desktop release without SignPath Windows signing."
-              exit 1
+              if [ "$signpath_present" -gt 0 ]; then
+                echo "::error::Refusing to publish a non-draft desktop release without SignPath Windows signing. SignPath is only partly configured (${signpath_present} of 6 settings present): finish the configuration or remove it. A repository with no SignPath configuration at all ships unsigned by design."
+                exit 1
+              fi
+              echo "::warning::Publishing an unsigned Windows release: this repository has no SignPath configuration and the release notes state that the Windows artifacts are unsigned."
             fi
           else
             echo "windows_signed=true" >> "$GITHUB_OUTPUT"
