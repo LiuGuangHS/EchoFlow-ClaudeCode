@@ -15,7 +15,7 @@ from urllib.request import Request, urlopen
 
 VERSION_RE = re.compile(r"^release-notes/v(\d+)\.(\d+)\.(\d+)\.md$")
 LOGIN_RE = re.compile(r"(?<![A-Za-z0-9._%+-])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)")
-RELEASE_HEADING_RE = re.compile(r"(?m)^#\s+Claude Code Haha v\d+\.\d+\.\d+\s*$")
+RELEASE_HEADING_RE = re.compile(r"(?m)^#\s+EchoFlow Code v\d+\.\d+\.\d+\s*$")
 CLOSING_PUNCTUATION = set("，。、；：！？）》」』】〕”’％")
 OPENING_PUNCTUATION = set("（《「『【〔“‘")
 
@@ -212,7 +212,7 @@ def get_avatar(person, spec_path, avatar_dir, allow_offline_avatars=False):
 
     request = Request(
         "https://api.github.com/users/" + quote(login),
-        headers={"Accept": "application/vnd.github+json", "User-Agent": "cc-haha-release-announcement"},
+        headers={"Accept": "application/vnd.github+json", "User-Agent": "echoflow-code-release-announcement"},
     )
     try:
         with urlopen(request, timeout=20) as response:
@@ -222,7 +222,7 @@ def get_avatar(person, spec_path, avatar_dir, allow_offline_avatars=False):
         url = profile.get("avatar_url")
         if not url:
             raise ValueError(f"@{login} 没有公开头像地址")
-        image_request = Request(url + "&s=256", headers={"User-Agent": "cc-haha-release-announcement"})
+        image_request = Request(url + "&s=256", headers={"User-Agent": "echoflow-code-release-announcement"})
         with urlopen(image_request, timeout=20) as response:
             content = response.read()
     except (HTTPError, URLError, TimeoutError) as exc:
@@ -258,7 +258,7 @@ def render(spec, scan_data, spec_path, output, allow_offline_avatars=False):
 
     # Compact hero: the first release content appears in the first phone viewport.
     draw.rectangle((0, 0, W, 230), fill=ink)
-    product = str(spec.get("product") or "Claude Code Haha").upper()
+    product = str(spec.get("product") or "EchoFlow Code").upper()
     write(64, 40, f"{product}  ·  v{spec['version']}", face(29, True), "#D6B99E", 950)
     draw.text((64, 99), "新版本发布", font=face(63, True), fill="#F4EFE4")
     draw.line((64, 207, 1016, 207), fill=rust, width=4)
@@ -346,7 +346,7 @@ def render(spec, scan_data, spec_path, output, allow_offline_avatars=False):
         write(96, y + 76, spec["install_note"], face(27), "#F4EFE4", 885)
         y += box_h + 68
 
-    draw.text((64, y), f"{spec.get('product') or 'Claude Code Haha'}  ·  v{spec['version']}", font=face(28, True), fill=ink)
+    draw.text((64, y), f"{spec.get('product') or 'EchoFlow Code'}  ·  v{spec['version']}", font=face(28, True), fill=ink)
     if spec.get("footer_url"):
         draw.text((64, y + 48), spec["footer_url"], font=face(27), fill=muted)
     y += 137

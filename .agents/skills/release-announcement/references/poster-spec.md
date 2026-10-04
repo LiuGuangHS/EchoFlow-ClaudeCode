@@ -5,7 +5,7 @@
 ```json
 {
   "version": "0.6.7",
-  "product": "Claude Code Haha",
+  "product": "EchoFlow Code",
   "features": [
     {"title": "侧边对话", "body": "输入 /btw，在右侧开启独立的临时对话，不打断主任务。"}
   ],
@@ -19,7 +19,7 @@
     {"login": "example-user", "contribution": "此人本次被署名的贡献"}
   ],
   "install_note": "仅在发布说明明确写有安装提醒时填写。",
-  "footer_url": "github.com/NanmiCoder/cc-haha"
+  "footer_url": "github.com/LiuGuangHS/EchoFlow-ClaudeCode"
 }
 ```
 

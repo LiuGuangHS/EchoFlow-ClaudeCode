@@ -21,7 +21,7 @@ class ReleasePosterTest(unittest.TestCase):
             self.assertEqual([person["login"] for person in older["mentions"]], ["old-user"])
 
     def test_chinese_section_in_either_order_and_without_details(self):
-        title = "# Claude Code Haha v0.5.4\n"
+        title = "# EchoFlow Code v0.5.4\n"
         english_first = title + "English changes here.\n<details>\n<summary>中文版本</summary>\n" + title + "这里是中文修复内容和版本更新。\n</details>"
         chinese_first = title + "这里是中文修复内容和版本更新。\n<details>\n<summary>English</summary>\n" + title + "English changes here.\n</details>"
         no_details = title + "这里是中文修复内容和版本更新。\n" + title + "English changes here.\n"
@@ -36,7 +36,7 @@ class ReleasePosterTest(unittest.TestCase):
             notes = repo / "release-notes"
             notes.mkdir()
             (notes / "v0.2.0.md").write_text(
-                "# Claude Code Haha v0.2.0\n本次修复桌面问题。\n- PR 模板默认要求 @dosubot review。\n- 修复连接问题 **@actual-author**（#42）。\n",
+                "# EchoFlow Code v0.2.0\n本次修复桌面问题。\n- PR 模板默认要求 @dosubot review。\n- 修复连接问题 **@actual-author**（#42）。\n",
                 encoding="utf-8",
             )
             result = scan(repo)

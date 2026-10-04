@@ -7,7 +7,7 @@ description: 从本项目最新的 release-notes Markdown 制作微信群发布�
 
 在本仓库调用 `$release-announcement` 时，交付一张可发微信群的 PNG 长图和一段很短的群文案。默认使用 [版式与文案要求](references/editorial-brief.md)；用户另有要求时以用户要求为准。
 
-调用方式：Codex 使用 `$release-announcement`；Claude Code Haha 的终端输入 `/release-announcement`。这两个工具都从项目的 `.agents/skills/` 读取同一份技能。
+调用方式：Codex 使用 `$release-announcement`；EchoFlow Code 的终端输入 `/release-announcement`。这两个工具都从项目的 `.agents/skills/` 读取同一份技能。
 
 ## 工作流
 
