@@ -22,7 +22,7 @@ type TestResultResponse = { result: ProviderTestResult }
 type OfficialProviderModelsResponse = { models: ModelMapping }
 type AuthStatusResponse = {
   hasAuth: boolean
-  source: 'cc-haha-provider' | 'claude-oauth' | 'openai-oauth' | 'grok-oauth' | 'original-settings' | 'env' | 'none'
+  source: 'echoflow-provider' | 'claude-oauth' | 'openai-oauth' | 'grok-oauth' | 'echoflow-settings' | 'env' | 'none'
   activeProvider?: string
 }
 

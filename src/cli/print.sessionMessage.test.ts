@@ -24,7 +24,7 @@ test('headless session inbox acknowledges queued then consumed and deduplicates 
     return new Response(completion(), { headers: { 'content-type': 'text/event-stream' } })
   } })
   const env = createSandboxedTestEnvironment(home, {
-    NODE_ENV: 'production', CI: '1', CC_HAHA_SKIP_DOTENV: '1',
+    NODE_ENV: 'production', CI: '1', ECHOFLOW_SKIP_DOTENV: '1',
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
     DISABLE_AUTOUPDATER: '1', DISABLE_TELEMETRY: '1', DISABLE_ERROR_REPORTING: '1',
     ANTHROPIC_API_KEY: 'fixture-key', ANTHROPIC_BASE_URL: server.url.origin,
@@ -33,8 +33,8 @@ test('headless session inbox acknowledges queued then consumed and deduplicates 
   const payload = { subtype: 'enqueue_session_message', start_if_idle: true, message_id: 'stable', sender_session_id: 'peer', text: '/clear @missing-fixture-file.txt' }
   const input = ['first', 'retry'].map(request_id => JSON.stringify({ type: 'control_request', request_id, request: payload })).join('\n') + '\n'
   try {
-    const child = Bun.spawn(['./bin/claude-haha', '--bare', '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose'], { env, stdin: new Blob([input]), stdout: 'pipe', stderr: 'pipe' })
-    const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited])
+    const child = Bun.spawn(['bash', join(process.cwd(), 'bin/echoflow-code'), '--bare', '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose'], { env, stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' })
+    child.stdin.write(input); child.stdin.end(); const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited])
     expect({ code, stderr }).toMatchObject({ code: 0 })
     const events = stdout.trim().split('\n').map(line => JSON.parse(line))
     const controls = events.filter(event => event.type === 'control_response')
@@ -44,8 +44,8 @@ test('headless session inbox acknowledges queued then consumed and deduplicates 
     expect(events.filter(event => event.subtype === 'session_message_receipt')).toMatchObject([{ message_id: 'stable', status: 'consumed' }])
     expect(requests).toBe(1)
     const sessionId = events.find(event => event.subtype === 'session_message_receipt').session_id
-    const resumed = Bun.spawn(['./bin/claude-haha', '--bare', '-p', '--resume', sessionId, '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose'], { env, stdin: new Blob([input]), stdout: 'pipe', stderr: 'pipe' })
-    const [resumedText, resumedError, resumedCode] = await Promise.all([new Response(resumed.stdout).text(), new Response(resumed.stderr).text(), resumed.exited])
+    const resumed = Bun.spawn(['bash', join(process.cwd(), 'bin/echoflow-code'), '--bare', '-p', '--resume', sessionId, '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose'], { env, stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' })
+    resumed.stdin.write(input); resumed.stdin.end(); const [resumedText, resumedError, resumedCode] = await Promise.all([new Response(resumed.stdout).text(), new Response(resumed.stderr).text(), resumed.exited])
     expect({ code: resumedCode, stderr: resumedError, stdout: resumedText }).toMatchObject({ code: 0 })
     const resumedEvents = resumedText.trim().split('\n').map(line => JSON.parse(line))
     const resumedControls = resumedEvents.filter(event => event.type === 'control_response')

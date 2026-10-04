@@ -8,9 +8,9 @@ import { anthropicToOpenaiResponses } from '../proxy/transform/anthropicToOpenai
 import type { AnthropicRequest } from '../proxy/transform/types.js'
 import { openaiResponsesStreamToAnthropicResponse } from '../proxy/streaming/openaiResponsesStreamToAnthropicResponse.js'
 import type { ProviderAuthStrategy } from '../types/provider.js'
-import { hahaOpenAIOAuthService } from './hahaOpenAIOAuthService.js'
-import { hahaGrokOAuthService } from './hahaGrokOAuthService.js'
-import { hahaOAuthService } from './hahaOAuthService.js'
+import { echoFlowOpenAIOAuthService as hahaOpenAIOAuthService } from './echoFlowOpenAIOAuthService.js'
+import { echoFlowGrokOAuthService as hahaGrokOAuthService } from './echoFlowGrokOAuthService.js'
+import { echoFlowOAuthService as hahaOAuthService } from './echoFlowOAuthService.js'
 import { resolveClaudeOfficialRuntimeModel } from './claudeOfficialRuntime.js'
 import {
   getNetworkProxyFetchOptions,

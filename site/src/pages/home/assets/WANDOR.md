@@ -1,6 +1,6 @@
 # Wandor-inspired landing assets
 
-Updated 2026-09-26. The user explicitly supplied the video and requested this art direction for the complete cc-haha landing page.
+Updated 2026-09-26. The user explicitly supplied the video and requested this art direction for the complete EchoFlow Code landing page.
 
 - `wandor-poster.webp`: 1920×1080 static frame captured in Ego Lite from the supplied video. Used during loading, media failure and reduced motion. The video is loaded from the exact supplied Figma URL in HomePage.tsx; no external video is required during deterministic build/check.
 - `quiet-landscape.webp`: original image generated with the built-in imagegen tool, optimized to WebP. Used behind the feature gallery, onboarding and closing sections.
@@ -10,7 +10,7 @@ Updated 2026-09-26. The user explicitly supplied the video and requested this ar
 
 ## Landscape generation prompt
 
-Use case: illustration-story. Asset type: extra-wide 16:9 illustrated landscape background for all lower sections of the cc-haha landing page. Create an original hand-printed paper-cut / textured woodcut landscape, sophisticated editorial illustration with warm ivory handmade paper, muted olive sage green, burnt terracotta, sepia ink. A peaceful meandering stream and gentle paths through softly rolling hills, tall stylized cypress/pine trees, a tiny simple cottage in distant hills, warm sun. Natural textured shapes, fine hand-drawn hatch marks, quiet confident composition, charming but refined, no childish cartoon. The upper 45% mostly empty warm ivory sky with subtle paper texture. Terrain and trees occupy bottom and sides; center has pale meadow open space for website text/cards. Asymmetric panoramic composition, no frames, no lettering, no typography, no logos, no computers, no interface, no photorealism, no gradients, no 3D render. Wide 2560x1440 landscape. This is a background asset only, no website mockup.
+Use case: illustration-story. Asset type: extra-wide 16:9 illustrated landscape background for all lower sections of the EchoFlow Code landing page. Create an original hand-printed paper-cut / textured woodcut landscape, sophisticated editorial illustration with warm ivory handmade paper, muted olive sage green, burnt terracotta, sepia ink. A peaceful meandering stream and gentle paths through softly rolling hills, tall stylized cypress/pine trees, a tiny simple cottage in distant hills, warm sun. Natural textured shapes, fine hand-drawn hatch marks, quiet confident composition, charming but refined, no childish cartoon. The upper 45% mostly empty warm ivory sky with subtle paper texture. Terrain and trees occupy bottom and sides; center has pale meadow open space for website text/cards. Asymmetric panoramic composition, no frames, no lettering, no typography, no logos, no computers, no interface, no photorealism, no gradients, no 3D render. Wide 2560x1440 landscape. This is a background asset only, no website mockup.
 
 ## Still-life generation prompt
 

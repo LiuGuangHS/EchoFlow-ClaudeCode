@@ -38,7 +38,7 @@ import { SenseVoiceRecognizer, type SpawnWorker } from './recognizer.js'
 export const SENSEVOICE_PROVIDER_ID = 'sensevoice-local'
 
 export interface SenseVoiceProviderOptions {
-  /** Defaults to `<config dir>/cc-haha/voice`. */
+  /** Defaults to `<config dir>/echoflow-code/voice`. */
   dataRoot?: string
   fetch?: FetchLike
   /** Extra fetch options per URL (proxy). Defaults to the configured network proxy. */

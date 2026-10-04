@@ -11,6 +11,7 @@ import {
   validateH5PublicBaseUrl,
 } from '../services/h5AccessService.js'
 import { ProviderService } from '../services/providerService.js'
+import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 
 let tmpDir: string
 let originalConfigDir: string | undefined
@@ -18,7 +19,7 @@ let originalH5PublicBaseUrl: string | undefined
 let originalH5AutoPublicUrl: string | undefined
 
 function getManagedSettingsPath(): string {
-  return path.join(tmpDir, 'cc-haha', 'settings.json')
+  return path.join(getEchoFlowInternalDir(tmpDir), 'settings.json')
 }
 
 beforeEach(async () => {
@@ -608,7 +609,9 @@ describe('H5AccessService', () => {
     expect(diag.storedHostStaleness).toBe('proxy')
     expect(diag.storedPublicBaseUrl).toBe('https://h5.mydomain.com')
 
-    // ok: stored URL host is on local interfaces
+    // ok: stored URL host is on local interfaces. Some machines expose
+    // public or non-private IPv4 addresses first, which are intentionally
+    // classified as proxy URLs rather than directly reachable LAN URLs.
     const localHost = collectLocalIPv4Hosts()
       .find((host) => classifyH5PublicBaseUrl(`http://${host}:55379`) === 'plain-lan')
     if (localHost) {

@@ -16,12 +16,12 @@ describe('cu-helper release target', () => {
     expect(createCuHelperBuildEnv('x86_64-apple-darwin', {
       CU_HELPER_ARCH: 'arm64',
       CU_HELPER_IDENTITY: 'Apple Development: Stale Identity',
-      CC_HAHA_SIGN_IDENTITY: 'Developer ID Application: Example',
+      ECHOFLOW_SIGN_IDENTITY: 'Developer ID Application: Example',
       PATH: '/usr/bin',
     })).toMatchObject({
       CU_HELPER_ARCH: 'x86_64',
       CU_HELPER_IDENTITY: 'Developer ID Application: Example',
-      CC_HAHA_SIGN_IDENTITY: 'Developer ID Application: Example',
+      ECHOFLOW_SIGN_IDENTITY: 'Developer ID Application: Example',
       PATH: '/usr/bin',
     })
   })

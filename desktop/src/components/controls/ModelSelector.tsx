@@ -27,9 +27,9 @@ import {
   resolveDefaultRuntimeSelection,
   resolveProviderSlotModelId,
 } from '../../lib/runtimeSelection'
-import { useHahaOAuthStore } from '../../stores/hahaOAuthStore'
-import { useHahaOpenAIOAuthStore } from '../../stores/hahaOpenAIOAuthStore'
-import { useHahaGrokOAuthStore } from '../../stores/hahaGrokOAuthStore'
+import { useEchoFlowOAuthStore } from '../../stores/echoFlowOAuthStore'
+import { useEchoFlowOpenAIOAuthStore } from '../../stores/echoFlowOpenAIOAuthStore'
+import { useEchoFlowGrokOAuthStore } from '../../stores/echoFlowGrokOAuthStore'
 import {
   GROK_OFFICIAL_MODELS,
   GROK_OFFICIAL_PROVIDER_ID,
@@ -141,10 +141,13 @@ function buildProviderModels(
   provider: SavedProvider,
   labels: Record<ModelSlot, string>,
 ): ModelInfo[] {
-  const entries = MODEL_SLOTS.map(slot => ({
-    id: resolveProviderSlotModelId(provider, slot),
-    label: labels[slot],
-  }))
+  const entries: Array<{ id: string; label: string }> = [
+    ...(provider.availableModels ?? []).map(model => ({ id: model.id, label: provider.credentialSource?.tokenName ? `EchoFlow · ${provider.credentialSource.tokenName}` : provider.name })),
+    { id: resolveProviderSlotModelId(provider, 'main'), label: labels.main },
+    { id: resolveProviderSlotModelId(provider, 'haiku'), label: labels.haiku },
+    { id: resolveProviderSlotModelId(provider, 'sonnet'), label: labels.sonnet },
+    { id: resolveProviderSlotModelId(provider, 'opus'), label: labels.opus },
+  ]
 
   const byId = new Map<string, { id: string; labels: string[] }>()
   for (const entry of entries) {
@@ -270,14 +273,17 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
     isLoading: providersLoading,
     fetchProviders,
   } = useProviderStore()
-  const claudeOAuthStatus = useHahaOAuthStore((s) => s.status)
-  const fetchClaudeOAuthStatus = useHahaOAuthStore((s) => s.fetchStatus)
-  const openAIOAuthStatus = useHahaOpenAIOAuthStore((s) => s.status)
-  const fetchOpenAIOAuthStatus = useHahaOpenAIOAuthStore((s) => s.fetchStatus)
-  const grokOAuthStatus = useHahaGrokOAuthStore((s) => s.status)
-  const fetchGrokOAuthStatus = useHahaGrokOAuthStore((s) => s.fetchStatus)
+  const claudeOAuthStatus = useEchoFlowOAuthStore((s) => s.status)
+  const fetchClaudeOAuthStatus = useEchoFlowOAuthStore((s) => s.fetchStatus)
+  const openAIOAuthStatus = useEchoFlowOpenAIOAuthStore((s) => s.status)
+  const fetchOpenAIOAuthStatus = useEchoFlowOpenAIOAuthStore((s) => s.fetchStatus)
+  const grokOAuthStatus = useEchoFlowGrokOAuthStore((s) => s.status)
+  const fetchGrokOAuthStatus = useEchoFlowGrokOAuthStore((s) => s.fetchStatus)
   const runtimeSelection = useSessionRuntimeStore((state) =>
     runtimeKey ? state.selections[runtimeKey] : undefined,
+  )
+  const runtimeRequestStatus = useSessionRuntimeStore((state) =>
+    runtimeKey ? state.runtimeRequestStatusBySessionId[runtimeKey] : undefined,
   )
   const [open, setOpen] = useState(false)
   const [effortOpen, setEffortOpen] = useState(false)
@@ -503,6 +509,13 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
   const buttonProviderLabel = isRuntimeScoped
     ? selectedProviderChoice?.providerName ?? null
     : null
+  const runtimeRequestStatusMessage = runtimeRequestStatus === 'pending'
+    ? t('model.applyingConfiguration')
+    : runtimeRequestStatus === 'unconfirmed'
+      ? t('model.configurationUnconfirmed')
+      : runtimeRequestStatus === 'failed'
+        ? t('model.configurationApplyFailed')
+        : null
   const supportedRuntimeEfforts = selectedRuntimeModel?.supportedReasoningEfforts
   const requestedRuntimeEffort = activeRuntimeSelection?.effortLevel ?? effortLevel
   const selectedRuntimeEffort = selectedRuntimeModel && !runtimeEffortSuppressedByProvider
@@ -531,9 +544,9 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
       return
     }
 
-    const claudeStatus = useHahaOAuthStore.getState().status
-    const openAIStatus = useHahaOpenAIOAuthStore.getState().status
-    const grokStatus = useHahaGrokOAuthStore.getState().status
+    const claudeStatus = useEchoFlowOAuthStore.getState().status
+    const openAIStatus = useEchoFlowOpenAIOAuthStore.getState().status
+    const grokStatus = useEchoFlowGrokOAuthStore.getState().status
     const statuses = [claudeStatus, openAIStatus, grokStatus]
     const providerState = useProviderStore.getState()
     if (providerState.providers.length > 0) {
@@ -566,9 +579,9 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
         fetchGrokOAuthStatus(),
       ])
       const hasOfficialLogin = [
-        useHahaOAuthStore.getState().status,
-        useHahaOpenAIOAuthStore.getState().status,
-        useHahaGrokOAuthStore.getState().status,
+        useEchoFlowOAuthStore.getState().status,
+        useEchoFlowOpenAIOAuthStore.getState().status,
+        useEchoFlowGrokOAuthStore.getState().status,
       ].some((status) => status?.loggedIn === true)
       if (hasOfficialLogin) {
         setOpen(true)
@@ -592,6 +605,10 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
 
   const handleRuntimeSelect = (selection: RuntimeSelection) => {
     if (lockedProviderId !== undefined && selection.providerId !== lockedProviderId) return
+    const runtimeStore = useSessionRuntimeStore.getState()
+    const currentSelection = controlledRuntimeSelection ?? (
+      runtimeKey ? runtimeStore.selections[runtimeKey] : undefined
+    )
     const provider = providers.find((entry) => entry.id === selection.providerId)
     const normalizedSelection = normalizeRuntimeSelection(
       selection,
@@ -599,11 +616,20 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
       provider ? getBundledPresetReasoningProviderKind(provider.presetId) : undefined,
     )
     if (lockedProviderId !== undefined) normalizedSelection.effortLevel = activeRuntimeSelection?.effortLevel
+    if (
+      currentSelection &&
+      currentSelection.providerId === normalizedSelection.providerId &&
+      currentSelection.modelId === normalizedSelection.modelId &&
+      currentSelection.effortLevel === normalizedSelection.effortLevel
+    ) {
+      setOpen(false)
+      return
+    }
     onRuntimeSelectionChange?.(normalizedSelection)
     if (runtimeKey) {
-      useSessionRuntimeStore.getState().setSelection(runtimeKey, normalizedSelection)
+      runtimeStore.setSelection(runtimeKey, normalizedSelection)
       if (runtimeKey !== DRAFT_RUNTIME_SELECTION_KEY) {
-        useChatStore.getState().setSessionRuntime(runtimeKey, normalizedSelection)
+        useChatStore.getState().setSessionModelConfig(runtimeKey, normalizedSelection)
       }
     }
     setOpen(false)
@@ -680,6 +706,7 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
                     return (
                       <button
                         key={`${choice.providerId ?? 'official'}:${model.id}`}
+                        disabled={disabled}
                         onClick={() => {
                           const supportedEfforts = model.supportedReasoningEfforts
                           const explicitEffort = activeRuntimeSelection?.effortLevel
@@ -912,6 +939,15 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
           </button>
         )}
       </div>
+      {runtimeRequestStatusMessage && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="mt-1 max-w-[220px] text-[10px] text-[var(--color-text-tertiary)]"
+        >
+          {runtimeRequestStatusMessage}
+        </div>
+      )}
       {dropdown}
       {canEditRuntimeEffort && selectedRuntimeEffort && (
         <ReasoningEffortPopover

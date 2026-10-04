@@ -11,13 +11,13 @@ A session is one complete collaboration: you describe what you want, Claude read
 
 ## Starting a session
 
-Click **New session** in the sidebar, or press `⌘N` (`Ctrl+N` on Windows and Linux). The empty session asks you for exactly one thing: a project directory. After that you can start typing — the model and permission mode come from your defaults in Settings.
+Click **New session** in the sidebar, or press `⌘N` (`Ctrl+N` on Windows and Linux). The empty session asks you for exactly one thing: a project directory. After that you can start typing — provider, model, effort, and permission mode start from your Settings defaults, and you can adjust the model and effort for this session before sending.
 
 Each session opens as a tab, and you can run many side by side. A dot on the tab means that session is still running; closing a running tab asks whether you want to **Keep running** or **Stop and close**, and **Stop and close** also stops the background tasks that session still has running.
 
 When a session is stopped on a permission request, a question or a plan review and needs you, the dot on its tab becomes an amber warning triangle, and so does its row in the sidebar. It stays until you have dealt with it, whether or not system notifications are on. When so many tabs are open that some scroll out of view, the scroll arrow on that side gets an amber dot, and the number button on the right of the tab bar shows how many other sessions are waiting; press it to jump to the next one. On a phone there is no tab bar: a dot on the menu button means another session is waiting, and its row in the sidebar carries the triangle.
 
-The small line under the session title is metadata: project path, branch, model. A session is bound to one directory — to work on a different project, start a new session.
+The small line under the session title is metadata: project path, branch, provider, and model. A session is bound to one directory — to work on a different project, start a new session. Provider configuration is managed in Settings and shared across sessions; choosing a provider, model, or effort in a session creates a session-level override rather than changing that shared configuration.
 
 ## Reading the conversation
 
@@ -99,7 +99,7 @@ Tool activity from background subagents bubbles up here too, so you don't have t
 - **`@` file and session references** — type `@` to search files and past sessions. Files are attached as paths; sessions appear as clickable references.
 - **Attachments** — click `+`, drag files in, or paste a screenshot. Images, PDFs, and directories all work.
 - **Context usage ring** — the small ring shows how much of the context window is used; hover it for used, free, and window size. When it fills up, run `/compact`.
-- **Model and effort** — switch models at any time. Effort has five levels — low, medium, high, xhigh, max — and models that don't support a level ignore it.
+- **Provider, model, and effort** — adjust the provider, model, or effort for the current session. Effort has five levels — low, medium, high, xhigh, max — and models that don't support a level ignore it. These are session-level configuration overrides, not a CLI execution-runtime selector; the desktop app does not yet provide a separate CLI runtime switcher. Provider credentials and other shared configuration remain managed in Settings.
 - **Location** — shows the current project and branch. In a Git project you can switch branches here, or turn on **Isolated worktree** to keep an experiment off your main branch. See [Workspace](./workspace.md).
 
 Enter sends and Shift+Enter inserts a newline by default; **Settings → General** can swap that to `Ctrl/Cmd+Enter`. `⌘.` stops the current generation.

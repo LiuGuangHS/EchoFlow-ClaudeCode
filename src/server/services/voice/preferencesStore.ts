@@ -7,7 +7,7 @@ export interface VoicePreferencesStore {
   update(patch: Partial<VoicePreferences>): Promise<VoicePreferences>
 }
 
-/** Persists preferences in the `voiceInput` section of `cc-haha/desktop-ui.json`. */
+/** Persists preferences in the `voiceInput` section of `echoflow-code/desktop-ui.json`. */
 export function createDesktopUiVoicePreferencesStore(
   service: DesktopUiPreferencesService = new DesktopUiPreferencesService(),
 ): VoicePreferencesStore {

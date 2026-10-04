@@ -190,8 +190,13 @@ ALTER TABLE sessions ADD COLUMN session_api_format TEXT;
 
 // Hide independently persisted team workers from the task sidebar without
 // removing their transcript lookup or entry locators. Older sessions remain visible.
+// Model configuration and runtime identity are separate session metadata. These nullable columns
+// preserve old indexes while allowing the index to return the same metadata as JSONL parsing.
 const SCHEMA_V6 = `
 ALTER TABLE sessions ADD COLUMN is_team_worker INTEGER NOT NULL DEFAULT 0 CHECK (is_team_worker IN (0, 1));
+ALTER TABLE sessions ADD COLUMN model_config_id TEXT;
+ALTER TABLE sessions ADD COLUMN model_config_json TEXT;
+ALTER TABLE sessions ADD COLUMN runtime_instance_id TEXT;
 `
 
 const MIGRATIONS = [

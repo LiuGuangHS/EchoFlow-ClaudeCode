@@ -1,5 +1,5 @@
 /**
- * Tool dispatch for CC-haha's macOS native semantic API and batch sequence.
+ * Tool dispatch for EchoFlow's macOS native semantic API and batch sequence.
  *
  * Semantic tools dispatched to the native `cu-helper` AX engine
  * (`adapter.executor.engine`, a thin wrapper over the daemon's NDJSON

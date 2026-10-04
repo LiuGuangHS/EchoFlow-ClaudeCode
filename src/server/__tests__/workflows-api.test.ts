@@ -523,7 +523,7 @@ describe('Workflows API', () => {
       status: 'completed' | 'failed' | 'stopped',
       timestamp: string,
     ) => ({
-      type: 'cc-haha-task-notification',
+      type: 'echoflow-code-task-notification',
       isMeta: true,
       timestamp,
       taskNotification: {
@@ -639,7 +639,7 @@ describe('Workflows API', () => {
           },
         },
         {
-          type: 'cc-haha-task-notification',
+          type: 'echoflow-code-task-notification',
           isMeta: true,
           timestamp: '2026-01-01T00:00:02.000Z',
           taskNotification: {
@@ -672,6 +672,65 @@ describe('Workflows API', () => {
       error: 'validation failed before spawn',
       agents: [],
     })])
+  })
+
+  it('prefers XML owner-agent-id when recovering a workflow terminal', async () => {
+    const sessionId = '99999999-2222-3333-4444-555555555555'
+    const runId = 'wf_xml-owner-123'
+    const taskId = 'task-xml-owner'
+    const projectDir = path.join(tmpHome, 'claude', 'projects', '-tmp-project')
+    const subagentsDir = path.join(projectDir, sessionId, 'subagents')
+    await fs.mkdir(subagentsDir, { recursive: true })
+    await fs.writeFile(
+      path.join(projectDir, `${sessionId}.jsonl`),
+      '',
+      'utf8',
+    )
+    await fs.writeFile(
+      path.join(subagentsDir, 'agent-launch-owner.jsonl'),
+      `${JSON.stringify({
+        type: 'user',
+        timestamp: '2026-08-11T00:00:01.000Z',
+        message: {
+          role: 'user',
+          content: [{
+            type: 'tool_result',
+            tool_use_id: 'tool-xml-owner',
+            content: JSON.stringify({
+              status: 'async_launched',
+              taskId,
+              taskType: 'local_workflow',
+              workflowName: 'xml-owner-run',
+              runId,
+            }),
+          }],
+        },
+      })}\n`,
+      'utf8',
+    )
+    await fs.writeFile(
+      path.join(subagentsDir, 'agent-transcript-owner.jsonl'),
+      `${JSON.stringify({
+        type: 'user',
+        timestamp: '2026-08-11T00:00:02.000Z',
+        message: {
+          role: 'user',
+          content: '<task-notification>\n<task-id>task-xml-owner</task-id>\n<tool-use-id>tool-xml-owner</tool-use-id>\n<owner-agent-id>launch-owner</owner-agent-id>\n<status>completed</status>\n<summary>completed by XML owner</summary>\n</task-notification>',
+        },
+      })}\n`,
+      'utf8',
+    )
+
+    const response = await call(`/api/workflows/session-runs/${sessionId}`)
+    expect(response.status).toBe(200)
+    const body = await response.json() as {
+      runs: Array<{ runId: string; ownerAgentId?: string; status: string }>
+    }
+    expect(body.runs).toContainEqual(expect.objectContaining({
+      runId,
+      ownerAgentId: 'launch-owner',
+      status: 'completed',
+    }))
   })
 
   it('uses the newest sidecar for an agent index after a resumed insertion', async () => {

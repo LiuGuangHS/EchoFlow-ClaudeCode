@@ -16,7 +16,7 @@ function resetComputerUseHelperState(): void {
   // callCuHelper now resolves through ensureInstalledHelper(); clear its module
   // cache too so a prior test's resolution can't leak into the next.
   __resetInstalledHelperCache()
-  delete process.env.CC_HAHA_CU_HELPER_PATH
+  delete process.env.ECHOFLOW_CU_HELPER_PATH
   delete process.env.CLAUDE_APP_ROOT
 }
 
@@ -33,15 +33,15 @@ function isCurrentDevBinary(candidate: string): boolean {
 
 describe('resolveCuHelperBinary', () => {
   test('returns the env override when it exists', () => {
-    process.env.CC_HAHA_CU_HELPER_PATH = '/custom/cu-helper'
+    process.env.ECHOFLOW_CU_HELPER_PATH = '/custom/cu-helper'
     expect(resolveCuHelperBinary(p => p === '/custom/cu-helper')).toBe('/custom/cu-helper')
   })
 
   test('ignores overrides and development candidates in a packaged app', () => {
-    process.env.CC_HAHA_CU_HELPER_PATH = '/tmp/evil-helper'
+    process.env.ECHOFLOW_CU_HELPER_PATH = '/tmp/evil-helper'
     process.env.CLAUDE_APP_ROOT = '/Applications/App.app/Contents/Resources/app.asar'
     const bundled =
-      '/Applications/App.app/Contents/Resources/app.asar.unpacked/src-tauri/binaries/cc-haha-computer-use.app/Contents/MacOS/cc-haha-computer-use'
+      '/Applications/App.app/Contents/Resources/app.asar.unpacked/src-tauri/binaries/echoflow-code-computer-use.app/Contents/MacOS/echoflow-code-computer-use'
 
     const found = resolveCuHelperBinary(p =>
       p === '/tmp/evil-helper'
@@ -52,7 +52,7 @@ describe('resolveCuHelperBinary', () => {
   })
 
   test('ignores the env override when it does not exist, falling to candidates', () => {
-    process.env.CC_HAHA_CU_HELPER_PATH = '/missing/cu-helper'
+    process.env.ECHOFLOW_CU_HELPER_PATH = '/missing/cu-helper'
     const found = resolveCuHelperBinary(isCurrentDevBinary)
     expect(found?.endsWith(currentDevSuffix)).toBe(true)
   })
@@ -65,10 +65,10 @@ describe('resolveCuHelperBinary', () => {
 
   test('maps Node architectures to matching thin SwiftPM products', () => {
     expect(resolveCuHelperDevelopmentBinary('/repo', 'arm64')).toBe(
-      '/repo/native/cu-helper/.build/arm64/arm64-apple-macosx/release/cc-haha-computer-use.app/Contents/MacOS/cc-haha-computer-use',
+      '/repo/native/cu-helper/.build/arm64/arm64-apple-macosx/release/echoflow-code-computer-use.app/Contents/MacOS/echoflow-code-computer-use',
     )
     expect(resolveCuHelperDevelopmentBinary('/repo', 'x64')).toBe(
-      '/repo/native/cu-helper/.build/x86_64/x86_64-apple-macosx/release/cc-haha-computer-use.app/Contents/MacOS/cc-haha-computer-use',
+      '/repo/native/cu-helper/.build/x86_64/x86_64-apple-macosx/release/echoflow-code-computer-use.app/Contents/MacOS/echoflow-code-computer-use',
     )
     expect(resolveCuHelperDevelopmentBinary('/repo', 'ia32')).toBeNull()
   })
@@ -76,18 +76,18 @@ describe('resolveCuHelperBinary', () => {
   test('resolves the bundled unpacked path from CLAUDE_APP_ROOT (.asar → .asar.unpacked)', () => {
     process.env.CLAUDE_APP_ROOT = '/Applications/App.app/Contents/Resources/app.asar'
     const unpacked =
-      '/Applications/App.app/Contents/Resources/app.asar.unpacked/src-tauri/binaries/cc-haha-computer-use.app/Contents/MacOS/cc-haha-computer-use'
+      '/Applications/App.app/Contents/Resources/app.asar.unpacked/src-tauri/binaries/echoflow-code-computer-use.app/Contents/MacOS/echoflow-code-computer-use'
     // Probe matches ONLY the unpacked binaries path (not the dev SwiftPM build).
     const found = resolveCuHelperBinary(p => p === unpacked)
     expect(found).toBe(unpacked)
     expect(found).toContain(
-      'app.asar.unpacked/src-tauri/binaries/cc-haha-computer-use.app/Contents/MacOS/cc-haha-computer-use',
+      'app.asar.unpacked/src-tauri/binaries/echoflow-code-computer-use.app/Contents/MacOS/echoflow-code-computer-use',
     )
-    // Must reach the inner executable THROUGH `src-tauri/binaries/cc-haha-computer-use.app`,
-    // not the old bogus `<projectRoot>/binaries/cc-haha-computer-use` guess (no `src-tauri/`
+    // Must reach the inner executable THROUGH `src-tauri/binaries/echoflow-code-computer-use.app`,
+    // not the old bogus `<projectRoot>/binaries/echoflow-code-computer-use` guess (no `src-tauri/`
     // segment) and not a bare Mach-O (Screen Recording TCC requires the real .app subject).
     expect(found).toMatch(
-      /[/\\]src-tauri[/\\]binaries[/\\]cc-haha-computer-use\.app[/\\]Contents[/\\]MacOS[/\\]cc-haha-computer-use$/,
+      /[/\\]src-tauri[/\\]binaries[/\\]echoflow-code-computer-use\.app[/\\]Contents[/\\]MacOS[/\\]echoflow-code-computer-use$/,
     )
   })
 
@@ -97,7 +97,7 @@ describe('resolveCuHelperBinary', () => {
     const found = resolveCuHelperBinary(
       p =>
         isCurrentDevBinary(p) ||
-        p.endsWith('/app.asar.unpacked/src-tauri/binaries/cc-haha-computer-use.app/Contents/MacOS/cc-haha-computer-use'),
+        p.endsWith('/app.asar.unpacked/src-tauri/binaries/echoflow-code-computer-use.app/Contents/MacOS/echoflow-code-computer-use'),
     )
     expect(found).toContain('app.asar.unpacked')
   })
@@ -117,13 +117,13 @@ describe('resolveCuHelperAppBundle', () => {
   test('derives the .app bundle path from the resolved inner executable', () => {
     const app = resolveCuHelperAppBundle(isCurrentDevBinary)
     expect(app).toContain(`native/cu-helper/.build/${process.arch === 'x64' ? 'x86_64' : 'arm64'}`)
-    expect(app?.endsWith('cc-haha-computer-use.app')).toBe(true)
+    expect(app?.endsWith('echoflow-code-computer-use.app')).toBe(true)
     // The bundle path stops at `.app` — it must NOT include the inner Contents/MacOS.
     expect(app).not.toContain('Contents')
   })
 
   test('returns null when the resolved binary is a bare path (no .app wrapper)', () => {
-    process.env.CC_HAHA_CU_HELPER_PATH = '/custom/cu-helper'
+    process.env.ECHOFLOW_CU_HELPER_PATH = '/custom/cu-helper'
     expect(resolveCuHelperAppBundle(p => p === '/custom/cu-helper')).toBeNull()
   })
 
@@ -152,7 +152,7 @@ describe('isCuHelperAvailable', () => {
   })
 
   test('launch resolution fails closed before touching a helper on unsupported systems', () => {
-    process.env.CC_HAHA_CU_HELPER_PATH = '/x/cu-helper'
+    process.env.ECHOFLOW_CU_HELPER_PATH = '/x/cu-helper'
     __resetCuHelperCache()
     resolveCuHelperBinary(p => p === '/x/cu-helper')
     expect(resolveLaunchableCuHelperBinary(false)).toBeNull()
@@ -162,7 +162,7 @@ describe('isCuHelperAvailable', () => {
 
 describe('callCuHelper', () => {
   function primeBinary(path = '/x/cu-helper') {
-    process.env.CC_HAHA_CU_HELPER_PATH = path
+    process.env.ECHOFLOW_CU_HELPER_PATH = path
     __resetCuHelperCache()
     resolveCuHelperBinary(p => p === path)
   }
@@ -194,9 +194,9 @@ describe('callCuHelper', () => {
 
   test('never falls back to a packaged nested source when standalone installation fails', async () => {
     process.env.CLAUDE_APP_ROOT =
-      '/Applications/Claude Code Haha.app/Contents/Resources/app.asar'
+      '/Applications/EchoFlow Code.app/Contents/Resources/app.asar'
     const nestedBinary =
-      '/Applications/Claude Code Haha.app/Contents/Resources/app.asar.unpacked/src-tauri/binaries/cc-haha-computer-use.app/Contents/MacOS/cc-haha-computer-use'
+      '/Applications/EchoFlow Code.app/Contents/Resources/app.asar.unpacked/src-tauri/binaries/echoflow-code-computer-use.app/Contents/MacOS/echoflow-code-computer-use'
     __resetCuHelperCache()
     resolveCuHelperBinary(candidate => candidate === nestedBinary)
     let spawnCount = 0

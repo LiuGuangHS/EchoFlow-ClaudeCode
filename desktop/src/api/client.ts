@@ -140,7 +140,6 @@ export type ApiRequestOptions = {
 }
 
 async function request<T>(method: string, path: string, body?: unknown, options?: ApiRequestOptions): Promise<T> {
-  const headers = buildHeaders()
   const timing: RequestTiming = {
     startedAt: monotonicNow(),
     attempts: 0,
@@ -168,7 +167,7 @@ async function request<T>(method: string, path: string, body?: unknown, options?
       try {
         return await fetch(`${baseUrl}${path}`, {
           method,
-          headers,
+          headers: buildHeaders(),
           body: body !== undefined ? JSON.stringify(body) : undefined,
           signal: controller.signal,
         })
@@ -358,8 +357,12 @@ async function recoverDesktopServerUrl(): Promise<boolean> {
   if (!host.isDesktop) return false
 
   if (!desktopServerRecovery) {
-    const recovery = host.runtime.getServerUrl().then((serverUrl) => {
+    const recovery = Promise.all([
+      host.runtime.getServerUrl(),
+      host.runtime.getLocalAccessToken().catch(() => null),
+    ]).then(([serverUrl, localAccessToken]) => {
       setBaseUrl(serverUrl)
+      setAuthToken(localAccessToken)
       return serverUrl
     })
     const trackedRecovery = recovery.finally(() => {
@@ -512,5 +515,5 @@ export const api = {
   post: <T>(path: string, body?: unknown, options?: ApiRequestOptions) => request<T>('POST', path, body, options),
   put: <T>(path: string, body?: unknown) => request<T>('PUT', path, body),
   patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, body),
-  delete: <T>(path: string) => request<T>('DELETE', path),
+  delete: <T>(path: string, body?: unknown) => request<T>('DELETE', path, body),
 }

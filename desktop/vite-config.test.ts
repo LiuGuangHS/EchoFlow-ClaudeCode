@@ -18,7 +18,7 @@ describe('desktop build compatibility', () => {
 
     const names = (config.plugins ?? []).flat(Infinity).map((plugin) => (plugin as { name?: string } | null)?.name)
 
-    expect(names).toContain('cc-haha:pdfjs-assets')
+    expect(names).toContain('echoflow-code:pdfjs-assets')
   })
 
   it('does not rely on CSS color-mix for startup-critical shell chrome', () => {

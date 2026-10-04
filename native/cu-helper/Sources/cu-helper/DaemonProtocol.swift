@@ -7,7 +7,7 @@ import Foundation
 /// also carries an absolute deadline plus session/turn identity so a command
 /// queued behind a slow capture cannot execute after its caller has moved on.
 enum ComputerUseDaemonProtocol {
-    static let version = "CCHahaComputerUseIPC-2"
+    static let version = "EchoFlowComputerUseIPC-2"
     static let maxFrameBytes = 8 * 1024 * 1024
     private static let connectionScopedCommands: Set<String> = [
         "ping", "check_permissions", "list_installed_apps", "shutdown",

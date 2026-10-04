@@ -6,8 +6,8 @@ const preferences = {
   schemaVersion: 3,
   projectDisplayNames: {},
   profile: {
-    displayName: 'cc-haha',
-    subtitle: 'github.com/NanmiCoder/cc-haha',
+    displayName: 'EchoFlow Code',
+    subtitle: 'EchoFlow Code',
     avatarFile: null,
     avatarUpdatedAt: null,
   },

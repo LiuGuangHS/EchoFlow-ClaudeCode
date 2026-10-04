@@ -151,7 +151,7 @@ ws://<server>/ws/<sessionId>
 
 ## CLI 与 Provider 代理
 
-Server 按会话启动 CLI，并通过内部协议转发输出、权限请求、工具结果和后台任务状态。会话的 Provider、模型、effort 和权限模式由 Server/CLI 共同维护，Renderer 不是唯一真相来源。
+Server 按会话启动 CLI，并通过内部协议转发输出、权限请求、工具结果和后台任务状态。会话的 Provider、模型、effort 和权限模式由 Server/CLI 共同维护，Renderer 不是唯一真相来源。Provider 配置是共享设置；当前会话可以覆盖 Provider、模型和 effort，但这不等于选择 CLI 执行运行时。
 
 `src/server/proxy/` 处理支持的 Provider 协议：
 

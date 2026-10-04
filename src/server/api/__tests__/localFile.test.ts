@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it, spyOn } from 'bun:test'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, spyOn } from 'bun:test'
 import {
   mkdirSync,
   mkdtempSync,
@@ -12,11 +12,13 @@ import { homedir, tmpdir } from 'node:os'
 import * as path from 'node:path'
 import { handleLocalFile, reconstructAbsolutePath } from '../localFile'
 import { isAllowedFilesystemPath } from '../filesystem'
+import { clearFilesystemAccessRootsForTests } from '../../services/filesystemAccessRoots'
 
 // Deterministic 256-byte payload (bytes 0..255) so range slices are checkable.
 const VIDEO_BYTES = Uint8Array.from({ length: 256 }, (_, i) => i)
 
-// Keep both home-relative files and any configuration reads in disposable state.
+// Keep home-relative files and configuration reads in disposable state while
+// keeping the fixture under tmpdir() for the filesystem allow-list.
 const SANDBOX_ROOTS = mkdtempSync(path.join(tmpdir(), 'lf-test-'))
 const homeSpy = spyOn(os, 'homedir')
 const originalHome = process.env.HOME
@@ -39,6 +41,10 @@ afterAll(() => {
   if (originalConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR
   else process.env.CLAUDE_CONFIG_DIR = originalConfigDir
   rmSync(SANDBOX_ROOTS, { recursive: true, force: true })
+})
+
+beforeEach(() => {
+  clearFilesystemAccessRootsForTests()
 })
 
 function setupFiles() {

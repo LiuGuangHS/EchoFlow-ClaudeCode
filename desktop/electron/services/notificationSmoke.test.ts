@@ -50,10 +50,10 @@ describe('Electron notification smoke hook', () => {
 
     expect(scheduleNotificationSmoke({
       env: {
-        CC_HAHA_ELECTRON_NOTIFICATION_SMOKE_SESSION_ID: 'session-smoke',
-        CC_HAHA_ELECTRON_NOTIFICATION_SMOKE_TITLE: 'Target smoke',
-        CC_HAHA_ELECTRON_NOTIFICATION_SMOKE_BODY: 'Click target smoke',
-        CC_HAHA_ELECTRON_NOTIFICATION_SMOKE_DELAY_MS: '10',
+        ECHOFLOW_ELECTRON_NOTIFICATION_SMOKE_SESSION_ID: 'session-smoke',
+        ECHOFLOW_ELECTRON_NOTIFICATION_SMOKE_TITLE: 'Target smoke',
+        ECHOFLOW_ELECTRON_NOTIFICATION_SMOKE_BODY: 'Click target smoke',
+        ECHOFLOW_ELECTRON_NOTIFICATION_SMOKE_DELAY_MS: '10',
       },
       NotificationClass,
       onAction,
@@ -112,9 +112,9 @@ describe('Electron notification smoke hook', () => {
 
     expect(scheduleNotificationSmoke({
       env: {
-        CC_HAHA_ELECTRON_NOTIFICATION_SMOKE_SESSION_ID: 'session-smoke',
-        CC_HAHA_ELECTRON_NOTIFICATION_SMOKE_TITLE: 'Target smoke',
-        CC_HAHA_ELECTRON_NOTIFICATION_SMOKE_TRIGGER_ACTION: '1',
+        ECHOFLOW_ELECTRON_NOTIFICATION_SMOKE_SESSION_ID: 'session-smoke',
+        ECHOFLOW_ELECTRON_NOTIFICATION_SMOKE_TITLE: 'Target smoke',
+        ECHOFLOW_ELECTRON_NOTIFICATION_SMOKE_TRIGGER_ACTION: '1',
       },
       NotificationClass,
       onAction,
@@ -152,7 +152,7 @@ describe('Electron notification smoke hook', () => {
   })
 
   it('writes JSONL smoke events when a log path is configured', () => {
-    const tmp = mkdtempSync(path.join(tmpdir(), 'cc-haha-notification-smoke-'))
+    const tmp = mkdtempSync(path.join(tmpdir(), 'echoflow-code-notification-smoke-'))
     const logPath = path.join(tmp, 'nested', 'notification.jsonl')
 
     appendNotificationSmokeLog(logPath, {
@@ -168,12 +168,12 @@ describe('Electron notification smoke hook', () => {
   })
 
   it('writes renderer acknowledgements to the notification smoke log only when configured', () => {
-    const tmp = mkdtempSync(path.join(tmpdir(), 'cc-haha-notification-smoke-'))
+    const tmp = mkdtempSync(path.join(tmpdir(), 'echoflow-code-notification-smoke-'))
     const logPath = path.join(tmp, 'nested', 'notification.jsonl')
 
     expect(logNotificationSmokeRendererAck({}, { target: { type: 'session', sessionId: 'session-smoke' } })).toBe(false)
     expect(logNotificationSmokeRendererAck({
-      CC_HAHA_ELECTRON_NOTIFICATION_SMOKE_LOG: logPath,
+      ECHOFLOW_ELECTRON_NOTIFICATION_SMOKE_LOG: logPath,
     } as NodeJS.ProcessEnv, { target: { type: 'session', sessionId: 'session-smoke' } })).toBe(true)
 
     const [entry] = readFileSync(logPath, 'utf-8').trim().split('\n').map(line => JSON.parse(line) as Record<string, unknown>)

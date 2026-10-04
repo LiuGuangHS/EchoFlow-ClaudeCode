@@ -94,7 +94,7 @@ Once all gates pass, AutoDream launches a **forked subagent** that operates acco
 
 ### Phase 1 -- Orient
 
-```
+```text
 - ls the memory directory, see existing files
 - Read MEMORY.md index, understand the current knowledge structure
 - Browse existing topic files to avoid creating duplicates
@@ -109,7 +109,7 @@ Collects information in order of priority (highest first):
 2. **Drifted memories** -- Old facts that contradict the current codebase state
 3. **Session transcript search** -- Narrow-scope `grep` searches in JSONL transcript files
 
-```
+```text
 Don't exhaustively read transcript files. Only look for content you already suspect is important.
 ```
 
@@ -135,7 +135,7 @@ The AutoDream subagent operates under strict tool permission constraints:
 
 ### Bash: Read-Only Only
 
-```
+```text
 Allowed: ls, find, grep, cat, stat, wc, head, tail
 Denied: All write, redirect, or state-modifying commands
 ```
@@ -144,7 +144,7 @@ Denied: All write, redirect, or state-modifying commands
 
 `createAutoMemCanUseTool()` is the permission function shared by both `extractMemories` and `autoDream`:
 
-```
+```text
 Allowed: Read / Grep / Glob -- unrestricted
 Allowed: Edit / Write -- only within the auto-memory directory
 Denied: MCP / Agent / non-read-only Bash / other write operations
@@ -261,7 +261,7 @@ In addition to automatic triggering, users can manually trigger memory consolida
 
 ### Collaboration Flow
 
-```
+```text
 After each conversation turn
     |
 extractMemories -> Extract new memory fragments -> Write *.md + MEMORY.md

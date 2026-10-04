@@ -40,7 +40,7 @@ Auxiliary modules:
 
 ### Core Function: `getAutoMemPath()`
 
-```
+```typescript
 Path resolution priority (highest to lowest):
 
 1. CLAUDE_COWORK_MEMORY_PATH_OVERRIDE  <- Cowork environment variable (full path)
@@ -80,7 +80,7 @@ export const getAutoMemPath = memoize(
 
 The `isAutoMemoryEnabled()` check chain:
 
-```
+```text
 CLAUDE_CODE_DISABLE_AUTO_MEMORY=1  -> Disabled
 CLAUDE_CODE_SIMPLE (--bare)        -> Disabled
 Remote mode without REMOTE_MEMORY_DIR -> Disabled
@@ -96,7 +96,7 @@ Default                            -> Enabled
 
 This is the interface between the memory system and the system prompt. It is called once at startup (cached via `systemPromptSection`).
 
-```
+```text
 loadMemoryPrompt()
   |-- KAIROS mode?    -> buildAssistantDailyLogPrompt()  [log append mode]
   |-- TEAMMEM enabled? -> buildCombinedMemoryPrompt()    [personal + team dual directory]
@@ -106,7 +106,7 @@ loadMemoryPrompt()
 
 ### Prompt Structure Built by `buildMemoryLines()`
 
-```
+```bash
 # auto memory
 
 You have a persistent file-based memory system located at `{memoryDir}`...
@@ -157,7 +157,7 @@ Triggered in `handleStopHooks` when the model produces a final response (no tool
 
 ### Complete Extraction Flow
 
-```
+```text
 1. Model finishes response (no tool_use)
    |
 2. executeExtractMemories() is called
@@ -203,7 +203,7 @@ Auto-extraction uses `runForkedAgent` -- a perfect fork of the main session:
 
 ### Tool Permissions (`createAutoMemCanUseTool`)
 
-```
+```text
 Allowed: Read, Grep, Glob (unrestricted)
 Allowed: Bash (read-only commands only: ls, find, grep, cat, stat...)
 Allowed: Edit/Write (only within auto-memory directory)
@@ -239,7 +239,7 @@ If a previous extraction is still running:
 
 Each time the user sends a query, `findRelevantMemories()` is triggered:
 
-```
+```typescript
 1. scanMemoryFiles(memoryDir)
    - Recursively reads all .md files (excludes MEMORY.md)
    - Parses frontmatter (first 30 lines)
@@ -262,7 +262,7 @@ Each time the user sends a query, `findRelevantMemories()` is triggered:
 
 ### Sonnet Selector Prompt
 
-```
+```text
 You are selecting memories useful for Claude Code to handle the user's query.
 You'll receive the user's query and a list of available memory files (with filenames and descriptions).
 
@@ -315,7 +315,7 @@ async function scanMemoryFiles(memoryDir, signal): Promise<MemoryHeader[]> {
 
 Generates a manifest consumed by Sonnet or the extraction agent:
 
-```
+```text
 - [feedback] testing_policy.md (2026-03-15T10:30:00.000Z): Integration tests use real DB
 - [user] role.md (2026-03-14T08:00:00.000Z): Data scientist, focused on logging
 - [project] freeze.md (2026-03-10T15:00:00.000Z): Merge freeze starting 3/5
@@ -344,7 +344,7 @@ When the `TEAMMEM` feature flag is enabled:
 
 ### Directory Structure
 
-```
+```text
 ~/.claude/projects/{hash}/memory/
 ├── MEMORY.md           <- Personal memory index
 ├── user_*.md           <- Personal memories
@@ -355,7 +355,7 @@ When the `TEAMMEM` feature flag is enabled:
 
 ### Sync API
 
-```
+```text
 GET  /api/claude_code/team_memory?repo={owner/repo}  <- Pull
 PUT  /api/claude_code/team_memory?repo={owner/repo}  <- Push
 ```
@@ -402,7 +402,7 @@ Max 5 relevant memories returned
 
 ## Data Flow Overview
 
-```
+```text
 ┌─────────────────────────────────────────────────────┐
 │                  Session Startup                     │
 │                                                      │

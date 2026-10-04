@@ -13,8 +13,8 @@ The fastest of the five to set up: ask `@BotFather` for a token, paste it into D
 
 In Telegram, open the official `@BotFather` account and send `/newbot`. Then:
 
-1. Choose a display name, for example `cc-haha Bot`.
-2. Choose a username in Latin letters ending in `_bot`, for example `jiang_cc_hah_bot`.
+1. Choose a display name, for example `EchoFlowCode Bot`.
+2. Choose a username in Latin letters ending in `_bot`, for example `echoflow_code_bot`.
 3. Copy the **Bot Token** that BotFather returns.
 
 That token is the bot's password. Do not paste it anywhere public.

@@ -1,0 +1,9 @@
+{
+  "name": "EchoFlow Code",
+  "version": "0.5.4",
+  "scheme": "codemobile",
+  "android": {
+    "package": "com.echoflow.code.mobile",
+    "usesCleartextTraffic": true
+  }
+}

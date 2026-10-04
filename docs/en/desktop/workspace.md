@@ -13,6 +13,17 @@ The conversation tells you what Claude said. The workspace tells you what it act
 
 Click **Show Workspace** on the right of the tab bar. Click it again to collapse. Drag the panel's left edge to resize.
 
+The workspace is a set of **unified tabs** — files, browser pages, code review and terminals can all be open at once, with no Files/Browser mode to switch between.
+
+The part that matters: **hiding the panel or switching tasks does not interrupt anything running inside it.** Pages and terminals keep going, and they're exactly as you left them when you come back.
+
+## Working with tabs
+
+- **Drag to reorder** — put frequently used tabs where you want them.
+- **Close in bulk** — drop several at once.
+- **Reopen a closed tab** — no need to hunt for it again.
+- **Tabs survive a restart** — terminals come back exited, ready to restart.
+
 The empty panel offers **Side chat**, **Review**, **Terminal**, **Browser**, and **Files**. Each opens in its own tab. Use the `+` at the top to add more tabs and switch between tools.
 
 ## Review: choose a comparison
@@ -33,7 +44,9 @@ If the folder is not a Git repository, the **Review** entry explains why it is u
 
 **Files** is a separate tab for browsing the project directory and previewing individual files. Use its search box to filter file names, or choose **Open file in tab** from a review. Open tabs work like editor tabs: switch between them as needed.
 
-Any file can have its path copied, or be pushed back into the composer as context with **Add to chat**.
+The file tree is **single-click to preview, double-click to pin**. The same file never gets two tabs — clicking it again switches to the existing one.
+
+Any file can have its path copied, or be pushed back into the composer as context with **Add to chat**. Output cards are **clickable across the whole row**, and CJK filenames no longer fail silently.
 
 ### Previewing PDFs, Word, Excel, and images
 
@@ -52,7 +65,9 @@ When Claude rewrites a file you are previewing, the preview refreshes in place. 
 
 ![A read-only review of the HEAD commit with syntax-highlighted diff lines (Chinese interface)](../../images/app/en/workspace-diff.webp)
 
-The diff keeps old and new lines with syntax highlighting. The toolbar lets you switch between **Unified diff** and **Split diff** and enable word wrap. When you finish a file, use **Mark as viewed**. To leave feedback, use line-level comments:
+Review is an **explicit two-sided comparison**: old and new lines side by side with syntax highlighting, so you never have to guess which is which. The toolbar lets you switch between **Unified diff** and **Split diff** and enable word wrap. Files can be staged individually, and so can single hunks. When you finish a file, use **Mark as viewed**.
+
+The genuinely useful part is line-level comments:
 
 1. Click a line — a comment box opens beside it.
 2. To comment on a range, hold `Shift` and click the first and last line. The selection must stay on one side of the diff and inside one hunk.
@@ -63,9 +78,17 @@ This is far more precise than describing "the null check in that one function" i
 
 If Claude changes the file while you're writing a comment, the panel tells you the diff has updated and asks you to reselect — that's there to stop a comment from landing on the wrong lines.
 
+**Discarding a change saves a copy first**, so a misclick is still recoverable.
+
 :::tip
 Denied tool calls never reach disk, so they do not create file changes to review. Even so, give `git diff` one last read before you ship.
 :::
+
+## Terminal
+
+The embedded terminal is a workspace tab, and it moves **between the side and bottom panels** without interrupting whatever is running inside.
+
+**Colors follow the active theme** — light themes no longer get a black terminal. After a restart it comes back exited, and one click starts it again.
 
 ## Isolated worktree: keeping experiments caged
 
@@ -83,10 +106,14 @@ The temporary worktree is cleaned up when you're done. History stays readable, b
 
 ![The built-in browser previewing a page that was just edited (Chinese interface)](../../images/app/en/workspace-preview.webp)
 
-Open a **Browser** tab from the empty workspace panel or the `+` menu at the top, then type a local dev address or any URL. It stays in its own tab alongside **Files** and **Review**. Three buttons here exist specifically so Claude can see what you see:
+Open a browser tab in the workspace and type a local dev address or any URL. The address bar **offers history suggestions**, so a few characters bring up places you've been. The window menu is a **native popup**, so the page stays visible instead of being covered by the menu itself.
+
+Links that open a new window become **background tabs inside the current task**, rather than grabbing focus.
+
+Three buttons here exist specifically so Claude can see what you see:
 
 - **Capture** — send the current rendering back into the conversation.
-- **Pick element** — click an element on the page; its selector, position, and a screenshot go to Claude as context. This saves an enormous amount of back-and-forth on styling.
+- **Pick element** — click an element on the page; its selector, position, and a screenshot go to Claude as context. This saves an enormous amount of back-and-forth on styling. Selecting several elements at once is supported.
 - **Zoom** — change the preview scale to check responsive layouts.
 
 Logins and cookies in this browser are real, same as any browser. Before you demo or screenshot anything publicly, switch to a page that doesn't require signing in.

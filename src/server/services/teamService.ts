@@ -11,7 +11,6 @@ import { readLegacyTranscriptFiles } from './legacyTranscriptBudget.js'
 
 import * as fs from 'fs/promises'
 import * as path from 'path'
-import * as os from 'os'
 import * as crypto from 'node:crypto'
 import { ApiError } from '../middleware/errorHandler.js'
 import { readTeamTranscriptProjection } from './teamTranscriptProjection.js'
@@ -25,6 +24,9 @@ import { localIndexCoordinator } from './localIndex/coordinator.js'
 import { readSessionEntriesByLocator } from './localIndex/sessionEntries.js'
 import { deserializeSourceFingerprint } from './localIndex/sourceFingerprint.js'
 import type { LocalIndexGateway } from './localIndex/sessionIndex.js'
+import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
+import { getEchoFlowConfigDir, getEchoFlowInternalDir } from '../../utils/echoFlowConfigRoot.js'
+import type { TaskInfo } from './taskService.js'
 import {
   getCanonicalTeamTaskListId,
   readTaskListLifecycleState,
@@ -205,7 +207,11 @@ const MESSAGE_ENTRY_TYPES = new Set([
   'tool_use',
   'tool_result',
 ])
-const PERSISTED_TASK_NOTIFICATION_ENTRY_TYPE = 'cc-haha-task-notification'
+const PERSISTED_TASK_NOTIFICATION_ENTRY_TYPES = new Set([
+  'echoflow-code-task-notification',
+  'echoflow-code-task-notification',
+])
+const PERSISTED_TASK_NOTIFICATION_ENTRY_TYPE = 'echoflow-code-task-notification'
 const TASK_NOTIFICATION_BLOCK_RE = /<task-notification>\s*[\s\S]*?<\/task-notification>/i
 
 const TEAM_WORKBENCH_ARCHIVE_SCHEMA_VERSION = 1
@@ -543,7 +549,7 @@ function taskNotificationFromEntry(
   ownerAgentId?: string,
 ): SessionTaskNotification | null {
   const timestamp = stringValue(entry.timestamp)
-  if (entry.type === PERSISTED_TASK_NOTIFICATION_ENTRY_TYPE) {
+  if (PERSISTED_TASK_NOTIFICATION_ENTRY_TYPES.has(entry.type)) {
     const notification = objectValue(entry.taskNotification)
     if (!notification) return null
     const toolUseId = stringValue(notification.toolUseId)
@@ -1462,7 +1468,7 @@ export class TeamService {
   }
 
   private getConfigDir(): string {
-    return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
+    return getClaudeConfigHomeDir()
   }
 
   private getTeamsDir(): string {
@@ -1474,7 +1480,7 @@ export class TeamService {
   }
 
   private getWorkbenchArchiveDir(): string {
-    return path.join(this.getConfigDir(), 'cc-haha', 'agent-teams')
+    return path.join(getEchoFlowInternalDir(getEchoFlowConfigDir()), 'agent-teams')
   }
 
   private getWorkbenchArchivePath(sessionId: string): string {
@@ -1625,7 +1631,7 @@ export class TeamService {
       memberName = await this.resolveMemberName(config, teamName, agentId)
       const configMember = config.members.find((candidate) => candidate.agentId === agentId)
       memberSessionId = configMember?.sessionId
-      leadSessionId = config.leadSessionId ?? leadSessionId
+      leadSessionId = config.leadSessionId
       transcriptStartedAt = config.createdAt
     } catch (error) {
       configError = error
@@ -1725,9 +1731,9 @@ export class TeamService {
     }
 
     // Out-of-process teammates own root session JSONL files rather than lead
-    // subagent fragments. Team and agent identity are persisted on those
-    // entries, so archived workbenches can still open the real execution log.
-    if (!transcriptPath) {
+    // subagent fragments. The incarnation time bounds this legacy identity
+    // lookup so a reused team/member name cannot select another run.
+    if (!transcriptPath && Number.isFinite(transcriptStartedAt)) {
       const teammatePaths = await this.findTeammateSessionTranscripts(
         teamName,
         memberName,
@@ -1743,7 +1749,6 @@ export class TeamService {
         )
       }
     }
-
     if (!transcriptPath) {
       return {
         messages: [],
@@ -2364,7 +2369,7 @@ export class TeamService {
   // ── Internal helpers ────────────────────────────────────────────────────
 
   private async loadTeamConfig(name: string): Promise<TeamFileRaw> {
-    const configPath = path.join(this.getTeamsDir(), name, 'config.json')
+    const configPath = path.join(this.getTeamsDir(), this.requireSafeTeamName(name), 'config.json')
 
     try {
       const raw = await fs.readFile(configPath, 'utf-8')
@@ -2374,13 +2379,20 @@ export class TeamService {
     }
   }
 
+  private requireSafeTeamName(name: string): string {
+    if (!name || name === '.' || name === '..' || name.includes('/') || name.includes('\\')) {
+      throw ApiError.badRequest('Invalid team name')
+    }
+    return name
+  }
+
   /**
    * Discover member names from the inboxes/ directory.
    * Each file `{name}.json` in inboxes/ represents a team member.
    * Excludes the team-lead inbox since the leader is already in config.
    */
   private async discoverInboxMembers(teamName: string): Promise<string[]> {
-    const inboxDir = path.join(this.getTeamsDir(), teamName, 'inboxes')
+    const inboxDir = path.join(this.getTeamsDir(), this.requireSafeTeamName(teamName), 'inboxes')
 
     try {
       const files = await fs.readdir(inboxDir)
@@ -2396,7 +2408,7 @@ export class TeamService {
   private async readWorkbenchMessages(
     teamName: string,
   ): Promise<TeamWorkbenchMessage[]> {
-    const inboxDir = path.join(this.getTeamsDir(), teamName, 'inboxes')
+    const inboxDir = path.join(this.getTeamsDir(), this.requireSafeTeamName(teamName), 'inboxes')
     let files: string[]
     try {
       files = (await fs.readdir(inboxDir)).filter((file) => file.endsWith('.json'))
@@ -3086,7 +3098,7 @@ export class TeamService {
       const selected = page.entries.filter(locator =>
         locator.ordinal > afterOrdinal && (
           MESSAGE_ENTRY_TYPES.has(locator.entryType) ||
-          locator.entryType === PERSISTED_TASK_NOTIFICATION_ENTRY_TYPE
+          PERSISTED_TASK_NOTIFICATION_ENTRY_TYPES.has(locator.entryType)
         ),
       )
       const result = await this.targetedEntryReader({

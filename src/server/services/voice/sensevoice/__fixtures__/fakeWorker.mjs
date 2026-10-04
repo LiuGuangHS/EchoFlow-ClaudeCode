@@ -5,10 +5,10 @@ import { createServer } from 'node:http'
 import { appendFileSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
-const config = JSON.parse(process.env.CC_HAHA_VOICE_WORKER_CONFIG)
-const token = process.env.CC_HAHA_VOICE_WORKER_TOKEN
-delete process.env.CC_HAHA_VOICE_WORKER_CONFIG
-delete process.env.CC_HAHA_VOICE_WORKER_TOKEN
+const config = JSON.parse(process.env.ECHOFLOW_VOICE_WORKER_CONFIG)
+const token = process.env.ECHOFLOW_VOICE_WORKER_TOKEN
+delete process.env.ECHOFLOW_VOICE_WORKER_CONFIG
+delete process.env.ECHOFLOW_VOICE_WORKER_TOKEN
 const dir = dirname(config.model)
 const log = (name, line) => appendFileSync(join(dir, name), `${line}\n`)
 

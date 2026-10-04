@@ -396,6 +396,160 @@ describe('chatStore tool settlement', () => {
 // the agent card instead of rendering them inline. Merging streamed blocks
 // against the raw array tail therefore chopped one continuous thinking block
 // (or reply) into several, with nothing visible in between.
+describe('chatStore runtime switching', () => {
+  beforeEach(() => {
+    sendMock.mockReset()
+    useSessionRuntimeStore.setState({
+      selections: {},
+      runtimeRequestStatusBySessionId: {},
+    })
+    useChatStore.setState({
+      ...initialState,
+      sessions: {
+        [TEST_SESSION_ID]: makeSession({ chatState: 'idle' }),
+      },
+    })
+  })
+
+  it('marks a runtime request pending when it sends set_runtime_config', () => {
+    const selection = {
+      providerId: 'provider-b',
+      modelId: 'model-b',
+      effortLevel: 'high' as const,
+    }
+
+    useChatStore.getState().setSessionRuntime(TEST_SESSION_ID, selection)
+
+    expect(sendMock).toHaveBeenCalledWith(TEST_SESSION_ID, {
+      type: 'set_runtime_config',
+      ...selection,
+    })
+    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
+      [TEST_SESSION_ID]: 'pending',
+    })
+  })
+
+  it('marks only a pending runtime request failed after a runtime configuration rejection', () => {
+    const store = useChatStore.getState()
+    store.setSessionRuntime(TEST_SESSION_ID, {
+      providerId: 'provider-b',
+      modelId: 'model-b',
+    })
+    store.handleServerMessage(TEST_SESSION_ID, {
+      type: 'error',
+      code: 'RUNTIME_CONFIG_INVALID',
+      message: 'runtime configuration is invalid',
+    })
+
+    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
+      [TEST_SESSION_ID]: 'failed',
+    })
+
+    useSessionRuntimeStore.setState({
+      runtimeRequestStatusBySessionId: {},
+    })
+    store.handleServerMessage(TEST_SESSION_ID, {
+      type: 'error',
+      code: 'RUNTIME_CONFIG_INVALID',
+      message: 'unrelated runtime configuration rejection',
+    })
+
+    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({})
+  })
+
+  it('does not attribute a generic CLI restart failure to a runtime request', () => {
+    const store = useChatStore.getState()
+    store.setSessionRuntime(TEST_SESSION_ID, {
+      providerId: 'provider-b',
+      modelId: 'model-b',
+    })
+
+    store.handleServerMessage(TEST_SESSION_ID, {
+      type: 'error',
+      code: 'CLI_RESTART_FAILED',
+      message: 'restart failed',
+    })
+
+    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
+      [TEST_SESSION_ID]: 'pending',
+    })
+  })
+
+  it('marks an idle runtime request unconfirmed instead of applied', () => {
+    const store = useChatStore.getState()
+    store.setSessionRuntime(TEST_SESSION_ID, {
+      providerId: 'provider-b',
+      modelId: 'model-b',
+    })
+
+    store.handleServerMessage(TEST_SESSION_ID, { type: 'status', state: 'idle' })
+
+    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
+      [TEST_SESSION_ID]: 'unconfirmed',
+    })
+  })
+
+  it('marks an unconfirmed runtime request failed after a delayed runtime configuration rejection', () => {
+    const store = useChatStore.getState()
+    store.setSessionRuntime(TEST_SESSION_ID, {
+      providerId: 'provider-b',
+      modelId: 'model-b',
+    })
+    store.handleServerMessage(TEST_SESSION_ID, { type: 'status', state: 'idle' })
+
+    store.handleServerMessage(TEST_SESSION_ID, {
+      type: 'error',
+      code: 'RUNTIME_CONFIG_INVALID',
+      message: 'runtime configuration is invalid',
+    })
+
+    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
+      [TEST_SESSION_ID]: 'failed',
+    })
+  })
+
+  it('keeps a rejected runtime request failed after trailing idle status', () => {
+    const store = useChatStore.getState()
+    store.setSessionRuntime(TEST_SESSION_ID, {
+      providerId: 'provider-b',
+      modelId: 'model-b',
+    })
+    store.handleServerMessage(TEST_SESSION_ID, {
+      type: 'error',
+      code: 'RUNTIME_CONFIG_INVALID',
+      message: 'runtime configuration is invalid',
+    })
+
+    store.handleServerMessage(TEST_SESSION_ID, { type: 'status', state: 'idle' })
+
+    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
+      [TEST_SESSION_ID]: 'failed',
+    })
+  })
+
+  it('allows a programmatic runtime request to become pending after a rejection or unconfirmed result', () => {
+    const store = useChatStore.getState()
+    const selection = { providerId: 'provider-b', modelId: 'model-b' }
+
+    store.setSessionRuntime(TEST_SESSION_ID, selection)
+    store.handleServerMessage(TEST_SESSION_ID, {
+      type: 'error',
+      code: 'RUNTIME_CONFIG_INVALID',
+      message: 'runtime configuration is invalid',
+    })
+    store.setSessionRuntime(TEST_SESSION_ID, selection)
+    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
+      [TEST_SESSION_ID]: 'pending',
+    })
+
+    store.handleServerMessage(TEST_SESSION_ID, { type: 'status', state: 'idle' })
+    store.setSessionRuntime(TEST_SESSION_ID, selection)
+    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({
+      [TEST_SESSION_ID]: 'pending',
+    })
+  })
+})
+
 describe('chatStore background agent activity interleaving', () => {
   beforeEach(() => {
     useChatStore.setState({
@@ -5450,7 +5604,46 @@ describe('chatStore history mapping', () => {
     expect(refreshTasksMock).not.toHaveBeenCalled()
   })
 
+  it('does not sync parent-linked SubAgent task tools into the session task store', () => {
+    const childTodos = [{ content: 'SubAgent internal task', status: 'in_progress' }]
+    useChatStore.setState({
+      sessions: {
+        [TEST_SESSION_ID]: makeSession({ chatState: 'tool_executing' }),
+      },
+    })
+
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'tool_use_complete',
+      toolName: 'TodoWrite',
+      toolUseId: 'agent-tool-1/todo-child',
+      input: { todos: childTodos },
+      parentToolUseId: 'agent-tool-1',
+    })
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'tool_use_complete',
+      toolName: 'TaskCreate',
+      toolUseId: 'agent-tool-1/task-child',
+      input: { subject: 'Child task' },
+      parentToolUseId: 'agent-tool-1',
+    })
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'tool_result',
+      toolUseId: 'agent-tool-1/task-child',
+      content: 'Task #2 created successfully: Child task',
+      isError: false,
+      parentToolUseId: 'agent-tool-1',
+    })
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'message_complete',
+      usage: { input_tokens: 1, output_tokens: 1 },
+    })
+
+    expect(setTasksFromTodosMock).not.toHaveBeenCalledWith(childTodos, TEST_SESSION_ID)
+    expect(refreshTasksMock).not.toHaveBeenCalled()
+  })
+
   it('replays saved runtime selection and effort when reconnecting a session', () => {
+    useSessionRuntimeStore.setState({ runtimeRequestStatusBySessionId: {} })
     sessionStoreSnapshot.sessions = [{
       id: TEST_SESSION_ID,
       title: 'New Session',
@@ -5487,6 +5680,7 @@ describe('chatStore history mapping', () => {
       ],
       [TEST_SESSION_ID, { type: 'prewarm_session' }],
     ])
+    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId).toEqual({})
   })
 
   it.each(['reconnect', 'send'] as const)('recovers a removed provider before %s without replaying its stale model or effort', (action) => {
@@ -9371,6 +9565,30 @@ describe('chatStore history mapping', () => {
     })
   })
 
+  it('ignores a stale model_config_applied event after a newer request', () => {
+    const runtime = useSessionRuntimeStore.getState()
+    runtime.setSelection(TEST_SESSION_ID, { providerId: 'provider-a', modelId: 'model-a' })
+    runtime.markRequestPending(TEST_SESSION_ID, 'request-a')
+    runtime.setSelection(TEST_SESSION_ID, { providerId: 'provider-b', modelId: 'model-b' })
+    runtime.markRequestPending(TEST_SESSION_ID, 'request-b')
+
+    useChatStore.getState().handleServerMessage(TEST_SESSION_ID, {
+      type: 'model_config_applied',
+      requestId: 'request-a',
+      configId: 'config-a',
+      application: 'runtime_restart',
+      runtimeInstanceId: 'runtime-test',
+      providerId: 'provider-a',
+      modelId: 'model-a',
+    })
+
+    expect(useSessionRuntimeStore.getState().selections[TEST_SESSION_ID]).toEqual({
+      providerId: 'provider-b',
+      modelId: 'model-b',
+    })
+    expect(useSessionRuntimeStore.getState().runtimeRequestStatusBySessionId[TEST_SESSION_ID]).toBe('pending')
+  })
+
   it('bumps context refresh only for the runtime config currently selected', () => {
     useSessionRuntimeStore.getState().setSelection(TEST_SESSION_ID, {
       providerId: 'provider-b',
@@ -9605,7 +9823,7 @@ describe('chatStore history mapping', () => {
       dedupeKey: 'permission:perm-ask-1',
       cooldownScope: 'permission-prompt',
       requestAttention: true,
-      title: 'Claude Code Haha 需要你的确认',
+      title: 'EchoFlow Code 需要你的确认',
       body: 'AskUserQuestion 请求执行，正在等待允许。',
       target: { type: 'session', sessionId: TEST_SESSION_ID },
     })
@@ -10187,9 +10405,7 @@ describe('chatStore history mapping', () => {
         .filter(row => row.groupProgress)
         .map(row => row.label),
     ).toEqual(['VERIFY'])
-    expect(model.sections.backgroundTasks.rows.map(row => [row.id, row.taskId])).toEqual([
-      ['workflow-tool-resumed', 'workflow-task-resumed'],
-    ])
+    expect(model.sections.backgroundTasks.rows).toEqual([])
     expect(session.backgroundAgentTasks?.['workflow-task-resumed']?.summary).toBeUndefined()
     expect(session.backgroundAgentTasks?.['workflow-task-resumed']?.result).toBeUndefined()
     expect(session.agentTaskNotifications).toEqual({})
@@ -14275,7 +14491,7 @@ describe('chatStore history mapping', () => {
       dedupeKey: 'computer-use-permission:cu-1',
       cooldownScope: 'permission-prompt',
       requestAttention: true,
-      title: 'Claude Code Haha 需要你的确认',
+      title: 'EchoFlow Code 需要你的确认',
       body: 'Open Finder and inspect a file',
       target: { type: 'session', sessionId: TEST_SESSION_ID },
     })
@@ -15144,7 +15360,7 @@ describe('chatStore history mapping', () => {
 
     expect(notifyDesktopMock).toHaveBeenCalledWith(expect.objectContaining({
       cooldownScope: 'agent-completion',
-      title: 'Claude Code Haha 已完成回复',
+      title: 'EchoFlow Code 已完成回复',
       body: '结果 修复完成 bun test 已通过',
       target: { type: 'session', sessionId: TEST_SESSION_ID },
     }))

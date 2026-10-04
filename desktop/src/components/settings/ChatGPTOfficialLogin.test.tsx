@@ -20,8 +20,8 @@ vi.mock('@tauri-apps/plugin-shell', () => ({
   open: shellOpenMock,
 }))
 
-vi.mock('../../api/hahaOpenAIOAuth', () => ({
-  hahaOpenAIOAuthApi: {
+vi.mock('../../api/echoFlowOpenAIOAuth', () => ({
+  echoFlowOpenAIOAuthApi: {
     start: startMock,
     status: statusMock,
     logout: logoutMock,
@@ -33,11 +33,11 @@ vi.mock('@/lib/clipboard', () => ({
 }))
 
 import { ChatGPTOfficialLogin } from './ChatGPTOfficialLogin'
-import { useHahaOpenAIOAuthStore } from '../../stores/hahaOpenAIOAuthStore'
+import { useEchoFlowOpenAIOAuthStore } from '../../stores/echoFlowOpenAIOAuthStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { browserHost } from '../../lib/desktopHost/browserHost'
 
-const initialOAuthState = useHahaOpenAIOAuthStore.getState()
+const initialOAuthState = useEchoFlowOpenAIOAuthStore.getState()
 
 describe('ChatGPTOfficialLogin', () => {
   beforeEach(() => {
@@ -49,7 +49,7 @@ describe('ChatGPTOfficialLogin', () => {
     copyTextToClipboardMock.mockReset()
     Reflect.deleteProperty(window, 'desktopHost')
     useSettingsStore.setState({ locale: 'en' })
-    useHahaOpenAIOAuthStore.setState({
+    useEchoFlowOpenAIOAuthStore.setState({
       ...initialOAuthState,
       status: null,
       isPolling: false,
@@ -60,8 +60,8 @@ describe('ChatGPTOfficialLogin', () => {
 
   afterEach(() => {
     act(() => {
-      useHahaOpenAIOAuthStore.getState().stopPolling()
-      useHahaOpenAIOAuthStore.setState(initialOAuthState)
+      useEchoFlowOpenAIOAuthStore.getState().stopPolling()
+      useEchoFlowOpenAIOAuthStore.setState(initialOAuthState)
     })
     vi.useRealTimers()
     cleanup()
@@ -106,8 +106,8 @@ describe('ChatGPTOfficialLogin', () => {
     })
 
     expect(copyTextToClipboardMock).toHaveBeenCalledWith(authorizeUrl)
-    expect(useHahaOpenAIOAuthStore.getState().error).toBeNull()
-    expect(useHahaOpenAIOAuthStore.getState().isPolling).toBe(true)
+    expect(useEchoFlowOpenAIOAuthStore.getState().error).toBeNull()
+    expect(useEchoFlowOpenAIOAuthStore.getState().isPolling).toBe(true)
     expect(screen.queryByText(/Unable to open browser/)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Copy authorization link' })).not.toBeInTheDocument()
   })
@@ -145,7 +145,7 @@ describe('ChatGPTOfficialLogin', () => {
     })
 
     expect(copyTextToClipboardMock).toHaveBeenCalledWith(authorizeUrl)
-    expect(useHahaOpenAIOAuthStore.getState().isPolling).toBe(false)
+    expect(useEchoFlowOpenAIOAuthStore.getState().isPolling).toBe(false)
     expect(screen.getByText(/Unable to copy authorization link/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Copy authorization link' })).toBeInTheDocument()
   })

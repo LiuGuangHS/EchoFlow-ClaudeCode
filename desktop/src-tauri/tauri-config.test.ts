@@ -7,6 +7,14 @@ import { join } from 'node:path'
 const currentDir = dirname(fileURLToPath(import.meta.url))
 
 describe('tauri security config', () => {
+  it('uses the desktop package identifier', () => {
+    const config = JSON.parse(
+      readFileSync(join(currentDir, 'tauri.conf.json'), 'utf8'),
+    ) as { identifier?: string }
+
+    expect(config.identifier).toBe('com.echoflow.code.desktop')
+  })
+
   it('allows desktop sidecar image URLs for opener icons', () => {
     const config = JSON.parse(
       readFileSync(join(currentDir, 'tauri.conf.json'), 'utf8'),
@@ -29,5 +37,22 @@ describe('tauri security config', () => {
 
     expect(cargoToml).toContain('reqwest = { version = "0.13"')
     expect(cargoToml).toContain('features = ["system-proxy"]')
+  })
+
+  it('keeps the legacy Tauri updater on gh-proxy with direct GitHub fallback', () => {
+    const config = JSON.parse(
+      readFileSync(join(currentDir, 'tauri.conf.json'), 'utf8'),
+    ) as {
+      plugins?: {
+        updater?: {
+          endpoints?: string[]
+        }
+      }
+    }
+
+    expect(config.plugins?.updater?.endpoints).toEqual([
+      'https://gh-proxy.org/https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest/download/latest.json',
+      'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest/download/latest.json',
+    ])
   })
 })

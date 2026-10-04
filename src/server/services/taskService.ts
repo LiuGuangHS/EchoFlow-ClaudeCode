@@ -7,7 +7,7 @@
 
 import * as fs from 'fs/promises'
 import * as path from 'path'
-import * as os from 'os'
+import { getClaudeConfigHomeDir } from '../../utils/envUtils.js'
 
 export type TaskStatus = 'pending' | 'in_progress' | 'completed'
 
@@ -34,7 +34,7 @@ export type TaskListSummary = {
 
 export class TaskService {
   private getConfigDir(): string {
-    return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
+    return getClaudeConfigHomeDir()
   }
 
   private getTasksDir(): string {

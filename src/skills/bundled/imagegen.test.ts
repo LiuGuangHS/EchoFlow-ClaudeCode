@@ -13,7 +13,6 @@ import {
   getBundledSkills,
 } from '../bundledSkills.js'
 import { registerImagegenSkill } from './imagegen.js'
-import { PROVIDER_PRESETS } from '../../server/config/providerPresets.js'
 import { buildProviderManagedEnv } from '../../server/services/providerRuntimeEnv.js'
 import { ImageGenTool, ImageEditTool } from '../../tools/ImageGenTool/ImageGenTool.js'
 
@@ -38,12 +37,16 @@ afterEach(() => {
 })
 
 describe('bundled imagegen skill', () => {
-  test('enables the skill and native tools from the ApiSmart preset without exposing its key', async () => {
-    const preset = PROVIDER_PRESETS.find(p => p.id === 'apismart')!
+  test('enables the skill and native tools from a custom image provider without exposing its key', async () => {
     const env = buildProviderManagedEnv({
-      id: 'apismart-test', presetId: preset.id, name: preset.name,
-      baseUrl: preset.baseUrl, apiKey: 'fake-apismart-image-key', apiFormat: preset.apiFormat,
-      models: preset.defaultModels, imageGeneration: preset.defaultImageGeneration,
+      id: 'custom-image-test', presetId: 'custom', name: 'Custom image provider',
+      baseUrl: 'https://api.example.test', apiKey: 'fake-custom-image-key', apiFormat: 'anthropic',
+      models: { main: 'fixture', haiku: 'fixture', sonnet: 'fixture', opus: 'fixture' },
+      imageGeneration: {
+        model: 'fixture-image-model',
+        baseUrl: 'https://images.example.test/v1',
+        apiKey: 'fake-custom-image-key',
+      },
     })
     for (const key of ENV_KEYS) process.env[key] = env[key]
     registerImagegenSkill()
@@ -54,7 +57,7 @@ describe('bundled imagegen skill', () => {
     if (skill.type !== 'prompt') throw new Error('Expected bundled imagegen prompt')
     const prompt = JSON.stringify(await skill.getPromptForCommand('Generate a poster', {} as ToolUseContext))
     expect(prompt).toContain('ImageGen')
-    expect(prompt).not.toContain('fake-apismart-image-key')
+    expect(prompt).not.toContain('fake-custom-image-key')
     delete process.env[IMAGE_GENERATION_MODEL_ENV_KEY]
     expect(skill.isEnabled?.()).toBe(false)
     expect(ImageGenTool.isEnabled()).toBe(false)
@@ -93,6 +96,6 @@ describe('bundled imagegen skill', () => {
     expect(text).toContain('Preserve all relevant user-specified detail')
     expect(text).toContain('Provider and image model selection come from')
     expect(text).toContain('do not add either to the tool arguments')
-    expect(text).not.toContain('CC_HAHA_IMAGE_API_KEY')
+    expect(text).not.toContain('ECHOFLOW_IMAGE_API_KEY')
   })
 })

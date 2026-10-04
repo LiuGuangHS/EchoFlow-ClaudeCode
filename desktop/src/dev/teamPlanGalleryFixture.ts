@@ -3,9 +3,9 @@ import { ApiError } from '@/api/client'
 import { useChatStore } from '@/stores/chatStore'
 import { useTeamPlanStore } from '@/stores/teamPlanStore'
 import { useProviderStore } from '@/stores/providerStore'
-import { useHahaOAuthStore } from '@/stores/hahaOAuthStore'
-import { useHahaOpenAIOAuthStore } from '@/stores/hahaOpenAIOAuthStore'
-import { useHahaGrokOAuthStore } from '@/stores/hahaGrokOAuthStore'
+import { useEchoFlowOAuthStore } from '@/stores/echoFlowOAuthStore'
+import { useEchoFlowOpenAIOAuthStore } from '@/stores/echoFlowOpenAIOAuthStore'
+import { useEchoFlowGrokOAuthStore } from '@/stores/echoFlowGrokOAuthStore'
 import type { TeamPlanRecord } from '../../../src/shared/teamPlan'
 import type { SavedProvider } from '@/types/provider'
 
@@ -46,9 +46,9 @@ export function installTeamPlanGalleryFixture() {
     void useTeamPlanStore.getState().refresh(TEAM_PLAN_GALLERY_SESSION)
   } })
   const providerState = useProviderStore.getState()
-  const oldClaudeFetch = useHahaOAuthStore.getState().fetchStatus
-  const oldOpenAIFetch = useHahaOpenAIOAuthStore.getState().fetchStatus
-  const oldGrokFetch = useHahaGrokOAuthStore.getState().fetchStatus
+  const oldClaudeFetch = useEchoFlowOAuthStore.getState().fetchStatus
+  const oldOpenAIFetch = useEchoFlowOpenAIOAuthStore.getState().fetchStatus
+  const oldGrokFetch = useEchoFlowGrokOAuthStore.getState().fetchStatus
   const providers: SavedProvider[] = ['economy', 'quality'].map(id => ({
     id, presetId: 'custom', name: id === 'economy' ? 'Economy (fixture)' : 'Quality (fixture)',
     apiKey: 'fixture-only', baseUrl: 'http://127.0.0.1:1', apiFormat: 'anthropic',
@@ -56,9 +56,9 @@ export function installTeamPlanGalleryFixture() {
     createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
   }))
   useProviderStore.setState({ providers, activeId: 'economy', hasLoadedProviders: true })
-  useHahaOAuthStore.setState({ fetchStatus: async () => {} })
-  useHahaOpenAIOAuthStore.setState({ fetchStatus: async () => {} })
-  useHahaGrokOAuthStore.setState({ fetchStatus: async () => {} })
+  useEchoFlowOAuthStore.setState({ fetchStatus: async () => {} })
+  useEchoFlowOpenAIOAuthStore.setState({ fetchStatus: async () => {} })
+  useEchoFlowGrokOAuthStore.setState({ fetchStatus: async () => {} })
   teamPlansApi.get = async () => ({ plan: clone(plan) })
   teamPlansApi.save = async (expected, edits) => {
     if (expected.revision !== plan.revision) throw new ApiError(409, { message: 'Fixture revision conflict' })
@@ -78,9 +78,9 @@ export function installTeamPlanGalleryFixture() {
       Object.assign(teamPlansApi, oldApi)
       useChatStore.setState({ stopGeneration: oldStop })
       useProviderStore.setState(providerState)
-      useHahaOAuthStore.setState({ fetchStatus: oldClaudeFetch })
-      useHahaOpenAIOAuthStore.setState({ fetchStatus: oldOpenAIFetch })
-      useHahaGrokOAuthStore.setState({ fetchStatus: oldGrokFetch })
+      useEchoFlowOAuthStore.setState({ fetchStatus: oldClaudeFetch })
+      useEchoFlowOpenAIOAuthStore.setState({ fetchStatus: oldOpenAIFetch })
+      useEchoFlowGrokOAuthStore.setState({ fetchStatus: oldGrokFetch })
     },
   }
 }

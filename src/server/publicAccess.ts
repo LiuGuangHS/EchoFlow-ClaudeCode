@@ -81,7 +81,7 @@ export class PublicAccessServer {
 
   constructor(private deps: Dependencies) {
     this.now = deps.now ?? Date.now
-    this.storePath = deps.storePath ?? path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'cc-haha', 'public-access-devices.json')
+    this.storePath = deps.storePath ?? path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'echoflow', 'public-access-devices.json')
   }
 
   private load() {
@@ -298,7 +298,7 @@ export class PublicAccessServer {
         const response = await this.deps.handleApiRequest(request, url, { remoteBrowser: true })
         if (route === 'api/providers/auth-status' && response.ok) {
           const status = await response.json() as Record<string, unknown>
-          const sources = ['cc-haha-provider', 'claude-oauth', 'openai-oauth', 'grok-oauth', 'original-settings', 'env', 'none']
+          const sources = ['echoflow-provider', 'claude-oauth', 'openai-oauth', 'grok-oauth', 'echoflow-settings', 'original-settings', 'env', 'none']
           return json({
             hasAuth: status.hasAuth === true,
             source: typeof status.source === 'string' && sources.includes(status.source) ? status.source : 'none',

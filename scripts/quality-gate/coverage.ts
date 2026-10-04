@@ -67,6 +67,7 @@ type CoverageReport = {
   finishedAt: string
   outputDir: string
   baselineRef?: string
+  scopeSelection?: string
   suites: SuiteCoverage[]
   changedLines?: ChangedLineCoverage
   targetGaps: string[]
@@ -357,8 +358,9 @@ function isUsableLcovRecord(record: LcovRecord) {
 }
 
 export function parseBunTestFileCount(output: string) {
-  const match = output.match(/Ran \d+ tests? across (\d+) files?\./)
-  return match ? Number(match[1]) : null
+  const fileCounts = [...output.matchAll(/Ran \d+ tests? across (\d+) files?\./g)]
+    .map((match) => Number(match[1]))
+  return fileCounts.length > 0 ? Math.max(...fileCounts) : null
 }
 
 export function buildRootCoverageCommand(outputDir: string, serverFiles: string[]) {
@@ -372,7 +374,7 @@ export function buildRootCoverageCommand(outputDir: string, serverFiles: string[
     '--coverage-reporter=lcov',
     '--coverage-reporter=text',
     '--coverage-dir',
-    join(outputDir, 'root-server'),
+    join(outputDir, 'root-server').replace(/\\/g, '/'),
     ...serverFiles.map(rootBunTestFilter),
   ]
 }
@@ -451,7 +453,7 @@ export function hasUsableCoverageSummary(summary: CoverageSummary) {
 
 export async function runCommand(command: string[], cwd: string, logPath: string) {
   const started = Date.now()
-  const sandboxHome = mkdtempSync(join(tmpdir(), 'cc-haha-coverage-test-'))
+  const sandboxHome = mkdtempSync(join(tmpdir(), 'echoflow-code-coverage-test-'))
   const header = `$ ${command.join(' ')}\n`
   const capturePath = join(sandboxHome, 'coverage-output.log')
   let logFd: number | undefined
@@ -596,6 +598,26 @@ export function parseChangedLinesFromDiff(diff: string) {
   return changed
 }
 
+export function coverageScopesForFiles(files: string[]) {
+  const hasScopedChanges = files.some((file) => (
+    file.startsWith('src/') ||
+    file.startsWith('adapters/') ||
+    file.startsWith('desktop/src/')
+  ))
+  const fullRun = !hasScopedChanges || files.some((file) => (
+    file === 'package.json' ||
+    file === 'desktop/package.json' ||
+    file === 'desktop/bun.lock' ||
+    file.startsWith('scripts/quality-gate/coverage')
+  ))
+  return {
+    root: fullRun || files.some((file) => file.startsWith('src/')),
+    adapters: fullRun || files.some((file) => file.startsWith('adapters/')),
+    desktop: fullRun || files.some((file) => file.startsWith('desktop/src/')),
+    fullRun,
+  }
+}
+
 function gitOutput(rootDir: string, args: string[]) {
   const proc = Bun.spawnSync(['git', ...args], {
     cwd: rootDir,
@@ -606,26 +628,39 @@ function gitOutput(rootDir: string, args: string[]) {
   return new TextDecoder().decode(proc.stdout)
 }
 
-function collectChangedLines(rootDir: string, baseRef?: string) {
+function changedDiffArgs(rootDir: string, baseRef?: string) {
   const explicitBase = baseRef?.trim()
   if (explicitBase) {
-    const diff = gitOutput(rootDir, ['diff', '--unified=0', '--no-ext-diff', `${explicitBase}...HEAD`, '--'])
-    return diff ? parseChangedLinesFromDiff(diff) : new Map<string, Set<number>>()
+    return [`${explicitBase}...HEAD`]
   }
 
-  const dirty = gitOutput(rootDir, ['diff', '--name-only', '--'])
+  const dirty = gitOutput(rootDir, ['status', '--porcelain'])
   if (dirty?.trim()) {
-    const diff = gitOutput(rootDir, ['diff', '--unified=0', '--no-ext-diff', 'HEAD', '--'])
-    return diff ? parseChangedLinesFromDiff(diff) : new Map<string, Set<number>>()
+    return ['HEAD']
   }
 
   const branch = gitOutput(rootDir, ['branch', '--show-current'])?.trim()
   const hasOriginMain = gitOutput(rootDir, ['rev-parse', '--verify', 'origin/main'])
   if (branch && branch !== 'main' && hasOriginMain) {
-    const diff = gitOutput(rootDir, ['diff', '--unified=0', '--no-ext-diff', 'origin/main...HEAD', '--'])
-    return diff ? parseChangedLinesFromDiff(diff) : new Map<string, Set<number>>()
+    return ['origin/main...HEAD']
   }
 
+  return null
+}
+
+function collectChangedFiles(rootDir: string, baseRef?: string) {
+  const diffArgs = changedDiffArgs(rootDir, baseRef)
+  if (!diffArgs) return []
+  const diff = gitOutput(rootDir, ['diff', '--name-only', '--no-ext-diff', ...diffArgs, '--'])
+  return diff ? diff.split(/\r?\n/).filter(Boolean) : []
+}
+
+function collectChangedLines(rootDir: string, baseRef?: string) {
+  const diffArgs = changedDiffArgs(rootDir, baseRef)
+  if (diffArgs) {
+    const diff = gitOutput(rootDir, ['diff', '--unified=0', '--no-ext-diff', ...diffArgs, '--'])
+    return diff ? parseChangedLinesFromDiff(diff) : new Map<string, Set<number>>()
+  }
   return new Map<string, Set<number>>()
 }
 
@@ -762,6 +797,7 @@ function renderReport(report: CoverageReport) {
     `- Finished: ${report.finishedAt}`,
     `- Output: ${report.outputDir}`,
     ...(report.baselineRef ? [`- Baseline ref: ${report.baselineRef}`] : []),
+    ...(report.scopeSelection ? [`- Coverage scopes: ${report.scopeSelection}`] : []),
     '',
     '| Suite | Status | Lines | Functions | Branches | Statements |',
     '| --- | --- | ---: | ---: | ---: | ---: |',
@@ -841,115 +877,123 @@ export async function runCoverageGate(options: {
   const baselineRef = options.baselineRef ?? process.env.COVERAGE_BASE_REF
   mkdirSync(outputDir, { recursive: true })
 
+  const changedFiles = collectChangedFiles(rootDir, options.changedBaseRef ?? process.env.COVERAGE_BASE_REF)
+  const scopes = coverageScopesForFiles(changedFiles)
   const serverFiles = collectServerTestFiles(rootDir)
   const suites: SuiteCoverage[] = []
   const coverageByFile = new Map<string, FileLineCoverage>()
 
-  mkdirSync(join(outputDir, 'root-server'), { recursive: true })
-  const rootCommand = buildRootCoverageCommand(outputDir, serverFiles)
-  const rootLogPath = join(outputDir, 'root-server', 'coverage.log')
-  const rootResult = await runCommand(rootCommand, rootDir, rootLogPath)
-  const rootLcovPath = join(outputDir, 'root-server', 'lcov.info')
-  const rootLcov = existsSync(rootLcovPath)
-    ? readFileSync(rootLcovPath, 'utf8')
-    : ''
-  const rootRecords = parseLcovRecords(rootLcov, { rootDir }).filter(isUsableLcovRecord)
-  const rootTestFileCount = parseBunTestFileCount(rootResult.output)
-  const rootTestDiscoveryComplete = rootTestFileCount === serverFiles.length
-  const rootCoverageAvailable = hasUsableLcov(rootLcov, { rootDir }) && rootTestDiscoveryComplete
+  if (scopes.root) {
+    mkdirSync(join(outputDir, 'root-server'), { recursive: true })
+    const rootCommand = buildRootCoverageCommand(outputDir, serverFiles)
+    const rootLogPath = join(outputDir, 'root-server', 'coverage.log')
+    const rootResult = await runCommand(rootCommand, rootDir, rootLogPath)
+    const rootLcovPath = join(outputDir, 'root-server', 'lcov.info')
+    const rootLcov = existsSync(rootLcovPath)
+      ? readFileSync(rootLcovPath, 'utf8')
+      : ''
+    const rootRecords = parseLcovRecords(rootLcov, { rootDir }).filter(isUsableLcovRecord)
+    const rootTestFileCount = parseBunTestFileCount(rootResult.output)
+    const rootTestDiscoveryComplete = rootTestFileCount === serverFiles.length
+    const rootCoverageAvailable = hasUsableLcov(rootLcov, { rootDir }) && rootTestDiscoveryComplete
 
-  if (rootResult.exitCode !== 0 && rootCoverageAvailable) {
-    writeFileSync(
-      rootLogPath,
-      `${readFileSync(rootLogPath, 'utf8')}\n# Coverage note: test assertions exited with ${rootResult.exitCode}; correctness is enforced by check:server's per-file sandboxed test processes. This lane uses the complete single-process LCOV universe because Bun LCOV does not expose function identities for lossless cross-process merging.\n`,
-    )
+    if (rootResult.exitCode !== 0 && rootCoverageAvailable) {
+      writeFileSync(
+        rootLogPath,
+        `${readFileSync(rootLogPath, 'utf8')}\n# Coverage note: test assertions exited with ${rootResult.exitCode}; correctness is enforced by check:server's per-file sandboxed test processes. This lane uses the complete single-process LCOV universe because Bun LCOV does not expose function identities for lossless cross-process merging.\n`,
+      )
+    }
+
+    for (const scope of ROOT_COVERAGE_SCOPES) {
+      const scopedRecords = rootRecords.filter((record) => matchesScope(record.file, scope))
+      const scopeCoverageAvailable = rootCoverageAvailable && scopedRecords.length > 0
+      const summary = scopeCoverageAvailable
+        ? summarizeLcovRecords(scopedRecords)
+        : undefined
+      suites.push({
+        id: scope.id,
+        title: scope.title,
+        status: scopeCoverageAvailable ? 'passed' : 'failed',
+        command: rootCommand,
+        durationMs: rootResult.durationMs,
+        logPath: rootLogPath,
+        ...(summary ? { summary } : {}),
+        ...(rootResult.exitCode !== 0 && rootCoverageAvailable ? {
+          note: `instrumentation test process exited with ${rootResult.exitCode}; correctness is enforced by the required per-file server gate`,
+        } : {}),
+        ...(!scopeCoverageAvailable ? {
+          error: rootCoverageAvailable
+            ? `coverage command produced no LCOV records for ${scope.id}`
+            : !rootTestDiscoveryComplete
+              ? `coverage command discovered ${rootTestFileCount ?? 0}/${serverFiles.length} root test files`
+              : `coverage command exited with ${rootResult.exitCode} and produced no usable LCOV records`,
+        } : {}),
+      })
+      if (scopeCoverageAvailable) {
+        for (const [file, coverage] of lcovRecordLineCoverage(scopedRecords, scope.id)) {
+          coverageByFile.set(file, coverage)
+        }
+      }
+    }
+
+    const rootRuntimeRecords = rootRecords.filter((record) => (
+      matchesScope(record.file, ROOT_RUNTIME_CHANGED_SCOPE)
+    ))
+    for (const [file, coverage] of lcovRecordLineCoverage(
+      rootRuntimeRecords,
+      ROOT_RUNTIME_CHANGED_SCOPE.id,
+    )) {
+      coverageByFile.set(file, coverage)
+    }
   }
 
-  for (const scope of ROOT_COVERAGE_SCOPES) {
-    const scopedRecords = rootRecords.filter((record) => matchesScope(record.file, scope))
-    const scopeCoverageAvailable = rootCoverageAvailable && scopedRecords.length > 0
-    const summary = scopeCoverageAvailable
-      ? summarizeLcovRecords(scopedRecords)
-      : undefined
-    suites.push({
-      id: scope.id,
-      title: scope.title,
-      status: scopeCoverageAvailable ? 'passed' : 'failed',
-      command: rootCommand,
-      durationMs: rootResult.durationMs,
-      logPath: rootLogPath,
-      ...(summary ? { summary } : {}),
-      ...(rootResult.exitCode !== 0 && rootCoverageAvailable ? {
-        note: `instrumentation test process exited with ${rootResult.exitCode}; correctness is enforced by the required per-file server gate`,
-      } : {}),
-      ...(!scopeCoverageAvailable ? {
-        error: rootCoverageAvailable
-          ? `coverage command produced no LCOV records for ${scope.id}`
-          : !rootTestDiscoveryComplete
-            ? `coverage command discovered ${rootTestFileCount ?? 0}/${serverFiles.length} root test files`
-            : `coverage command exited with ${rootResult.exitCode} and produced no usable LCOV records`,
-      } : {}),
-    })
-    if (scopeCoverageAvailable) {
-      for (const [file, coverage] of lcovRecordLineCoverage(scopedRecords, scope.id)) {
+  if (scopes.adapters) {
+    const adapters = await runSuite(
+      'adapters',
+      'IM adapters',
+      ['bun', '--no-env-file', 'test', '--coverage', '--coverage-reporter=lcov', '--coverage-reporter=text', '--coverage-dir', join(outputDir, 'adapters')],
+      join(rootDir, 'adapters'),
+      join(outputDir, 'adapters'),
+      () => parseLcov(readFileSync(join(outputDir, 'adapters', 'lcov.info'), 'utf8')),
+    )
+    suites.push(adapters)
+    const adaptersLcovPath = join(outputDir, 'adapters', 'lcov.info')
+    if (adapters.status === 'passed' && existsSync(adaptersLcovPath)) {
+      const adaptersLcov = prefixRelativeLcovSourcePaths(readFileSync(adaptersLcovPath, 'utf8'), 'adapters')
+      for (const [file, coverage] of lcovLineCoverage(adaptersLcov, 'adapters', ADAPTERS_SCOPE, rootDir)) {
         coverageByFile.set(file, coverage)
       }
     }
   }
 
-  const rootRuntimeRecords = rootRecords.filter((record) => (
-    matchesScope(record.file, ROOT_RUNTIME_CHANGED_SCOPE)
-  ))
-  for (const [file, coverage] of lcovRecordLineCoverage(
-    rootRuntimeRecords,
-    ROOT_RUNTIME_CHANGED_SCOPE.id,
-  )) {
-    coverageByFile.set(file, coverage)
-  }
-
-  const adapters = await runSuite(
-    'adapters',
-    'IM adapters',
-    ['bun', '--no-env-file', 'test', '--coverage', '--coverage-reporter=lcov', '--coverage-reporter=text', '--coverage-dir', join(outputDir, 'adapters')],
-    join(rootDir, 'adapters'),
-    join(outputDir, 'adapters'),
-    () => parseLcov(readFileSync(join(outputDir, 'adapters', 'lcov.info'), 'utf8')),
-  )
-  suites.push(adapters)
-  const adaptersLcovPath = join(outputDir, 'adapters', 'lcov.info')
-  if (adapters.status === 'passed' && existsSync(adaptersLcovPath)) {
-    const adaptersLcov = prefixRelativeLcovSourcePaths(readFileSync(adaptersLcovPath, 'utf8'), 'adapters')
-    for (const [file, coverage] of lcovLineCoverage(adaptersLcov, 'adapters', ADAPTERS_SCOPE, rootDir)) {
-      coverageByFile.set(file, coverage)
-    }
-  }
-
-  const desktop = await runSuite(
-    'desktop',
-    'Desktop React',
-    [
-      'bun',
-      '--no-env-file',
-      'run',
-      'test',
-      '--',
-      '--run',
-      '--coverage',
-      '--coverage.reporter=json-summary',
-      '--coverage.reporter=lcov',
-      `--coverage.reportsDirectory=${join(outputDir, 'desktop')}`,
-      '--testTimeout=20000',
-    ],
-    join(rootDir, 'desktop'),
-    join(outputDir, 'desktop'),
-    () => parseVitestSummary(join(outputDir, 'desktop', 'coverage-summary.json')),
-  )
-  suites.push(desktop)
-  const desktopLcovPath = join(outputDir, 'desktop', 'lcov.info')
-  if (desktop.status === 'passed' && existsSync(desktopLcovPath)) {
-    const desktopLcov = prefixRelativeLcovSourcePaths(readFileSync(desktopLcovPath, 'utf8'), 'desktop')
-    for (const [file, coverage] of lcovLineCoverage(desktopLcov, 'desktop', DESKTOP_SCOPE, rootDir)) {
-      coverageByFile.set(file, coverage)
+  if (scopes.desktop) {
+    const desktop = await runSuite(
+      'desktop',
+      'Desktop React',
+      [
+        'bun',
+        '--no-env-file',
+        'run',
+        'test',
+        '--',
+        '--run',
+        '--coverage',
+        '--coverage.reporter=json-summary',
+        '--coverage.reporter=lcov',
+        `--coverage.reportsDirectory=${join(outputDir, 'desktop')}`,
+        '--testTimeout=20000',
+      ],
+      join(rootDir, 'desktop'),
+      join(outputDir, 'desktop'),
+      () => parseVitestSummary(join(outputDir, 'desktop', 'coverage-summary.json')),
+    )
+    suites.push(desktop)
+    const desktopLcovPath = join(outputDir, 'desktop', 'lcov.info')
+    if (desktop.status === 'passed' && existsSync(desktopLcovPath)) {
+      const desktopLcov = prefixRelativeLcovSourcePaths(readFileSync(desktopLcovPath, 'utf8'), 'desktop')
+      for (const [file, coverage] of lcovLineCoverage(desktopLcov, 'desktop', DESKTOP_SCOPE, rootDir)) {
+        coverageByFile.set(file, coverage)
+      }
     }
   }
 
@@ -975,6 +1019,9 @@ export async function runCoverageGate(options: {
     finishedAt: new Date().toISOString(),
     outputDir,
     ...(baselineRef ? { baselineRef } : {}),
+    scopeSelection: scopes.fullRun
+      ? 'all (no targeted changes or coverage policy files changed)'
+      : [scopes.root ? 'root' : null, scopes.adapters ? 'adapters' : null, scopes.desktop ? 'desktop' : null].filter(Boolean).join(', '),
     suites,
     ...(changedLines ? { changedLines } : {}),
     targetGaps,

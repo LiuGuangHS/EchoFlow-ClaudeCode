@@ -41,7 +41,7 @@ const originalInteractive = getIsInteractive()
 let testRoot: string | null = null
 
 beforeEach(async () => {
-  testRoot = await mkdtemp(join(tmpdir(), 'cc-haha-file-history-security-'))
+  testRoot = await mkdtemp(join(tmpdir(), 'echoflow-code-file-history-security-'))
   process.env.CLAUDE_CONFIG_DIR = join(testRoot, 'config')
   delete process.env.CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING
   setOriginalCwd(join(testRoot, 'project'))

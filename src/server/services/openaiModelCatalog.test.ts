@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { clearOpenAICodexModelCatalogCache } from '../../services/openaiAuth/modelCatalog.js'
 import { OPENAI_CODEX_MODEL_CATALOG } from '../../services/openaiAuth/models.js'
 import { clearOpenAIOAuthTokenCache } from '../../services/openaiAuth/storage.js'
-import { hahaOpenAIOAuthService } from './hahaOpenAIOAuthService.js'
+import { echoFlowOpenAIOAuthService } from './echoFlowOpenAIOAuthService.js'
 import { getDesktopOpenAICodexModelCatalog } from './openaiModelCatalog.js'
 
 describe('desktop OpenAI model catalog credentials', () => {
@@ -39,7 +39,7 @@ describe('desktop OpenAI model catalog credentials', () => {
   })
 
   const saveAccount = async (accountId: string) => {
-    await hahaOpenAIOAuthService.saveTokens({
+    await echoFlowOpenAIOAuthService.saveTokens({
       accessToken: `desktop-token-${accountId}`,
       refreshToken: null,
       expiresAt: null,
@@ -74,7 +74,7 @@ describe('desktop OpenAI model catalog credentials', () => {
     expect(requests[1]?.get('Authorization')).toBe('Bearer desktop-token-account-b')
     expect(await getDesktopOpenAICodexModelCatalog({ fetchOverride })).toEqual(second)
 
-    await hahaOpenAIOAuthService.deleteTokens()
+    await echoFlowOpenAIOAuthService.deleteTokens()
     expect(await getDesktopOpenAICodexModelCatalog({ fetchOverride, forceRefresh: true }))
       .toEqual(OPENAI_CODEX_MODEL_CATALOG)
     expect(requests).toHaveLength(2)
@@ -82,7 +82,7 @@ describe('desktop OpenAI model catalog credentials', () => {
 
   test('unreadable desktop tokens fall back without consulting CLI credentials', async () => {
     await saveAccount('account-a')
-    await writeFile(hahaOpenAIOAuthService.getOAuthFilePath(), 'invalid JSON')
+    await writeFile(echoFlowOpenAIOAuthService.getOAuthFilePath(), 'invalid JSON')
     let calls = 0
     const fetchOverride = (async () => {
       calls += 1

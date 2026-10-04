@@ -28,6 +28,8 @@ order: 0
 ## 让它替你干更多活
 
 - [子 Agent 与任务拆分](./agents.md) — 什么时候该派 Agent，内置 Agent 有哪些，怎么捏一个自己的。
+- [Agent Teams 协作工作台](./agent-teams.md) — 在一个面板里看成员、共享任务、通信和依赖关系。
+- [Dynamic Workflow](./dynamic-workflow.md) — 用并发或流水线编排多个 Agent，并观察、停止和恢复运行。
 - [技能与技能市场](./skills.md) — 技能是什么、和 Agent 有什么区别、从市场装技能前要看什么。
 - [定时任务](./schedule.md) — 让 Claude 每天早上自动跑一遍代码审查。
 - [Computer Use](./computer-use.md) — 在 macOS 上不占用真实鼠标和键盘，替你操作别的应用。

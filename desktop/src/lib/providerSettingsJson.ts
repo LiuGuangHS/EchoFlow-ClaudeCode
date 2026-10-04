@@ -1,6 +1,10 @@
 export const API_KEY_JSON_PLACEHOLDER = '••••••••'
 
-const API_KEY_JSON_KEYS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'] as const
+const API_KEY_JSON_KEYS = [
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_AUTH_TOKEN',
+  'ECHOFLOW_IMAGE_API_KEY',
+] as const
 const PROXY_MANAGED_PLACEHOLDERS = new Set(['proxy-managed', 'proxy_managed'])
 
 const PROVIDER_SETTINGS_JSON_ENV_KEYS = new Set([
@@ -25,9 +29,9 @@ const PROVIDER_SETTINGS_JSON_ENV_KEYS = new Set([
   'ANTHROPIC_DEFAULT_OPUS_MODEL_NAME',
   'ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES',
   'ANTHROPIC_SMALL_FAST_MODEL',
+  'ECHOFLOW_OPENAI_OAUTH_PROVIDER',
   'ENABLE_TOOL_SEARCH',
   'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS',
-  'CC_HAHA_OPENAI_OAUTH_PROVIDER',
   'CLAUDE_CODE_AUTO_COMPACT_WINDOW',
   'CLAUDE_CODE_PROVIDER_MAX_OUTPUT_TOKENS',
   'CLAUDE_CODE_MODEL_CONTEXT_WINDOWS',
@@ -92,7 +96,10 @@ export function restoreSettingsJsonSecrets<T>(
     const previousValue = previousEnv?.[key]
     if (isSecretDisplayValue(previousValue)) {
       parsed.env[key] = previousValue
-    } else if (fallback) {
+    } else if (
+      fallback &&
+      (key === 'ANTHROPIC_API_KEY' || key === 'ANTHROPIC_AUTH_TOKEN')
+    ) {
       parsed.env[key] = fallback
     }
   }

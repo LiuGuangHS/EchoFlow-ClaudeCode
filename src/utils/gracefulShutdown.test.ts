@@ -13,7 +13,7 @@ afterEach(async () => {
 })
 
 test.serial('in-process shutdown waits for stdout drain and callback before exit', async () => {
-  const isolatedDir = await mkdtemp(join(tmpdir(), 'cc-haha-shutdown-direct-'))
+  const isolatedDir = await mkdtemp(join(tmpdir(), 'echoflow-code-shutdown-direct-'))
   const originalConfigDir = process.env.CLAUDE_CONFIG_DIR
   const originalHome = process.env.HOME
   const originalNonessentialTraffic =
@@ -77,7 +77,7 @@ test.serial('in-process shutdown waits for stdout drain and callback before exit
 })
 
 test('subprocess shutdown exits only after pending stdout is flushed', async () => {
-  tempDir = await mkdtemp(join(tmpdir(), 'cc-haha-shutdown-drain-'))
+  tempDir = await mkdtemp(join(tmpdir(), 'echoflow-code-shutdown-drain-'))
   const markerPath = join(tempDir, 'write-callback-completed')
   const processModule = pathToFileURL(resolve('src/utils/process.ts')).href
   const shutdownModule = pathToFileURL(
@@ -116,7 +116,7 @@ test('subprocess shutdown exits only after pending stdout is flushed', async () 
         CI: '1',
         HOME: tempDir,
         CLAUDE_CONFIG_DIR: join(tempDir, '.claude'),
-        CC_HAHA_SKIP_DOTENV: '1',
+        ECHOFLOW_SKIP_DOTENV: '1',
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
         DISABLE_AUTOUPDATER: '1',
         DISABLE_TELEMETRY: '1',

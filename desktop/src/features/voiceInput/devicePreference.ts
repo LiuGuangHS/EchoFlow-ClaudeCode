@@ -1,4 +1,4 @@
-const STORAGE_KEY = 'cc-haha-voice-input-device'
+const STORAGE_KEY = 'echoflow-code-voice-input-device'
 
 /** The microphone the user picked in settings; undefined means the system default. */
 export function getPreferredMicrophoneId(): string | undefined {

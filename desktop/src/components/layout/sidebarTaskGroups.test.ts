@@ -159,9 +159,9 @@ describe('getSessionWorkspaceLabel', () => {
   })
 
   it('falls back to the last path segment when there is no display name', () => {
-    const session = makeSession({ id: 'a', projectRoot: '/Users/dev/work/claude-code-haha' })
+    const session = makeSession({ id: 'a', projectRoot: '/Users/dev/work/echoflow-code' })
 
-    expect(getSessionWorkspaceLabel(session, NO_DISPLAY_NAME)).toBe('claude-code-haha')
+    expect(getSessionWorkspaceLabel(session, NO_DISPLAY_NAME)).toBe('echoflow-code')
   })
 
   it('falls back to workDir when the session has no projectRoot', () => {

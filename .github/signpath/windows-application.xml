@@ -1,6 +1,6 @@
 <artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
   <zip-file>
-    <pe-file path="Claude Code Haha.exe">
+    <pe-file path="EchoFlow Code.exe">
       <authenticode-sign/>
     </pe-file>
     <pe-file path="claude-sidecar-*.exe">

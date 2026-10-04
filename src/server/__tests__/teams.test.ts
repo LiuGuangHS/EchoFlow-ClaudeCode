@@ -829,7 +829,7 @@ describe('TeamService', () => {
         timestamp: `${timestampPrefix}4.000Z`,
       },
       {
-        type: 'cc-haha-task-notification',
+        type: 'echoflow-code-task-notification',
         isMeta: true,
         taskNotification: {
           taskId: 'task-0',
@@ -1218,6 +1218,8 @@ describe('TeamService', () => {
     })
 
     const live = await service.getWorkbench('archived-team')
+    const archiveHash = crypto.createHash('sha256').update('archived-lead-session').digest('hex')
+    await fs.access(path.join(tmpDir, 'echoflow-code', 'agent-teams', `${archiveHash}.json`))
     await fs.rm(path.join(tmpDir, 'teams', 'archived-team'), { recursive: true, force: true })
     await fs.rm(path.join(tmpDir, 'tasks', 'archived-team'), { recursive: true, force: true })
 
@@ -2921,7 +2923,7 @@ describe('TeamService', () => {
     )
     const archivePath = path.join(
       tmpDir,
-      'cc-haha',
+      'echoflow-code',
       'agent-teams',
       `${crypto.createHash('sha256').update(leadSessionId).digest('hex')}.json`,
     )
@@ -3063,7 +3065,7 @@ describe('TeamService', () => {
     }
     const archivePath = path.join(
       tmpDir,
-      'cc-haha',
+      'echoflow-code',
       'agent-teams',
       `${crypto.createHash('sha256').update(sessionId).digest('hex')}.json`,
     )
@@ -3177,6 +3179,7 @@ describe('TeamService', () => {
         agentType: 'security-reviewer',
         joinedAt: 1700000001000,
         cwd: '/tmp/project',
+        sessionId: 'reviewer-root-session',
         isActive: false,
       }],
     }))
@@ -3221,6 +3224,39 @@ describe('TeamService', () => {
     expect(page.messages[0]?.content).toEqual([
       { type: 'tool_use', id: 'tool-1', name: 'Bash', input: { command: 'bun test' } },
     ])
+  })
+
+  it('does not match a reused team member name to another archived session', async () => {
+    await writeTeamConfig('reused-team', makeTeamConfig({
+      name: 'reused-team',
+      createdAt: Date.parse('2026-08-08T00:00:00.000Z'),
+      leadSessionId: 'reused-lead-session',
+      members: [{
+        agentId: 'reviewer@reused-team',
+        name: 'reviewer',
+        joinedAt: Date.parse('2026-08-08T00:00:00.000Z'),
+        cwd: '/tmp/project',
+        isActive: false,
+      }],
+    }))
+    await writeTranscriptFile('-tmp-project', 'other-session', [{
+      type: 'assistant',
+      uuid: 'other-session-message',
+      teamName: 'reused-team',
+      agentName: 'reviewer',
+      message: { role: 'assistant', content: 'Unrelated run' },
+      timestamp: '2026-07-01T00:00:00.000Z',
+    }])
+    await service.getWorkbench('reused-team')
+    await fs.rm(path.join(tmpDir, 'teams', 'reused-team'), { recursive: true, force: true })
+
+    const page = await service.getMemberTranscriptPage(
+      'reused-team',
+      'reviewer@reused-team',
+      { leadSessionId: 'reused-lead-session' },
+    )
+
+    expect(page.messages).toEqual([])
   })
 
   it('reconstructs a completed multi-member DAG from an old session transcript', () => {
@@ -3629,7 +3665,7 @@ describe('TeamService', () => {
       message: { role: 'user', content: 'Indexed' },
       timestamp: '2026-01-01T00:01:00.000Z',
     }, {
-      type: 'cc-haha-task-notification',
+      type: 'echoflow-code-task-notification',
       isMeta: true,
       taskNotification: {
         taskId: 'indexed-task',
@@ -3672,7 +3708,7 @@ describe('TeamService', () => {
         source: { path: filePath, size: stat.size, mtimeMs: stat.mtimeMs, fileIdentity: null, fingerprint, indexedBytes: stat.size, parserVersion: 3, state: 'ready', lastErrorCode: null, updatedAtMs: 1 },
         entries: [
           { ordinal: 0, jsonlLine: 1, byteStart: 0, byteLength: lineLengths[0]!, entryType: 'user', messageId: 'u1', role: 'user', timestamp: '2026-01-01T00:01:00.000Z', parentToolUseId: null },
-          { ordinal: 1, jsonlLine: 2, byteStart: lineLengths[0]!, byteLength: lineLengths[1]!, entryType: 'cc-haha-task-notification', messageId: null, role: null, timestamp: '2026-01-01T00:02:00.000Z', parentToolUseId: null },
+          { ordinal: 1, jsonlLine: 2, byteStart: lineLengths[0]!, byteLength: lineLengths[1]!, entryType: 'echoflow-code-task-notification', messageId: null, role: null, timestamp: '2026-01-01T00:02:00.000Z', parentToolUseId: null },
         ],
       }),
       async rebuild() { return this.getPublicStatus() },
@@ -4636,6 +4672,7 @@ describe('Teams API', () => {
         agentType: 'worker',
         joinedAt: 1700000001000,
         cwd: '/tmp/project',
+        sessionId: 'worker-root-session',
         isActive: false,
       }],
     }))
@@ -4657,6 +4694,24 @@ describe('Teams API', () => {
 
     expect(response.status).toBe(200)
     expect(body.messages.map((message) => message.id)).toEqual(['worker-execution'])
+  })
+
+  it('rejects a transcript lead session path with a directory separator', async () => {
+    await writeTeamConfig('path-safe-team', makeTeamConfig({
+      name: 'path-safe-team',
+      leadSessionId: undefined,
+    }))
+
+    const response = await fetch(
+      `${baseUrl}/api/teams/path-safe-team/members/agent-lead/transcript?incremental=true&leadSessionId=..%2Foutside`,
+    )
+
+    expect(response.status).toBe(400)
+  })
+
+  it('GET /api/teams/:name rejects encoded path traversal', async () => {
+    const res = await fetch(`${baseUrl}/api/teams/..%2F..%2Foutside`)
+    expect(res.status).toBe(400)
   })
 
   it('GET /api/teams/:name should 404 for unknown team', async () => {
@@ -4784,7 +4839,7 @@ describe('Teams API', () => {
     })
 
     await fs.appendFile(transcriptPath, `${JSON.stringify({
-      type: 'cc-haha-task-notification',
+      type: 'echoflow-code-task-notification',
       isMeta: true,
       taskNotification: {
         taskId: 'persisted-task',

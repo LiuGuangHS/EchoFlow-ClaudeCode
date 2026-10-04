@@ -129,7 +129,9 @@ test('released pins remain addressable by their exact installed version, never c
   expect(getArtifactPins(installedDefinition, 'win32-x64').binaryIntegrity).toBe('sha256-403b56ab849b28b4072b46799bd898959dc55382c18d7f4e83cd65f49f570b3f')
   expect(() => getArtifactPins(futureCatalogDefinition, 'darwin-arm64')).toThrow('no pinned artifact')
   const directory = await root()
-  await expect(prepareManagedRuntime(futureCatalogDefinition, directory, signal(), () => {})).rejects.toThrow('no pinned artifact')
+  await expect(prepareManagedRuntime(futureCatalogDefinition, directory, signal(), () => {}, {
+    ...fakeRuntime(), binaryIntegrity: undefined,
+  })).rejects.toThrow('no pinned artifact')
   expect(await readdir(directory)).toEqual([])
   // Only an explicitly injected fixture checksum admits unpublished versions.
   expect(getArtifactPins(futureCatalogDefinition, 'darwin-arm64', fakeRuntime()).binaryIntegrity).toBe(fakeRuntime().binaryIntegrity!(futureCatalogDefinition, 'darwin-arm64'))

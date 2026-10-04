@@ -1,0 +1,56 @@
+import groovy.json.JsonSlurper
+
+plugins {
+  id 'com.android.application'
+  id 'org.jetbrains.kotlin.android'
+}
+
+def config = new JsonSlurper().parse(rootProject.file('../app.json'))
+def versionName = config.version as String
+def versionParts = versionName.tokenize('.').collect { it as int }
+def appId = config.android.package as String
+
+android {
+  namespace appId
+  compileSdk 35
+
+  defaultConfig {
+    applicationId appId
+    minSdk 24
+    targetSdk 35
+    versionCode versionParts[0] * 10000 + versionParts[1] * 100 + versionParts[2]
+    versionName versionName
+  }
+
+  signingConfigs {
+    release {
+      def propertiesFile = rootProject.file('signing.properties')
+      if (propertiesFile.exists()) {
+        def properties = new Properties()
+        propertiesFile.withInputStream { properties.load(it) }
+        storeFile rootProject.file(properties['storeFile'])
+        storePassword properties['storePassword']
+        keyAlias properties['keyAlias']
+        keyPassword properties['keyPassword']
+      }
+    }
+  }
+
+  buildTypes {
+    debug {
+      applicationIdSuffix '.debug'
+    }
+    release {
+      signingConfig signingConfigs.release
+      minifyEnabled true
+      shrinkResources true
+      proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+    }
+  }
+}
+
+dependencies {
+  implementation 'com.google.android.gms:play-services-code-scanner:16.1.0'
+  implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+  implementation 'androidx.webkit:webkit:1.17.1'
+}

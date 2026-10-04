@@ -26,10 +26,13 @@ export function createElectronDevEnv(env: NodeJS.ProcessEnv = process.env) {
     env: { ELECTRON_RENDERER_URL: env.ELECTRON_RENDERER_URL?.trim() || DEFAULT_RENDERER_URL },
   })
   const noProxy = mergeNoProxy(env.NO_PROXY ?? env.no_proxy)
+  const childEnv = { ...env }
+  delete childEnv.ELECTRON_RUN_AS_NODE
+
   return {
-    ...env,
+    ...childEnv,
     ELECTRON_RENDERER_URL: rendererUrl,
-    CC_HAHA_TRUSTED_RENDERER_ORIGIN: new URL(rendererUrl).origin,
+    ECHOFLOW_TRUSTED_RENDERER_ORIGIN: new URL(rendererUrl).origin,
     NO_PROXY: noProxy,
     no_proxy: noProxy,
   }

@@ -296,6 +296,7 @@ let traceBackfillQueue: Promise<void> = Promise.resolve()
 // Only a small bounded number of small list sources backfill without an
 // overview consumer. Large files require a cancellable overview request.
 const TRACE_BACKFILL_MAX_PENDING = 8
+const TRACE_SYNC_RECONCILE_MAX_BYTES = 2 * 1024 * 1024
 type TraceIndexState = {
   path: string
   database: TraceIndexDatabase
@@ -303,6 +304,7 @@ type TraceIndexState = {
 }
 
 const traceIndexStates = new Map<string, TraceIndexState>()
+const traceIndexFreshPaths = new Set<string>()
 const unavailableTraceIndexPaths = new Set<string>()
 const traceIndexBusyCooldownUntil = new Map<string, number>()
 let traceAppendBeforeWriteHookForTests: (() => Promise<void>) | null = null
@@ -318,29 +320,29 @@ const traceCaptureDiagnostics = {
 }
 
 export function shouldCaptureApiTrace(): boolean {
-  if (isEnvDefinedFalsy(process.env.CC_HAHA_TRACE_API_CALLS)) return false
-  if (isEnvTruthy(process.env.CC_HAHA_TRACE_API_CALLS)) return true
+  if (isEnvDefinedFalsy(process.env.ECHOFLOW_TRACE_API_CALLS)) return false
+  if (isEnvTruthy(process.env.ECHOFLOW_TRACE_API_CALLS)) return true
   return readTraceCaptureSettingsSync().enabled &&
     process.env.CLAUDE_CODE_ENTRYPOINT === 'claude-desktop'
 }
 
 export function isTraceCaptureEnabled(): boolean {
-  if (isEnvDefinedFalsy(process.env.CC_HAHA_TRACE_API_CALLS)) return false
-  if (isEnvTruthy(process.env.CC_HAHA_TRACE_API_CALLS)) return true
+  if (isEnvDefinedFalsy(process.env.ECHOFLOW_TRACE_API_CALLS)) return false
+  if (isEnvTruthy(process.env.ECHOFLOW_TRACE_API_CALLS)) return true
   return readTraceCaptureSettingsSync().enabled
 }
 
 export function getTraceStorageDir(): string {
-  return join(getClaudeConfigHomeDir(), 'cc-haha', 'traces')
+  return join(getClaudeConfigHomeDir(), 'echoflow-code', 'traces')
 }
 
 function currentTraceScopeContext(): TraceScopeContext {
   const scope = getClaudeConfigHomeDir()
   return {
     scope,
-    storageDir: join(scope, 'cc-haha', 'traces'),
+    storageDir: join(scope, 'echoflow-code', 'traces'),
     target: {
-      path: join(scope, 'cc-haha', 'db', 'trace-index-v1.sqlite'),
+      path: join(scope, 'echoflow-code', 'db', 'trace-index-v1.sqlite'),
       scope,
     },
   }
@@ -655,6 +657,7 @@ export function clearTraceCaptureStateForTests(): void {
   traceBackfillQueue = Promise.resolve()
   for (const state of traceIndexStates.values()) state.database.close()
   traceIndexStates.clear()
+  traceIndexFreshPaths.clear()
   unavailableTraceIndexPaths.clear()
   traceIndexBusyCooldownUntil.clear()
   traceAppendBeforeWriteHookForTests = null
@@ -1014,22 +1017,30 @@ class TraceCaptureService {
         // external write the writer path never saw.
         const index = getTraceIndex(target)
         const source = index?.getSource(sessionId) ?? null
-        const projection = source && index ? index.getSummary(sessionId) : null
+        let projection = source && index ? index.getSummary(sessionId) : null
         if (projection) {
+          const stale = source.state !== 'ready' ||
+            source.size !== file.size ||
+            source.mtimeMs !== file.stat.mtimeMs
+          if (file.size <= TRACE_SYNC_RECONCILE_MAX_BYTES) {
+            projection = await ensureTraceProjection(sessionId, file.path, file.stat, 0, target) ?? projection
+          } else if (stale) {
+            scheduleTraceProjectionBackfill(sessionId, file.path, file.stat, target)
+          }
           const fingerprint = storedTraceFingerprint(projection)
           trace = { sessionId, summary: projection.summary,
             ...(fingerprint ? { window: traceWindowMetadata({ ...projection, fingerprint }, projection.summary.apiCalls, 0, {}) } : {}),
           }
-          if (
-            source.state !== 'ready' ||
-            source.size !== file.size ||
-            source.mtimeMs !== file.stat.mtimeMs
-          ) {
-            scheduleTraceProjectionBackfill(sessionId, file.path, file.stat, target)
-          }
         } else {
-          scheduleTraceProjectionBackfill(sessionId, file.path, file.stat, target)
-          trace = { sessionId, summary: emptyTraceSummary() }
+          if (traceIndexFreshPaths.has(target.path) && file.size <= TRACE_SYNC_RECONCILE_MAX_BYTES) {
+            const rebuilt = await ensureTraceProjection(sessionId, file.path, file.stat, 0, target)
+            trace = rebuilt
+              ? { sessionId, summary: rebuilt.summary }
+              : { sessionId, summary: emptyTraceSummary() }
+          } else {
+            scheduleTraceProjectionBackfill(sessionId, file.path, file.stat, target)
+            trace = { sessionId, summary: emptyTraceSummary() }
+          }
         }
       }
       const updatedAt = trace.summary.updatedAt ?? file.updatedAt
@@ -1403,6 +1414,16 @@ function quarantineTraceIndexFailure(
   error: unknown,
 ): void {
   const failed = traceIndexStates.get(target.path)
+  if (isTraceIndexBusy(error) && failed) {
+    // Keep the read handle alive during the short writer-lock cooldown. Read
+    // paths can still serve the last committed projection while the next
+    // background attempt waits for SQLite to become writable again.
+    traceIndexBusyCooldownUntil.set(
+      target.path,
+      Date.now() + TRACE_INDEX_BUSY_COOLDOWN_MS,
+    )
+    return
+  }
   traceIndexStates.delete(target.path)
   try {
     failed?.database.close()
@@ -1432,19 +1453,23 @@ function syncTraceIndexMode(): LocalIndexMode {
 function getTraceIndex(target = currentTraceIndexTarget()): TraceIndex | null {
   if (syncTraceIndexMode() === 'off') return null
   const databasePath = target.path
-  if ((traceIndexBusyCooldownUntil.get(databasePath) ?? 0) > Date.now()) return null
+  if ((traceIndexBusyCooldownUntil.get(databasePath) ?? 0) > Date.now()) {
+    return traceIndexStates.get(databasePath)?.index ?? null
+  }
   traceIndexBusyCooldownUntil.delete(databasePath)
   const existing = traceIndexStates.get(databasePath)
   if (existing) return existing.index
   if (unavailableTraceIndexPaths.has(databasePath)) return null
 
   try {
+    const fresh = !existsSync(databasePath)
     const database = openTraceIndexDatabase({
       path: databasePath,
       scope: target.scope,
     })
     const index = createTraceIndex(database)
     traceIndexStates.set(databasePath, { path: databasePath, database, index })
+    if (fresh) traceIndexFreshPaths.add(databasePath)
     return index
   } catch (error) {
     quarantineTraceIndexFailure(target, error)
@@ -1968,10 +1993,15 @@ async function readCanonicalTraceSummary(
   sessionId: string,
   filePath: string,
 ): Promise<Pick<TraceSession, 'sessionId' | 'summary' | 'window'>> {
-  const snapshot = await readStableTraceProjection(filePath).catch((error) => {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
-    throw error
-  })
+  let snapshot: Awaited<ReturnType<typeof readStableTraceProjection>> | undefined
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    snapshot = await readStableTraceProjection(filePath).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+      throw error
+    })
+    if (snapshot !== null) break
+    await Bun.sleep(2)
+  }
   if (snapshot === undefined) return { sessionId, summary: emptyTraceSummary() }
   if (!snapshot) throw new Error('Trace changed while loading; retry the request')
   const calls = snapshot.calls.map(locator => shellTraceCallFromLocator(sessionId, locator))
@@ -2572,13 +2602,13 @@ async function appendTraceEntry(sessionId: string, entry: TraceFileEntry): Promi
   const scope = getClaudeConfigHomeDir()
   const filePath = join(
     scope,
-    'cc-haha',
+    'echoflow-code',
     'traces',
     `${normalizedSessionId}.jsonl`,
   )
   const target: TraceIndexTarget = {
     scope,
-    path: join(scope, 'cc-haha', 'db', 'trace-index-v1.sqlite'),
+    path: join(scope, 'echoflow-code', 'db', 'trace-index-v1.sqlite'),
   }
   const queueKey = `${scope}\0${normalizedSessionId}`
   const previous = traceWriteQueues.get(queueKey) ?? Promise.resolve()
@@ -3053,7 +3083,7 @@ function sanitizeTraceFileName(sessionId: string): string {
 }
 
 function getManagedSettingsPath(scope = getClaudeConfigHomeDir()): string {
-  return join(scope, 'cc-haha', 'settings.json')
+  return join(scope, 'echoflow-code', 'settings.json')
 }
 
 function defaultTraceCaptureSettings(
@@ -3061,7 +3091,7 @@ function defaultTraceCaptureSettings(
 ): TraceCaptureSettings {
   return {
     enabled: true,
-    storageDir: join(scope, 'cc-haha', 'traces'),
+    storageDir: join(scope, 'echoflow-code', 'traces'),
   }
 }
 

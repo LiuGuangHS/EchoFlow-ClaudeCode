@@ -2,7 +2,7 @@
 title: Phone (H5) and IM
 nav_title: Phone and IM
 description: Continue a session in your phone's browser, or chat from WeChat, Feishu, or Telegram.
-order: 9
+order: 11
 ---
 
 # Phone (H5) and IM
@@ -13,6 +13,8 @@ A task is running on your computer and you want to check on it, or add one more 
 - **IM Adapters** — talk to Claude directly inside WeChat, DingTalk, WhatsApp, Telegram, or Feishu.
 
 Both require your computer to be on with the app running. Tasks execute on your computer; public tunnels and IM platforms carry content through their respective service providers.
+
+If you use the official Android client, see [Android client](../mobile/index.md) — it connects to the same H5 interface, replacing "scan a code, type an address, store the credential" with a native flow.
 
 ## H5 Access
 
@@ -61,7 +63,7 @@ Only when a task is idle *and* nothing is connected does the CLI process stop, a
 
 Session list and project switching, sending messages, stopping, streaming replies, image and file attachments, permission buttons, questions from Claude, `@` file references, copy and fork — the whole conversation flow.
 
-The **Settings** entry at the bottom of the sidebar provides **Model providers** and **General**. Add, edit, delete, reorder, or switch providers on your phone. Existing API keys are never returned; leave a key blank while editing to keep it. Changing a model or image request URL requires entering the corresponding API key again, so saved credentials are not automatically sent to a new address. General settings include theme, interface language, response language, output style, reasoning effort, send behavior, thinking, and workflow keywords. Theme and interface language affect this browser; Agent preferences are shared with the computer.
+The **Settings** entry at the bottom of the sidebar provides two tabs: **Model settings** and **General**. Add, edit, delete, reorder, or switch models on your phone. Existing API keys are never returned; leave a key blank while editing to keep it. Changing a model or image request URL requires entering the corresponding API key again, so saved credentials are not automatically sent to a new address. **General** covers theme, interface language, response language, output style, reasoning effort, send behavior, thinking, and workflow keywords. Theme and interface language affect this browser; Agent preferences are shared with the computer.
 
 Provider website login, configuration import, and desktop administration remain on the computer. The desktop workspace, embedded terminal, native "open with", Computer Use authorization, and the desktop pet are not part of H5. Remote terminal execution is deferred: the current terminal is owned by Electron and requires a separate device-authorized transport with reconnect and revocation support.
 
@@ -76,7 +78,7 @@ Open **Settings → H5 Access → Public access · ngrok** to connect your own n
 
 Pairing codes expire after 5 minutes and can only be used once. Phone credentials last 30 days by default. Keep QR codes private. Revoke individual phones or turn off public access to disconnect remote clients immediately; running tasks continue.
 
-The public entry also supports the provider and General settings above. Unrestricted local directory browsing and path-based file previews remain desktop-only; session-scoped file and review APIs remain available.
+The public entry also supports the Model settings and General settings above. Unrestricted local directory browsing and path-based file previews remain desktop-only; session-scoped file and review APIs remain available.
 
 Once paired, public authorization persists in a secure browser cookie. Scanning again while it is valid opens the app without consuming another pairing code. Long-lived public credentials are not stored in localStorage. Camera scanning works in system browsers, but different browsers, private windows, and hostnames do not share authorization. If a scanner opens an embedded browser, switch to your preferred browser before pairing. Clearing browser data, expiration, or revocation requires pairing again.
 

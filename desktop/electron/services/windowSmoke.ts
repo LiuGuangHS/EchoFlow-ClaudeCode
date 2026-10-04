@@ -2,7 +2,7 @@ import { appendFileSync } from 'node:fs'
 import type { BrowserWindow } from 'electron'
 
 export type WindowSmokeEnv = {
-  CC_HAHA_ELECTRON_WINDOW_SMOKE_LOG?: string
+  ECHOFLOW_ELECTRON_WINDOW_SMOKE_LOG?: string
 }
 
 type WindowSmokeWindow = Pick<
@@ -17,7 +17,7 @@ export function writeWindowSmokeSnapshot(
   reason: string,
   env: WindowSmokeEnv = process.env,
 ) {
-  const logPath = env.CC_HAHA_ELECTRON_WINDOW_SMOKE_LOG
+  const logPath = env.ECHOFLOW_ELECTRON_WINDOW_SMOKE_LOG
   if (!logPath) return
 
   const payload = window

@@ -79,7 +79,7 @@ describe('installMainWindowNavigationGuards', () => {
 
     expect(wc.hasWillNavigate()).toBe(true)
     expect(wc.navigate('http://localhost:5173')).not.toHaveBeenCalled()
-    expect(wc.navigate('file:///Applications/cc-haha/index.html')).not.toHaveBeenCalled()
+    expect(wc.navigate('file:///Applications/echoflow-code/index.html')).not.toHaveBeenCalled()
   })
 })
 

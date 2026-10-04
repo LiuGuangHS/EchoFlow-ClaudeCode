@@ -11,9 +11,8 @@ assignees: ''
 ## 提交前确认
 <!-- 请确认以下事项 -->
 
-- [ ] 我已经阅读了 [README 常见问题](https://github.com/NanmiCoder/cc-haha#常见问题)
-- [ ] 我已经阅读了[第三方模型使用指南](https://github.com/NanmiCoder/cc-haha/blob/main/docs/guide/third-party-models.md)（如使用第三方 provider）
-- [ ] 我已经搜索过[现有 issues](https://github.com/NanmiCoder/cc-haha/issues)，确认没有重复问题
+- [ ] 我已经阅读了[故障排查](https://code.echoflow.cn/start/troubleshooting)和[连接模型服务](https://code.echoflow.cn/start/models)（如使用 Provider）
+- [ ] 我已经搜索过[现有 issues](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/issues)，确认没有重复问题
 - [ ] 我已经隐藏截图和日志中的 API Key、Token、Cookie 等敏感信息
 
 ## 问题描述
@@ -26,7 +25,7 @@ assignees: ''
 - 使用方式: 桌面端 / CLI / 其他:
 - 操作系统: Windows / macOS / Linux:
 - 系统版本: 例如 Windows 11 23H2 / macOS 15.4:
-- 桌面端版本: 例如 v0.1.8（设置页 -> 关于 中可查看）:
+- 桌面端版本: 设置 → 关于 中显示的版本:
 - 安装来源: GitHub Release / 源码本地构建 / 其他:
 - Bun 版本（CLI 问题填写，`bun --version`）:
 - Node 版本（CLI 问题填写，`node --version`）:

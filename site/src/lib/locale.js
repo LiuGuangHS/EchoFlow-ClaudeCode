@@ -20,6 +20,14 @@ export function resolveBrowserLocale({ language, languages } = {}) {
   return /^zh(?:[-_]|$)/i.test(preferredLanguage) ? 'zh' : DEFAULT_LOCALE
 }
 
+export function normalizeSitePath(pathname, baseUrl = '/') {
+  const route = `/${String(pathname ?? '/').replace(/^\/+/, '')}`.replace(/\/+$/, '') || '/'
+  const base = `/${String(baseUrl).replace(/^\/+|\/+$/g, '')}`.replace(/\/{2,}/g, '/').replace(/\/$/, '') || '/'
+
+  if (base === '/' || (route !== base && !route.startsWith(`${base}/`))) return route
+  return route.slice(base.length) || '/'
+}
+
 export function normalizeStoredLocale(value) {
   return value === 'en' || value === 'zh' ? value : null
 }

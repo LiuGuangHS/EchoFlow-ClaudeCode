@@ -34,6 +34,10 @@ const tauriDialogMock = vi.hoisted(() => ({
 const tauriProcessMock = vi.hoisted(() => ({
   relaunch: vi.fn(),
 }))
+const echoFlowMigrationMock = vi.hoisted(() => ({
+  getStatus: vi.fn(),
+  run: vi.fn(),
+}))
 const providerStoreState = {
   providers: [] as SavedProvider[],
   providerOrder: [] as string[],
@@ -72,7 +76,6 @@ const ZHIPU_REGIONAL_PRESET: ProviderPreset = {
   needsApiKey: true,
   websiteUrl: 'https://open.bigmodel.cn',
   apiKeyUrl: 'https://www.bigmodel.cn/api-keys',
-  promoText: 'Mainland China promotion',
 }
 
 vi.mock('../api/agents', () => ({
@@ -90,6 +93,10 @@ vi.mock('../api/providers', () => ({
     getSettings: MOCK_GET_SETTINGS,
     updateSettings: MOCK_UPDATE_SETTINGS,
   },
+}))
+
+vi.mock('../api/echoFlowMigration', () => ({
+  echoFlowMigrationApi: echoFlowMigrationMock,
 }))
 
 vi.mock('../lib/desktopNotifications', () => desktopNotificationsMock)
@@ -178,6 +185,21 @@ function installElectronDesktopHost() {
       ...browserHost.app,
       getVersion: vi.fn().mockResolvedValue('0.3.2'),
     },
+    runtime: {
+      ...browserHost.runtime,
+      getClaudeCode: vi.fn().mockResolvedValue({
+        defaultRuntimeId: 'bundled',
+        hasInstalledRuntime: false,
+      }),
+      chooseClaudeCode: vi.fn().mockResolvedValue({
+        defaultRuntimeId: 'installed',
+        hasInstalledRuntime: true,
+      }),
+      setClaudeCode: vi.fn().mockResolvedValue({
+        defaultRuntimeId: 'bundled',
+        hasInstalledRuntime: false,
+      }),
+    },
     dialogs: {
       ...browserHost.dialogs,
       open: vi.fn((options) => tauriDialogMock.open(options)),
@@ -213,9 +235,17 @@ describe('Settings > General tab', () => {
     tauriCoreMock.invoke.mockReset()
     tauriCoreMock.invoke.mockResolvedValue(undefined)
     tauriDialogMock.open.mockReset()
-    tauriDialogMock.open.mockResolvedValue('/Users/test/cc-haha-data')
+    tauriDialogMock.open.mockResolvedValue('/Users/test/echoflow-code-data')
     tauriProcessMock.relaunch.mockReset()
     tauriProcessMock.relaunch.mockResolvedValue(undefined)
+    echoFlowMigrationMock.getStatus.mockReset()
+    echoFlowMigrationMock.getStatus.mockResolvedValue({
+      summary: { ready: 0, 'target-exists': 0, missing: 0, invalid: 0, failed: 0, migrated: 0, skipped: 0 },
+    })
+    echoFlowMigrationMock.run.mockReset()
+    echoFlowMigrationMock.run.mockResolvedValue({
+      summary: { ready: 0, 'target-exists': 0, missing: 0, invalid: 0, failed: 0, migrated: 0, skipped: 0 },
+    })
     delete (window as unknown as { __TAURI_INTERNALS__?: object }).__TAURI_INTERNALS__
     delete (window as unknown as { __TAURI__?: object }).__TAURI__
     installElectronDesktopHost()
@@ -257,7 +287,7 @@ describe('Settings > General tab', () => {
       autoDreamEnabled: false,
       skipWebFetchPreflight: true,
       desktopNotificationsEnabled: true,
-      traceCapture: { enabled: true, storageDir: '/Users/test/.claude/cc-haha/traces' },
+      traceCapture: { enabled: true, storageDir: '/Users/test/.claude/echoflow-code/traces' },
       chatSendBehavior: 'enter',
       responseLanguage: '',
       proxyManagedSettingsWarning: false,
@@ -424,6 +454,19 @@ describe('Settings > General tab', () => {
       installUpdate: vi.fn().mockResolvedValue(undefined),
       dismissPrompt: vi.fn(),
     })
+  })
+
+  it('chooses an installed Claude Code runtime through the native picker', async () => {
+    const runtimeHost = window.desktopHost!.runtime
+    const chooseClaudeCode = vi.mocked(runtimeHost.chooseClaudeCode)
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+    await screen.findByText('Claude Code runtime')
+    fireEvent.click(screen.getByRole('button', { name: 'Choose installed runtime' }))
+
+    await waitFor(() => expect(chooseClaudeCode).toHaveBeenCalledTimes(1))
+    expect(screen.getByRole('button', { name: 'Installed' })).toBeEnabled()
   })
 
   it('shows WebFetch preflight toggle enabled by default', () => {
@@ -628,20 +671,20 @@ describe('Settings > General tab', () => {
 
     fireEvent.change(timeoutInput, { target: { value: '180' } })
 
-    await act(async () => {
-      fireEvent.click(saveButton)
-    })
+    fireEvent.click(saveButton)
 
-    expect(useSettingsStore.getState().setNetwork).toHaveBeenCalledWith({
-      aiRequestTimeoutMs: 180_000,
-      proxy: {
-        mode: 'manual',
-        url: 'http://user:p%40ss@127.0.0.1:7890',
-      },
-    })
-    expect(useUIStore.getState().toasts[useUIStore.getState().toasts.length - 1]).toMatchObject({
-      type: 'success',
-      message: 'Network settings saved.',
+    await waitFor(() => {
+      expect(useSettingsStore.getState().setNetwork).toHaveBeenCalledWith({
+        aiRequestTimeoutMs: 180_000,
+        proxy: {
+          mode: 'manual',
+          url: 'http://user:p%40ss@127.0.0.1:7890',
+        },
+      })
+      expect(useUIStore.getState().toasts[useUIStore.getState().toasts.length - 1]).toMatchObject({
+        type: 'success',
+        message: 'Network settings saved.',
+      })
     })
   })
 
@@ -970,6 +1013,71 @@ describe('Settings > General tab', () => {
     expect(screen.getByText(/Windows, upgrades recover verified legacy app-adjacent data/)).toBeInTheDocument()
   })
 
+  it('requires a check and confirmation before importing legacy data', async () => {
+    echoFlowMigrationMock.getStatus.mockResolvedValueOnce({
+      summary: { ready: 1, 'target-exists': 0, missing: 0, invalid: 0, failed: 0, migrated: 0, skipped: 0 },
+    })
+
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+    expect(screen.queryByRole('button', { name: 'Import Legacy Data' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Check Legacy Data' }))
+
+    await waitFor(() => {
+      expect(echoFlowMigrationMock.getStatus).toHaveBeenCalledTimes(1)
+      expect(screen.getByRole('button', { name: 'Import Legacy Data' })).toBeInTheDocument()
+    })
+    expect(echoFlowMigrationMock.run).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Import Legacy Data' }))
+    expect(screen.getByText('Import legacy data?')).toBeInTheDocument()
+    expect(echoFlowMigrationMock.run).not.toHaveBeenCalled()
+
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Import Legacy Data' }))
+    await waitFor(() => expect(echoFlowMigrationMock.run).toHaveBeenCalledTimes(1))
+  })
+
+  it('shows an import failure inside the confirmation dialog', async () => {
+    echoFlowMigrationMock.getStatus.mockResolvedValueOnce({
+      summary: { ready: 1, 'target-exists': 0, missing: 0, invalid: 0, failed: 0, migrated: 0, skipped: 0 },
+    })
+    echoFlowMigrationMock.run.mockRejectedValueOnce(new Error('migration unavailable'))
+
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByRole('button', { name: 'Check Legacy Data' }))
+    await screen.findByRole('button', { name: 'Import Legacy Data' })
+    fireEvent.click(screen.getByRole('button', { name: 'Import Legacy Data' }))
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Import Legacy Data' }))
+
+    await waitFor(() => {
+      expect(within(screen.getByRole('dialog')).getByRole('alert')).toHaveTextContent('migration unavailable')
+    })
+  })
+
+  it('removes import eligibility when a later legacy data check fails', async () => {
+    echoFlowMigrationMock.getStatus
+      .mockResolvedValueOnce({
+        summary: { ready: 1, 'target-exists': 0, missing: 0, invalid: 0, failed: 0, migrated: 0, skipped: 0 },
+      })
+      .mockRejectedValueOnce(new Error('status unavailable'))
+
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByRole('button', { name: 'Check Legacy Data' }))
+    await screen.findByRole('button', { name: 'Import Legacy Data' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Check Legacy Data' }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Import Legacy Data' })).not.toBeInTheDocument()
+      expect(screen.getByRole('alert')).toHaveTextContent('status unavailable')
+    })
+  })
+
   it('lets desktop users choose a custom data directory and relaunch immediately', async () => {
     render(<Settings />)
 
@@ -977,7 +1085,7 @@ describe('Settings > General tab', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Choose Folder' }))
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Custom data directory')).toHaveValue('/Users/test/cc-haha-data')
+      expect(screen.getByLabelText('Custom data directory')).toHaveValue('/Users/test/echoflow-code-data')
     })
 
     fireEvent.click(screen.getByRole('button', { name: 'Use This Folder and Restart' }))
@@ -985,7 +1093,7 @@ describe('Settings > General tab', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save and Restart' }))
 
     await waitFor(() => {
-      expect(useSettingsStore.getState().setAppMode).toHaveBeenCalledWith('portable', '/Users/test/cc-haha-data')
+      expect(useSettingsStore.getState().setAppMode).toHaveBeenCalledWith('portable', '/Users/test/echoflow-code-data')
       expect(tauriCoreMock.invoke).toHaveBeenCalledWith('prepare_for_app_mode_restart')
       expect(tauriProcessMock.relaunch).toHaveBeenCalledTimes(1)
     })
@@ -995,8 +1103,8 @@ describe('Settings > General tab', () => {
     useSettingsStore.setState({
       appMode: {
         mode: 'portable',
-        portableDir: '/Users/test/cc-haha-data',
-        activeConfigDir: '/Users/test/cc-haha-data',
+        portableDir: '/Users/test/echoflow-code-data',
+        activeConfigDir: '/Users/test/echoflow-code-data',
         configDirSource: 'portable',
       },
     })
@@ -1478,7 +1586,7 @@ describe('Settings > General tab', () => {
       expect(desktopNotificationsMock.requestDesktopNotificationPermission).toHaveBeenCalledTimes(1)
     })
     expect(desktopNotificationsMock.notifyDesktop).toHaveBeenCalledWith({
-      title: 'Claude Code Haha notifications are enabled',
+      title: 'EchoFlow Code notifications are enabled',
       body: 'Permission prompts and completed agent replies will now use system notifications.',
     })
   })
@@ -2329,14 +2437,13 @@ describe('Settings > Providers tab', () => {
       const baseUrlInput = within(dialog).getByRole('textbox', { name: /Base URL/i })
       expect(baseUrlInput).toHaveValue('https://open.bigmodel.cn/api/anthropic')
       expect(within(dialog).getByRole('button', { name: /Get API Key/i })).toBeInTheDocument()
-      expect(within(dialog).getByRole('button', { name: 'Mainland China promotion' })).toBeInTheDocument()
+      expect(within(dialog).queryByText(/promotion/i)).not.toBeInTheDocument()
 
       fireEvent.click(regionTrigger)
       fireEvent.click(within(dialog).getByRole('option', { name: /Global/ }))
 
       expect(baseUrlInput).toHaveValue('https://api.z.ai/api/anthropic')
       expect(within(dialog).queryByRole('button', { name: /Get API Key/i })).not.toBeInTheDocument()
-      expect(within(dialog).queryByText('Mainland China promotion')).not.toBeInTheDocument()
       await act(async () => settleSettings?.())
       await waitFor(() => {
         expect(dialog.querySelector('textarea')?.value).toContain(
@@ -2441,10 +2548,13 @@ describe('Settings > Providers tab', () => {
     render(<Settings />)
     fireEvent.click(screen.getByRole('button', { name: /Add Model/i }))
 
-    const dialog = screen.getByRole('dialog')
-    const mediaSupport = within(dialog).getByRole('checkbox', { name: 'Preserve nested tool result media' })
-    expect(mediaSupport).toBeChecked()
-    fireEvent.click(mediaSupport)
+      const dialog = screen.getByRole('dialog')
+      const mediaSupport = within(dialog).getAllByRole('checkbox', { name: 'Preserve nested tool result media' })
+      expect(mediaSupport).toHaveLength(2)
+      expect(mediaSupport[0]).toBeChecked()
+      expect(mediaSupport[1]).toBeChecked()
+      fireEvent.click(mediaSupport[0]!)
+      expect(mediaSupport[1]).not.toBeChecked()
 
     const settingsTextarea = await waitFor(() => {
       const textarea = dialog.querySelector('textarea') as HTMLTextAreaElement
@@ -2838,7 +2948,9 @@ describe('Settings > Providers tab', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Add Model/i }))
     const dialog = screen.getByRole('dialog')
-    const toolSearchCheckbox = within(dialog).getByRole('checkbox', { name: 'Enable Tool Search' })
+    const toolSearchCheckboxes = within(dialog).getAllByRole('checkbox', { name: 'Enable Tool Search' })
+    expect(toolSearchCheckboxes).toHaveLength(2)
+    const toolSearchCheckbox = toolSearchCheckboxes[0]!
 
     expect(toolSearchCheckbox).not.toBeChecked()
     await waitFor(() => {
@@ -2916,8 +3028,10 @@ describe('Settings > Providers tab', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Add Model/i }))
     const dialog = screen.getByRole('dialog')
-    const disableBetasCheckbox = within(dialog).getByRole('checkbox', { name: 'Disable experimental beta headers' })
-    fireEvent.focus(within(dialog).getByRole('button', { name: 'Disable experimental beta headers' }))
+    const disableBetasCheckboxes = within(dialog).getAllByRole('checkbox', { name: 'Disable experimental beta headers' })
+    expect(disableBetasCheckboxes).toHaveLength(2)
+    const disableBetasCheckbox = disableBetasCheckboxes[0]!
+    fireEvent.focus(within(dialog).getAllByRole('button', { name: 'Disable experimental beta headers' })[0]!)
     expect(await screen.findByRole('tooltip')).toHaveTextContent(
       /GPT and o-series models still receive the reasoning effort selected for the Session/i,
     )
@@ -3137,6 +3251,7 @@ describe('Settings > Providers tab', () => {
     const apiKeyInput = within(dialog).getByPlaceholderText('sk-...')
 
     expect(apiKeyInput).toHaveAttribute('type', 'password')
+    fireEvent.change(apiKeyInput, { target: { value: 'sk-test' } })
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Show API Key' }))
 
@@ -3582,7 +3697,7 @@ describe('Settings > About tab', () => {
     useUpdateStore.setState({
       status: 'available',
       availableVersion: '0.1.5',
-      releaseNotes: '# Claude Code Haha v0.1.5\n\n- Fixed updater rendering\n- Added markdown support',
+      releaseNotes: '# EchoFlow Code v0.1.5\n\n- Fixed updater rendering\n- Added markdown support',
       progressPercent: 0,
       downloadedBytes: 0,
       totalBytes: null,
@@ -3599,7 +3714,7 @@ describe('Settings > About tab', () => {
   it('renders release notes with markdown formatting', async () => {
     render(<Settings />)
 
-    expect(await screen.findByRole('heading', { name: 'Claude Code Haha v0.1.5' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'EchoFlow Code v0.1.5' })).toBeInTheDocument()
     expect(screen.getByText('Fixed updater rendering')).toBeInTheDocument()
     expect(screen.getByText('Added markdown support')).toBeInTheDocument()
   })
@@ -3644,7 +3759,7 @@ describe('Settings > About tab', () => {
     useUpdateStore.setState({
       status: 'downloading',
       availableVersion: '0.1.5',
-      releaseNotes: '# Claude Code Haha v0.1.5',
+      releaseNotes: '# EchoFlow Code v0.1.5',
       progressPercent: 0,
       downloadedBytes: 1536,
       totalBytes: null,

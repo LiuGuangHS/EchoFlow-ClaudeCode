@@ -63,7 +63,7 @@ function TaskPreview({ task, locale, onClose }: { task: Preview; locale: Landing
     }
   }
   return <dialog ref={ref} className="wander-dialog" aria-labelledby="task-preview-title" onCancel={onClose} onClick={event => { if (event.target === event.currentTarget) onClose() }}>
-    <div className="wander-dialog__head"><span className="wander-eyebrow">cc-haha / {en ? 'YOUR NEXT TASK' : '你的下一件事'}</span><button className="wander-icon" onClick={onClose} aria-label={en ? 'Close preview' : '关闭预览'}><X size={20} /></button></div>
+    <div className="wander-dialog__head"><span className="wander-eyebrow">EchoFlow Code / {en ? 'YOUR NEXT TASK' : '你的下一件事'}</span><button className="wander-icon" onClick={onClose} aria-label={en ? 'Close preview' : '关闭预览'}><X size={20} /></button></div>
     <h2 id="task-preview-title">{en ? 'A little plan. A real beginning.' : '把想法，变成下一步。'}</h2>
     <p className="wander-dialog__note">{en ? 'This is a workflow preview. Run your task in the desktop app with your own model.' : '这里预览工作流程。实际任务将在桌面端连接你的模型后执行。'}</p>
     <blockquote>{task.text}</blockquote>
@@ -86,14 +86,14 @@ function Nav({ locale }: { locale: LandingLocale }) {
     return () => window.removeEventListener('keydown', close)
   }, [open])
   return <header className="wander-header">
-    <a className="wander-wordmark" href={toSiteHref(en ? '/en' : '/')} aria-label="cc-haha">cc-haha</a>
+    <a className="wander-wordmark" href={toSiteHref(en ? '/en' : '/')} aria-label="EchoFlow Code">EchoFlow Code</a>
     <nav aria-label={en ? 'Main navigation' : '主导航'} id="wander-nav" className="wander-nav" data-open={open}>
       <a href="#discover" onClick={() => setOpen(false)}>{en ? 'Discover' : '发现可能'}</a>
       <a href="#how-it-works" onClick={() => setOpen(false)}>{en ? 'How it works' : '如何开始'}</a>
       <a href="#faqs" onClick={() => setOpen(false)}>{en ? 'FAQs' : '常见问题'}</a>
       <a className="wander-nav__mobile-docs" href={toSiteHref(en ? '/en/start' : '/start')}>{en ? 'Documentation' : '使用文档'}</a>
     </nav>
-    <div className="wander-header__actions"><a className="wander-doc-link" href={toSiteHref(en ? '/en/start' : '/start')}>{en ? 'Docs' : '使用文档'}<ArrowUpRight size={15} /></a><a className="wander-locale" href={toSiteHref(en ? '/' : '/en')} lang={en ? 'zh-CN' : 'en'} aria-label={en ? 'Switch to Chinese' : '切换为英文'} onClick={() => rememberLocale(en ? 'zh' : 'en')}>{en ? '中文' : 'EN'}</a><a className="wander-primary" href="#download">{en ? 'Get cc-haha' : '免费下载'}<ArrowUpRight size={17} /></a><button ref={toggleRef} className="wander-icon wander-menu" aria-label={en ? 'Toggle navigation' : '切换导航'} aria-expanded={open} aria-controls="wander-nav" onClick={() => setOpen(!open)}>{open ? <X /> : <Menu />}</button></div>
+    <div className="wander-header__actions"><a className="wander-doc-link" href={toSiteHref(en ? '/en/start' : '/start')}>{en ? 'Docs' : '使用文档'}<ArrowUpRight size={15} /></a><a className="wander-locale" href={toSiteHref(en ? '/' : '/en')} lang={en ? 'zh-CN' : 'en'} aria-label={en ? 'Switch to Chinese' : '切换为英文'} onClick={() => rememberLocale(en ? 'zh' : 'en')}>{en ? '中文' : 'EN'}</a><a className="wander-primary" href="#download">{en ? 'Get EchoFlow Code' : '免费下载'}<ArrowUpRight size={17} /></a><button ref={toggleRef} className="wander-icon wander-menu" aria-label={en ? 'Toggle navigation' : '切换导航'} aria-expanded={open} aria-controls="wander-nav" onClick={() => setOpen(!open)}>{open ? <X /> : <Menu />}</button></div>
   </header>
 }
 
@@ -156,7 +156,7 @@ function Discover({ locale, onEnlarge }: { locale: LandingLocale; onEnlarge: (im
     workspace: { width: 2000, height: 1255 },
   }[item.imageKey]
   const screenshotAlt = item.imageKey === 'session'
-    ? (en ? 'cc-haha with the real project and session list visible' : 'cc-haha 真实项目界面，完整展示左侧项目与会话列表')
+    ? (en ? 'EchoFlow Code with the real project and session list visible' : 'EchoFlow Code 真实项目界面，完整展示左侧项目与会话列表')
     : item.title
   function onKey(event: KeyboardEvent<HTMLButtonElement>, index: number) {
     const choices: Record<string, number> = { ArrowRight: (index + 1) % 3, ArrowLeft: (index + 2) % 3, Home: 0, End: 2 }
@@ -169,7 +169,7 @@ function Discover({ locale, onEnlarge }: { locale: LandingLocale; onEnlarge: (im
     <div className="wander-section__heading"><span className="wander-eyebrow">01 / {en ? 'MEET YOUR NEW COMPANION' : '认识你的新搭档'}</span><h2 id="discover-title">{en ? <>A little less doing.<br />A lot more <em>living.</em></> : <>少一点忙碌。<br />多一点<em>可能。</em></>}</h2><p>{en ? 'One place for your ideas, your apps, and every change along the way.' : '想法、应用和每一次改动，都在同一个工作空间里。'}</p></div>
     <div className="wander-feature-tabs" role="tablist" aria-label={en ? 'Explore capabilities' : '探索产品能力'}>{c.features.map((feature, index) => { const Symbol = featureIcons[index]; return <button role="tab" key={feature.id} id={`feature-${feature.id}`} aria-controls="feature-panel" aria-selected={active === index} tabIndex={active === index ? 0 : -1} onClick={() => setActive(index)} onKeyDown={event => onKey(event, index)}><Symbol size={17} />{en ? ['Write code', 'Use apps', 'Review changes'][index] : ['写代码', '操作应用', '审阅改动'][index]}</button> })}</div>
     <div className="wander-showcase" role="tabpanel" id="feature-panel" aria-labelledby={`feature-${item.id}`}>
-      <div className="wander-showcase__bar"><span className="wander-window-dots"><i /><i /><i /></span><span>cc-haha / {en ? 'YOUR WORKSPACE' : '你的工作空间'}</span><span className="wander-live"><i />{en ? 'REAL PRODUCT' : '真实产品界面'}</span></div>
+      <div className="wander-showcase__bar"><span className="wander-window-dots"><i /><i /><i /></span><span>EchoFlow Code / {en ? 'YOUR WORKSPACE' : '你的工作空间'}</span><span className="wander-live"><i />{en ? 'REAL PRODUCT' : '真实产品界面'}</span></div>
       <button className="wander-showcase__image" onClick={event => onEnlarge({ src: screenshot, alt: screenshotAlt, opener: event.currentTarget })} aria-label={en ? 'Enlarge product screenshot' : '放大查看产品截图'}><img key={item.imageKey} src={screenshot} alt={screenshotAlt} width={dimensions.width} height={dimensions.height} loading="lazy" /><span><Plus size={16} />{en ? 'A closer look' : '看看细节'}</span></button>
       <div className="wander-showcase__caption"><div><span className="wander-eyebrow">{item.kicker}</span><h3>{item.title}</h3></div><div><p>{item.body}</p><a className="wander-text-link" href={toSiteHref(item.route)}>{en ? 'Explore this workflow' : '了解这个工作流'}<ArrowUpRight size={16} /></a></div></div>
     </div>
@@ -189,7 +189,7 @@ function Journey({ locale }: { locale: LandingLocale }) {
     <div className="wander-journey__inner"><div className="wander-section__heading"><span className="wander-eyebrow">02 / {en ? 'THE FIRST SMALL STEP' : '从这里出发'}</span><h2 id="journey-title">{en ? <>New companion.<br />Familiar rhythm.</> : <>新搭档，<br />你的老习惯。</>}</h2><p>{en ? 'Four small steps. Then, back to the things you love.' : '只需要四小步，然后，把时间还给你喜欢的事。'}</p></div>
       <div className="wander-route"><div className="wander-route__steps" aria-label={en ? 'Getting started steps' : '上手步骤'}>{c.workflowSteps.map((item, index) => <button key={item.route} aria-pressed={index === active} onClick={() => setActive(index)}><span>0{index + 1}</span><strong>{item.title}</strong><ArrowUpRight size={17} /></button>)}</div><div className="wander-route__detail" aria-live="polite"><div className="wander-route__stamp"><Symbol size={34} strokeWidth={1.2} /></div><span className="wander-eyebrow">STEP 0{active + 1} / 04</span><h3>{step.title}</h3><p>{descriptions[active]}</p><a className="wander-primary" href={toSiteHref(step.route)}>{en ? 'Show me how' : '带我开始'}<ArrowUpRight size={17} /></a></div></div>
     </div>
-    <div className="wander-journey__caption"><span>{en ? 'LESS FRICTION. MORE FREEDOM.' : '少一点阻力，多一点自由。'}</span><span>cc-haha field notes / 02</span></div>
+    <div className="wander-journey__caption"><span>{en ? 'LESS FRICTION. MORE FREEDOM.' : '少一点阻力，多一点自由。'}</span><span>EchoFlow Code field notes / 02</span></div>
   </section>
 }
 
@@ -209,7 +209,7 @@ function Closing({ locale }: { locale: LandingLocale }) {
   const en = locale === 'en'
   const c = landingContent[locale]
   const [platform, setPlatform] = useState('macOS')
-  return <footer className="wander-closing" id="download"><img className="wander-landscape" src={landscape} alt="" loading="lazy" /><div className="wander-closing__content"><span className="wander-eyebrow">{en ? 'YOUR TIME. YOUR POSSIBILITIES.' : '你的时间，你的可能。'}</span><h2>{en ? <>Your next idea<br />starts <em>here.</em></> : <>下一件想做的事，<br /><em>从这里开始。</em></>}</h2><p>{c.closing.body}</p><div className="wander-platforms" aria-label={en ? 'Choose your operating system' : '选择你的操作系统'}>{['macOS', 'Windows', 'Linux'].map((name, index) => { const Symbol = [Command, Monitor, Laptop][index]; return <button key={name} aria-pressed={platform === name} onClick={() => setPlatform(name)}><Symbol size={15} />{name}</button> })}</div><a className="wander-primary wander-download" href={DOWNLOAD_URL}><Download size={18} />{en ? `Get cc-haha for ${platform}` : `下载 ${platform} 版`}<ArrowUpRight size={18} /></a><span className="wander-closing__hint">{en ? 'Choose your architecture on GitHub Releases · Free & open source' : '前往 GitHub Releases 选择对应架构 · 免费开源'}</span></div><div className="wander-footer"><a className="wander-wordmark" href="#wander-title">cc-haha</a><span>{en ? 'A little more room for life.' : '给生活，多留一点空间。'}</span><nav aria-label={en ? 'Footer navigation' : '页脚导航'}><a href={toSiteHref(en ? '/en/start' : '/start')}>{en ? 'Docs' : '文档'}</a><a href={GITHUB_URL} target="_blank" rel="noreferrer"><Code2 size={14} />GitHub</a><a href={toSiteHref(en ? '/en/start/privacy' : '/start/privacy')}>{en ? 'Privacy' : '隐私'}</a><a href={toSiteHref(en ? '/' : '/en')} onClick={() => rememberLocale(en ? 'zh' : 'en')}>{en ? '中文' : 'English'}</a></nav></div></footer>
+  return <footer className="wander-closing" id="download"><img className="wander-landscape" src={landscape} alt="" loading="lazy" /><div className="wander-closing__content"><span className="wander-eyebrow">{en ? 'YOUR TIME. YOUR POSSIBILITIES.' : '你的时间，你的可能。'}</span><h2>{en ? <>Your next idea<br />starts <em>here.</em></> : <>下一件想做的事，<br /><em>从这里开始。</em></>}</h2><p>{c.closing.body}</p><div className="wander-platforms" aria-label={en ? 'Choose your operating system' : '选择你的操作系统'}>{['macOS', 'Windows', 'Linux'].map((name, index) => { const Symbol = [Command, Monitor, Laptop][index]; return <button key={name} aria-pressed={platform === name} onClick={() => setPlatform(name)}><Symbol size={15} />{name}</button> })}</div><a className="wander-primary wander-download" href={DOWNLOAD_URL}><Download size={18} />{en ? `Get EchoFlow Code for ${platform}` : `下载 ${platform} 版`}<ArrowUpRight size={18} /></a><span className="wander-closing__hint">{en ? 'Choose your architecture on GitHub Releases · Free & open source' : '前往 GitHub Releases 选择对应架构 · 免费开源'}</span></div><div className="wander-footer"><a className="wander-wordmark" href="#wander-title">EchoFlow Code</a><span>{en ? 'A little more room for life.' : '给生活，多留一点空间。'}</span><nav aria-label={en ? 'Footer navigation' : '页脚导航'}><a href={toSiteHref(en ? '/en/start' : '/start')}>{en ? 'Docs' : '文档'}</a><a href={GITHUB_URL} target="_blank" rel="noreferrer"><Code2 size={14} />GitHub</a><a href={toSiteHref(en ? '/en/start/privacy' : '/start/privacy')}>{en ? 'Privacy' : '隐私'}</a><a href={toSiteHref(en ? '/' : '/en')} onClick={() => rememberLocale(en ? 'zh' : 'en')}>{en ? '中文' : 'English'}</a></nav></div></footer>
 }
 
 export default function HomePage({ locale = 'en' }: { locale?: LandingLocale }) {
@@ -217,7 +217,7 @@ export default function HomePage({ locale = 'en' }: { locale?: LandingLocale }) 
   const [preview, setPreview] = useState<Preview | null>(null)
   const [enlargedImage, setEnlargedImage] = useState<EnlargedImage | null>(null)
   useEffect(() => {
-    setPageMeta({ alternate: locale === 'en' ? '/' : '/en', canonical: locale === 'en' ? '/en' : '/', description: landingContent[locale].hero.description, lang: locale === 'en' ? 'en' : 'zh-CN', title: locale === 'en' ? 'cc-haha — Less busywork. More room for life.' : 'cc-haha — 把琐碎交给 AI，把时间留给生活。' })
+    setPageMeta({ alternate: locale === 'en' ? '/' : '/en', canonical: locale === 'en' ? '/en' : '/', description: landingContent[locale].hero.description, lang: locale === 'en' ? 'en' : 'zh-CN', title: locale === 'en' ? 'EchoFlow Code — Less busywork. More room for life.' : 'EchoFlow Code — 把琐碎交给 AI，把时间留给生活。' })
   }, [locale])
   return <div className="wander-page font-sans"><a className="u-skip" href="#main">{locale === 'en' ? 'Skip to content' : '跳到正文'}</a><main id="main" tabIndex={-1}><Hero locale={locale} paused={paused} setPaused={setPaused} onPreview={setPreview} /><Discover locale={locale} onEnlarge={setEnlargedImage} /><Journey locale={locale} /><Possibilities locale={locale} onPreview={setPreview} /><Faq locale={locale} /></main><Closing locale={locale} />{preview && <TaskPreview task={preview} locale={locale} onClose={() => setPreview(null)} />}{enlargedImage && <ImageViewer image={enlargedImage} locale={locale} onClose={() => setEnlargedImage(null)} />}</div>
 }

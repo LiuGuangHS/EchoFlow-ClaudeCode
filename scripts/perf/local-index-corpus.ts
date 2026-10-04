@@ -100,7 +100,7 @@ function assertOptions(options: LocalIndexCorpusOptions): void {
 
 function seededHex(seed: number, label: string): string {
   return createHash('sha256')
-    .update(`cc-haha-local-index:${seed}:${label}`)
+    .update(`echoflow-code-local-index:${seed}:${label}`)
     .digest('hex')
 }
 

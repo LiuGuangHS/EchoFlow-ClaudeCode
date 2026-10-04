@@ -101,7 +101,7 @@ export class ComputerUseRepl implements ComputerUseReplRuntime {
   private async start(signal: AbortSignal): Promise<Kernel> {
     if (this.kernel) return this.kernel
     if (process.platform !== 'darwin') throw new Error('Computer Use JavaScript is currently available on macOS only.')
-    const directory = await realpath(await mkdtemp(join(tmpdir(), 'cc-haha-cu-repl-')))
+    const directory = await realpath(await mkdtemp(join(tmpdir(), 'echoflow-cu-repl-')))
     try {
       const executable = await realpath(process.execPath)
       let args: string[]

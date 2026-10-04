@@ -18,15 +18,15 @@ it('opens the group QR in a dialog instead of pushing it below the fold', async 
   // is not racing a state update.
   await screen.findByText((_, node) => node?.tagName === 'SPAN' && node.textContent === '版本 0.1.0')
 
-  const entry = screen.getByRole('button', { name: /加入 cc-haha 交流群/ })
+  const entry = screen.getByRole('button', { name: /加入 EchoFlow 交流群/ })
   expect(entry.compareDocumentPosition(screen.getByRole('button', { name: /反馈问题/ })) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy()
   expect(entry).toHaveAttribute('aria-haspopup', 'dialog')
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 
   fireEvent.click(entry)
 
-  const dialog = screen.getByRole('dialog', { name: '加入 cc-haha 交流群' })
-  const qr = screen.getByRole('img', { name: 'cc-haha 企业微信用户群二维码' })
+  const dialog = screen.getByRole('dialog', { name: '加入 EchoFlow 交流群' })
+  const qr = screen.getByRole('img', { name: 'EchoFlow 企业微信群二维码' })
   expect(dialog).toContainElement(qr)
   expect(qr).toHaveAttribute('src', expect.stringContaining('icons/wechat-group-qr.png'))
 

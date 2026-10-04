@@ -4,10 +4,10 @@ import type { ElectronUpdateCheckResult, ElectronUpdaterLike } from './updater'
 type ProgressHandler = (progress: { transferred?: number, total?: number }) => void
 
 export type UpdateSmokeEnv = {
-  CC_HAHA_ELECTRON_UPDATE_SMOKE_VERSION?: string
-  CC_HAHA_ELECTRON_UPDATE_SMOKE_BODY?: string
-  CC_HAHA_ELECTRON_UPDATE_SMOKE_TOTAL_BYTES?: string
-  CC_HAHA_ELECTRON_UPDATE_SMOKE_LOG?: string
+  ECHOFLOW_ELECTRON_UPDATE_SMOKE_VERSION?: string
+  ECHOFLOW_ELECTRON_UPDATE_SMOKE_BODY?: string
+  ECHOFLOW_ELECTRON_UPDATE_SMOKE_TOTAL_BYTES?: string
+  ECHOFLOW_ELECTRON_UPDATE_SMOKE_LOG?: string
 }
 
 type UpdateSmokeConfig = {
@@ -24,13 +24,13 @@ function parsePositiveInteger(value: string | undefined, fallback: number) {
 }
 
 export function parseUpdateSmokeEnv(env: UpdateSmokeEnv): UpdateSmokeConfig | null {
-  const version = env.CC_HAHA_ELECTRON_UPDATE_SMOKE_VERSION?.trim()
+  const version = env.ECHOFLOW_ELECTRON_UPDATE_SMOKE_VERSION?.trim()
   if (!version) return null
   return {
     version,
-    body: env.CC_HAHA_ELECTRON_UPDATE_SMOKE_BODY ?? 'Electron update smoke release',
-    totalBytes: parsePositiveInteger(env.CC_HAHA_ELECTRON_UPDATE_SMOKE_TOTAL_BYTES, 100),
-    logPath: env.CC_HAHA_ELECTRON_UPDATE_SMOKE_LOG,
+    body: env.ECHOFLOW_ELECTRON_UPDATE_SMOKE_BODY ?? 'Electron update smoke release',
+    totalBytes: parsePositiveInteger(env.ECHOFLOW_ELECTRON_UPDATE_SMOKE_TOTAL_BYTES, 100),
+    logPath: env.ECHOFLOW_ELECTRON_UPDATE_SMOKE_LOG,
   }
 }
 

@@ -1,9 +1,18 @@
 {
+  "exclude": [
+    "adapters",
+    "artifacts",
+    "desktop",
+    "mobile",
+    "site",
+    "node_modules"
+  ],
   "compilerOptions": {
     "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "bundler",
     "allowJs": true,
+    "noEmit": true,
     "jsx": "react-jsx",
     "baseUrl": ".",
     "paths": {
@@ -17,8 +26,6 @@
         "./src/*"
       ]
     },
-    "types": [
-      "bun-types"
-    ]
+    "ignoreDeprecations": "6.0"
   }
 }

@@ -43,7 +43,7 @@ type JsonResult = Record<string, any>
 async function getJson(url: string): Promise<JsonResult> {
   for (let attempt = 0; attempt < 4; attempt++) {
     try {
-      const response = await fetch(url, { headers: { 'user-agent': 'cc-haha-market-catalog' } })
+      const response = await fetch(url, { headers: { 'user-agent': 'echoflow-code-market-catalog' } })
       if (response.status === 429 || response.status >= 500) throw new Error(`HTTP ${response.status}`)
       if (!response.ok) return { _status: response.status }
       return (await response.json()) as JsonResult

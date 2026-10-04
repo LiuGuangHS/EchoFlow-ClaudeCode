@@ -19,9 +19,9 @@ import { handlePluginsApi } from './api/plugins.js'
 import { handleSkillsApi } from './api/skills.js'
 import { handleMarketApi } from './api/market.js'
 import { handleComputerUseApi } from './api/computer-use.js'
-import { handleHahaOAuthApi } from './api/haha-oauth.js'
-import { handleHahaOpenAIOAuthApi } from './api/haha-openai-oauth.js'
-import { handleHahaGrokOAuthApi } from './api/haha-grok-oauth.js'
+import { handleEchoFlowOAuthApi } from './api/echoflow-oauth.js'
+import { handleEchoFlowOpenAIOAuthApi } from './api/echoflow-openai-oauth.js'
+import { handleEchoFlowGrokOAuthApi } from './api/echoflow-grok-oauth.js'
 import { handleMcpApi } from './api/mcp.js'
 import { handleDiagnosticsApi } from './api/diagnostics.js'
 import { handleDoctorApi } from './api/doctor.js'
@@ -30,6 +30,7 @@ import { handleActivityStatsApi } from './api/activityStats.js'
 import { handleOpenTargetsApi } from './api/open-targets.js'
 import { handleMemoryApi } from './api/memory.js'
 import { handleDesktopUiApi } from './api/desktop-ui.js'
+import { handleEchoFlowApi } from './api/echoflow.js'
 import { handleTracesApi } from './api/traces.js'
 import { handleWorkflowsApi } from './api/workflows.js'
 import { handleVoiceApi } from './api/voice.js'
@@ -51,7 +52,7 @@ export async function handleApiRequest(req: Request, url: URL, context: ApiReque
 }
 
 async function handleApiRequestWithoutPerformance(req: Request, url: URL, context: ApiRequestContext = {}): Promise<Response> {
-  if (!context.remoteBrowser) return routeApiRequest(req, url)
+  if (!context.remoteBrowser) return routeApiRequest(req, url, { projectProviderSecrets: false })
   const parts = url.pathname.split('/').filter(Boolean)
   const isProvider = parts[1] === 'providers'
   const isSettings = parts[1] === 'settings'
@@ -101,7 +102,11 @@ async function handleApiRequestWithoutPerformance(req: Request, url: URL, contex
   }
 }
 
-async function routeApiRequest(req: Request, url: URL): Promise<Response> {
+async function routeApiRequest(
+  req: Request,
+  url: URL,
+  options: { projectProviderSecrets?: boolean } = {},
+): Promise<Response> {
   const path = url.pathname
   const segments = path.split('/').filter(Boolean) // ['api', 'sessions', ...]
 
@@ -153,16 +158,16 @@ async function routeApiRequest(req: Request, url: URL): Promise<Response> {
       return handleWorkflowsApi(req, url, segments)
 
     case 'providers':
-      return handleProvidersApi(req, url, segments)
+      return handleProvidersApi(req, url, segments, { projectSecrets: options.projectProviderSecrets })
 
-    case 'haha-oauth':
-      return handleHahaOAuthApi(req, url, segments)
+    case 'echoflow-oauth':
+      return handleEchoFlowOAuthApi(req, url, segments)
 
-    case 'haha-openai-oauth':
-      return handleHahaOpenAIOAuthApi(req, url, segments)
+    case 'echoflow-openai-oauth':
+      return handleEchoFlowOpenAIOAuthApi(req, url, segments)
 
-    case 'haha-grok-oauth':
-      return handleHahaGrokOAuthApi(req, url, segments)
+    case 'echoflow-grok-oauth':
+      return handleEchoFlowGrokOAuthApi(req, url, segments)
 
     case 'adapters':
       // Adapter protocols pull in platform SDKs that are unnecessary for the
@@ -210,6 +215,9 @@ async function routeApiRequest(req: Request, url: URL): Promise<Response> {
 
     case 'voice':
       return handleVoiceApi(req, url, segments)
+
+    case 'echoflow':
+      return handleEchoFlowApi(req, url, segments)
 
     case 'traces':
       return handleTracesApi(req, url, segments)

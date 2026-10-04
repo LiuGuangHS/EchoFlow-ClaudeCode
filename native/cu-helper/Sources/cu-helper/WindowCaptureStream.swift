@@ -421,7 +421,7 @@ private final class ScreenCaptureKitWindowStreamSourceFactory: WindowCaptureStre
 @MainActor
 final class ScreenCaptureKitWindowStreamSource: WindowCaptureStreamSource {
     private static let sampleQueue = DispatchQueue(
-        label: "dev.cchaha.cu-helper.window-stream.frames",
+        label: "dev.echoflow.cu-helper.window-stream.frames",
         qos: .userInitiated
     )
     private static let startTimeout: TimeInterval = 2.5

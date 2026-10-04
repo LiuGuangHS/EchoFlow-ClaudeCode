@@ -14,21 +14,21 @@ import {
 
 async function fixture(run: (filePath: string) => Promise<void>) {
   const previousConfig = process.env.CLAUDE_CONFIG_DIR
-  const previousMode = process.env.CC_HAHA_LOCAL_INDEX
+  const previousMode = process.env.ECHOFLOW_LOCAL_INDEX
   const scope = await fs.mkdtemp(join(tmpdir(), 'trace-hard-bounds-'))
   process.env.CLAUDE_CONFIG_DIR = scope
-  process.env.CC_HAHA_LOCAL_INDEX = 'on'
+  process.env.ECHOFLOW_LOCAL_INDEX = 'on'
   clearTraceCaptureStateForTests()
   try {
-    const dir = join(scope, 'cc-haha', 'traces')
+    const dir = join(scope, 'echoflow-code', 'traces')
     await fs.mkdir(dir, { recursive: true })
     await run(join(dir, 'fixture.jsonl'))
   } finally {
     clearTraceCaptureStateForTests()
     if (previousConfig === undefined) delete process.env.CLAUDE_CONFIG_DIR
     else process.env.CLAUDE_CONFIG_DIR = previousConfig
-    if (previousMode === undefined) delete process.env.CC_HAHA_LOCAL_INDEX
-    else process.env.CC_HAHA_LOCAL_INDEX = previousMode
+    if (previousMode === undefined) delete process.env.ECHOFLOW_LOCAL_INDEX
+    else process.env.ECHOFLOW_LOCAL_INDEX = previousMode
     await fs.rm(scope, { recursive: true, force: true })
   }
 }

@@ -321,7 +321,7 @@ describe('readImageWithTokenBudget', () => {
     originalPngDimensions = { width: 1920, height: 1080, format: 'png' }
     outputForOperations = () => Buffer.from('compressed-image')
     const imageBuffer = Buffer.alloc(200_000, 1)
-    const imagePath = join(tmpdir(), `cc-haha-image-budget-${Date.now()}.png`)
+    const imagePath = join(tmpdir(), `echoflow-code-image-budget-${Date.now()}.png`)
     await writeFile(imagePath, imageBuffer)
 
     try {
@@ -359,7 +359,7 @@ describe('readImageWithTokenBudget', () => {
     const imageBuffer = Buffer.alloc(200_000, 1)
     const imagePath = join(
       tmpdir(),
-      `cc-haha-image-vision-budget-${Date.now()}.png`,
+      `echoflow-code-image-vision-budget-${Date.now()}.png`,
     )
     await writeFile(imagePath, imageBuffer)
 

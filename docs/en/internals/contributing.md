@@ -33,6 +33,21 @@ bun install
 
 Do not commit local artifacts such as `artifacts/quality-runs/`, `node_modules/`, or `desktop/node_modules/`.
 
+### Common development commands
+
+```bash
+bun run start                                   # or ./bin/echoflow-code: run the CLI locally
+SERVER_PORT=3456 bun run src/server/index.ts    # local API/WebSocket server used by desktop/
+cd desktop && bun run dev                       # desktop frontend in Vite
+cd desktop && bun run test                      # desktop Vitest suites
+cd desktop && bun run check:electron            # type-check the Electron host and rebuild bundles
+cd desktop && bun run build                     # type-check and produce a production build
+cd adapters && bun run test                     # all adapter tests; test:<platform> for one platform
+bun run docs:dev                                # docs preview; bun run docs:build to build
+```
+
+For Windows x64 packaging use `cd desktop && bun run build:windows-x64`; it requires Bun/Bunx and Visual Studio 2022 Build Tools with the Desktop development with C++ workload.
+
 ## Gate Tiers
 
 | Tier | Trigger | What runs | Constraint |
@@ -92,7 +107,7 @@ artifacts/coverage/<timestamp>/coverage-report.json
 
 Include the commands you ran and the report summary in your PR description. `quality:pr` / `quality:verify` remain available for contributors who prefer explicit quality command names, but docs and AI prompts should prefer `bun run verify`.
 
-The coverage gate does four things: measures source-only coverage, enforces the baseline ratchet, reports target gaps against 75-80%+ maintained-area goals, and enforces changed-line coverage for new or modified executable production lines. The current baseline lives in `scripts/quality-gate/coverage-baseline.json`, and CI compares against the base branch baseline when available. New PRs must not lower coverage beyond the allowed window. Changes to `coverage-baseline.json` or `coverage-thresholds.json` require the maintainer-only `allow-coverage-baseline-change` label. Quarantine is reserved for maintainer baseline/release tracking and must never hide deterministic provider/chat contract tests; the normal PR gate does not depend on quarantine to pass.
+The coverage gate runs root, desktop, and adapter suites for the source areas changed in the diff, then enforces the baseline ratchet, reports target gaps, and checks changed-line coverage. Unchanged areas are skipped. If no source area can be selected, or the coverage policy or dependency manifests changed, it runs every area. The current baseline lives in `scripts/quality-gate/coverage-baseline.json`, and CI compares the affected suites against the base branch baseline when available. Changed areas must not lower coverage beyond the allowed window. Changes to `coverage-baseline.json` or `coverage-thresholds.json` require the maintainer-only `allow-coverage-baseline-change` label. Quarantine is reserved for maintainer baseline/release tracking and must never hide deterministic provider/chat contract tests; the normal PR gate does not depend on quarantine to pass.
 
 ## AI Coding Agent Fix Loop
 
@@ -111,6 +126,31 @@ When a check fails, consult the evidence for that failure:
 
 Claim PR-ready/full validation only after `bun run verify` passes for the final diff. Do not lower coverage baselines/thresholds or rewrite test expectations to hide failures.
 
+## Agent Toolset
+
+The default toolset is five plugins covering design, planning, review, and minimal implementation. They accelerate the workflow but **do not replace the gates**: `bun run check:impact`, the surface checks, `bun run check:policy`, and `bun run verify` remain the only authority. Where a plugin disagrees with this repository, `AGENTS.md` and this document win.
+
+| Plugin | Purpose | Entry point |
+| --- | --- | --- |
+| `superpowers` | The main flow: clarify requirements → implementation plan → batched execution with review checkpoints | `/superpowers:brainstorm`, `/superpowers:write-plan`, `/superpowers:execute-plan`; review with `@code-reviewer` |
+| `ponytail` | The minimal-code ladder: ask whether the code is needed, then reuse, standard library, native features, and only then the least code that works | `/ponytail-review` on the current diff; `/ponytail-audit` across the repo |
+| `frontend-design` | Interface design quality for the desktop app and docs site, avoiding generic output | Triggered on demand for UI design work |
+| `typescript-lsp` | TypeScript/JavaScript go-to-definition, find-references, and diagnostics | Always on |
+| `claude-model-router-hook` | Routes model tiers by task class and constrains the model a spawned sub-agent uses | Always on; configured via `.claude/model-router.json` |
+
+`superpowers`, `typescript-lsp`, and `frontend-design` come from the official Claude Code marketplace; the other two need their own marketplace added first:
+
+```bash
+/plugin marketplace add tzachbon/claude-model-router-hook
+/plugin install claude-model-router-hook@claude-model-router-hook
+/plugin marketplace add DietrichGebert/ponytail
+/plugin install ponytail@ponytail
+```
+
+The mapping from task class (mechanical, implementation, debugging, architecture, cross-system) to model tier is defined and maintained by `claude-model-router-hook` itself — do **not** copy that table into repository docs, and do not rewrite the plugin's classification. Set the Agent tool's `model` to match the task class instead of defaulting every sub-agent to the top tier.
+
+`ponytail` is how the "smallest change" bullet under Engineering Behavior Guardrails is enforced: when a diff outgrows its own proof, run `/ponytail-review` to find what can be deleted. Its `ultra` level challenges requirements themselves, while fork identity, provider policy, persistence compatibility, and the release flow are non-negotiable in `AGENTS.md` — do not use any level to challenge those.
+
 ## Regression Test Design
 
 A same-area test file is the gate's minimum signal; tests also need to prove behavior:
@@ -121,6 +161,16 @@ A same-area test file is the gate's minimum signal; tests also need to prove beh
 - **Test the connections across boundaries.** Separate green server, store, and component tests do not prove that messages drive the UI. Exercise risky connections through real entry points and do not mock the module under test.
 
 Coverage reports have limits: `desktop/vitest.config.ts` collects only `src/**`, excluding the Electron main process. The repository's current Bun coverage baseline has zero branch records, and `coverage.ts` displays `0/0` as 100%; that does not prove all branches were exercised. Inspect current configuration and reports instead of using historical coverage figures as evidence for a new change.
+
+### Regression case law
+
+The directions above are the rules; these are regressions that actually shipped. The concrete evidence is kept so you can judge whether the problem in front of you is the same kind.
+
+- **Drive the transition; never hand-write the state it produces.** Component tests in `desktop/src` call `setState` 744 times and a real store action 3 times. State you assigned is self-consistent by construction and cannot expose "transition A did not update B" — which is where these bugs live. Use `handleServerMessage`, store actions, and real user events.
+- **Assert the invariant, not today's output.** `2262973a4` shipped `expect(getByText('deepseek-reasoner'))` at a moment when the screen showed another model's number: it wrote the bug in as a passing assertion, and the next fix had to invert that exact line. Ask what must be true after this step, not what it prints now.
+- **Cover both directions of any rule that drops or merges something.** The replay guard was tested for "a replay must be discarded" and never for "a genuine repeat must be kept", so it shipped dropping real replies.
+- **Test the join, not each end.** Server, store, and component each had a test for `runtime_config_applied`; nothing crossed them, and deleting the term that joins them (`ChatInput.tsx` `refreshNonce`) left 314 tests green.
+- **Never retune an existing test's inputs to keep it green.** `128f75ab5` changed five tests' props (`messageCount={0}` → `{1}`) instead of accepting that they described states a real session cannot reach. If a test only passes after you edit its inputs, the test was describing the implementation.
 
 ### Coverage References
 
@@ -133,6 +183,8 @@ External reference points:
 ## Maintaining Agent Instructions
 
 Keep project constraints and entry points in root `AGENTS.md`, specialized rules near the code, and explanations/examples in on-demand documentation. Shared guidance must work for contributors using different models. Revisit duplicated workflows and broad stopping conditions as capabilities change, while preserving current safety and CI contracts. This cleanup draws on Eric Provencher's [Rethinking skills and prompts for GPT-6 Astra](https://x.com/pvncher/status/2095991462416490862) (2026-09-04).
+
+The "How This Contract Is Maintained" section of `AGENTS.md` turns that principle into an executable rule: a rule stays in the root contract only when all three hold — it changes a direction decision, violating it causes irreversible loss, and it cannot be read from the code. Otherwise it moves here and leaves a one-line pointer. When a trigger fires (a top-level directory or gate added or removed, a `ChangeArea` change, a workflow change, a referenced file moved), fix the contract in the **same commit**. `scripts/pr/quality-contract.test.ts` checks the byte budget and checks that the contract's pointers still resolve to real content — re-inlining a copy of what was moved out after the fact is caught by that assertion.
 
 Repository skill descriptions should identify the applicable task and necessary distinctions; put operational detail in the body or referenced files. Use a short router for multiple workflows and avoid broadening triggers just to match more keywords. Model defaults, tool formats, and compaction behavior describe product implementation, so check the source before updating those docs.
 
@@ -191,13 +243,14 @@ Run the checks that match the files you changed:
 bun run check:server      # Server API, WebSocket, providers, sessions, and related tests
 bun run check:desktop     # Desktop lint, Vitest, and production build
 bun run check:adapters    # IM adapter tests
+bun run check:mobile      # Kotlin Android shell: metadata and native integration contracts
 bun run check:native      # Desktop sidecars, Electron host, and package-smoke checks
 bun run check:provider-contract # Offline provider/runtime/proxy contract tests
 bun run check:chat-contract     # WebSocket, session, and desktop chat-store contracts
 bun run check:persistence-upgrade # Persistence migrations and old-fixture compatibility
 bun run check:docs        # Isolated install, build, and validation for the site/ React docs
 bun run check:quarantine  # Maintainer baseline/release quarantine audit
-bun run check:coverage    # Root, desktop, and adapter coverage reports plus ratchet enforcement
+bun run check:coverage    # Coverage and ratchet for changed root, desktop, and adapter areas; full when needed
 ```
 
 Focused tests are the normal development loop. Run `bun run verify` locally when claiming PR-ready/full validation; hosted CI still executes every selected required lane.
@@ -252,7 +305,7 @@ bun run quality:gate --mode baseline --allow-live \
   --provider-model minimax:main:minimax-main
 ```
 
-Provider selectors come from the providers saved in your local Desktop Settings > Providers page. Contributors do not need the maintainer's provider UUIDs or vendor accounts. They can add their own provider locally, run `bun run quality:providers`, and choose their own model.
+Provider selectors come from the providers saved in your local desktop app under Settings > Model settings. Contributors do not need the maintainer's provider UUIDs or vendor accounts. They can add their own provider locally, run `bun run quality:providers`, and choose their own model.
 
 If you do not have a saved provider, you can run one unsaved provider smoke with environment variables:
 
@@ -349,6 +402,98 @@ Every release should be verified by upgrading from the previous stable build at 
 
 Platforms differ in what matters: on macOS confirm the release job used the signed artifacts and the launch-policy check passed; on Windows confirm `latest.yml`, `.exe`, and `.exe.blockmap` are all in the release assets, and remember that a SmartScreen prompt on an unsigned build does not mean the updater failed; on Linux verify auto-update through the AppImage, since `.deb` ships as a manual installer only.
 
+## Upstream Sync (maintainer)
+
+The fork tracks upstream **releases**, not upstream's moving tip: upstream `main` is a development branch, and only a release tag is something the fork can version against. Syncing is high-risk; the non-negotiable constraints live in `AGENTS.md` under "Upstream Sync Direction", and this section is the full procedure.
+
+### Four commands
+
+| Command | Effect |
+| --- | --- |
+| `bun run upstream:check` | Read-only probe. Reports the verdict, changes nothing. |
+| `bun run upstream:resolve` | Fetches the sync branch and merges `main` into it locally, leaving conflicts in the tree. |
+| `bun run upstream:audit` | Read-only release-surface gate for unresolved conflicts, release-note version/brand and newer release notes. |
+| `bun run upstream:sync` | Pushes the sync branch so the PR can be opened. |
+
+All four need bun (`packageManager: bun@1.3.14`): the runner uses `import.meta.dir`, which Node does not provide.
+
+Two constraints that can cost you work:
+
+- `upstream:resolve` runs `git switch --track --force-create <branch> origin/<branch>` — it **switches branches and overwrites a same-named local branch**, and it refuses to start when the worktree is dirty.
+- `upstream:sync` pushes with `--force-with-lease` and refuses when the remote branch holds different content, so a manual resolution is never overwritten.
+
+`upstream:check` flags: `--strict` (exit 1 when the merge conflicts; the default is always 0) and `--base <branch>` (default `main`).
+
+**"Already synced?" is answered from the commit graph, not from version numbers**: each release commit is tested for ancestry against the base branch, and the newest one that fails is the target. The fork ships its own version line (`0.5.x`) that cannot be compared with upstream's (`0.6.x`), so a version comparison silently reports "already synced" as soon as the fork version passes upstream's. For the same reason, **a release sitting on a sync branch is not a release merged into `main`** — only the base branch decides.
+
+### Automated path (removed)
+
+`.github/workflows/upstream-sync.yml` used to probe upstream releases every three days and open a `sync/upstream-vX.Y.Z` PR. It never produced a mergeable PR: the sync branch carried a large conflict surface, and PRs opened with the default `GITHUB_TOKEN` do not trigger `pull_request` workflows, so no CI result ever came back. The workflow is gone; run the three commands above by hand.
+
+### Manual path
+
+Use this for every upstream release:
+
+1. Start from a clean `main` worktree and inspect the configured remotes.
+2. Fetch `origin` normally. Fetch upstream branches without tags: `git fetch upstream +refs/heads/*:refs/remotes/upstream/* --prune`. Upstream release tags can share names with fork release tags.
+3. Compare `main...origin/main` and `main...upstream/main` before merging.
+4. Merge upstream with a merge commit; **do not** rebase public `main`.
+5. Plan the merge ("merge upstream, keep the fixes, replace the brand") with `/superpowers:brainstorm` and `/superpowers:write-plan`; use `@code-reviewer` on conflicted files, high-risk files, and provider-policy decisions.
+6. **Write one complete conflict matrix before editing** (see below), then resolve the whole matrix in one pass. Do not discover and patch conflicts one at a time.
+7. Resolve file contents intentionally; **never** apply blanket `--ours` or `--theirs`. Preserve fork identity and provider policy, sponsor-free public docs, persistence compatibility, the Electron release flow, and the quality gates.
+8. Audit public identity after every merge: README, docs, release notes, package metadata, diagnostics export, signing/privacy pages, updater links, and desktop About/profile defaults must not identify NanmiCoder/阿江 or `cc-haha` as the current EchoFlow author, maintainer, contact, or product.
+9. Conflict analysis and worktree edits may be automated, but `git add` and `git commit` require explicit developer confirmation. **Never** stage or commit a conflict resolution automatically.
+10. After writing resolutions, have `@code-reviewer` review them and run `bun run check:policy` before asking the developer to stage or commit. If a build or type check fails, locate it through the "AI Coding Agent Fix Loop" section, rerun the narrow failed check, and run `bun run verify` before claiming push-readiness.
+11. Push `main` before or together with release tags, then verify the remote branch and tag targets.
+
+### Conflict matrix template
+
+One row per file, written in full before you edit anything:
+
+| File | base / ours / theirs behavior | Final decision | Validating command |
+| --- | --- | --- | --- |
+| `package.json` | Upstream changes version and deps, ours holds fork metadata | `ours` | `bun run check:policy` |
+| `LICENSE` | Upstream changes the copyright line | `ours` | manual check |
+| `providerPresets.json` | Upstream adds provider presets | `manual`, ruled one by one | `bun run check:provider-contract` |
+| `desktop/src/stores/chatStore.ts` | Upstream changes session-title logic, ours holds brand copy | per-field: keep fork branding in `title`, take upstream logic in `body` | `cd desktop && bun run test` |
+
+`providerPresets.json` is always `manual`. Brand-owned files (`package.json`, `LICENSE`, `README.md`, `desktop/package.json`, `AGENTS.md`) are `ours`, with a separate decision about whether upstream logic needs to come along.
+
+### Worked example: the selective v0.6.4 merge
+
+This merge ran the four-phase flow and is the reference for selective adoption. Branch `merge/upstream-v0.6.4-selective`, snapshot tag `pre-merge-v0.6.4-snapshot`, estimated 12-18 hours.
+
+- **Strategy**: cherry-pick plus manual merge, not a wholesale merge.
+- **Phase 2 selected 6 upstream commits** (all landed in `main`, under new hashes after cherry-pick): Agent Teams inheriting the lead model; teammate permission prompt routing; session list no longer scanning every JSONL; restored window dragging; the test-connection button collapse; and the fold control with context table.
+- **The one brand conflict** (`desktop/src/stores/chatStore.ts`) was resolved by per-field choice rather than `--ours` or `--theirs`: keep EchoFlow branding in `title`, take the upstream logic in `body`. It is the clearest statement of the whole sync philosophy.
+- **Phase 3 provider decision**: all 7 provider presets added upstream in v0.6.4 were **rejected** (5 were marked `deprecated` upstream, `atlascloud` carried `utm_campaign=cc-haha`, `apismart` was a sponsor), and the EchoFlow API preset upstream had deleted was restored. The conclusion: `providerPresets.json` **did not change at all**.
+- **One file landed in the end**: `desktop/build/getProcessInfo.nsh`.
+
+### Version consolidation
+
+When a sync contains multiple upstream releases, do not carry upstream release-note files or upstream version numbers into the fork unchanged. The fork's `desktop/package.json` is the release-version source of truth:
+
+1. Determine the next fork release from the latest **fork** release/tag, not from the upstream tag.
+2. Consolidate user-relevant upstream changes into the next fork release note under the fork's version.
+3. Increment the fork patch version exactly once per fork release; **do not** create same-named tags merely because upstream `v0.6.4` or `v0.6.5` was merged.
+4. Remove upstream-only release-note files after their useful content has been consolidated, unless the maintainer explicitly asks to retain them.
+5. Before committing, verify that `desktop/package.json`, the consolidated release note, release scripts, and any tag plan all use the same fork version. If the target version or the file to remove is ambiguous, ask the maintainer before deleting it.
+
+For example, if the fork has not released `v0.5.6`, merge upstream changes into the fork's `v0.5.6` release note and do not introduce upstream `v0.6.x` release notes or tags.
+
+### Execution rules learned from this sync
+
+The v0.6.6 sync produced 15 conflicted files in practice. The sync script can locate and prepare the merge, but it cannot replace maintainer decisions. Use this sequence for future syncs:
+
+1. Use `upstream:check` read-only to confirm the target release, fork version, conflict count and sync branch; save its report before editing.
+2. Use `upstream:resolve` only to create the isolated sync branch and merge; it must not stage or commit automatically.
+3. Write the complete matrix before resolving conflicts. It must cover every file from `git diff --name-only --diff-filter=U` and state the branding, provider, persistence and test decisions.
+4. When merging an upstream release note, fold user-visible content into the current EchoFlow release note. Keep the fork version, brand, download links and comparison links; remove upstream version headings, authors, asset names and repository links.
+5. After the merge, run the brand scan, provider contract, `check:impact`, affected focused tests and `check:policy` in that order. Run server tests that use dynamic ports serially so concurrent tests do not compete for ports.
+6. Only after the conflict resolutions, release note and verification report are reviewable should the developer explicitly confirm `git add`, `git commit` and `upstream:sync`.
+
+This separates automatable preparation from maintainer decisions and prevents both accidental deletion of upstream documentation and accidental import of upstream version numbers into the EchoFlow release line.
+
 ## PR Workflow
 
 1. Create a product branch such as `fix/session-reconnect` or `feat/provider-quality-gate`.
@@ -370,7 +515,7 @@ Yes. Run the impact report and its selected deterministic checks:
 bun run check:impact
 ```
 
-`bun run verify` also needs no real model. Only the live baseline does. Maintainers can add a provider in Desktop Settings > Providers, then run:
+`bun run verify` also needs no real model. Only the live baseline does. Maintainers can add a provider in the desktop app under Settings > Model settings, then run:
 
 ```bash
 bun run quality:providers

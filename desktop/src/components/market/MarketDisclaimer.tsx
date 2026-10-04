@@ -3,7 +3,7 @@ import { ShieldAlert, X } from 'lucide-react'
 import { useTranslation } from '../../i18n'
 import { IconButton } from '@/components/ui/IconButton'
 
-const STORAGE_KEY = 'cc-haha-market-disclaimer-dismissed'
+const STORAGE_KEY = 'echoflow-code-market-disclaimer-dismissed'
 
 function readDismissed(): boolean {
   try {

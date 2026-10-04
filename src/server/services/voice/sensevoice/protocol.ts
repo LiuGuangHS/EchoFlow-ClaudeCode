@@ -8,8 +8,8 @@
  * worker deletes as soon as it has read them.
  */
 
-export const WORKER_CONFIG_ENV = 'CC_HAHA_VOICE_WORKER_CONFIG'
-export const WORKER_TOKEN_ENV = 'CC_HAHA_VOICE_WORKER_TOKEN'
+export const WORKER_CONFIG_ENV = 'ECHOFLOW_VOICE_WORKER_CONFIG'
+export const WORKER_TOKEN_ENV = 'ECHOFLOW_VOICE_WORKER_TOKEN'
 
 export const WORKER_LANGUAGES: readonly string[] = ['auto', 'zh', 'en', 'ja', 'ko', 'yue']
 

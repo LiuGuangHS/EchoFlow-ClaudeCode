@@ -206,7 +206,7 @@ private func runCLIMode(argv: [String]) -> Never {
     guard (command == "check_permissions" || command == "attest_daemon_peer"),
           HelperRuntimeAuthorization.authorizeOneShot(command: command) else {
         emitEnvelopeAndExit(.fail(
-            "This helper command requires the signed Claude Code Haha desktop app.",
+            "This helper command requires the signed EchoFlow Code desktop app.",
             code: "unauthorized_client"
         ))
     }
@@ -375,7 +375,7 @@ if isDaemonMode {
 } else if argv.count >= 2 && (argv[1] == "request-access" || argv[1] == "request_access") {
     guard HelperRuntimeAuthorization.authorizeOneShot(command: argv[1]) else {
         emitEnvelopeAndExit(.fail(
-            "Permission setup requires the signed Claude Code Haha desktop app.",
+            "Permission setup requires the signed EchoFlow Code desktop app.",
             code: "unauthorized_client"
         ))
     }

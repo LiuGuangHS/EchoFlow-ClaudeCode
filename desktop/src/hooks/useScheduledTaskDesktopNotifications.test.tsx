@@ -54,7 +54,7 @@ describe('useScheduledTaskDesktopNotifications', () => {
 
     render(<Harness />)
 
-    expect(JSON.parse(localStorage.getItem('cc-haha.scheduledTaskNotificationScan.v1')!))
+    expect(JSON.parse(localStorage.getItem('echoflow-code.scheduledTaskNotificationScan.v1')!))
       .toEqual({
         initializedAtMs: Date.parse('2026-05-03T00:00:30.000Z'),
         initializationPending: true,
@@ -304,12 +304,12 @@ describe('useScheduledTaskDesktopNotifications', () => {
 
     render(<Harness />)
     await vi.waitFor(() => expect(notifyDesktopMock).toHaveBeenCalledTimes(1))
-    expect(JSON.parse(localStorage.getItem('cc-haha.notifiedDesktopTaskRuns.v1')!))
+    expect(JSON.parse(localStorage.getItem('echoflow-code.notifiedDesktopTaskRuns.v1')!))
       .not.toContain('first-poll-retry')
 
     await vi.advanceTimersByTimeAsync(30_000)
     await vi.waitFor(() => expect(notifyDesktopMock).toHaveBeenCalledTimes(2))
-    expect(JSON.parse(localStorage.getItem('cc-haha.notifiedDesktopTaskRuns.v1')!))
+    expect(JSON.parse(localStorage.getItem('echoflow-code.notifiedDesktopTaskRuns.v1')!))
       .toContain('first-poll-retry')
   })
 
@@ -532,7 +532,7 @@ describe('useScheduledTaskDesktopNotifications', () => {
   })
 
   it('keeps legacy notified IDs as dedupe without suppressing fresh summary runs', async () => {
-    localStorage.setItem('cc-haha.notifiedDesktopTaskRuns.v1', JSON.stringify(['run-before-restart']))
+    localStorage.setItem('echoflow-code.notifiedDesktopTaskRuns.v1', JSON.stringify(['run-before-restart']))
     listMock.mockResolvedValue({
       tasks: [{
         id: 'task-1',
@@ -599,7 +599,7 @@ describe('useScheduledTaskDesktopNotifications', () => {
     listMock.mockResolvedValue({ tasks: [] })
     const firstMount = render(<Harness />)
     await vi.waitFor(() => expect(listMock).toHaveBeenCalledTimes(1))
-    expect(localStorage.getItem('cc-haha.scheduledTaskNotificationScan.v1')).not.toBeNull()
+    expect(localStorage.getItem('echoflow-code.scheduledTaskNotificationScan.v1')).not.toBeNull()
     firstMount.unmount()
 
     listMock.mockReset()
@@ -690,8 +690,8 @@ describe('useScheduledTaskDesktopNotifications', () => {
   })
 
   it('continues catch-up with a persisted cursor and delivers at most 50 runs per poll', async () => {
-    localStorage.setItem('cc-haha.notifiedDesktopTaskRuns.v1', JSON.stringify(['run-before-restart']))
-    localStorage.setItem('cc-haha.scheduledTaskNotificationScan.v1', JSON.stringify({
+    localStorage.setItem('echoflow-code.notifiedDesktopTaskRuns.v1', JSON.stringify(['run-before-restart']))
+    localStorage.setItem('echoflow-code.scheduledTaskNotificationScan.v1', JSON.stringify({
       initializedAtMs: Date.parse('2026-05-02T00:00:00.000Z'),
     }))
     const desktopTask = {
@@ -727,7 +727,7 @@ describe('useScheduledTaskDesktopNotifications', () => {
     render(<Harness />)
     await vi.waitFor(() => expect(notifyDesktopMock).toHaveBeenCalledTimes(50))
     expect(getRecentRunsMock).toHaveBeenNthCalledWith(1, 50, { summaryOnly: true })
-    expect(JSON.parse(localStorage.getItem('cc-haha.scheduledTaskNotificationScan.v1')!)).toMatchObject({
+    expect(JSON.parse(localStorage.getItem('echoflow-code.scheduledTaskNotificationScan.v1')!)).toMatchObject({
       cursor: 'older-page',
     })
 
@@ -743,8 +743,8 @@ describe('useScheduledTaskDesktopNotifications', () => {
   })
 
   it('does not duplicate the completed scan boundary after more than 200 catch-up deliveries', async () => {
-    localStorage.setItem('cc-haha.notifiedDesktopTaskRuns.v1', JSON.stringify([]))
-    localStorage.setItem('cc-haha.scheduledTaskNotificationScan.v1', JSON.stringify({
+    localStorage.setItem('echoflow-code.notifiedDesktopTaskRuns.v1', JSON.stringify([]))
+    localStorage.setItem('echoflow-code.scheduledTaskNotificationScan.v1', JSON.stringify({
       initializedAtMs: Date.parse('2026-05-02T00:00:00.000Z'),
     }))
     listMock.mockResolvedValue({
@@ -810,7 +810,7 @@ describe('useScheduledTaskDesktopNotifications', () => {
     const newest = run('newest-terminal', '2026-05-03T00:03:00.000Z', 'completed')
     const youngerRunning = run('younger-running', '2026-05-03T00:02:00.000Z', 'running')
     const oldestRunning = run('oldest-running', '2026-05-03T00:01:00.000Z', 'running')
-    localStorage.setItem('cc-haha.scheduledTaskNotificationScan.v1', JSON.stringify({
+    localStorage.setItem('echoflow-code.scheduledTaskNotificationScan.v1', JSON.stringify({
       initializedAtMs: Date.parse('2026-05-02T00:00:00.000Z'),
       boundary: {
         runId: oldestRunning.id,
@@ -838,7 +838,7 @@ describe('useScheduledTaskDesktopNotifications', () => {
 
     render(<Harness />)
     await vi.waitFor(() => expect(notifyDesktopMock).toHaveBeenCalledTimes(1))
-    expect(JSON.parse(localStorage.getItem('cc-haha.scheduledTaskNotificationScan.v1')!)).toMatchObject({
+    expect(JSON.parse(localStorage.getItem('echoflow-code.scheduledTaskNotificationScan.v1')!)).toMatchObject({
       boundary: { runId: 'oldest-running', terminal: false },
     })
 
@@ -891,7 +891,7 @@ describe('useScheduledTaskDesktopNotifications', () => {
       taskId: 'other-task',
       startedAt: new Date(Date.parse('2026-05-03T00:01:49.000Z') - index * 1000).toISOString(),
     }))
-    localStorage.setItem('cc-haha.scheduledTaskNotificationScan.v1', JSON.stringify({
+    localStorage.setItem('echoflow-code.scheduledTaskNotificationScan.v1', JSON.stringify({
       initializedAtMs: Date.parse('2026-05-02T00:00:00.000Z'),
       boundary: {
         runId: baseline.id,
@@ -913,7 +913,7 @@ describe('useScheduledTaskDesktopNotifications', () => {
 
     const firstMount = render(<Harness />)
     await vi.waitFor(() => expect(getRecentRunsMock).toHaveBeenCalledTimes(1))
-    expect(JSON.parse(localStorage.getItem('cc-haha.scheduledTaskNotificationScan.v1')!)).toMatchObject({
+    expect(JSON.parse(localStorage.getItem('echoflow-code.scheduledTaskNotificationScan.v1')!)).toMatchObject({
       cursor: 'page-2',
       scanLowWater: { runId: 'young-running', terminal: false },
     })
@@ -921,14 +921,14 @@ describe('useScheduledTaskDesktopNotifications', () => {
 
     render(<Harness />)
     await vi.waitFor(() => expect(getRecentRunsMock).toHaveBeenCalledTimes(2))
-    expect(JSON.parse(localStorage.getItem('cc-haha.scheduledTaskNotificationScan.v1')!)).toMatchObject({
+    expect(JSON.parse(localStorage.getItem('echoflow-code.scheduledTaskNotificationScan.v1')!)).toMatchObject({
       boundary: { runId: 'old-running', terminal: false },
     })
 
     notifyDesktopMock.mockResolvedValueOnce(false).mockResolvedValueOnce(true)
     await vi.advanceTimersByTimeAsync(30_000)
     await vi.waitFor(() => expect(notifyDesktopMock).toHaveBeenCalledTimes(1))
-    expect(JSON.parse(localStorage.getItem('cc-haha.scheduledTaskNotificationScan.v1')!)).toMatchObject({
+    expect(JSON.parse(localStorage.getItem('echoflow-code.scheduledTaskNotificationScan.v1')!)).toMatchObject({
       boundary: { runId: 'old-running', terminal: false },
     })
 
@@ -937,7 +937,7 @@ describe('useScheduledTaskDesktopNotifications', () => {
     expect(notifyDesktopMock).toHaveBeenLastCalledWith(expect.objectContaining({
       dedupeKey: 'scheduled-task:young-running',
     }))
-    expect(JSON.parse(localStorage.getItem('cc-haha.scheduledTaskNotificationScan.v1')!)).toMatchObject({
+    expect(JSON.parse(localStorage.getItem('echoflow-code.scheduledTaskNotificationScan.v1')!)).toMatchObject({
       boundary: { runId: 'young-running', terminal: true },
     })
   })
@@ -967,7 +967,7 @@ describe('useScheduledTaskDesktopNotifications', () => {
       startedAt: '2026-05-03T00:01:00.000Z',
       completedAt: '2026-05-03T00:01:01.000Z',
     }
-    localStorage.setItem('cc-haha.scheduledTaskNotificationScan.v1', JSON.stringify({
+    localStorage.setItem('echoflow-code.scheduledTaskNotificationScan.v1', JSON.stringify({
       initializedAtMs: Date.parse('2026-05-02T00:00:00.000Z'),
       boundary: {
         runId: baseline.id,
@@ -994,7 +994,7 @@ describe('useScheduledTaskDesktopNotifications', () => {
     expect(notifyDesktopMock).toHaveBeenCalledWith(expect.objectContaining({
       dedupeKey: 'scheduled-task:fresh-after-reset',
     }))
-    expect(JSON.parse(localStorage.getItem('cc-haha.scheduledTaskNotificationScan.v1')!)).toEqual({
+    expect(JSON.parse(localStorage.getItem('echoflow-code.scheduledTaskNotificationScan.v1')!)).toEqual({
       initializedAtMs: Date.parse('2026-05-02T00:00:00.000Z'),
       boundary: {
         runId: 'fresh-after-reset',
@@ -1124,8 +1124,8 @@ describe('useScheduledTaskDesktopNotifications', () => {
       id: 'tie-new-run',
       completedAt: '2026-05-03T00:02:00.000Z',
     }
-    localStorage.setItem('cc-haha.notifiedDesktopTaskRuns.v1', JSON.stringify([baseline.id]))
-    localStorage.setItem('cc-haha.scheduledTaskNotificationScan.v1', JSON.stringify({
+    localStorage.setItem('echoflow-code.notifiedDesktopTaskRuns.v1', JSON.stringify([baseline.id]))
+    localStorage.setItem('echoflow-code.scheduledTaskNotificationScan.v1', JSON.stringify({
       initializedAtMs: Date.parse('2026-05-03T00:00:30.000Z'),
       revisionToken: 'source-1',
       boundary: {
@@ -1170,8 +1170,8 @@ describe('useScheduledTaskDesktopNotifications', () => {
       id: 'tie-retry-new-run',
       completedAt: '2026-05-03T00:02:00.000Z',
     }
-    localStorage.setItem('cc-haha.notifiedDesktopTaskRuns.v1', JSON.stringify([baseline.id]))
-    localStorage.setItem('cc-haha.scheduledTaskNotificationScan.v1', JSON.stringify({
+    localStorage.setItem('echoflow-code.notifiedDesktopTaskRuns.v1', JSON.stringify([baseline.id]))
+    localStorage.setItem('echoflow-code.scheduledTaskNotificationScan.v1', JSON.stringify({
       initializedAtMs: Date.parse('2026-05-03T00:00:30.000Z'),
       revisionToken: 'source-1',
       boundary: {
@@ -1244,7 +1244,7 @@ describe('useScheduledTaskDesktopNotifications', () => {
   })
 
   it('does not let a legacy delivered-id store suppress a fresh startup completion', async () => {
-    localStorage.setItem('cc-haha.notifiedDesktopTaskRuns.v1', JSON.stringify(['legacy-delivered']))
+    localStorage.setItem('echoflow-code.notifiedDesktopTaskRuns.v1', JSON.stringify(['legacy-delivered']))
     listMock.mockResolvedValue({
       tasks: [{
         id: 'task-1',
@@ -1306,7 +1306,7 @@ describe('useScheduledTaskDesktopNotifications', () => {
 
     render(<Harness />)
     await vi.waitFor(() => expect(listMock).toHaveBeenCalledTimes(1))
-    expect(JSON.parse(localStorage.getItem('cc-haha.scheduledTaskNotificationScan.v1')!))
+    expect(JSON.parse(localStorage.getItem('echoflow-code.scheduledTaskNotificationScan.v1')!))
       .toMatchObject({ initializationPending: true })
 
     await vi.advanceTimersByTimeAsync(30_000)
@@ -1352,7 +1352,7 @@ describe('useScheduledTaskDesktopNotifications', () => {
 
     render(<Harness />)
     await vi.waitFor(() => expect(getRecentRunsMock).toHaveBeenCalledTimes(2))
-    expect(JSON.parse(localStorage.getItem('cc-haha.scheduledTaskNotificationScan.v1')!))
+    expect(JSON.parse(localStorage.getItem('echoflow-code.scheduledTaskNotificationScan.v1')!))
       .toEqual({
         initializedAtMs: Date.parse('2026-05-03T00:00:30.000Z'),
         initializationPending: true,

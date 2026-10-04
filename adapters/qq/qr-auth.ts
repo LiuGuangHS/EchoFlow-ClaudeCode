@@ -47,7 +47,7 @@ export type QqQrPollResult =
       verificationUrl?: string
     }
 
-const DEFAULT_SOURCE = 'claude-code-haha'
+const DEFAULT_SOURCE = 'echoflow-code'
 const QR_READY_TIMEOUT_MS = 20_000
 const SESSION_TTL_MS = 10 * 60_000
 export const QQ_POLL_INTERVAL_MS = 2_000

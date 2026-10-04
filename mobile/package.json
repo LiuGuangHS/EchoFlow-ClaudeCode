@@ -1,0 +1,11 @@
+{
+  "name": "echoflow-code-mobile",
+  "private": true,
+  "version": "0.5.4",
+  "scripts": {
+    "check": "bun test test/*.test.ts",
+    "test": "bun test test/*.test.ts",
+    "android": "cd android && ./gradlew assembleDebug",
+    "android:release": "cd android && ./gradlew assembleRelease --console=plain --no-daemon"
+  }
+}

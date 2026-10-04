@@ -5,6 +5,7 @@ import {
   SETTINGS_TAB_ID,
   MARKET_TAB_ID,
   CONNECTORS_TAB_ID,
+  DEEPSEEK_HARNESS_TAB_ID,
   SUBAGENT_TAB_PREFIX,
   TEAM_MEMBER_TAB_PREFIX,
   TEAM_TAB_PREFIX,
@@ -91,6 +92,7 @@ const TAB_TYPE_ICON: Partial<Record<TabType, string>> = {
   scheduled: 'schedule',
   market: 'storefront',
   connectors: 'link',
+  'deepseek-harness': 'deployed_code',
   terminal: 'terminal',
   trace: 'account_tree',
   traces: 'account_tree',
@@ -123,6 +125,7 @@ function isSessionTabId(tabId: string | null) {
     tabId !== SCHEDULED_TAB_ID &&
     tabId !== MARKET_TAB_ID &&
     tabId !== CONNECTORS_TAB_ID &&
+    tabId !== DEEPSEEK_HARNESS_TAB_ID &&
     tabId !== TRACE_LIST_TAB_ID &&
     !tabId.startsWith(TERMINAL_TAB_PREFIX) &&
     !tabId.startsWith(TRACE_TAB_PREFIX) &&

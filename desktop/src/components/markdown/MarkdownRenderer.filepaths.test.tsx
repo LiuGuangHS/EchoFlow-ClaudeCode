@@ -98,7 +98,7 @@ describe('MarkdownRenderer file references', () => {
   })
 
   it('never re-links a path that is already inside a URL', () => {
-    const container = renderMarkdown('见 https://github.com/NanmiCoder/cc-haha/blob/main/src/app.ts')
+    const container = renderMarkdown('见 https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/src/app.ts')
     expect(fileLinks(container)).toHaveLength(0)
     expect(container.querySelector('a[href^="https://"]')).not.toBeNull()
   })
@@ -109,7 +109,7 @@ describe('MarkdownRenderer file references', () => {
   })
 
   it('leaves prose that only looks like a path as text', () => {
-    expect(fileLinks(renderMarkdown('用 console.log 打印，版本 v0.5.0，域名 cchaha.ai'))).toHaveLength(0)
+    expect(fileLinks(renderMarkdown('用 console.log 打印，版本 v0.5.0，域名 code.echoflow.cn'))).toHaveLength(0)
   })
 
   it('hands the click a reference classifyPreviewLink can parse', () => {
@@ -120,7 +120,7 @@ describe('MarkdownRenderer file references', () => {
   })
 
   it.each([
-    ['file:///tmp/cc-haha-qa-checklist-v0.6.6.html', '/tmp/cc-haha-qa-checklist-v0.6.6.html'],
+    ['file:///tmp/echoflow-code-qa-checklist.html', '/tmp/echoflow-code-qa-checklist.html'],
     ['file:///tmp/%E6%B8%85%E5%8D%95.html', '/tmp/清单.html'],
     ['/tmp/app.ts:42', '/tmp/app.ts:42'],
   ])('preserves explicit local Markdown destination %s through sanitization', (href, expected) => {
@@ -149,10 +149,10 @@ describe('MarkdownRenderer file references', () => {
   it('links owner/repo#123 to GitHub', () => {
     // The second half of the prompt contract (prompts.ts:438), which also had no
     // implementation. Unlike a file link this is a real URL, so it keeps its href.
-    const container = renderMarkdown('见 NanmiCoder/cc-haha#1146')
+    const container = renderMarkdown('见 LiuGuangHS/EchoFlow-ClaudeCode#1146')
     const link = container.querySelector<HTMLAnchorElement>('a[href^="https://github.com"]')
-    expect(link?.getAttribute('href')).toBe('https://github.com/NanmiCoder/cc-haha/issues/1146')
-    expect(link?.textContent).toBe('NanmiCoder/cc-haha#1146')
+    expect(link?.getAttribute('href')).toBe('https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/issues/1146')
+    expect(link?.textContent).toBe('LiuGuangHS/EchoFlow-ClaudeCode#1146')
     expect(fileLinks(container)).toHaveLength(0)
   })
 

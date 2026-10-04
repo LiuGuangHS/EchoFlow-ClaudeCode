@@ -94,7 +94,7 @@ export function DocPage({ onNavigate = defaultNavigate, onNotFound, path, pathna
       description: doc.description,
       lang: doc.locale === 'en' ? 'en' : 'zh-CN',
       alternate: alternate === doc.path ? null : alternate,
-      title: `${doc.title} · cc-haha`
+      title: `${doc.title} · EchoFlow Code`
     })
   }, [doc])
 
@@ -306,7 +306,7 @@ export function DocPage({ onNavigate = defaultNavigate, onNotFound, path, pathna
         {/* tabIndex -1 让「跳到正文」和换页真的把焦点搬进来，而不是停在 body 上 */}
         <main className="doc-main" id="doc-main" ref={mainRef} tabIndex={-1}>
           <div className="doc-reading-head">
-            <span>cc-haha / {locale === 'en' ? 'FIELD GUIDE' : '使用指南'}</span>
+            <span>EchoFlow Code / {locale === 'en' ? 'FIELD GUIDE' : '使用指南'}</span>
             <span>{locale === 'en' ? 'TAKE A CLOSER LOOK' : '从这里，走进你的工作流'}</span>
           </div>
           <div className="doc-cover" aria-hidden="true">

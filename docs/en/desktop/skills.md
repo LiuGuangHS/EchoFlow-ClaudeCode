@@ -2,7 +2,7 @@
 title: Skills and the Skills Market
 nav_title: Skills
 description: A skill is a ready-made procedure for Claude. What to check before installing one.
-order: 4
+order: 6
 ---
 
 # Skills and the Skills Market
@@ -11,7 +11,7 @@ A skill is a procedure someone else already worked out. Install it and Claude fo
 
 **How it differs from an agent**: an agent is a worker with its own context and tool scope; a skill is knowledge and procedure that an agent loads. Delegating to an agent is hiring someone; installing a skill is handing them a manual.
 
-## The Skills Market
+**How it differs from a connector**: a connector is a channel to a third-party service and needs an authorized account first; a skill works as soon as it is installed. This page covers skills only — connectors are in [Connectors](./connectors.md).
 
 ![The Skills Market: categories, curated cards and security badges](../../images/app/en/skill-market.webp)
 
@@ -61,7 +61,7 @@ Recommended:
 2. If you're unsure, have Claude look first — "check this skill's files for anything suspicious".
 3. Confirm you actually need it. More skills isn't more capability; every skill costs context.
 
-**Install** opens a confirmation with the install location, what the skill will be able to do, and a reminder that it takes effect in new sessions. For a **Not audited** or **Flagged** skill you must first tick "I have read SKILL.md and the security report" before you can confirm. **Sessions already open won't pick it up** — start a new one. Installing only downloads files; it never runs the skill's scripts.
+**Install** opens a confirmation with the install location, what the skill will be able to do, and a reminder that it takes effect in new sessions. For a **Not audited** or **Flagged** skill you must first tick "I have read SKILL.md and the security report" before you can confirm. **Sessions already open won't pick it up** — start a new one (compare with connectors, where connecting one refreshes the open session's skills and tools immediately — see [Connectors](./connectors.md)). Installing only downloads files; it never runs the skill's scripts.
 
 Uninstall lives in the same place and deletes the local files under that skill's directory.
 
@@ -85,5 +85,13 @@ A project's own `.agents/skills/` works the same way: it ships with the repo rat
 :::warning
 A shared directory means skills another client installed also apply here. Scan **Settings → Skills** occasionally and make sure nothing on the list is a stranger.
 :::
+
+## Referencing them in a session
+
+Both `@` and `/` reference plugins and skills in the composer — `@` brings one in as context, `/` invokes it directly.
+
+Above the composer there is also a capability menu gathering Skills, connectors, Agents, workflows, Agent Teams, and Computer Use, **and it is searchable**. Once there are many entries, typing a name beats scrolling.
+
+A skill installed from the market takes effect in **new sessions**: the install confirmation says so. To use it right away, start a new session.
 
 For how skills are loaded and what the file format is, see [Skills internals](../internals/skills.md).

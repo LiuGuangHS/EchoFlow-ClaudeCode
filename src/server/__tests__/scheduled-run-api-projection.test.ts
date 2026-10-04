@@ -7,12 +7,12 @@ import { resetScheduledRunReadModelForTests } from '../services/localIndex/sched
 
 let tmpDir: string
 const originalConfigDir = process.env.CLAUDE_CONFIG_DIR
-const originalLocalIndexMode = process.env.CC_HAHA_LOCAL_INDEX
+const originalLocalIndexMode = process.env.ECHOFLOW_LOCAL_INDEX
 
 beforeEach(async () => {
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'scheduled-run-api-'))
   process.env.CLAUDE_CONFIG_DIR = tmpDir
-  process.env.CC_HAHA_LOCAL_INDEX = 'on'
+  process.env.ECHOFLOW_LOCAL_INDEX = 'on'
   await fs.writeFile(path.join(tmpDir, 'scheduled_tasks_log.json'), JSON.stringify({
     runs: [
       {
@@ -53,8 +53,8 @@ afterEach(async () => {
   await resetScheduledRunReadModelForTests()
   if (originalConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR
   else process.env.CLAUDE_CONFIG_DIR = originalConfigDir
-  if (originalLocalIndexMode === undefined) delete process.env.CC_HAHA_LOCAL_INDEX
-  else process.env.CC_HAHA_LOCAL_INDEX = originalLocalIndexMode
+  if (originalLocalIndexMode === undefined) delete process.env.ECHOFLOW_LOCAL_INDEX
+  else process.env.ECHOFLOW_LOCAL_INDEX = originalLocalIndexMode
   await fs.rm(tmpDir, { recursive: true, force: true })
 })
 
@@ -165,7 +165,7 @@ describe('scheduled run projection API', () => {
   })
 
   test('keeps the same reset contract when SQLite is unavailable and reads canonical JSON', async () => {
-    const dbPath = path.join(tmpDir, 'cc-haha', 'db', 'scheduled-runs-v1.sqlite')
+    const dbPath = path.join(tmpDir, 'echoflow-code', 'db', 'scheduled-runs-v1.sqlite')
     await fs.mkdir(dbPath, { recursive: true })
     const first = await get(
       'http://localhost/api/scheduled-tasks/runs?limit=1&summaryOnly=true',

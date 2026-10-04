@@ -8,7 +8,7 @@ test('real server remote listener serves bootstrap, sessions and approval replay
   const home = mkdtempSync(path.join(os.tmpdir(), 'public-access-integration-'))
   try {
     const child = Bun.spawn([process.execPath, '--no-env-file', path.join(import.meta.dir, '__fixtures__/publicAccessSmoke.ts')], {
-      env: createSandboxedTestEnvironment(home, { CC_HAHA_LOCAL_ACCESS_TOKEN: 'fixture-process-credential' }),
+      env: createSandboxedTestEnvironment(home, { ECHOFLOW_LOCAL_ACCESS_TOKEN: 'fixture-process-credential' }),
       stdout: 'pipe', stderr: 'pipe',
     })
     const timeout = setTimeout(() => child.kill(), 15_000)

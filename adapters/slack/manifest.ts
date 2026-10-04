@@ -28,7 +28,7 @@ export const SLACK_BOT_SCOPES = [
 
 export type SlackManifest = Record<string, unknown>
 
-export function buildSlackAppManifest(appName = 'Claude Code Haha'): SlackManifest {
+export function buildSlackAppManifest(appName = 'EchoFlow Code'): SlackManifest {
   return {
     display_information: {
       name: appName,

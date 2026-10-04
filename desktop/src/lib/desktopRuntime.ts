@@ -9,8 +9,8 @@ import {
 import { getDesktopHost } from './desktopHost'
 import { isPublicAccessRuntime } from './publicAccessRuntime'
 
-export const H5_SERVER_URL_STORAGE_KEY = 'cc-haha-h5-server-url'
-export const H5_TOKEN_STORAGE_KEY = 'cc-haha-h5-token'
+export const H5_SERVER_URL_STORAGE_KEY = 'echoflow-code-h5-server-url'
+export const H5_TOKEN_STORAGE_KEY = 'echoflow-code-h5-token'
 
 type H5ConnectionFailureReason =
   | 'missing-token'

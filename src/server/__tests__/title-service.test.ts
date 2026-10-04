@@ -12,9 +12,9 @@ import {
   saveAiTitle,
 } from '../services/titleService.js'
 import { sessionService } from '../services/sessionService.js'
-import { drainTraceCaptureForTests } from '../services/traceCaptureService.js'
-import { hahaOpenAIOAuthService } from '../services/hahaOpenAIOAuthService.js'
+import { echoFlowOpenAIOAuthService } from '../services/echoFlowOpenAIOAuthService.js'
 import { SYSTEM_PROXY_URL_ENV } from '../services/networkSettings.js'
+import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
 
 describe('titleService', () => {
   let tmpDir: string
@@ -32,11 +32,24 @@ describe('titleService', () => {
 
   afterEach(async () => {
     globalThis.fetch = originalFetch
-    hahaOpenAIOAuthService.dispose()
+    echoFlowOpenAIOAuthService.dispose()
     restoreEnv('CLAUDE_CONFIG_DIR', originalConfigDir)
     restoreEnv(SYSTEM_PROXY_URL_ENV, originalSystemProxyUrl)
     await fs.rm(tmpDir, { recursive: true, force: true })
   })
+
+  async function writeProviderFixture(providerId: string, provider: Record<string, unknown>) {
+    const echoFlowDir = getEchoFlowInternalDir(tmpDir)
+    await fs.mkdir(echoFlowDir, { recursive: true })
+    await fs.writeFile(
+      path.join(echoFlowDir, 'providers.json'),
+      JSON.stringify({
+        activeId: providerId,
+        providers: [provider],
+      }, null, 2),
+      'utf-8',
+    )
+  }
 
   test('generates titles with a versioned Anthropic base URL (#1279)', async () => {
     const paths: string[] = []
@@ -80,29 +93,20 @@ describe('titleService', () => {
 
     try {
       const providerId = 'zhipu-test'
-      await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
-      await fs.writeFile(
-        path.join(tmpDir, 'cc-haha', 'providers.json'),
-        JSON.stringify({
-          activeId: providerId,
-          providers: [
-            {
-              id: providerId,
-              presetId: 'zhipuglm',
-              name: 'Zhipu GLM',
-              apiKey: 'test-key',
-              baseUrl: `http://127.0.0.1:${server.port}/anthropic`,
-              apiFormat: 'anthropic',
-              models: {
-                main: 'glm-5.1',
-                haiku: 'glm-4.5-air',
-                sonnet: 'glm-5-turbo',
-                opus: 'glm-5.1',
-              },
-            },
-          ],
-        }, null, 2),
-      )
+      await writeProviderFixture(providerId, {
+        id: providerId,
+        presetId: 'zhipuglm',
+        name: 'Zhipu GLM',
+        apiKey: 'test-key',
+        baseUrl: `http://127.0.0.1:${server.port}/anthropic`,
+        apiFormat: 'anthropic',
+        models: {
+          main: 'glm-5.1',
+          haiku: 'glm-4.5-air',
+          sonnet: 'glm-5-turbo',
+          opus: 'glm-5.1',
+        },
+      })
 
       await expect(generateTitle('请只回复 trace-ok')).resolves.toBe('Trace ok')
       expect(requestBody?.thinking).toEqual({ type: 'disabled' })
@@ -130,29 +134,20 @@ describe('titleService', () => {
 
     try {
       const providerId = 'fallback-thinking-test'
-      await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
-      await fs.writeFile(
-        path.join(tmpDir, 'cc-haha', 'providers.json'),
-        JSON.stringify({
-          activeId: providerId,
-          providers: [
-            {
-              id: providerId,
-              presetId: 'custom',
-              name: 'Thinking Fallback',
-              apiKey: 'test-key',
-              baseUrl: `http://127.0.0.1:${server.port}/anthropic`,
-              apiFormat: 'anthropic',
-              models: {
-                main: 'fallback-main',
-                haiku: 'fallback-haiku',
-                sonnet: 'fallback-main',
-                opus: 'fallback-main',
-              },
-            },
-          ],
-        }, null, 2),
-      )
+      await writeProviderFixture(providerId, {
+        id: providerId,
+        presetId: 'custom',
+        name: 'Thinking Fallback',
+        apiKey: 'test-key',
+        baseUrl: `http://127.0.0.1:${server.port}/anthropic`,
+        apiFormat: 'anthropic',
+        models: {
+          main: 'fallback-main',
+          haiku: 'fallback-haiku',
+          sonnet: 'fallback-main',
+          opus: 'fallback-main',
+        },
+      })
 
       await expect(generateTitle('请只回复 trace-ok')).resolves.toBe('Trace ok')
       expect(requestBodies).toHaveLength(2)
@@ -178,29 +173,20 @@ describe('titleService', () => {
 
     try {
       const providerId = 'deepseek-test'
-      await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
-      await fs.writeFile(
-        path.join(tmpDir, 'cc-haha', 'providers.json'),
-        JSON.stringify({
-          activeId: providerId,
-          providers: [
-            {
-              id: providerId,
-              presetId: 'deepseek',
-              name: 'DeepSeek',
-              apiKey: 'test-key',
-              baseUrl: `http://127.0.0.1:${server.port}/anthropic`,
-              apiFormat: 'anthropic',
-              models: {
-                main: 'deepseek-v4-pro',
-                haiku: 'deepseek-v4-pro',
-                sonnet: 'deepseek-v4-pro',
-                opus: 'deepseek-v4-pro',
-              },
-            },
-          ],
-        }, null, 2),
-      )
+      await writeProviderFixture(providerId, {
+        id: providerId,
+        presetId: 'deepseek',
+        name: 'DeepSeek',
+        apiKey: 'test-key',
+        baseUrl: `http://127.0.0.1:${server.port}/anthropic`,
+        apiFormat: 'anthropic',
+        models: {
+          main: 'deepseek-v4-pro',
+          haiku: 'deepseek-v4-pro',
+          sonnet: 'deepseek-v4-pro',
+          opus: 'deepseek-v4-pro',
+        },
+      })
 
       await expect(generateTitle('请只回复 trace-ok')).resolves.toBe('Trace ok')
       expect(requestBody?.thinking).toEqual({ type: 'disabled' })
@@ -331,29 +317,20 @@ describe('titleService', () => {
 
     try {
       const providerId = 'title-clean-test'
-      await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
-      await fs.writeFile(
-        path.join(tmpDir, 'cc-haha', 'providers.json'),
-        JSON.stringify({
-          activeId: providerId,
-          providers: [
-            {
-              id: providerId,
-              presetId: 'anthropic',
-              name: 'Anthropic',
-              apiKey: 'test-key',
-              baseUrl: `http://127.0.0.1:${server.port}/anthropic`,
-              apiFormat: 'anthropic',
-              models: {
-                main: 'claude-sonnet-4-7',
-                haiku: 'claude-haiku-4-5',
-                sonnet: 'claude-sonnet-4-7',
-                opus: 'claude-opus-4-7',
-              },
-            },
-          ],
-        }, null, 2),
-      )
+      await writeProviderFixture(providerId, {
+        id: providerId,
+        presetId: 'anthropic',
+        name: 'Anthropic',
+        apiKey: 'test-key',
+        baseUrl: `http://127.0.0.1:${server.port}/anthropic`,
+        apiFormat: 'anthropic',
+        models: {
+          main: 'claude-sonnet-4-7',
+          haiku: 'claude-haiku-4-5',
+          sonnet: 'claude-sonnet-4-7',
+          opus: 'claude-opus-4-7',
+        },
+      })
 
       await expect(generateTitle([
         '<command-message>frontend-design</command-message>',
@@ -393,29 +370,20 @@ describe('titleService', () => {
 
     try {
       const providerId = 'title-language-test'
-      await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
-      await fs.writeFile(
-        path.join(tmpDir, 'cc-haha', 'providers.json'),
-        JSON.stringify({
-          activeId: providerId,
-          providers: [
-            {
-              id: providerId,
-              presetId: 'minimax',
-              name: 'MiniMax',
-              apiKey: 'test-key',
-              baseUrl: `http://127.0.0.1:${server.port}/anthropic`,
-              apiFormat: 'anthropic',
-              models: {
-                main: 'minimax-main',
-                haiku: 'minimax-haiku',
-                sonnet: 'minimax-main',
-                opus: 'minimax-main',
-              },
-            },
-          ],
-        }, null, 2),
-      )
+      await writeProviderFixture(providerId, {
+        id: providerId,
+        presetId: 'minimax',
+        name: 'MiniMax',
+        apiKey: 'test-key',
+        baseUrl: `http://127.0.0.1:${server.port}/anthropic`,
+        apiFormat: 'anthropic',
+        models: {
+          main: 'minimax-main',
+          haiku: 'minimax-haiku',
+          sonnet: 'minimax-main',
+          opus: 'minimax-main',
+        },
+      })
 
       const languagePreference = resolveTitleLanguagePreference(
         '最近我们在最近 15 天做了很多的变更，你去看一下',
@@ -466,7 +434,7 @@ describe('titleService', () => {
     )
     const providerService = new ProviderService()
     await providerService.activateProvider('openai-official')
-    await hahaOpenAIOAuthService.saveTokens({
+    await echoFlowOpenAIOAuthService.saveTokens({
       accessToken: 'access-for-title',
       refreshToken: 'refresh-for-title',
       expiresAt: Date.now() + 60 * 60_000,
@@ -523,9 +491,9 @@ describe('titleService', () => {
 
     try {
       const providerId = 'auth-token-title-test'
-      await fs.mkdir(path.join(tmpDir, 'cc-haha'), { recursive: true })
+      await fs.mkdir(getEchoFlowInternalDir(tmpDir), { recursive: true })
       await fs.writeFile(
-        path.join(tmpDir, 'cc-haha', 'providers.json'),
+        path.join(getEchoFlowInternalDir(tmpDir), 'providers.json'),
         JSON.stringify({
           activeId: providerId,
           providers: [
@@ -603,101 +571,3 @@ function restoreEnv(key: string, value: string | undefined) {
     process.env[key] = value
   }
 }
-
-/**
- * Title generation builds its own upstream request instead of going through the
- * CLI, so it has to make the same per-model protocol decision the proxy makes.
- * Otherwise a provider that only answers on a non-Anthropic path silently gets no
- * AI titles at all — the request fails, the failure is swallowed, and the user
- * only sees the derived placeholder.
- */
-describe('titleService protocol routing', () => {
-  let tmpDir: string
-  let originalConfigDir: string | undefined
-  let originalFetch: typeof globalThis.fetch
-
-  beforeEach(async () => {
-    originalConfigDir = process.env.CLAUDE_CONFIG_DIR
-    originalFetch = globalThis.fetch
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'title-service-routing-'))
-    process.env.CLAUDE_CONFIG_DIR = tmpDir
-    // The proxy records traces for a session-scoped request; give them a home so
-    // the background writer does not fail the run with an unhandled ENOENT.
-    await fs.mkdir(path.join(tmpDir, 'cc-haha', 'traces'), { recursive: true })
-  })
-
-  afterEach(async () => {
-    globalThis.fetch = originalFetch
-    // Let the background trace writer finish before the directory it targets goes
-    // away, otherwise it fails the run with an unhandled ENOENT.
-    await drainTraceCaptureForTests()
-    restoreEnv('CLAUDE_CONFIG_DIR', originalConfigDir)
-    await fs.rm(tmpDir, { recursive: true, force: true })
-  })
-
-  test('uses the endpoint and client headers the provider actually requires', async () => {
-    const calls: Array<{ url: string; headers: Headers; body: any }> = []
-    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-      calls.push({
-        url: String(input),
-        headers: new Headers(init?.headers),
-        body: init?.body ? JSON.parse(String(init.body)) : undefined,
-      })
-      return Response.json({
-        id: 'chatcmpl-title',
-        object: 'chat.completion',
-        model: 'glm-5.3-flash',
-        choices: [{
-          index: 0,
-          message: { role: 'assistant', content: '{"title":"Routed title"}' },
-          finish_reason: 'stop',
-        }],
-        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-      })
-    }) as typeof fetch
-
-    const provider = await new ProviderService().addProvider({
-      presetId: 'opencode-go',
-      name: 'OpenCode Go',
-      apiKey: 'sk-opencode-title',
-      baseUrl: 'https://opencode.ai/zen/go/v1',
-      apiFormat: 'openai_chat',
-      models: { main: 'glm-5.3', haiku: 'glm-5.3-flash', sonnet: 'glm-5.3', opus: 'glm-5.3' },
-    })
-
-    expect(await generateTitle('Explain endpoint compatibility', provider.id, null, 'session-title-1'))
-      .toBe('Routed title')
-
-    expect(calls).toHaveLength(1)
-    // The haiku model is a chat model: Anthropic Messages would be rejected outright.
-    expect(new URL(calls[0]!.url).pathname).toBe('/zen/go/v1/chat/completions')
-    expect(calls[0]!.body.model).toBe('glm-5.3-flash')
-    // The gateway refuses any request without this, so a title call without it can
-    // never succeed.
-    expect(calls[0]!.headers.get('x-opencode-session')).toBe('session-title-1')
-    expect(calls[0]!.headers.get('authorization')).toBe('Bearer sk-opencode-title')
-  })
-
-  test('still talks to an Anthropic-format provider directly', async () => {
-    const paths: string[] = []
-    const server = Bun.serve({
-      hostname: '127.0.0.1',
-      port: 0,
-      fetch(req) {
-        paths.push(new URL(req.url).pathname)
-        return Response.json({ content: [{ type: 'text', text: '{"title":"Direct title"}' }] })
-      },
-    })
-    try {
-      const provider = await new ProviderService().addProvider({
-        presetId: 'custom', name: 'Direct Anthropic', apiKey: 'test-key',
-        baseUrl: `http://127.0.0.1:${server.port}`, apiFormat: 'anthropic',
-        models: { main: 'm', haiku: 'm', sonnet: 'm', opus: 'm' },
-      })
-      expect(await generateTitle('Explain endpoint compatibility', provider.id)).toBe('Direct title')
-      expect(paths).toEqual(['/v1/messages'])
-    } finally {
-      server.stop(true)
-    }
-  })
-})

@@ -17,7 +17,7 @@ export function resolveOpenAIRequestIdentity(
   // same local agent ID in another conversation cannot alias this thread.
   const uuidRoot = UUID_PATTERN.test(sessionId)
   const namespace = uuidRoot ? sessionId : URL_NAMESPACE
-  const name = uuidRoot ? agentId : JSON.stringify(['cc-haha', sessionId, agentId])
+  const name = uuidRoot ? agentId : JSON.stringify(['echoflow', sessionId, agentId])
   const bytes = createHash('sha1')
     .update(Buffer.from(namespace.replaceAll('-', ''), 'hex'))
     .update(name, 'utf8')

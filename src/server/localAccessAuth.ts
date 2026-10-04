@@ -1,7 +1,7 @@
 import { timingSafeEqual } from 'node:crypto'
 
-export const LOCAL_ACCESS_TOKEN_ENV = 'CC_HAHA_LOCAL_ACCESS_TOKEN'
-export const PET_ACCESS_TOKEN_ENV = 'CC_HAHA_PET_ACCESS_TOKEN'
+export const LOCAL_ACCESS_TOKEN_ENV = 'ECHOFLOW_LOCAL_ACCESS_TOKEN'
+export const PET_ACCESS_TOKEN_ENV = 'ECHOFLOW_PET_ACCESS_TOKEN'
 
 function configuredAccessToken(envName: string): string | null {
   const token = process.env[envName]?.trim()

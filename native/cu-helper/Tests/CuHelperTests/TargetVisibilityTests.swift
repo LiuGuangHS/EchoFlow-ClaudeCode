@@ -1,7 +1,7 @@
 import CoreGraphics
 import XCTest
 
-@testable import cc_haha_computer_use
+@testable import echoflow_code_computer_use
 
 /// A fully covered Chromium window stops drawing while every action still
 /// reports success. Measured on one real session: 22 captures, 6 distinct

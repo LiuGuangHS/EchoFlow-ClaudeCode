@@ -105,9 +105,9 @@ describe('SenseVoiceRecognizer', () => {
     })
     await recognizer.transcribe(wav, 'zh', signal())
     await recognizerWithSpy.transcribe(wav, 'zh', signal())
-    expect(seen.CC_HAHA_VOICE_WORKER_TOKEN).toMatch(/^[a-f0-9]{64}$/)
+    expect(seen.ECHOFLOW_VOICE_WORKER_TOKEN).toMatch(/^[a-f0-9]{64}$/)
     expect(Object.keys(seen)).not.toContain('HTTP_PROXY')
-    expect(JSON.parse(seen.CC_HAHA_VOICE_WORKER_CONFIG!).model).toBe(join(dir, 'model.onnx'))
+    expect(JSON.parse(seen.ECHOFLOW_VOICE_WORKER_CONFIG!).model).toBe(join(dir, 'model.onnx'))
   })
 
   it('stops an idle worker and starts a fresh one for the next request', async () => {

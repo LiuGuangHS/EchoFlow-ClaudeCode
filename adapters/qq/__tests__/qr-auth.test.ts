@@ -73,7 +73,7 @@ describe('startQqQrLogin', () => {
     // A desktop app renders the QR itself; console output would be noise and
     // would leak the code into the sidecar log.
     expect(controls.options()?.displayQrCodeToConsole).toBe(false)
-    expect(controls.options()?.source).toBe('claude-code-haha')
+    expect(controls.options()?.source).toBe('echoflow-code')
   })
 
   it('rejects and disposes the connector when it fails before showing a code', async () => {

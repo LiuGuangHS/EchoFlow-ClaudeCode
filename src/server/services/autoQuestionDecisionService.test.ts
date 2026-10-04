@@ -4,9 +4,9 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { ProviderService } from './providerService.js'
 import { drainTraceCaptureForTests } from './traceCaptureService.js'
-import { hahaOAuthService } from './hahaOAuthService.js'
-import { hahaOpenAIOAuthService } from './hahaOpenAIOAuthService.js'
-import { hahaGrokOAuthService } from './hahaGrokOAuthService.js'
+import { echoFlowOAuthService as hahaOAuthService } from './echoFlowOAuthService.js'
+import { echoFlowOpenAIOAuthService as hahaOpenAIOAuthService } from './echoFlowOpenAIOAuthService.js'
+import { echoFlowGrokOAuthService as hahaGrokOAuthService } from './echoFlowGrokOAuthService.js'
 import {
   decideAutoQuestionAnswers,
   type AutoQuestion,

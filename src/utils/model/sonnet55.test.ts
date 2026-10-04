@@ -52,7 +52,7 @@ const envKeys = [
   'CLAUDE_CODE_USE_FOUNDRY',
   'CLAUDE_CODE_DISABLE_1M_CONTEXT',
   'CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING',
-  'CC_HAHA_SEND_DISABLED_THINKING',
+  'ECHOFLOW_SEND_DISABLED_THINKING',
 ] as const
 let savedEnv: (string | undefined)[]
 let temporaryHome: string
