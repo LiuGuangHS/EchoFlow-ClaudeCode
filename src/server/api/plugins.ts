@@ -15,7 +15,31 @@ export async function handlePluginsApi(
   try {
     const method = req.method
     const sub = segments[2]
+    const nestedSub = segments[3]
     const cwd = url.searchParams.get('cwd') || undefined
+
+    if (method === 'GET' && sub === 'marketplace' && nestedSub === 'presets') {
+      return Response.json({ presets: pluginService.listMarketplacePresets() })
+    }
+
+    if (method === 'GET' && sub === 'marketplace' && nestedSub === 'registered') {
+      return Response.json({ marketplaces: await pluginService.listRegisteredMarketplaces() })
+    }
+
+    if (method === 'GET' && sub === 'marketplace' && nestedSub === 'discover') {
+      const marketplace = url.searchParams.get('marketplace')
+      if (!marketplace) throw ApiError.badRequest('Missing required "marketplace" query parameter')
+      return Response.json(await pluginService.discoverMarketplacePlugins(marketplace))
+    }
+
+    if (method === 'GET' && sub === 'marketplace' && nestedSub === 'detail') {
+      const marketplace = url.searchParams.get('marketplace')
+      const plugin = url.searchParams.get('plugin')
+      if (!marketplace || !plugin) {
+        throw ApiError.badRequest('Missing required "marketplace" or "plugin" query parameter')
+      }
+      return Response.json({ detail: await pluginService.getMarketplacePluginDetail(marketplace, plugin) })
+    }
 
     if (method === 'GET' && !sub) {
       return Response.json(await pluginService.listPlugins(cwd))

@@ -163,6 +163,22 @@ describe('Plugins API', () => {
     expect(body.summary.enabled).toBe(1)
   })
 
+  it('exposes empty verified presets and registered marketplaces without network access', async () => {
+    const presets = makeRequest('GET', '/api/plugins/presets')
+    const presetsResponse = await handlePluginsApi(presets.req, presets.url, presets.segments)
+    expect(presetsResponse.status).toBe(200)
+    expect(await presetsResponse.json()).toEqual({ presets: [] })
+
+    const registered = makeRequest('GET', '/api/plugins/marketplaces')
+    const registeredResponse = await handlePluginsApi(registered.req, registered.url, registered.segments)
+    expect(registeredResponse.status).toBe(200)
+    expect(await registeredResponse.json()).toEqual({ marketplaces: [] })
+
+    const discover = makeRequest('GET', '/api/plugins/discover?marketplace=missing')
+    const discoverResponse = await handlePluginsApi(discover.req, discover.url, discover.segments)
+    expect(discoverResponse.status).toBe(404)
+  })
+
   it('POST /api/plugins/reload returns numeric counters', async () => {
     const { req, url, segments } = makeRequest('POST', '/api/plugins/reload', {})
     const res = await handlePluginsApi(req, url, segments)
