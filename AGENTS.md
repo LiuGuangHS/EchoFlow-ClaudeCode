@@ -36,6 +36,7 @@ Keep this file under 24 KB. Crossing that is the signal to move content out, not
 - Prefer the installed agent toolset over recreating planning, review, debugging, or design workflows: `/superpowers:brainstorm` → `/superpowers:write-plan` → `/superpowers:execute-plan` for design and planning, `@code-reviewer` for review, `ponytail` for minimal-code discipline, `frontend-design` for desktop/web UI. No plugin replaces the gates in this file, and the contract stays tool-independent; details in `docs/internals/contributing.md`.
 - Identify the changed surface first. The canonical vocabulary is the `ChangeArea` union in `scripts/pr/change-policy.ts`: `desktop`, `server`, `adapters`, `docs`, `release`, `mobile`, `cli-core`. The prose surfaces in this file map onto it, and `native/` routes to the `desktop` area. Do not invent a surface name that has no area and no check behind it.
 - `cli-core` covers `bin/` and the root `src/` runtime paths. Changes there are blocked until the PR carries the `allow-cli-core-change` label and a maintainer approves.
+- Treat root `src/` as the upstream-derived native Claude Code runtime: prefer not to modify it directly. Enhance behavior through configuration, dependency upgrades, and adapters/services in EchoFlow-owned surfaces (such as `desktop/`, `src/server/`, or existing orchestration boundaries) where practical. When a change to native `src/` is unavoidable, keep it minimal, isolated, covered by focused regression tests, and document the compatibility reason; the `cli-core` approval requirement still applies.
 - Check `git status --short` before editing. The worktree may already contain user changes; never revert, overwrite, restage, or reformat unrelated files.
 - Keep diffs small and owned. Stage or commit only files you intentionally changed for the current task.
 - Prefer existing utilities, stores, services, command patterns, and test harnesses over new abstractions. Do not add dependencies unless the task explicitly requires them.
@@ -102,9 +103,10 @@ Install root dependencies with `bun install`, plus `desktop/` or `adapters/` dep
 
 - `bun run start` or `./bin/echoflow-code`: run the CLI locally.
 - `SERVER_PORT=3456 bun run src/server/index.ts`: start the local API/WebSocket server used by `desktop/`.
-- `cd desktop && bun run electron:dev`: run the desktop app in development mode with hot reload.
+- `cd desktop && bun run electron:dev`: the default desktop development path; start the complete Electron application with its sidecars and hot reload, and use this for ordinary manual verification.
 - `cd desktop && bun run electron:build`: build and package the desktop app (use this, not `bun run build` which only builds frontend).
-- `cd desktop && bun run test`: run desktop Vitest suites.
+- `cd desktop && bun run test`: run desktop Vitest suites for focused regression checks.
+- Run desktop development and verification commands inside WSL from `/home/<user>/WorkSpace/EchoFlow-Code` when the repository is hosted in WSL. Do not use the Vite-only `bun run dev` browser preview as the normal product test path; reserve it for explicitly isolated frontend work. For user-visible desktop changes, prefer launching the complete app with `bun run electron:dev` and exercising the affected workflow.
 - `cd desktop && bun run build:windows-x64`: package the Windows x64 Electron app from PowerShell; requires Visual Studio 2022 Build Tools with the Desktop development with C++ workload.
 
 ## Test Design Direction

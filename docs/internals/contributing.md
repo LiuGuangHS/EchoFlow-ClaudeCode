@@ -38,13 +38,21 @@ bun install
 ```bash
 bun run start                                   # 或 ./bin/echoflow-code，本地运行 CLI
 SERVER_PORT=3456 bun run src/server/index.ts    # desktop/ 使用的本地 API/WebSocket 服务
-cd desktop && bun run dev                       # Vite 启动桌面端前端
-cd desktop && bun run test                      # 桌面端 Vitest 套件
+cd desktop && bun run electron:dev              # 默认开发路径：完整 Electron 应用、sidecar 与热更新
+cd desktop && bun run test                      # 桌面端 Vitest 套件；只做聚焦回归检查
 cd desktop && bun run check:electron            # 校验 Electron host 代码并重建 bundle
 cd desktop && bun run build                     # 类型检查 + 生产构建
 cd adapters && bun run test                     # 全部 adapter 测试；test:<platform> 只跑单平台
 bun run docs:dev                                # 文档站预览；bun run docs:build 构建
 ```
+
+桌面仓库位于 WSL 时，开发和验证命令统一在 WSL 中执行，例如：
+
+```bash
+wsl.exe -d Ubuntu -- bash -lc 'cd /home/<user>/WorkSpace/EchoFlow-Code/desktop && bun run electron:dev'
+```
+
+一般不使用 `cd desktop && bun run dev` 的 Vite-only 浏览器预览作为产品测试路径；它仅适合明确隔离的前端调试。桌面功能或用户可见改动优先启动完整 Electron 应用并实际操作受影响流程。
 
 Windows x64 打包用 `cd desktop && bun run build:windows-x64`，需要 Bun/Bunx 和带「使用 C++ 的桌面开发」工作负载的 Visual Studio 2022 Build Tools。
 
