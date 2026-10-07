@@ -13,6 +13,8 @@ import { resolveDefaultRuntimeSelection } from '../../lib/runtimeSelection'
 import type { RuntimeSelection } from '../../types/runtime'
 import type { PermissionUpdate } from '../../types/chat'
 import { DiffViewer } from './DiffViewer'
+import { AutoModeOptInDialog } from '../controls/AutoModeOptInDialog'
+import { useUIStore } from '../../stores/uiStore'
 import {
   PlanPreviewCard,
   buildPlanApprovalPermissionUpdates,
@@ -334,6 +336,10 @@ function ExitPlanModePermissionDialog({
   const { respondToPermission } = useChatStore()
   const t = useTranslation()
   const [feedback, setFeedback] = useState('')
+  const [autoDialog, setAutoDialog] = useState(false)
+  const [autoConsentPending, setAutoConsentPending] = useState(false)
+  const autoModeOptInAccepted = useSettingsStore((state) => state.autoModeOptInAccepted)
+  const acceptAutoModeOptIn = useSettingsStore((state) => state.acceptAutoModeOptIn)
   // null = execute on the planning model (unchanged); non-null = the staged
   // execution-model switch sent with the approval as runtimeOverride.
   const [executionRuntime, setExecutionRuntime] = useState<RuntimeSelection | null>(null)
@@ -395,6 +401,28 @@ function ExitPlanModePermissionDialog({
   // used to start by asking for every tool. Approving with a mode pins it.
   const approveWithMode = (mode: PlanApprovalMode) => {
     approve({ permissionUpdates: buildPlanApprovalPermissionUpdates(mode, preview.allowedPrompts) })
+  }
+
+  const handleAutoModeApproval = async () => {
+    if (!sessionId || !isPending || autoConsentPending) return
+    const pending = getPendingPermission(useChatStore.getState().sessions[sessionId], requestId)
+    if (pending?.toolName !== 'ExitPlanMode') return
+
+    setAutoConsentPending(true)
+    try {
+      if (!autoModeOptInAccepted) await acceptAutoModeOptIn()
+      const current = getPendingPermission(useChatStore.getState().sessions[sessionId], requestId)
+      if (current?.toolName !== 'ExitPlanMode') return
+      approveWithMode('auto')
+      setAutoDialog(false)
+    } catch (err) {
+      useUIStore.getState().addToast({
+        type: 'error',
+        message: err instanceof Error ? err.message : t('common.error'),
+      })
+    } finally {
+      setAutoConsentPending(false)
+    }
   }
 
   return (
@@ -505,6 +533,20 @@ function ExitPlanModePermissionDialog({
             {t('permission.planApproveAcceptEdits')}
           </Button>
           <Button
+            variant="secondary"
+            size="base"
+            onClick={() => {
+              if (autoModeOptInAccepted) {
+                approveWithMode('auto')
+              } else {
+                setAutoDialog(true)
+              }
+            }}
+            icon={<span aria-hidden="true" className="material-symbols-outlined text-[14px]">autoplay</span>}
+          >
+            {t('permission.planApproveAuto')}
+          </Button>
+          <Button
             variant="danger-outline"
             size="base"
             onClick={() => approveWithMode('bypassPermissions')}
@@ -523,6 +565,14 @@ function ExitPlanModePermissionDialog({
           </Button>
         </div>
       ) : null}
+      <AutoModeOptInDialog
+        open={autoDialog}
+        loading={autoConsentPending}
+        onClose={() => {
+          if (!autoConsentPending) setAutoDialog(false)
+        }}
+        onConfirm={handleAutoModeApproval}
+      />
     </div>
   )
 }

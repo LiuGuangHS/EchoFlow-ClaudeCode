@@ -128,7 +128,7 @@ export function buildPromptPermissionUpdates(allowedPrompts: AllowedPrompt[]): P
 }
 
 /** Modes the approval dialog can hand the session before implementation starts. */
-export type PlanApprovalMode = 'acceptEdits' | 'bypassPermissions'
+export type PlanApprovalMode = 'acceptEdits' | 'auto' | 'bypassPermissions'
 
 /**
  * Approval with an explicit mode, mirroring the official CLI: every "yes" in

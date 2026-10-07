@@ -1,5 +1,6 @@
 import { Dropdown } from '../ui/Dropdown'
 import { Button } from '../ui/Button'
+import { useTranslation } from '@/i18n'
 
 type ClaudeCodeRuntimeId = 'bundled' | 'installed'
 type CliRuntimeStatus = 'pending' | 'applied' | 'failed'
@@ -19,16 +20,17 @@ export function CliRuntimeSelector({
   hasInstalledRuntime,
   onChange,
 }: CliRuntimeSelectorProps) {
+  const t = useTranslation()
   const value = requestedRuntime ?? effectiveRuntime ?? 'bundled'
   const items = [
-    { value: 'bundled' as const, label: 'Bundled' },
-    ...(hasInstalledRuntime ? [{ value: 'installed' as const, label: 'Installed' }] : []),
+    { value: 'bundled' as const, label: t('settings.runtime.managed') },
+    ...(hasInstalledRuntime ? [{ value: 'installed' as const, label: t('settings.runtime.external') }] : []),
   ]
   const statusLabel = status === 'pending'
-    ? 'Applying…'
+    ? t('settings.runtime.applying')
     : status === 'failed'
-      ? 'Runtime change failed'
-      : value === 'installed' ? 'Installed' : 'Bundled'
+      ? t('settings.runtime.changeFailed')
+      : value === 'installed' ? t('settings.runtime.external') : t('settings.runtime.managed')
 
   return (
     <div className="flex items-center gap-2">
@@ -41,7 +43,7 @@ export function CliRuntimeSelector({
             type="button"
             size="sm"
             variant="secondary"
-            aria-label="CLI runtime"
+            aria-label={t('settings.runtime.cliLabel')}
             disabled={status === 'pending'}
           >
             {statusLabel}

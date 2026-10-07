@@ -26,7 +26,7 @@ import {
 } from './sidebarTaskGroups'
 import { sessionsApi } from '../../api/sessions'
 import type { SessionListItem } from '../../types/session'
-import { useTabStore, SETTINGS_TAB_ID, SCHEDULED_TAB_ID, MARKET_TAB_ID, CONNECTORS_TAB_ID, DEEPSEEK_HARNESS_TAB_ID } from '../../stores/tabStore'
+import { useTabStore, SETTINGS_TAB_ID, SCHEDULED_TAB_ID, MARKET_TAB_ID, CONNECTORS_TAB_ID } from '../../stores/tabStore'
 import { useChatStore } from '../../stores/chatStore'
 import { useOpenTargetStore } from '../../stores/openTargetStore'
 import {
@@ -1064,21 +1064,6 @@ export function Sidebar({
             icon={<StorefrontIcon />}
           >
             {t('sidebar.extensions')}
-          </NavItem>
-        )}
-        {!isMobile && isDesktopRuntime && (
-          <NavItem
-            active={activeTabId === DEEPSEEK_HARNESS_TAB_ID}
-            collapsed={!expanded}
-            label="DeepSeek Harness"
-            touchFriendly={isMobile}
-            onClick={() => {
-              useTabStore.getState().openTab(DEEPSEEK_HARNESS_TAB_ID, 'DeepSeek Harness', 'deepseek-harness')
-              closeMobileDrawer()
-            }}
-            icon={<span className="material-symbols-outlined text-[20px]" aria-hidden="true">deployed_code</span>}
-          >
-            DeepSeek Harness
           </NavItem>
         )}
       </div>

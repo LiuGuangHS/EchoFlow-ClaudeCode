@@ -14,6 +14,7 @@ export const SCHEDULED_TAB_ID = '__scheduled__'
 export const CONNECTORS_TAB_ID = '__connectors__'
 export const MARKET_TAB_ID = '__market__'
 export const DEEPSEEK_HARNESS_TAB_ID = '__deepseek-harness__'
+export const RUNTIME_SETTINGS_TAB_ID = '__runtime-settings__'
 export const TRACE_LIST_TAB_ID = '__traces__'
 export const TERMINAL_TAB_PREFIX = '__terminal__'
 export const TRACE_TAB_PREFIX = '__trace__'
@@ -92,7 +93,7 @@ const PERSISTENT_SPECIAL_TAB_IDS: Record<PersistentSpecialTabType, string> = {
   scheduled: SCHEDULED_TAB_ID,
   market: MARKET_TAB_ID,
   connectors: CONNECTORS_TAB_ID,
-  'deepseek-harness': DEEPSEEK_HARNESS_TAB_ID,
+  'deepseek-harness': RUNTIME_SETTINGS_TAB_ID,
   traces: TRACE_LIST_TAB_ID,
 }
 

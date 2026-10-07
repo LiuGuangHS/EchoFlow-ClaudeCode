@@ -3,8 +3,8 @@ import { useTabStore } from '../../stores/tabStore'
 import { EmptySession } from '../../pages/EmptySession'
 import { ActiveSession } from '../../pages/ActiveSession'
 import { ScheduledTasks } from '../../pages/ScheduledTasks'
-import { DeepSeekHarness } from '../../pages/DeepSeekHarness'
 import { ExtensionMarket } from '@/pages/ExtensionMarket'
+import { useUIStore } from '../../stores/uiStore'
 import { Settings } from '../../pages/Settings'
 import { TerminalSettings } from '../../pages/TerminalSettings'
 import { TraceList } from '../../pages/TraceList'
@@ -17,6 +17,7 @@ export function ContentRouter() {
   const activeTabId = useTabStore((s) => s.activeTabId)
   const tabs = useTabStore((s) => s.tabs)
   const activeTabType = tabs.find((t) => t.sessionId === activeTabId)?.type
+  const setPendingSettingsTab = useUIStore((s) => s.setPendingSettingsTab)
   const terminalTabs = tabs.filter((tab) => tab.type === 'terminal')
   const activeSessionId = activeTabType === 'session' ? activeTabId : null
   const [lastSessionId, setLastSessionId] = useState<string | null>(activeSessionId)
@@ -30,6 +31,11 @@ export function ContentRouter() {
     if (activeSessionId) setLastSessionId(activeSessionId)
     else if (lastSessionId && !retainedSessionId) setLastSessionId(null)
   }, [activeSessionId, lastSessionId, retainedSessionId])
+
+  useEffect(() => {
+    if (activeTabType !== 'deepseek-harness') return
+    setPendingSettingsTab('runtime')
+  }, [activeTabType, setPendingSettingsTab])
 
   useEffect(() => {
     if (activeTabType !== 'workbench') return
@@ -52,7 +58,7 @@ export function ContentRouter() {
   } else if (activeTabType === 'connectors' || activeTabType === 'market') {
     page = <ExtensionMarket />
   } else if (activeTabType === 'deepseek-harness') {
-    page = <DeepSeekHarness />
+    page = <Settings />
   } else if (activeTabType === 'trace') {
     const traceTabId = activeTabId
     const traceSessionId = tabs.find((t) => t.sessionId === traceTabId)?.traceSessionId

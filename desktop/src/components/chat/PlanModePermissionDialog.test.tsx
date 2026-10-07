@@ -239,6 +239,38 @@ describe('plan mode permission UI', () => {
     })
   })
 
+  it('approves with auto mode and keeps the requested prompt rules', () => {
+    useSettingsStore.setState({ autoModeOptInAccepted: true } as never)
+    render(
+      <PermissionDialog
+        sessionId="session-1"
+        requestId="perm-plan"
+        toolName="ExitPlanMode"
+        input={{
+          plan: PLAN,
+          allowedPrompts: [{ tool: 'Bash', prompt: 'run tests' }],
+        }}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Approve & use auto mode' }))
+
+    expect(sendMock).toHaveBeenCalledWith('session-1', {
+      type: 'permission_response',
+      requestId: 'perm-plan',
+      allowed: true,
+      permissionUpdates: [
+        { type: 'setMode', mode: 'auto', destination: 'session' },
+        {
+          type: 'addRules',
+          rules: [{ toolName: 'Bash', ruleContent: 'prompt: run tests' }],
+          behavior: 'allow',
+          destination: 'session',
+        },
+      ],
+    })
+  })
+
   it('approves with auto-accept edits and keeps the requested prompt rules', () => {
     render(
       <PermissionDialog
