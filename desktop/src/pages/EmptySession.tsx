@@ -724,17 +724,15 @@ export function EmptySession() {
 
   return (
     <div className="relative flex flex-1 flex-col overflow-hidden bg-[var(--color-surface)]">
-      <div className={`brand-seal-glow flex flex-1 flex-col items-center justify-center ${
+      <div className={`flex flex-1 flex-col items-center justify-center ${
         isMobileComposer ? 'px-6 pb-[230px] pt-10' : 'p-8 pb-32'
       }`}>
         <div className={`flex flex-col items-center text-center ${
-          isMobileComposer ? 'max-w-[300px] gap-3' : 'max-w-[420px] gap-[13px]'
+          isMobileComposer ? 'max-w-[300px] gap-2.5' : 'max-w-[420px] gap-2.5'
         }`}>
-          <BrandSeal size={isMobileComposer ? 'lg' : 'xl'} />
+          <BrandSeal size="lg" className={isMobileComposer ? undefined : 'h-12 w-12'} />
           <h1
-            className={`font-bold tracking-tight text-[var(--color-text-primary)] ${
-              isMobileComposer ? 'text-2xl' : 'text-[27px]'
-            }`}
+            className="text-2xl font-bold tracking-tight text-[var(--color-text-primary)]"
             style={{ fontFamily: 'var(--font-headline)' }}
           >
             {t('empty.title')}

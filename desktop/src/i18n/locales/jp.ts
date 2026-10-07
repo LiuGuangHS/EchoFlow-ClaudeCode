@@ -2533,8 +2533,8 @@ export const jp: Record<TranslationKey, string> = {
   'settings.general.uiZoomReset': 'UI ズームを 100% にリセット',
 
   // ─── Empty Session ──────────────────────────────────────
-  'empty.title': '新しいセッション',
-  'empty.subtitle': '新しいコーディングセッションを開始します。Claude は、プロジェクトの構築、デバッグ、設計をお手伝いする準備ができています。',
+  'empty.title': '何から始めますか？',
+  'empty.subtitle': 'タスクを入力するか、@ でファイルを参照し、/ でコマンドを確認できます。',
   'empty.placeholder': '何でも質問してください...',
   'empty.addFiles': 'ファイルまたは写真を追加',
   'empty.slashCommands': 'スラッシュコマンド',

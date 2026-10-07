@@ -851,7 +851,7 @@ export function ActiveSession({ sessionId, active = true }: { sessionId?: string
             <div
               data-testid="empty-session-hero"
               className={[
-                'brand-seal-glow flex min-h-0 flex-1 flex-col items-center justify-center overflow-hidden px-8 pt-8',
+                'flex min-h-0 flex-1 flex-col items-center justify-center overflow-hidden px-8 pt-8',
                 compactEmptyHero ? 'pb-6' : 'pb-32',
               ].join(' ')}
             >

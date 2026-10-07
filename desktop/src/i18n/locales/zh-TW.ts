@@ -2532,8 +2532,8 @@ export const zh: Record<TranslationKey, string> = {
   'settings.general.uiZoomReset': '重置介面縮放到 100%',
 
   // ─── Empty Session ──────────────────────────────────────
-  'empty.title': '新建會話',
-  'empty.subtitle': '開始一個新的編碼會話。Claude 已準備好幫你構建、除錯和設計你的專案。',
+  'empty.title': '想從什麼開始？',
+  'empty.subtitle': '描述任務，或用 @ 引用檔案、用 / 查看命令。',
   'empty.placeholder': '隨便問點什麼...',
   'empty.addFiles': '新增檔案或圖片',
   'empty.slashCommands': '斜槓命令',

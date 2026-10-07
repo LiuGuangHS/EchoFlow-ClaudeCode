@@ -2532,8 +2532,8 @@ Row 9, all 8 cells: continuing from straight down, turning left through lower-le
   'settings.general.uiZoomReset': 'Reset UI zoom to 100%',
 
   // ─── Empty Session ──────────────────────────────────────
-  'empty.title': 'New session',
-  'empty.subtitle': 'Start a fresh coding session. Claude is ready to help you build, debug, and architect your project.',
+  'empty.title': 'What would you like to work on?',
+  'empty.subtitle': 'Describe a task, use @ to reference files, or / to browse commands.',
   'empty.placeholder': 'Ask anything...',
   'empty.addFiles': 'Add files or photos',
   'empty.slashCommands': 'Slash commands',

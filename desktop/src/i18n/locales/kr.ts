@@ -2535,8 +2535,8 @@ export const kr: Record<TranslationKey, string> = {
   'settings.general.uiZoomReset': 'UI 확대/축소를 100%로 재설정',
 
   // ─── Empty Session ──────────────────────────────────────
-  'empty.title': '새 세션',
-  'empty.subtitle': '새 코딩 세션을 시작합니다. Claude가 프로젝트를 구축하고 디버깅하며 설계하도록 도울 준비가 되어 있습니다.',
+  'empty.title': '무엇부터 시작할까요?',
+  'empty.subtitle': '작업을 설명하거나 @로 파일을 참조하고 /로 명령을 확인하세요.',
   'empty.placeholder': '무엇이든 물어보세요...',
   'empty.addFiles': '파일 또는 사진 추가',
   'empty.slashCommands': '슬래시 명령',
