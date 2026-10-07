@@ -1161,7 +1161,18 @@ async function createMainWindow() {
   writeWindowSmokeSnapshot(mainWindow, 'after-final-show')
 }
 
-if (!acquireSingleInstanceLock(app, () => mainWindow)) {
+if (!acquireSingleInstanceLock(app, () => mainWindow, url => {
+  if (deepLinkHandler) {
+    deepLinkHandler.handle(url)
+  } else {
+    deepLinkHandler = new DeepLinkHandler({
+      sendToRenderer: (_channel, data) => {
+        mainWindow?.webContents.send(ELECTRON_EVENT_CHANNELS.deepLink, data)
+      },
+    })
+    deepLinkHandler.setPending(url)
+  }
+})) {
   process.exit(0)
 }
 

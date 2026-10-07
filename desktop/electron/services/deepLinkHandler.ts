@@ -21,7 +21,7 @@ export class DeepLinkHandler {
   }
 
   handle(url: string): void {
-    console.log('[DeepLink] Processing:', url)
+    console.log('[DeepLink] Processing deep link')
 
     const action = handleDeepLinkUrl(url)
     if (!action) {

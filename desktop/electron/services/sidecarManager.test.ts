@@ -765,10 +765,10 @@ describe('Electron sidecar manager', () => {
   })
 
   it('isolates health probes from the shared HTTP connection pool', async () => {
-    const connections = new Set<number>()
+    const connections = new Set<http.IncomingMessage['socket']>()
     const connectionHeaders: string[] = []
     const server = http.createServer((request, response) => {
-      connections.add(request.socket.remotePort!)
+      connections.add(request.socket)
       connectionHeaders.push(request.headers.connection ?? '')
       response.writeHead(200, { 'content-type': 'application/json' })
       response.end(JSON.stringify({ status: 'ok' }))

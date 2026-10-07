@@ -4,6 +4,7 @@ import { showMainWindow } from './windows'
 export function acquireSingleInstanceLock(
   app: App,
   getMainWindow: () => BrowserWindow | null,
+  onDeepLink: (url: string) => void,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
   if (env.ECHOFLOW_ELECTRON_DISABLE_SINGLE_INSTANCE_LOCK === '1') {
@@ -16,7 +17,9 @@ export function acquireSingleInstanceLock(
     return false
   }
 
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, commandLine) => {
+    const deepLinkUrl = commandLine.find(arg => arg.startsWith('echoflowcode://'))
+    if (deepLinkUrl) onDeepLink(deepLinkUrl)
     showMainWindow(getMainWindow(), app)
   })
 
