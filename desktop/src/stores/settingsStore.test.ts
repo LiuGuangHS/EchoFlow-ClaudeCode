@@ -61,6 +61,14 @@ describe('settingsStore locale defaults', () => {
     expect(useSettingsStore.getState().locale).toBe('en')
   })
 
+  it('defaults the reasoning effort to medium before settings load', async () => {
+    mockSystemLanguages(['en-US'])
+
+    const { useSettingsStore } = await import('./settingsStore')
+
+    expect(useSettingsStore.getState().effortLevel).toBe('medium')
+  })
+
   it('keeps a stored locale override', async () => {
     mockSystemLanguages(['en-US'])
     window.localStorage.setItem('echoflow-code-locale', 'zh-TW')

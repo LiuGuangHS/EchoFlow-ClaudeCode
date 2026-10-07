@@ -144,6 +144,7 @@ function buildProviderModels(
   const entries: Array<{ id: string; label: string }> = [
     ...(provider.availableModels ?? []).map(model => ({ id: model.id, label: provider.credentialSource?.tokenName ? `EchoFlow · ${provider.credentialSource.tokenName}` : provider.name })),
     { id: resolveProviderSlotModelId(provider, 'main'), label: labels.main },
+    { id: resolveProviderSlotModelId(provider, 'fable'), label: labels.fable },
     { id: resolveProviderSlotModelId(provider, 'haiku'), label: labels.haiku },
     { id: resolveProviderSlotModelId(provider, 'sonnet'), label: labels.sonnet },
     { id: resolveProviderSlotModelId(provider, 'opus'), label: labels.opus },
@@ -517,13 +518,18 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
         ? t('model.configurationApplyFailed')
         : null
   const supportedRuntimeEfforts = selectedRuntimeModel?.supportedReasoningEfforts
-  const requestedRuntimeEffort = activeRuntimeSelection?.effortLevel ?? effortLevel
+  const requestedRuntimeEffort = activeRuntimeSelection?.effortLevel
   const selectedRuntimeEffort = selectedRuntimeModel && !runtimeEffortSuppressedByProvider
     ? supportedRuntimeEfforts?.length === 0
       ? undefined
-      : supportedRuntimeEfforts === undefined || supportedRuntimeEfforts.includes(requestedRuntimeEffort)
+      : requestedRuntimeEffort && (
+          supportedRuntimeEfforts === undefined || supportedRuntimeEfforts.includes(requestedRuntimeEffort)
+        )
         ? requestedRuntimeEffort
-        : selectedRuntimeModel.defaultReasoningEffort ?? supportedRuntimeEfforts[0]
+        : selectedRuntimeModel.defaultReasoningEffort
+          ?? (supportedRuntimeEfforts === undefined || supportedRuntimeEfforts.includes(effortLevel)
+            ? effortLevel
+            : supportedRuntimeEfforts[0])
     : undefined
   const runtimeEffortOptions = supportedRuntimeEfforts === undefined
     ? EFFORT_OPTIONS.filter((option) => option.value !== 'xhigh')
@@ -733,15 +739,14 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
                           )
                             ? normalizedProviderEffort
                             : undefined
-                          const nextEffort = supportedEfforts === undefined
-                            ? explicitEffort ?? effortLevel
+  const nextEffort = supportedEfforts === undefined
+                            ? supportedProviderEffort ?? explicitEffort ?? model.defaultReasoningEffort ?? effortLevel
                             : supportedEfforts.length
                               ? supportedProviderEffort
                                 ?? (explicitEffort && supportedEfforts.includes(explicitEffort)
                                 ? explicitEffort
-                                : supportedEfforts.includes(effortLevel)
-                                  ? effortLevel
-                                  : model.defaultReasoningEffort ?? supportedEfforts[0])
+                                : model.defaultReasoningEffort
+                                  ?? (supportedEfforts.includes(effortLevel) ? effortLevel : supportedEfforts[0]))
                               : undefined
                           handleRuntimeSelect({
                             providerId: choice.providerId,
@@ -896,8 +901,9 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
             openSelector()
           }}
           disabled={disabled}
-          aria-label={ariaLabel ?? (buttonProviderLabel ? `${buttonModelLabel}, ${buttonProviderLabel}` : buttonModelLabel)}
-          title={buttonProviderLabel ? `${buttonProviderLabel} · ${buttonModelLabel}` : buttonModelLabel}
+            aria-label={ariaLabel ?? (buttonProviderLabel ? `${buttonModelLabel}, ${buttonProviderLabel}` : buttonModelLabel)}
+            title={buttonProviderLabel ? `${buttonProviderLabel} · ${buttonModelLabel}` : buttonModelLabel}
+            data-testid={buttonProviderLabel ? 'model-provider-button' : undefined}
           // `focus-visible:rounded-*` restores the other pair of corners while
           // focused. The ring traces `border-radius`, so on the half-rounded
           // halves of this segmented control it otherwise drew a box that was
@@ -911,7 +917,7 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
           <span className={`${appearance === 'field' ? 'text-sm font-normal' : compact ? 'text-xs font-medium' : 'text-[13px] font-medium'} min-w-0 flex-1 truncate text-[var(--color-text-primary)]`}>
             {buttonModelLabel}
           </span>
-          {!canEditRuntimeEffort && !compact && buttonProviderLabel && (
+          {!compact && buttonProviderLabel && (
             <span className="max-w-[108px] flex-shrink-0 truncate text-[11px] text-[var(--color-text-tertiary)]">
               {buttonProviderLabel}
             </span>

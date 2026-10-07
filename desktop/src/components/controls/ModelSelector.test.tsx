@@ -1292,6 +1292,34 @@ describe('ModelSelector', () => {
     })
   })
 
+  it('uses the selected model default when a fresh session has no explicit effort', () => {
+    const model: ModelInfo = {
+      id: 'gpt-5.6-sol',
+      name: 'GPT-5.6-Sol',
+      description: 'Frontier model',
+      context: '353400',
+      defaultReasoningEffort: 'low',
+      supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+    }
+    useEchoFlowOpenAIOAuthStore.setState({
+      status: { loggedIn: true, expiresAt: null, email: null, accountId: null },
+      fetchStatus: async () => {},
+    })
+    useSettingsStore.setState({
+      locale: 'en', availableModels: [model], currentModel: model,
+      activeProviderName: 'ChatGPT Official', effortLevel: 'max',
+    })
+    useProviderStore.setState({
+      providers: [], activeId: OPENAI_OFFICIAL_PROVIDER_ID,
+      hasLoadedProviders: true, isLoading: true,
+    })
+
+    render(<ModelSelector runtimeKey="fresh-session" />)
+
+    expect(screen.getByRole('button', { name: 'Effort: Low' })).toBeInTheDocument()
+    expect(useSessionRuntimeStore.getState().selections['fresh-session']).toBeUndefined()
+  })
+
   it('uses each ChatGPT model reasoning catalog and resets unsupported effort to its default', async () => {
     const openAIModels: ModelInfo[] = [
       {
@@ -1341,6 +1369,8 @@ describe('ModelSelector', () => {
       'ChatGPT Official · GPT-5.6-Sol',
     )
     expect(screen.queryByTestId('model-provider-badge')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-provider-button')).toHaveAttribute('title', 'ChatGPT Official · GPT-5.6-Sol')
+    expect(screen.getByTestId('model-provider-button')).toHaveTextContent('ChatGPT Official')
     expect(screen.getByRole('button', { name: 'Effort: Max' })).toBeInTheDocument()
     await clickByRole('Effort: Max')
     expect(screen.getByRole('slider', { name: 'Effort' })).toHaveAttribute('aria-valuemax', '4')
