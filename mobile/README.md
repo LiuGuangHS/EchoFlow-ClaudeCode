@@ -12,6 +12,7 @@ the desktop web experience.
 - Server health and H5 token verification before opening the workspace.
 - H5 credentials encrypted with Android Keystore AES-GCM.
 - WebView support for H5 navigation, loading feedback, and native file picking.
+- A short recent-server list that stores addresses only, never H5 tokens.
 - Native confirmation prompts for Agent tool permission requests.
 - Origin-allowlisted WebView bridge for discovering the active session safely.
 - Trusted LAN HTTP support for existing self-hosted installations.
@@ -22,7 +23,7 @@ the app to request camera permission.
 
 ## Development
 
-JDK 17 and Android SDK Platform 35 are required for local APK builds.
+JDK 25 LTS and Android SDK Platform 35 are required for local APK builds.
 
 ```bash
 cd mobile

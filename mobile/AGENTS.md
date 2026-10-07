@@ -9,7 +9,7 @@ integration and mobile-specific presentation. Prefer Android platform APIs.
 
 - Run `cd mobile && bun run check`; from the repository root the same gate is
   `bun run check:mobile`. This checks mobile metadata and Android integration
-  contracts. Build with `cd mobile && bun run android` when JDK 17 and the
+  contracts. Build with `cd mobile && bun run android` when JDK 25 and the
   Android SDK are available.
 - Keep credentials encrypted with Android Keystore AES-GCM. Never log secrets.
   The H5 handoff currently uses its documented `h5Token` query parameter.
@@ -18,7 +18,7 @@ integration and mobile-specific presentation. Prefer Android platform APIs.
   networks.
 - `mobile/package.json` and `mobile/app.json` both carry the version, and the
   mobile release workflow checks they match. Bump both.
-- JDK 17 is the tested Android build toolchain. Check AGP and Gradle compatibility
-  before changing their pinned versions.
+- JDK 25 LTS, Android Gradle Plugin 9.4.0, and Gradle 9.8.0 are the pinned
+  Android build toolchain. Keep these versions compatible when upgrading them.
 - WebView remains the compatibility layer for chat, tools, and sessions. Add
   mobile-specific flows incrementally and preserve H5 navigation and file input.

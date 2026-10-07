@@ -19,12 +19,15 @@ describe('native Android app contract', () => {
   test('keeps the minimal native shell integrations wired', () => {
     const manifest = read('../android/app/src/main/AndroidManifest.xml')
     const gradle = read('../android/app/build.gradle')
-    const activity = read('../android/app/src/main/java/com/echoflowai/codemobile/MainActivity.kt')
-    const credentialStore = read('../android/app/src/main/java/com/echoflowai/codemobile/CredentialStore.kt')
-    const permissions = read('../android/app/src/main/java/com/echoflowai/codemobile/PermissionSession.kt')
+    const activity = read('../android/app/src/main/java/com/echoflow/code/mobile/MainActivity.kt')
+    const credentialStore = read('../android/app/src/main/java/com/echoflow/code/mobile/CredentialStore.kt')
+    const permissions = read('../android/app/src/main/java/com/echoflow/code/mobile/PermissionSession.kt')
 
     expect(manifest).toContain('android.permission.INTERNET')
-    expect(manifest).toContain('android:usesCleartextTraffic="true"')
+    expect(appConfig.android.usesCleartextTraffic).toBe(true)
+    expect(manifest).toContain(`android:usesCleartextTraffic="${appConfig.android.usesCleartextTraffic}"`)
+    expect(manifest).not.toContain('android.permission.CAMERA')
+    expect(manifest).toContain('com.google.mlkit.vision.DEPENDENCIES')
     expect(gradle).toContain('play-services-code-scanner')
     expect(gradle).toContain('com.squareup.okhttp3:okhttp')
     expect(gradle).toContain('androidx.webkit:webkit')
@@ -33,9 +36,10 @@ describe('native Android app contract', () => {
     expect(activity).toContain('onShowFileChooser')
     expect(credentialStore).toContain('AndroidKeyStore')
     expect(credentialStore).toContain('AES/GCM/NoPadding')
+    expect(credentialStore).toContain('MAX_RECENT_SERVERS = 5')
     expect(activity).toContain('确认 Agent 操作')
     expect(permissions).toContain('control_response')
-    expect(read('../android/app/src/main/java/com/echoflowai/codemobile/Connection.kt')).toContain('isSameOrigin')
+    expect(read('../android/app/src/main/java/com/echoflow/code/mobile/Connection.kt')).toContain('isSameOrigin')
   })
 
   test('does not retain the Expo or React Native runtime', () => {

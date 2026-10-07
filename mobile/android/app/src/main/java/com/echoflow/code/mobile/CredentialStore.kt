@@ -14,6 +14,7 @@ internal data class SavedCredentials(val serverUrl: String, val h5Token: String)
 internal class CredentialStore(context: Context) {
   private val preferences = context.getSharedPreferences("echoflow.credentials", Context.MODE_PRIVATE)
   private val alias = "echoflow.mobile.credentials"
+  private val recentServersKey = "recentServers"
 
   fun load(): SavedCredentials? = runCatching {
     val iv = preferences.getString("iv", null) ?: return null
@@ -36,8 +37,25 @@ internal class CredentialStore(context: Context) {
       .apply()
   }
 
+  fun recentServers(): List<String> = preferences.getString(recentServersKey, null)
+    .orEmpty()
+    .lineSequence()
+    .map(String::trim)
+    .filter(String::isNotEmpty)
+    .distinct()
+    .take(MAX_RECENT_SERVERS)
+    .toList()
+
+  fun rememberServer(serverUrl: String) {
+    val recent = (listOf(serverUrl) + recentServers())
+      .distinct()
+      .take(MAX_RECENT_SERVERS)
+      .joinToString("\n")
+    preferences.edit().putString(recentServersKey, recent).apply()
+  }
+
   fun clear() {
-    preferences.edit().clear().apply()
+    preferences.edit().remove("iv").remove("payload").apply()
   }
 
   private fun key(): SecretKey {
@@ -60,4 +78,8 @@ internal class CredentialStore(context: Context) {
 
   private fun encode(bytes: ByteArray): String = Base64.encodeToString(bytes, Base64.NO_WRAP)
   private fun decode(value: String): ByteArray = Base64.decode(value, Base64.NO_WRAP)
+
+  private companion object {
+    const val MAX_RECENT_SERVERS = 5
+  }
 }

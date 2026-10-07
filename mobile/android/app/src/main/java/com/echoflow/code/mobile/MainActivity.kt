@@ -81,6 +81,8 @@ class MainActivity : Activity() {
   }
 
   private fun showConnect(serverUrl: String = lastServerUrl, h5Token: String = "") {
+    permissionSession.disconnect()
+    clearPermissionRequests()
     filePathCallback?.onReceiveValue(null)
     filePathCallback = null
     pendingFileChooser = null
@@ -110,6 +112,7 @@ class MainActivity : Activity() {
     card.addView(label("输入桌面服务地址和 H5 Token，手机会直接打开完整的 EchoFlow 工作台。", muted, 14f))
 
     val serverInput = input("服务器地址", "http://192.168.1.10:3456", serverUrl)
+    serverInput.second.inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
     val tokenInput = input("H5 Token", "h5_...", h5Token).also {
       it.second.inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
     }
@@ -117,6 +120,23 @@ class MainActivity : Activity() {
     card.addView(serverInput.second, marginTop = 8)
     card.addView(tokenInput.first, marginTop = 16)
     card.addView(tokenInput.second, marginTop = 8)
+
+    val recentServers = credentials.recentServers()
+    if (recentServers.isNotEmpty()) {
+      card.addView(label("最近连接", muted, 12f), marginTop = 18)
+      recentServers.forEach { recentUrl ->
+        val recentButton = toolbarButton(recentUrl) {
+          serverInput.second.setText(recentUrl)
+          tokenInput.second.text.clear()
+          tokenInput.second.requestFocus()
+        }.apply {
+          gravity = Gravity.START or Gravity.CENTER_VERTICAL
+          maxLines = 1
+          ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+        }
+        card.addView(recentButton, marginTop = 6)
+      }
+    }
 
     val scan = Button(this).apply {
       text = "扫描连接二维码"
@@ -127,7 +147,9 @@ class MainActivity : Activity() {
       setOnClickListener {
         GmsBarcodeScanning.getClient(this@MainActivity).startScan()
           .addOnSuccessListener { barcode ->
-            val parsed = Connection.parseIntent(runCatching { Uri.parse(barcode.rawValue) }.getOrNull())
+            val parsed = barcode.rawValue?.let { value ->
+              Connection.parseIntent(runCatching { Uri.parse(value) }.getOrNull())
+            }
             if (parsed == null) {
               Toast.makeText(this@MainActivity, "二维码不是有效的 EchoFlow 连接链接", Toast.LENGTH_SHORT).show()
             } else {
@@ -181,7 +203,10 @@ class MainActivity : Activity() {
             SavedCredentials(
               Connection.verify(serverInput.second.text.toString(), token),
               token,
-            ).also(credentials::save)
+            ).also {
+              credentials.save(it)
+              credentials.rememberServer(it.serverUrl)
+            }
           }
             .onSuccess { saved -> runOnUiThread { showWeb(saved) } }
             .onFailure { error ->
@@ -217,9 +242,7 @@ class MainActivity : Activity() {
     titleGroup.addView(label(saved.serverUrl, muted, 11f).also { it.maxLines = 1; it.ellipsize = android.text.TextUtils.TruncateAt.MIDDLE })
     toolbar.addView(titleGroup, LinearLayout.LayoutParams(0, -2, 1f))
     val reload = toolbarButton("↻") { webView?.reload() }
-    val disconnect = toolbarButton("退出") {
-      clearPermissionRequests()
-      permissionSession.disconnect()
+    val disconnect = toolbarButton("断开") {
       credentials.clear()
       CookieManager.getInstance().removeAllCookies(null)
       CookieManager.getInstance().flush()
@@ -249,7 +272,7 @@ class MainActivity : Activity() {
           val uri = request.url
           if (uri.scheme == "http" || uri.scheme == "https") {
             val origin = Uri.parse(saved.serverUrl)
-            val sameOrigin = uri.scheme == origin.scheme && uri.host == origin.host && uri.port == origin.port
+            val sameOrigin = Connection.isSameOrigin(saved.serverUrl, uri.toString())
             return if (sameOrigin) false else runCatching {
               startActivity(Intent(Intent.ACTION_VIEW, uri))
               true

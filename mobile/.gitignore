@@ -3,6 +3,8 @@ node_modules/
 dist/
 android/.gradle/
 android/.kotlin/
+android/signing.properties
+android/app/release.keystore
 android/app/build/
 android/build/
 *.jks

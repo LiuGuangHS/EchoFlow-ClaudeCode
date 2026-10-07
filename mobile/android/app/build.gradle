@@ -2,13 +2,13 @@ import groovy.json.JsonSlurper
 
 plugins {
   id 'com.android.application'
-  id 'org.jetbrains.kotlin.android'
 }
 
 def config = new JsonSlurper().parse(rootProject.file('../app.json'))
 def versionName = config.version as String
 def versionParts = versionName.tokenize('.').collect { it as int }
 def appId = config.android.package as String
+def signingPropertiesFile = rootProject.file('signing.properties')
 
 android {
   namespace appId
@@ -22,12 +22,16 @@ android {
     versionName versionName
   }
 
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+
   signingConfigs {
     release {
-      def propertiesFile = rootProject.file('signing.properties')
-      if (propertiesFile.exists()) {
+      if (signingPropertiesFile.exists()) {
         def properties = new Properties()
-        propertiesFile.withInputStream { properties.load(it) }
+        signingPropertiesFile.withInputStream { properties.load(it) }
         storeFile rootProject.file(properties['storeFile'])
         storePassword properties['storePassword']
         keyAlias properties['keyAlias']
@@ -41,7 +45,7 @@ android {
       applicationIdSuffix '.debug'
     }
     release {
-      signingConfig signingConfigs.release
+      signingConfig signingPropertiesFile.exists() ? signingConfigs.release : signingConfigs.debug
       minifyEnabled true
       shrinkResources true
       proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
