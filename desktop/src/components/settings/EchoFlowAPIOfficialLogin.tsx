@@ -236,14 +236,19 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
                     type="button"
                     onClick={() => {
                       if (alreadyAdded) return
-                      onAddFromToken({
-                        endpoint: selectedEndpoint,
-                        tokenId: token.id,
-                        tokenName: token.name,
-                        keyPreview: token.keyPreview,
-                        remainQuota: token.remainQuota,
-                        unlimitedQuota: token.unlimitedQuota,
-                      })
+                      void echoflowApi.getTokenKey(selectedEndpoint, token.id)
+                        .then(({ token: selectedToken }) => {
+                          onAddFromToken({
+                            endpoint: selectedEndpoint,
+                            tokenId: selectedToken.id,
+                            tokenName: selectedToken.name,
+                            key: selectedToken.key,
+                            keyPreview: token.keyPreview,
+                            remainQuota: token.remainQuota,
+                            unlimitedQuota: token.unlimitedQuota,
+                          })
+                        })
+                        .catch(() => setError('无法读取所选令牌，请刷新账户后重试。'))
                     }}
                     disabled={alreadyAdded}
                     className={`flex items-center gap-2.5 rounded-lg border px-3 py-2 text-left transition-colors ${

@@ -1919,8 +1919,25 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
             {mode === 'create' && requiresApiKey && <span className="text-[var(--color-error)] ml-0.5">*</span>}
           </label>
           {echoFlowDraft ? (
-            <div className="flex h-10 items-center rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-3 font-mono text-sm text-[var(--color-text-secondary)]">
-              {echoFlowDraft.keyPreview}
+            <div className="relative">
+              <input
+                id="provider-api-key"
+                autoComplete="off"
+                spellCheck={false}
+                readOnly
+                type={showApiKey ? 'text' : 'password'}
+                value={echoFlowDraft.key}
+                className="h-10 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-3 pr-10 font-mono text-sm text-[var(--color-text-secondary)] outline-none"
+              />
+              <IconButton
+                icon={showApiKey ? 'visibility_off' : 'visibility'}
+                label={t(showApiKey ? 'settings.providers.hideApiKey' : 'settings.providers.showApiKey')}
+                showTooltip={false}
+                size="sm"
+                tone="muted"
+                onClick={() => setShowApiKey((visible) => !visible)}
+                className="absolute right-1.5 top-1/2 -translate-y-1/2"
+              />
             </div>
           ) : (
             <div className="relative">

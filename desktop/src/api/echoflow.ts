@@ -37,12 +37,13 @@ export type EchoFlowTokenSource = {
   endpoint: EchoFlowEndpoint
   tokenId: string
   tokenName: string
+  key: string
   keyPreview: string
   remainQuota?: number
   unlimitedQuota?: boolean
 }
 
-export type EchoFlowProviderCreateInput = Omit<CreateProviderInput, 'presetId' | 'apiKey'> & EchoFlowTokenSource
+export type EchoFlowProviderCreateInput = Omit<CreateProviderInput, 'presetId' | 'apiKey'> & Omit<EchoFlowTokenSource, 'key'>
 export type EchoFlowProviderTestInput = Omit<TestProviderConfigInput, 'apiKey'> & Pick<EchoFlowTokenSource, 'endpoint' | 'tokenId'>
 export type EchoFlowProviderModelsInput = Pick<EchoFlowTokenSource, 'endpoint' | 'tokenId'>
 
@@ -63,6 +64,8 @@ export const echoflowApi = {
     api.patch<{ account: EchoFlowAccount }>('/api/echoflow/account', { endpoint }),
   selectToken: (endpoint: EchoFlowEndpoint, tokenId: string, providerId?: string) =>
     api.post<EchoFlowTokenSelectionResponse>('/api/echoflow/select-token', { endpoint, tokenId, ...(providerId ? { providerId } : {}) }),
+  getTokenKey: (endpoint: EchoFlowEndpoint, tokenId: string) =>
+    api.post<{ token: { id: string; name: string; key: string } }>('/api/echoflow/token', { endpoint, tokenId }),
   createProviderFromToken: (input: EchoFlowProviderCreateInput) =>
     api.post<{ provider: SavedProvider }>('/api/echoflow/provider', input),
   testProviderFromToken: (input: EchoFlowProviderTestInput) =>

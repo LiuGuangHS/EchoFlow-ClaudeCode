@@ -38,6 +38,7 @@ describe('EchoFlowAPIOfficialLogin', () => {
     echoflowApi.bindAccount = vi.fn()
     echoflowApi.refreshAccount = vi.fn()
     echoflowApi.disconnectAccount = vi.fn()
+    echoflowApi.getTokenKey = vi.fn()
   })
   beforeEach(() => {
     useProviderStore.setState({ providers: [], activeId: null })
@@ -45,6 +46,8 @@ describe('EchoFlowAPIOfficialLogin', () => {
     vi.mocked(echoflowApi.bindAccount).mockReset()
     vi.mocked(echoflowApi.refreshAccount).mockReset()
     vi.mocked(echoflowApi.disconnectAccount).mockReset()
+    vi.mocked(echoflowApi.getTokenKey).mockReset()
+    vi.mocked(echoflowApi.getTokenKey).mockResolvedValue({ token: { id: 'shared-token-id', name: 'Main key', key: 'sk-main-secret' } })
     mockAccounts()
   })
 
@@ -120,14 +123,14 @@ describe('EchoFlowAPIOfficialLogin', () => {
     const tokenButton = screen.getByRole('button', { name: /Main key.*sk-main…1234/ })
     fireEvent.click(tokenButton)
 
-    expect(onAddFromToken).toHaveBeenCalledWith({
+    await waitFor(() => expect(onAddFromToken).toHaveBeenCalledWith({
       endpoint: 'main',
       tokenId: 'shared-token-id',
       tokenName: 'Main key',
+      key: 'sk-main-secret',
       keyPreview: 'sk-main…1234',
-    })
+    }))
     expect(onAddFromToken.mock.calls[0]?.[0]).not.toHaveProperty('managementToken')
-    expect(onAddFromToken.mock.calls[0]?.[0]).not.toHaveProperty('key')
   })
 
   it('keeps binding credentials scoped to the selected endpoint', async () => {

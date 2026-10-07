@@ -283,7 +283,7 @@ describe('EchoFlow account API', () => {
         token: expect.objectContaining({ id: 'dedicated-token', name: 'Dedicated key', keyPreview: 'sk-••••' }),
       })
       expect(selectionBody).not.toHaveProperty('providerId')
-      expect(selectionBody.token).not.toHaveProperty('key')
+      expect(selectionBody.token).toMatchObject({ key: 'sk-test' })
 
       const ordinaryProvider = await new ProviderService().addProvider({
         presetId: 'custom',

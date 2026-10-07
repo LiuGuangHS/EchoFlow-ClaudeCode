@@ -46,6 +46,11 @@ const EchoFlowModelsSchema = z.object({
   tokenId: z.string().trim().min(1),
 })
 
+const EchoFlowTokenSchema = z.object({
+  endpoint: z.enum(['main', 'dedicated']),
+  tokenId: z.string().trim().min(1),
+})
+
 const LegacyMigrationConfirmationSchema = z.object({
   confirmed: z.literal(true),
 })
@@ -112,6 +117,12 @@ export async function handleEchoFlowApi(req: Request, _url: URL, segments: strin
         baseUrl: ECHOFLOW_BASE_URLS[endpoint],
       })
       return Response.json({ provider: toPublicProvider(provider) }, { status: 201 })
+    }
+
+    if (action === 'token' && req.method === 'POST') {
+      const input = EchoFlowTokenSchema.parse(await req.json())
+      const token = await service.selectAccountToken(input.endpoint, input.tokenId)
+      return Response.json({ token: { id: token.id, name: token.name, key: token.key } })
     }
 
     if (action === 'models' && req.method === 'POST') {

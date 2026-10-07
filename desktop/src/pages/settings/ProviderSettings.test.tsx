@@ -12,6 +12,7 @@ type EchoFlowTokenSource = {
   endpoint: 'main' | 'dedicated'
   tokenId: string
   tokenName: string
+  key: string
   keyPreview: string
 }
 
@@ -46,6 +47,7 @@ vi.mock('../../components/settings/EchoFlowAPIOfficialLogin', () => ({
           endpoint: 'main',
           tokenId: 'main-token-id',
           tokenName: 'Main key',
+          key: 'sk-main-secret',
           keyPreview: 'sk-main…1234',
         })}
       >
@@ -57,6 +59,7 @@ vi.mock('../../components/settings/EchoFlowAPIOfficialLogin', () => ({
           endpoint: 'dedicated',
           tokenId: 'dedicated-token-id',
           tokenName: 'Dedicated key',
+          key: 'sk-dedicated-secret',
           keyPreview: 'sk-dedicated…5678',
         })}
       >
@@ -106,9 +109,14 @@ describe('EchoFlow provider setup', () => {
     const dialog = within(await screen.findByRole('dialog'))
 
     expect(dialog.getByDisplayValue('https://expapi.echoflowai.cc')).toBeInTheDocument()
-    expect(dialog.getByText('sk-dedicated…5678')).toBeInTheDocument()
-    expect(dialog.queryByRole('button', { name: 'Show API Key' })).not.toBeInTheDocument()
-    expect(dialog.getByText(/full key is not exposed/i)).toBeInTheDocument()
+    expect(dialog.getByRole('textbox', { name: 'API Key' })).toHaveValue('sk-dedicated-secret')
+    expect(dialog.getByRole('textbox', { name: 'API Key' })).toHaveAttribute('type', 'password')
+    const tokenKey = dialog.getByRole('textbox', { name: 'API Key' })
+    fireEvent.click(dialog.getByRole('button', { name: 'Show API Key' }))
+    expect(tokenKey).toHaveAttribute('type', 'text')
+    expect(tokenKey).toHaveValue('sk-dedicated-secret')
+    fireEvent.click(dialog.getByRole('button', { name: 'Hide API Key' }))
+    expect(tokenKey).toHaveAttribute('type', 'password')
     expect(dialog.getByText('API Format')).toBeInTheDocument()
     expect(dialog.getByRole('button', { name: /Anthropic Messages \(native\)/ })).toBeInTheDocument()
     expect(createProviderFromTokenMock).not.toHaveBeenCalled()
