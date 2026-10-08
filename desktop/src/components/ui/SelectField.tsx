@@ -1,4 +1,5 @@
 import { useId, type ReactNode, type SelectHTMLAttributes } from 'react'
+import { ChevronDown } from 'lucide-react'
 
 import { cx } from '@/lib/cx'
 import { FIELD_BASE_CLASSES, FIELD_SIZE_CLASSES, fieldStateClasses, type FieldSize } from './Input'
@@ -62,23 +63,29 @@ export function SelectField<T extends string = string>({
           {label}
         </label>
       )}
-      <select
-        id={selectId}
-        value={value}
-        disabled={disabled}
-        aria-label={labelHidden ? label : undefined}
-        aria-invalid={error ? true : undefined}
-        aria-describedby={describedBy}
-        onChange={(event) => onChange(event.target.value as T)}
-        className={cx(FIELD_BASE_CLASSES, FIELD_SIZE_CLASSES[size], fieldStateClasses(!!error), 'cursor-pointer', className)}
-        {...props}
-      >
-        {options.map((option) => (
-          <option key={option.value} value={option.value} disabled={option.disabled}>
-            {option.label}
-          </option>
-        ))}
-      </select>
+      <div className="relative">
+        <select
+          id={selectId}
+          value={value}
+          disabled={disabled}
+          aria-label={labelHidden ? label : undefined}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={describedBy}
+          onChange={(event) => onChange(event.target.value as T)}
+          className={cx(FIELD_BASE_CLASSES, FIELD_SIZE_CLASSES[size], fieldStateClasses(!!error), 'appearance-none cursor-pointer pr-9', className)}
+          {...props}
+        >
+          {options.map((option) => (
+            <option key={option.value} value={option.value} disabled={option.disabled}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        <ChevronDown
+          aria-hidden="true"
+          className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-[var(--color-text-tertiary)]"
+        />
+      </div>
       {error
         ? <p id={errorId} role="alert" className="text-xs text-[var(--color-error)]">{error}</p>
         : hint
