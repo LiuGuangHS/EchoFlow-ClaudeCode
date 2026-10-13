@@ -19,6 +19,7 @@ export type LocalIndexStatus = {
 
 export type SessionListItem = {
   id: string
+  archived?: boolean
   title: string
   createdAt: string
   modifiedAt: string

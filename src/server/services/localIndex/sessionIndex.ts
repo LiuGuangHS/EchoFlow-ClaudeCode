@@ -16,6 +16,7 @@ import type {
 export type IndexedSessionRow = {
   transcriptPath: string
   id: string
+  archived?: boolean
   title: string
   createdAt: string
   modifiedAt: string

@@ -158,6 +158,7 @@ export async function handleSessionsApi(
         ...(url.searchParams.has('cursor') ? { cursor: url.searchParams.get('cursor')! } : {}),
         ...(url.searchParams.has('beforeModifiedAt') ? { beforeModifiedAt: url.searchParams.get('beforeModifiedAt')! } : {}),
         ...(url.searchParams.has('beforeId') ? { beforeId: url.searchParams.get('beforeId')! } : {}),
+        includeArchived: url.searchParams.get('includeArchived') === 'true' || url.searchParams.get('archived') === 'true',
       }))
     }
 
@@ -446,6 +447,7 @@ async function listSessions(req: Request, url: URL): Promise<Response> {
   const view = url.searchParams.get('view')
   const requestedLimit = parseInt(url.searchParams.get('limit') || '20', 10)
   const offset = parseInt(url.searchParams.get('offset') || '0', 10)
+  const includeArchived = url.searchParams.get('includeArchived') === 'true' || url.searchParams.get('archived') === 'true'
 
   if (isNaN(requestedLimit) || requestedLimit < 0) {
     throw ApiError.badRequest('Invalid limit parameter')
@@ -464,7 +466,7 @@ async function listSessions(req: Request, url: URL): Promise<Response> {
       throw ApiError.badRequest('Invalid perProjectLimit parameter')
     }
     return Response.json({
-      ...await sessionService.listProjectPreviews(perProjectLimit),
+      ...await sessionService.listProjectPreviews(perProjectLimit, url.searchParams.get('includeArchived') === 'true' || url.searchParams.get('archived') === 'true'),
       index: localIndexCoordinator.getPublicStatus(),
     })
   }
@@ -473,6 +475,7 @@ async function listSessions(req: Request, url: URL): Promise<Response> {
     ...(petAccess ? {} : { project }),
     limit,
     offset: petAccess ? 0 : offset,
+    includeArchived,
   })
   if (petAccess) {
     return Response.json({
@@ -1594,18 +1597,24 @@ async function getTurnCheckpointDiff(sessionId: string, url: URL): Promise<Respo
 }
 
 async function patchSession(req: Request, sessionId: string): Promise<Response> {
-  let body: { title?: string }
+  let body: { title?: string; archived?: boolean }
   try {
     body = (await req.json()) as { title?: string }
   } catch {
     throw ApiError.badRequest('Invalid JSON body')
   }
 
-  if (!body.title || typeof body.title !== 'string') {
-    throw ApiError.badRequest('title (string) is required in request body')
+  if (body.title !== undefined && (typeof body.title !== 'string' || !body.title)) {
+    throw ApiError.badRequest('title must be a non-empty string')
   }
-
-  await sessionService.renameSession(sessionId, body.title)
+  if (body.archived !== undefined && typeof body.archived !== 'boolean') {
+    throw ApiError.badRequest('archived must be a boolean')
+  }
+  if (body.title === undefined && body.archived === undefined) {
+    throw ApiError.badRequest('title or archived is required in request body')
+  }
+  if (body.title !== undefined) await sessionService.renameSession(sessionId, body.title)
+  if (body.archived !== undefined) await sessionService.setSessionArchived(sessionId, body.archived)
   return Response.json({ ok: true })
 }
 

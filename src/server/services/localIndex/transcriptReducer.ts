@@ -50,6 +50,7 @@ type ReducerUsage = {
 type ReducerEntry = {
   type?: string
   subtype?: string
+  archived?: unknown
   content?: unknown
   isMeta?: boolean
   cwd?: string
@@ -73,6 +74,7 @@ type ReducerEntry = {
 
 type ReducerState = {
   isTeamWorker: boolean
+  archived: boolean
   fallbackCreatedAt: string
   fallbackModifiedAt: string
   fallbackWorkDir: string | null
@@ -260,6 +262,7 @@ function createInitialState(
   const summary = seed?.summary
   const activity = seed?.activity
   return {
+    archived: summary?.archived ?? false,
     fallbackCreatedAt: summary?.createdAt ?? '',
     fallbackModifiedAt: summary?.modifiedAt ?? '',
     fallbackWorkDir: summary?.workDir ?? null,
@@ -560,6 +563,7 @@ function applyEntry(state: ReducerState, entry: ReducerEntry): void {
   }
 
   const record = entry as Record<string, unknown>
+  if (typeof record.archived === 'boolean') state.archived = record.archived
   if (entry.type === 'session-meta') {
     if (typeof record.workDir === 'string') {
       state.latestWorkDir = normalizeDriveRootPathForPlatform(record.workDir)
@@ -650,6 +654,7 @@ function applyEntry(state: ReducerState, entry: ReducerEntry): void {
 
 function summaryFromState(state: ReducerState): SessionListSummary {
   return {
+    archived: state.archived,
     title: state.customTitle ||
       state.goalTitle ||
       state.aiTitle ||

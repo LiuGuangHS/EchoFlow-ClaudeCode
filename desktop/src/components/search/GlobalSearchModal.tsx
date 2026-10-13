@@ -28,11 +28,13 @@ type Row = {
   modifiedAt: string
   matchCount: number
   matches: SessionMatch[]
+  archived?: boolean
 }
 
 export function GlobalSearchModal({ open, onClose }: Props) {
   const t = useTranslation()
   const sessions = useSessionStore((s) => s.sessions)
+  const showArchived = useSessionStore((s) => s.showArchived)
 
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
@@ -114,7 +116,7 @@ export function GlobalSearchModal({ open, onClose }: Props) {
     searchApi
       .searchSessions(
         q,
-        { limit: SEARCH_LIMIT, matchesPerSession: MATCH_PREVIEW_PER_SESSION },
+        { limit: SEARCH_LIMIT, matchesPerSession: MATCH_PREVIEW_PER_SESSION, includeArchived: showArchived },
         { signal: controller.signal },
       )
       .then((resp) => {
@@ -140,7 +142,7 @@ export function GlobalSearchModal({ open, onClose }: Props) {
       })
 
     return () => controller.abort()
-  }, [debouncedQuery, open])
+  }, [debouncedQuery, open, showArchived])
 
   const recentSessions = useMemo(
     () =>
@@ -172,6 +174,7 @@ export function GlobalSearchModal({ open, onClose }: Props) {
       modifiedAt: r.modifiedAt,
       matchCount: r.matchCount,
       matches: r.matches,
+      archived: r.archived,
     }))
   }, [isSearching, recentSessions, results])
 

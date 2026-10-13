@@ -54,8 +54,10 @@ type SessionStore = {
   recentProjectBoundaries: Record<string, RecentProjectBoundary>
   projectSessionTotals: Record<string, number>
   projectHistory: Record<string, ProjectHistoryState>
+  showArchived: boolean
 
   fetchSessions: (project?: string) => Promise<void>
+  setShowArchived: (show: boolean) => void
   loadMoreProjectSessions: (projectRoot: string) => Promise<void>
   releaseProjectHistory: (projectRoot: string) => void
   hydrateHistoricalSessions: (sessions: SessionListItem[], runtimeSelections?: Record<string, RuntimeSelection>) => SessionListItem[]
@@ -75,6 +77,7 @@ type SessionStore = {
   deselectSessions: (ids: string[]) => void
   clearSessionSelection: () => void
   renameSession: (id: string, title: string) => Promise<void>
+  setSessionArchived: (id: string, archived: boolean) => Promise<void>
   updateSessionTitle: (id: string, title: string) => void
   updateSessionMessageCount: (id: string, messageCount: number) => void
   updateSessionPermissionMode: (id: string, mode: PermissionMode) => void
@@ -111,6 +114,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   recentProjectBoundaries: {},
   projectSessionTotals: {},
   projectHistory: {},
+  showArchived: false,
 
   fetchSessions: async (project?: string) => {
     const requestId = ++fetchSessionsRequestId
@@ -120,9 +124,9 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     // attempt makes the whole pane flicker.
     set({ isLoading: true, sessionListRequestId: requestId })
     try {
-      const response = await sessionsApi.list(buildSessionListParams(project))
+      const response = await sessionsApi.list(buildSessionListParams(project, get().showArchived))
       if (requestId !== get().sessionListRequestId) return
-      const raw = response.sessions
+      const raw = response.sessions.filter((session) => Boolean(session.archived) === get().showArchived)
       const indexStatus = response.index ?? null
       useSessionRuntimeStore.getState().syncFromSessions(raw, runtimeSelections)
       let syncedSessions: SessionListItem[] = []
@@ -170,6 +174,11 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       console.error('[session-list] refresh failed', err)
       set({ isLoading: false })
     }
+  },
+
+  setShowArchived: (show) => {
+    set({ showArchived: show })
+    void get().fetchSessions()
   },
 
   loadMoreProjectSessions: async (projectRoot) => {
@@ -460,6 +469,16 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     }))
   },
 
+  setSessionArchived: async (id: string, archived: boolean) => {
+    await sessionsApi.setArchived(id, archived)
+    set((s) => ({
+      sessions: s.sessions.map((session) =>
+        session.id === id ? { ...session, archived } : session,
+      ),
+    }))
+    void get().fetchSessions()
+  },
+
   updateSessionTitle: (id, title) => {
     const normalizedTitle = title.trim()
     if (!normalizedTitle) return
@@ -513,7 +532,7 @@ function getProjectHistorySessionIds(projectHistory: Record<string, ProjectHisto
 
 function initialProjectHistoryParams(
   projectRoot: string,
-  state: Pick<SessionStore, 'recentProjectBoundaries'>,
+  state: Pick<SessionStore, 'recentProjectBoundaries' | 'showArchived'>,
 ): ProjectSessionHistoryParams {
   // Only the recent page forms a contiguous prefix. An individually restored
   // old tab cannot serve as the boundary without skipping the history gap.
@@ -521,6 +540,7 @@ function initialProjectHistoryParams(
     projectRoot,
     limit: PROJECT_HISTORY_PAGE_SIZE,
     ...state.recentProjectBoundaries[projectRoot],
+    ...(state.showArchived ? { includeArchived: true } : {}),
   }
 }
 
@@ -560,10 +580,10 @@ function removeProjectHistorySessionIds(
   ]))
 }
 
-function buildSessionListParams(project: string | undefined) {
+function buildSessionListParams(project: string | undefined, includeArchived = false) {
   return project
-    ? { project, limit: SIDEBAR_PROJECT_SESSION_PREVIEW_LIMIT }
-    : { view: 'sidebar' as const, perProjectLimit: SIDEBAR_PROJECT_SESSION_PREVIEW_LIMIT }
+    ? { project, limit: SIDEBAR_PROJECT_SESSION_PREVIEW_LIMIT, ...(includeArchived ? { includeArchived: true } : {}) }
+    : { view: 'sidebar' as const, perProjectLimit: SIDEBAR_PROJECT_SESSION_PREVIEW_LIMIT, ...(includeArchived ? { includeArchived: true } : {}) }
 }
 
 function getDefaultSessionPermissionMode(): PermissionMode | undefined {

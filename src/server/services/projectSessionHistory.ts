@@ -9,6 +9,7 @@ export type ProjectHistoryOptions = {
   cursor?: string
   beforeModifiedAt?: string
   beforeId?: string
+  includeArchived?: boolean
 }
 export type ProjectHistoryPage = { sessions: SessionListItem[]; nextCursor: string | null }
 export type ProjectSessionPreviews = {
@@ -74,6 +75,7 @@ export class ProjectSessionHistory {
       const seen = new Set<string>()
       const rows = catalog.filter((row) => {
         if (row.logicalProjectRoot !== projectRoot || seen.has(row.id)) return false
+        if (!options.includeArchived && row.archived) return false
         seen.add(row.id)
         if (beforeTime === null) return true
         const time = Date.parse(row.modifiedAt)
@@ -112,7 +114,7 @@ export class ProjectSessionHistory {
   }
 
   /** Return only the newest rows needed to paint each sidebar project group. */
-  async listPreviews(requestedLimit = 6): Promise<ProjectSessionPreviews> {
+  async listPreviews(requestedLimit = 6, includeArchived = false): Promise<ProjectSessionPreviews> {
     if (!Number.isSafeInteger(requestedLimit) || requestedLimit <= 0) {
       throw ApiError.badRequest('Invalid per-project limit')
     }
@@ -132,6 +134,7 @@ export class ProjectSessionHistory {
           grouped.set(row.logicalProjectRoot, project)
         }
         if (project.seen.has(row.id)) continue
+        if (!includeArchived && row.archived) continue
         project.seen.add(row.id)
         project.total += 1
         // Keep a bounded fallback tail so a handful of stale index rows do not

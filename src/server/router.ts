@@ -52,6 +52,9 @@ export async function handleApiRequest(req: Request, url: URL, context: ApiReque
 }
 
 async function handleApiRequestWithoutPerformance(req: Request, url: URL, context: ApiRequestContext = {}): Promise<Response> {
+  if (context.remoteBrowser && /^\/api\/echoflow\/site-session(?:\/|$)/u.test(url.pathname)) {
+    return Response.json({ error: 'desktop_only' }, { status: 403 })
+  }
   if (!context.remoteBrowser) return routeApiRequest(req, url, { projectProviderSecrets: false })
   const parts = url.pathname.split('/').filter(Boolean)
   const isProvider = parts[1] === 'providers'
@@ -217,7 +220,7 @@ async function routeApiRequest(
       return handleVoiceApi(req, url, segments)
 
     case 'echoflow':
-      return handleEchoFlowApi(req, url, segments)
+      return handleEchoFlowApi(req, url, segments, { remoteBrowser: context.remoteBrowser })
 
     case 'traces':
       return handleTracesApi(req, url, segments)

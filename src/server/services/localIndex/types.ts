@@ -37,6 +37,7 @@ export type PersistedWorktreeSession = {
 }
 
 export type SessionListSummary = {
+  archived?: boolean
   isTeamWorker?: boolean
   title: string
   createdAt: string

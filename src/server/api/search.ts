@@ -42,6 +42,7 @@ export async function handleSearchApi(
         project: body.project as string | undefined,
         modifiedAfter: body.modifiedAfter as string | undefined,
         modifiedBefore: body.modifiedBefore as string | undefined,
+        includeArchived: body.includeArchived === true,
         signal: req.signal,
       })
       return Response.json({ results, total: results.length, truncated })

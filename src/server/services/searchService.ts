@@ -60,6 +60,7 @@ export type SessionMatch = {
 
 export type SessionSearchResult = {
   sessionId: string
+  archived: boolean
   title: string
   projectPath: string
   workDir: string | null
@@ -77,6 +78,7 @@ export type SessionSearchOptions = {
   project?: string
   modifiedAfter?: string
   modifiedBefore?: string
+  includeArchived?: boolean
   signal?: AbortSignal
 }
 
@@ -501,6 +503,7 @@ export class SearchService {
       }),
     )
     const filteredRanked = ranked.filter(item =>
+      (options?.includeArchived || !item.indexed?.archived) &&
       (!options?.project || path.basename(path.dirname(item.filePath)) === options.project) &&
       item.mtimeMs >= modifiedAfterMs &&
       item.mtimeMs <= modifiedBeforeMs,
@@ -575,6 +578,7 @@ export class SearchService {
 
       results.push({
         sessionId,
+        archived: indexed?.archived ?? false,
         title,
         projectPath,
         workDir,
@@ -796,6 +800,7 @@ export class SearchService {
       if (exactMatches.length === 0) continue
 
       const indexed = metadata?.get(path.resolve(session.ownerTranscriptPath))
+      if (indexed?.archived && !options.includeArchived) continue
       let title = session.ownerSessionId
       let projectPath = session.projectPath
       let workDir: string | null = null
@@ -811,6 +816,7 @@ export class SearchService {
 
       results.push({
         sessionId: session.ownerSessionId,
+        archived: indexed?.archived ?? false,
         title,
         projectPath,
         workDir,
