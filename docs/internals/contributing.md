@@ -489,6 +489,17 @@ fork 跟踪上游的**发布**，而不是上游 `main` 的移动顶端：上游
 
 例如：如果 fork 还没发布 `v0.5.6`，就把上游改动并进 fork 的 `v0.5.6` release note，不要引入上游 `v0.6.x` 的 release note 或 tag。
 
+### 同步发版的版本号跟随（维护者 2026-10-14 定）
+
+**同步驱动的发版，fork 版本号跟随上游版本号**，并把本次合入的所有上游 release 的用户可见改动归并进同一个 fork release note。这样做是为了让 fork 产物能一眼追溯到对应的上游版本。约束：
+
+- 只有「合并上游」这一种发版跟随上游版本号；**纯 fork 自己的发版仍然走 fork 自己的版本线**，按上一节的规则递增。
+- 归并时只取上游 release note 里的用户可见内容，**不保留**上游版本标题、作者、资产名、compare 链接或仓库地址。
+- `desktop/package.json`、归并后的 release note、`scripts/release.ts` 和 tag 计划必须用同一个版本号。
+- 上游 `release-notes/vX.Y.Z.md` 文件在归并完成后删除。
+
+实践：v0.7.0 + v0.7.1 一并合入时，`desktop/package.json` 升到 `0.7.1`，两个上游 release note 的用户可见改动都写进 fork 的 `release-notes/v0.7.1.md`。
+
 ### 本次同步后的执行规范
 
 本次 v0.6.6 同步实际产生了 15 个冲突文件，说明同步脚本负责定位和准备，不能替代人工决策。后续统一按下面的顺序执行：
