@@ -9,6 +9,13 @@ import type {
 
 export type EchoFlowEndpoint = 'main' | 'dedicated'
 
+export type EchoFlowSiteAccount = {
+  userId: string
+  username: string
+  balance: number
+  refreshedAt: number
+}
+
 export const ECHOFLOW_BASE_URLS: Record<EchoFlowEndpoint, string> = {
   main: 'https://api.echoflowai.cc',
   dedicated: 'https://expapi.echoflowai.cc',
@@ -37,13 +44,12 @@ export type EchoFlowTokenSource = {
   endpoint: EchoFlowEndpoint
   tokenId: string
   tokenName: string
-  key: string
   keyPreview: string
   remainQuota?: number
   unlimitedQuota?: boolean
 }
 
-export type EchoFlowProviderCreateInput = Omit<CreateProviderInput, 'presetId' | 'apiKey'> & Omit<EchoFlowTokenSource, 'key'>
+export type EchoFlowProviderCreateInput = Omit<CreateProviderInput, 'presetId' | 'apiKey'> & EchoFlowTokenSource
 export type EchoFlowProviderTestInput = Omit<TestProviderConfigInput, 'apiKey'> & Pick<EchoFlowTokenSource, 'endpoint' | 'tokenId'>
 export type EchoFlowProviderModelsInput = Pick<EchoFlowTokenSource, 'endpoint' | 'tokenId'>
 
@@ -52,6 +58,8 @@ type EchoFlowTokenSelectionResponse =
   | { provider: { id: string } }
 
 export const echoflowApi = {
+  getSiteSession: () => api.get<{ account: EchoFlowSiteAccount | null }>('/api/echoflow/site-session'),
+  refreshSiteSession: () => api.post<{ account: EchoFlowSiteAccount }>('/api/echoflow/site-session/refresh', {}),
   getAccounts: () => api.get<{
     account: EchoFlowAccount | null
     accounts: Record<EchoFlowEndpoint, EchoFlowAccount | null>

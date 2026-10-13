@@ -140,6 +140,29 @@ describe('remote browser API routing', () => {
     expect((await handleApiRequest(new Request(url, { method: 'PUT', body: '{broken' }), url, { remoteBrowser: true })).status).toBe(400)
   })
 
+  test('denies public-access callers from bootstrapping an EchoFlow site session', async () => {
+    const previousBridge = process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN
+    const previousFetch = globalThis.fetch
+    process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN = 'electron-only-secret'
+    globalThis.fetch = mock(async () => new Response(JSON.stringify({
+      success: true,
+      data: { id: 1, username: 'must-not-load', quota: 500_000 },
+    }))) as typeof fetch
+    try {
+      const url = new URL('https://fixture.invalid/api/echoflow/site-session')
+      const response = await handleApiRequest(new Request(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-echoflow-site-session-bridge': 'electron-only-secret' },
+        body: JSON.stringify({ cookie: 'session=private' }),
+      }), url, { remoteBrowser: true })
+      expect(response.status).toBe(403)
+    } finally {
+      globalThis.fetch = previousFetch
+      if (previousBridge === undefined) delete process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN
+      else process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN = previousBridge
+    }
+  })
+
   test('forwards safe mutation results and preserves downstream validation errors', async () => {
     expect((await request(`/api/providers/${provider.id}/activate`, 'POST', {})).status).toBe(200)
     expect(ProviderService.prototype.activateProvider).toHaveBeenCalledWith(provider.id)
