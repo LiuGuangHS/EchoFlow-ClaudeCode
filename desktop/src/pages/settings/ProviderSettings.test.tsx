@@ -12,7 +12,6 @@ type EchoFlowTokenSource = {
   endpoint: 'main' | 'dedicated'
   tokenId: string
   tokenName: string
-  key: string
   keyPreview: string
 }
 
@@ -20,10 +19,12 @@ const {
   createProviderFromTokenMock,
   testProviderFromTokenMock,
   fetchModelsFromTokenMock,
+  getTokenKeyMock,
 } = vi.hoisted(() => ({
   createProviderFromTokenMock: vi.fn(),
   testProviderFromTokenMock: vi.fn(),
   fetchModelsFromTokenMock: vi.fn(),
+  getTokenKeyMock: vi.fn(),
 }))
 
 vi.mock('../../api/echoflow', () => ({
@@ -31,6 +32,7 @@ vi.mock('../../api/echoflow', () => ({
     createProviderFromToken: createProviderFromTokenMock,
     testProviderFromToken: testProviderFromTokenMock,
     fetchModelsFromToken: fetchModelsFromTokenMock,
+    getTokenKey: getTokenKeyMock,
   },
 }))
 
@@ -47,7 +49,6 @@ vi.mock('../../components/settings/EchoFlowAPIOfficialLogin', () => ({
           endpoint: 'main',
           tokenId: 'main-token-id',
           tokenName: 'Main key',
-          key: 'sk-main-secret',
           keyPreview: 'sk-main…1234',
         })}
       >
@@ -59,7 +60,6 @@ vi.mock('../../components/settings/EchoFlowAPIOfficialLogin', () => ({
           endpoint: 'dedicated',
           tokenId: 'dedicated-token-id',
           tokenName: 'Dedicated key',
-          key: 'sk-dedicated-secret',
           keyPreview: 'sk-dedicated…5678',
         })}
       >
@@ -94,6 +94,8 @@ describe('EchoFlow provider setup', () => {
     createProviderFromTokenMock.mockReset()
     testProviderFromTokenMock.mockReset()
     fetchModelsFromTokenMock.mockReset()
+    getTokenKeyMock.mockReset()
+    getTokenKeyMock.mockResolvedValue({ token: { id: 'dedicated-token-id', name: 'Dedicated key', key: 'sk-dedicated-secret' } })
     createProviderFromTokenMock.mockResolvedValue({ provider: {} })
   })
 
@@ -109,14 +111,18 @@ describe('EchoFlow provider setup', () => {
     const dialog = within(await screen.findByRole('dialog'))
 
     expect(dialog.getByDisplayValue('https://expapi.echoflowai.cc')).toBeInTheDocument()
-    expect(dialog.getByRole('textbox', { name: 'API Key' })).toHaveValue('sk-dedicated-secret')
-    expect(dialog.getByRole('textbox', { name: 'API Key' })).toHaveAttribute('type', 'password')
-    const tokenKey = dialog.getByRole('textbox', { name: 'API Key' })
+    const tokenKey = dialog.getByPlaceholderText('sk-dedicated…5678')
+    expect(tokenKey).toHaveValue('')
+    expect(tokenKey).toHaveAttribute('type', 'password')
+    expect(dialog.getByPlaceholderText('sk-dedicated…5678')).toBeInTheDocument()
+    expect(getTokenKeyMock).not.toHaveBeenCalled()
     fireEvent.click(dialog.getByRole('button', { name: 'Show API Key' }))
-    expect(tokenKey).toHaveAttribute('type', 'text')
+    await waitFor(() => expect(getTokenKeyMock).toHaveBeenCalledWith('dedicated', 'dedicated-token-id'))
+    await waitFor(() => expect(tokenKey).toHaveAttribute('type', 'text'))
     expect(tokenKey).toHaveValue('sk-dedicated-secret')
     fireEvent.click(dialog.getByRole('button', { name: 'Hide API Key' }))
     expect(tokenKey).toHaveAttribute('type', 'password')
+    expect(tokenKey).toHaveValue('')
     expect(dialog.getByText('API Format')).toBeInTheDocument()
     expect(dialog.getByRole('button', { name: /Anthropic Messages \(native\)/ })).toBeInTheDocument()
     expect(createProviderFromTokenMock).not.toHaveBeenCalled()

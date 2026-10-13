@@ -123,13 +123,14 @@ describe('EchoFlowAPIOfficialLogin', () => {
     const tokenButton = screen.getByRole('button', { name: /Main key.*sk-main…1234/ })
     fireEvent.click(tokenButton)
 
-    await waitFor(() => expect(onAddFromToken).toHaveBeenCalledWith({
+    expect(onAddFromToken).toHaveBeenCalledWith({
       endpoint: 'main',
       tokenId: 'shared-token-id',
       tokenName: 'Main key',
-      key: 'sk-main-secret',
       keyPreview: 'sk-main…1234',
-    }))
+    })
+    expect(echoflowApi.getTokenKey).not.toHaveBeenCalled()
+    expect(onAddFromToken.mock.calls[0]?.[0]).not.toHaveProperty('key')
     expect(onAddFromToken.mock.calls[0]?.[0]).not.toHaveProperty('managementToken')
   })
 

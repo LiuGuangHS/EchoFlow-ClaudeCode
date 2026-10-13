@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef } from 'react'
-import { Bell, Check, ChevronDown, Clock, Folder, FolderOpen, FolderPlus, GitBranch, MoreHorizontal, Pin, PinOff, RefreshCw, RotateCcw, SquarePen, X } from 'lucide-react'
+import { Archive, Bell, Check, ChevronDown, Clock, Folder, FolderOpen, FolderPlus, GitBranch, MoreHorizontal, Pin, PinOff, RefreshCw, RotateCcw, SquarePen, X } from 'lucide-react'
 import { releaseWorkspaceSession } from '../../lib/workspace/releaseSession'
 import { useSessionStore } from '../../stores/sessionStore'
 import { useUIStore } from '../../stores/uiStore'
@@ -45,6 +45,7 @@ import { hasRunningBackgroundTasks } from '../../lib/backgroundTasks'
 import { collectAttentionIds } from '../../lib/sessionAttention'
 import { getSessionWorkspaceState, getSessionSeedWorkDir } from '../../lib/sessionWorkspace'
 import { SessionAttentionMark } from './SessionAttentionMark'
+import { EchoFlowAccountDock } from './EchoFlowAccountDock'
 
 const desktopHost = getDesktopHost()
 const isDesktopRuntime = desktopHost.isDesktop
@@ -116,6 +117,9 @@ export function Sidebar({
 }: SidebarProps) {
   const t = useTranslation()
   const sessions = useSessionStore((s) => s.sessions)
+  const showArchived = useSessionStore((s) => s.showArchived)
+  const setShowArchived = useSessionStore((s) => s.setShowArchived)
+  const setSessionArchived = useSessionStore((s) => s.setSessionArchived)
   const projectHistory = useSessionStore((s) => s.projectHistory)
   const projectSessionTotals = useSessionStore((s) => s.projectSessionTotals)
   const isLoading = useSessionStore((s) => s.isLoading)
@@ -1099,6 +1103,16 @@ export function Sidebar({
                 className="border border-[var(--color-sidebar-search-border)] bg-[var(--color-sidebar-search-bg)]"
               />
               <IconButton
+                icon={<Archive className="h-4 w-4" aria-hidden="true" />}
+                label={showArchived ? t('sidebar.showActiveSessions') : t('sidebar.showArchivedSessions')}
+                onClick={() => setShowArchived(!showArchived)}
+                size={isMobile ? '2xl' : 'lg'}
+                tone={showArchived ? 'brand' : 'secondary'}
+                surface="sidebar"
+                aria-pressed={showArchived}
+                className="border border-[var(--color-sidebar-search-border)] bg-[var(--color-sidebar-search-bg)]"
+              />
+              <IconButton
                 icon={isBatchMode ? 'close' : 'delete_sweep'}
                 label={isBatchMode ? t('sidebar.batchExit') : t('sidebar.batchManage')}
                 onClick={isBatchMode ? handleExitBatchMode : enterBatchMode}
@@ -1460,6 +1474,7 @@ export function Sidebar({
           data-testid="sidebar-settings-dock"
           className={`sidebar-settings-dock absolute bottom-0 left-0 right-0 border-t border-[var(--color-border)] p-3 ${expanded ? '' : 'flex justify-center'}`}
         >
+          <EchoFlowAccountDock />
           <NavItem
             active={activeTabId === SETTINGS_TAB_ID}
             collapsed={!expanded}
@@ -1490,6 +1505,18 @@ export function Sidebar({
             className="w-full px-4 py-2 text-left text-[13px] text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-surface-hover)]"
           >
             {t('common.rename')}
+          </button>
+          <button
+            onClick={() => {
+              const session = sessions.find((item) => item.id === contextMenu.id)
+              setContextMenu(null)
+              if (session) void setSessionArchived(session.id, !session.archived)
+            }}
+            className="w-full px-4 py-2 text-left text-[13px] text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-surface-hover)]"
+          >
+            {sessions.find((item) => item.id === contextMenu.id)?.archived
+              ? t('sidebar.unarchiveSession')
+              : t('sidebar.archiveSession')}
           </button>
           <button
             onClick={() => handleDelete(contextMenu.id)}

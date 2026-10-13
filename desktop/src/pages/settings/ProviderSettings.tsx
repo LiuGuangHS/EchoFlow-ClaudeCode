@@ -1108,6 +1108,9 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
   const [authStrategy, setAuthStrategy] = useState<ProviderAuthStrategy>(provider?.authStrategy ?? getPresetAuthStrategy(initialPreset))
   const [apiKey, setApiKey] = useState(provider?.apiKey ?? '')
   const [showApiKey, setShowApiKey] = useState(false)
+  const [echoFlowKey, setEchoFlowKey] = useState<string | null>(null)
+  const echoFlowKeyRequestRef = useRef(0)
+  const [echoFlowKeyError, setEchoFlowKeyError] = useState(false)
   const [notes, setNotes] = useState(defaultNotes)
   const [compatibility, setCompatibility] = useState(() => compatibilityForm(provider?.requestCompatibility))
   const [models, setModels] = useState<ModelMapping>(initialModels)
@@ -1566,6 +1569,31 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
       if (modelsRequestRef.current === requestId) setIsFetchingModels(false)
     }
   }
+  const toggleEchoFlowKeyVisibility = async () => {
+    if (showApiKey) {
+      echoFlowKeyRequestRef.current += 1
+      setShowApiKey(false)
+      setEchoFlowKey(null)
+      setEchoFlowKeyError(false)
+      return
+    }
+    if (echoFlowKey !== null) {
+      setShowApiKey(true)
+      return
+    }
+    if (!echoFlowDraft) return
+
+    const requestId = ++echoFlowKeyRequestRef.current
+    setEchoFlowKeyError(false)
+    try {
+      const { token } = await echoflowApi.getTokenKey(echoFlowDraft.endpoint, echoFlowDraft.tokenId)
+      if (echoFlowKeyRequestRef.current !== requestId) return
+      setEchoFlowKey(token.key)
+      setShowApiKey(true)
+    } catch {
+      if (echoFlowKeyRequestRef.current === requestId) setEchoFlowKeyError(true)
+    }
+  }
   const modelsErrorText = modelsErrorCode ? t(providerModelsErrorKey(modelsErrorCode)) : null
   // The server keeps the upstream's own wording, which is the only thing that
   // separates a 200-cloaked auth failure (智谱 answers `{"msg":"身份验证失败。"}`
@@ -1914,7 +1942,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
         </label>
 
         <div className="flex flex-col gap-1">
-          <label htmlFor={echoFlowDraft ? undefined : 'provider-api-key'} className="text-sm font-medium text-[var(--color-text-primary)]">
+          <label htmlFor="provider-api-key" className="text-sm font-medium text-[var(--color-text-primary)]">
             {mode === 'edit' && !browserMode ? t('settings.providers.apiKeyKeep') : t('settings.providers.apiKey')}
             {mode === 'create' && requiresApiKey && <span className="text-[var(--color-error)] ml-0.5">*</span>}
           </label>
@@ -1926,7 +1954,8 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
                 spellCheck={false}
                 readOnly
                 type={showApiKey ? 'text' : 'password'}
-                value={echoFlowDraft.key}
+                value={echoFlowKey ?? ''}
+                placeholder={echoFlowDraft.keyPreview}
                 className="h-10 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-3 pr-10 font-mono text-sm text-[var(--color-text-secondary)] outline-none"
               />
               <IconButton
@@ -1935,9 +1964,10 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
                 showTooltip={false}
                 size="sm"
                 tone="muted"
-                onClick={() => setShowApiKey((visible) => !visible)}
+                onClick={() => void toggleEchoFlowKeyVisibility()}
                 className="absolute right-1.5 top-1/2 -translate-y-1/2"
               />
+              {echoFlowKeyError && <p role="alert" className="mt-1 text-xs text-[var(--color-error)]">{t('settings.providers.fetchModelsErrorUnknown')}</p>}
             </div>
           ) : (
             <div className="relative">
@@ -1964,7 +1994,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
               )}
             </div>
           )}
-          {echoFlowDraft && <p className="text-xs text-[var(--color-text-tertiary)]">{t('settings.providers.tokenKeyManaged')}</p>}
+          {echoFlowDraft && !echoFlowKeyError && <p className="text-xs text-[var(--color-text-tertiary)]">{t('settings.providers.tokenKeyManaged')}</p>}
         </div>
 
         {(apiKeyUrl || promoText) && (
