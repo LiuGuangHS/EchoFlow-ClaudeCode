@@ -29,6 +29,19 @@ const workspaceBrowserServiceSource = mainSource.slice(
 )
 
 describe('Electron preview security boundary', () => {
+  it('restricts EchoFlow site-session IPC to the main desktop frame', () => {
+    expect(mainSource).toContain("channel.startsWith('desktop:echoflow:')")
+    expect(mainSource).toContain('senderWindow !== mainWindow || event.senderFrame !== event.sender.mainFrame')
+  })
+
+  it('forwards explicit WSL discovery requests from the main window', () => {
+    const handler = mainSource.slice(
+      mainSource.indexOf('ELECTRON_IPC_CHANNELS.runtimeDiscoveryGet'),
+      mainSource.indexOf('ELECTRON_IPC_CHANNELS.runtimeDiscoveryProbePath'),
+    )
+    expect(handler).toContain("includeWsl: (payload as { includeWsl?: boolean } | undefined)?.includeWsl === true")
+  })
+
   it('restricts public access management to the main desktop frame', () => {
     expect(mainSource).toContain("channel.startsWith('desktop:public-access:')")
     expect(mainSource).toContain('senderWindow !== mainWindow || event.senderFrame !== event.sender.mainFrame')

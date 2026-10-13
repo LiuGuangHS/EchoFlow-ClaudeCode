@@ -128,6 +128,7 @@ export class ElectronServerRuntime {
   private readonly resolveSystemProxy?: (url: string) => Promise<string>
   private readonly localAccessToken = randomBytes(32).toString('base64url')
   private readonly petAccessToken = randomBytes(32).toString('base64url')
+  private siteSessionBridgeToken = ''
   private sidecarEnvPromise: Promise<NodeJS.ProcessEnv> | null = null
   private systemProxyBridge: SystemProxyBridgeLike | null = null
   private server: ActiveServer | null = null
@@ -188,6 +189,10 @@ export class ElectronServerRuntime {
     return this.petAccessToken
   }
 
+  getSiteSessionBridgeToken(): string {
+    return this.siteSessionBridgeToken
+  }
+
   getActiveServerUrl(): string | null {
     return this.server?.url ?? null
   }
@@ -212,6 +217,7 @@ export class ElectronServerRuntime {
 
   stopAll(sync = false) {
     this.onServerUnavailable?.()
+    this.siteSessionBridgeToken = ''
     ++this.lifecycleGeneration
     this.restartNotBefore = 0
     const starting = this.startingServer
@@ -274,6 +280,7 @@ export class ElectronServerRuntime {
     const url = `http://${SERVER_CONTROL_HOST}:${port}`
     const logs: string[] = []
     let startState: ServerStartState | null = null
+    this.siteSessionBridgeToken = randomBytes(32).toString('base64url')
     const env = this.withServerAccessTokens({
       ...(await this.resolveSidecarBaseEnv()),
       ...(this.appVersion ? { APP_VERSION: this.appVersion } : {}),
@@ -419,6 +426,7 @@ export class ElectronServerRuntime {
     return {
       ...this.withLocalAccessToken(env),
       ECHOFLOW_PET_ACCESS_TOKEN: this.petAccessToken,
+      ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN: this.siteSessionBridgeToken,
     }
   }
 

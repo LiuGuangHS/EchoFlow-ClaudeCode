@@ -1,4 +1,6 @@
 import { PublicAccessManager } from './services/publicAccess'
+import { EchoFlowLoginSession, ECHOFLOW_LOGIN_ORIGIN, ECHOFLOW_LOGIN_PARTITION, siteCookieHeader, type EchoFlowLoginIdentity, type EchoFlowLoginWindow, type SiteCookie } from './services/echoFlowLogin'
+import { createEchoFlowLoginIdentityReader } from './services/echoFlowLoginIdentity'
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, screen, session, systemPreferences, WebContentsView } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import path from 'node:path'
@@ -16,6 +18,7 @@ import {
   type ClaudeCodeRuntimeConfig,
 } from './services/claudeCodeRuntime'
 import { DeepSeekHarnessRuntime } from './services/deepseekHarnessRuntime'
+import { discoverRuntimes, probeRuntimePath } from './services/runtimeDiscovery'
 import { DeepLinkHandler, extractDeepLinkFromArgs } from './services/deepLinkHandler'
 import { appendHostDiagnostic, electronHostDiagnosticsFile, sanitizeHostDiagnostic } from './services/sidecarManager'
 import { openDialog, saveDialog } from './services/dialogs'
@@ -112,6 +115,8 @@ import {
 
 let mainWindow: BrowserWindow | null = null
 let serverRuntime: ElectronServerRuntime | null = null
+let echoFlowLoginSession: EchoFlowLoginSession | null = null
+let echoFlowSiteIdentity: EchoFlowLoginIdentity | null = null
 let deepSeekHarnessRuntime: DeepSeekHarnessRuntime | null = null
 let deepSeekHarnessWindow: BrowserWindow | null = null
 let publicAccessManager: PublicAccessManager | null = null
@@ -263,7 +268,10 @@ async function openTraceWindow(sessionId: string) {
 function getServerRuntime() {
   serverRuntime ??= new ElectronServerRuntime({
     onServerUnavailable: () => { void publicAccessManager?.serverUnavailable() },
-    onServerReady: () => { void publicAccessManager?.serverChanged() },
+    onServerReady: () => {
+      void publicAccessManager?.serverChanged()
+      void rehydrateEchoFlowSiteSession()
+    },
     desktopRoot: unpackedRoot(),
     appRoot: appRoot(),
     appVersion: app.getVersion(),
@@ -272,6 +280,97 @@ function getServerRuntime() {
     resolveSystemProxy: (url) => session.defaultSession.resolveProxy(url),
   })
   return serverRuntime
+}
+
+
+function echoFlowLoginCookies() {
+  return session.fromPartition(ECHOFLOW_LOGIN_PARTITION).cookies
+}
+
+async function readEchoFlowSiteCookies(): Promise<SiteCookie[]> {
+  return await echoFlowLoginCookies().get({ url: ECHOFLOW_LOGIN_ORIGIN })
+}
+
+async function clearEchoFlowSiteCookies(): Promise<void> {
+  const cookies = await readEchoFlowSiteCookies()
+  await Promise.all(cookies.map(cookie => echoFlowLoginCookies().remove(
+    `${ECHOFLOW_LOGIN_ORIGIN}${cookie.path && cookie.path.startsWith('/') ? cookie.path : `/${cookie.path || ''}`}`,
+    cookie.name,
+  )))
+}
+
+async function bootstrapEchoFlowSiteSession(cookies: readonly SiteCookie[], identity?: EchoFlowLoginIdentity): Promise<boolean> {
+  const cookie = siteCookieHeader(cookies)
+  const accountIdentity = identity ?? echoFlowSiteIdentity
+  if (!cookie || !accountIdentity) return false
+  try {
+    const runtime = getServerRuntime()
+    const serverUrl = await runtime.getServerUrl()
+    const bridgeToken = runtime.getSiteSessionBridgeToken()
+    if (!bridgeToken) return false
+    const response = await fetch(`${serverUrl}/api/echoflow/site-session`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-echoflow-site-session-bridge': bridgeToken,
+      },
+      body: JSON.stringify({ cookie, userId: accountIdentity.userId }),
+      signal: AbortSignal.timeout(15_000),
+    })
+    if (!response.ok) return false
+    if (identity) echoFlowSiteIdentity = identity
+    return true
+  } catch {
+    return false
+  }
+}
+
+function getEchoFlowLoginSession(): EchoFlowLoginSession {
+  echoFlowLoginSession ??= new EchoFlowLoginSession({
+    createWindow(partition): EchoFlowLoginWindow {
+      const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
+      const loginWindow = new BrowserWindow({
+        title: 'EchoFlow 账号登录',
+        width: 520,
+        height: 720,
+        show: true,
+        autoHideMenuBar: true,
+        ...(parent ? { parent, modal: true } : {}),
+        webPreferences: {
+          partition,
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+        },
+      })
+      const identityReader = createEchoFlowLoginIdentityReader(loginWindow.webContents.debugger as never)
+      loginWindow.webContents.once('destroyed', () => identityReader.dispose())
+      return Object.assign(loginWindow, {
+        webContents: Object.assign(loginWindow.webContents, { readIdentity: () => identityReader.read() }),
+      }) as unknown as EchoFlowLoginWindow
+    },
+    verifySession: bootstrapEchoFlowSiteSession,
+    readCookies: readEchoFlowSiteCookies,
+    clearCookies: clearEchoFlowSiteCookies,
+  })
+  return echoFlowLoginSession
+}
+
+async function rehydrateEchoFlowSiteSession(): Promise<void> {
+  await getEchoFlowLoginSession().rehydrate()
+}
+
+async function signOutEchoFlowSiteSession(): Promise<void> {
+  const runtime = getServerRuntime()
+  const serverUrl = await runtime.getServerUrl()
+  const response = await fetch(`${serverUrl}/api/echoflow/site-session`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${runtime.getLocalAccessToken()}` },
+    signal: AbortSignal.timeout(10_000),
+  })
+  if (!response.ok) throw new Error('Could not sign out of the EchoFlow account.')
+  await getEchoFlowLoginSession().clear()
+  echoFlowSiteIdentity = null
 }
 
 function getDeepSeekHarnessRuntime() {
@@ -571,8 +670,11 @@ function registerHandler<T>(
       throw new Error(`Invalid Electron IPC payload for ${channel}`)
     }
     const senderWindow = BrowserWindow.fromWebContents(event.sender)
-    if (channel.startsWith('desktop:public-access:') && (senderWindow !== mainWindow || event.senderFrame !== event.sender.mainFrame)) {
-      throw new Error('Public access management requires the main desktop window')
+    if (
+      (channel.startsWith('desktop:public-access:') || channel.startsWith('desktop:echoflow:') || channel === ELECTRON_IPC_CHANNELS.runtimeGetLocalAccessToken)
+      && (senderWindow !== mainWindow || event.senderFrame !== event.sender.mainFrame)
+    ) {
+      throw new Error('This desktop host action requires the main application frame')
     }
     if (
       petWindowController?.owns(senderWindow) &&
@@ -655,6 +757,8 @@ function registerIpcHandlers() {
     if (getWorkspaceBrowserService().handleMessageFromView(event.sender, raw)) return
     void getPreviewService().sendMessageToRenderer(event.sender, raw, mainWindow?.webContents)
   })
+  registerHandler(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, async () => await getEchoFlowLoginSession().open())
+  registerHandler(ELECTRON_IPC_CHANNELS.echoFlowSignOut, async () => await signOutEchoFlowSiteSession())
   registerHandler(ELECTRON_IPC_CHANNELS.publicAccessGetStatus, () => getPublicAccessManager().getStatus())
   registerHandler(ELECTRON_IPC_CHANNELS.publicAccessSaveCredential, (_event, payload) => getPublicAccessManager().saveCredential(payload as string))
   registerHandler(ELECTRON_IPC_CHANNELS.publicAccessDeleteCredential, () => getPublicAccessManager().deleteCredential())
@@ -687,6 +791,17 @@ function registerIpcHandlers() {
     ELECTRON_IPC_CHANNELS.runtimeGetPetAccessToken,
     () => getServerRuntime().getPetAccessToken(),
   )
+  registerHandler(ELECTRON_IPC_CHANNELS.runtimeDiscoveryGet, (event, payload) => {
+    requireMainWindow(event)
+    return discoverRuntimes({
+      includeWsl: (payload as { includeWsl?: boolean } | undefined)?.includeWsl === true,
+      bundledVersion: app.getVersion(),
+    })
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.runtimeDiscoveryProbePath, async (event, payload) => {
+    requireMainWindow(event)
+    return probeRuntimePath(String(payload))
+  })
   registerHandler(ELECTRON_IPC_CHANNELS.runtimeGetClaudeCode, (event) => {
     requireMainWindow(event)
     return getClaudeCodeRuntimeStatus()

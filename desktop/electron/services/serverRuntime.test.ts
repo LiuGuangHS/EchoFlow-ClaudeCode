@@ -200,6 +200,22 @@ describe('ElectronServerRuntime', () => {
     }
   })
 
+  it('keeps the EchoFlow session bridge secret private to the server generation', async () => {
+    const runtime = createRuntime()
+    await runtime.startServer()
+    const firstSecret = runtime.getSiteSessionBridgeToken()
+
+    expect(firstSecret).toMatch(/^[A-Za-z0-9_-]{32,}$/)
+    expect(sidecarMocks.serverPlans[0]!.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN).toBe(firstSecret)
+    expect(firstSecret).not.toBe(runtime.getLocalAccessToken())
+
+    runtime.stopAll()
+    await runtime.startServer()
+    const secondSecret = runtime.getSiteSessionBridgeToken()
+    expect(secondSecret).not.toBe(firstSecret)
+    expect(sidecarMocks.serverPlans[1]!.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN).toBe(secondSecret)
+  })
+
   it('gives the server only the dynamic bridge URL while adapters explicitly inherit it', async () => {
     const bridge = {
       start: vi.fn(async () => 'http://127.0.0.1:49123'),

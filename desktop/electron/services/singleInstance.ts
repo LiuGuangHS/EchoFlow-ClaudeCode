@@ -1,4 +1,5 @@
 import type { App, BrowserWindow } from 'electron'
+import { extractDeepLinkFromArgs } from './deepLinkHandler'
 import { showMainWindow } from './windows'
 
 export function acquireSingleInstanceLock(
@@ -18,7 +19,7 @@ export function acquireSingleInstanceLock(
   }
 
   app.on('second-instance', (_event, commandLine) => {
-    const deepLinkUrl = commandLine.find(arg => arg.startsWith('echoflowcode://'))
+    const deepLinkUrl = extractDeepLinkFromArgs(commandLine)
     if (deepLinkUrl) onDeepLink(deepLinkUrl)
     showMainWindow(getMainWindow(), app)
   })
