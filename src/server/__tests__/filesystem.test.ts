@@ -68,6 +68,22 @@ async function makeExternalFixtureDir(): Promise<string | null> {
 }
 
 describe('filesystem API', () => {
+  it('allows browsing a directory under the Linux home directory', async () => {
+    const homeProject = await fsp.mkdtemp(path.join(os.homedir(), 'claude-filesystem-home-test-'))
+    cleanupDirs.add(homeProject)
+    await fsp.mkdir(path.join(homeProject, 'src'))
+
+    const res = await handleFilesystemRoute(
+      '/api/filesystem/browse',
+      makeUrl('/api/filesystem/browse', { path: homeProject }),
+    )
+
+    expect(res.status).toBe(200)
+    const body = await res.json() as { currentPath: string; entries: Array<{ name: string }> }
+    expect(body.currentPath).toBe(homeProject)
+    expect(body.entries.some(entry => entry.name === 'src')).toBe(true)
+  })
+
   it('allows browsing a directory under the default allowed roots', async () => {
     const fixtureDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'claude-filesystem-test-'))
     cleanupDirs.add(fixtureDir)

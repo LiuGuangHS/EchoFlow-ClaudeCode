@@ -739,7 +739,7 @@ export class ConversationService {
       childEnv.CC_HAHA_TEAM_WORKER_PRESET_TYPE = typeof options.teamWorker.agentDefinition?.agentType === 'string' ? options.teamWorker.agentDefinition.agentType : options.teamWorker.name
       childEnv.CC_HAHA_TEAM_WORKER_PRESET_SOURCE = typeof options.teamWorker.agentDefinition?.source === 'string' ? options.teamWorker.agentDefinition.source : 'flagSettings'
       childEnv.CC_HAHA_TEAM_WORKER_OMIT_CLAUDE_MD = options.teamWorker.agentDefinition?.omitClaudeMd === true ? '1' : '0'
-      childEnv.CC_HAHA_TRANSCRIPT_ENTRYPOINT = 'claude-desktop-team-worker'
+      childEnv.ECHOFLOW_TRANSCRIPT_ENTRYPOINT = 'claude-desktop-team-worker'
     }
     if (side) {
       delete childEnv.CLAUDE_CODE_RESUME_INTERRUPTED_TURN

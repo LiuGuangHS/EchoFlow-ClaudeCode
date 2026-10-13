@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ConversationService } from './conversationService.js'
 import { ProviderService } from './providerService.js'
+import { sanitizePath } from '../../utils/sessionStoragePortable.js'
 import { resetTerminalShellEnvironmentCacheForTests } from '../../utils/terminalShellEnvironment.js'
 
 let home: string
@@ -146,6 +147,9 @@ test('real independent CLI processes send their first request to the approved pr
     }))
     await Promise.all(['worker-a', 'worker-b'].map(id => service.sendMessage(id, 'Start approved task')))
     await Promise.all(results)
+    const workerTranscriptPath = join(home, 'projects', sanitizePath(home), 'worker-a.jsonl')
+    const workerTranscript = (await readFile(workerTranscriptPath, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+    expect(workerTranscript.map(record => record.entrypoint)).toContain('claude-desktop-team-worker')
     const { writeTeamFileAsync } = await import('../../utils/swarm/teamHelpers.js')
     const { TeamService } = await import('./teamService.js')
     await writeTeamFileAsync('approved', { name: 'approved', createdAt: 1, leadSessionId: 'parent', leadAgentId: 'team-lead@approved', members: [{ agentId: 'researcher@approved', name: 'researcher', joinedAt: 1, cwd: home, sessionId: 'worker-a', tmuxPaneId: '', subscriptions: [], backendType: 'process' }] })

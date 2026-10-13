@@ -674,6 +674,11 @@ export class WorkspaceService {
       }
     } catch (error) {
       stop()
+      const code = (error as NodeJS.ErrnoException)?.code
+      if (code === 'EISDIR') {
+        onError?.(error instanceof Error ? error : new Error(String(error)))
+        return stop
+      }
       throw error
     }
     if (signal.aborted) stop()

@@ -270,6 +270,7 @@ describe('SearchService.searchSessions', () => {
       message: { role: 'user', content: 'prefilterneedle excluded' },
     }])
     const metadata = new Map([[path.resolve(included), {
+      archived: false,
       title: 'Included',
       modifiedAt: '2026-06-01T00:00:00.000Z',
       workDir: null,
@@ -308,6 +309,7 @@ describe('SearchService.searchSessions', () => {
     const current = new Date('2026-06-01T00:00:00.000Z')
     await fs.utimes(filePath, current, current)
     const staleMetadata = new Map([[path.resolve(filePath), {
+      archived: false,
       title: 'Stale indexed title',
       modifiedAt: '2025-01-01T00:00:00.000Z',
       workDir: '/stale/indexed/workdir',
@@ -344,6 +346,7 @@ describe('SearchService.searchSessions', () => {
       message: { role: 'user', content: 'directoryraceneedle included' },
     }])
     const metadata = new Map([[path.resolve(included), {
+      archived: false,
       title: 'Included',
       modifiedAt: '2026-06-01T00:00:00.000Z',
       workDir: null,

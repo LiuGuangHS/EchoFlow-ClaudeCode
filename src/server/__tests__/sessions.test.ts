@@ -935,6 +935,7 @@ describe('SessionService', () => {
     const seed: TranscriptProjection = {
       summary: {
         title: 'Untitled Session',
+        archived: false,
         createdAt: stat.birthtime.toISOString(),
         modifiedAt: stat.mtime.toISOString(),
         messageCount: 0,
@@ -949,6 +950,7 @@ describe('SessionService', () => {
     expect(scanned).toEqual(reduced.summary)
     expect(scanned).toEqual({
       title: 'Canonical parity title',
+      archived: false,
       createdAt: '2026-07-01T01:00:00.000Z',
       modifiedAt: '2026-07-01T02:05:00.000Z',
       messageCount: 3,
@@ -1027,6 +1029,7 @@ describe('SessionService', () => {
     const seed: TranscriptProjection = {
       summary: {
         title: 'Untitled Session',
+        archived: false,
         createdAt: stat.birthtime.toISOString(),
         modifiedAt: stat.mtime.toISOString(),
         messageCount: 0,

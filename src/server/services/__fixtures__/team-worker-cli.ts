@@ -21,7 +21,7 @@ sdk.onmessage = async event => {
       if (!args.includes('--no-session-persistence')) {
         const dir = join(process.env.CLAUDE_CONFIG_DIR!, 'projects', sanitizePath(process.cwd()))
         await mkdir(dir, { recursive: true })
-        await appendFile(join(dir, `${arg('--session-id')}.jsonl`), JSON.stringify({ type: 'assistant', uuid: crypto.randomUUID(), timestamp: new Date().toISOString(), sessionId: arg('--session-id'), cwd: process.cwd(), teamName: arg('--team-name'), agentName: arg('--agent-name'), entrypoint: process.env.CC_HAHA_TRANSCRIPT_ENTRYPOINT, message: { role: 'assistant', content: [{ type: 'text', text }], model: arg('--model') } }) + '\n')
+        await appendFile(join(dir, `${arg('--session-id')}.jsonl`), JSON.stringify({ type: 'assistant', uuid: crypto.randomUUID(), timestamp: new Date().toISOString(), sessionId: arg('--session-id'), cwd: process.cwd(), teamName: arg('--team-name'), agentName: arg('--agent-name'), entrypoint: process.env.ECHOFLOW_TRANSCRIPT_ENTRYPOINT, message: { role: 'assistant', content: [{ type: 'text', text }], model: arg('--model') } }) + '\n')
       }
       sdk.send(JSON.stringify({ type: 'result', subtype: 'success', result: text }))
     }

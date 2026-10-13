@@ -167,6 +167,34 @@ describe('workspace watch coalescing contract', () => {
 })
 
 describe('bounded workspace watches', () => {
+  it('reports synchronous EISDIR watcher setup failures without leaking earlier watchers', async () => {
+    await fs.mkdir(path.join(root, 'other'))
+    const closed: nativeFs.FSWatcher[] = []
+    const nativeWatch = nativeFs.watch
+    const watchSpy = spyOn(nativeFs, 'watch').mockImplementation(((filename, options, listener) => {
+      if (String(filename).endsWith(`${path.sep}other`)) {
+        const error = new Error('watch target is a directory') as NodeJS.ErrnoException
+        error.code = 'EISDIR'
+        throw error
+      }
+      const watcher = nativeWatch(filename, options, listener)
+      const close = watcher.close.bind(watcher)
+      watcher.close = (() => { closed.push(watcher); return close() }) as typeof watcher.close
+      return watcher
+    }) as typeof nativeFs.watch)
+    const abort = controller()
+    const errors: Error[] = []
+    try {
+      const stop = await service.watchDirectories('task', ['src', 'other'], () => {}, abort.signal, error => errors.push(error))
+      expect(errors).toHaveLength(1)
+      expect(errors[0]?.message).toContain('directory')
+      expect(closed).toHaveLength(1)
+      stop()
+    } finally {
+      watchSpy.mockRestore()
+    }
+  })
+
   it('reports each restored ancestor so a missing multilevel target can be reattached and read again', async () => {
     await fs.mkdir(path.join(root, 'src/nested'))
     const filePath = path.join(root, 'src/nested/a.ts')

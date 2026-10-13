@@ -2177,7 +2177,7 @@ export async function listSessionTurnCheckpoints(
   const {
     messages: activeMessages,
     transcriptEvidenceComplete,
-  } = await sessionService.getSessionMessagesWithEvidence(sessionId)
+  } = await sessionService.getSessionMessagesWithEvidence(sessionId, { signal })
   signal?.throwIfAborted()
   const turns = buildTranscriptTurnContexts(activeMessages)
   if (turns.length === 0) {
