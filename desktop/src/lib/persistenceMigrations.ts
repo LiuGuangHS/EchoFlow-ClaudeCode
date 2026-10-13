@@ -34,6 +34,7 @@ const LEGACY_STORAGE_RULES = [
   { targetKey: LOCALE_STORAGE_KEY, sourceKeys: ['cc-haha-locale'] },
   { targetKey: APP_ZOOM_STORAGE_KEY, sourceKeys: ['cc-haha-app-zoom', 'cc-haha-ui-zoom', 'echoflow-code-ui-zoom'] },
   { targetKey: 'echoflow-code-dismissed-update-version', sourceKeys: ['cc-haha-dismissed-update-version'] },
+  { targetKey: 'echoflow-code-voice-input-device', sourceKeys: ['cc-haha-voice-input-device'] },
   { targetKey: WORKSPACE_STORAGE_KEY, sourceKeys: ['cc-haha.workspace'] },
 ] as const
 const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max']

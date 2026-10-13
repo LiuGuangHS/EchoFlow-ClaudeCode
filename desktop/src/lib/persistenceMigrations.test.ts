@@ -43,6 +43,7 @@ describe('desktop persistence migrations', () => {
     window.localStorage.setItem('cc-haha-locale', 'en')
     window.localStorage.setItem('cc-haha-ui-zoom', '1.25')
     window.localStorage.setItem('cc-haha-dismissed-update-version', '0.3.2')
+    window.localStorage.setItem('cc-haha-voice-input-device', 'usb-1')
 
     const report = runDesktopPersistenceMigrations()
 
@@ -53,6 +54,7 @@ describe('desktop persistence migrations', () => {
       'echoflow-code-locale',
       'echoflow-code-app-zoom',
       'echoflow-code-dismissed-update-version',
+      'echoflow-code-voice-input-device',
     ]))
     expect(JSON.parse(window.localStorage.getItem('echoflow-code-open-tabs') || '{}')).toEqual({
       openTabs: [{ sessionId: 'session-1', title: 'Legacy tab', type: 'session' }],
@@ -62,8 +64,10 @@ describe('desktop persistence migrations', () => {
     expect(window.localStorage.getItem('echoflow-code-theme')).toBe('white')
     expect(window.localStorage.getItem('echoflow-code-app-zoom')).toBe('1.25')
     expect(window.localStorage.getItem('echoflow-code-dismissed-update-version')).toBe('0.3.2')
+    expect(window.localStorage.getItem('echoflow-code-voice-input-device')).toBe('usb-1')
     expect(window.localStorage.getItem('cc-haha-open-tabs')).toBe('{"openTabs":[{"sessionId":"session-1","title":"Legacy tab"}]}')
     expect(window.localStorage.getItem('cc-haha-dismissed-update-version')).toBe('0.3.2')
+    expect(window.localStorage.getItem('cc-haha-voice-input-device')).toBe('usb-1')
     expect(window.localStorage.getItem('cc-haha-ui-zoom')).toBe('1.25')
   })
 

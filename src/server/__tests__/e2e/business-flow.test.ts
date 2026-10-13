@@ -461,9 +461,9 @@ describe('Business Flow: Models & Effort', () => {
     expect(status).toBe(400)
   })
 
-  it('should default effort to max', async () => {
+  it('should default effort to medium', async () => {
     const { data } = await api('GET', '/api/effort')
-    expect(data.level).toBe('max')
+    expect(data.level).toBe('medium')
     expect(data.available).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
   })
 

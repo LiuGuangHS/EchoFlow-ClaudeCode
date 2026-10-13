@@ -185,7 +185,7 @@ describe('Content-only pages render without errors', () => {
       await Promise.resolve()
     })
     expect(container.querySelector('[data-composer-editor]')).toBeInTheDocument()
-    expect(container.innerHTML).toContain('New session')
+    expect(container.innerHTML).toContain('What would you like to work on?')
     expect(container.innerHTML).toContain('Ask anything')
   })
 
@@ -274,8 +274,8 @@ describe('Content-only pages render without errors', () => {
       },
     })
     const { container } = render(<ActiveSession />)
-    // With empty messages, the hero is shown
-    expect(container.innerHTML).toContain('New session')
+    // With empty messages, the empty-session hero is shown
+    expect(container.innerHTML).toContain('What would you like to work on?')
     // ChatInput renders the ProseMirror composer
     const composer = container.querySelector('[data-composer-editor]')
     expect(composer).toBeInTheDocument()

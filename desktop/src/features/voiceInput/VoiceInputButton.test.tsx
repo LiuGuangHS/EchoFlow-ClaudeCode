@@ -10,6 +10,7 @@ import { translate } from '@/i18n'
 import type { TranslationKey } from '@/i18n/locales/en'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { selectVoiceInputReady, useVoiceInputStore } from '@/stores/voiceInputStore'
+import { setPreferredMicrophoneId } from './devicePreference'
 import { VoiceRecorderError, type StartRecordingOptions } from './recorder'
 import { useComposerDictation } from './useComposerDictation'
 import { VoiceInputButton } from './VoiceInputButton'
@@ -229,7 +230,9 @@ describe('visibility', () => {
 
 describe('recording and transcription', () => {
   it('records with the remembered microphone and the configured limit, then transcribes with the selected provider and language', async () => {
-    localStorage.setItem('cc-haha-voice-input-device', 'usb-1')
+    // Drive the transition through the real preference writer so the storage key
+    // stays owned by devicePreference rather than duplicated in this test.
+    setPreferredMicrophoneId('usb-1')
     useVoiceInputStore.setState({ catalog: catalogFixture({ language: 'en' }) })
     render(<Harness />)
 

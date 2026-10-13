@@ -902,7 +902,7 @@ describe('EmptySession', () => {
     expect(useSessionRuntimeStore.getState().selections['draft-session']).toEqual({
       providerId: 'provider-minimax',
       modelId: enabled ? 'MiniMax-M3[1m]' : 'MiniMax-M3',
-      effortLevel: 'max',
+      effortLevel: 'medium',
     })
     expect(mocks.wsSend.mock.calls.slice(0, 3)).toEqual([
       [
@@ -911,7 +911,7 @@ describe('EmptySession', () => {
           type: 'set_runtime_config',
           providerId: 'provider-minimax',
           modelId: enabled ? 'MiniMax-M3[1m]' : 'MiniMax-M3',
-          effortLevel: 'max',
+          effortLevel: 'medium',
         },
       ],
       ['draft-session', { type: 'prewarm_session' }],

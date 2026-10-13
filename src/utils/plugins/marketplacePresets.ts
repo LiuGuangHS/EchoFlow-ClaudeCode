@@ -37,7 +37,7 @@ function validateDescriptor(
     throw new Error(`Marketplace preset ${descriptor.id} must have a label`)
   }
 
-  const source = MarketplaceSourceSchema.parse(descriptor.source)
+  const source = MarketplaceSourceSchema().parse(descriptor.source)
   if (!verifySource?.(source)) {
     throw new Error(
       `Marketplace preset ${descriptor.id} requires verified source data`,

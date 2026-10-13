@@ -156,6 +156,7 @@ describe('SearchService SQLite content path', () => {
         projectPath: '-repo',
         workDir: '/repo',
         modifiedAt: '2026-07-16T00:00:00.000Z',
+        archived: false,
         matchCount: 1,
         matches: [{
           role: 'user',

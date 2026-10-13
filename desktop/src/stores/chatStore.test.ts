@@ -13653,7 +13653,7 @@ describe('chatStore history mapping', () => {
     ]))
     // The desktop notification previews the same reply the transcript shows.
     expect(notifyDesktopMock).toHaveBeenCalledWith(expect.objectContaining({
-      title: 'Claude Code Haha 已完成回复',
+      title: 'EchoFlow Code 已完成回复',
       body: expect.stringContaining('alpha 任务完成'),
     }))
 

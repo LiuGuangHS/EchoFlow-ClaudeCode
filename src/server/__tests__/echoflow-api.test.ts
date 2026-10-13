@@ -283,7 +283,16 @@ describe('EchoFlow account API', () => {
         token: expect.objectContaining({ id: 'dedicated-token', name: 'Dedicated key', keyPreview: 'sk-••••' }),
       })
       expect(selectionBody).not.toHaveProperty('providerId')
-      expect(selectionBody.token).toMatchObject({ key: 'sk-test' })
+      expect(selectionBody.token).not.toHaveProperty('key')
+
+      const reveal = makeApiRequest('/api/echoflow/token', 'POST', {
+        endpoint: 'dedicated',
+        tokenId: 'dedicated-token',
+      })
+      const revealResponse = await handleEchoFlowApi(reveal.req, reveal.url, reveal.segments)
+      const revealBody = await revealResponse.json() as { token: Record<string, unknown> }
+      expect(revealResponse.status).toBe(200)
+      expect(revealBody.token).toEqual({ id: 'dedicated-token', name: 'Dedicated key', key: 'sk-test' })
 
       const ordinaryProvider = await new ProviderService().addProvider({
         presetId: 'custom',
@@ -610,6 +619,61 @@ describe('EchoFlow account API', () => {
       expect(requests.some((request) => request.url.startsWith('https://api.echoflowai.cc/'))).toBe(false)
     } finally {
       globalThis.fetch = originalFetch
+    }
+  })
+})
+
+describe('EchoFlow site session API', () => {
+  test('accepts cookie bootstrap only from the Electron bridge and never returns the cookie', async () => {
+    const originalFetch = globalThis.fetch
+    const oldBridge = process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN
+    const oldLocal = process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
+    process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN = 'electron-only-bridge-secret'
+    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'renderer-local-token'
+    globalThis.fetch = mock(async (_input: string | URL | Request, init?: RequestInit) => {
+      expect(new Headers(init?.headers).get('cookie')).toBe('session=private-site-cookie')
+      expect(new Headers(init?.headers).get('new-api-user')).toBe('106452')
+      return new Response(JSON.stringify({ success: true, data: { id: 106452, username: 'site-user', quota: 1_000_000 } }), { headers: { 'Content-Type': 'application/json' } })
+    }) as typeof fetch
+
+    const makeSessionRequest = (method: 'GET' | 'POST' | 'DELETE', body?: Record<string, unknown>, headers?: Record<string, string>) => {
+      const req = new Request('http://localhost:3456/api/echoflow/site-session', {
+        method,
+        headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(headers ?? {}) },
+        body: body ? JSON.stringify(body) : undefined,
+      })
+      const url = new URL(req.url)
+      return { req, url, segments: url.pathname.split('/').filter(Boolean) }
+    }
+
+    try {
+      const localTokenBootstrap = makeSessionRequest('POST', { cookie: 'session=private-site-cookie', userId: '106452' }, { Authorization: 'Bearer renderer-local-token' })
+      expect((await handleEchoFlowApi(localTokenBootstrap.req, localTokenBootstrap.url, localTokenBootstrap.segments)).status).toBe(403)
+
+      const remoteBootstrap = makeSessionRequest('POST', { cookie: 'session=private-site-cookie', userId: '106452' }, { 'x-echoflow-site-session-bridge': 'electron-only-bridge-secret' })
+      expect((await handleEchoFlowApi(remoteBootstrap.req, remoteBootstrap.url, remoteBootstrap.segments, { remoteBrowser: true })).status).toBe(403)
+
+      const bootstrap = makeSessionRequest('POST', { cookie: 'session=private-site-cookie', userId: '106452' }, { 'x-echoflow-site-session-bridge': 'electron-only-bridge-secret' })
+      const bootstrapResponse = await handleEchoFlowApi(bootstrap.req, bootstrap.url, bootstrap.segments)
+      const bootstrapBody = await bootstrapResponse.json() as { account: Record<string, unknown> }
+      expect(bootstrapResponse.status).toBe(200)
+      expect(bootstrapBody.account).toEqual({ userId: '106452', username: 'site-user', balance: 2, refreshedAt: expect.any(Number) })
+      expect(JSON.stringify(bootstrapBody)).not.toContain('private-site-cookie')
+
+      const status = makeSessionRequest('GET', undefined, { Authorization: 'Bearer renderer-local-token' })
+      const statusResponse = await handleEchoFlowApi(status.req, status.url, status.segments)
+      expect(await statusResponse.json()).toEqual({ account: bootstrapBody.account })
+
+      const signOut = makeSessionRequest('DELETE', undefined, { Authorization: 'Bearer renderer-local-token' })
+      expect((await handleEchoFlowApi(signOut.req, signOut.url, signOut.segments)).status).toBe(200)
+      expect((await handleEchoFlowApi(status.req, status.url, status.segments)).status).toBe(200)
+      expect(await (await handleEchoFlowApi(status.req, status.url, status.segments)).json()).toEqual({ account: null })
+    } finally {
+      globalThis.fetch = originalFetch
+      if (oldBridge === undefined) delete process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN
+      else process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN = oldBridge
+      if (oldLocal === undefined) delete process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
+      else process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = oldLocal
     }
   })
 })
