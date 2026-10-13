@@ -164,6 +164,28 @@ For local models (LM Studio / Ollama), **do not append `/v1` to the base URL** �
 
 **What to do** — Run `git status` and `git diff` before shipping. Disk and Git are the source of truth.
 
+## A project added in WSL cannot be accessed
+
+First confirm that EchoFlow was started from a WSL shell, rather than the Windows desktop app trying to access a WSL path:
+
+```bash
+echo "$WSL_DISTRO_NAME"
+pwd
+command -v echoflow-code
+git rev-parse --show-toplevel
+```
+
+WSL-native projects should use Linux paths such as `/home/<user>/...`. `C:\\...` and `\\\\wsl$\\...` are Windows-host paths and do not guarantee that the Windows sidecar, Git, terminal, and WSL filesystem share one runtime. Projects under `/mnt/c` may also have slower search or file watching; move a test project under `/home/<user>` first.
+
+If the directory picker does not open or shows no entries:
+
+1. Check that the current WSL user can read the project: `ls -ld /home/<user>/project`.
+2. Run `echoflow-code` from the project directory to rule out Windows/Git Bash path conversion.
+3. Check whether the path is outside the project roots; the server only allows the home directory, temporary directories, and registered workspace roots.
+4. Record the exact error, startup mode, and path. Do not add all of `/` or `/mnt` to the access allowlist as a workaround.
+
+Managing a `\\wsl$\\...` project directly from the Windows desktop is a separate cross-host workflow and is not the same as WSL-native support.
+
 ## Port conflicts
 
 **What you see** — H5 won't load, or the local service doesn't come up after launch.

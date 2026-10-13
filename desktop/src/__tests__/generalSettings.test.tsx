@@ -185,6 +185,14 @@ function installElectronDesktopHost() {
       ...browserHost.app,
       getVersion: vi.fn().mockResolvedValue('0.3.2'),
     },
+    runtimeDiscovery: {
+      list: vi.fn().mockResolvedValue({ installations: [
+        { productId: 'echoflow-agent', source: 'bundled', status: 'available', version: '0.5.7' },
+        { productId: 'claude-code', source: 'current-system', status: 'not-found' },
+        { productId: 'codex', source: 'current-system', status: 'available', version: '1.2.3', path: '/usr/bin/codex' },
+      ] }),
+      probePath: vi.fn().mockResolvedValue({ productId: 'codex', source: 'custom-path', status: 'available', version: '1.2.3', path: '/opt/codex' }),
+    },
     runtime: {
       ...browserHost.runtime,
       getClaudeCode: vi.fn().mockResolvedValue({
@@ -456,17 +464,57 @@ describe('Settings > General tab', () => {
     })
   })
 
-  it('chooses an installed Claude Code runtime through the native picker', async () => {
+  it('chooses an external Claude Code runtime from Runtime settings', async () => {
     const runtimeHost = window.desktopHost!.runtime
     const chooseClaudeCode = vi.mocked(runtimeHost.chooseClaudeCode)
     render(<Settings />)
 
-    fireEvent.click(screen.getByText('General'))
-    await screen.findByText('Claude Code runtime')
-    fireEvent.click(screen.getByRole('button', { name: 'Choose installed runtime' }))
+    fireEvent.click(screen.getByText('Runtime management'))
+    await screen.findByText('Choose which Claude Code executable starts new sessions.')
+    fireEvent.click(screen.getByRole('button', { name: 'Choose external runtime' }))
 
     await waitFor(() => expect(chooseClaudeCode).toHaveBeenCalledTimes(1))
-    expect(screen.getByRole('button', { name: 'Installed' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'External' })).toBeEnabled()
+  })
+
+  it('discovers installed runtimes and displays source and version without enabling session switching', async () => {
+    const discovery = window.desktopHost!.runtimeDiscovery
+    render(<Settings />)
+    fireEvent.click(screen.getByText('Runtime management'))
+
+    expect(await screen.findByText('EchoFlow Agent')).toBeInTheDocument()
+    expect(screen.getByText(/0\.5\.7/)).toBeInTheDocument()
+    expect(screen.getByText('Codex')).toBeInTheDocument()
+    expect(screen.getByText(/not found/i)).toBeInTheDocument()
+    expect(vi.mocked(discovery.list)).toHaveBeenCalledWith(undefined)
+    expect(vi.mocked(window.desktopHost!.runtime.setClaudeCode)).not.toHaveBeenCalled()
+  })
+
+  it('probes WSL only after an explicit request and renders the distro result', async () => {
+    const discovery = window.desktopHost!.runtimeDiscovery
+    vi.mocked(discovery.list).mockImplementation(async options => ({ installations: options?.includeWsl
+      ? [
+          { productId: 'echoflow-agent', source: 'bundled', status: 'available', version: '0.5.7' },
+          { productId: 'wsl', source: 'wsl', status: 'available', distribution: 'Ubuntu', path: '/usr/bin/codex', version: '1.2.3' },
+        ]
+      : [{ productId: 'echoflow-agent', source: 'bundled', status: 'available', version: '0.5.7' }] }))
+    render(<Settings />)
+    fireEvent.click(screen.getByText('Runtime management'))
+    await screen.findByText('EchoFlow Agent')
+    fireEvent.click(screen.getByRole('button', { name: 'Check WSL' }))
+    expect(await screen.findByText(/Ubuntu/)).toBeInTheDocument()
+    expect(vi.mocked(discovery.list)).toHaveBeenLastCalledWith({ includeWsl: true })
+  })
+
+  it('validates a user-selected executable path before displaying it', async () => {
+    const discovery = window.desktopHost!.runtimeDiscovery
+    vi.mocked(tauriDialogMock.open).mockResolvedValueOnce('/opt/codex')
+    render(<Settings />)
+    fireEvent.click(screen.getByText('Runtime management'))
+    await screen.findByText('EchoFlow Agent')
+    fireEvent.click(screen.getByRole('button', { name: 'Add executable' }))
+    expect(await screen.findByText(/1\.2\.3/)).toBeInTheDocument()
+    expect(vi.mocked(discovery.probePath)).toHaveBeenCalledWith('/opt/codex')
   })
 
   it('shows WebFetch preflight toggle enabled by default', () => {

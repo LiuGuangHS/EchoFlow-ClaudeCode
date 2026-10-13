@@ -69,7 +69,18 @@ Unsigned packages trigger a SmartScreen warning. Once you've confirmed the file 
 
 When upgrading in place, the installer inspects user data in the old install directory. If it reports that the program is still running, quit the main window and the tray icon, give the background sidecar, terminal, and IM adapter processes a few seconds to exit, then run the installer again. Don't delete the old install directory by hand first.
 
-## Linux
+## Linux / WSL
+
+For WSL, run the Linux CLI directly from a WSL shell and keep projects on the Linux filesystem (for example `/home/<user>/projects`). Do not pass Windows desktop paths such as `C:\...` or `\\wsl$\...` to the WSL-native CLI.
+
+Check the runtime before starting:
+
+```bash
+uname -a
+echo "$WSL_DISTRO_NAME"
+command -v bun
+git --version
+```
 
 **AppImage** (no installation, just run it):
 
@@ -87,6 +98,22 @@ sudo apt install ./EchoFlow-Code-<version>-linux-amd64.deb
 ```
 
 On ARM64 machines, use the corresponding `linux-arm64` file.
+
+## Running from source in WSL
+
+For WSL-native use, run from a WSL shell and keep the project, Bun, and Git on the Linux side:
+
+```bash
+git clone https://github.com/LiuGuangHS/EchoFlow-ClaudeCode.git ~/src/echoflow-code
+cd ~/src/echoflow-code
+bun install
+cp .env.example .env
+./bin/echoflow-code
+```
+
+Keeping projects under `/home/<user>` is usually faster than `/mnt/c` and avoids many file-watcher and permission differences. Setting `CLAUDE_CODE_SHELL_PREFIX='wsl -e bash -lc'` in Windows/Git Bash is a different mode—Windows CLI routing commands through WSL—not a replacement for WSL-native startup.
+
+A Windows desktop path such as `C:\...` or `\\wsl$\...` is also not the same as the WSL-native `/home/<user>/...` path. Directly managing WSL projects from the Windows desktop is not currently a complete supported workflow; use the CLI or Web service started inside WSL for that use case.
 
 ## Running from source
 

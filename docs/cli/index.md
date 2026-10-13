@@ -89,6 +89,17 @@ cd ~/your-other-project
 echoflow-code
 ```
 
+### WSL 内直接运行
+
+如果用户环境本身是 WSL，优先从 WSL shell 直接启动 `echoflow-code`，并使用 Linux 路径：
+
+```bash
+cd ~/your-project
+echoflow-code
+```
+
+项目建议放在 `/home/<user>` 下。`/mnt/c` 项目可能受到跨文件系统性能和文件监听差异影响。WSL-native 的项目路径应写成 `/home/<user>/...`；Windows 的 `C:\...` 和 `\\wsl$\...` 路径属于另一种宿主环境，不应混用。
+
 ### Windows 配 WSL 工具链
 
 如果 `echoflow-code` 跑在 Windows 或 Git Bash 里，而 Node、Python、uv、bun 这些工具装在 WSL 中，可以显式经 WSL 调用：

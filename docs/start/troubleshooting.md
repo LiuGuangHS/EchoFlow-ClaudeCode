@@ -164,6 +164,28 @@ order: 5
 
 **怎么办** — 交付前自己跑一遍 `git status` 和 `git diff`。磁盘和 Git 才是最终事实源。
 
+## WSL 中添加项目后无法访问
+
+先确认 EchoFlow 是从 WSL shell 启动的，而不是 Windows 桌面版在访问 WSL 路径：
+
+```bash
+echo "$WSL_DISTRO_NAME"
+pwd
+command -v echoflow-code
+git rev-parse --show-toplevel
+```
+
+WSL-native 项目使用 `/home/<user>/...` 形式的 Linux 路径。`C:\\...` 和 `\\\\wsl$\\...` 是 Windows 宿主路径，不能保证 Windows sidecar、Git、终端和 WSL 文件系统使用同一运行环境。项目在 `/mnt/c` 下时，还可能出现较慢的搜索或文件监听行为；优先移动到 `/home/<user>` 验证。
+
+如果目录选择器打不开或列表为空：
+
+1. 检查项目目录对当前 WSL 用户可读：`ls -ld /home/<user>/project`。
+2. 直接在项目目录执行 `echoflow-code`，排除 Windows/Git Bash 路径转换。
+3. 检查是否使用了项目外的路径；服务端只允许 home、临时目录和已注册的工作区根目录。
+4. 记录实际错误、启动方式和路径，不要为了排错把整个 `/` 或 `/mnt` 加入访问白名单。
+
+Windows 桌面直接管理 `\\wsl$\\...` 项目属于独立的跨宿主场景，目前不等同于 WSL-native 支持。
+
 ## 端口冲突
 
 **现象** — H5 打不开，或者应用启动后本地服务没起来。

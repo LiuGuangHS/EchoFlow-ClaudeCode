@@ -237,6 +237,43 @@ describe('DirectoryPicker', () => {
     errorSpy.mockRestore()
   })
 
+  it('browses and selects Linux paths when native folder dialogs are unavailable', async () => {
+    vi.mocked(sessionsApi.getRecentProjects).mockResolvedValue({ projects: [] })
+    vi.mocked(filesystemApi.browse)
+      .mockResolvedValueOnce({
+        currentPath: '/home',
+        parentPath: '/',
+        entries: [{ name: 'user', path: '/home/user', isDirectory: true }],
+      })
+      .mockResolvedValueOnce({
+        currentPath: '/home/user',
+        parentPath: '/home',
+        entries: [{ name: 'project', path: '/home/user/project', isDirectory: true }],
+      })
+
+    window.desktopHost = {
+      ...browserHost,
+      kind: 'electron',
+      isDesktop: true,
+      capabilities: {
+        ...browserHost.capabilities,
+        dialogs: false,
+      },
+    }
+    const onChange = vi.fn()
+    render(<DirectoryPicker value="" onChange={onChange} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /选择项目|Select a project/ }))
+    fireEvent.click(await screen.findByText(/选择其他文件夹|Choose a different folder/))
+
+    expect(filesystemApi.browse).toHaveBeenNthCalledWith(1, undefined)
+    fireEvent.click(await screen.findByRole('button', { name: /user/ }))
+    await waitFor(() => expect(filesystemApi.browse).toHaveBeenNthCalledWith(2, '/home/user'))
+    fireEvent.click(await screen.findByRole('button', { name: /^(选择|Select)$/ }))
+
+    expect(onChange).toHaveBeenCalledWith('/home/user/project')
+  })
+
   it('uses the injected desktop host for native folder selection', async () => {
     vi.mocked(sessionsApi.getRecentProjects).mockResolvedValue({ projects: [] })
     const open = vi.fn().mockResolvedValue('/workspace/native-project')

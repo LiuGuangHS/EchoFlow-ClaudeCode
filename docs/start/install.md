@@ -69,7 +69,18 @@ xattr -dr com.apple.quarantine "/Applications/EchoFlow Code.app"
 
 覆盖升级时安装器会检查旧安装目录里的用户数据。如果它提示「程序仍在运行」，退出主窗口和托盘图标，等几秒让后台的 sidecar、终端和 IM adapter 退干净，再重新运行安装器。别先手动删掉旧安装目录。
 
-## Linux
+## Linux / WSL
+
+WSL 用户建议在 WSL 内直接使用 Linux CLI，项目放在 Linux 文件系统（例如 `/home/<user>/projects`），不要把 Windows 桌面路径 `C:\...` 或 `\\wsl$\...` 当成 WSL 项目路径传给 CLI。
+
+先确认运行环境：
+
+```bash
+uname -a
+echo "$WSL_DISTRO_NAME"
+command -v bun
+git --version
+```
 
 **AppImage**（免安装，下载即用）：
 
@@ -87,6 +98,22 @@ sudo apt install ./EchoFlow-Code-<版本>-linux-amd64.deb
 ```
 
 ARM64 机器换成对应的 `linux-arm64` 文件。
+
+## WSL 中从源码跑
+
+WSL-native 使用时，建议从 WSL shell 执行，并让项目、Bun 和 Git 都使用 Linux 环境：
+
+```bash
+git clone https://github.com/LiuGuangHS/EchoFlow-ClaudeCode.git ~/src/echoflow-code
+cd ~/src/echoflow-code
+bun install
+cp .env.example .env
+./bin/echoflow-code
+```
+
+将项目放在 `/home/<user>` 下通常比 `/mnt/c` 更快，也更不容易遇到文件监听和权限差异。Windows/Git Bash 中设置 `CLAUDE_CODE_SHELL_PREFIX='wsl -e bash -lc'` 是另一种“Windows CLI 调 WSL 工具链”的模式，不能替代 WSL-native 启动。
+
+Windows 桌面版选择的 `C:\...` 或 `\\wsl$\...` 路径也不等价于 WSL-native 的 `/home/<user>/...`。当前不要把 Windows 桌面直接管理 WSL 项目视为完整支持；需要这类用法时，请在 WSL 内启动 CLI 或 Web 服务。
 
 ## 从源码跑
 

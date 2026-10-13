@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/Button'
 import { SettingsPageHeader, SettingsPill, SettingsSection } from '@/components/settings/SettingsSection'
 import { getDesktopHost } from '@/lib/desktopHost'
-import type { DeepSeekHarnessStatus } from '@/lib/desktopHost/types'
+import type { DeepSeekHarnessStatus, RuntimeDiscoveryResult, RuntimeInstallation } from '@/lib/desktopHost/types'
 import { useTranslation } from '@/i18n'
 import { isDesktopRuntime } from '@/lib/desktopRuntime'
 
@@ -22,9 +22,94 @@ export function RuntimeSettings() {
   return (
     <div className="w-full min-w-0">
       <SettingsPageHeader title={t('settings.runtime.title')} description={t('settings.runtime.description')} />
+      <RuntimeDiscoveryCard />
       <ClaudeCodeRuntimeCard />
       <DeepSeekHarnessCard />
     </div>
+  )
+}
+
+function RuntimeDiscoveryCard() {
+  const t = useTranslation()
+  const host = getDesktopHost()
+  const [result, setResult] = useState<RuntimeDiscoveryResult>({ installations: [] })
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [pathError, setPathError] = useState<string | null>(null)
+  const [pathResult, setPathResult] = useState<RuntimeInstallation | null>(null)
+
+  const refresh = useCallback(async (includeWsl = false) => {
+    setLoading(true)
+    setError(null)
+    try {
+      setResult(await host.runtimeDiscovery.list(includeWsl ? { includeWsl: true } : undefined))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setLoading(false)
+    }
+  }, [host])
+
+  useEffect(() => { void refresh() }, [refresh])
+
+  const choosePath = async () => {
+    setPathError(null)
+    try {
+      const selected = await host.dialogs.open({ title: t('settings.runtime.discovery.choosePath'), multiple: false })
+      if (typeof selected !== 'string') return
+      setPathResult(await host.runtimeDiscovery.probePath(selected))
+    } catch (cause) {
+      setPathError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+
+  const productName = (installation: RuntimeInstallation) => installation.productId === 'echoflow-agent'
+    ? t('settings.runtime.discovery.echoflow')
+    : installation.productId === 'claude-code'
+      ? 'Claude Code'
+      : installation.productId === 'codex'
+        ? 'Codex'
+        : 'WSL'
+  const sourceName = (installation: RuntimeInstallation) => installation.source === 'bundled'
+    ? t('settings.runtime.discovery.sourceBundled')
+    : installation.source === 'current-system'
+      ? t('settings.runtime.discovery.sourceSystem')
+      : installation.source === 'custom-path'
+        ? t('settings.runtime.discovery.sourceCustom')
+        : `${t('settings.runtime.discovery.sourceWsl')}${installation.distribution ? ` · ${installation.distribution}` : ''}`
+  const statusName = (installation: RuntimeInstallation) => installation.status === 'available'
+    ? t('settings.runtime.discovery.available')
+    : installation.status === 'not-applicable'
+      ? t('settings.runtime.discovery.notApplicable')
+      : installation.status === 'not-found'
+        ? t('settings.runtime.discovery.notFound')
+        : installation.error === 'probe-timeout'
+          ? t('settings.runtime.discovery.timeout')
+          : t('settings.runtime.discovery.probeFailed')
+
+  const installations = pathResult ? [...result.installations, pathResult] : result.installations
+  return (
+    <SettingsSection title={t('settings.runtime.discovery.title')} description={t('settings.runtime.discovery.description')}>
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" variant="secondary" loading={loading} onClick={() => void refresh()}>{t('settings.runtime.discovery.refresh')}</Button>
+        {host.isDesktop && <Button size="sm" variant="secondary" disabled={loading} onClick={() => void refresh(true)}>{t('settings.runtime.discovery.checkWsl')}</Button>}
+        {host.capabilities.dialogs && <Button size="sm" variant="secondary" disabled={loading} onClick={() => void choosePath()}>{t('settings.runtime.discovery.addPath')}</Button>}
+      </div>
+      {error && <p role="alert" className="mt-3 text-sm text-[var(--color-error)]">{error}</p>}
+      {pathError && <p role="alert" className="mt-3 text-sm text-[var(--color-error)]">{pathError}</p>}
+      {loading && <p className="mt-3 text-sm text-[var(--color-text-secondary)]">{t('settings.runtime.discovery.checking')}</p>}
+      {!loading && installations.length === 0 && <p className="mt-3 text-sm text-[var(--color-text-secondary)]">{t('settings.runtime.discovery.empty')}</p>}
+      <ul className="mt-3 grid gap-2">
+        {installations.map((installation, index) => <li key={`${installation.productId}:${installation.source}:${installation.distribution ?? installation.path ?? index}`} className="rounded-[var(--radius-md)] border border-[var(--color-border)] px-3 py-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-sm font-medium text-[var(--color-text-primary)]">{productName(installation)}</span>
+            <span className="text-xs text-[var(--color-text-secondary)]">{sourceName(installation)} · {statusName(installation)}{installation.version ? ` · ${installation.version}` : ''}</span>
+          </div>
+          {installation.path && <p className="mt-1 break-all text-xs text-[var(--color-text-tertiary)]">{installation.path}</p>}
+        </li>)}
+      </ul>
+      <p className="mt-3 text-xs leading-5 text-[var(--color-text-tertiary)]">{t('settings.runtime.discovery.notExecution')}</p>
+    </SettingsSection>
   )
 }
 

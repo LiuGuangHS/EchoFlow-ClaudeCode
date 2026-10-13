@@ -89,6 +89,17 @@ cd ~/your-other-project
 echoflow-code
 ```
 
+### Running directly inside WSL
+
+If your user environment is WSL, start `echoflow-code` directly from the WSL shell and use Linux paths:
+
+```bash
+cd ~/your-project
+echoflow-code
+```
+
+Projects under `/home/<user>` are recommended. Projects under `/mnt/c` can be slower and may behave differently for file watching. WSL-native project paths should use `/home/<user>/...`; Windows `C:\...` and `\\wsl$\...` paths belong to a different host workflow and should not be mixed in.
+
 ### Windows with a WSL toolchain
 
 If `echoflow-code` runs on Windows or Git Bash while Node, Python, uv, and bun live inside WSL, call them through WSL explicitly:

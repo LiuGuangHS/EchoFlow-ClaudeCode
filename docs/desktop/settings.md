@@ -42,6 +42,16 @@ order: 13
 - **消息发送方式**默认 Enter 发送、Shift+Enter 换行；常写多行提示词可改成 `Ctrl/Cmd+Enter` 发送。
 - **默认编辑器**决定文件「打开方式」菜单默认选哪个本机已检测到的编辑器。
 
+### 运行时管理
+
+「运行时管理」页面会检查 EchoFlow 自带的 Agent，以及当前系统中能从常见命令路径找到的 Claude Code、Codex；Windows 用户还可主动检查 WSL 发行版，也可手动选择 Claude Code 或 Codex 的可执行文件。检查只会读取版本信息，不会安装或更新第三方工具。EchoFlow 也不会因此自动把会话切换到这些工具。
+
+每项显示来源、版本和位置。**“已发现”只表示本机存在，不代表 EchoFlow 已支持用它执行会话或 Team 任务。**WSL 检查由用户主动触发，显示具体发行版及 Linux 路径；它与 Windows 本机的安装分开管理。SDK 是 EchoFlow 内部使用的开发依赖，不需要用户单独安装。
+
+DeepSeek Harness 仍在自己的条目中管理启动、停止和更新；它当前是独立运行的应用，不代表 EchoFlow 已能把会话或 Team 任务交给它。
+
+现有 Claude Code 的 **Bundled / Installed** 仍是兼容设置：前者使用 EchoFlow 随应用提供的执行入口，后者使用用户选择的 Claude Code 可执行文件。它不是跨工具的会话运行时切换器。
+
 ### 需要更复杂的 Agent 工作流时
 
 | 设置 | 何时开启或调整 |
