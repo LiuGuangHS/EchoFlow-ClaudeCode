@@ -11,6 +11,15 @@ const optionalRecord: Validator = value => value === undefined || isRecord(value
 const stringPayload: Validator = value => typeof value === 'string'
 const booleanPayload: Validator = value => typeof value === 'boolean'
 const claudeCodeRuntimeId: Validator = value => value === 'bundled' || value === 'installed'
+const runtimeDiscoveryOptions: Validator = value => {
+  if (value === undefined) return true
+  return isRecord(value) && hasOnlyKeys(value, ['includeWsl']) && typeof value.includeWsl === 'boolean'
+}
+const runtimeDiscoveryPath: Validator = value => typeof value === 'string'
+  && value.length > 0
+  && value.length <= 4096
+  && (value.startsWith('/') || /^[A-Za-z]:[\\/]/.test(value))
+  && !/[\u0000-\u001f\u007f]/.test(value)
 const hasOnlyKeys = (value: Record<string, unknown>, allowedKeys: string[]) =>
   Object.keys(value).every(key => allowedKeys.includes(key))
 
@@ -333,6 +342,8 @@ const localePreference: Validator = value =>
   || value === 'kr'
 
 export const ELECTRON_IPC_VALIDATORS = {
+  [ELECTRON_IPC_CHANNELS.echoFlowLoginOpen]: noPayload,
+  [ELECTRON_IPC_CHANNELS.echoFlowSignOut]: noPayload,
   [ELECTRON_IPC_CHANNELS.appGetVersion]: noPayload,
   [ELECTRON_IPC_CHANNELS.appGetLocalePreference]: noPayload,
   [ELECTRON_IPC_CHANNELS.appSetLocalePreference]: localePreference,
@@ -351,6 +362,8 @@ export const ELECTRON_IPC_VALIDATORS = {
   [ELECTRON_IPC_CHANNELS.runtimeGetClaudeCode]: noPayload,
   [ELECTRON_IPC_CHANNELS.runtimeChooseClaudeCode]: noPayload,
   [ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode]: claudeCodeRuntimeId,
+  [ELECTRON_IPC_CHANNELS.runtimeDiscoveryGet]: runtimeDiscoveryOptions,
+  [ELECTRON_IPC_CHANNELS.runtimeDiscoveryProbePath]: runtimeDiscoveryPath,
   [ELECTRON_IPC_CHANNELS.commandInvoke]: commandInvoke,
   [ELECTRON_IPC_CHANNELS.clipboardReadText]: noPayload,
   [ELECTRON_IPC_CHANNELS.clipboardWriteText]: stringPayload,

@@ -11,6 +11,7 @@ export type DesktopHostKind = 'browser' | 'electron'
 
 export type DesktopHostCapability =
   | 'appMode'
+  | 'echoFlowAccount'
   | 'clipboard'
   | 'dialogs'
   | 'notifications'
@@ -391,6 +392,21 @@ export type AppModeSetInput = {
 
 export type ClaudeCodeRuntimeId = 'bundled' | 'installed'
 
+export type RuntimeProductId = 'echoflow-agent' | 'claude-code' | 'codex' | 'wsl'
+export type RuntimeSource = 'bundled' | 'current-system' | 'custom-path' | 'wsl'
+export type RuntimeInstallationStatus = 'available' | 'not-found' | 'error' | 'not-applicable'
+export type RuntimeInstallation = {
+  productId: RuntimeProductId
+  source: RuntimeSource
+  status: RuntimeInstallationStatus
+  version?: string
+  path?: string
+  distribution?: string
+  error?: 'probe-failed' | 'probe-timeout' | 'invalid-version'
+}
+export type RuntimeDiscoveryResult = { installations: RuntimeInstallation[] }
+
+
 export type ClaudeCodeRuntimeStatus = {
   defaultRuntimeId: ClaudeCodeRuntimeId
   hasInstalledRuntime: boolean
@@ -417,6 +433,14 @@ export type DesktopHost = {
   kind: DesktopHostKind
   isDesktop: boolean
   capabilities: DesktopHostCapabilities
+  echoFlow: {
+    openLogin(): Promise<'authenticated' | 'cancelled'>
+    signOut(): Promise<void>
+  }
+  runtimeDiscovery: {
+    list(options?: { includeWsl?: boolean }): Promise<RuntimeDiscoveryResult>
+    probePath(path: string): Promise<RuntimeInstallation>
+  }
   runtime: {
     getServerUrl(): Promise<string>
     getLocalAccessToken(): Promise<string | null>

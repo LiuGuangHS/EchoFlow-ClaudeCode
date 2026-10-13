@@ -77,6 +77,7 @@ export function createElectronHost(bridge: ElectronHostBridge): DesktopHost {
     isDesktop: true,
     capabilities: {
       appMode: true,
+      echoFlowAccount: true,
       clipboard: true,
       dialogs: true,
       notifications: true,
@@ -87,6 +88,14 @@ export function createElectronHost(bridge: ElectronHostBridge): DesktopHost {
       updates: true,
       windowControls: true,
       zoom: true,
+    },
+    echoFlow: {
+      openLogin: () => invoke(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen),
+      signOut: () => invoke(ELECTRON_IPC_CHANNELS.echoFlowSignOut),
+    },
+    runtimeDiscovery: {
+      list: options => invoke(ELECTRON_IPC_CHANNELS.runtimeDiscoveryGet, options),
+      probePath: filePath => invoke(ELECTRON_IPC_CHANNELS.runtimeDiscoveryProbePath, filePath),
     },
     runtime: {
       getServerUrl: () => invoke(ELECTRON_IPC_CHANNELS.runtimeGetServerUrl),

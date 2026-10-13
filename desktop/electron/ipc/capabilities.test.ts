@@ -9,6 +9,11 @@ import {
 } from './capabilities'
 
 describe('Electron IPC capabilities', () => {
+  it('allows only the main app to request EchoFlow sign-in with no payload', () => {
+    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, undefined)).toBe(true)
+    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, { cookie: 'secret' })).toBe(false)
+    expect(isElectronIpcChannelAllowedForPetWindow(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen)).toBe(false)
+  })
   it('restricts public access credentials and consent to validated desktop IPC', () => {
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.publicAccessSaveCredential, 'fake-token')).toBe(true)
     for (const value of ['', 'a b', 'x'.repeat(4097), {}, null]) {
@@ -218,6 +223,19 @@ describe('Electron IPC capabilities', () => {
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.petsFocusMainWindow, {})).toBe(false)
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.petsFocusSession, 'session-123')).toBe(true)
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.petsFocusSession, '../escape')).toBe(false)
+  })
+
+  it('validates runtime discovery IPC without accepting probe commands', () => {
+    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.runtimeDiscoveryGet, undefined)).toBe(true)
+    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.runtimeDiscoveryGet, {})).toBe(false)
+    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.runtimeDiscoveryGet, { includeWsl: true })).toBe(true)
+    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.runtimeDiscoveryGet, { includeWsl: 'true' })).toBe(false)
+    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.runtimeDiscoveryProbePath, '/opt/bin/codex')).toBe(true)
+    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.runtimeDiscoveryProbePath, 'C:\\Tools\\codex.exe')).toBe(true)
+    for (const invalid of [undefined, '', 'relative/codex', 'C:codex.exe', '/opt/codex\n', '/'.repeat(4097), { path: '/opt/codex', args: ['evil'] }]) {
+      expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.runtimeDiscoveryProbePath, invalid)).toBe(false)
+    }
+    expect(isElectronIpcChannelAllowedForPetWindow(ELECTRON_IPC_CHANNELS.runtimeDiscoveryProbePath)).toBe(false)
   })
 
   it('validates Claude Code runtime IPC without accepting executable paths', () => {

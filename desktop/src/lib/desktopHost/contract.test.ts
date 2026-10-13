@@ -9,6 +9,8 @@ describe('desktop host contract', () => {
     expect(browserHost.isDesktop).toBe(false)
     expect(browserHost.capabilities).toEqual({
       appMode: false,
+      echoFlowAccount: false,
+      echoFlowAccount: false,
       clipboard: false,
       dialogs: false,
       notifications: false,
@@ -28,6 +30,8 @@ describe('desktop host contract', () => {
     await expect(browserHost.runtime.getClaudeCode()).rejects.toThrow('desktop app runtime')
     await expect(browserHost.runtime.chooseClaudeCode()).rejects.toThrow('desktop app runtime')
     await expect(browserHost.runtime.setClaudeCode('bundled')).rejects.toThrow('desktop app runtime')
+    await expect(browserHost.runtimeDiscovery.list()).rejects.toThrow('desktop app runtime')
+    await expect(browserHost.runtimeDiscovery.probePath('/opt/codex')).rejects.toThrow('desktop app runtime')
     await expect(browserHost.dialogs.open({ directory: true })).rejects.toThrow('desktop app runtime')
     await expect(browserHost.shell.openPath('/tmp/report.md')).rejects.toThrow('desktop app runtime')
     await expect(browserHost.terminal.spawn({ cwd: '/tmp', cols: 80, rows: 24 })).rejects.toThrow(

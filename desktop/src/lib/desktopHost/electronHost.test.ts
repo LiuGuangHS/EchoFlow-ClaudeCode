@@ -5,6 +5,13 @@ import { createElectronHost } from './electronHost'
 import { PUBLIC_ACCESS_CONSENT_VERSION, type WorkspaceBrowserMenuOptions } from './types'
 
 describe('electron desktop host', () => {
+  it('opens site sign-in without sending credentials through renderer IPC', async () => {
+    const invoke = vi.fn().mockResolvedValue('authenticated')
+    const host = createElectronHost({ invoke, subscribe: vi.fn() })
+
+    await expect(host.echoFlow.openLogin()).resolves.toBe('authenticated')
+    expect(invoke).toHaveBeenCalledWith(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, undefined)
+  })
   it('routes Claude Code runtime settings through narrow runtime IPC boundaries', async () => {
     const status = { defaultRuntimeId: 'bundled' as const, hasInstalledRuntime: false }
     const invoke = vi.fn()
@@ -23,6 +30,19 @@ describe('electron desktop host', () => {
     expect(invoke).toHaveBeenNthCalledWith(1, ELECTRON_IPC_CHANNELS.runtimeGetClaudeCode, undefined)
     expect(invoke).toHaveBeenNthCalledWith(2, ELECTRON_IPC_CHANNELS.runtimeChooseClaudeCode, undefined)
     expect(invoke).toHaveBeenNthCalledWith(3, ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode, 'bundled')
+  })
+
+  it('routes runtime discovery through fixed payload IPC methods', async () => {
+    const result = { installations: [{ productId: 'claude-code', source: 'current-system', status: 'not-found' }] }
+    const installation = { productId: 'codex', source: 'custom-path', status: 'available', version: '1.2.3' }
+    const invoke = vi.fn().mockResolvedValueOnce(result).mockResolvedValueOnce(result).mockResolvedValueOnce(installation)
+    const host = createElectronHost({ invoke, subscribe: vi.fn() })
+    await expect(host.runtimeDiscovery.list()).resolves.toEqual(result)
+    await expect(host.runtimeDiscovery.list({ includeWsl: true })).resolves.toEqual(result)
+    await expect(host.runtimeDiscovery.probePath('/opt/codex')).resolves.toEqual(installation)
+    expect(invoke).toHaveBeenNthCalledWith(1, ELECTRON_IPC_CHANNELS.runtimeDiscoveryGet, undefined)
+    expect(invoke).toHaveBeenNthCalledWith(2, ELECTRON_IPC_CHANNELS.runtimeDiscoveryGet, { includeWsl: true })
+    expect(invoke).toHaveBeenNthCalledWith(3, ELECTRON_IPC_CHANNELS.runtimeDiscoveryProbePath, '/opt/codex')
   })
 
   it('routes public access through validated local IPC without exposing management in browsers', async () => {

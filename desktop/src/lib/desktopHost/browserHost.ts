@@ -10,6 +10,7 @@ import { readBrowserLanguages } from '../../i18n/locale'
 
 const browserCapabilities: DesktopHostCapabilities = {
   appMode: false,
+  echoFlowAccount: false,
   clipboard: false,
   dialogs: false,
   notifications: false,
@@ -49,6 +50,14 @@ export const browserHost: DesktopHost = {
   kind: 'browser',
   isDesktop: false,
   capabilities: browserCapabilities,
+  echoFlow: {
+    async openLogin() { return unsupported('EchoFlow site account login') },
+    async signOut() { return unsupported('EchoFlow site account login') },
+  },
+  runtimeDiscovery: {
+    async list() { return unsupported('Runtime discovery') },
+    async probePath() { return unsupported('Runtime discovery') },
+  },
   runtime: {
     async getServerUrl() {
       unsupported('Resolving the bundled server URL')

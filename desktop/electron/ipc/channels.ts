@@ -1,4 +1,6 @@
 export const ELECTRON_IPC_CHANNELS = {
+  echoFlowLoginOpen: 'desktop:echoflow:login-open',
+  echoFlowSignOut: 'desktop:echoflow:sign-out',
   publicAccessGetStatus: 'desktop:public-access:get-status',
   publicAccessSaveCredential: 'desktop:public-access:save-credential',
   publicAccessDeleteCredential: 'desktop:public-access:delete-credential',
@@ -15,6 +17,8 @@ export const ELECTRON_IPC_CHANNELS = {
   runtimeGetClaudeCode: 'desktop:runtime:get-claude-code',
   runtimeChooseClaudeCode: 'desktop:runtime:choose-claude-code',
   runtimeSetClaudeCode: 'desktop:runtime:set-claude-code',
+  runtimeDiscoveryGet: 'desktop:runtime:discovery-get',
+  runtimeDiscoveryProbePath: 'desktop:runtime:discovery-probe-path',
   commandInvoke: 'desktop:command:invoke',
   clipboardReadText: 'desktop:clipboard:read-text',
   clipboardWriteText: 'desktop:clipboard:write-text',
