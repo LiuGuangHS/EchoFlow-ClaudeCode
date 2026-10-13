@@ -24,7 +24,9 @@ type LoginRequestResult = {
 export interface EchoFlowLoginWindow {
   id: number
   webContents: {
-    on(event: 'will-navigate' | 'will-redirect' | 'did-fail-load' | 'did-finish-load', listener: ((event: { preventDefault(): void }, url: string) => void) | ((event: unknown, errorCode: number, errorDescription: string, validatedURL: string, isMainFrame: boolean) => void) | (() => void)): void
+    on(event: 'will-navigate' | 'will-redirect', listener: (navigation: { preventDefault(): void }, url: string) => void): void
+    on(event: 'did-fail-load', listener: (event: unknown, errorCode: number, errorDescription: string, validatedURL: string, isMainFrame: boolean) => void): void
+    on(event: 'did-finish-load', listener: () => void): void
     setWindowOpenHandler(handler: (details: { url: string }) => { action: 'deny' }): void
     readIdentity?(): Promise<EchoFlowLoginIdentity>
   }
