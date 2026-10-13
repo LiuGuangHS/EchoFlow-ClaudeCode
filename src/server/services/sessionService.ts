@@ -100,6 +100,7 @@ export type SessionModelConfigSnapshot = {
 
 export type SessionListItem = {
   id: string
+  archived: boolean
   title: string
   createdAt: string
   modifiedAt: string
@@ -165,6 +166,7 @@ export type SessionEntriesAtLinesResult = {
 }
 
 export type IndexedSessionSearchMetadata = {
+  archived: boolean
   title: string
   modifiedAt: string
   workDir: string | null
@@ -195,6 +197,7 @@ export type SessionDetail = SessionListItem & {
 
 export type SessionLaunchInfo = {
   filePath: string
+  archived: boolean
   projectDir: string
   workDir: string
   repository?: PreparedSessionWorkspace['repository']
@@ -277,6 +280,7 @@ export type SessionMessagesWithEvidence = {
  */
 export type SessionMessagesOptions = {
   includeSubagents?: boolean
+  signal?: AbortSignal
 }
 
 type SubagentMessagesResult = {
@@ -1213,17 +1217,19 @@ export class SessionService {
   // JSONL parsing
   // --------------------------------------------------------------------------
 
-  private async readJsonlFileWithDiagnostics(filePath: string): Promise<{
+  private async readJsonlFileWithDiagnostics(filePath: string, signal?: AbortSignal): Promise<{
     entries: RawEntry[]
     exists: boolean
     parseComplete: boolean
   }> {
+    signal?.throwIfAborted()
     const entries: RawEntry[] = []
     let parseComplete = true
     const stream = createReadStream(filePath, { encoding: 'utf8' })
     const lines = createInterface({ input: stream, crlfDelay: Infinity })
     try {
       for await (const line of lines) {
+        signal?.throwIfAborted()
         const trimmed = line.trim()
         if (!trimmed) continue
         try {
@@ -1401,6 +1407,7 @@ export class SessionService {
         runtimeInstanceId: undefined as string | undefined,
         cliRuntimeId: undefined as 'bundled' | 'installed' | undefined,
         customTitle: null as string | null, nonemptyCustomTitle: null as string | null,
+        archived: false,
         goalTitle: null as string | null, aiTitle: null as string | null, firstUserTitle: null as string | null,
         createdAt: null as string | null, modifiedAt: null as string | null,
         count: 0, launchCount: 0, isTeamWorker: false,
@@ -1441,6 +1448,8 @@ export class SessionService {
         state.repository = this.resolveRepositoryFromEntries([entry]) ?? state.repository
         const worktree = this.resolveWorktreeSessionFromEntries([entry])
         if (worktree !== undefined) state.worktreeSession = worktree
+        if (entry.type === 'session-meta' && typeof record.archived === 'boolean') state.archived = record.archived
+        if (entry.type === 'session-archive' && typeof record.archived === 'boolean') state.archived = record.archived
         if (entry.type === 'custom-title') {
           if (typeof entry.customTitle === 'string') state.customTitle = entry.customTitle
           if (typeof entry.customTitle === 'string' && entry.customTitle.trim()) state.nonemptyCustomTitle = entry.customTitle
@@ -1465,6 +1474,7 @@ export class SessionService {
           ...(state.modelConfig ? { modelConfig: state.modelConfig } : {}),
           ...(state.runtimeInstanceId ? { runtimeInstanceId: state.runtimeInstanceId } : {}),
           ...(state.cliRuntimeId ? { cliRuntimeId: state.cliRuntimeId } : {}),
+        archived: state.archived,
         ...(state.repository ? { repository: state.repository } : {}),
         ...(state.worktreeSession !== undefined ? { worktreeSession: state.worktreeSession } : {}),
       })
@@ -1483,6 +1493,7 @@ export class SessionService {
           filePath, projectDir,
           workDir: (launch.workDir !== undefined ? launch.workDir : launch.cwd ?? this.desanitizePath(projectDir)) || process.cwd(),
           customTitle: launch.customTitle,
+          archived: launch.archived,
           transcriptMessageCount: launch.launchCount,
           ...shared(launch),
         },
@@ -1505,6 +1516,7 @@ export class SessionService {
    * instead of the raw UUID file name.
    */
   async getSessionTitleAndMeta(filePath: string): Promise<{
+    archived: boolean
     title: string
     modifiedAt: string
     workDir: string | null
@@ -1514,6 +1526,7 @@ export class SessionService {
     const indexedMeta = this.getIndexedSessionMetaById(sessionId)
     if (indexedMeta) {
       return {
+        archived: indexedMeta.archived ?? false,
         title: indexedMeta.title,
         modifiedAt: indexedMeta.modifiedAt,
         workDir: indexedMeta.workDir,
@@ -1527,6 +1540,7 @@ export class SessionService {
     const projectPath = path.basename(path.dirname(filePath))
     const summary = await this.getCachedSessionListSummary(filePath, projectPath, stat, scope)
     return {
+      archived: summary.archived ?? false,
       title: summary.title,
       modifiedAt: summary.modifiedAt,
       workDir: summary.workDir ?? null,
@@ -1535,6 +1549,7 @@ export class SessionService {
   }
 
   getIndexedSessionMetaById(sessionId: string): {
+    archived: boolean
     title: string
     modifiedAt: string
     projectPath: string
@@ -1545,6 +1560,7 @@ export class SessionService {
       const row = this.localIndexGateway.getSession?.(sessionId) ?? null
       if (!row || !this.indexStatusRemainsUsable()) return null
       return {
+        archived: row.archived ?? false,
         title: row.title,
         modifiedAt: row.modifiedAt,
         projectPath: row.projectPath,
@@ -1575,6 +1591,7 @@ export class SessionService {
           const transcriptPath = path.resolve(session.transcriptPath)
           if (!wanted.has(transcriptPath)) continue
           result.set(transcriptPath, {
+            archived: session.archived ?? false,
             title: session.title,
             modifiedAt: session.modifiedAt,
             workDir: session.workDir,
@@ -1685,6 +1702,7 @@ export class SessionService {
             !Number.isFinite(Date.parse(session.modifiedAt))
           ) return null
           validated.set(transcriptPath, {
+            archived: session.archived ?? false,
             title: session.title,
             modifiedAt: session.modifiedAt,
             workDir: session.workDir,
@@ -2424,9 +2442,10 @@ export class SessionService {
     sessionId: string,
     parentToolUseId: string,
     agentId: string,
+    signal?: AbortSignal,
   ): Promise<SubagentMessagesResult> {
     const filePath = this.subagentTranscriptPath(projectDir, sessionId, agentId)
-    const { entries, exists, parseComplete } = await this.readJsonlFileWithDiagnostics(filePath)
+    const { entries, exists, parseComplete } = await this.readJsonlFileWithDiagnostics(filePath, signal)
     const namespace = `${parentToolUseId}/${agentId}`
     const messages: MessageEntry[] = []
 
@@ -2462,6 +2481,7 @@ export class SessionService {
     projectDir: string,
     sessionId: string,
     messages: MessageEntry[],
+    signal?: AbortSignal,
   ): Promise<SubagentMessagesResult> {
     const maxSubagentDepth = 16
     const maxSubagentTranscripts = 128
@@ -2499,6 +2519,7 @@ export class SessionService {
       }))
 
     while (pendingLinks.length > 0) {
+      signal?.throwIfAborted()
       const newLinks = pendingLinks.filter(({ parentToolUseId, agentId, depth, ancestry }) => {
         const identity = transcriptIdentity(agentId)
         if (ancestry.has(identity)) {
@@ -2524,6 +2545,7 @@ export class SessionService {
             sessionId,
             link.parentToolUseId,
             link.agentId,
+            signal,
           ),
         })),
       )
@@ -3245,6 +3267,7 @@ export class SessionService {
     let runtimeInstanceId: string | undefined
     let cliRuntimeId: 'bundled' | 'installed' | undefined
     let customTitle: string | null = null
+    let archived = false
     let transcriptMessageCount = 0
     const metadata: TranscriptMetadataSnapshot = {}
 
@@ -3342,6 +3365,9 @@ export class SessionService {
         }
       }
 
+      if ((entry.type === 'session-meta' || entry.type === 'session-archive') && typeof (entry as Record<string, unknown>).archived === 'boolean') {
+        archived = (entry as Record<string, unknown>).archived as boolean
+      }
       if (entry.type === 'custom-title' && typeof entry.customTitle === 'string') {
         customTitle = entry.customTitle
       }
@@ -3450,6 +3476,7 @@ export class SessionService {
       worktreeSession,
       transcriptMessageCount,
       customTitle,
+      archived,
       permissionMode,
       ...(runtimeProviderId !== undefined ? { runtimeProviderId } : {}),
       ...(runtimeModelId ? { runtimeModelId } : {}),
@@ -3524,8 +3551,8 @@ export class SessionService {
   }
 
   /** Load the newest few sessions for every logical project in one request. */
-  listProjectPreviews(perProjectLimit?: number): Promise<ProjectSessionPreviews> {
-    return this.projectHistory.listPreviews(perProjectLimit)
+  listProjectPreviews(perProjectLimit?: number, includeArchived = false): Promise<ProjectSessionPreviews> {
+    return this.projectHistory.listPreviews(perProjectLimit, includeArchived)
   }
 
   private projectHistoryRevision(): string {
@@ -3668,6 +3695,7 @@ export class SessionService {
     project?: string
     limit?: number
     offset?: number
+    includeArchived?: boolean
   }): Promise<{ sessions: SessionListItem[]; total: number }> {
     this.syncSharedMutationEpoch()
     const routingMutationEpoch = getSharedSessionMutationState(this.localIndexGateway).epoch
@@ -3721,6 +3749,7 @@ export class SessionService {
     project?: string
     limit?: number
     offset?: number
+    includeArchived?: boolean
   }): Promise<{ sessions: SessionListItem[]; total: number }> {
     this.syncSharedMutationEpoch()
     const scope = this.getConfigDir()
@@ -3761,6 +3790,7 @@ export class SessionService {
     project?: string
     limit?: number
     offset?: number
+    includeArchived?: boolean
   }, requireReady = false): Promise<{ sessions: SessionListItem[]; total: number } | null> {
     const indexedMutationEpoch = getSharedSessionMutationState(this.localIndexGateway).epoch
     try {
@@ -3789,10 +3819,20 @@ export class SessionService {
         return { sessions: [], total: indexedPage.total }
       }
 
+
       const sessions: SessionListItem[] = []
       const pathExists = this.createCachedPathExists()
       const projectsRoot = await fs.realpath(this.getProjectsDir())
+      // Archived rows are dropped before hydration, so the page total has to shed
+      // them too — otherwise the caller paginates against rows it never receives.
+      let archivedRows = 0
       for (const row of indexedPage.sessions) {
+        // Archived state lives in the transcript, so the index row is authoritative
+        // for the default view and the caller opts in to archived rows explicitly.
+        if (!options?.includeArchived && row.archived === true) {
+          archivedRows += 1
+          continue
+        }
         try {
           await this.validateIndexedTranscriptPath(
             row.transcriptPath,
@@ -3812,10 +3852,10 @@ export class SessionService {
       }
       if (sessions.length === 0) {
         return status.state === 'building'
-          ? { sessions: [], total: indexedPage.total }
+          ? { sessions: [], total: Math.max(indexedPage.total - archivedRows, 0) }
           : null
       }
-      return { sessions, total: indexedPage.total }
+      return { sessions, total: Math.max(indexedPage.total - archivedRows, 0) }
     } catch {
       this.markIndexReadFailure()
       return null
@@ -3828,7 +3868,7 @@ export class SessionService {
    * in the index's own order before paginating.
    */
   private async tryListSessionsFromDegradedIndex(
-    options: { project?: string; limit?: number; offset?: number } | undefined,
+    options: { project?: string; limit?: number; offset?: number; includeArchived?: boolean } | undefined,
     plan: DegradedListPlan,
   ): Promise<{ sessions: SessionListItem[]; total: number } | null> {
     const mutationEpoch = getSharedSessionMutationState(this.localIndexGateway).epoch
@@ -3855,6 +3895,12 @@ export class SessionService {
       rows.push(...await this.readExcludedTranscriptRows(plan, scope, project))
       if (rows.length === 0) return null
       rows.sort(compareIndexedListRows)
+      // Filter before paginating so the page and its total describe the same set,
+      // matching the file projection which filters before it slices.
+      const visibleRows = options?.includeArchived
+        ? rows
+        : rows.filter(row => row.archived !== true)
+      if (visibleRows.length === 0) return null
 
       // Same defaults as the index and file lists.
       const offset = options?.offset ?? 0
@@ -3862,7 +3908,7 @@ export class SessionService {
       const sessions: SessionListItem[] = []
       const pathExists = this.createCachedPathExists()
       const projectsRoot = await fs.realpath(this.getProjectsDir())
-      for (const row of rows.slice(offset, offset + limit)) {
+      for (const row of visibleRows.slice(offset, offset + limit)) {
         try {
           await this.validateIndexedTranscriptPath(row.transcriptPath, row.projectPath, row.id, projectsRoot)
           sessions.push(await this.hydrateIndexedSession(row, pathExists))
@@ -3872,7 +3918,7 @@ export class SessionService {
       }
       if (mutationEpoch !== getSharedSessionMutationState(this.localIndexGateway).epoch) return null
       if (sessions.length === 0) return null
-      return { sessions, total: rows.length }
+      return { sessions, total: visibleRows.length }
     } catch {
       this.markIndexReadFailure()
       return null
@@ -3899,6 +3945,7 @@ export class SessionService {
     })
     return {
       id: row.id,
+      archived: row.archived ?? false,
       title: row.title,
       createdAt: row.createdAt,
       modifiedAt: row.modifiedAt,
@@ -4036,7 +4083,7 @@ export class SessionService {
     for (const item of filesWithStats) {
       try {
         const summary = await this.getCachedSessionListSummary(item.filePath, item.projectDir, item.stat, scope)
-        if (!summary.isTeamWorker) summarizedFiles.push({ ...item, summary })
+        if (!summary.isTeamWorker && (options?.includeArchived || !summary.archived)) summarizedFiles.push({ ...item, summary })
       } catch {
         // Skip unreadable files
       }
@@ -4079,6 +4126,7 @@ export class SessionService {
 
         items.push({
           id: sessionId,
+          archived: summary.archived ?? false,
           title: summary.title,
           createdAt: summary.createdAt,
           modifiedAt: summary.modifiedAt,
@@ -4362,8 +4410,9 @@ export class SessionService {
       throw ApiError.notFound(`Session not found: ${sessionId}`)
     }
 
-    const rootTranscript = await this.readJsonlFileWithDiagnostics(found.filePath)
+    const rootTranscript = await this.readJsonlFileWithDiagnostics(found.filePath, options?.signal)
     const rootMessages = this.entriesToMessages(rootTranscript.entries)
+    options?.signal?.throwIfAborted()
     const rootEvidenceComplete = rootTranscript.exists && rootTranscript.parseComplete
     if (options?.includeSubagents === false) {
       return { messages: rootMessages, transcriptEvidenceComplete: rootEvidenceComplete }
@@ -4372,6 +4421,7 @@ export class SessionService {
       found.projectDir,
       sessionId,
       rootMessages,
+      options?.signal,
     )
     return {
       messages: subagentResult.messages,
@@ -4782,6 +4832,20 @@ export class SessionService {
     }
 
     return { successes, failures }
+  }
+
+  /**
+   * Rename a session by appending a custom-title entry to its JSONL file.
+   */
+  async setSessionArchived(sessionId: string, archived: boolean): Promise<void> {
+    const info = await this.getSessionLaunchInfo(sessionId)
+    if (!info) throw ApiError.notFound(`Session not found: ${sessionId}`)
+    const found = await this.findSessionFile(sessionId)
+    if (!found) throw ApiError.notFound(`Session not found: ${sessionId}`)
+    await this.appendJsonlEntry(found.filePath, {
+      type: 'session-archive', archived, timestamp: new Date().toISOString(),
+    })
+    this.invalidateSessionListCache()
   }
 
   /**
