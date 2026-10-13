@@ -1,16 +1,26 @@
 import { create } from 'zustand'
 import { pluginsApi } from '../api/plugins'
 import type {
+  MarketplaceDiscovery,
+  MarketplacePlugin,
+  MarketplacePreset,
   PluginDetail,
   PluginListResponse,
   PluginReloadSummary,
   PluginSessionReloadSummary,
   PluginScope,
   PluginSummary,
+  RegisteredMarketplace,
 } from '../types/plugin'
 
 type PluginStore = {
   plugins: PluginSummary[]
+  marketplacePresets: MarketplacePreset[]
+  registeredMarketplaces: RegisteredMarketplace[]
+  discoveredMarketplace: MarketplaceDiscovery | null
+  selectedMarketplacePlugin: MarketplacePlugin | null
+  isMarketplaceLoading: boolean
+  marketplaceError: string | null
   marketplaces: PluginListResponse['marketplaces']
   summary: PluginListResponse['summary'] | null
   selectedPlugin: PluginDetail | null
@@ -23,6 +33,10 @@ type PluginStore = {
   isApplying: boolean
   error: string | null
   fetchPlugins: (cwd?: string) => Promise<void>
+  fetchMarketplaceCatalog: () => Promise<void>
+  discoverMarketplace: (name: string) => Promise<void>
+  fetchMarketplacePluginDetail: (marketplace: string, plugin: string) => Promise<void>
+  clearMarketplaceSelection: () => void
   fetchPluginDetail: (id: string, cwd?: string) => Promise<void>
   reloadPlugins: (cwd?: string, sessionId?: string) => Promise<PluginReloadSummary>
   enablePlugin: (id: string, scope?: PluginScope, cwd?: string, sessionId?: string) => Promise<string>
@@ -41,6 +55,12 @@ export type PluginActionTarget = {
 
 export const usePluginStore = create<PluginStore>((set, get) => ({
   plugins: [],
+  marketplacePresets: [],
+  registeredMarketplaces: [],
+  discoveredMarketplace: null,
+  selectedMarketplacePlugin: null,
+  isMarketplaceLoading: false,
+  marketplaceError: null,
   marketplaces: [],
   summary: null,
   selectedPlugin: null,
@@ -73,6 +93,54 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
       })
     }
   },
+
+  fetchMarketplaceCatalog: async () => {
+    const requestVersion = ++marketplaceCatalogRequestVersion
+    set({ isMarketplaceLoading: true, marketplaceError: null })
+    try {
+      const [{ presets }, { marketplaces }] = await Promise.all([
+        pluginsApi.marketplacePresets(),
+        pluginsApi.registeredMarketplaces(),
+      ])
+      if (requestVersion !== marketplaceCatalogRequestVersion) return
+      set({ marketplacePresets: presets, registeredMarketplaces: marketplaces, isMarketplaceLoading: false })
+    } catch (err) {
+      if (requestVersion !== marketplaceCatalogRequestVersion) return
+      set({ isMarketplaceLoading: false, marketplaceError: err instanceof Error ? err.message : String(err) })
+    }
+  },
+
+  discoverMarketplace: async (name) => {
+    const requestVersion = ++marketplaceBrowseRequestVersion
+    set({ isMarketplaceLoading: true, marketplaceError: null, discoveredMarketplace: null, selectedMarketplacePlugin: null })
+    try {
+      const discovery = await pluginsApi.discoverMarketplace(name)
+      if (requestVersion !== marketplaceBrowseRequestVersion) return
+      set({ discoveredMarketplace: discovery, isMarketplaceLoading: false })
+    } catch (err) {
+      if (requestVersion !== marketplaceBrowseRequestVersion) return
+      set({ isMarketplaceLoading: false, marketplaceError: err instanceof Error ? err.message : String(err) })
+    }
+  },
+
+  fetchMarketplacePluginDetail: async (marketplace, plugin) => {
+    const requestVersion = ++marketplaceDetailRequestVersion
+    set({ isMarketplaceLoading: true, marketplaceError: null, selectedMarketplacePlugin: null })
+    try {
+      const { detail } = await pluginsApi.marketplacePluginDetail(marketplace, plugin)
+      if (requestVersion !== marketplaceDetailRequestVersion) return
+      set({ selectedMarketplacePlugin: detail, isMarketplaceLoading: false })
+    } catch (err) {
+      if (requestVersion !== marketplaceDetailRequestVersion) return
+      set({ isMarketplaceLoading: false, marketplaceError: err instanceof Error ? err.message : String(err) })
+    }
+  },
+
+  clearMarketplaceSelection: () => {
+    marketplaceDetailRequestVersion += 1
+    set({ selectedMarketplacePlugin: null, marketplaceError: null })
+  },
+
 
   fetchPluginDetail: async (id, cwd) => {
     const requestVersion = ++detailRequestVersion
@@ -226,6 +294,9 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
 
 let listRequestVersion = 0
 let detailRequestVersion = 0
+let marketplaceCatalogRequestVersion = 0
+let marketplaceBrowseRequestVersion = 0
+let marketplaceDetailRequestVersion = 0
 let mutationQueue: Promise<void> = Promise.resolve()
 let pendingMutations = 0
 

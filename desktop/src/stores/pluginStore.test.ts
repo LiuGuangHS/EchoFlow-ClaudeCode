@@ -11,6 +11,10 @@ vi.mock('../api/plugins', () => ({
     update: vi.fn(),
     uninstall: vi.fn(),
     reload: vi.fn(),
+    marketplacePresets: vi.fn(),
+    registeredMarketplaces: vi.fn(),
+    discoverMarketplace: vi.fn(),
+    marketplacePluginDetail: vi.fn(),
   },
 }))
 
@@ -47,6 +51,12 @@ describe('pluginStore', () => {
     })
     usePluginStore.setState({
       plugins: [],
+      marketplacePresets: [],
+      registeredMarketplaces: [],
+      discoveredMarketplace: null,
+      selectedMarketplacePlugin: null,
+      isMarketplaceLoading: false,
+      marketplaceError: null,
       marketplaces: [],
       summary: null,
       selectedPlugin: null,
@@ -59,6 +69,45 @@ describe('pluginStore', () => {
       isApplying: false,
       error: null,
     })
+  })
+
+  it('loads configured marketplaces and browses cached plugin details', async () => {
+    mockedPluginsApi.marketplacePresets.mockResolvedValue({ presets: [] })
+    mockedPluginsApi.registeredMarketplaces.mockResolvedValue({
+      marketplaces: [{ name: 'configured-market', source: 'github owner/repo', autoUpdate: true, allowedByPolicy: true }],
+    })
+    mockedPluginsApi.discoverMarketplace.mockResolvedValue({
+      name: 'configured-market',
+      plugins: [{ id: 'tool@configured-market', name: 'tool', description: 'A tool' }],
+    })
+    mockedPluginsApi.marketplacePluginDetail.mockResolvedValue({
+      detail: { id: 'tool@configured-market', name: 'tool', description: 'Details' },
+    })
+
+    await usePluginStore.getState().fetchMarketplaceCatalog()
+    expect(usePluginStore.getState().marketplacePresets).toEqual([])
+    expect(usePluginStore.getState().registeredMarketplaces).toHaveLength(1)
+    await usePluginStore.getState().discoverMarketplace('configured-market')
+    await usePluginStore.getState().fetchMarketplacePluginDetail('configured-market', 'tool')
+
+    expect(mockedPluginsApi.discoverMarketplace).toHaveBeenCalledWith('configured-market')
+    expect(mockedPluginsApi.marketplacePluginDetail).toHaveBeenCalledWith('configured-market', 'tool')
+    expect(usePluginStore.getState().selectedMarketplacePlugin?.description).toBe('Details')
+  })
+
+  it('ignores stale marketplace discovery responses', async () => {
+    let resolveFirst!: (value: { name: string; plugins: { id: string; name: string }[] }) => void
+    mockedPluginsApi.discoverMarketplace
+      .mockImplementationOnce(() => new Promise(resolve => { resolveFirst = resolve }))
+      .mockResolvedValueOnce({ name: 'second', plugins: [] })
+
+    const firstRequest = usePluginStore.getState().discoverMarketplace('first')
+    await usePluginStore.getState().discoverMarketplace('second')
+    resolveFirst({ name: 'first', plugins: [] })
+    await firstRequest
+
+    expect(usePluginStore.getState().discoveredMarketplace?.name).toBe('second')
+    expect(usePluginStore.getState().isMarketplaceLoading).toBe(false)
   })
 
   it('reloads the active CLI session after enabling a plugin', async () => {

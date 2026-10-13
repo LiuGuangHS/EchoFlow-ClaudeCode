@@ -6,6 +6,7 @@ import { SegmentedControl } from '@/components/ui/SegmentedControl'
 import { Connectors } from '@/pages/Connectors'
 import { Market } from '@/pages/Market'
 import { InstalledSkills } from '@/pages/InstalledSkills'
+import { MarketplaceBrowser } from '@/components/plugins/MarketplaceBrowser'
 
 export function ExtensionMarket() {
   const t = useTranslation()
@@ -28,7 +29,7 @@ export function ExtensionMarket() {
           previous featured row is a change to the skills branch below. */}
       {managing
         ? section === 'plugins' ? <Connectors key="installed" management /> : <div className="h-full overflow-y-auto"><div className="mx-auto max-w-7xl px-5 py-6 lg:px-8"><InstalledSkills /></div></div>
-        : section === 'plugins' ? <Connectors key="catalog" mode="plugins" /> : <Market />}
+        : section === 'plugins' ? <MarketplaceBrowser /> : <Market />}
     </div>
   </section>
 }

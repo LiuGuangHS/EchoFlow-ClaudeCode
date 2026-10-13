@@ -89,6 +89,38 @@ export type PluginListResponse = {
   }
 }
 
+export type RegisteredMarketplace = {
+  name: string
+  source: string
+  lastUpdated?: string
+  autoUpdate: boolean
+  allowedByPolicy?: boolean
+}
+
+export type MarketplacePreset = {
+  id: string
+  label: string
+  source: Record<string, unknown>
+  description?: string
+}
+
+export type MarketplacePlugin = {
+  id: string
+  name: string
+  description?: string
+  version?: string
+  category?: string
+  tags?: string[]
+  author?: string | { name?: string }
+}
+
+export type MarketplaceDiscovery = {
+  name: string
+  owner?: string | { name?: string }
+  description?: string
+  plugins: MarketplacePlugin[]
+}
+
 export type PluginReloadSummary = {
   enabled: number
   disabled: number
