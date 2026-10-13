@@ -739,14 +739,14 @@ export const ModelSelector = forwardRef<ModelSelectorHandle, Props>(function Mod
                           )
                             ? normalizedProviderEffort
                             : undefined
-  const nextEffort = supportedEfforts === undefined
+                          const nextEffort = supportedEfforts === undefined
                             ? supportedProviderEffort ?? explicitEffort ?? model.defaultReasoningEffort ?? effortLevel
                             : supportedEfforts.length
                               ? supportedProviderEffort
                                 ?? (explicitEffort && supportedEfforts.includes(explicitEffort)
-                                ? explicitEffort
-                                : model.defaultReasoningEffort
-                                  ?? (supportedEfforts.includes(effortLevel) ? effortLevel : supportedEfforts[0]))
+                                  ? explicitEffort
+                                  : model.defaultReasoningEffort
+                                    ?? (supportedEfforts.includes(effortLevel) ? effortLevel : supportedEfforts[0]))
                               : undefined
                           handleRuntimeSelect({
                             providerId: choice.providerId,

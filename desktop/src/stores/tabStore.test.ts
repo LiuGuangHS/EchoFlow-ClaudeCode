@@ -3,7 +3,7 @@ import { sessionsApi } from '../api/sessions'
 import { ApiError } from '../api/client'
 import { useSessionRuntimeStore } from './sessionRuntimeStore'
 import { useSessionStore } from './sessionStore'
-import { SETTINGS_TAB_ID, MARKET_TAB_ID, CONNECTORS_TAB_ID, useTabStore } from './tabStore'
+import { SETTINGS_TAB_ID, MARKET_TAB_ID, CONNECTORS_TAB_ID, DEEPSEEK_HARNESS_TAB_ID, RUNTIME_SETTINGS_TAB_ID, useTabStore } from './tabStore'
 
 vi.mock('../api/sessions', () => ({
   sessionsApi: {
@@ -531,6 +531,23 @@ describe('tabStore', () => {
       },
     ])
     expect(useTabStore.getState().activeTabId).toBe(SETTINGS_TAB_ID)
+  })
+
+  it('migrates the legacy DeepSeek tab to Runtime settings', async () => {
+    localStorage.setItem('echoflow-code-open-tabs', JSON.stringify({
+      openTabs: [{ sessionId: DEEPSEEK_HARNESS_TAB_ID, title: 'DeepSeek Harness', type: 'deepseek-harness' }],
+      activeTabId: DEEPSEEK_HARNESS_TAB_ID,
+    }))
+
+    await useTabStore.getState().restoreTabs()
+
+    expect(useTabStore.getState().tabs).toEqual([{
+      sessionId: RUNTIME_SETTINGS_TAB_ID,
+      title: 'DeepSeek Harness',
+      type: 'deepseek-harness',
+      status: 'idle',
+    }])
+    expect(useTabStore.getState().activeTabId).toBe(RUNTIME_SETTINGS_TAB_ID)
   })
 })
 

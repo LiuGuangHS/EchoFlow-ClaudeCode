@@ -16,7 +16,7 @@ describe('CliRuntimeSelector', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: /CLI runtime/i }))
-    fireEvent.click(screen.getByRole('option', { name: 'Installed' }))
+    fireEvent.click(screen.getByRole('option', { name: 'External' }))
 
     await waitFor(() => expect(onChange).toHaveBeenCalledWith('installed'))
   })
@@ -33,6 +33,6 @@ describe('CliRuntimeSelector', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: /CLI runtime/i }))
-    expect(screen.queryByRole('option', { name: 'Installed' })).toBeNull()
+    expect(screen.queryByRole('option', { name: 'External' })).toBeNull()
   })
 })

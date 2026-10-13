@@ -61,9 +61,7 @@ This is the part people mix up, so it is worth stating plainly:
 - A **system access token** belongs to the account. It proves the account is yours. Detecting the account, reading the token list, and rotating tokens all use it.
 - A **call token (API key)** belongs to one channel. It is the credential actually sent on model calls.
 
-**The desktop app never handles the full API key.** What you pick is a token ID; testing, creation, and updates are resolved server-side from the account and token ID, and are forced onto that token's endpoint. That means:
-
-- The token list only ever shows masked previews — the full key never reaches the desktop app.
+**The desktop app shows only a masked API key preview by default.** What you pick is a token ID; testing, creation, and updates are resolved server-side from the account and token ID, and are forced onto that token's endpoint. The configuration panel has an explicit visibility toggle; the full key is fetched separately by account endpoint and token ID only when you choose to reveal it. The token list still returns masked previews only.
 - Rotating a channel's token needs no pasted secret, only a different token ID.
 - A main-site token can only build main-site channels; it never leaks onto the dedicated line.
 

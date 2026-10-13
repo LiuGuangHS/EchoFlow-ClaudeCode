@@ -18,11 +18,14 @@ internal class PermissionSession(
     .build()
   private var socket: WebSocket? = null
   private var connectedSessionId: String? = null
+  private var connectionGeneration = 0L
+  private val pendingRequestIds = mutableSetOf<String>()
 
   fun connect(serverUrl: String, token: String, sessionId: String) {
     if (connectedSessionId == sessionId) return
     disconnect()
 
+    val generation = ++connectionGeneration
     val server = Uri.parse(serverUrl)
     val url = server.buildUpon()
       .scheme(if (server.scheme == "https") "wss" else "ws")
@@ -36,16 +39,23 @@ internal class PermissionSession(
       object : WebSocketListener() {
         override fun onMessage(webSocket: WebSocket, text: String) {
           val message = runCatching { JSONObject(text) }.getOrNull() ?: return
+          if (generation != connectionGeneration || socket !== webSocket) return
           when (message.optString("type")) {
-            "control_request" -> {
-              val request = message.optJSONObject("request") ?: return
-              if (request.optString("subtype") == "can_use_tool" && message.has("request_id")) {
-                request.put("request_id", message.optString("request_id"))
-                onRequest(request)
+            "permission_request" -> {
+              if (message.optString("toolName") == "AskUserQuestion") return
+              val requestId = message.optString("requestId")
+              if (requestId.isNotBlank() && pendingRequestIds.add(requestId)) {
+                message.put("request_id", requestId)
+                message.put("tool_name", message.optString("toolName"))
+                message.put("display_name", message.optString("displayName"))
+                onRequest(message)
               }
             }
-            "control_cancel_request", "control_response" -> {
-              message.optString("request_id").takeIf(String::isNotBlank)?.let(onCancel)
+            "permission_resolved" -> {
+              message.optString("requestId").takeIf(String::isNotBlank)?.let {
+                pendingRequestIds.remove(it)
+                onCancel(it)
+              }
             }
           }
         }
@@ -56,8 +66,11 @@ internal class PermissionSession(
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
           if (socket === webSocket) {
+            val requestIds = pendingRequestIds.toList()
             socket = null
             connectedSessionId = null
+            pendingRequestIds.clear()
+            requestIds.forEach(onCancel)
           }
         }
       },
@@ -65,31 +78,24 @@ internal class PermissionSession(
   }
 
   fun respond(requestId: String, allowed: Boolean) {
+    if (!pendingRequestIds.remove(requestId)) return
     val response = JSONObject().apply {
-      put("type", "control_response")
-      put("response", JSONObject().apply {
-        put("subtype", "success")
-        put("request_id", requestId)
-        put("response", if (allowed) {
-          JSONObject().apply {
-            put("behavior", "allow")
-            put("updatedInput", JSONObject())
-          }
-        } else {
-          JSONObject().apply {
-            put("behavior", "deny")
-            put("message", "Denied by user")
-          }
-        })
-      })
+      put("type", "permission_response")
+      put("requestId", requestId)
+      put("allowed", allowed)
+      if (!allowed) put("denyMessage", "Denied by user")
     }
     socket?.send(response.toString())
   }
 
   fun disconnect() {
+    connectionGeneration += 1
     socket?.close(1000, "WebView session changed")
     socket = null
     connectedSessionId = null
+    val requestIds = pendingRequestIds.toList()
+    pendingRequestIds.clear()
+    requestIds.forEach(onCancel)
   }
 
   fun destroy() {

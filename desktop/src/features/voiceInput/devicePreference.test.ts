@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getPreferredMicrophoneId, setPreferredMicrophoneId } from './devicePreference'
 
-const KEY = 'cc-haha-voice-input-device'
+const KEY = 'echoflow-code-voice-input-device'
 
 describe('microphone preference', () => {
   beforeEach(() => {
