@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { stat } from 'node:fs/promises'
 import { isValidTeamMemberName, type TeamPlanRecord, type TeamPlanMember } from '../../shared/teamPlan.js'
-import { conversationService } from './conversationService.js'
+import { conversationService, type SessionStartOptions } from './conversationService.js'
 import { ProviderService } from './providerService.js'
 import { CLAUDE_OFFICIAL_PROVIDER_ID } from '../types/provider.js'
 import { normalizeExplicitClaudeOfficialModelId } from './claudeOfficialRuntime.js'
@@ -130,6 +130,43 @@ export async function stopTeamPlanRuntime(planId: string): Promise<void> {
   }
 }
 
+/**
+ * Session options for one approved Team worker.
+ *
+ * The worker runs the same task as the leader against the same executable, so
+ * it inherits the leader's CLI runtime. Without this the whole Team silently
+ * falls back to the bundled runtime even when the user picked an installed
+ * Claude Code, while provider, model and effort stay per-member.
+ */
+export function buildTeamWorkerStartOptions(input: {
+  parentSessionId: string
+  teamName: string
+  memberId: string
+  name: string
+  snapshot: { systemPrompt: string; tools?: string[]; [key: string]: unknown }
+  runtime: { providerId: string; modelId: string; effortLevel?: string }
+  permissionMode: string
+}): SessionStartOptions {
+  const { parentSessionId, teamName, memberId, name, snapshot, runtime, permissionMode } = input
+  const tools = snapshot.tools ? [...new Set([...snapshot.tools, ...essentialTools])] : undefined
+  const parentRuntimeId = conversationService.getSessionCliRuntimeId(parentSessionId)
+  return {
+    providerId: runtime.providerId === CLAUDE_OFFICIAL_PROVIDER_ID ? null : runtime.providerId,
+    model: runtime.modelId,
+    effort: runtime.effortLevel,
+    permissionMode,
+    // Only a non-default runtime has to be named. `undefined` keeps the worker
+    // on the server default, which is what a leader already on `bundled` wants;
+    // passing `bundled` explicitly would pin it away from that resolution path.
+    cliRuntimeId: parentRuntimeId === 'bundled' ? undefined : parentRuntimeId,
+    teamWorker: {
+      parentSessionId, teamName, memberId, name,
+      systemPrompt: snapshot.systemPrompt, tools,
+      agentDefinition: { ...snapshot, initialPrompt: undefined, effort: runtime.effortLevel },
+    },
+  }
+}
+
 export async function launchTeamPlanRuntime(plan: TeamPlanRecord): Promise<{ memberIds: Record<string, string> }> {
   const approved = plan.approvedSnapshot
   if (!approved || approved.revision !== plan.revision - 1 || plan.state !== 'launching') throw new Error('Team plan is not approved for launch')
@@ -164,16 +201,8 @@ export async function launchTeamPlanRuntime(plan: TeamPlanRecord): Promise<{ mem
       url.searchParams.set('token', randomUUID())
       const snapshot = member.agentSnapshot
       if (!snapshot) throw new Error(`Missing approved preset for ${member.name}`)
-      const tools = snapshot.tools ? [...new Set([...snapshot.tools, ...essentialTools])] : undefined
       try {
-        await conversationService.startSession(id, plan.workDir, url.toString(), {
-          providerId: member.runtime.providerId === CLAUDE_OFFICIAL_PROVIDER_ID ? null : member.runtime.providerId, model: member.runtime.modelId, effort: member.runtime.effortLevel, permissionMode,
-          teamWorker: {
-            parentSessionId: plan.sessionId, teamName: plan.teamName, memberId: member.id, name: member.name,
-            systemPrompt: snapshot.systemPrompt, tools,
-            agentDefinition: { ...snapshot, initialPrompt: undefined, effort: member.runtime.effortLevel },
-          },
-        })
+        await conversationService.startSession(id, plan.workDir, url.toString(), buildTeamWorkerStartOptions({ parentSessionId: plan.sessionId, teamName: plan.teamName, memberId: member.id, name: member.name, snapshot, runtime: member.runtime, permissionMode }))
         await conversationService.requestControl(id, { subtype: 'set_model', model: member.runtime.modelId }, 30_000)
       } catch (error) {
         await conversationService.stopSessionAndWait(id)

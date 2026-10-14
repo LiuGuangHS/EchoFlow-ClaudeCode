@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ConversationService } from './conversationService.js'
@@ -194,6 +194,55 @@ test('approval resolves preset snapshots and model aliases against the selected 
   const team = { name: 'conflict-check', createdAt: Date.now(), leadSessionId: 'conflict-parent', leadAgentId: 'team-lead@conflict-check', members: [{ agentId: 'reader@conflict-check', name: 'reader', agentType: 'researcher', joinedAt: Date.now(), backendType: 'process', terminated: true }] } as any
   await writeTeamFileAsync(team.name, team)
   await expect(validateTeamPlanRuntime({ ...plan, teamName: team.name, sessionId: team.leadSessionId, incarnationId: createHash('sha256').update(JSON.stringify([team.name, team.leadSessionId, team.createdAt])).digest('hex') })).rejects.toThrow('Member already exists: reader')
+})
+
+test('team workers inherit the parent session CLI runtime instead of falling back to bundled', async () => {
+  // A parent switched to an installed Claude Code must not silently launch its
+  // Team workers on the bundled runtime: the user approved every member against
+  // the executable they chose, and the workers run the same task for it.
+  const { conversationService: runtimeService } = await import('./conversationService.js')
+  const { buildTeamWorkerStartOptions } = await import('./teamPlanRuntime.js')
+  runtimeService.sessions.set('cli-parent', { cliRuntimeId: 'installed' } as any)
+
+  const options = buildTeamWorkerStartOptions({
+    parentSessionId: 'cli-parent',
+    teamName: 'approved',
+    memberId: 'research',
+    name: 'researcher',
+    snapshot: { systemPrompt: 'Read only research', tools: ['Read'] },
+    runtime: { providerId: 'provider-b', modelId: 'cheap' },
+    permissionMode: 'default',
+  })
+
+  expect(options.cliRuntimeId).toBe('installed')
+  // Routing stays per-member: only the executable is inherited.
+  expect(options.providerId).toBe('provider-b')
+  expect(options.teamWorker?.parentSessionId).toBe('cli-parent')
+  // The suite shares one ConversationService; a leftover stub would be stopped
+  // by a later test's stopAllSessionsAndWait.
+  runtimeService.sessions.delete('cli-parent')
+})
+
+test('a leader already on the default runtime leaves workers on the server default', async () => {
+  const { conversationService: runtimeService } = await import('./conversationService.js')
+  const { buildTeamWorkerStartOptions } = await import('./teamPlanRuntime.js')
+  // A session normalizes an unset runtime to `bundled` when it starts, so the
+  // leader reads back as `bundled`. Naming that explicitly would pin the worker
+  // to the bundled executable instead of the server default it already uses.
+  runtimeService.sessions.set('default-parent', { cliRuntimeId: 'bundled' } as any)
+
+  const options = buildTeamWorkerStartOptions({
+    parentSessionId: 'default-parent',
+    teamName: 'approved',
+    memberId: 'research',
+    name: 'researcher',
+    snapshot: { systemPrompt: 'Read only research', tools: ['Read'] },
+    runtime: { providerId: 'provider-b', modelId: 'cheap' },
+    permissionMode: 'default',
+  })
+
+  expect(options.cliRuntimeId).toBeUndefined()
+  runtimeService.sessions.delete('default-parent')
 })
 
 test('stopping a parent stops its workers and cancels relayed pending approvals', () => {
