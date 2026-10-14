@@ -5,12 +5,10 @@
   "type": "module",
   "packageManager": "bun@1.3.14",
   "bin": {
-    "echoflow-code": "./bin/echoflow-code",
-    "claude-haha": "./bin/claude-haha"
+    "echoflow-code": "./bin/echoflow-code"
   },
   "scripts": {
     "echoflow-code": "bash ./bin/echoflow-code",
-    "claude-haha": "bash ./bin/claude-haha",
     "start": "bash ./bin/echoflow-code",
     "perf:local-index": "bun run scripts/perf/local-index-benchmark.ts",
     "perf:local-index:10k": "bun run scripts/perf/local-index-benchmark.ts --sessions 10000 --runs 20",

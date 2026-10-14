@@ -9,7 +9,7 @@ test('source CLI launcher runs through Bun without requiring Bash', async () => 
 
   try {
     const child = Bun.spawn(
-      [process.execPath, 'run', 'claude-haha', '--version'],
+      [process.execPath, 'run', 'echoflow-code', '--version'],
       {
         cwd: repoRoot,
         env: {
