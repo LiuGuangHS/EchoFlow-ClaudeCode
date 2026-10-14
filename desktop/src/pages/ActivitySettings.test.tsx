@@ -191,6 +191,9 @@ describe('ActivitySettings', () => {
     vi.useRealTimers()
   })
 
+  // Renders a year-long heatmap, so it needs more than the suite's 5s budget
+  // once the whole desktop suite runs concurrently. Per-test, so a genuinely
+  // slow regression elsewhere still fails at the default.
   it('renders summary metrics and a GitHub-style trailing heatmap without future days', async () => {
     render(<ActivitySettings />)
 
@@ -241,7 +244,7 @@ describe('ActivitySettings', () => {
     })
     expect(todayCell).toBeInTheDocument()
     expect(screen.queryByRole('gridcell', { name: /May 10, 2026/i })).not.toBeInTheDocument()
-  })
+  }, 20_000)
 
   it('shows a compact hover preview without a persistent selected-day panel', async () => {
     render(<ActivitySettings />)

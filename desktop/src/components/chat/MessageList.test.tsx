@@ -9519,7 +9519,10 @@ describe('MessageList agent card activity', () => {
     renderDispatchedAgent()
     openAgentCard()
 
-    expect(await screen.findByTestId('agent-call-activity')).toBeTruthy()
+    // The card renders a thousand tool entries, which under load can outlast
+    // testing-library's 1s default before the fetch even resolves. The budget
+    // is this wait only; the test's own timeout stays the suite default.
+    expect(await screen.findByTestId('agent-call-activity', undefined, { timeout: 5000 })).toBeTruthy()
     expect(screen.getByText(/Showing the start and end of this run/)).toBeTruthy()
   })
 })
