@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ConversationService } from './conversationService.js'
@@ -243,6 +243,24 @@ test('a leader already on the default runtime leaves workers on the server defau
 
   expect(options.cliRuntimeId).toBeUndefined()
   runtimeService.sessions.delete('default-parent')
+})
+
+test('a leader that is not in the runtime map leaves workers on the server default', async () => {
+  const { buildTeamWorkerStartOptions } = await import('./teamPlanRuntime.js')
+  // A leader whose process restarted has no entry, so there is nothing to
+  // inherit. Naming a runtime anyway would pin the worker to an executable the
+  // leader is no longer on.
+  const options = buildTeamWorkerStartOptions({
+    parentSessionId: 'no-such-session',
+    teamName: 'approved',
+    memberId: 'research',
+    name: 'researcher',
+    snapshot: { systemPrompt: 'Read only research', tools: ['Read'] },
+    runtime: { providerId: 'provider-b', modelId: 'cheap' },
+    permissionMode: 'default',
+  })
+
+  expect(options.cliRuntimeId).toBeUndefined()
 })
 
 test('stopping a parent stops its workers and cancels relayed pending approvals', () => {
