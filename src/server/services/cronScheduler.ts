@@ -512,6 +512,21 @@ export function resolveCronProjectRoot(
   return path.resolve(options.moduleDir ?? import.meta.dir, '../../..')
 }
 
+/**
+ * The installed Claude Code executable, or null when there is not a usable one.
+ *
+ * A scheduled task is not interactive: it cannot ask the user to re-pick a
+ * path, and a config that names a file which has since been deleted should not
+ * stop the task from running on the default.
+ */
+function installedRuntimePathOrNull(env: NodeJS.ProcessEnv): string | null {
+  try {
+    return resolveClaudeCodeRuntimePath(undefined, env)
+  } catch {
+    return null
+  }
+}
+
 export function buildCronCliArgs(
   baseArgs: string[],
   options: CronCliResolutionOptions = {},
@@ -520,8 +535,12 @@ export function buildCronCliArgs(
   // resolves the executable the same way: through the stored runtime config.
   // Reading CLAUDE_CLI_PATH alone left every cron task on the bundled runtime
   // even when the user had chosen an installed Claude Code.
+  //
+  // Unlike a session, a task throws here: it is not interactive, and a broken
+  // or since-deleted path should fall back to the default rather than fail a
+  // task the user scheduled for later.
   const env = options.env ?? process.env
-  const installedPath = resolveClaudeCodeRuntimePath(undefined, env)
+  const installedPath = installedRuntimePathOrNull(env)
   const launcher = resolveClaudeCliLauncher({
     cliPath: installedPath ?? options.cliPath ?? env.CLAUDE_CLI_PATH,
     execPath: options.execPath ?? process.execPath,

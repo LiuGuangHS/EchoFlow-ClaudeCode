@@ -265,6 +265,29 @@ describe('cron scheduler launcher resolution', () => {
     expect(args[0]).toBe(await fs.realpath(installedPath))
   })
 
+  it('falls back to the bundled runtime when the config names a missing executable', async () => {
+    // The stored path can outlive the file it names. Cron must not throw on
+    // that: a task scheduled for tomorrow should still run, on the default.
+    const configPath = path.join(tmpDir, 'runtime-config.json')
+    const deletedPath = path.join(tmpDir, 'deleted-claude')
+    await fs.writeFile(configPath, JSON.stringify({
+      schemaVersion: 1,
+      defaultRuntimeId: 'installed',
+      installedPath: deletedPath,
+    }))
+
+    const args = buildCronCliArgs(['--print'], {
+      appRoot: path.join(tmpDir, 'app-root'),
+      execPath: path.join(tmpDir, 'bun'),
+      cwd: path.join(tmpDir, 'missing-cwd'),
+      moduleDir: path.join(tmpDir, 'missing-module'),
+      env: { ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG: configPath },
+    })
+
+    expect(args[0]).not.toBe(deletedPath)
+    expect(args).toContain('--print')
+  })
+
   it('builds hidden CLI spawn options for scheduled task subprocesses', () => {
     const env = { CLAUDECODE: '1' }
 
