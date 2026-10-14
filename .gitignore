@@ -34,6 +34,7 @@ desktop-vitest-latest.log
 # Desktop build output
 desktop/dist/
 desktop/electron-dist/
+desktop/coverage/
 desktop/build-artifacts/
 desktop/src-tauri/binaries/
 desktop/src-tauri/target/
