@@ -1,6 +1,6 @@
 {
   "name": "EchoFlow Code",
-  "version": "0.5.6",
+  "version": "0.7.1",
   "scheme": "codemobile",
   "android": {
     "package": "com.echoflow.code.mobile",
