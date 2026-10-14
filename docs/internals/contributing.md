@@ -206,6 +206,7 @@ bun run scripts/release.ts X.Y.Z --dry   # 发布预演
 - **不要为了保持绿灯而重调既有测试的输入。** `128f75ab5` 把五个测试的 props 从 `messageCount={0}` 改成 `{1}`，而不是承认它们描述的是真实会话到不了的状态。如果一个测试只有在你改完输入后才通过，那它描述的是实现，不是行为。
 - **间歇失败先分清「测试脆」还是「有 bug」，再动手。** v0.7.1 发版前把两个偶发失败直接归为「flaky 时序」跳过，复核后发现只有一个真的脆：`downloader.test.ts` 失败率 5 次里 4 次，三条测试用「某个 mirror 被 GET 几次」断言行为，而 `orderSources` 按 HEAD 探测赢家重排，输家永远收不到请求，计数在 0 和 2 之间跳——测的其实是竞速；另一个 `sessionCollaborationService.test.ts` 断言本身是对的，只是 20s 预算在负载下不够。判定方法：先用 `-t` 单独跑看是否稳定失败，再写最小复现脚本连跑 5–8 次。改第二个测试时一度删掉墙钟断言，结果稳定失败——因为 `afterRevision=0` 恰好等于新 store 的 revision，`wait()` 真的会等满 clamp 后的 10s，那行断言是唯一能证明 clamp 生效的东西。删断言前先确认它在测什么。
 - **多源路径上不要用「某个源被请求几次」断言。** 只要实现会按探测结果重排源顺序，输家就可能一次都不被请求。要么退到单源只测重试预算和错误处理，要么像既有用例那样用 `headDelayMs` 人为固定赢家。
+- **判定「既有脆测试」要在干净树上跑，别只在本地分支跑。** 运行时管理这轮里，`officeZipGuard.test.ts`（墙钟断言 <250ms）和 `conversations.test.ts` 的 "should stream one active turn to multiple connected clients" 两次在全量 `check:server` 里失败。`-t` 单独跑都通过，看起来像自己的改动引入的；在未改动的 `main` 上检出干净 worktree 连跑，`officeZipGuard` 4 次挂 1 次、conversations 2 次挂 1 次——都是既有脆测试，与本轮无关。结论：**先用 `git worktree add /tmp/<name> main` 建干净树复现，再决定要不要动它**，否则很容易把别人的时间花在修一个本来就在抖的测试上，或者反过来把自己的真 bug 当成抖动放过。
 
 ### 覆盖率参考
 
