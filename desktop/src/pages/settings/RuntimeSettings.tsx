@@ -147,16 +147,20 @@ function ClaudeCodeRuntimeCard() {
   const t = useTranslation()
   const [runtime, setRuntime] = useState<ClaudeCodeRuntimeId>('bundled')
   const [hasInstalledRuntime, setHasInstalledRuntime] = useState(false)
+  const [installedPath, setInstalledPath] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+
+  const applyStatus = (status: { defaultRuntimeId: ClaudeCodeRuntimeId, hasInstalledRuntime: boolean, installedPath?: string | null }) => {
+    setRuntime(status.defaultRuntimeId)
+    setHasInstalledRuntime(status.hasInstalledRuntime)
+    setInstalledPath(status.installedPath ?? null)
+  }
 
   useEffect(() => {
     if (!isDesktopRuntime()) return
     void getDesktopHost().runtime.getClaudeCode()
-      .then(status => {
-        setRuntime(status.defaultRuntimeId)
-        setHasInstalledRuntime(status.hasInstalledRuntime)
-      })
+      .then(applyStatus)
       .catch(error => setError(error instanceof Error ? error.message : String(error)))
   }, [])
 
@@ -165,10 +169,7 @@ function ClaudeCodeRuntimeCard() {
     setError(null)
     try {
       const status = await getDesktopHost().runtime.chooseClaudeCode()
-      if (status) {
-        setRuntime(status.defaultRuntimeId)
-        setHasInstalledRuntime(status.hasInstalledRuntime)
-      }
+      if (status) applyStatus(status)
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -184,9 +185,7 @@ function ClaudeCodeRuntimeCard() {
     setSaving(true)
     setError(null)
     try {
-      const status = await getDesktopHost().runtime.setClaudeCode(next)
-      setRuntime(status.defaultRuntimeId)
-      setHasInstalledRuntime(status.hasInstalledRuntime)
+      applyStatus(await getDesktopHost().runtime.setClaudeCode(next))
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -207,6 +206,11 @@ function ClaudeCodeRuntimeCard() {
           {t('settings.runtime.chooseExternal')}
         </Button>
       </div>
+      {/* Names the file the installed choice runs, so a wrong or stale pick is
+          visible from this page instead of only when a session fails. */}
+      {runtime === 'installed' && installedPath && (
+        <p className="mt-2 break-all text-xs text-[var(--color-text-tertiary)]">{installedPath}</p>
+      )}
       {error && <p role="alert" className="mt-2 text-xs text-[var(--color-error)]">{error}</p>}
     </SettingsSection>
   )

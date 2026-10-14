@@ -13,8 +13,8 @@ import {
 import { ElectronServerRuntime } from './services/serverRuntime'
 import {
   claudeCodeRuntimeConfigPath,
+  claudeCodeRuntimeStatus,
   getClaudeCodeRuntimeConfig,
-  isUsableInstalledPath,
   setClaudeCodeRuntimeConfig,
   type ClaudeCodeRuntimeConfig,
 } from './services/claudeCodeRuntime'
@@ -696,25 +696,19 @@ function unsupported(name: string): never {
 }
 
 function getClaudeCodeRuntimeStatus() {
-  const config = getClaudeCodeRuntimeConfig(app.getPath('userData'))
-  return {
-    defaultRuntimeId: config.defaultRuntimeId,
-    hasInstalledRuntime: isUsableInstalledPath(config.installedPath),
-  }
+  return claudeCodeRuntimeStatus(getClaudeCodeRuntimeConfig(app.getPath('userData')))
 }
 
 function setClaudeCodeRuntime(runtimeId: ClaudeCodeRuntimeConfig['defaultRuntimeId']) {
-  const next = setClaudeCodeRuntimeConfig(
-    app.getPath('userData'),
-    {
-      ...getClaudeCodeRuntimeConfig(app.getPath('userData')),
-      defaultRuntimeId: runtimeId,
-    },
+  return claudeCodeRuntimeStatus(
+    setClaudeCodeRuntimeConfig(
+      app.getPath('userData'),
+      {
+        ...getClaudeCodeRuntimeConfig(app.getPath('userData')),
+        defaultRuntimeId: runtimeId,
+      },
+    ),
   )
-  return {
-    defaultRuntimeId: next.defaultRuntimeId,
-    hasInstalledRuntime: isUsableInstalledPath(next.installedPath),
-  }
 }
 
 function emitNotificationAction(payload: unknown) {
@@ -819,15 +813,11 @@ function registerIpcHandlers() {
     })
     if (typeof selectedPath !== 'string') return null
     const current = getClaudeCodeRuntimeConfig(app.getPath('userData'))
-    const next = setClaudeCodeRuntimeConfig(app.getPath('userData'), {
+    return claudeCodeRuntimeStatus(setClaudeCodeRuntimeConfig(app.getPath('userData'), {
       ...current,
       defaultRuntimeId: 'installed',
       installedPath: selectedPath,
-    })
-    return {
-      defaultRuntimeId: next.defaultRuntimeId,
-      hasInstalledRuntime: isUsableInstalledPath(next.installedPath),
-    }
+    }))
   })
   registerHandler(ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode, (event, payload) => {
     requireMainWindow(event)

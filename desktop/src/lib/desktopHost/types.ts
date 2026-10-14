@@ -412,6 +412,8 @@ export type RuntimeDiscoveryResult = { installations: RuntimeInstallation[] }
 export type ClaudeCodeRuntimeStatus = {
   defaultRuntimeId: ClaudeCodeRuntimeId
   hasInstalledRuntime: boolean
+  /** The executable `installed` runs, when one is configured and usable. */
+  installedPath?: string | null
 }
 
 export type DesktopPublicAccessStatus = {

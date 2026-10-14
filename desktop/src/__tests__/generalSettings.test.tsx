@@ -525,7 +525,37 @@ describe('Settings > General tab', () => {
     expect(vi.mocked(discovery.probePath)).toHaveBeenCalledWith('/opt/codex')
   })
 
-  it('renders a managed DeepSeek Node row from its own status', async () => {
+  it('shows which local executable the installed runtime points at', async () => {
+    // "Claude Code on this computer" names a file the user picked by hand.
+    // Without the path, nothing on the page says which one is in use, so a
+    // stale or wrong choice cannot be spotted from the settings alone.
+    vi.mocked(window.desktopHost!.runtime.getClaudeCode).mockResolvedValue({
+      defaultRuntimeId: 'installed',
+      hasInstalledRuntime: true,
+      installedPath: '/usr/local/bin/claude',
+    })
+    render(<Settings />)
+    fireEvent.click(screen.getByText('Runtime management'))
+
+    expect(await screen.findByText('/usr/local/bin/claude')).toBeInTheDocument()
+  })
+
+it('does not show a path while the bundled runtime is selected', async () => {
+    vi.mocked(window.desktopHost!.runtime.getClaudeCode).mockResolvedValue({
+      defaultRuntimeId: 'bundled',
+      hasInstalledRuntime: true,
+      installedPath: '/usr/local/bin/claude',
+    })
+    render(<Settings />)
+    fireEvent.click(screen.getByText('Runtime management'))
+
+    await screen.findByText('EchoFlow Agent runtime')
+    // The path is only meaningful as the answer to "what does installed run",
+    // so it appears when that choice is the active one.
+    expect(screen.queryByText('/usr/local/bin/claude')).toBeNull()
+  })
+
+it('renders a managed DeepSeek Node row from its own status', async () => {
     // The Node row sits on the same page as the EchoFlow Agent runtime card.
     // It has its own key so the two levels can be worded differently (the
     // Chinese locale reads "EchoFlow 管理" vs "EchoFlow 内置"), so this pins

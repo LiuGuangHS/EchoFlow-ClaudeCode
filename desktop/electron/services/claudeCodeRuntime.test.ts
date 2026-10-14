@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  claudeCodeRuntimeStatus,
   getClaudeCodeRuntimeConfig,
   isUsableInstalledPath,
   setClaudeCodeRuntimeConfig,
@@ -106,5 +107,34 @@ describe('Claude Code runtime config', () => {
     expect(isUsableInstalledPath(null)).toBe(false)
     expect(isUsableInstalledPath('')).toBe(false)
     expect(isUsableInstalledPath('claude')).toBe(false)
+  })
+
+  it('names the installed executable only while it stays usable', () => {
+    // The runtime page shows this path so a wrong pick is visible there. It
+    // must not survive the file being removed, or the page would name an
+    // executable the boolean right above it says is absent.
+    const userDataPath = tempDir()
+    const executablePath = path.join(userDataPath, process.platform === 'win32' ? 'claude.exe' : 'claude')
+    fs.writeFileSync(executablePath, '')
+    fs.chmodSync(executablePath, 0o755)
+    const config: ClaudeCodeRuntimeConfig = {
+      schemaVersion: 1,
+      defaultRuntimeId: 'installed',
+      installedPath: executablePath,
+    }
+
+    expect(claudeCodeRuntimeStatus(config)).toEqual({
+      defaultRuntimeId: 'installed',
+      hasInstalledRuntime: true,
+      installedPath: executablePath,
+    })
+
+    fs.rmSync(executablePath)
+
+    expect(claudeCodeRuntimeStatus(config)).toEqual({
+      defaultRuntimeId: 'installed',
+      hasInstalledRuntime: false,
+      installedPath: null,
+    })
   })
 })
