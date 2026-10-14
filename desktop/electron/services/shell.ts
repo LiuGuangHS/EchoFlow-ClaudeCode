@@ -50,7 +50,7 @@ export function expandTildePath(target: string, platform: NodeJS.Platform = proc
 }
 
 /** Resolves a user-supplied path to an existing file or directory on this machine. */
-function resolveExistingPath(target: string): string {
+function resolveExistingPath(target: string): { realPath: string, isDirectory: boolean } {
   const filePath = expandTildePath(
     target.startsWith('file://') ? fileURLToPath(target) : target,
   )
@@ -62,12 +62,12 @@ function resolveExistingPath(target: string): string {
   if (!stat.isFile() && !stat.isDirectory()) {
     throw new Error('System file paths must point to a file or directory')
   }
-  return realPath
+  return { realPath, isDirectory: stat.isDirectory() }
 }
 
 export function normalizeOpenPath(target: string): string {
-  const realPath = resolveExistingPath(target)
-  if (isBlockedExecutablePath(realPath, statSync(realPath).isDirectory())) {
+  const { realPath, isDirectory } = resolveExistingPath(target)
+  if (isBlockedExecutablePath(realPath, isDirectory)) {
     throw new Error('System file paths must not point to executable apps or scripts')
   }
   return realPath
@@ -117,7 +117,7 @@ export async function showItemInFolder(
   target: string,
   shellApi?: { showItemInFolder(fullPath: string): void },
 ): Promise<void> {
-  const realPath = resolveExistingPath(target)
+  const { realPath } = resolveExistingPath(target)
   const api = shellApi ?? (await import('electron')).shell
   api.showItemInFolder(realPath)
 }
