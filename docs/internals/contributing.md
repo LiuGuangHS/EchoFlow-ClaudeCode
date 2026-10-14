@@ -115,6 +115,31 @@ artifacts/coverage/<timestamp>/coverage-report.json
 
 PR 描述里请贴出你实际运行的命令和 summary。`quality:pr` / `quality:verify` 仍然保留给习惯显式质量命名的用户，但推荐文档和 AI prompt 都使用 `bun run verify`。
 
+### 轻量验证（维护者日常发版）
+
+`bun run verify` 会跑完整 lane 矩阵，一次要 20 分钟以上。维护者日常发版**不要默认跑它**，按改动面挑窄命令即可。v0.7.1 发版时实际用这一组，覆盖了全部改动面：
+
+```bash
+bun run check:policy              # 388 tests：policy、dead-imports、module-graph、contract 字节预算
+bun run check:server              # 6560 tests：src/ 全量
+bun run check:desktop             # lint + 8280 vitest + vite build
+bun run check:electron            # electron tsc + 663 tests + bundle
+bun run check:provider-contract   # provider/proxy/auth 契约
+bun run check:chat-contract       # desktop transport、store、首回合
+bun run check:persistence-upgrade # 持久化迁移与旧 fixture
+bun run check:agent-flow          # 无模型的 agent 端到端 8 场景
+bun run check:mobile              # Kotlin shell contract
+bun run check:adapters            # IM sidecar
+bun run check:docs                # site build + 内容检查
+bun run check:coverage            # 覆盖率与 changed-line 门槛
+bun run upstream:audit            # 发版面：未解决冲突、release note 版本/品牌
+bun run scripts/release.ts X.Y.Z --dry   # 发布预演
+```
+
+`check:native`（完整 sidecar 构建 + 打包 + package smoke）最慢，仅在触碰 `native/`、`desktop/electron` 打包配置或发版脚本时跑。真正的 Release workflow 会在 6 个平台上重新构建，本机不必重复。
+
+跑 `check:server` 时它与动态端口测试不可与其他 server lane 并发，串行执行。
+
 覆盖率门禁按本次改动的源码区域运行 root、desktop、adapters 对应套件，并执行 baseline ratchet、报告目标差距和检查变更行覆盖率；未改动区域不重复跑。没有可识别的源码区域变更，或覆盖率策略及依赖清单变化时会运行全部区域。当前 baseline 记录在 `scripts/quality-gate/coverage-baseline.json`，CI 会优先对比 base branch 的 baseline，改动区域的覆盖率不得低于允许窗口。`coverage-baseline.json` 或 `coverage-thresholds.json` 变更必须由维护者加 `allow-coverage-baseline-change` 后才能合并。Quarantine 只用于维护者的 baseline/release 追踪，不得隐藏确定性的 provider/chat 契约测试；当前普通 PR gate 不依赖 quarantine 才能通过。
 
 ## AI Coding Agent 修复循环
@@ -179,6 +204,8 @@ PR 描述里请贴出你实际运行的命令和 summary。`quality:pr` / `quali
 - **丢弃与保留两个方向都要覆盖。** replay 防护只测了"replay 必须被丢弃"，没测"真实重复必须保留"，于是上线后把真实回复丢掉了。
 - **测连接点，不要只测两端。** server、store、component 各自都有 `runtime_config_applied` 的测试，但没有任何一个跨越三者；删掉连接它们的 `ChatInput.tsx` 中的 `refreshNonce`，314 个测试依然全绿。
 - **不要为了保持绿灯而重调既有测试的输入。** `128f75ab5` 把五个测试的 props 从 `messageCount={0}` 改成 `{1}`，而不是承认它们描述的是真实会话到不了的状态。如果一个测试只有在你改完输入后才通过，那它描述的是实现，不是行为。
+- **间歇失败先分清「测试脆」还是「有 bug」，再动手。** v0.7.1 发版前把两个偶发失败直接归为「flaky 时序」跳过，复核后发现只有一个真的脆：`downloader.test.ts` 失败率 5 次里 4 次，三条测试用「某个 mirror 被 GET 几次」断言行为，而 `orderSources` 按 HEAD 探测赢家重排，输家永远收不到请求，计数在 0 和 2 之间跳——测的其实是竞速；另一个 `sessionCollaborationService.test.ts` 断言本身是对的，只是 20s 预算在负载下不够。判定方法：先用 `-t` 单独跑看是否稳定失败，再写最小复现脚本连跑 5–8 次。改第二个测试时一度删掉墙钟断言，结果稳定失败——因为 `afterRevision=0` 恰好等于新 store 的 revision，`wait()` 真的会等满 clamp 后的 10s，那行断言是唯一能证明 clamp 生效的东西。删断言前先确认它在测什么。
+- **多源路径上不要用「某个源被请求几次」断言。** 只要实现会按探测结果重排源顺序，输家就可能一次都不被请求。要么退到单源只测重试预算和错误处理，要么像既有用例那样用 `headDelayMs` 人为固定赢家。
 
 ### 覆盖率参考
 
