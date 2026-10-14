@@ -5,10 +5,19 @@
  * 验证请求头中的 Authorization: Bearer <key> 与 .env 中的 ANTHROPIC_API_KEY 是否匹配。
  */
 
+import { timingSafeEqual } from 'node:crypto'
+
 import { H5AccessService } from '../services/h5AccessService.js'
 import { isLocalAccessAuthorized } from '../localAccessAuth.js'
 
 type AuthResult = { valid: boolean; error?: string }
+
+function apiKeysEqual(supplied: string, expected: string): boolean {
+  const suppliedBytes = Buffer.from(supplied)
+  const expectedBytes = Buffer.from(expected)
+  return suppliedBytes.length === expectedBytes.length &&
+    timingSafeEqual(suppliedBytes, expectedBytes)
+}
 
 function parseBearerToken(authHeader: string | null): AuthResult & { token?: string } {
   if (!authHeader) {
@@ -35,7 +44,7 @@ export function validateAuth(req: Request): AuthResult {
     return { valid: false, error: 'Server ANTHROPIC_API_KEY not configured' }
   }
 
-  if (parsedAuth.token !== apiKey) {
+  if (!apiKeysEqual(parsedAuth.token, apiKey)) {
     return { valid: false, error: 'Invalid API key' }
   }
 

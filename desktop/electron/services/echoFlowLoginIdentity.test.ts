@@ -62,4 +62,54 @@ describe('EchoFlow login identity reader', () => {
     await expect(result).rejects.toThrow('EchoFlow login identity unavailable')
     reader.dispose()
   })
+
+  // The live site appends the Cloudflare Turnstile token as a query parameter
+  // (turnstile_check is on in /api/status, and the server rejects a login POST
+  // without it), so matching the URL by exact string never fires.
+  it('matches the login request when the site appends a turnstile query parameter', async () => {
+    const debuggerApi = new FakeDebugger()
+    const reader = createEchoFlowLoginIdentityReader(debuggerApi, 100)
+    const result = reader.read()
+    debuggerApi.requestWillBeSent('request-4', 'https://api.echoflowai.cc/api/user/login?turnstile=0x4AAAA')
+    debuggerApi.responseReceived('request-4', 'https://api.echoflowai.cc/api/user/login?turnstile=0x4AAAA')
+    debuggerApi.loadingFinished('request-4')
+
+    await expect(result).resolves.toEqual({ userId: '106452', username: 'site-user' })
+    reader.dispose()
+  })
+
+  it('still ignores a same-origin path that only looks like login', async () => {
+    const debuggerApi = new FakeDebugger()
+    const reader = createEchoFlowLoginIdentityReader(debuggerApi, 10)
+    const result = reader.read()
+    debuggerApi.requestWillBeSent('request-5', 'https://api.echoflowai.cc/api/user/login-evil')
+    debuggerApi.responseReceived('request-5', 'https://api.echoflowai.cc/api/user/login-evil')
+    debuggerApi.loadingFinished('request-5')
+    await expect(result).rejects.toThrow('EchoFlow login identity unavailable')
+    reader.dispose()
+  })
+
+  // Path must match exactly — a prefix or startsWith check would let these
+  // same-origin endpoints through and read their bodies as the login response.
+  it('ignores a longer path that has the login path as its prefix', async () => {
+    const debuggerApi = new FakeDebugger()
+    const reader = createEchoFlowLoginIdentityReader(debuggerApi, 10)
+    const result = reader.read()
+    debuggerApi.requestWillBeSent('request-6', 'https://api.echoflowai.cc/api/user/login-history')
+    debuggerApi.responseReceived('request-6', 'https://api.echoflowai.cc/api/user/login-history')
+    debuggerApi.loadingFinished('request-6')
+    await expect(result).rejects.toThrow('EchoFlow login identity unavailable')
+    reader.dispose()
+  })
+
+  it('ignores the same path on a different origin', async () => {
+    const debuggerApi = new FakeDebugger()
+    const reader = createEchoFlowLoginIdentityReader(debuggerApi, 10)
+    const result = reader.read()
+    debuggerApi.requestWillBeSent('request-7', 'https://api.echoflowai.cc.evil.test/api/user/login')
+    debuggerApi.responseReceived('request-7', 'https://api.echoflowai.cc.evil.test/api/user/login')
+    debuggerApi.loadingFinished('request-7')
+    await expect(result).rejects.toThrow('EchoFlow login identity unavailable')
+    reader.dispose()
+  })
 })

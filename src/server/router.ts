@@ -55,11 +55,11 @@ async function handleApiRequestWithoutPerformance(req: Request, url: URL, contex
   if (context.remoteBrowser && /^\/api\/echoflow\/site-session(?:\/|$)/u.test(url.pathname)) {
     return Response.json({ error: 'desktop_only' }, { status: 403 })
   }
-  if (!context.remoteBrowser) return routeApiRequest(req, url, { projectProviderSecrets: false })
+  if (!context.remoteBrowser) return routeApiRequest(req, url, { projectProviderSecrets: false }, context)
   const parts = url.pathname.split('/').filter(Boolean)
   const isProvider = parts[1] === 'providers'
   const isSettings = parts[1] === 'settings'
-  if (!isProvider && !isSettings) return routeApiRequest(req, url)
+  if (!isProvider && !isSettings) return routeApiRequest(req, url, {}, context)
   if ((isProvider && !remoteProviderRouteAllowed(parts, req.method)) || (isSettings && !remoteSettingsRouteAllowed(parts, req.method))) {
     return Response.json({ error: 'Desktop-only capability' }, { status: 403 })
   }
@@ -91,7 +91,7 @@ async function handleApiRequestWithoutPerformance(req: Request, url: URL, contex
       }
       req = new Request(req.url, { method: req.method, headers: req.headers, body: JSON.stringify(input) })
     }
-    const response = await routeApiRequest(req, url)
+    const response = await routeApiRequest(req, url, {}, context)
     if (!response.ok) return response
     const body = await response.json() as Record<string, unknown>
     if (isSettings && req.method === 'GET') return Response.json(projectRemoteSettings(body))
@@ -109,6 +109,7 @@ async function routeApiRequest(
   req: Request,
   url: URL,
   options: { projectProviderSecrets?: boolean } = {},
+  context: ApiRequestContext = {},
 ): Promise<Response> {
   const path = url.pathname
   const segments = path.split('/').filter(Boolean) // ['api', 'sessions', ...]

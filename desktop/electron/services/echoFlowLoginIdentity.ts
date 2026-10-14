@@ -23,6 +23,17 @@ export interface EchoFlowLoginDebugger {
 const LOGIN_URL = 'https://api.echoflowai.cc/api/user/login'
 const MAX_LOGIN_RESPONSE_BYTES = 64 * 1024
 
+/** The site appends the Turnstile token as a query parameter, so compare the parsed path. */
+function isLoginUrl(value: unknown): boolean {
+  if (typeof value !== 'string') return false
+  try {
+    const url = new URL(value)
+    return url.origin === new URL(LOGIN_URL).origin && url.pathname === new URL(LOGIN_URL).pathname
+  } catch {
+    return false
+  }
+}
+
 /** Reads only the identity fields from the site's login response using Electron's host-side CDP. */
 export function createEchoFlowLoginIdentityReader(
   debuggerApi: EchoFlowLoginDebugger,
@@ -39,7 +50,7 @@ export function createEchoFlowLoginIdentityReader(
     const params = rawParams as Record<string, unknown>
     if (method === 'Network.requestWillBeSent') {
       const request = params.request as Record<string, unknown> | undefined
-      if (typeof params.requestId === 'string' && request?.method === 'POST' && request.url === LOGIN_URL) {
+      if (typeof params.requestId === 'string' && request?.method === 'POST' && isLoginUrl(request.url)) {
         requests.add(params.requestId)
       }
       return
@@ -49,7 +60,8 @@ export function createEchoFlowLoginIdentityReader(
       if (typeof params.requestId === 'string'
         && requests.has(params.requestId)
         && (params.type === 'XHR' || params.type === 'Fetch')
-        && response?.url === LOGIN_URL
+        && response !== undefined
+        && isLoginUrl(response.url)
         && typeof response.status === 'number'
         && response.status >= 200 && response.status < 300) {
         successfulResponses.add(params.requestId)

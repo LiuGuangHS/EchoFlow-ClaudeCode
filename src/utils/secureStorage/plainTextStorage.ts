@@ -54,9 +54,12 @@ export const plainTextStorage = {
         }
       }
 
+      // mode rather than a post-write chmod: between the two the file is
+      // briefly world-readable per umask, and it holds OAuth tokens.
       writeFileSync_DEPRECATED(storagePath, jsonStringify(data), {
         encoding: 'utf8',
         flush: false,
+        mode: 0o600,
       })
       chmodSync(storagePath, 0o600)
       return {

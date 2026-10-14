@@ -3,6 +3,7 @@ import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { handleEchoFlowApi } from '../api/echoflow.js'
+import { handleApiRequest } from '../router.js'
 import { ProviderService } from '../services/providerService.js'
 import { EchoFlowApiService } from '../services/echoflowApiService.js'
 
@@ -674,6 +675,41 @@ describe('EchoFlow site session API', () => {
       else process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN = oldBridge
       if (oldLocal === undefined) delete process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
       else process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = oldLocal
+    }
+  })
+
+  // The desktop bootstraps through the real router, not straight into the
+  // handler: routeApiRequest used to lose `context` on the way in and every
+  // site-session request answered 500 instead of reaching this handler.
+  test('bootstraps a site session through the router for the Electron bridge', async () => {
+    const originalFetch = globalThis.fetch
+    const oldBridge = process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN
+    process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN = 'electron-only-bridge-secret'
+    globalThis.fetch = mock(async () => new Response(JSON.stringify({
+      success: true,
+      data: { id: 106452, username: 'site-user', quota: 1_000_000 },
+    }), { headers: { 'Content-Type': 'application/json' } })) as typeof fetch
+
+    try {
+      const url = new URL('http://localhost:3456/api/echoflow/site-session')
+      const req = new Request(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-echoflow-site-session-bridge': 'electron-only-bridge-secret',
+        },
+        body: JSON.stringify({ cookie: 'session=private-site-cookie', userId: '106452' }),
+      })
+      const response = await handleApiRequest(req, url)
+      const body = await response.json() as { account: { userId: string } }
+
+      expect(response.status).toBe(200)
+      expect(body.account.userId).toBe('106452')
+      expect(JSON.stringify(body)).not.toContain('private-site-cookie')
+    } finally {
+      globalThis.fetch = originalFetch
+      if (oldBridge === undefined) delete process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN
+      else process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN = oldBridge
     }
   })
 })

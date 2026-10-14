@@ -163,6 +163,17 @@ describe('remote browser API routing', () => {
     }
   })
 
+  // Regression: routeApiRequest reached `context` through the enclosing scope
+  // instead of a parameter, so every /api/echoflow request threw
+  // ReferenceError and returned 500 instead of routing.
+  test('routes nested API resources instead of throwing on the request context', async () => {
+    expect((await request('/api/echoflow/nonexistent')).status).toBe(404)
+  })
+
+  test('routes nested API resources for local desktop callers too', async () => {
+    expect((await request('/api/echoflow/nonexistent', 'GET', undefined, false)).status).toBe(404)
+  })
+
   test('forwards safe mutation results and preserves downstream validation errors', async () => {
     expect((await request(`/api/providers/${provider.id}/activate`, 'POST', {})).status).toBe(200)
     expect(ProviderService.prototype.activateProvider).toHaveBeenCalledWith(provider.id)
