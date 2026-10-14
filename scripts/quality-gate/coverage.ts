@@ -981,7 +981,11 @@ export async function runCoverageGate(options: {
         '--coverage.reporter=json-summary',
         '--coverage.reporter=lcov',
         `--coverage.reportsDirectory=${join(outputDir, 'desktop')}`,
-        '--testTimeout=20000',
+        // Instrumentation slows these suites 5-10x: the diagnostics and
+        // MessageList files run 0.5s plain and 4-40s under coverage, so a
+        // 20s budget fails tests that are not actually broken. The
+        // non-coverage `check:desktop` run keeps vitest's 5s default.
+        '--testTimeout=60000',
       ],
       join(rootDir, 'desktop'),
       join(outputDir, 'desktop'),
