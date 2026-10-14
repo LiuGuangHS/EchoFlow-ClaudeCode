@@ -4,6 +4,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   getClaudeCodeRuntimeConfig,
+  isUsableInstalledPath,
   setClaudeCodeRuntimeConfig,
   type ClaudeCodeRuntimeConfig,
 } from './claudeCodeRuntime'
@@ -78,5 +79,32 @@ describe('Claude Code runtime config', () => {
     })).toThrow()
 
     expect(getClaudeCodeRuntimeConfig(userDataPath)).toEqual(original)
+  })
+
+  // The stored path outlives the executable: the user may uninstall or rename
+  // Claude Code after choosing it. Reporting it as installed leaves External
+  // selectable and only fails once a session starts.
+  it('reports a stored installed path as unusable once the executable is gone', () => {
+    const userDataPath = tempDir()
+    const executablePath = path.join(userDataPath, process.platform === 'win32' ? 'claude.exe' : 'claude')
+    fs.writeFileSync(executablePath, '')
+    fs.chmodSync(executablePath, 0o755)
+    setClaudeCodeRuntimeConfig(userDataPath, {
+      schemaVersion: 1,
+      defaultRuntimeId: 'installed',
+      installedPath: executablePath,
+    })
+
+    expect(isUsableInstalledPath(getClaudeCodeRuntimeConfig(userDataPath).installedPath)).toBe(true)
+
+    fs.rmSync(executablePath)
+
+    expect(isUsableInstalledPath(getClaudeCodeRuntimeConfig(userDataPath).installedPath)).toBe(false)
+  })
+
+  it('reports a null or malformed installed path as unusable', () => {
+    expect(isUsableInstalledPath(null)).toBe(false)
+    expect(isUsableInstalledPath('')).toBe(false)
+    expect(isUsableInstalledPath('claude')).toBe(false)
   })
 })

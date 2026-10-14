@@ -14,6 +14,7 @@ import { ElectronServerRuntime } from './services/serverRuntime'
 import {
   claudeCodeRuntimeConfigPath,
   getClaudeCodeRuntimeConfig,
+  isUsableInstalledPath,
   setClaudeCodeRuntimeConfig,
   type ClaudeCodeRuntimeConfig,
 } from './services/claudeCodeRuntime'
@@ -694,7 +695,7 @@ function getClaudeCodeRuntimeStatus() {
   const config = getClaudeCodeRuntimeConfig(app.getPath('userData'))
   return {
     defaultRuntimeId: config.defaultRuntimeId,
-    hasInstalledRuntime: config.installedPath !== null,
+    hasInstalledRuntime: isUsableInstalledPath(config.installedPath),
   }
 }
 
@@ -708,7 +709,7 @@ function setClaudeCodeRuntime(runtimeId: ClaudeCodeRuntimeConfig['defaultRuntime
   )
   return {
     defaultRuntimeId: next.defaultRuntimeId,
-    hasInstalledRuntime: next.installedPath !== null,
+    hasInstalledRuntime: isUsableInstalledPath(next.installedPath),
   }
 }
 
@@ -821,7 +822,7 @@ function registerIpcHandlers() {
     })
     return {
       defaultRuntimeId: next.defaultRuntimeId,
-      hasInstalledRuntime: next.installedPath !== null,
+      hasInstalledRuntime: isUsableInstalledPath(next.installedPath),
     }
   })
   registerHandler(ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode, (event, payload) => {
