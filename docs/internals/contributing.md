@@ -209,6 +209,7 @@ bun run scripts/release.ts X.Y.Z --dry   # 发布预演
 - **判定「既有脆测试」要在干净树上跑，别只在本地分支跑。** 运行时管理这轮里，`officeZipGuard.test.ts`（墙钟断言 <250ms）和 `conversations.test.ts` 的 "should stream one active turn to multiple connected clients" 两次在全量 `check:server` 里失败。`-t` 单独跑都通过，看起来像自己的改动引入的；在未改动的 `main` 上检出干净 worktree 连跑，`officeZipGuard` 4 次挂 1 次、conversations 2 次挂 1 次——都是既有脆测试，与本轮无关。结论：**先用 `git worktree add /tmp/<name> main` 建干净树复现，再决定要不要动它**，否则很容易把别人的时间花在修一个本来就在抖的测试上，或者反过来把自己的真 bug 当成抖动放过。
 - **改掉一个抖动断言前，先确认它到底在测什么。** `officeZipGuard` 那条 <250ms 的墙钟断言，本意是表达「没有解压就被拒绝」。把守卫里那行提前抛出去改成 `if (false)` 之后，这条断言**照样通过**——它测的是机器有多快，不是行为，coverage 插桩一慢就红。真正的断言是拒绝原因 `entry-too-large`（而不是先累加再报的 `too-large`），它本来就够。删掉墙钟前必须做变异测试：把被测分支改成不生效，测试还绿就说明它什么都没测。
 - **「等固定时长」和「等这件事做完」是两回事。** 运行时管理这轮清掉的三条抖动断言都是同一类：断言本身是对的，红的原因是它等的方式。`MessageList` 渲染一千条 tool 记录后靠 `findByTestId` 的 1s 默认值等（改成给这次等待单独预算）；`ActivitySettings` 渲染一整年热力图，套件默认 5s 在并发下不够（改成单条 20s）；`TeamsDialog` 的 `tick()` 是 20ms 定时器，假装「等 handler 提交完」（改成把事件循环排空）。**改等待不是改断言**，但也不是无脑放宽：放宽前先在干净树上复现，确认单跑是绿的。
+- **等到了 A 就断言 A 和 B —— 除非 B 一定先于 A 到达。** `conversations.test.ts` 里拒绝一轮用户输入那条，服务端是先发 `error` 再发 `status: idle`，测试 `waitUntil` 等到 error 就直接断言 idle，于是并发下偶发失败。两帧是按顺序过 socket 的、不是原子到达的。**凡是断言里出现「等待条件」没覆盖的消息，都要把它写进等待条件**，否则这是一次必然的竞态。
 
 ### 覆盖率参考
 
