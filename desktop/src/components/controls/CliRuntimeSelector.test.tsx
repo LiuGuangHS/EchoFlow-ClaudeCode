@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import '@testing-library/jest-dom'
 import { CliRuntimeSelector } from './CliRuntimeSelector'
 
 describe('CliRuntimeSelector', () => {
@@ -34,5 +35,30 @@ describe('CliRuntimeSelector', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /CLI runtime/i }))
     expect(screen.queryByRole('option', { name: 'External' })).toBeNull()
+  })
+
+  it('shows the effective runtime while a failed switch is on screen', () => {
+    // The server rolls a failed switch back and re-acks the runtime that is
+    // actually running. Showing the rejected request here would leave the
+    // selector on a choice the session is not using.
+    render(
+      <CliRuntimeSelector
+        effectiveRuntime="bundled"
+        requestedRuntime="installed"
+        status="failed"
+        hasInstalledRuntime
+        onChange={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /CLI runtime/i }))
+    expect(screen.getByRole('option', { name: 'EchoFlow Managed' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+    expect(screen.getByRole('option', { name: 'External' })).toHaveAttribute(
+      'aria-selected',
+      'false',
+    )
   })
 })

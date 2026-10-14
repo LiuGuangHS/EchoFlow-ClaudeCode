@@ -21,7 +21,12 @@ export function CliRuntimeSelector({
   onChange,
 }: CliRuntimeSelectorProps) {
   const t = useTranslation()
-  const value = requestedRuntime ?? effectiveRuntime ?? 'bundled'
+  // A failed switch is rolled back server-side, which re-acks the runtime that
+  // is actually running. The store keeps the rejected request so a stale ack
+  // cannot confirm it, so the selector has to show the effective runtime while
+  // the failure is on screen — otherwise the dropdown sits on a choice that is
+  // not what the session is running.
+  const value = (status === 'failed' ? effectiveRuntime : undefined) ?? requestedRuntime ?? effectiveRuntime ?? 'bundled'
   const items = [
     { value: 'bundled' as const, label: t('settings.runtime.managed') },
     ...(hasInstalledRuntime ? [{ value: 'installed' as const, label: t('settings.runtime.external') }] : []),
