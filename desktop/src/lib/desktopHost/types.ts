@@ -403,6 +403,8 @@ export type RuntimeInstallation = {
   path?: string
   distribution?: string
   error?: 'probe-failed' | 'probe-timeout' | 'invalid-version'
+  /** Epoch ms of this probe. A version with no timestamp reads as unverified. */
+  probedAt?: number
 }
 export type RuntimeDiscoveryResult = { installations: RuntimeInstallation[] }
 
@@ -474,6 +476,8 @@ export type DesktopHost = {
   shell: {
     open(target: string): Promise<void>
     openPath(path: string): Promise<void>
+    /** Reveal a file in its folder without opening it. */
+    showItemInFolder(path: string): Promise<void>
   }
   trace?: {
     openWindow(sessionId: string): Promise<void>

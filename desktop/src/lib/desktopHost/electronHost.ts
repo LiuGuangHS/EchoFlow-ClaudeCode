@@ -135,6 +135,7 @@ export function createElectronHost(bridge: ElectronHostBridge): DesktopHost {
     shell: {
       open: target => invoke(ELECTRON_IPC_CHANNELS.shellOpen, target),
       openPath: path => invoke(ELECTRON_IPC_CHANNELS.shellOpenPath, path),
+      showItemInFolder: path => invoke(ELECTRON_IPC_CHANNELS.shellShowItemInFolder, path),
     },
     trace: {
       openWindow: sessionId => invoke(ELECTRON_IPC_CHANNELS.traceOpenWindow, sessionId),

@@ -44,6 +44,32 @@ async function finish(child: FakeChild, output: string, code = 0) {
 afterEach(() => vi.restoreAllMocks())
 
 describe('runtime discovery', () => {
+  it('stamps every entry of one pass with the same probe time', async () => {
+    // A user reads "found" next to a version; without a shared timestamp the
+    // list cannot say how fresh any of it is.
+    const { deps, children } = makeDeps()
+    const pending = discoverRuntimes({ probedAt: 1_700_000_000_000 }, deps)
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.all(children.map((child, index) => finish(child, index ? 'codex 1.2.3\n' : 'Claude Code 2.0.1\n')))
+    const { installations } = await pending
+    expect(installations).toHaveLength(3)
+    expect(installations.map(entry => entry.probedAt)).toEqual([
+      1_700_000_000_000,
+      1_700_000_000_000,
+      1_700_000_000_000,
+    ])
+  })
+
+  it('stamps a not-found entry so an absent runtime is still dated', async () => {
+    const { deps } = makeDeps({ exists: () => false })
+    const { installations } = await discoverRuntimes({ probedAt: 42 }, deps)
+    expect(installations.find(entry => entry.productId === 'claude-code')).toMatchObject({
+      status: 'not-found',
+      probedAt: 42,
+    })
+  })
+
   it('reports EchoFlow bundled separately and discovers known native CLIs with versions', async () => {
     const { deps, children } = makeDeps()
     const pending = discoverRuntimes({}, deps)
@@ -121,6 +147,18 @@ describe('runtime discovery', () => {
     await expect(pending).resolves.toMatchObject({ productId: 'codex', source: 'custom-path', version: '9.8.7', status: 'available' })
   })
 
+  it('dates a manually selected executable like a discovered one', async () => {
+    // The page appends this entry to the same list, so an undated pick would be
+    // the only row unable to say when it was last checked.
+    const { deps, children } = makeDeps({ exists: () => true })
+    const pending = probeRuntimePath('/custom/codex-cli', deps)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    await finish(children[0]!, 'codex 9.8.7\n')
+    const result = await pending
+    expect(result.probedAt).toBeGreaterThan(0)
+    expect(result.source).toBe('custom-path')
+  })
+
   it('rejects an unknown executable name without running it', async () => {
     const { deps } = makeDeps({ exists: () => true })
     await expect(probeRuntimePath('/custom/agent-tool', deps)).rejects.toThrow(/Claude Code or Codex/)
@@ -171,9 +209,10 @@ it('rejects control characters and non-executable selected paths before spawning
 describe('WSL runtime discovery', () => {
   it('does not run WSL commands outside Windows', async () => {
     const { deps } = makeDeps({ platform: 'linux', exists: () => false })
-    await expect(discoverRuntimes({ includeWsl: true }, deps)).resolves.toMatchObject({
-      installations: expect.arrayContaining([{ productId: 'wsl', source: 'wsl', status: 'not-applicable' }]),
-    })
+    const { installations } = await discoverRuntimes({ includeWsl: true }, deps)
+    expect(installations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ productId: 'wsl', source: 'wsl', status: 'not-applicable' }),
+    ]))
     expect(deps.spawn).not.toHaveBeenCalled()
   })
 
@@ -207,12 +246,15 @@ describe('WSL runtime discovery', () => {
       child.stderr.end()
       child.emit('close', 0, null)
     }
-    await expect(pending).resolves.toMatchObject({ installations: expect.arrayContaining([
-      { productId: 'claude-code', source: 'wsl', distribution: 'Ubuntu', status: 'not-found' },
-      { productId: 'codex', source: 'wsl', distribution: 'Ubuntu', status: 'not-found' },
-      { productId: 'claude-code', source: 'wsl', distribution: 'Debian', status: 'not-found' },
-      { productId: 'codex', source: 'wsl', distribution: 'Debian', status: 'not-found' },
-    ]) })
+    // `objectContaining` per entry: entries now carry a probe timestamp, and
+    // `toMatchObject` would treat that extra key as a mismatch.
+    const { installations } = await pending
+    expect(installations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ productId: 'claude-code', source: 'wsl', distribution: 'Ubuntu', status: 'not-found' }),
+      expect.objectContaining({ productId: 'codex', source: 'wsl', distribution: 'Ubuntu', status: 'not-found' }),
+      expect.objectContaining({ productId: 'claude-code', source: 'wsl', distribution: 'Debian', status: 'not-found' }),
+      expect.objectContaining({ productId: 'codex', source: 'wsl', distribution: 'Debian', status: 'not-found' }),
+    ]))
   })
 
   it('decodes UTF-16 WSL distro lists, including BOMs and empty output', () => {

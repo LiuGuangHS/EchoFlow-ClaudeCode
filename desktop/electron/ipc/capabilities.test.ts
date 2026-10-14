@@ -238,6 +238,21 @@ describe('Electron IPC capabilities', () => {
     expect(isElectronIpcChannelAllowedForPetWindow(ELECTRON_IPC_CHANNELS.runtimeDiscoveryProbePath)).toBe(false)
   })
 
+  it('keeps the reveal-in-folder channel to a plain string and away from pets', () => {
+    // Revealing is the read-only counterpart to openPath: it must take a path
+    // and nothing else, and the transparent pet window must not be able to
+    // drive the file manager.
+    const channel = ELECTRON_IPC_CHANNELS.shellShowItemInFolder
+    expect(validateElectronIpcPayload(channel, '/usr/local/bin/claude')).toBe(true)
+    expect(validateElectronIpcPayload(channel, 'C:\\Tools\\claude.exe')).toBe(true)
+    // `''` is a string, so it passes here and is refused downstream by the
+    // absolute-path check — same contract as the other shell path channels.
+    for (const invalid of [undefined, 42, { path: '/usr/local/bin/claude' }, ['/usr/local/bin/claude']]) {
+      expect(validateElectronIpcPayload(channel, invalid)).toBe(false)
+    }
+    expect(isElectronIpcChannelAllowedForPetWindow(channel)).toBe(false)
+  })
+
   it('validates Claude Code runtime IPC without accepting executable paths', () => {
     expect(validateElectronIpcPayload(
       ELECTRON_IPC_CHANNELS.runtimeSetClaudeCode,

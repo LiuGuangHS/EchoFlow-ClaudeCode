@@ -34,6 +34,7 @@ describe('desktop host contract', () => {
     await expect(browserHost.runtimeDiscovery.probePath('/opt/codex')).rejects.toThrow('desktop app runtime')
     await expect(browserHost.dialogs.open({ directory: true })).rejects.toThrow('desktop app runtime')
     await expect(browserHost.shell.openPath('/tmp/report.md')).rejects.toThrow('desktop app runtime')
+    await expect(browserHost.shell.showItemInFolder('/tmp/report.md')).rejects.toThrow('desktop app runtime')
     await expect(browserHost.terminal.spawn({ cwd: '/tmp', cols: 80, rows: 24 })).rejects.toThrow(
       'desktop app runtime',
     )

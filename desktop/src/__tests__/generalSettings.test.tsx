@@ -215,6 +215,8 @@ function installElectronDesktopHost() {
     shell: {
       ...browserHost.shell,
       open: vi.fn().mockResolvedValue(undefined),
+      openPath: vi.fn().mockResolvedValue(undefined),
+      showItemInFolder: vi.fn().mockResolvedValue(undefined),
     },
     appMode: {
       ...browserHost.appMode,
@@ -515,6 +517,53 @@ describe('Settings > General tab', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add executable' }))
     expect(await screen.findByText(/1\.2\.3/)).toBeInTheDocument()
     expect(vi.mocked(discovery.probePath)).toHaveBeenCalledWith('/opt/codex')
+  })
+
+  it('dates each discovered entry so a stale version is visible', async () => {
+    const discovery = window.desktopHost!.runtimeDiscovery
+    vi.mocked(discovery.list).mockResolvedValue({ installations: [
+      { productId: 'echoflow-agent', source: 'bundled', status: 'available', version: '0.5.7', probedAt: Date.now() },
+      { productId: 'claude-code', source: 'current-system', status: 'not-found' },
+    ] })
+    render(<Settings />)
+    fireEvent.click(screen.getByText('Runtime management'))
+
+    expect(await screen.findByText('Checked just now')).toBeInTheDocument()
+    // An entry with no timestamp must not claim to have been checked.
+    expect(screen.getByText('Never checked')).toBeInTheDocument()
+  })
+
+  it('reveals a discovered executable in its folder instead of launching it', async () => {
+    const discovery = window.desktopHost!.runtimeDiscovery
+    vi.mocked(discovery.list).mockResolvedValue({ installations: [
+      { productId: 'claude-code', source: 'current-system', status: 'available', version: '2.0.1', path: '/usr/local/bin/claude', probedAt: Date.now() },
+    ] })
+    render(<Settings />)
+    fireEvent.click(screen.getByText('Runtime management'))
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Show in folder' }))
+    await waitFor(() => expect(window.desktopHost!.shell.showItemInFolder).toHaveBeenCalledWith('/usr/local/bin/claude'))
+    // Revealing must never reach the launch path.
+    expect(window.desktopHost!.shell.openPath).not.toHaveBeenCalled()
+  })
+
+  it('does not offer to reveal a WSL path in the native file manager', async () => {
+    const discovery = window.desktopHost!.runtimeDiscovery
+    vi.mocked(discovery.list).mockImplementation(async options => ({ installations: options?.includeWsl
+      ? [
+          { productId: 'echoflow-agent', source: 'bundled', status: 'available', version: '0.5.7' },
+          { productId: 'claude-code', source: 'wsl', distribution: 'Ubuntu', status: 'available', path: '/usr/bin/claude', version: '2.0.1' },
+        ]
+      : [{ productId: 'echoflow-agent', source: 'bundled', status: 'available', version: '0.5.7' }] }))
+    render(<Settings />)
+    fireEvent.click(screen.getByText('Runtime management'))
+    await screen.findByText('EchoFlow Agent')
+    fireEvent.click(screen.getByRole('button', { name: 'Check WSL' }))
+
+    await screen.findByText(/Ubuntu/)
+    // A Linux path belongs to another filesystem; the native file manager
+    // cannot open it and must not be handed the string.
+    expect(screen.queryByRole('button', { name: 'Show in folder' })).toBeNull()
   })
 
   it('shows WebFetch preflight toggle enabled by default', () => {

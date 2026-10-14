@@ -23,7 +23,7 @@ import { discoverRuntimes, probeRuntimePath } from './services/runtimeDiscovery'
 import { DeepLinkHandler, extractDeepLinkFromArgs } from './services/deepLinkHandler'
 import { appendHostDiagnostic, electronHostDiagnosticsFile, sanitizeHostDiagnostic } from './services/sidecarManager'
 import { openDialog, saveDialog } from './services/dialogs'
-import { openExternalUrl, openSystemPath, openSystemSettingsUrl } from './services/shell'
+import { openExternalUrl, openSystemPath, openSystemSettingsUrl, showItemInFolder } from './services/shell'
 import {
   notificationPermissionState,
   requestNotificationPermission,
@@ -336,6 +336,9 @@ function getEchoFlowLoginSession(): EchoFlowLoginSession {
         height: 720,
         show: true,
         autoHideMenuBar: true,
+        // The site login page is a heavy SPA bundle; without a background the
+        // window sits white and reads as hung while it downloads.
+        backgroundColor: resolveStartupWindowBackground(),
         ...(parent ? { parent, modal: true } : {}),
         webPreferences: {
           partition,
@@ -344,6 +347,7 @@ function getEchoFlowLoginSession(): EchoFlowLoginSession {
           sandbox: true,
         },
       })
+
       const identityReader = createEchoFlowLoginIdentityReader(loginWindow.webContents.debugger as never)
       loginWindow.webContents.once('destroyed', () => identityReader.dispose())
       return Object.assign(loginWindow, {
@@ -834,6 +838,7 @@ function registerIpcHandlers() {
   registerHandler(ELECTRON_IPC_CHANNELS.clipboardWriteText, (_event, payload) => clipboard.writeText(String(payload)))
   registerHandler(ELECTRON_IPC_CHANNELS.shellOpen, (_event, payload) => openExternalUrl(String(payload)))
   registerHandler(ELECTRON_IPC_CHANNELS.shellOpenPath, (_event, payload) => openSystemPath(String(payload)))
+  registerHandler(ELECTRON_IPC_CHANNELS.shellShowItemInFolder, (_event, payload) => showItemInFolder(String(payload)))
   registerHandler(ELECTRON_IPC_CHANNELS.traceOpenWindow, (_event, payload) => openTraceWindow(String(payload)))
   registerHandler(ELECTRON_IPC_CHANNELS.petsList, () => listCustomPets())
   registerHandler(ELECTRON_IPC_CHANNELS.petsCreateFromImage, async (event, payload) => {

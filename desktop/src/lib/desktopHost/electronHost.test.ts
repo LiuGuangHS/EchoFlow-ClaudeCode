@@ -143,15 +143,27 @@ describe('electron desktop host', () => {
 
     await host.shell.open('https://example.com')
     await host.shell.openPath('/tmp/report.md')
+    await host.shell.showItemInFolder('/tmp/report.md')
     await host.dialogs.open({ directory: true, multiple: false, title: 'Choose folder' })
 
     expect(invoke).toHaveBeenNthCalledWith(1, ELECTRON_IPC_CHANNELS.shellOpen, 'https://example.com')
     expect(invoke).toHaveBeenNthCalledWith(2, ELECTRON_IPC_CHANNELS.shellOpenPath, '/tmp/report.md')
-    expect(invoke).toHaveBeenNthCalledWith(3, ELECTRON_IPC_CHANNELS.dialogOpen, {
+    expect(invoke).toHaveBeenNthCalledWith(3, ELECTRON_IPC_CHANNELS.shellShowItemInFolder, '/tmp/report.md')
+    expect(invoke).toHaveBeenNthCalledWith(4, ELECTRON_IPC_CHANNELS.dialogOpen, {
       directory: true,
       multiple: false,
       title: 'Choose folder',
     })
+  })
+
+  it('rejects a non-string reveal target before it reaches Electron IPC', async () => {
+    const invoke = vi.fn()
+    const host = createElectronHost({ invoke, subscribe: vi.fn() })
+
+    await expect(host.shell.showItemInFolder({ path: '/tmp/report.md' } as unknown as string)).rejects.toThrow(
+      'Invalid Electron IPC payload',
+    )
+    expect(invoke).not.toHaveBeenCalled()
   })
 
   it('routes clipboard reads and writes through narrow IPC channels', async () => {

@@ -88,6 +88,25 @@ function RuntimeDiscoveryCard() {
           : t('settings.runtime.discovery.probeFailed')
 
   const installations = pathResult ? [...result.installations, pathResult] : result.installations
+
+  const probedLabel = (installation: RuntimeInstallation) => {
+    if (!installation.probedAt) return t('settings.runtime.discovery.neverChecked')
+    const minutes = Math.floor((Date.now() - installation.probedAt) / 60_000)
+    return minutes < 1
+      ? t('settings.runtime.discovery.checkedJustNow')
+      : t('settings.runtime.discovery.checkedAgo', { minutes: String(minutes) })
+  }
+
+  const revealPath = async (installation: RuntimeInstallation) => {
+    if (!installation.path) return
+    setPathError(null)
+    try {
+      await host.shell.showItemInFolder(installation.path)
+    } catch (cause) {
+      setPathError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+
   return (
     <SettingsSection title={t('settings.runtime.discovery.title')} description={t('settings.runtime.discovery.description')}>
       <div className="flex flex-wrap gap-2">
@@ -106,6 +125,17 @@ function RuntimeDiscoveryCard() {
             <span className="text-xs text-[var(--color-text-secondary)]">{sourceName(installation)} · {statusName(installation)}{installation.version ? ` · ${installation.version}` : ''}</span>
           </div>
           {installation.path && <p className="mt-1 break-all text-xs text-[var(--color-text-tertiary)]">{installation.path}</p>}
+          <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+            <span className="text-[11px] text-[var(--color-text-tertiary)]">{probedLabel(installation)}</span>
+            {/* Only a local, current-system path can be revealed on this OS; a
+                WSL path is inside another filesystem and must not be passed to
+                the native file manager. */}
+            {installation.path && installation.source !== 'wsl' && (
+              <Button size="sm" variant="ghost" onClick={() => void revealPath(installation)}>
+                {t('settings.runtime.discovery.showInFolder')}
+              </Button>
+            )}
+          </div>
         </li>)}
       </ul>
       <p className="mt-3 text-xs leading-5 text-[var(--color-text-tertiary)]">{t('settings.runtime.discovery.notExecution')}</p>

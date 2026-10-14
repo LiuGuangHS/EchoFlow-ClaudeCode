@@ -49,7 +49,8 @@ export function expandTildePath(target: string, platform: NodeJS.Platform = proc
   return target
 }
 
-export function normalizeOpenPath(target: string): string {
+/** Resolves a user-supplied path to an existing file or directory on this machine. */
+function resolveExistingPath(target: string): string {
   const filePath = expandTildePath(
     target.startsWith('file://') ? fileURLToPath(target) : target,
   )
@@ -61,7 +62,12 @@ export function normalizeOpenPath(target: string): string {
   if (!stat.isFile() && !stat.isDirectory()) {
     throw new Error('System file paths must point to a file or directory')
   }
-  if (isBlockedExecutablePath(realPath, stat.isDirectory())) {
+  return realPath
+}
+
+export function normalizeOpenPath(target: string): string {
+  const realPath = resolveExistingPath(target)
+  if (isBlockedExecutablePath(realPath, statSync(realPath).isDirectory())) {
     throw new Error('System file paths must not point to executable apps or scripts')
   }
   return realPath
@@ -97,4 +103,21 @@ export async function openSystemPath(target: string): Promise<void> {
   const { shell } = await import('electron')
   const error = await shell.openPath(normalizeOpenPath(target))
   if (error) throw new Error(error)
+}
+
+/**
+ * Reveal a file in its containing folder without opening it.
+ *
+ * `openPath` blocks executables because it would run them; revealing only
+ * selects the entry in the file manager, so the executable rule does not apply
+ * here. It is what the runtime page needs: its entries are all executables, and
+ * naming one must never launch it.
+ */
+export async function showItemInFolder(
+  target: string,
+  shellApi?: { showItemInFolder(fullPath: string): void },
+): Promise<void> {
+  const realPath = resolveExistingPath(target)
+  const api = shellApi ?? (await import('electron')).shell
+  api.showItemInFolder(realPath)
 }

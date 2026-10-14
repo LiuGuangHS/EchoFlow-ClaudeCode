@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { chmodSync, mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { expandTildePath, normalizeExternalUrl, normalizeOpenPath, normalizeSystemSettingsUrl } from './shell'
+import { expandTildePath, normalizeExternalUrl, normalizeOpenPath, normalizeSystemSettingsUrl, showItemInFolder } from './shell'
 
 describe('Electron shell service', () => {
   it('allows only explicit external URL schemes', () => {
@@ -34,6 +34,39 @@ describe('Electron shell service', () => {
       rmSync(rootDir, { recursive: true, force: true })
     }
     expect(() => normalizeOpenPath('relative/report.md')).toThrow('absolute')
+  })
+
+  it('reveals an executable, unlike openPath which refuses to launch one', async () => {
+    // Runtime management lists executable paths; revealing one is exactly what
+    // its "show in folder" asks for. openPath blocks them because it would run
+    // them — revealing only selects the entry, so the same rule must not apply.
+    const rootDir = mkdtempSync(join(tmpdir(), 'electron-shell-reveal-'))
+    const scriptPath = join(rootDir, 'claude')
+    const shown: string[] = []
+    const shellApi = { showItemInFolder: (target: string) => { shown.push(target) } }
+    try {
+      writeFileSync(scriptPath, '#!/bin/sh\n')
+      chmodSync(scriptPath, 0o755)
+      expect(() => normalizeOpenPath(scriptPath)).toThrow('executable')
+
+      await showItemInFolder(scriptPath, shellApi)
+      expect(shown).toEqual([realpathSync(scriptPath)])
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  it('reveals only paths that exist on this machine', async () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'electron-shell-reveal-missing-'))
+    const shown: string[] = []
+    const shellApi = { showItemInFolder: (target: string) => { shown.push(target) } }
+    try {
+      await expect(showItemInFolder(join(rootDir, 'gone'), shellApi)).rejects.toThrow()
+      await expect(showItemInFolder('relative/claude', shellApi)).rejects.toThrow('absolute')
+      expect(shown).toHaveLength(0)
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true })
+    }
   })
 
   it('expands tilde paths per platform', () => {

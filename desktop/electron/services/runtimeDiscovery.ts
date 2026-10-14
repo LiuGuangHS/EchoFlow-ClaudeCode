@@ -87,6 +87,7 @@ function runVersionProbe(
   productId: Exclude<RuntimeProductId, 'echoflow-agent' | 'wsl'>,
   executable: string,
   deps: RuntimeDiscoveryDeps,
+  probedAt: number,
 ): Promise<RuntimeInstallation> {
   return new Promise(resolve => {
     let child: ProbeChild
@@ -98,7 +99,7 @@ function runVersionProbe(
         env: safeProbeEnv(deps.env),
       })
     } catch {
-      resolve({ productId, source: 'current-system', path: executable, status: 'error', error: 'probe-failed' })
+      resolve({ productId, source: 'current-system', path: executable, status: 'error', error: 'probe-failed', probedAt })
       return
     }
 
@@ -116,28 +117,28 @@ function runVersionProbe(
       outputBytes += Buffer.byteLength(text)
       if (outputBytes > MAX_OUTPUT_BYTES) {
         child.kill()
-        finish({ productId, source: 'current-system', path: executable, status: 'error', error: 'probe-failed' })
+        finish({ productId, source: 'current-system', path: executable, status: 'error', error: 'probe-failed', probedAt })
         return
       }
       output += text
     }
     const timer = setTimeout(() => {
       child.kill()
-      finish({ productId, source: 'current-system', path: executable, status: 'error', error: 'probe-timeout' })
+      finish({ productId, source: 'current-system', path: executable, status: 'error', error: 'probe-timeout', probedAt })
     }, deps.timeoutMs)
 
     child.stdout?.on('data', collect)
     child.stderr?.on('data', collect)
-    child.on('error', () => finish({ productId, source: 'current-system', path: executable, status: 'error', error: 'probe-failed' }))
+    child.on('error', () => finish({ productId, source: 'current-system', path: executable, status: 'error', error: 'probe-failed', probedAt }))
     child.on('close', code => {
       if (code !== 0) {
-        finish({ productId, source: 'current-system', path: executable, status: 'error', error: 'probe-failed' })
+        finish({ productId, source: 'current-system', path: executable, status: 'error', error: 'probe-failed', probedAt })
         return
       }
       const version = parseVersion(output, productId)
       finish(version
-        ? { productId, source: 'current-system', path: executable, version, status: 'available' }
-        : { productId, source: 'current-system', path: executable, status: 'error', error: 'invalid-version' })
+        ? { productId, source: 'current-system', path: executable, version, status: 'available', probedAt }
+        : { productId, source: 'current-system', path: executable, status: 'error', error: 'invalid-version', probedAt })
     })
   })
 }
@@ -170,25 +171,28 @@ export async function probeRuntimePath(
     ? name === 'claude' || name.startsWith('claude-')
     : name === 'codex' || name.startsWith('codex-'))
   if (!product) throw new Error('Choose a Claude Code or Codex executable')
-  const result = await runVersionProbe(product.id, executable, deps)
+  const result = await runVersionProbe(product.id, executable, deps, Date.now())
   return { ...result, source: 'custom-path' }
 }
 
 export async function discoverRuntimes(
-  options: { includeWsl?: boolean; bundledVersion?: string } = {},
+  options: { includeWsl?: boolean; bundledVersion?: string; probedAt?: number } = {},
   deps: RuntimeDiscoveryDeps = defaultDeps,
 ): Promise<RuntimeDiscoveryResult> {
+  // Stamped by the caller so one discovery pass reports a single, consistent
+  // time across every entry rather than time skewing per probe.
+  const probedAt = options.probedAt ?? Date.now()
   const installations: RuntimeInstallation[] = [
-    { productId: 'echoflow-agent', source: 'bundled', status: 'available', ...(options.bundledVersion ? { version: options.bundledVersion } : {}) },
+    { productId: 'echoflow-agent', source: 'bundled', status: 'available', probedAt, ...(options.bundledVersion ? { version: options.bundledVersion } : {}) },
   ]
   const discovered = await Promise.all(PRODUCTS.map(async product => {
     const executable = findExecutable(product.command, deps)
     return executable
-      ? runVersionProbe(product.id, executable, deps)
-      : { productId: product.id, source: 'current-system' as const, status: 'not-found' as const }
+      ? runVersionProbe(product.id, executable, deps, probedAt)
+      : { productId: product.id, source: 'current-system' as const, status: 'not-found' as const, probedAt }
   }))
   installations.push(...discovered)
-  if (options.includeWsl) installations.push(...await discoverWsl(deps))
+  if (options.includeWsl) installations.push(...await discoverWsl(deps, probedAt))
   return { installations }
 }
 
@@ -246,27 +250,27 @@ function runWslCommand(args: string[], deps: RuntimeDiscoveryDeps): Promise<{ co
   })
 }
 
-async function discoverWsl(deps: RuntimeDiscoveryDeps): Promise<RuntimeInstallation[]> {
-  if (deps.platform !== 'win32') return [{ productId: 'wsl', source: 'wsl', status: 'not-applicable' }]
+async function discoverWsl(deps: RuntimeDiscoveryDeps, probedAt: number): Promise<RuntimeInstallation[]> {
+  if (deps.platform !== 'win32') return [{ productId: 'wsl', source: 'wsl', status: 'not-applicable', probedAt }]
   const list = await runWslCommand(['--list', '--quiet'], deps)
-  if (list.error || list.code !== 0) return [{ productId: 'wsl', source: 'wsl', status: 'error', error: 'probe-failed' }]
+  if (list.error || list.code !== 0) return [{ productId: 'wsl', source: 'wsl', status: 'error', error: 'probe-failed', probedAt }]
   const distributions = parseWslDistributions(list.output)
-  if (!distributions.length) return [{ productId: 'wsl', source: 'wsl', status: 'not-found' }]
+  if (!distributions.length) return [{ productId: 'wsl', source: 'wsl', status: 'not-found', probedAt }]
   const script = 'for tool in claude codex; do p=$(command -v "$tool" 2>/dev/null) || continue; v=$("$p" --version 2>/dev/null | head -n 1); printf "%s\t%s\t%s\n" "$tool" "$p" "$v"; done'
   const results = await Promise.all(distributions.map(async distribution => {
     const response = await runWslCommand(['-d', distribution, '--exec', 'sh', '-c', script], deps)
     if (response.error || response.code !== 0) {
-      return PRODUCTS.map(product => ({ productId: product.id, source: 'wsl' as const, distribution, status: 'error' as const, error: 'probe-failed' as const }))
+      return PRODUCTS.map(product => ({ productId: product.id, source: 'wsl' as const, distribution, status: 'error' as const, error: 'probe-failed' as const, probedAt }))
     }
     const lines = decodeWslOutput(response.output).split(/\r?\n/)
     return PRODUCTS.map(product => {
       const line = lines.find(entry => entry.startsWith(`${product.command}\t`))
-      if (!line) return { productId: product.id, source: 'wsl' as const, distribution, status: 'not-found' as const }
+      if (!line) return { productId: product.id, source: 'wsl' as const, distribution, status: 'not-found' as const, probedAt }
       const [, runtimePath, versionText] = line.split('\t')
       const version = versionText ? parseVersion(versionText, product.id) : null
       return version && runtimePath
-        ? { productId: product.id, source: 'wsl' as const, distribution, path: runtimePath, version, status: 'available' as const }
-        : { productId: product.id, source: 'wsl' as const, distribution, status: 'error' as const, error: 'invalid-version' as const }
+        ? { productId: product.id, source: 'wsl' as const, distribution, path: runtimePath, version, status: 'available' as const, probedAt }
+        : { productId: product.id, source: 'wsl' as const, distribution, status: 'error' as const, error: 'invalid-version' as const, probedAt }
     })
   }))
   return results.flat()

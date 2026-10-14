@@ -139,6 +139,9 @@ export const browserHost: DesktopHost = {
     async openPath() {
       unsupported('Opening system file paths')
     },
+    async showItemInFolder() {
+      unsupported('Showing a file in its folder')
+    },
   },
   trace: {
     async openWindow(sessionId) {
