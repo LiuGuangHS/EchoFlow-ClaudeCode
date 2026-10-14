@@ -50,7 +50,7 @@ Each entry shows its source, version, location, and when it was last checked —
 
 DeepSeek Harness keeps its own entry for starting, stopping, and updating. It is a standalone app today and does not accept EchoFlow sessions or Team tasks.
 
-The **EchoFlow Agent runtime** card chooses which executable starts new sessions: **EchoFlow Managed** uses the EchoFlow Agent shipped with the app, and **Claude Code on this computer** uses an executable you installed. That is a choice between two products, not two configurations of one. **Claude Code on this computer** is disabled when this machine has no usable install; choose **Choose a local Claude Code executable** to point at one manually. If that file is later uninstalled or renamed, the option returns to disabled and you must pick a new one. This setting does not affect sessions already running, and a session can switch separately.
+The **EchoFlow Agent runtime** card chooses which executable starts new sessions: **EchoFlow Managed** uses the EchoFlow Agent shipped with the app, and **Claude Code on this computer** uses an executable you installed. That is a choice between two products, not two configurations of one. **Claude Code on this computer** is disabled when this machine has no usable install; choose **Choose a local Claude Code executable** to point at one manually, and the card then shows its full path so you can confirm you picked the right file. If that file is later uninstalled or renamed, the option returns to disabled and you must pick a new one. This setting does not affect sessions already running, and a session can switch separately.
 
 ### For more involved agent workflows
 
