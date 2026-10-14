@@ -274,7 +274,7 @@ function DeepSeekHarnessCard() {
       </div>
       <dl className="mt-4 grid gap-1 text-sm text-[var(--color-text-secondary)] sm:grid-cols-2">
         <div>{t('settings.runtime.deepseek.version')}: {status.version ?? t('settings.runtime.deepseek.versionPending')}</div>
-        <div>{t('settings.runtime.deepseek.node')}: {status.nodeVersion ?? (unavailable ? t('settings.runtime.deepseek.nodeUnavailable') : t('settings.runtime.deepseek.nodeChecking'))}{status.nodeSource === 'managed' ? `（${t('settings.runtime.managed')}）` : status.nodeSource === 'system' ? `（${t('settings.runtime.deepseek.system')}）` : ''}</div>
+        <div>{t('settings.runtime.deepseek.node')}: {status.nodeVersion ?? (unavailable ? t('settings.runtime.deepseek.nodeUnavailable') : t('settings.runtime.deepseek.nodeChecking'))}{status.nodeSource === 'managed' ? `（${t('settings.runtime.nodeManaged')}）` : status.nodeSource === 'system' ? `（${t('settings.runtime.deepseek.system')}）` : ''}</div>
       </dl>
       {(running || status.state === 'stopped') && <Button className="mt-4" variant="secondary" loading={loading} onClick={() => void run(() => host.deepSeekHarness.update())}>{running ? t('settings.runtime.deepseek.updateRestart') : t('settings.runtime.deepseek.updateStart')}</Button>}
       {status.error && <p role="alert" className="mt-4 text-sm text-[var(--color-error)]">{status.error}</p>}

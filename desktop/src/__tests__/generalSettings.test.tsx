@@ -223,6 +223,12 @@ function installElectronDesktopHost() {
       prepareRestart: vi.fn(() => tauriCoreMock.invoke('prepare_for_app_mode_restart')),
       restart: vi.fn(() => tauriProcessMock.relaunch()),
     },
+    deepSeekHarness: {
+      ...browserHost.deepSeekHarness,
+      getStatus: vi.fn().mockResolvedValue({
+        state: 'unavailable', version: null, url: null, error: null, nodeVersion: null, nodeSource: null,
+      }),
+    },
   }
 }
 
@@ -517,6 +523,46 @@ describe('Settings > General tab', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add executable' }))
     expect(await screen.findByText(/1\.2\.3/)).toBeInTheDocument()
     expect(vi.mocked(discovery.probePath)).toHaveBeenCalledWith('/opt/codex')
+  })
+
+  it('renders a managed DeepSeek Node row from its own status', async () => {
+    // The Node row sits on the same page as the EchoFlow Agent runtime card.
+    // It has its own key so the two levels can be worded differently (the
+    // Chinese locale reads "EchoFlow 管理" vs "EchoFlow 内置"), so this pins
+    // that the row reads the Node source rather than the runtime choice.
+    vi.mocked(window.desktopHost!.deepSeekHarness.getStatus).mockResolvedValue({
+      state: 'stopped',
+      version: '0.2.0',
+      url: null,
+      error: null,
+      nodeVersion: 'v22.11.0',
+      nodeSource: 'managed',
+    })
+    render(<Settings />)
+    fireEvent.click(screen.getByText('Runtime management'))
+
+    expect(await screen.findByText(/v22\.11\.0/)).toBeInTheDocument()
+    // Both rows render "EchoFlow Managed" in English; the Node one is the
+    // text inside the dl, so scope the assertion to it.
+    const nodeRow = screen.getByText(/v22\.11\.0/).closest('div') as HTMLElement
+    expect(nodeRow).toHaveTextContent('EchoFlow Managed')
+    expect(nodeRow).not.toHaveTextContent('System')
+  })
+
+  it('shows a system Node source distinctly from a managed one', async () => {
+    vi.mocked(window.desktopHost!.deepSeekHarness.getStatus).mockResolvedValue({
+      state: 'stopped',
+      version: '0.2.0',
+      url: null,
+      error: null,
+      nodeVersion: 'v20.0.0',
+      nodeSource: 'system',
+    })
+    render(<Settings />)
+    fireEvent.click(screen.getByText('Runtime management'))
+
+    expect(await screen.findByText(/v20\.0\.0/)).toBeInTheDocument()
+    expect(screen.getByText(/System/)).toBeInTheDocument()
   })
 
   it('dates each discovered entry so a stale version is visible', async () => {
