@@ -535,10 +535,6 @@ export function buildCronCliArgs(
   // resolves the executable the same way: through the stored runtime config.
   // Reading CLAUDE_CLI_PATH alone left every cron task on the bundled runtime
   // even when the user had chosen an installed Claude Code.
-  //
-  // Unlike a session, a task throws here: it is not interactive, and a broken
-  // or since-deleted path should fall back to the default rather than fail a
-  // task the user scheduled for later.
   const env = options.env ?? process.env
   const installedPath = installedRuntimePathOrNull(env)
   const launcher = resolveClaudeCliLauncher({
@@ -550,7 +546,7 @@ export function buildCronCliArgs(
     return buildClaudeCliArgs(
       launcher,
       baseArgs,
-      options.appRoot ?? process.env.CLAUDE_APP_ROOT,
+      options.appRoot ?? env.CLAUDE_APP_ROOT,
     )
   }
 
