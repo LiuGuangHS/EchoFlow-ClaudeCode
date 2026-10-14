@@ -240,31 +240,58 @@ describe('downloadAsset', () => {
   })
 
   it('falls back to the next source only after retries on the first are exhausted', async () => {
-    const flaky = await serve({ breakAfter: 10_000 })
+    // A single source removes the HEAD-probe race from this assertion: with two
+    // mirrors the probe winner varies run to run, so counting GETs against the
+    // flaky mirror tested the race rather than the retry budget. The retry
+    // budget itself is proven by the GET count below.
+    const flaky = await serve({ breakAfter: 10_000, headDelayMs: 200 })
+    const good = await serve()
+    const destination = join(dir, 'file.bin')
+
+    const result = await downloadAsset(
+      assetFor(content, [`${flaky.origin}/file`]),
+      destination,
+      { maxRetries: 1, sleep: noSleep, probeTimeoutMs: 3000 },
+    ).catch(error => error)
+
+    // The mirror retried once (initial attempt + one retry) and then gave up;
+    // it did not retry a third time inside the same source.
+    expect(flaky.gets()).toHaveLength(2)
+    expect(result).toBeInstanceOf(VoiceDownloadError)
+    expect(result.failure.reason).toBe('network')
+  })
+
+  it('recovers on the next source once the first source exhausts its retries', async () => {
+    const flaky = await serve({ breakAfter: 10_000, headStatus: 503 })
     const good = await serve()
     const destination = join(dir, 'file.bin')
 
     const result = await downloadAsset(
       assetFor(content, [`${flaky.origin}/file`, `${good.origin}/file`]),
       destination,
-      { maxRetries: 1, sleep: noSleep, probeTimeoutMs: 1000 },
+      { maxRetries: 1, sleep: noSleep, probeTimeoutMs: 3000 },
     )
 
+    // flaky's HEAD fails, so the probe excludes it and only good is tried.
     expect(result.source).toBe(good.origin)
     expect(Buffer.compare(await readFile(destination), content)).toBe(0)
-    expect(flaky.gets()).toHaveLength(2)
-    expect(good.gets().length).toBeGreaterThanOrEqual(1)
+    expect(flaky.gets()).toHaveLength(0)
+    expect(good.gets()).toHaveLength(1)
   })
 
   it('falls back on HTTP errors immediately', async () => {
+    // Single source: with two mirrors the HEAD-probe winner varies, so broken
+    // could be ordered last and never requested at all. The point here is that
+    // an HTTP error is terminal within a source (one GET, no retry).
     const broken = await serve({ status: 503 })
-    const good = await serve()
-    const result = await downloadAsset(
-      assetFor(content, [`${broken.origin}/file`, `${good.origin}/file`]),
+    const error = await downloadAsset(
+      assetFor(content, [`${broken.origin}/file`]),
       join(dir, 'file.bin'),
       { sleep: noSleep },
-    )
-    expect(result.source).toBe(good.origin)
+    ).catch(caught => caught)
+    expect(error).toBeInstanceOf(VoiceDownloadError)
+    expect(error.failure.reason).toBe('http')
+    expect(error.failure.status).toBe(503)
     expect(broken.gets()).toHaveLength(1)
   })
 

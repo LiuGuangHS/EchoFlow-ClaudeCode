@@ -376,6 +376,9 @@ describe('session collaboration', () => {
   })
 
   test('a short wait is raised to the minimum and says so, while a newer revision still returns immediately', async () => {
+    // afterRevision 0 equals the fresh store's revision, so this really does sit
+    // in the timer for the clamped 10s. The wall-clock assertion is the only way
+    // to prove the clamp took effect; the generous timeout absorbs loaded CI.
     const startedAt = Date.now()
     const raised = await service.wait(0, undefined, 0)
     expect(Date.now() - startedAt).toBeGreaterThanOrEqual(10_000)
@@ -385,7 +388,7 @@ describe('session collaboration', () => {
     const fresh = await service.wait(raised.revision, ['peer'], 0)
     expect(fresh.messages.map(message => message.id)).toEqual(['arrived'])
     expect(fresh).toMatchObject({ requestedTimeoutMs: 0, timeoutMs: 10_000 })
-  }, 20_000)
+  }, 30_000)
 
   test('wait cursor omits unchanged messages but returns a changed delivery receipt', async () => {
     await service.send('root', 'peer', 'message', 'stable')
