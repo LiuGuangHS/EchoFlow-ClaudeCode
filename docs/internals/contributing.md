@@ -208,7 +208,7 @@ bun run scripts/release.ts X.Y.Z --dry   # 发布预演
 - **多源路径上不要用「某个源被请求几次」断言。** 只要实现会按探测结果重排源顺序，输家就可能一次都不被请求。要么退到单源只测重试预算和错误处理，要么像既有用例那样用 `headDelayMs` 人为固定赢家。
 - **判定「既有脆测试」要在干净树上跑，别只在本地分支跑。** 运行时管理这轮里，`officeZipGuard.test.ts`（墙钟断言 <250ms）和 `conversations.test.ts` 的 "should stream one active turn to multiple connected clients" 两次在全量 `check:server` 里失败。`-t` 单独跑都通过，看起来像自己的改动引入的；在未改动的 `main` 上检出干净 worktree 连跑，`officeZipGuard` 4 次挂 1 次、conversations 2 次挂 1 次——都是既有脆测试，与本轮无关。结论：**先用 `git worktree add /tmp/<name> main` 建干净树复现，再决定要不要动它**，否则很容易把别人的时间花在修一个本来就在抖的测试上，或者反过来把自己的真 bug 当成抖动放过。
 - **改掉一个抖动断言前，先确认它到底在测什么。** `officeZipGuard` 那条 <250ms 的墙钟断言，本意是表达「没有解压就被拒绝」。把守卫里那行提前抛出去改成 `if (false)` 之后，这条断言**照样通过**——它测的是机器有多快，不是行为，coverage 插桩一慢就红。真正的断言是拒绝原因 `entry-too-large`（而不是先累加再报的 `too-large`），它本来就够。删掉墙钟前必须做变异测试：把被测分支改成不生效，测试还绿就说明它什么都没测。
-- **全量 desktop 套件里 `Test timed out in 5000ms` 的两个已知户。** `MessageList.test.tsx` 的 "trims an oversized run and says so" 和 `ActivitySettings.test.tsx` 的 "renders summary metrics and a GitHub-style trailing heatmap without future days"，全量跑时偶发超时，`-t` 单独跑或按文件跑都绿（224/224）。原因和 coverage 那条一样是并发下耗时被拉长，`check:desktop` 用 vitest 默认的 5s 预算所以更容易触发。不要因为它们红了就去调断言——先按上一条的办法在干净树上复现。
+- **「等固定时长」和「等这件事做完」是两回事。** 运行时管理这轮清掉的三条抖动断言都是同一类：断言本身是对的，红的原因是它等的方式。`MessageList` 渲染一千条 tool 记录后靠 `findByTestId` 的 1s 默认值等（改成给这次等待单独预算）；`ActivitySettings` 渲染一整年热力图，套件默认 5s 在并发下不够（改成单条 20s）；`TeamsDialog` 的 `tick()` 是 20ms 定时器，假装「等 handler 提交完」（改成把事件循环排空）。**改等待不是改断言**，但也不是无脑放宽：放宽前先在干净树上复现，确认单跑是绿的。
 
 ### 覆盖率参考
 
