@@ -6418,6 +6418,10 @@ describe('WebSocket Chat Integration', () => {
         await waitUntil(() => hasTurnOutcome(since), 'rejected runtime user turn settled')
         expect(sentContents).toEqual(['warm original runtime'])
         expect(messages.slice(since)).toContainEqual(expect.objectContaining({ type: 'error', code: 'USER_TURN_FAILED' }))
+        // The handler sends the error and then `status: idle`, but they cross the
+        // socket in that order, not atomically — waiting only on the error can
+        // assert on `idle` before it arrives.
+        await waitUntil(() => messages.slice(since).some(message => message.type === 'status' && message.state === 'idle'), 'rejected runtime reported idle')
         expect(messages.slice(since)).toContainEqual({ type: 'status', state: 'idle' })
         expect(conversationService.hasSession(sessionId)).toBe(true)
       }
