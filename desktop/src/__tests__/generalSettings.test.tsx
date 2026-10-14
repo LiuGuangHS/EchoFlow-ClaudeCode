@@ -472,11 +472,11 @@ describe('Settings > General tab', () => {
     render(<Settings />)
 
     fireEvent.click(screen.getByText('Runtime management'))
-    await screen.findByText('Choose which Claude Code executable starts new sessions.')
-    fireEvent.click(screen.getByRole('button', { name: 'Choose external runtime' }))
+    await screen.findByText('Choose whether new sessions use the EchoFlow built-in Agent or Claude Code installed on this computer.')
+    fireEvent.click(screen.getByRole('button', { name: 'Choose a local Claude Code executable' }))
 
     await waitFor(() => expect(chooseClaudeCode).toHaveBeenCalledTimes(1))
-    expect(screen.getByRole('button', { name: 'External' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Claude Code on this computer' })).toBeEnabled()
   })
 
   it('discovers installed runtimes and displays source and version without enabling session switching', async () => {

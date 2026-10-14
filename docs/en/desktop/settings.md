@@ -42,6 +42,16 @@ General covers four areas: appearance and replies, how the agent works, network 
 - **Message sending:** defaults to Enter to send and Shift+Enter for a newline. If you write long prompts, choose `Ctrl/Cmd+Enter` to send.
 - **Default editor:** chooses which detected local editor appears as the default under a file's **Open with** menu.
 
+### Runtime management
+
+The **Runtime management** page checks the EchoFlow Agent bundled with the app, plus the Claude Code and Codex it can find on this computer through the usual command paths. Windows users can also check WSL distributions on request, or pick a Claude Code or Codex executable by hand. Checking only reads version information: it does not install or update third-party tools, and EchoFlow does not switch your sessions to them because of it.
+
+Each entry shows its source, version, location, and when it was last checked — a version and a "Found" label are the result of a probe, not a standing state. A local path can be shown in its folder, which opens the containing folder and never runs the program. **Found means it exists on this machine; it does not mean EchoFlow can run sessions or Team tasks with it.** The WSL check is user-triggered and reports the distribution and its in-Linux path; a Linux path belongs to another filesystem, so those entries are not offered to the native file manager. WSL installs are managed separately from a Windows install. The SDK is an internal development dependency of EchoFlow, so you do not install or manage it yourself.
+
+DeepSeek Harness keeps its own entry for starting, stopping, and updating. It is a standalone app today and does not accept EchoFlow sessions or Team tasks.
+
+The **EchoFlow Agent runtime** card chooses which executable starts new sessions: **EchoFlow Managed** uses the EchoFlow Agent shipped with the app, and **Claude Code on this computer** uses an executable you installed. That is a choice between two products, not two configurations of one. **Claude Code on this computer** is disabled when this machine has no usable install; choose **Choose a local Claude Code executable** to point at one manually. If that file is later uninstalled or renamed, the option returns to disabled and you must pick a new one. This setting does not affect sessions already running, and a session can switch separately.
+
 ### For more involved agent workflows
 
 | Setting | When to use it |
@@ -51,7 +61,6 @@ General covers four areas: appearance and replies, how the agent works, network 
 | Auto-answer questions | Off by default. After 1, 5, 10, or 30 minutes without an answer to an agent's multiple-choice question, it can choose a recommended option. If it cannot choose reliably, it keeps waiting. Use only when you want unattended work to continue. |
 | Auto-dream | Off by default. After enough sessions have accumulated, it can organize auto-memory in the background, using additional model calls and tokens. |
 | Agent Trace | On by default. New sessions write condensed request, response, and status events to a local traces directory. Use the **Trace** tab to investigate a failure; turning it off stops new records, while old ones remain readable. |
-| Claude Code runtime | Switch to **Installed** when new sessions should start from your own local Claude Code; **Bundled**, shipped with the app, is the default. **Installed** is disabled when no usable install exists, and selecting it opens **Choose installed runtime** (that block stays English in the Chinese UI). Switching shows a loading state, and failures appear as an inline error beneath it. |
 
 ### Network, web search, and notifications
 

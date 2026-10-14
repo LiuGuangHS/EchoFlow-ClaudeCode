@@ -124,7 +124,7 @@ ws://127.0.0.1:3456/ws/<session-id>
 - `user_message`、`stop_generation`
 - `permission_response`、`computer_use_permission_response`
 - `set_permission_mode`、`set_runtime_config`（会话级服务商、模型与推理参数覆盖）
-- `set_cli_runtime`（选择 `bundled` 或 `installed` CLI；当前为协议/Server 能力，桌面端尚无独立选择器）
+- `set_cli_runtime`（选择 `bundled` 或 `installed` CLI；桌面端在会话输入区提供选择器，设置页的「运行时管理」另管默认值）
 - `sync_state`、`prewarm_session`
 - `ping`
 

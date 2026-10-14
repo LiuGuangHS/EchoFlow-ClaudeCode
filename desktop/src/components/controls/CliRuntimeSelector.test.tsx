@@ -17,7 +17,7 @@ describe('CliRuntimeSelector', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: /CLI runtime/i }))
-    fireEvent.click(screen.getByRole('option', { name: 'External' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Claude Code on this computer' }))
 
     await waitFor(() => expect(onChange).toHaveBeenCalledWith('installed'))
   })
@@ -34,7 +34,7 @@ describe('CliRuntimeSelector', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: /CLI runtime/i }))
-    expect(screen.queryByRole('option', { name: 'External' })).toBeNull()
+    expect(screen.queryByRole('option', { name: 'Claude Code on this computer' })).toBeNull()
   })
 
   it('shows the effective runtime while a failed switch is on screen', () => {
@@ -56,7 +56,7 @@ describe('CliRuntimeSelector', () => {
       'aria-selected',
       'true',
     )
-    expect(screen.getByRole('option', { name: 'External' })).toHaveAttribute(
+    expect(screen.getByRole('option', { name: 'Claude Code on this computer' })).toHaveAttribute(
       'aria-selected',
       'false',
     )

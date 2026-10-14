@@ -124,7 +124,7 @@ Common client messages include:
 - `user_message` and `stop_generation`;
 - `permission_response` and `computer_use_permission_response`;
 - `set_permission_mode` and `set_runtime_config` (session-level provider, model, and effort override);
-- `set_cli_runtime` (selects `bundled` or `installed` CLI; currently a protocol/server capability with no separate Desktop selector);
+- `set_cli_runtime` (selects `bundled` or `installed` CLI; Desktop exposes a selector in the session input area, and the Runtime management settings page manages the default);
 - `sync_state` and `prewarm_session`;
 - `ping`.
 
