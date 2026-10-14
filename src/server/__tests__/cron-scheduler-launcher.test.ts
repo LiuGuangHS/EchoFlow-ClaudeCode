@@ -240,6 +240,31 @@ describe('cron scheduler launcher resolution', () => {
     ])
   })
 
+  it('runs a scheduled task on the installed runtime when the user chose one', async () => {
+    // A scheduled task is the same session the user configured, so it must
+    // honour the same executable. Reading CLAUDE_CLI_PATH alone left every
+    // cron task on the bundled runtime.
+    const installedPath = path.join(tmpDir, 'installed-claude')
+    const configPath = path.join(tmpDir, 'runtime-config.json')
+    await fs.writeFile(installedPath, '')
+    await fs.chmod(installedPath, 0o755)
+    await fs.writeFile(configPath, JSON.stringify({
+      schemaVersion: 1,
+      defaultRuntimeId: 'installed',
+      installedPath,
+    }))
+
+    const args = buildCronCliArgs(['--print'], {
+      appRoot: path.join(tmpDir, 'app-root'),
+      execPath: path.join(tmpDir, 'bun'),
+      cwd: path.join(tmpDir, 'missing-cwd'),
+      moduleDir: path.join(tmpDir, 'missing-module'),
+      env: { ECHOFLOW_CLAUDE_CODE_RUNTIME_CONFIG: configPath },
+    })
+
+    expect(args[0]).toBe(await fs.realpath(installedPath))
+  })
+
   it('builds hidden CLI spawn options for scheduled task subprocesses', () => {
     const env = { CLAUDECODE: '1' }
 

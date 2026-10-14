@@ -15,6 +15,7 @@ import * as crypto from 'crypto'
 import { isBlankFileContent } from './blankFileContent.js'
 import { CronService, type CronTask } from './cronService.js'
 import { SessionService } from './sessionService.js'
+import { resolveClaudeCodeRuntimePath } from './claudeCodeRuntimeService.js'
 import { sendTaskNotification } from './notificationService.js'
 import { ProviderService } from './providerService.js'
 import { SettingsService } from './settingsService.js'
@@ -515,8 +516,14 @@ export function buildCronCliArgs(
   baseArgs: string[],
   options: CronCliResolutionOptions = {},
 ): string[] {
+  // A scheduled task runs the same work as the session that created it, so it
+  // resolves the executable the same way: through the stored runtime config.
+  // Reading CLAUDE_CLI_PATH alone left every cron task on the bundled runtime
+  // even when the user had chosen an installed Claude Code.
+  const env = options.env ?? process.env
+  const installedPath = resolveClaudeCodeRuntimePath(undefined, env)
   const launcher = resolveClaudeCliLauncher({
-    cliPath: options.cliPath ?? process.env.CLAUDE_CLI_PATH,
+    cliPath: installedPath ?? options.cliPath ?? env.CLAUDE_CLI_PATH,
     execPath: options.execPath ?? process.execPath,
   })
 
