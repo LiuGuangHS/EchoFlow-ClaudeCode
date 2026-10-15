@@ -712,4 +712,58 @@ describe('EchoFlow site session API', () => {
       else process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN = oldBridge
     }
   })
+
+  // refresh spends a real upstream request, and it is the one site-session
+  // route that neither the bridge token nor a remote browser may reach.
+  test('refreshes the account for a local client and refuses everyone else', async () => {
+    const originalFetch = globalThis.fetch
+    const oldBridge = process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN
+    const oldLocal = process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
+    process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN = 'electron-only-bridge-secret'
+    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'renderer-local-token'
+    globalThis.fetch = mock(async () => new Response(JSON.stringify({
+      success: true,
+      data: { id: 106452, username: 'site-user', quota: 2_000_000 },
+    }), { headers: { 'Content-Type': 'application/json' } })) as typeof fetch
+
+    const call = (method: 'POST' | 'GET', headers: Record<string, string>, remoteBrowser = false) => {
+      const url = new URL('http://localhost:3456/api/echoflow/site-session/refresh')
+      return handleEchoFlowApi(
+        new Request(url, { method, headers }),
+        url,
+        url.pathname.split('/').filter(Boolean),
+        { remoteBrowser },
+      )
+    }
+
+    try {
+      const bootstrapUrl = new URL('http://localhost:3456/api/echoflow/site-session')
+      await handleEchoFlowApi(
+        new Request(bootstrapUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-echoflow-site-session-bridge': 'electron-only-bridge-secret' },
+          body: JSON.stringify({ cookie: 'session=private-site-cookie', userId: '106452' }),
+        }),
+        bootstrapUrl,
+        bootstrapUrl.pathname.split('/').filter(Boolean),
+      )
+
+      // The bridge token alone is not enough — refresh is a renderer action.
+      expect((await call('POST', { 'x-echoflow-site-session-bridge': 'electron-only-bridge-secret' })).status).toBe(403)
+      expect((await call('POST', {}, true)).status).toBe(403)
+      expect((await call('POST', {})).status).toBe(403)
+
+      const refreshed = await call('POST', { Authorization: 'Bearer renderer-local-token' })
+      const body = await refreshed.json() as { account: { balance: number } }
+      expect(refreshed.status).toBe(200)
+      expect(body.account.balance).toBe(4)
+      expect(JSON.stringify(body)).not.toContain('private-site-cookie')
+    } finally {
+      globalThis.fetch = originalFetch
+      if (oldBridge === undefined) delete process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN
+      else process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN = oldBridge
+      if (oldLocal === undefined) delete process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
+      else process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = oldLocal
+    }
+  })
 })
