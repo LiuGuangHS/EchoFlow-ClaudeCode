@@ -91,6 +91,10 @@ export function PetSettings() {
   const [walkthroughVisible, setWalkthroughVisible] = useState(false)
   const [promptCopied, setPromptCopied] = useState(false)
   const [guideExpanded, setGuideExpanded] = useState(false)
+  // Held so unmount can cancel it: the timer fires a setState two seconds
+  // later, which after a test teardown is an update on an unmounted tree.
+  const promptCopiedTimer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(promptCopiedTimer.current), [])
   const locale = useSettingsStore((s) => s.locale)
   const actionSheetGuide = locale === 'zh' || locale === 'zh-TW'
     ? actionSheetGuideZh
@@ -251,7 +255,8 @@ export function PetSettings() {
     try {
       await getDesktopHost().clipboard.writeText(t('settings.pets.guide.prompt'))
       setPromptCopied(true)
-      window.setTimeout(() => setPromptCopied(false), 2000)
+      window.clearTimeout(promptCopiedTimer.current)
+      promptCopiedTimer.current = window.setTimeout(() => setPromptCopied(false), 2000)
     } catch {
       setCreateError(t('settings.pets.guide.copyFailed'))
     }
