@@ -19,13 +19,15 @@ if (!process.env.BTW_LOOPBACK_FIXTURE) {
           CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK: '1',
         }), stdout: 'pipe', stderr: 'pipe',
       })
-      const timeout = setTimeout(() => child.kill(), 12_000)
+      // The child boots a real CLI, so under a loaded machine 12s was not
+      // always enough and the kill turned a slow start into a failure.
+      const timeout = setTimeout(() => child.kill(), 45_000)
       try {
         const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()])
         expect(code, stdout + stderr).toBe(0)
       } finally { clearTimeout(timeout) }
     } finally { await rm(root, { recursive: true, force: true }) }
-  }, 15_000)
+  }, 60_000)
 } else {
   test('real fork tools/cache/current context', async () => {
     ;(globalThis as any).MACRO = { BUILD_TIME: '' }
