@@ -132,6 +132,19 @@ ws://127.0.0.1:3456/ws/<session-id>
 
 桌面客户端每 30 秒发送一次 ping；等待 pong 10 秒后会主动重连。重连退避上限为 30 秒，并不会在固定次数后永久停止。自定义客户端应能重复连接、重新同步状态，并忽略未知的新增消息字段。
 
+### 谁跟随用户选的 CLI 运行时
+
+选定 `installed` 之后，执行 CLI 的每一条路径都必须解析同一份运行时配置。新增执行入口时照此办理：
+
+- 会话启动与重启：`conversationService.resolveCliArgs`，会话级选择和持久化的 `cliRuntimeId` 都在这里生效。
+- Team worker：`teamPlanRuntime.buildTeamWorkerStartOptions` 继承父会话的运行时；服务商、模型和推理强度仍然按成员各自批准的值。
+- 定时任务：`cronScheduler.buildCronCliArgs` 读运行时配置，**不读** `CLAUDE_CLI_PATH`。定时任务不交互，配置指向的文件被删时退回默认运行时，而不是让任务失败。
+
+两处刻意不跟随，修改前先确认理由仍然成立：
+
+- `desktopCliLauncherService` 解析的是要装到用户 PATH 上的内置 sidecar，装的就是内置。
+- `bashProvider` 定义的是新开 shell 里的 `claude()` 函数；新 shell 没有会话可继承，跟随应用默认值是唯一说得通的行为。
+
 ## 反向代理清单
 
 远程使用时至少完成：

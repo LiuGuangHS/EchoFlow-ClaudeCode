@@ -132,6 +132,19 @@ The server sends connection and session state, text deltas, thinking, tool calls
 
 The Desktop client sends a ping every 30 seconds and reconnects if no pong arrives within 10 seconds. Reconnect delay is capped at 30 seconds; it does not stop permanently after a fixed number of attempts. A custom client should reconnect, resynchronize state, and ignore unknown fields added to future messages.
 
+### Who follows the chosen CLI runtime
+
+Once `installed` is selected, every path that executes the CLI must resolve the same runtime config. Follow this when adding an execution entry point:
+
+- Session start and restart: `conversationService.resolveCliArgs`, where both the session-level choice and the persisted `cliRuntimeId` take effect.
+- Team workers: `teamPlanRuntime.buildTeamWorkerStartOptions` inherits the leader's runtime. Provider, model, and effort stay per-member, from what was individually approved.
+- Scheduled tasks: `cronScheduler.buildCronCliArgs` reads the runtime config and deliberately does **not** read `CLAUDE_CLI_PATH`. A task is not interactive, so a config whose file has been deleted falls back to the default runtime instead of failing the run.
+
+Two sites deliberately do not follow it; confirm the reason still holds before changing either:
+
+- `desktopCliLauncherService` resolves the bundled sidecar it installs onto the user's PATH — that is the bundled one by definition.
+- `bashProvider` defines the `claude()` function inside a newly opened shell. A new shell has no session to inherit from, so following the app default is the only coherent behavior.
+
 ## Reverse-proxy checklist
 
 For remote use:
