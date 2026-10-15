@@ -145,7 +145,7 @@ Then start a new session and **pick the specific model from the session configur
 If a configured provider is temporarily unreachable, **it does not block app startup** — the model catalog is served from cache until you need a fresh fetch.
 
 :::info
-Model configuration and a session's execution runtime are two different things. The runtime (bundled or installed Claude Code) switches under Settings → General, in **Claude Code runtime**, or straight from the top of a session.
+Model configuration and a session's execution runtime are two different things. The runtime (EchoFlow's bundled Agent or Claude Code installed on this computer) switches under Settings → General, in **EchoFlow Agent runtime**, or straight from the top of a session.
 :::
 
 :::tip
