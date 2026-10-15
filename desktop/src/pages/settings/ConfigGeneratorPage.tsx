@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useProviderStore } from '../../stores/providerStore'
 import { useTranslation } from '../../i18n'
 import { SettingsPageHeader } from '@/components/settings/SettingsSection'
@@ -18,6 +18,10 @@ export function ConfigGeneratorPage() {
   const [providerLink, setProviderLink] = useState('')
   const [showLinkModal, setShowLinkModal] = useState(false)
   const [copied, setCopied] = useState(false)
+  // Held so unmount can cancel it: the timer fires a setState later, which
+  // after a test teardown is an update on an unmounted tree.
+  const copiedTimer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(copiedTimer.current), [])
 
   const toggleProvider = (id: string) => {
     setSelectedProviderIds(current => current.includes(id)
@@ -46,7 +50,8 @@ export function ConfigGeneratorPage() {
     try {
       await navigator.clipboard.writeText(link)
       setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
+      window.clearTimeout(copiedTimer.current)
+      copiedTimer.current = window.setTimeout(() => setCopied(false), 2000)
     } catch (error) {
       console.error('Failed to copy config link:', error)
     }

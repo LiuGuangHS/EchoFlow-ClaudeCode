@@ -291,6 +291,10 @@ export function AdapterSettings() {
   const [isSaving, setIsSaving] = useState(false)
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'error'>('idle')
   const [saveError, setSaveError] = useState('')
+  // Held so unmount can cancel it: the timer fires a setState two seconds
+  // later, which after a test teardown is an update on an unmounted tree.
+  const saveStatusTimer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(saveStatusTimer.current), [])
 
   // Platforms whose own allowedProjectRoots replace the global list below.
   const platformsWithOwnRoots = IM_TABS
@@ -605,7 +609,8 @@ export function AdapterSettings() {
 
       await updateConfig(patch)
       setSaveStatus('saved')
-      setTimeout(() => setSaveStatus('idle'), 2000)
+      window.clearTimeout(saveStatusTimer.current)
+      saveStatusTimer.current = window.setTimeout(() => setSaveStatus('idle'), 2000)
     } catch (err) {
       setSaveStatus('error')
       setSaveError(err instanceof Error ? err.message : 'Save failed')

@@ -1,5 +1,5 @@
 import { Copy, RefreshCw } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '../../i18n'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
@@ -35,13 +35,18 @@ export function StartupErrorView({ error }: StartupErrorViewProps) {
   const t = useTranslation()
   const { message, logs, diagnostics } = useMemo(() => splitStartupError(error), [error])
   const [copied, setCopied] = useState(false)
+  // Held so unmount can cancel it: the timer fires a setState later, which
+  // after a test teardown is an update on an unmounted tree.
+  const copiedTimer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(copiedTimer.current), [])
 
   const handleCopy = async () => {
     const ok = await copyTextToClipboard(diagnostics)
     if (!ok) return
 
     setCopied(true)
-    window.setTimeout(() => setCopied(false), 1600)
+    window.clearTimeout(copiedTimer.current)
+    copiedTimer.current = window.setTimeout(() => setCopied(false), 1600)
   }
 
   return (
