@@ -1,0 +1,118 @@
+name: Sync PR Conflict Map
+
+# Posts the conflict map on sync PRs: a fresh `git merge-tree` between the PR
+# base and head, rendered as the conflict-matrix template from
+# docs/internals/contributing.md. The map tracks resolution progress because it
+# probes the PR head, not the upstream release commit.
+#
+# Read-only: it never resolves, stages, commits, or pushes. The maintainer fills
+# the matrix; AGENTS.md "Upstream Sync Direction" keeps every decision human.
+#
+# The trigger is the maintainer-opened PR (pushed by `bun run upstream:sync`),
+# which fires `pull_request` normally. The deleted sync automation failed
+# precisely because GITHUB_TOKEN-opened PRs never triggered CI; nothing here
+# reopens that path.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-pr-map-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  conflict-map:
+    name: conflict-map
+    if: startsWith(github.head_ref, 'sync/upstream-')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Fetch base branch
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: git fetch --no-tags origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+
+      - name: Fetch previous map
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PREVIOUS: ${{ runner.temp }}/previous-map.md
+        # The map is re-rendered on every push, so the previous body is read back
+        # first: without it, every decision the maintainer typed into the matrix
+        # would be destroyed by their next push.
+        run: |
+          set -euo pipefail
+
+          comment_id=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --paginate \
+            --jq "[.[] | select(.body | startswith(\"<!-- upstream-conflict-map -->\"))] | first | .id // empty")
+
+          if [ -n "$comment_id" ]; then
+            gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" \
+              --jq .body > "$PREVIOUS"
+            echo "Found existing map comment ${comment_id}."
+          else
+            echo "No existing map comment; starting a fresh matrix."
+          fi
+
+      - name: Build conflict map
+        env:
+          BASE_REF: origin/${{ github.event.pull_request.base.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PREVIOUS: ${{ runner.temp }}/previous-map.md
+        run: |
+          previous=()
+          if [ -s "$PREVIOUS" ]; then
+            previous=(--previous "$PREVIOUS")
+          fi
+
+          bun run scripts/upstream/pr-conflict-map.ts \
+            --base "$BASE_REF" \
+            --head "$HEAD_SHA" \
+            --out "$RUNNER_TEMP/conflict-map.md" \
+            "${previous[@]}"
+
+      - name: Comment on the PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        # `--edit-last` addresses the *current user's* most recent comment, and
+        # pr-triage.yml comments on the same PR as the same bot identity — so
+        # `--edit-last` would overwrite the triage comment. --create-if-none is
+        # required because without it gh errors out when the bot has posted nothing
+        # yet, which is exactly the state of a freshly opened sync PR.
+        run: |
+          marker='<!-- upstream-conflict-map -->'
+
+          comment_id=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --paginate \
+            --jq "[.[] | select(.body | startswith(\"$marker\"))] | first | .id // empty")
+
+          if [ -n "$comment_id" ]; then
+            gh api --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" \
+              -F body=@"$RUNNER_TEMP/conflict-map.md" >/dev/null
+            echo "Updated conflict map comment ${comment_id}."
+          else
+            gh api --method POST \
+              "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+              -F body=@"$RUNNER_TEMP/conflict-map.md" >/dev/null
+            echo "Created conflict map comment."
+          fi
