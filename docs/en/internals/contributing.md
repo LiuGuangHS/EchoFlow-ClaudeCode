@@ -385,9 +385,12 @@ Auto-update still works without Windows signing; users may just see a SmartScree
 bun run scripts/release.ts <version> --dry
 bun test scripts/pr/release-workflow.test.ts scripts/release-update-metadata.test.ts scripts/quality-gate/package-smoke/index.test.ts
 bun run check:policy
+bun run upstream:audit
 ```
 
 Confirm `release-notes/v<version>.md` exists before running `bun run scripts/release.ts <version>` for real.
+
+`upstream:audit` is a lane of release mode (`upstream-release-audit`), so `bun run quality:gate --mode release` runs it too; it is read-only with no external dependencies and takes milliseconds, so it is worth confirming on its own before tagging.
 
 ### Verify one real update path
 
@@ -408,27 +411,54 @@ The fork tracks upstream **releases**, not upstream's moving tip: upstream `main
 
 ### Four commands
 
-| Command | Effect |
-| --- | --- |
-| `bun run upstream:check` | Read-only probe. Reports the verdict, changes nothing. |
-| `bun run upstream:resolve` | Fetches the sync branch and merges `main` into it locally, leaving conflicts in the tree. |
-| `bun run upstream:audit` | Read-only release-surface gate for unresolved conflicts, release-note version/brand and newer release notes. |
-| `bun run upstream:sync` | Pushes the sync branch so the PR can be opened. |
+**Run them in this order** — `upstream:resolve` needs the sync branch to already exist on `origin`, which only `upstream:sync` creates. Reversed, a fresh release fails with `couldn't find remote ref`.
+
+| Order | Command | Effect |
+| --- | --- | --- |
+| 1 | `bun run upstream:check` | Read-only probe. Reports the verdict, changes nothing. |
+| 2 | `bun run upstream:sync` | Publishes the sync branch, for the next step to fetch and for the PR to use. |
+| 3 | `bun run upstream:resolve` | Merges `main` into the sync branch locally, leaving conflicts in the tree. |
+| 4 | `bun run upstream:audit` | Read-only release-surface gate: unresolved conflicts, release-note version/brand, newer release notes, and upstream branding in `README.md` / `package.json` / `desktop/package.json` / `AGENTS.md`. |
 
 All four need bun (`packageManager: bun@1.3.14`): the runner uses `import.meta.dir`, which Node does not provide.
 
 Two constraints that can cost you work:
 
-- `upstream:resolve` runs `git switch --track --force-create <branch> origin/<branch>` — it **switches branches and overwrites a same-named local branch**, and it refuses to start when the worktree is dirty.
-- `upstream:sync` pushes with `--force-with-lease` and refuses when the remote branch holds different content, so a manual resolution is never overwritten.
+- `upstream:resolve` runs `git switch --track --force-create <branch> origin/<branch>` (falling back to the release commit when origin lacks the branch) — it **switches branches and overwrites a same-named local branch**, and it refuses to start when the worktree is dirty. **Run it in a separate worktree**: it switches the branch of whatever checkout it runs in. If a local branch of that name already points elsewhere, it refuses and tells you how to back it up first; `--force` accepts losing it.
+- `upstream:sync` pushes with `--force-with-lease`, and it **pushes the upstream release commit, not your resolved branch head** (`--publish` pushes `${commit}:refs/heads/${branch}`, where `commit` comes from `fetchRelease()`). Use it only for step 2, to publish the empty sync branch; finish with `git push origin sync/upstream-v<version>`. It refuses when the remote branch holds different content, so a manual resolution is never overwritten.
+
+Because step 3 switches branches, do the work in a separate worktree:
+
+```bash
+git worktree add ../EchoFlow-sync-v<version> sync/upstream-v<version>
+cd ../EchoFlow-sync-v<version>
+bun run upstream:resolve
+```
+
+This keeps the main checkout untouched and matches the `upstream:state --cwd` usage below.
 
 `upstream:check` flags: `--strict` (exit 1 when the merge conflicts; the default is always 0) and `--base <branch>` (default `main`).
 
 **"Already synced?" is answered from the commit graph, not from version numbers**: each release commit is tested for ancestry against the base branch, and the newest one that fails is the target. The fork ships its own version line (`0.5.x`) that cannot be compared with upstream's (`0.6.x`), so a version comparison silently reports "already synced" as soon as the fork version passes upstream's. For the same reason, **a release sitting on a sync branch is not a release merged into `main`** — only the base branch decides.
 
-### Automated path (removed)
+### Automated path (reporting only)
 
-`.github/workflows/upstream-sync.yml` used to probe upstream releases every three days and open a `sync/upstream-vX.Y.Z` PR. It never produced a mergeable PR: the sync branch carried a large conflict surface, and PRs opened with the default `GITHUB_TOKEN` do not trigger `pull_request` workflows, so no CI result ever came back. The workflow is gone; run the three commands above by hand.
+`.github/workflows/upstream-sync.yml` used to probe upstream releases every three days and open a `sync/upstream-vX.Y.Z` PR. It never produced a mergeable PR: the sync branch carried a large conflict surface, and PRs opened with the default `GITHUB_TOKEN` do not trigger `pull_request` workflows, so no CI result ever came back. The workflow is gone.
+
+What replaced it reports, and nothing more. Both jobs are read-only: they never create a branch, resolve a conflict, stage, commit, or push.
+
+- `.github/workflows/upstream-probe.yml` probes daily at 09:00 China Standard Time (UTC+8) and maintains a single labeled tracker issue ("上游同步盯梢"). Up to date closes the issue; behind opens or updates it with the release tag and the conflicting-file count.
+- `.github/workflows/sync-pr-conflict-map.yml` posts one conflict map per sync PR, keyed by an HTML marker comment so it updates in place on every push instead of stacking.
+
+The conflict matrix, `git add`/`git commit`, and `upstream:sync` stay on the manual path below. Run the three commands above by hand whenever you want a fresh reading.
+
+**A third surface covers local merge state** (`bun run upstream:state`). Both jobs above read committed history, so neither can see a merge that is half-resolved in a worktree — which is exactly where a large campaign spends its days. `scripts/upstream/merge-state.ts` reports the unmerged paths by area and splits them into *resolved but not staged* and *still needs work* (remaining conflict markers, plus files a delete/modify conflict left absent). It exits 1 while anything is unresolved, so a gate can use it.
+
+```bash
+bun run upstream:state --cwd ../EchoFlow-sync-v0.7.4
+```
+
+`--cwd` is required in practice: the merge normally lives in a separate worktree, and without it the script reports on the checkout it sits in and claims no merge is in progress.
 
 ### Manual path
 
@@ -485,12 +515,13 @@ For example, if the fork has not released `v0.5.6`, merge upstream changes into 
 
 The v0.6.6 sync produced 15 conflicted files in practice. The sync script can locate and prepare the merge, but it cannot replace maintainer decisions. Use this sequence for future syncs:
 
-1. Use `upstream:check` read-only to confirm the target release, fork version, conflict count and sync branch; save its report before editing.
-2. Use `upstream:resolve` only to create the isolated sync branch and merge; it must not stage or commit automatically.
-3. Write the complete matrix before resolving conflicts. It must cover every file from `git diff --name-only --diff-filter=U` and state the branding, provider, persistence and test decisions.
-4. When merging an upstream release note, fold user-visible content into the current EchoFlow release note. Keep the fork version, brand, download links and comparison links; remove upstream version headings, authors, asset names and repository links.
-5. After the merge, run the brand scan, provider contract, `check:impact`, affected focused tests and `check:policy` in that order. Run server tests that use dynamic ports serially so concurrent tests do not compete for ports.
-6. Only after the conflict resolutions, release note and verification report are reviewable should the developer explicitly confirm `git add`, `git commit` and `upstream:sync`.
+1. Use `upstream:check` read-only to confirm the target release, fork version, conflict count and sync branch; save its report before editing. The report lists **every upstream release note this sync covers** — fold all of them.
+2. Run `upstream:sync` to publish the sync branch. It must come before `upstream:resolve`, which fetches that branch from `origin`.
+3. Create a separate worktree, then `upstream:resolve` to merge. It must not stage or commit automatically. **Run it in a worktree** because it switches the branch of the checkout it runs in.
+4. Write the complete matrix before resolving conflicts. It must cover every file from `git diff --name-only --diff-filter=U` and state the branding, provider, persistence and test decisions.
+5. When merging an upstream release note, fold user-visible content into the current EchoFlow release note. Keep the fork version, brand, download links and comparison links; remove upstream version headings, authors, asset names and repository links. When several upstream releases land at once (v0.7.2 + v0.7.3 + v0.7.4, say), **fold every note**, not just the newest.
+6. After the merge, run `upstream:audit` (including the brand scan over `README.md`, `package.json`, `desktop/package.json` and `AGENTS.md`), provider contract, `check:impact`, affected focused tests and `check:policy` in that order. Run server tests that use dynamic ports serially so concurrent tests do not compete for ports.
+7. Only after the conflict resolutions, release note and verification report are reviewable should the developer explicitly confirm `git add` and `git commit`, then push with a plain **`git push origin sync/upstream-v<version>`** and open the PR. Do not close the sync with `upstream:sync`: it pushes the upstream release commit, not your resolved branch head.
 
 This separates automatable preparation from maintainer decisions and prevents both accidental deletion of upstream documentation and accidental import of upstream version numbers into the EchoFlow release line.
 

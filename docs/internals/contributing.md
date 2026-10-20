@@ -132,7 +132,7 @@ bun run check:mobile              # Kotlin shell contract
 bun run check:adapters            # IM sidecar
 bun run check:docs                # site build + 内容检查
 bun run check:coverage            # 覆盖率与 changed-line 门槛
-bun run upstream:audit            # 发版面：未解决冲突、release note 版本/品牌
+bun run upstream:audit            # 发版面：未解决冲突、未归并的上游 note、note 版本/品牌
 bun run scripts/release.ts X.Y.Z --dry   # 发布预演
 ```
 
@@ -424,9 +424,12 @@ WINDOWS_CERTIFICATE_PASSWORD
 bun run scripts/release.ts <version> --dry
 bun test scripts/pr/release-workflow.test.ts scripts/release-update-metadata.test.ts scripts/quality-gate/package-smoke/index.test.ts
 bun run check:policy
+bun run upstream:audit
 ```
 
 正式执行 `bun run scripts/release.ts <version>` 前，先确认对应的 `release-notes/v<version>.md` 已经存在。
+
+`upstream:audit` 是 release 模式的一条 lane（`upstream-release-audit`），所以跑 `bun run quality:gate --mode release` 时也会执行；但它只读、无外部依赖，单跑一次只要几十毫秒，发版前值得单独确认一次。
 
 ### 验证一条真实更新链路
 
@@ -445,30 +448,60 @@ bun run check:policy
 
 fork 跟踪上游的**发布**，而不是上游 `main` 的移动顶端：上游 `main` 是开发分支，只有 release tag 才是 fork 能对齐的版本。同步是高风险操作，不可协商的约束写在根 `AGENTS.md` 的 "Upstream Sync Direction"；本节是完整流程。
 
+> 要把这次合并交给 agent 执行，用 `docs/_internal/upstream-sync-agent-handoff.md` 里那段自包含的提示词（含权限边界、策略常量和停机点）。
+
 ### 四条命令
 
-| 命令 | 作用 |
-| --- | --- |
-| `bun run upstream:check` | 只读探测，报告判定结果，不改动任何东西 |
-| `bun run upstream:resolve` | 拉取同步分支并在本地把 `main` 合入，冲突留在工作区、不提交 |
-| `bun run upstream:audit` | 只读发版面检查；检查未解决冲突、当前 release note 版本/品牌和高于当前版本的 release note |
-| `bun run upstream:sync` | 推送同步分支，便于开 PR |
+**按下表顺序执行** —— `upstream:resolve` 依赖 `upstream:sync` 已经在 `origin` 上发布了同步分支，反过来会在新 release 上直接报 `couldn't find remote ref`。
+
+| 顺序 | 命令 | 作用 |
+| --- | --- | --- |
+| 1 | `bun run upstream:check` | 只读探测，报告判定结果，不改动任何东西 |
+| 2 | `bun run upstream:sync` | 推送同步分支（供下一步拉取，也是最终开 PR 的分支） |
+| 3 | `bun run upstream:resolve` | 把 `main` 合入同步分支，冲突留在工作区、不提交 |
+| 4 | `bun run upstream:audit` | 只读发版面检查：未解决冲突、release note 版本/品牌、高于当前版本的 release note，以及 `README.md` / `package.json` / `desktop/package.json` / `AGENTS.md` 里的上游品牌标记 |
 
 这些命令都要 bun（`packageManager: bun@1.3.14`）：脚本用了 `import.meta.dir`，Node 跑不了。
 
 能丢东西的两条约束：
 
-- `upstream:resolve` 内部是 `git switch --track --force-create <分支> origin/<分支>` —— **会切换分支并覆盖同名本地分支**，且工作区必须干净，有未提交改动会直接报错退出。
-- `upstream:sync` 用 `git push --force-with-lease`；远端同名分支内容不同时拒绝推送，不会覆盖人工解决过的冲突。
+- `upstream:resolve` 内部是 `git switch --track --force-create <分支> origin/<分支>`（origin 上没有该分支时退回用 release commit 本地建分支）—— **会切换分支并覆盖同名本地分支**，且工作区必须干净，有未提交改动会直接报错退出。**在独立 worktree 里跑**：它会切换所在 checkout 的分支。若同名本地分支已指向别的提交，脚本会拒绝执行并提示先备份，确需覆盖时加 `--force`。
+- `upstream:sync` 用 `git push --force-with-lease`，而且**推的是上游 release commit，不是解决后的分支头**（`--publish` 推送 `${commit}:refs/heads/${branch}`，`commit` 来自 `fetchRelease()`）。所以它只用于第 2 步发布空白同步分支；收尾推送必须用 `git push origin sync/upstream-v<版本>`。远端同名分支内容不同时它会拒绝推送，不会覆盖人工解决过的冲突。
+
+因为第 3 步会切分支，同步工作统一在独立 worktree 里做：
+
+```bash
+git worktree add ../EchoFlow-sync-v<版本> sync/upstream-v<版本>
+cd ../EchoFlow-sync-v<版本>
+bun run upstream:resolve
+```
+
+这样主 checkout 不受影响，也正好匹配下面的 `upstream:state --cwd`。
 
 `upstream:check` 的可选参数：`--strict`（有冲突时退出码为 1，默认始终 0）、`--base <分支>`（默认 `main`）。
 
 **"是否已同步"按提交图判定**，不比较版本号：逐个检查 release commit 是否已是 base 分支的祖先，取最新的一个未合入项。fork 的版本线（`0.5.x`）与上游（`0.6.x`）本就不可比，用版本号判断会在 fork 版本号超过上游时静默漏掉同步。同理，**同步分支上存在某个 release 不等于该 release 已合入 `main`** —— 判定只看 base 分支。
 
-### 自动化路径（已移除）
+### 自动化边界
 
-此前由 `.github/workflows/upstream-sync.yml` 每三天探测上游 release，并创建 `sync/upstream-vX.Y.Z` 分支与 PR。它实际没有产出可合并的 PR：同步分支的冲突面很大，而用默认 `GITHUB_TOKEN` 开的 PR 不会触发 `pull_request` 工作流，拿不到 CI 结果，于是长期停在未合入状态。该工作流已删除，release 探测改为手工执行上面的三条命令。
+**自动建分支、自动开 PR 的同步自动化保持移除状态。** 此前 `.github/workflows/upstream-sync.yml` 每三天探测上游 release，并创建 `sync/upstream-vX.Y.Z` 分支与 PR。它实际没有产出可合并的 PR：同步分支的冲突面很大，而用默认 `GITHUB_TOKEN` 开的 PR 不会触发 `pull_request` 工作流，拿不到 CI 结果，于是长期停在未合入状态。该工作流已删除，失败原因本身要保留——任何未来的同步自动化都必须先解决"PR 拿不到 CI"这一条。
 
+当前保留两类**只读**自动化（2026-10-18 增加），都不解决冲突、不提交、不推送：
+
+| 工作流 | 触发 | 行为 |
+| --- | --- | --- |
+| `.github/workflows/upstream-probe.yml` | 每天 09:00（北京时间）+ 手动 | 跑 `upstream:check`，把判定、冲突数、冲突清单写进固定盯梢 issue（label `upstream-probe`）；已同步则关闭该 issue |
+| `.github/workflows/sync-pr-conflict-map.yml` | `sync/upstream-*` 分支头的 PR（由维护者推送后手动开） | 对 PR 的 base 与 head 复算 `merge-tree`，评论冲突地图（按区域统计 + 逐文件矩阵模板），随 PR 更新而更新 |
+
+两类自动化的产出都是**给人看的情报**：盯梢 issue 回答"落后了几个 release、冲突多大"，PR 评论回答"这一轮要裁决哪些文件"。冲突矩阵的填写、`git add`/`git commit`、`upstream:sync` 仍按下面的手工路径由维护者执行；release 探测也仍可随时手工跑上面的三条命令。
+
+**第三类：本地合并状态（`bun run upstream:state`）。** 上面两类都只看已提交的历史，看不见"合并做了一半、冲突还没暂存"——而大冲突战役恰恰长时间停在这个状态。`scripts/upstream/merge-state.ts` 补这一格：
+
+```bash
+bun run upstream:state --cwd ../EchoFlow-sync-v0.7.4
+```
+
+它只读索引和工作区，按区域列出未解决冲突，并分成**已改完待暂存**与**仍需处理**两类（后者包括仍有冲突标记的文件，以及 delete/modify 冲突里已经不存在的文件）。有未解决冲突时退出码为 1，可直接当门禁用。`--cwd` 是必需的：合并通常在一个独立 worktree 里，省略它会去报告脚本自己所在的 checkout，从而误报"没有进行中的合并"。
 ### 手工路径
 
 每个上游 release 都按这条路径同步：
@@ -535,12 +568,13 @@ fork 跟踪上游的**发布**，而不是上游 `main` 的移动顶端：上游
 
 本次 v0.6.6 同步实际产生了 15 个冲突文件，说明同步脚本负责定位和准备，不能替代人工决策。后续统一按下面的顺序执行：
 
-1. `upstream:check` 只读确认目标 release、当前 fork 版本、冲突数量和同步分支；先保存报告，再开始修改。
-2. `upstream:resolve` 只负责创建隔离同步分支和合并，不自动暂存或提交。
-3. 解决冲突前写完整矩阵，矩阵必须覆盖 `git diff --name-only --diff-filter=U` 的每个文件，并写明品牌、provider、持久化和测试取舍。
-4. 合并上游 release note 时，把用户可见内容归并到当前 EchoFlow release note；保留当前 fork 版本号、品牌、下载链接和比较链接，不保留上游版本标题、作者、资产名或仓库链接。
-5. 合并后依次执行品牌扫描、provider contract、`check:impact`、受影响的窄测试和 `check:policy`；服务器测试涉及动态端口时串行运行，避免并发测试互相抢占端口。
-6. 只有冲突内容、release note 和验证报告都可复核后，才由开发者明确确认 `git add`、`git commit` 和 `upstream:sync`。
+1. `upstream:check` 只读确认目标 release、当前 fork 版本、冲突数量和同步分支；先保存报告，再开始修改。报告里列出**本次涵盖的全部上游 release note**，逐个归并。
+2. `upstream:sync` 发布同步分支 —— 必须在 `upstream:resolve` 之前，后者要从 `origin` 拉取这个分支。
+3. 开独立 worktree 后 `upstream:resolve` 合并；它只负责合并，不自动暂存或提交。**在 worktree 里跑**，因为它会切换所在 checkout 的分支。
+4. 解决冲突前写完整矩阵，矩阵必须覆盖 `git diff --name-only --diff-filter=U` 的每个文件，并写明品牌、provider、持久化和测试取舍。
+5. 合并上游 release note 时，把用户可见内容归并到当前 EchoFlow release note；保留当前 fork 版本号、品牌、下载链接和比较链接，不保留上游版本标题、作者、资产名或仓库链接。多个上游 release 一并合入时（例如 v0.7.2 + v0.7.3 + v0.7.4），**每份 note 的内容都要归并**，不是只归最新的那份。
+6. 合并后依次执行 `upstream:audit`（含 README / `package.json` / `desktop/package.json` / `AGENTS.md` 的品牌扫描）、provider contract、`check:impact`、受影响的窄测试和 `check:policy`；服务器测试涉及动态端口时串行运行，避免并发测试互相抢占端口。
+7. 只有冲突内容、release note 和验证报告都可复核后，才由开发者明确确认 `git add`、`git commit`，再用**普通 `git push origin sync/upstream-v<版本>`** 推送并开 PR。**不要用 `upstream:sync` 收尾** —— 它推的是上游 release commit，不是解决后的分支头。
 
 这套顺序把“脚本能自动做的事”和“必须由维护者决定的事”分开，也避免把上游说明误删或把上游版本号带进 EchoFlow 发版线。
 
