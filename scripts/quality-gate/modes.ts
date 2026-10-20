@@ -155,6 +155,15 @@ export function lanesForMode(mode: QualityGateMode, baselineTargets: BaselineTar
       category: 'governance',
     },
     {
+      id: 'upstream-release-audit',
+      title: 'Upstream release audit',
+      description: 'Reject unfolded upstream release notes, release-note version/brand drift, unresolved merge conflicts, and upstream branding on the public-identity surfaces before a release ships.',
+      kind: 'command',
+      command: ['bun', 'run', 'upstream:audit'],
+      requiredForModes: ['release'],
+      category: 'governance',
+    },
+    {
       id: 'coverage',
       title: 'Coverage gate',
       description: 'Run unit/component coverage suites and enforce the ratcheted coverage baseline.',

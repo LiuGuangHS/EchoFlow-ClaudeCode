@@ -41,6 +41,9 @@ describe('quality gate modes', () => {
     const lanes = lanesForMode('baseline').map((lane) => lane.id)
     expect(lanes).toContain('baseline-catalog')
     expect(lanes).toContain('quarantine')
+    // Upstream release hygiene is a release-time concern, not a per-PR one: a PR
+    // that touches the scripts should not be blocked by notes it did not fold.
+    expect(lanes).not.toContain('upstream-release-audit')
     expect(lanes).toContain('coverage')
     expect(lanes).toContain('baseline:failing-unit:current-runtime')
     expect(lanes).toContain('provider-smoke:current-runtime')
@@ -63,6 +66,7 @@ describe('quality gate modes', () => {
     expect(lanes).toContain('docs-checks')
     expect(lanes).toContain('persistence-upgrade')
     expect(lanes).toContain('quarantine')
+    expect(lanes).toContain('upstream-release-audit')
     expect(lanes).toContain('coverage')
     expect(lanes).toContain('baseline:failing-unit:current-runtime')
     expect(lanes).toContain('provider-smoke:current-runtime')
