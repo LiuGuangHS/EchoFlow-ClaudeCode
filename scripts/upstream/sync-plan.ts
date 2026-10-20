@@ -35,6 +35,8 @@ export type SyncPlan =
     behind: number
     ahead: number
     conflictFiles: string[]
+    /** Upstream releases this merge subsumes, whose notes all need folding. */
+    pendingNotes: UpstreamRelease[]
     reason: string
   }
 
@@ -120,6 +122,50 @@ export function pendingRelease(input: {
   }
 
   return null
+}
+
+/**
+ * Every release whose notes still need folding into the fork's note.
+ *
+ * `pendingRelease` returns one release, but the merge that integrates it also
+ * subsumes every release between it and the last synced one — v0.7.2 and v0.7.3
+ * are ancestors of v0.7.4, so merging v0.7.4 carries all three. The commit graph
+ * absorbs that on its own; the **release notes do not**. The contract requires
+ * folding each upstream note's user-visible content into the fork note and then
+ * deleting the upstream files, so the set of notes is a separate question from
+ * the set of commits — and without it the intermediate notes are silently lost
+ * behind a merge that looks complete.
+ *
+ * Walks backwards from `target` and stops at the first release the base branch
+ * already has, which is exactly "everything not yet integrated".
+ */
+export function pendingReleaseNotes(input: {
+  releases: UpstreamRelease[]
+  target: UpstreamRelease
+  isMerged: (commit: string) => boolean
+}): UpstreamRelease[] {
+  const notes: UpstreamRelease[] = []
+  const start = input.releases.findIndex(release => release.tag === input.target.tag)
+
+  // An unknown target has no position to walk back from; asking for its notes is
+  // a caller bug, and returning the whole list would fold notes that are already
+  // integrated.
+  if (start < 0) {
+    return []
+  }
+
+  for (let index = start; index >= 0; index -= 1) {
+    const release = input.releases[index]
+
+    if (input.isMerged(release.commit)) {
+      break
+    }
+
+    notes.push(release)
+  }
+
+  // Newest-last, so the report reads in the order the maintainer folds them.
+  return notes.reverse()
 }
 
 /**
@@ -278,6 +324,13 @@ export function planUpstreamSync(input: {
   const branch = syncBranchFor(release)
 
   const conflictCount = input.state.conflictFiles.length
+  // Without a repository to ask, the notes are unknown rather than empty: claiming
+  // "nothing to fold" for a release that does carry notes is how intermediate
+  // release notes went missing in the first place.
+  const pendingNotes = input.isMerged
+    ? pendingReleaseNotes({ releases: input.releases, target: release, isMerged: input.isMerged })
+    : []
+
   const base = {
     release,
     previousVersion: input.currentVersion,
@@ -285,6 +338,7 @@ export function planUpstreamSync(input: {
     behind: input.state.behind,
     ahead: input.state.ahead,
     conflictFiles: input.state.conflictFiles,
+    pendingNotes,
   }
 
   if (conflictCount > 0) {
@@ -357,6 +411,23 @@ export function syncPullRequestBody(plan: SyncPlan) {
     '',
   ]
 
+  // The merge subsumes every release back to the last synced one, and each of
+  // those carries a note that must be folded into the fork's. Listing them is the
+  // only thing that makes the requirement visible before the work starts — the
+  // audit gate only reports leftovers after the fact.
+  if (plan.pendingNotes.length > 0) {
+    lines.push(
+      '### Upstream release notes to fold',
+      '',
+      'Fold the user-visible content of each into the fork release note, then delete',
+      'the upstream file. Do not carry over upstream version titles, authors, asset',
+      'names, or compare links.',
+      '',
+      ...plan.pendingNotes.map((release) => `- \`release-notes/${release.tag}.md\``),
+      '',
+    )
+  }
+
   if (plan.action === 'needs-conflict-resolution') {
     lines.push(
       'Git could not merge these files on its own, so this PR is opened as a draft:',
@@ -371,11 +442,15 @@ export function syncPullRequestBody(plan: SyncPlan) {
       'To resolve locally:',
       '',
       '```bash',
+      '# The branch must exist on origin first; upstream:sync publishes it.',
+      'bun run upstream:sync --base main',
       `git fetch origin ${plan.branch}`,
       `git switch --track -c ${plan.branch} origin/${plan.branch}`,
       'git merge main',
       '# resolve, then: git add <files> && git commit',
-      'git push',
+      // A plain push, not upstream:sync: --publish pushes the upstream release
+      // commit, so re-running it after resolving would not move this branch.
+      `git push origin ${plan.branch}`,
       '```',
     )
   } else {

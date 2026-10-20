@@ -13,8 +13,11 @@
  * Modes:
  *   default          read-only. Reports the verdict, pushes nothing, changes nothing.
  *   --publish        pushes `sync/upstream-vX.Y.Z` for the PR.
- *   --prepare-local  fetches the sync branch and merges `main` into it locally,
- *                    leaving the conflict markers in the working tree to resolve.
+ *   --prepare-local  merges `main` into the sync branch locally, leaving the
+ *                    conflict markers in the working tree to resolve. Creates the
+ *                    branch from the release commit when origin does not have it
+ *                    yet. `--force` is required to move a local branch that
+ *                    already points somewhere else.
  *   --strict         exit 1 when the merge conflicts. Default: always exit 0.
  *   --base <branch>  branch the sync merges into. Default: main.
  */
@@ -74,6 +77,7 @@ export function git(
         maxBuffer: 64 * 1024 * 1024,
         timeout: options.timeout,
       }).trim(),
+      stderr: '',
     }
   } catch (error) {
     // Several Git commands report a *finding* on stdout and still exit non-zero:
@@ -82,16 +86,19 @@ export function git(
     // is kept and the caller decides what the exit code means.
     const stdout = (error as { stdout?: Buffer | string }).stdout
     const output = (typeof stdout === 'string' ? stdout : stdout?.toString() ?? '').trim()
+    const capturedStderr = (error as { stderr?: Buffer | string }).stderr
+    const stderr = typeof capturedStderr === 'string'
+      ? capturedStderr
+      : capturedStderr?.toString() ?? (error as Error).message
 
     if (!options.allowFailure) {
-      const stderr = (error as { stderr?: Buffer | string }).stderr
-      const detail = typeof stderr === 'string'
-        ? stderr
-        : stderr?.toString() ?? (error as Error).message
-      throw new Error(`git ${args.join(' ')} failed: ${detail}`)
+      throw new Error(`git ${args.join(' ')} failed: ${stderr}`)
     }
 
-    return { ok: false, output }
+    // stderr travels with the failure because an empty stdout plus a non-zero exit
+    // is ambiguous on its own: it means either "no conflicts" or "git could not
+    // merge these at all", and only stderr tells the two apart.
+    return { ok: false, output, stderr: stderr.trim() }
   }
 }
 
@@ -246,7 +253,18 @@ function probeMerge(base: string, target: string) {
   }
 
   const files = parseMergeTreeConflicts(result.output)
-  return { conflicted: files.length > 0, files }
+
+  // Non-zero with no conflict list means Git never evaluated the merge (unresolvable
+  // ref, unrelated histories, a missing object). Reporting that as zero conflicts
+  // would publish a clean-merge verdict the probe never actually produced.
+  if (files.length === 0) {
+    throw new Error(
+      `Could not evaluate the merge between \`${base}\` and \`${target}\`: `
+      + `${result.stderr || 'git merge-tree exited non-zero without reporting conflicts'}`,
+    )
+  }
+
+  return { conflicted: true, files }
 }
 
 function workingTreeIsDirty() {
@@ -260,23 +278,75 @@ function workingTreeIsDirty() {
  * describes, and stops. Resolving, staging, and pushing stay with the developer,
  * which is what AGENTS.md requires.
  */
-function prepareLocal(branch: string, baseBranch: string) {
+function prepareLocal(input: {
+  branch: string
+  base: string
+  commit: string
+  force: boolean
+}) {
+  const { branch, base, commit, force } = input
+
   if (workingTreeIsDirty()) {
     throw new Error(
       'Working tree has uncommitted changes. Commit or stash them before preparing a local merge.',
     )
   }
 
-  git(['fetch', '--no-tags', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`])
-  git(['switch', '--track', '--force-create', branch, `origin/${branch}`])
+  // `git switch --force-create` moves the ref, so anything committed here but not
+  // pushed stops being reachable from it. `workingTreeIsDirty` above covers the
+  // working tree, not the branch, and this is the branch-destroying half.
+  const localHead = git(['rev-parse', '--verify', `refs/heads/${branch}`], {
+    allowFailure: true,
+  })
 
-  const merge = git(['merge', '--no-commit', '--no-ff', baseBranch], { allowFailure: true })
+  if (localHead.ok && localHead.output !== commit) {
+    if (!force) {
+      throw new Error(
+        `Local branch '${branch}' is at ${localHead.output.slice(0, 12)}, not the release `
+        + `commit ${commit.slice(0, 12)}. Preparing the merge would move that ref.\n\n`
+        + `Save it first, then re-run:\n`
+        + `  git branch -f ${branch}-saved ${localHead.output.slice(0, 12)}\n\n`
+        + `Or push the resolution you already have (bun run upstream:sync), or pass --force `
+        + `to accept losing it. Recovery afterwards is best-effort via `
+        + `git reflog ${branch}.`,
+      )
+    }
+
+    console.log(
+      `Moving ${branch} from ${localHead.output.slice(0, 12)} to ${commit.slice(0, 12)} (--force).`,
+    )
+  }
+
+  // The sync branch only exists on origin once `--publish` has run, and the
+  // documented order used to put this step first — which made a fresh release
+  // fail with "couldn't find remote ref". Fall back to the release commit that
+  // `fetchRelease` already fetched, and say which path was taken so the
+  // maintainer knows whether the branch has an upstream yet.
+  const onOrigin = git(['rev-parse', '--verify', `refs/remotes/origin/${branch}`], {
+    allowFailure: true,
+  }).ok
+
+  if (onOrigin) {
+    git(['fetch', '--no-tags', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`], {
+      timeout: NETWORK_TIMEOUT_MS,
+    })
+    git(['switch', '--track', '--force-create', branch, `origin/${branch}`])
+  } else {
+    console.log(
+      `origin/${branch} does not exist yet; creating ${branch} locally at `
+      + `${commit.slice(0, 12)}. Run \`bun run upstream:sync\` to publish it before opening the PR.`,
+    )
+    // No --track: there is nothing to track until the branch is pushed.
+    git(['switch', '--force-create', branch, commit])
+  }
+
+  const merge = git(['merge', '--no-commit', '--no-ff', base], { allowFailure: true })
   const unmerged = git(['diff', '--name-only', '--diff-filter=U']).output
   const files = unmerged ? unmerged.split(/\r?\n/).filter(Boolean) : []
 
   console.log(merge.ok
-    ? `Merged ${baseBranch} into ${branch} with no conflicts; review and commit.`
-    : `Conflicts while merging ${baseBranch} into ${branch}:`)
+    ? `Merged ${base} into ${branch} with no conflicts; review and commit.`
+    : `Conflicts while merging ${base} into ${branch}:`)
 
   for (const file of files) {
     console.log(`  - ${file}`)
@@ -311,6 +381,14 @@ function main() {
 
   requireRemote('upstream')
 
+  // Both `--publish` and `--prepare-local` eventually talk to origin, and the
+  // check has to run before either: `git fetch origin` reports a missing remote
+  // as "does not appear to be a git repository", which reads like a URL problem
+  // and sends people off to check credentials.
+  if (publish || args.has('--prepare-local')) {
+    requireRemote('origin')
+  }
+
   const releases = upstreamReleases()
   const version = currentVersion()
 
@@ -341,12 +419,15 @@ function main() {
 
   const branch = syncBranchFor(target)
 
+  // Fetch before branching off to --prepare-local: that path needs the release
+  // objects local to build the branch from, and it used to run before this line,
+  // which left it fetching nothing and then demanding a branch origin never had.
+  const commit = fetchRelease(target.tag)
+
   if (args.has('--prepare-local')) {
-    prepareLocal(branch, baseBranch)
+    prepareLocal({ branch, base, commit, force: args.has('--force') })
     return
   }
-
-  const commit = fetchRelease(target.tag)
 
   // The ancestry test above runs before the fetch, so a release whose objects are
   // not local yet reads as "not merged". Ask again now that they are.
@@ -366,7 +447,6 @@ function main() {
     return
   }
 
-  requireRemote('origin')
   const existingHead = remoteBranchHead(branch)
 
   // A parked branch is not evidence of a merge; it only constrains --publish.
@@ -413,6 +493,11 @@ function main() {
       `- Fork commits ahead: ${ahead}`,
       `- Conflicting files: ${probe.files.length}`,
       ...(probe.files.length > 0 ? ['', ...probe.files.map((file) => `- \`${file}\``)] : []),
+      '',
+      // The merge subsumes these releases commit-wise; their notes still have to be
+      // folded by hand, and this list is the only place that says so up front.
+      `- Upstream release notes to fold: ${plan.pendingNotes.length}`,
+      ...plan.pendingNotes.map(release => `- \`release-notes/${release.tag}.md\``),
     ],
   })
 

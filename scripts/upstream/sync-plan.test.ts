@@ -8,6 +8,7 @@ import {
   parseMergeTreeConflicts,
   parseUpstreamReleases,
   pendingRelease,
+  pendingReleaseNotes,
   planUpstreamSync,
   releaseToSync,
   syncBranchFor,
@@ -249,6 +250,82 @@ describe('pendingRelease', () => {
       releases: RELEASES,
       isMerged: (commit) => commit === branchHead,
     })?.tag).toBe('v0.6.2')
+  })
+})
+
+describe('pendingReleaseNotes', () => {
+  // The shape that prompted this function: v0.7.2 and v0.7.3 are ancestors of
+  // v0.7.4, so merging v0.7.4 subsumes all three commit-wise — but it does not
+  // fold their notes. The commit graph absorbs the merge; the notes are manual.
+  const CHAIN = parseUpstreamReleases([
+    { tag: 'v0.7.1', commit: 'c1' },
+    { tag: 'v0.7.2', commit: 'c2' },
+    { tag: 'v0.7.3', commit: 'c3' },
+    { tag: 'v0.7.4', commit: 'c4' },
+  ])
+
+  const tags = (input: ReturnType<typeof pendingReleaseNotes>) => input.map(r => r.tag)
+
+  test('returns just the target when the previous release is already merged', () => {
+    expect(tags(pendingReleaseNotes({
+      releases: CHAIN,
+      target: CHAIN[3],
+      isMerged: (commit) => commit === 'c3' || commit === 'c2' || commit === 'c1',
+    }))).toEqual(['v0.7.4'])
+  })
+
+  test('returns every release back to the last merged one', () => {
+    expect(tags(pendingReleaseNotes({
+      releases: CHAIN,
+      target: CHAIN[3],
+      isMerged: (commit) => commit === 'c1',
+    }))).toEqual(['v0.7.2', 'v0.7.3', 'v0.7.4'])
+  })
+
+  test('stops at the first merged release rather than folding it again', () => {
+    // v0.7.2 is integrated, so only v0.7.3 and v0.7.4 are outstanding. Re-folding
+    // v0.7.2 would duplicate content the fork note already carries.
+    expect(tags(pendingReleaseNotes({
+      releases: CHAIN,
+      target: CHAIN[3],
+      isMerged: (commit) => commit === 'c2' || commit === 'c1',
+    }))).toEqual(['v0.7.3', 'v0.7.4'])
+  })
+
+  test('returns every release when nothing is merged', () => {
+    expect(tags(pendingReleaseNotes({
+      releases: CHAIN,
+      target: CHAIN[3],
+      isMerged: () => false,
+    }))).toEqual(['v0.7.1', 'v0.7.2', 'v0.7.3', 'v0.7.4'])
+  })
+
+  test('returns nothing when the target itself is already merged', () => {
+    expect(pendingReleaseNotes({
+      releases: CHAIN,
+      target: CHAIN[3],
+      isMerged: () => true,
+    })).toEqual([])
+  })
+
+  test('returns nothing for a target outside the release list', () => {
+    // An unknown tag has no position to walk back from; returning the whole chain
+    // would demand notes that may already be folded.
+    expect(pendingReleaseNotes({
+      releases: CHAIN,
+      target: { tag: 'v9.9.9', version: '9.9.9', commit: 'cn' },
+      isMerged: () => false,
+    })).toEqual([])
+  })
+
+  test('orders the notes oldest-first, the order they get folded', () => {
+    const notes = pendingReleaseNotes({
+      releases: CHAIN,
+      target: CHAIN[3],
+      isMerged: (commit) => commit === 'c1',
+    })
+
+    expect(notes.map(r => r.tag)).toEqual(['v0.7.2', 'v0.7.3', 'v0.7.4'])
   })
 })
 
