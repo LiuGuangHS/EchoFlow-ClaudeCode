@@ -2,9 +2,11 @@ import { describe, expect, test } from 'bun:test'
 
 import {
   areaOf,
+  classifyConflictHunk,
   decisionFor,
   formatPlan,
   latestRelease,
+  normalizeForkBrand,
   parseCurrentVersion,
   parseLsRemoteTags,
   parseMergeTreeConflicts,
@@ -470,5 +472,81 @@ describe('areaOf', () => {
   test('keeps shallower trees whole', () => {
     expect(areaOf('docs/internals/contributing.md')).toBe('docs')
     expect(areaOf('desktop/package.json')).toBe('desktop')
+  })
+})
+
+describe('normalizeForkBrand', () => {
+  const policy = parseSyncPolicy(JSON.stringify({
+    brandTokens: [
+      { upstream: 'Claude-Code-Haha', fork: 'EchoFlow-Code' },
+      { upstream: 'CC_HAHA_', fork: 'ECHOFLOW_' },
+      { upstream: 'cc-haha', fork: 'echoflow' },
+    ],
+    fileDecisions: {},
+  }))
+
+  test('rewrites upstream brand tokens to fork tokens', () => {
+    expect(normalizeForkBrand('from cc-haha-plugin', policy)).toBe('from echoflow-plugin')
+    expect(normalizeForkBrand('CC_HAHA_API_KEY', policy)).toBe('ECHOFLOW_API_KEY')
+    expect(normalizeForkBrand('Claude-Code-Haha', policy)).toBe('EchoFlow-Code')
+  })
+
+  test('replaces longest tokens first so shorter tokens cannot clobber', () => {
+    // 若先替换 cc-haha，CC_HAHA_ 不会被改写；若顺序错乱，Claude-Code-Haha 可能被截断。
+    expect(normalizeForkBrand('CC_HAHA_X cc-haha Claude-Code-Haha', policy))
+      .toBe('ECHOFLOW_X echoflow EchoFlow-Code')
+  })
+
+  test('leaves text without brand tokens unchanged', () => {
+    expect(normalizeForkBrand('claude-code-plugin CLAUDE_CODE_HOME', policy))
+      .toBe('claude-code-plugin CLAUDE_CODE_HOME')
+  })
+
+  test('normalizes a scrambled policy to the same result as an ordered one', () => {
+    // Nested tokens make the order observable: applying `ab` first turns `abcd`
+    // into `Xd`, so the longer rewrite never lands. The policy file is data a
+    // maintainer edits, so a wrong row order must not change the output.
+    const nested = (order: { upstream: string, fork: string }[]) => parseSyncPolicy(JSON.stringify({
+      brandTokens: order,
+      fileDecisions: {},
+    }))
+    const ordered = nested([
+      { upstream: 'abcd', fork: 'Y' },
+      { upstream: 'ab', fork: 'X' },
+    ])
+    const scrambled = nested([
+      { upstream: 'ab', fork: 'X' },
+      { upstream: 'abcd', fork: 'Y' },
+    ])
+    expect(normalizeForkBrand('abcd ab', ordered)).toBe('Y X')
+    expect(normalizeForkBrand('abcd ab', scrambled)).toBe('Y X')
+  })
+})
+
+describe('classifyConflictHunk', () => {
+  const policy = parseSyncPolicy(JSON.stringify({
+    brandTokens: [{ upstream: 'cc-haha', fork: 'echoflow' }],
+    fileDecisions: {},
+  }))
+
+  test('classifies hunks that differ only by brand tokens as brand-only', () => {
+    expect(classifyConflictHunk({ ours: 'echoflow-api', theirs: 'cc-haha-api', policy }))
+      .toBe('brand-only')
+  })
+
+  test('classifies hunks with real code divergence as semantic', () => {
+    expect(classifyConflictHunk({ ours: 'echoflow-api-v2', theirs: 'cc-haha-api-v1', policy }))
+      .toBe('semantic')
+  })
+
+  test('classifies identical sides as brand-only', () => {
+    expect(classifyConflictHunk({ ours: 'same', theirs: 'same', policy })).toBe('brand-only')
+  })
+
+  test('treats a brand difference as semantic when it is not the only difference', () => {
+    // The guard is exact equality after normalization: a hunk that carries both a
+    // brand rename and a real edit must never be auto-resolved.
+    expect(classifyConflictHunk({ ours: 'echoflow-api call()', theirs: 'cc-haha-api call2()', policy }))
+      .toBe('semantic')
   })
 })

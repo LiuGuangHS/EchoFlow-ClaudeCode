@@ -171,6 +171,45 @@ export function areaOf(file: string): string {
 }
 
 /**
+ * Rewrites upstream brand tokens to their fork equivalents.
+ *
+ * Longest token first, enforced here rather than trusted to the policy array's
+ * order: a short token applied first rewrites part of a longer one, so the longer
+ * rewrite never lands. `parseSyncPolicy` accepts whatever order a maintainer
+ * typed; this sort is what keeps the output the same either way.
+ */
+export function normalizeForkBrand(text: string, policy: SyncPolicy): string {
+  const longestFirst = [...policy.brandTokens].sort((a, b) => b.upstream.length - a.upstream.length)
+
+  let result = text
+  for (const token of longestFirst) {
+    result = result.replaceAll(token.upstream, token.fork)
+  }
+
+  return result
+}
+
+/**
+ * Classifies one conflict hunk as brand-only or semantic.
+ *
+ * The only guard is exact equality after brand normalization. If the two sides
+ * still differ once the brand tokens agree, the hunk changed something real and a
+ * human decides — AGENTS.md forbids blanket `--ours`/`--theirs`, and a smarter
+ * heuristic here would one day auto-resolve a hunk it had no business touching.
+ */
+export function classifyConflictHunk(input: {
+  ours: string
+  theirs: string
+  policy: SyncPolicy
+}): 'brand-only' | 'semantic' {
+  const { ours, theirs, policy } = input
+
+  return normalizeForkBrand(ours, policy) === normalizeForkBrand(theirs, policy)
+    ? 'brand-only'
+    : 'semantic'
+}
+
+/**
  * Keeps only `vX.Y.Z` release tags. Prerelease and fork-local tags such as
  * `v0.3.2-rc.1` are deliberately excluded: they are not upstream releases.
  */
