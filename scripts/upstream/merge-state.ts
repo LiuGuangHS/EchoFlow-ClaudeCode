@@ -8,11 +8,13 @@
  * happens — a 124-file campaign sits in that state for days, and the only way to
  * know whether it is finished was `git status` plus reading files by hand.
  *
- * Read-only: it stages nothing, commits nothing, and writes nothing. It only reads
- * the index and the working tree.
+ * Read-only by default: it stages nothing and commits nothing. `--resolve-brand`
+ * additionally rewrites file *content* — brand-only conflict hunks only — and
+ * still leaves the index alone, so a resolved file stays unmerged until the
+ * maintainer stages it.
  *
  * Usage:
- *   bun run scripts/upstream/merge-state.ts [--cwd <worktree>] [--json] [--out report.md]
+ *   bun run scripts/upstream/merge-state.ts [--cwd <worktree>] [--resolve-brand] [--json] [--out report.md]
  *
  * `--cwd` matters: a long merge usually lives in a separate worktree, and without
  * it this would silently report on the checkout the script happens to sit in.
@@ -22,10 +24,28 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 import { git } from './sync'
-import { areaOf } from './sync-plan'
+import {
+  areaOf,
+  classifyConflictHunk,
+  decisionFor,
+  normalizeForkBrand,
+  parseSyncPolicy,
+  type SyncPolicy,
+} from './sync-plan'
 
 /** Git's unmerged stage marker in `git status --porcelain` output. */
 const UNMERGED = new Set(['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU'])
+
+/**
+ * The policy sits beside this script, not in the caller's working directory: a
+ * merge campaign lives in its own worktree, and a CWD-relative path would only
+ * resolve for someone standing at the repo root.
+ */
+const POLICY_PATH = path.join(import.meta.dir, 'sync-policy.json')
+
+function loadSyncPolicy(): SyncPolicy {
+  return parseSyncPolicy(readFileSync(POLICY_PATH, 'utf8'))
+}
 
 /**
  * Conflict markers as Git writes them. A file can be resolved without being
@@ -52,6 +72,120 @@ export type MergeState = {
   readyToStage: UnmergedFile[]
   /** Unmerged files that still need work: markers remain, or the file is missing. */
   needsWork: UnmergedFile[]
+}
+
+export type ContentPart =
+  | { kind: 'text', text: string }
+  | { kind: 'conflict', ours: string, theirs: string, raw: string }
+
+/**
+ * Splits file content into plain text and complete three-way conflict blocks.
+ *
+ * A block counts only as `<<<<<<< … ======= … >>>>>>>` on its own lines, which is
+ * what Git writes. A `=======` outside such a pair is ordinary content — a
+ * Markdown rule, a diagram separator — and an unterminated marker (the shape a
+ * modify/delete conflict leaves behind) is text too: a block this cannot parse is
+ * left for a human rather than dropped or thrown over.
+ */
+export function splitConflictHunks(content: string): ContentPart[] {
+  // Splitting on look-behind keeps each line's terminator, so joined parts
+  // reassemble the file byte for byte.
+  const lines = content.split(/(?<=\n)/)
+  const parts: ContentPart[] = []
+  let buffer = ''
+
+  for (let index = 0; index < lines.length;) {
+    const line = lines[index]
+
+    if (!line.startsWith('<<<<<<< ')) {
+      buffer += line
+      index += 1
+      continue
+    }
+
+    let separator = -1
+    let end = -1
+
+    for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
+      const marker = lines[cursor].replace(/\r?\n$/, '')
+
+      if (separator < 0 && marker === '=======') {
+        separator = cursor
+        continue
+      }
+
+      if (separator >= 0 && lines[cursor].startsWith('>>>>>>> ')) {
+        end = cursor
+        break
+      }
+    }
+
+    if (separator < 0 || end < 0) {
+      // No complete triple. Emit the opening line as text and rescan from the
+      // next one, so a later complete block is still found.
+      buffer += line
+      index += 1
+      continue
+    }
+
+    if (buffer !== '') {
+      parts.push({ kind: 'text', text: buffer })
+      buffer = ''
+    }
+
+    parts.push({
+      kind: 'conflict',
+      ours: lines.slice(index + 1, separator).join(''),
+      theirs: lines.slice(separator + 1, end).join(''),
+      raw: lines.slice(index, end + 1).join(''),
+    })
+    index = end + 1
+  }
+
+  if (buffer !== '') {
+    parts.push({ kind: 'text', text: buffer })
+  }
+
+  return parts
+}
+
+/**
+ * Applies the brand-only resolution to every conflict hunk in a file.
+ *
+ * A hunk that differs solely in brand tokens is rewritten to the fork brand over
+ * the upstream logic — `normalizeForkBrand(theirs)`; a brand-only hunk's two
+ * sides normalize to the same text, so which side is taken is not a choice.
+ * Every other hunk keeps its markers. Nothing here touches the index: staging
+ * stays the maintainer's call, as AGENTS.md requires.
+ */
+export function resolveBrandOnlyHunks(input: {
+  content: string
+  policy: SyncPolicy
+}): { content: string, resolved: number, remaining: number } {
+  let resolved = 0
+  let remaining = 0
+
+  const content = splitConflictHunks(input.content).map((part) => {
+    if (part.kind === 'text') {
+      return part.text
+    }
+
+    const verdict = classifyConflictHunk({
+      ours: part.ours,
+      theirs: part.theirs,
+      policy: input.policy,
+    })
+
+    if (verdict === 'brand-only') {
+      resolved += 1
+      return normalizeForkBrand(part.theirs, input.policy)
+    }
+
+    remaining += 1
+    return part.raw
+  }).join('')
+
+  return { content, resolved, remaining }
 }
 
 /**
@@ -330,6 +464,46 @@ export function readMergeState(root: string): MergeState {
   })
 }
 
+/**
+ * Rewrites brand-only conflict hunks in every marked file under `root`.
+ *
+ * Writes file content only. The index is never touched: a resolved file stays
+ * `UU` until the maintainer stages it, which is exactly what AGENTS.md reserves
+ * for a human. Files the policy records as `manual` are left byte-for-byte alone,
+ * whatever their hunks look like.
+ */
+function applyBrandResolutions(root: string) {
+  const policy = loadSyncPolicy()
+  const candidates = readMergeState(root).needsWork
+  let rewritten = 0
+  let manual = 0
+
+  for (const entry of candidates) {
+    if (!entry.present) {
+      continue
+    }
+
+    if (decisionFor(entry.path, policy) === 'manual') {
+      manual += 1
+      continue
+    }
+
+    const absolute = path.join(root, entry.path)
+    const before = readFileSync(absolute, 'utf8')
+    const outcome = resolveBrandOnlyHunks({ content: before, policy })
+
+    if (outcome.content !== before) {
+      writeFileSync(absolute, outcome.content)
+    }
+
+    rewritten += outcome.resolved
+  }
+
+  console.log(
+    `--resolve-brand: rewrote ${rewritten} brand-only hunk(s); left ${manual} manual file(s) untouched.`,
+  )
+}
+
 function main() {
   const argv = process.argv.slice(2)
   const cwdIndex = argv.indexOf('--cwd')
@@ -337,6 +511,12 @@ function main() {
     ? path.resolve(argv[cwdIndex + 1])
     : path.resolve(import.meta.dir, '..', '..')
 
+  if (argv.includes('--resolve-brand')) {
+    applyBrandResolutions(root)
+  }
+
+  // Read after any rewrite, so the report describes what is left rather than
+  // what was there before the run touched it.
   const state = readMergeState(root)
   if (state.unmerged.length > 0) {
     process.exitCode = 1

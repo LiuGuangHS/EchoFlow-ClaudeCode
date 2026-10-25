@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, test } from 'bun:test'
@@ -7,10 +7,13 @@ import { describe, expect, test } from 'bun:test'
 import {
   formatMergeState,
   parseStatus,
+  resolveBrandOnlyHunks,
+  splitConflictHunks,
   summarizeMergeState,
   type MergeState,
   type UnmergedFile,
 } from './merge-state'
+import { normalizeForkBrand, parseSyncPolicy } from './sync-plan'
 
 const file = (overrides: Partial<UnmergedFile> & { path: string }): UnmergedFile => ({
   status: 'UU',
@@ -424,5 +427,152 @@ describe('formatMergeState', () => {
     expect(report).toContain('| desktop/src | 2 |')
     expect(report).toContain('| docs | 1 |')
     expect(report).toContain('`desktop/src/a.ts`（仍有冲突标记）')
+  })
+})
+
+describe('splitConflictHunks', () => {
+  test('separates conflict blocks from surrounding text', () => {
+    const parts = splitConflictHunks('a\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> x\nb\n')
+
+    expect(parts).toHaveLength(3)
+    expect(parts[1]).toMatchObject({ kind: 'conflict', ours: 'ours\n', theirs: 'theirs\n' })
+  })
+
+  test('keeps a body line of equals signs outside a conflict intact', () => {
+    // A markdown rule or a diagram separator is a line of equals. Outside a real
+    // <<<<<<< / >>>>>>> pair it is content, and must survive untouched.
+    expect(splitConflictHunks('top\n=======\nbottom\n'))
+      .toEqual([{ kind: 'text', text: 'top\n=======\nbottom\n' }])
+  })
+
+  test('returns an unterminated marker block as text rather than throwing', () => {
+    // modify/delete conflicts leave a marker with no pair. A tool that cannot
+    // parse a block must leave it for a human, not refuse to report anything.
+    const content = 'ok\n<<<<<<< HEAD\ngone\n'
+    expect(splitConflictHunks(content)).toEqual([{ kind: 'text', text: content }])
+  })
+})
+
+describe('resolveBrandOnlyHunks', () => {
+  const policy = parseSyncPolicy(JSON.stringify({
+    brandTokens: [{ upstream: 'cc-haha', fork: 'echoflow' }],
+    fileDecisions: {},
+  }))
+
+  test('resolves a brand-only hunk to the fork brand over upstream logic', () => {
+    const result = resolveBrandOnlyHunks({
+      content: 'a\n<<<<<<< HEAD\nechoflow-api\n=======\ncc-haha-api\n>>>>>>> x\nb\n',
+      policy,
+    })
+
+    expect(result.content).toBe('a\nechoflow-api\nb\n')
+    expect(result.resolved).toBe(1)
+    expect(result.remaining).toBe(0)
+  })
+
+  test('leaves a semantic hunk marked and counts it as remaining', () => {
+    const before = '<<<<<<< HEAD\nv2\n=======\nv1\n>>>>>>> x\n'
+    const result = resolveBrandOnlyHunks({ content: before, policy })
+
+    expect(result.content).toBe(before)
+    expect(result.resolved).toBe(0)
+    expect(result.remaining).toBe(1)
+  })
+
+  test('resolves the brand-only hunks of a mixed file and keeps the rest', () => {
+    const result = resolveBrandOnlyHunks({
+      content: [
+        'a',
+        '<<<<<<< HEAD',
+        'echoflow-api',
+        '=======',
+        'cc-haha-api',
+        '>>>>>>> x',
+        'b',
+        '<<<<<<< HEAD',
+        'v2',
+        '=======',
+        'v1',
+        '>>>>>>> y',
+        'c',
+        '',
+      ].join('\n'),
+      policy,
+    })
+
+    expect(result.content).toContain('echoflow-api')
+    expect(result.content).not.toContain('cc-haha-api')
+    expect(result.content).toContain('<<<<<<< HEAD\nv2\n=======\nv1\n>>>>>>> y')
+    expect(result.resolved).toBe(1)
+    expect(result.remaining).toBe(1)
+  })
+
+  test('both normalizations agree for a brand-only hunk', () => {
+    // Taking theirs and normalizing is only unambiguous because ours normalizes
+    // to the same text — otherwise the hunk is not brand-only at all.
+    const ours = 'echoflow-api'
+    const theirs = 'cc-haha-api'
+    expect(normalizeForkBrand(ours, policy)).toBe(normalizeForkBrand(theirs, policy))
+  })
+})
+
+describe('--resolve-brand', () => {
+  const script = path.join(import.meta.dir, 'merge-state.ts')
+
+  /** Runs the real script and returns its raw result; `reportOn` is the JSON view. */
+  function runMain(repo: string, args: string[]) {
+    return spawnSync(process.execPath, [script, ...args], { cwd: repo, encoding: 'utf8' })
+  }
+
+  test('resolve-brand rewrites file content without staging it', () => {
+    const repo = mkdtempSync(path.join(tmpdir(), 'merge-state-resolve-brand-'))
+    createConflict(repo, ['conflicted.ts'])
+    writeFileSync(
+      path.join(repo, 'conflicted.ts'),
+      'a\n<<<<<<< HEAD\nechoflow-api\n=======\ncc-haha-api\n>>>>>>> x\nb\n',
+    )
+
+    const result = runMain(repo, ['--cwd', repo, '--resolve-brand'])
+    // The merge is not finished: the file is resolved but still unmerged until a
+    // human stages it, and the exit code keeps answering that question.
+    expect(result.status).toBe(1)
+
+    const content = readFileSync(path.join(repo, 'conflicted.ts'), 'utf8')
+    expect(content).toContain('echoflow-api')
+    expect(content).not.toContain('<<<<<<<')
+
+    // The invariant that makes this safe: content is written, the index is not
+    // touched. AGENTS.md reserves `git add` for the maintainer.
+    const status = runGit(repo, ['status', '--porcelain'])
+    expect(status.stdout).toMatch(/^UU /m)
+
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  test('resolve-brand leaves a semantic hunk marked for a human', () => {
+    const repo = mkdtempSync(path.join(tmpdir(), 'merge-state-resolve-semantic-'))
+    createConflict(repo, ['conflicted.ts'])
+    writeFileSync(path.join(repo, 'conflicted.ts'), '<<<<<<< HEAD\nv2\n=======\nv1\n>>>>>>> x\n')
+
+    runMain(repo, ['--cwd', repo, '--resolve-brand'])
+
+    expect(readFileSync(path.join(repo, 'conflicted.ts'), 'utf8')).toContain('<<<<<<<')
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  test('resolve-brand skips manual policy files entirely', () => {
+    const repo = mkdtempSync(path.join(tmpdir(), 'merge-state-resolve-manual-'))
+    const relative = 'src/server/config/providerPresets.json'
+    mkdirSync(path.dirname(path.join(repo, relative)), { recursive: true })
+    createConflict(repo, [relative])
+    const before = '<<<<<<< HEAD\nechoflow-api\n=======\ncc-haha-api\n>>>>>>> x\n'
+    writeFileSync(path.join(repo, relative), before)
+
+    runMain(repo, ['--cwd', repo, '--resolve-brand'])
+
+    // Provider policy is adjudicated entry by entry against AGENTS.md, never by
+    // a token rewrite — so the file is left byte-for-byte as it was.
+    expect(readFileSync(path.join(repo, relative), 'utf8')).toBe(before)
+    rmSync(repo, { recursive: true, force: true })
   })
 })
