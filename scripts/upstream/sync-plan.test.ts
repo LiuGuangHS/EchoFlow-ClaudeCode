@@ -1,11 +1,14 @@
 import { describe, expect, test } from 'bun:test'
 
 import {
+  areaOf,
+  decisionFor,
   formatPlan,
   latestRelease,
   parseCurrentVersion,
   parseLsRemoteTags,
   parseMergeTreeConflicts,
+  parseSyncPolicy,
   parseUpstreamReleases,
   pendingRelease,
   pendingReleaseNotes,
@@ -398,5 +401,74 @@ describe('syncPullRequestTitle', () => {
   test('returns a title only for an actionable plan', () => {
     expect(syncPullRequestTitle({ action: 'none', reason: 'x', currentVersion: null })).toBeNull()
     expect(syncPullRequestTitle({ action: 'already-synced', release: RELEASES[2], branch: 'b' })).toBeNull()
+  })
+})
+
+describe('parseSyncPolicy', () => {
+  test('reads brand tokens and file decisions from policy data', () => {
+    const policy = parseSyncPolicy(JSON.stringify({
+      brandTokens: [{ upstream: 'cc-haha', fork: 'echoflow' }],
+      fileDecisions: { 'package.json': 'fork-brand-with-upstream-logic' },
+    }))
+
+    expect(policy.brandTokens).toHaveLength(1)
+    expect(policy.fileDecisions['package.json']).toBe('fork-brand-with-upstream-logic')
+  })
+
+  test('rejects an unknown file decision', () => {
+    // A decision no resolver understands must fail loudly rather than be treated
+    // as "no decision", which would silently drop a rule someone thought they wrote.
+    expect(() => parseSyncPolicy(JSON.stringify({
+      brandTokens: [],
+      fileDecisions: { 'x.ts': 'take-theirs' },
+    }))).toThrow()
+  })
+
+  test('rejects a brand token that is not an upstream/fork pair', () => {
+    expect(() => parseSyncPolicy(JSON.stringify({
+      brandTokens: [{ upstream: 'cc-haha' }],
+      fileDecisions: {},
+    }))).toThrow()
+  })
+})
+
+describe('decisionFor', () => {
+  const policy = parseSyncPolicy(JSON.stringify({
+    brandTokens: [],
+    fileDecisions: {
+      'package.json': 'fork-brand-with-upstream-logic',
+      'src/server/config/providerPresets.json': 'manual',
+    },
+  }))
+
+  test('returns the recorded decision for a known path', () => {
+    expect(decisionFor('package.json', policy)).toBe('fork-brand-with-upstream-logic')
+    expect(decisionFor('src/server/config/providerPresets.json', policy)).toBe('manual')
+  })
+
+  test('returns null for a path with no recorded decision', () => {
+    expect(decisionFor('src/server/foo.ts', policy)).toBeNull()
+  })
+})
+
+// areaOf lives here now: both the PR conflict map and the merge-state report
+// bucket through it, and two copies of the same function stopped being the same
+// function the first time only one of them changed.
+describe('areaOf', () => {
+  test('buckets root-level files on their own', () => {
+    expect(areaOf('package.json')).toBe('仓库根目录')
+  })
+
+  test('splits the two big trees by second segment', () => {
+    // desktop/ and src/ each hold more conflict files than every other area
+    // combined, so a top-level bucket would say nothing a maintainer can act on.
+    expect(areaOf('desktop/src/stores/chatStore.ts')).toBe('desktop/src')
+    expect(areaOf('src/server/services/localIndex/search.ts')).toBe('src/server')
+    expect(areaOf('src/server/services/sessionService.ts')).toBe('src/server')
+  })
+
+  test('keeps shallower trees whole', () => {
+    expect(areaOf('docs/internals/contributing.md')).toBe('docs')
+    expect(areaOf('desktop/package.json')).toBe('desktop')
   })
 })

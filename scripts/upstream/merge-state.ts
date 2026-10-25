@@ -22,6 +22,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 import { git } from './sync'
+import { areaOf } from './sync-plan'
 
 /** Git's unmerged stage marker in `git status --porcelain` output. */
 const UNMERGED = new Set(['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU'])
@@ -51,21 +52,6 @@ export type MergeState = {
   readyToStage: UnmergedFile[]
   /** Unmerged files that still need work: markers remain, or the file is missing. */
   needsWork: UnmergedFile[]
-}
-
-/** Buckets a path for the area summary, matching the PR conflict map. */
-export function areaOf(file: string): string {
-  const segments = file.split('/')
-
-  if (segments.length === 1) {
-    return '仓库根目录'
-  }
-
-  if ((segments[0] === 'desktop' || segments[0] === 'src') && segments.length > 2) {
-    return `${segments[0]}/${segments[1]}`
-  }
-
-  return segments[0]
 }
 
 /**

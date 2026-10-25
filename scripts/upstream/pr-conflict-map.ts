@@ -18,35 +18,49 @@
  */
 
 import { readFileSync, writeFileSync } from 'node:fs'
+import path from 'node:path'
 
 import { git } from './sync'
-import { parseMergeTreeConflicts } from './sync-plan'
-
-/**
- * Files the conflict matrix pins to a fixed decision, mirroring
- * `docs/internals/contributing.md`. The matrix itself stays authoritative; this
- * pre-fill only saves the maintainer a lookup, and the rule is restated in the
- * rendered footer.
- */
-const BRAND_FILES = ['package.json', 'LICENSE', 'README.md', 'desktop/package.json', 'AGENTS.md']
-
-const MANUAL_FILES = ['src/server/config/providerPresets.json']
+import {
+  areaOf,
+  decisionFor,
+  parseSyncPolicy,
+  parseMergeTreeConflicts,
+  type FileDecision,
+  type SyncPolicy,
+} from './sync-plan'
 
 const MARKER = '<!-- upstream-conflict-map -->'
 
-/** Buckets a path for the area summary: second segment for the two big trees. */
-export function areaOf(file: string): string {
-  const segments = file.split('/')
+/**
+ * The policy lives beside the script, not in the caller's working directory: the
+ * conflict probe runs this file with `cwd` set to a throwaway repository, so a
+ * CWD-relative path would only work for a maintainer at the repo root.
+ */
+const POLICY_PATH = path.join(import.meta.dir, 'sync-policy.json')
 
-  if (segments.length === 1) {
-    return '仓库根目录'
+function loadSyncPolicy(): SyncPolicy {
+  return parseSyncPolicy(readFileSync(POLICY_PATH, 'utf8'))
+}
+
+/** The matrix's pre-filled decision for a file, or empty when the maintainer decides. */
+function prefillFor(file: string, policy: SyncPolicy): string {
+  switch (decisionFor(file, policy)) {
+    case 'fork-brand-with-upstream-logic':
+      return 'ours（品牌类）'
+    case 'manual':
+      return 'manual（provider 政策）'
+    default:
+      return ''
   }
+}
 
-  if ((segments[0] === 'desktop' || segments[0] === 'src') && segments.length > 2) {
-    return `${segments[0]}/${segments[1]}`
-  }
-
-  return segments[0]
+/** Lists every path the policy pins to a decision, for the rendered footer. */
+function policyFiles(policy: SyncPolicy, decision: FileDecision): string {
+  return Object.entries(policy.fileDecisions)
+    .filter(([, recorded]) => recorded === decision)
+    .map(([file]) => `\`${file}\``)
+    .join('、')
 }
 
 /**
@@ -103,6 +117,8 @@ export function formatConflictMap(input: {
     ].join('\n')
   }
 
+  const policy = loadSyncPolicy()
+
   const counts = new Map<string, number>()
   for (const file of files) {
     const area = areaOf(file)
@@ -121,12 +137,7 @@ export function formatConflictMap(input: {
       // A decision the maintainer already recorded wins over the pre-fill: re-deciding
       // it would silently roll their work back on the next push.
       const previous = carried?.get(file)
-      const decision = previous?.decision
-        || (BRAND_FILES.includes(file)
-          ? 'ours（品牌类）'
-          : MANUAL_FILES.includes(file)
-            ? 'manual（provider 政策）'
-            : '')
+      const decision = previous?.decision || prefillFor(file, policy)
       return `| \`${file}\` | ${decision} | ${previous?.command ?? ''} |`
     })
 
@@ -149,7 +160,9 @@ export function formatConflictMap(input: {
     '',
     '</details>',
     '',
-    '裁决规则见 `AGENTS.md`「Upstream Sync Direction」与 `docs/internals/contributing.md` 冲突矩阵：品牌类文件（`package.json`、`LICENSE`、`README.md`、`desktop/package.json`、`AGENTS.md`）判 `ours`，并单独确认上游逻辑是否需要一并带走；`src/server/config/providerPresets.json` 永远 `manual`，逐条按 provider 政策裁定；**禁止 blanket `--ours`/`--theirs`**，混合文件逐 hunk / 逐字段取舍；上游 release note 文件在归并完成后删除。',
+    // The file lists come from the policy too, so editing sync-policy.json cannot
+    // leave this footer naming files the matrix no longer pre-decides.
+    `裁决规则见 \`AGENTS.md\`「Upstream Sync Direction」与 \`docs/internals/contributing.md\` 冲突矩阵：品牌类文件（${policyFiles(policy, 'fork-brand-with-upstream-logic')}）判 \`ours\`，并单独确认上游逻辑是否需要一并带走；${policyFiles(policy, 'manual')} 永远 \`manual\`，逐条按 provider 政策裁定；**禁止 blanket \`--ours\`/\`--theirs\`**，混合文件逐 hunk / 逐字段取舍；上游 release note 文件在归并完成后删除。`,
     '',
   ].join('\n')
 }
@@ -184,8 +197,14 @@ function main() {
   const out = args.get('--out')
   const previous = args.get('--previous')
 
+  // Probing the repository the caller is standing in, not the checkout this file
+  // happens to live in: a sync campaign runs in its own worktree, and a map that
+  // silently fell back to the main checkout would report the wrong history. It is
+  // also what keeps an unresolvable ref a local failure instead of a network fetch
+  // against whatever remote the script's own repository has configured.
   const result = git(['merge-tree', '--write-tree', '--name-only', base, head], {
     allowFailure: true,
+    cwd: process.cwd(),
   })
   const files = result.ok ? [] : parseMergeTreeConflicts(result.output)
 

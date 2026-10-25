@@ -1,30 +1,12 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir, devNull as osDevNull } from 'node:os'
 import path from 'node:path'
-import { afterAll, describe, expect, test } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 
-import { areaOf, formatConflictMap, parseCarriedDecisions } from './pr-conflict-map'
+import { formatConflictMap, parseCarriedDecisions } from './pr-conflict-map'
 
 const HEAD = 'abc123def4567890'
-
-describe('areaOf', () => {
-  test('buckets root-level files on their own', () => {
-    expect(areaOf('package.json')).toBe('仓库根目录')
-  })
-
-  test('splits the two big trees by second segment', () => {
-    // desktop/ and src/ each hold more conflict files than every other area
-    // combined, so a top-level bucket would say nothing a maintainer can act on.
-    expect(areaOf('desktop/src/stores/chatStore.ts')).toBe('desktop/src')
-    expect(areaOf('src/server/services/localIndex/search.ts')).toBe('src/server')
-  })
-
-  test('keeps shallower trees whole', () => {
-    expect(areaOf('docs/internals/contributing.md')).toBe('docs')
-    expect(areaOf('desktop/package.json')).toBe('desktop')
-  })
-})
 
 describe('formatConflictMap', () => {
   test('reports a clean merge without a matrix', () => {
@@ -129,23 +111,64 @@ describe('formatConflictMap', () => {
 })
 
 describe('conflict probe', () => {
+  // A real repository, not a bare temp dir: `--base HEAD` has to resolve for the
+  // probe to reach the point where it reports an unresolvable *head*. Without an
+  // initialized repo the run hangs until the test times out instead.
   const repo = mkdtempSync(path.join(tmpdir(), 'echoflow-conflict-map-'))
+
+  beforeAll(() => {
+    const git = (args: string[]) => {
+      const result = spawnSync('git', args, {
+        cwd: repo,
+        encoding: 'utf8',
+        env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: osDevNull },
+      })
+      if (result.status !== 0) {
+        throw new Error(`git ${args.join(' ')} failed: ${result.stderr}`)
+      }
+    }
+    git(['init', '--quiet'])
+    git(['config', 'user.email', 'test@example.com'])
+    git(['config', 'user.name', 'Test'])
+    writeFileSync(path.join(repo, 'file.txt'), 'base\n')
+    git(['add', 'file.txt'])
+    git(['commit', '--quiet', '-m', 'base'])
+  })
 
   afterAll(() => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  /** Runs the real script in `cwd`; returns exit code and both streams. */
+  /**
+   * Runs the real script in `cwd`; returns exit code and both streams.
+   *
+   * The environment is stripped rather than inherited: a developer machine with a
+   * global `http.proxy` makes Git resolve an unknown object id against the
+   * network, and the run then hangs until the test times out instead of reporting
+   * the ref it cannot resolve. `GIT_CONFIG_NOSYSTEM` and an empty
+   * `GIT_CONFIG_GLOBAL` keep the probe offline and deterministic.
+   */
   function runScript(args: string[], cwd: string) {
+    const { http_proxy, https_proxy, HTTP_PROXY, HTTPS_PROXY, ...rest } = process.env
     const result = spawnSync(
       process.execPath,
       [path.join(import.meta.dir, 'pr-conflict-map.ts'), ...args],
-      { cwd, encoding: 'utf8' },
+      {
+        cwd,
+        encoding: 'utf8',
+        env: {
+          ...rest,
+          GIT_CONFIG_NOSYSTEM: '1',
+          GIT_CONFIG_GLOBAL: osDevNull,
+        },
+      },
     )
 
     return { code: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' }
   }
 
+  // Spawns a real Bun process that runs real Git, so the default 5s budget is
+  // tight on a loaded machine; the run itself is a couple of seconds.
   test('refuses to call an unevaluable merge clean', () => {
     // A ref Git cannot resolve exits non-zero with no conflict list, which used to
     // render as "没有冲突，可以进入评审" — a false all-clear on exactly the PRs this
@@ -158,7 +181,7 @@ describe('conflict probe', () => {
     expect(missing.code).not.toBe(0)
     expect(missing.stdout).not.toContain('没有冲突')
     expect(missing.stderr).toContain('not something we can merge')
-  })
+  }, 30_000)
 
   test('never writes a map file when the merge was never evaluated', () => {
     const out = path.join(repo, 'map.md')
@@ -170,5 +193,5 @@ describe('conflict probe', () => {
     expect(missing.code).not.toBe(0)
     // A stale map from an earlier successful run must not be left to be posted.
     expect(existsSync(out)).toBe(false)
-  })
+  }, 30_000)
 })

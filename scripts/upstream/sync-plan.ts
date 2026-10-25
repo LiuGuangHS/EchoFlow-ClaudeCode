@@ -65,6 +65,112 @@ function compareParsedVersion(a: ParsedVersion, b: ParsedVersion) {
 }
 
 /**
+ * One upstream brand token and the fork token that replaces it.
+ *
+ * Order in the policy file is the replacement order — longest first, so a short
+ * token cannot rewrite part of a longer one before the longer one is applied.
+ */
+export type BrandToken = {
+  upstream: string
+  fork: string
+}
+
+/**
+ * What the conflict matrix should do with a file before anyone looks at its hunks.
+ *
+ * `fork-brand-with-upstream-logic` is the brand-class file the matrix pre-decides;
+ * `manual` is a file that must never be auto-resolved, whatever it looks like.
+ */
+export type FileDecision = 'fork-brand-with-upstream-logic' | 'manual'
+
+/**
+ * Sync rules as data, not as code.
+ *
+ * These are policy decisions a maintainer edits between syncs — brand mappings,
+ * which files the matrix pre-decides. Keeping them in `sync-policy.json` means
+ * changing a rule does not mean changing the resolver, and the resolver stays a
+ * pure computation over whatever the file says.
+ */
+export type SyncPolicy = {
+  brandTokens: BrandToken[]
+  fileDecisions: Record<string, FileDecision>
+}
+
+const FILE_DECISIONS: readonly FileDecision[] = ['fork-brand-with-upstream-logic', 'manual']
+
+/**
+ * Validates policy data. A rule that cannot be understood must fail loudly: a
+ * silently-ignored unknown decision reads to a maintainer like a rule that works.
+ */
+export function parseSyncPolicy(json: string): SyncPolicy {
+  const parsed = JSON.parse(json) as {
+    brandTokens?: unknown
+    fileDecisions?: unknown
+  }
+
+  if (!Array.isArray(parsed.brandTokens)) {
+    throw new Error('sync policy: brandTokens must be an array')
+  }
+
+  const brandTokens: BrandToken[] = parsed.brandTokens.map((token, index) => {
+    const pair = token as { upstream?: unknown; fork?: unknown }
+
+    if (typeof pair.upstream !== 'string' || pair.upstream === ''
+      || typeof pair.fork !== 'string' || pair.fork === '') {
+      throw new Error(`sync policy: brandTokens[${index}] must be a non-empty upstream/fork string pair`)
+    }
+
+    return { upstream: pair.upstream, fork: pair.fork }
+  })
+
+  const raw = parsed.fileDecisions
+
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('sync policy: fileDecisions must be an object')
+  }
+
+  const fileDecisions: Record<string, FileDecision> = {}
+
+  for (const [file, decision] of Object.entries(raw as Record<string, unknown>)) {
+    if (!FILE_DECISIONS.includes(decision as FileDecision)) {
+      throw new Error(
+        `sync policy: fileDecisions['${file}'] is ${JSON.stringify(decision)}, expected one of ${FILE_DECISIONS.join(', ')}`,
+      )
+    }
+
+    fileDecisions[file] = decision as FileDecision
+  }
+
+  return { brandTokens, fileDecisions }
+}
+
+/** The recorded decision for a path, or `null` when the policy says nothing about it. */
+export function decisionFor(file: string, policy: SyncPolicy): FileDecision | null {
+  return policy.fileDecisions[file] ?? null
+}
+
+/**
+ * Buckets a path for the area summary: second segment for the two big trees.
+ *
+ * Shared by the PR conflict map and the merge-state report so both rank areas the
+ * same way. It used to be duplicated in each, which stopped being true the first
+ * time only one copy changed.
+ */
+export function areaOf(file: string): string {
+  const segments = file.split('/')
+
+  if (segments.length === 1) {
+    return '仓库根目录'
+  }
+
+  if ((segments[0] === 'desktop' || segments[0] === 'src') && segments.length > 2) {
+    return `${segments[0]}/${segments[1]}`
+  }
+
+  return segments[0]
+}
+
+/**
  * Keeps only `vX.Y.Z` release tags. Prerelease and fork-local tags such as
  * `v0.3.2-rc.1` are deliberately excluded: they are not upstream releases.
  */

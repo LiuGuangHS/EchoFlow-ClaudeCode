@@ -5,7 +5,6 @@ import path from 'node:path'
 import { describe, expect, test } from 'bun:test'
 
 import {
-  areaOf,
   formatMergeState,
   parseStatus,
   summarizeMergeState,
@@ -84,15 +83,6 @@ function reportOn(repo: string): { status: number | null; state: MergeState } {
 }
 
 const pathsOf = (files: { path: string }[]): string[] => files.map(file => file.path)
-
-describe('areaOf', () => {
-  test('matches the PR conflict map so the two reports bucket identically', () => {
-    expect(areaOf('package.json')).toBe('仓库根目录')
-    expect(areaOf('desktop/src/stores/chatStore.ts')).toBe('desktop/src')
-    expect(areaOf('src/server/services/sessionService.ts')).toBe('src/server')
-    expect(areaOf('docs/internals/contributing.md')).toBe('docs')
-  })
-})
 
 describe('parseStatus', () => {
   test('reads NUL-separated entries, including paths that look like pathspec magic', () => {
