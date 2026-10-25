@@ -1,23 +1,17 @@
-name: Push Quality
+name: Quality Check
 
-# Runs essential deterministic checks on every push to main. This is the
-# primary quality gate for solo development: push, watch CI, fix if red,
-# then tag. The full sweep (nightly-quality.yml) remains manual; this is
-# the fast subset that catches real problems before a release.
+# Manual quality check. Run this before tagging a release to confirm the
+# codebase is green. Not push-triggered: during development you push freely
+# without CI noise. The release workflow runs its own verification in
+# parallel with the build, so this is the pre-tag checkpoint.
 
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - 'release-notes/**'
-      - 'docs/**'
-      - 'site/**'
-      - 'README*.md'
-      - 'LICENSE'
-      - 'CODE_OF_CONDUCT.md'
-      - 'SUPPORT.md'
-      - 'THIRD_PARTY_LICENSES.md'
-      - '.github/workflows/push-quality.yml'
+  workflow_dispatch:
+    inputs:
+      skip_desktop:
+        description: 'Skip desktop lint/test/build (faster when only server/adapters changed)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -128,6 +122,7 @@ jobs:
 
   desktop:
     name: desktop-checks
+    if: ${{ !inputs.skip_desktop }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -174,15 +169,30 @@ jobs:
       - name: Require all checks to pass
         run: |
           failures=0
-          for job in contract policy server desktop; do
-            result=$(eval echo "\${{ needs.$job.result }}")
+          require_success() {
+            local name="$1" result="$2"
             if [ "$result" != "success" ]; then
-              echo "::error::$job ended with result: $result"
+              echo "::error::$name ended with result: $result"
               failures=$((failures + 1))
             else
-              echo "$job: success"
+              echo "$name: success"
             fi
-          done
+          }
+          require_selected() {
+            local name="$1" expected="$2" result="$3"
+            if [ "$expected" = "true" ]; then
+              require_success "$name" "$result"
+            elif [ "$result" = "skipped" ]; then
+              echo "$name: skipped"
+            else
+              echo "::error::$name was not selected but ended with result: $result"
+              failures=$((failures + 1))
+            fi
+          }
+          require_success "contract" "${{ needs.contract.result }}"
+          require_success "policy" "${{ needs.policy.result }}"
+          require_success "server" "${{ needs.server.result }}"
+          require_selected "desktop" "${{ !inputs.skip_desktop }}" "${{ needs.desktop.result }}"
           if [ "$failures" -gt 0 ]; then
             exit 1
           fi
