@@ -507,6 +507,27 @@ describe('resolveBrandOnlyHunks', () => {
     expect(result.remaining).toBe(1)
   })
 
+  test('keeps a deliberate historical token the fork side retained', () => {
+    // AGENTS.md: historical names are retained for explicit compatibility, attribution,
+    // migration fixtures, or supported variables. A brand-only hunk is brand-equivalent
+    // on both sides, so ours already carries "fork brand over upstream logic" — and it
+    // is the only side that can hold a retention. Rewriting theirs would silently drop it.
+    const branding = parseSyncPolicy(JSON.stringify({
+      brandTokens: [
+        { upstream: 'CC_HAHA_', fork: 'ECHOFLOW_' },
+        { upstream: 'cc-haha', fork: 'echoflow' },
+      ],
+      fileDecisions: {},
+    }))
+    const result = resolveBrandOnlyHunks({
+      content: '<<<<<<< HEAD\nECHOFLOW_API_KEY fallback CC_HAHA_API_KEY\n=======\nCC_HAHA_API_KEY fallback CC_HAHA_API_KEY\n>>>>>>> x\n',
+      policy: branding,
+    })
+
+    expect(result.content).toBe('ECHOFLOW_API_KEY fallback CC_HAHA_API_KEY\n')
+    expect(result.resolved).toBe(1)
+  })
+
   test('both normalizations agree for a brand-only hunk', () => {
     // Taking theirs and normalizing is only unambiguous because ours normalizes
     // to the same text — otherwise the hunk is not brand-only at all.
@@ -560,6 +581,23 @@ describe('--resolve-brand', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
+  test('resolve-brand keeps --json output parseable', () => {
+    // The summary is a diagnostic; stdout is the machine-readable document. Mixing
+    // them breaks the natural "resolve, then report" invocation.
+    const repo = mkdtempSync(path.join(tmpdir(), 'merge-state-resolve-json-'))
+    createConflict(repo, ['conflicted.ts'])
+    writeFileSync(path.join(repo, 'conflicted.ts'), '<<<<<<< HEAD\nechoflow-api\n=======\ncc-haha-api\n>>>>>>> x\n')
+
+    const result = spawnSync(
+      process.execPath,
+      [script, '--cwd', repo, '--resolve-brand', '--json'],
+      { encoding: 'utf8' },
+    )
+
+    expect(() => JSON.parse(result.stdout)).not.toThrow()
+    rmSync(repo, { recursive: true, force: true })
+  })
+
   test('resolve-brand skips manual policy files entirely', () => {
     const repo = mkdtempSync(path.join(tmpdir(), 'merge-state-resolve-manual-'))
     const relative = 'src/server/config/providerPresets.json'
@@ -576,3 +614,4 @@ describe('--resolve-brand', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 })
+

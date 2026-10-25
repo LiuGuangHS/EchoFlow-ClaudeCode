@@ -140,7 +140,8 @@ for (const marker of ['Claude Code Haha', 'Claude-Code-Haha-', 'NanmiCoder/cc-ha
 
 根目录那 2 个是 `README.md` 和 `package.json`。
 
-`merge-state.ts` 是**只读**的 —— 它报告进度，不备份。这个 worktree 一旦被删
+`merge-state.ts` 只读索引和工作区；`--resolve-brand` 会改写文件内容（只解品牌类 hunk，仍不暂存、不提交），
+但两者都**不备份**。这个 worktree 一旦被删
 （清理磁盘、重装系统、`git worktree prune`），这 115 个文件的裁决工作就全没了。
 
 而 v0.6.4 那次是打了快照 tag `pre-merge-v0.6.4-snapshot` 的，这次没有。
@@ -178,10 +179,10 @@ for (const marker of ['Claude Code Haha', 'Claude-Code-Haha-', 'NanmiCoder/cc-ha
 
 ---
 
-### H. `areaOf` 重复实现（低）
+### H. `areaOf` 重复实现（低）—— 已解决
 
-`merge-state.ts:57-69` 和 `pr-conflict-map.ts:38-50` 定义了两份完全相同的 `areaOf`。
-抽到共享模块里，顺手把「仓库根目录 / `desktop|X` / `X`」这套分桶规则固定住。
+`merge-state.ts` 和 `pr-conflict-map.ts` 曾各有一份完全相同的 `areaOf`。已抽到
+`scripts/upstream/sync-plan.ts`，两处改为共用，分桶规则（仓库根目录 / `desktop|X` / `X`）随之固定。
 
 ---
 

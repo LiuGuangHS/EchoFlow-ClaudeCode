@@ -28,7 +28,6 @@ import {
   areaOf,
   classifyConflictHunk,
   decisionFor,
-  normalizeForkBrand,
   parseSyncPolicy,
   type SyncPolicy,
 } from './sync-plan'
@@ -152,11 +151,13 @@ export function splitConflictHunks(content: string): ContentPart[] {
 /**
  * Applies the brand-only resolution to every conflict hunk in a file.
  *
- * A hunk that differs solely in brand tokens is rewritten to the fork brand over
- * the upstream logic — `normalizeForkBrand(theirs)`; a brand-only hunk's two
- * sides normalize to the same text, so which side is taken is not a choice.
+ * A hunk that differs solely in brand tokens keeps **ours**. The two sides are
+ * brand-equivalent, so ours already is "fork brand over upstream logic" — what
+ * AGENTS.md prescribes — and it is the only side that can carry a historical
+ * token the fork deliberately retained for compatibility, attribution, or
+ * supported variables. Rewriting theirs would silently destroy that retention.
  * Every other hunk keeps its markers. Nothing here touches the index: staging
- * stays the maintainer's call, as AGENTS.md requires.
+ * stays the maintainer's call.
  */
 export function resolveBrandOnlyHunks(input: {
   content: string
@@ -178,7 +179,7 @@ export function resolveBrandOnlyHunks(input: {
 
     if (verdict === 'brand-only') {
       resolved += 1
-      return normalizeForkBrand(part.theirs, input.policy)
+      return part.ours
     }
 
     remaining += 1
@@ -499,7 +500,8 @@ function applyBrandResolutions(root: string) {
     rewritten += outcome.resolved
   }
 
-  console.log(
+  // stderr: stdout belongs to the report, and `--json` consumers parse it whole.
+  console.error(
     `--resolve-brand: rewrote ${rewritten} brand-only hunk(s); left ${manual} manual file(s) untouched.`,
   )
 }

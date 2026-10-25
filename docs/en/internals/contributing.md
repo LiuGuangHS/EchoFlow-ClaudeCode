@@ -504,7 +504,7 @@ After the four commands have run and `upstream:resolve` has left the conflicts i
 bun run scripts/upstream/merge-state.ts --cwd ../EchoFlow-sync-v<version> --resolve-brand
 ```
 
-It resolves exactly one kind of hunk: those whose two sides are still equal once brand tokens are normalized (`cc-haha` ↔ `echoflow` and friends). What lands is upstream logic under the fork brand — which is what "never take either side wholesale" means in practice. Every other hunk keeps its markers for a human. Three boundaries:
+It resolves exactly one kind of hunk: those whose two sides are still equal once brand tokens are normalized (`cc-haha` ↔ `echoflow` and friends). What lands is **ours** — such a hunk is brand-equivalent on both sides, so ours already is "fork brand over upstream logic", and only ours can carry a historical name the fork deliberately retained for compatibility, attribution, or supported variables; rewriting theirs would silently drop that retention. Every other hunk keeps its markers for a human. Three boundaries:
 
 - **File content only, never staged and never committed.** A resolved file is still `UU` until the maintainer runs `git add`.
 - Paths recorded as `manual` in `sync-policy.json` are skipped entirely (currently `src/server/config/providerPresets.json`), whatever their hunks look like.
