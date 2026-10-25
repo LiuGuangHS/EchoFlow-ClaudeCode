@@ -1,0 +1,188 @@
+name: Push Quality
+
+# Runs essential deterministic checks on every push to main. This is the
+# primary quality gate for solo development: push, watch CI, fix if red,
+# then tag. The full sweep (nightly-quality.yml) remains manual; this is
+# the fast subset that catches real problems before a release.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'release-notes/**'
+      - 'docs/**'
+      - 'site/**'
+      - 'README*.md'
+      - 'LICENSE'
+      - 'CODE_OF_CONDUCT.md'
+      - 'SUPPORT.md'
+      - 'THIRD_PARTY_LICENSES.md'
+      - '.github/workflows/push-quality.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: push-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    name: release-contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Upstream release audit
+        run: bun run upstream:audit
+
+  policy:
+    name: policy-and-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Cache root dependencies
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: bun-root-${{ hashFiles('bun.lock') }}
+
+      - name: Install root dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Policy and gate regressions
+        run: bun run check:policy
+
+  server:
+    name: server-and-contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Cache root dependencies
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: bun-root-${{ hashFiles('bun.lock') }}
+
+      - name: Cache desktop dependencies
+        uses: actions/cache@v4
+        with:
+          path: desktop/node_modules
+          key: bun-desktop-${{ hashFiles('desktop/bun.lock') }}
+
+      - name: Cache adapter dependencies
+        uses: actions/cache@v4
+        with:
+          path: adapters/node_modules
+          key: bun-adapters-${{ hashFiles('adapters/bun.lock') }}
+
+      - name: Install root dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: bun install --frozen-lockfile
+
+      - name: Install adapter dependencies
+        working-directory: adapters
+        run: bun install --frozen-lockfile
+
+      - name: Root runtime tests
+        run: bun run check:server
+
+      - name: Provider contracts
+        run: bun run check:provider-contract
+
+      - name: Desktop/server chat contracts
+        run: bun run check:chat-contract
+
+      - name: Deterministic agent flow
+        run: bun run check:agent-flow
+
+      - name: Adapter tests
+        run: bun run check:adapters
+
+  desktop:
+    name: desktop-checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Cache root dependencies
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: bun-root-${{ hashFiles('bun.lock') }}
+
+      - name: Cache desktop dependencies
+        uses: actions/cache@v4
+        with:
+          path: desktop/node_modules
+          key: bun-desktop-${{ hashFiles('desktop/bun.lock') }}
+
+      - name: Install root dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: bun install --frozen-lockfile
+
+      - name: Desktop lint, tests, and build
+        run: bun run check:desktop
+
+  push-quality-gate:
+    name: push-quality-gate
+    needs:
+      - contract
+      - policy
+      - server
+      - desktop
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all checks to pass
+        run: |
+          failures=0
+          for job in contract policy server desktop; do
+            result=$(eval echo "\${{ needs.$job.result }}")
+            if [ "$result" != "success" ]; then
+              echo "::error::$job ended with result: $result"
+              failures=$((failures + 1))
+            else
+              echo "$job: success"
+            fi
+          done
+          if [ "$failures" -gt 0 ]; then
+            exit 1
+          fi
