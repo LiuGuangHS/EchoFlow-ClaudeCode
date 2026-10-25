@@ -477,7 +477,7 @@ Use this for every upstream release:
 4. Merge upstream with a merge commit; **do not** rebase public `main`.
 5. Plan the merge ("merge upstream, keep the fixes, replace the brand") with `/superpowers:brainstorm` and `/superpowers:write-plan`; use `@code-reviewer` on conflicted files, high-risk files, and provider-policy decisions.
 6. **Write one complete conflict matrix before editing** (see below), then resolve the whole matrix in one pass. Do not discover and patch conflicts one at a time.
-7. Resolve file contents intentionally; **never** apply blanket `--ours` or `--theirs`. Preserve fork identity and provider policy, sponsor-free public docs, persistence compatibility, the Electron release flow, and the quality gates.
+7. Run `bun run scripts/upstream/merge-state.ts --cwd <worktree> --resolve-brand` first to clear the purely brand-token hunks (see "Auto-adjudication and parallel conflict work"), then resolve the remaining file contents intentionally; **never** apply blanket `--ours` or `--theirs`. Preserve fork identity and provider policy, sponsor-free public docs, persistence compatibility, the Electron release flow, and the quality gates.
 8. Audit public identity after every merge: README, docs, release notes, package metadata, diagnostics export, signing/privacy pages, updater links, and desktop About/profile defaults must not identify NanmiCoder/阿江 or `cc-haha` as the current EchoFlow author, maintainer, contact, or product.
 9. Conflict analysis and worktree edits may be automated, but `git add` and `git commit` require explicit developer confirmation. **Never** stage or commit a conflict resolution automatically.
 10. After writing resolutions, have `@code-reviewer` review them and run `bun run check:policy` before asking the developer to stage or commit. If a build or type check fails, locate it through the "AI Coding Agent Fix Loop" section, rerun the narrow failed check, and run `bun run verify` before claiming push-readiness.
@@ -495,6 +495,37 @@ One row per file, written in full before you edit anything:
 | `desktop/src/stores/chatStore.ts` | Upstream changes session-title logic, ours holds brand copy | per-field: keep fork branding in `title`, take upstream logic in `body` | `cd desktop && bun run test` |
 
 `providerPresets.json` is always `manual`. Brand-owned files (`package.json`, `LICENSE`, `README.md`, `desktop/package.json`, `AGENTS.md`) are `ours`, with a separate decision about whether upstream logic needs to come along.
+
+### Auto-adjudication and parallel conflict work
+
+After the four commands have run and `upstream:resolve` has left the conflicts in the worktree, let the machine take the part it can decide **deterministically**:
+
+```bash
+bun run scripts/upstream/merge-state.ts --cwd ../EchoFlow-sync-v<version> --resolve-brand
+```
+
+It resolves exactly one kind of hunk: those whose two sides are still equal once brand tokens are normalized (`cc-haha` ↔ `echoflow` and friends). What lands is upstream logic under the fork brand — which is what "never take either side wholesale" means in practice. Every other hunk keeps its markers for a human. Three boundaries:
+
+- **File content only, never staged and never committed.** A resolved file is still `UU` until the maintainer runs `git add`.
+- Paths recorded as `manual` in `sync-policy.json` are skipped entirely (currently `src/server/config/providerPresets.json`), whatever their hunks look like.
+- The rules live in `scripts/upstream/sync-policy.json`: brand-token mappings and file decisions are data, so changing a rule does not mean changing the resolver. The exit code still answers "is the merge finished?" and is 1 as long as any file is unmerged.
+
+The remaining semantic conflicts are worked in parallel by `areaOf` area, one agent per area, each running its own gate:
+
+| Area | What decides the hunk | Validating command |
+| --- | --- | --- |
+| `desktop/src` | Upstream UI intent + fork branding | `bun run check:desktop` |
+| `src/server` | Upstream server semantics + provider policy | `bun run check:server` |
+| `desktop/electron` + `src/services` | Host process and runtime | `bun run check:desktop` / `bun run check:server` |
+| `docs/` and the rest | Doc consistency, brand audit | `bun run check:docs` |
+
+The discipline does not change; parallelism only makes the division visible:
+
+- **Hunk-level mixing** — fork brand tokens with upstream logic, never one side wholesale.
+- `providerPresets.json` is ruled entry by entry against the provider policy in `AGENTS.md`, not against a list of ids.
+- Once resolved, `@code-reviewer` reviews the results and `bun run check:policy` must pass before the maintainer is asked to `git add` / `git commit`.
+
+The lasting fix is a smaller conflict surface: conflicts cluster in `desktop/src` and `src/server` (roughly seven in ten across syncs). Put new customization in configuration, adapters, or standalone modules and stay off the shared paths upstream is also editing, and the next round will genuinely have less to decide.
 
 ### Worked example: the selective v0.6.4 merge
 

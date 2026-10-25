@@ -520,7 +520,7 @@ bun run upstream:state --cwd ../EchoFlow-sync-v0.7.4
 4. 用 merge commit 合并上游；**不要** rebase 公开的 `main`。
 5. 用 `/superpowers:brainstorm` 与 `/superpowers:write-plan` 规划这次合并（"合并上游，保留修复，替换品牌名"）；对冲突、高风险文件以及 provider 政策决策用 `@code-reviewer`。
 6. **动手前先写出完整的冲突矩阵**（见下），然后一轮把所有冲突解决完；不要逐个发现、逐个修补。
-7. 有意地解决文件内容，**绝不**整体套用 `--ours` 或 `--theirs`。保留 fork 身份与 provider 政策、无赞助的公开文档、持久化兼容、Electron 发布链路和质量门禁。
+7. 先跑 `bun run scripts/upstream/merge-state.ts --cwd <worktree> --resolve-brand` 收掉纯品牌差异的 hunk（见「自动裁决与并行解冲突」），再有意地解决剩下的文件内容，**绝不**整体套用 `--ours` 或 `--theirs`。保留 fork 身份与 provider 政策、无赞助的公开文档、持久化兼容、Electron 发布链路和质量门禁。
 8. 每次合并后审计公开身份：README、文档、release notes、包元数据、诊断导出、签名/隐私页面、更新链接，以及桌面端「关于」/个人资料默认值，都不能把 NanmiCoder/阿江 或 `cc-haha` 写成当前 EchoFlow 的作者、维护者、联系人或产品。
 9. 冲突分析与工作区编辑可以自动化，但 `git add` 和 `git commit` 必须由开发者显式确认。**绝不**自动暂存或提交冲突解决结果。
 10. 写完冲突解决后，让 `@code-reviewer` 审阅这些结果并运行 `bun run check:policy`，再请开发者暂存/提交。构建或类型检查失败时，按 `AI Coding Agent 修复循环` 一节定位并修复，重跑失败的窄检查，并在声称可推送前运行 `bun run verify`。
@@ -538,6 +538,37 @@ bun run upstream:state --cwd ../EchoFlow-sync-v0.7.4
 | `desktop/src/stores/chatStore.ts` | 上游改会话标题逻辑，ours 是品牌文案 | 逐字段取舍：`title` 保 fork 品牌，`body` 吸上游逻辑 | `cd desktop && bun run test` |
 
 `providerPresets.json` 永远判 `manual`；品牌类文件（`package.json`、`LICENSE`、`README.md`、`desktop/package.json`、`AGENTS.md`）判 `ours`，并单独确认上游逻辑是否需要一并带走。
+
+### 自动裁决与并行解冲突
+
+四条命令跑完、`upstream:resolve` 把冲突留在工作区之后，先让机器收掉它**能确定性裁决**的那部分：
+
+```bash
+bun run scripts/upstream/merge-state.ts --cwd ../EchoFlow-sync-v<版本> --resolve-brand
+```
+
+它只解一种 hunk：两边归一化品牌词之后仍然相等的（`cc-haha` ↔ `echoflow` 这类纯品牌差异）。落盘取的是上游逻辑配 fork 品牌，正是上文「不整文件取一边」的取法。其余 hunk 原样保留冲突标记，留给人工。三条边界：
+
+- **只写文件内容，不暂存、不提交**。解完的文件仍是 `UU`，等维护者 `git add`。
+- `sync-policy.json` 里记为 `manual` 的路径整体跳过（当前是 `src/server/config/providerPresets.json`），无论它的 hunk 长什么样。
+- 裁决规则在 `scripts/upstream/sync-policy.json`：品牌词映射和文件决策都是数据，改规则不必改解析器。退出码仍然回答「合并结束了吗」，只要还有未合并文件就是 1。
+
+剩下的语义冲突按 `areaOf` 分区并行处理，一个区一个 agent，各自跑所属门禁：
+
+| 区域 | 判断依据 | 验证命令 |
+| --- | --- | --- |
+| `desktop/src` | 上游 UI 改动意图 + fork 品牌 | `bun run check:desktop` |
+| `src/server` | 上游服务端语义 + provider 政策 | `bun run check:server` |
+| `desktop/electron` + `src/services` | 宿主进程与运行时 | `bun run check:desktop` / `bun run check:server` |
+| `docs/` 与杂项 | 文档一致性、品牌审计 | `bun run check:docs` |
+
+纪律不变，并行只是把分工摊开：
+
+- **hunk 级混合**——fork 品牌词 + 上游逻辑，不整文件取一边。
+- `providerPresets.json` 逐条按 provider 政策裁定（`AGENTS.md` 的规则，不是 id 白名单）。
+- 解完由 `@code-reviewer` 复核，`bun run check:policy` 通过后再请维护者 `git add` / `git commit`。
+
+治本在减面：冲突面长期集中在 `desktop/src` 与 `src/server`（历次同步约占七成）。新增定制尽量落在配置、adapter 或独立模块，少占上游也在改的共享路径，下一轮冲突才会真的变少。
 
 ### 参考案例：v0.6.4 的选择性采纳
 
