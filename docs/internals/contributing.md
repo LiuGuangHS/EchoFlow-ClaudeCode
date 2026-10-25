@@ -63,9 +63,14 @@ Windows x64 打包用 `cd desktop && bun run build:windows-x64`，需要 Bun/Bun
 | 本地迭代 | 手动 | 最窄的相关测试；`bun run check:impact` 选中的命令 | 秒级反馈 |
 | PR（必过） | `pull_request` | impact 选中的确定性 lane，含 `check:agent-flow` | 无模型、无 provider、无 secret、fork 可跑 |
 | 全量 | 维护者手动触发（`workflow_dispatch`） | 全部确定性 lane（不做路径选择）+ 模块图健康度 + `check:desktop-ui-smoke` | 仍然无模型、无 secret |
-| Release | 维护者手动 `bun run quality:release`（**不是** `release-desktop.yml`） | PR + 全量层全部内容 + native/打包 smoke + 维护者授权的真实 provider baseline | 真实模型只在此层，且需显式授权 |
+| Release | 打 tag 自动触发 `release-desktop.yml`；维护者也可手动跑 `bun run quality:release` | CI 跑内容门禁 + 并行验证（见下）；`quality:release` 额外含 native 打包 smoke 和维护者授权的真实 provider baseline | 真实模型只在 `quality:release` 层，且需显式授权 |
 
-注意：`release-desktop.yml` 按设计**不跑任何质量门禁**——打 tag 不应被 `bun run verify` 阻塞，`scripts/pr/release-workflow.test.ts` 有守卫测试锁定这一点。因此发版前的质量证据来自「合并进来的那些 PR」+ 维护者手动跑的全量层 + `quality:release`。全量层刻意不设定时：跑不跑、什么时候跑由维护者决定，`pr-quality-workflow.test.ts` 会拦住重新加回 `schedule:` 的改动。
+`release-desktop.yml` 现在跑两道门：
+
+1. **内容门禁**（`release-contract` job，30 秒）：tag 版本号、`release-notes/vX.Y.Z.md`、`upstream:audit` 三者对齐，不通过就不开始构建。
+2. **并行验证**（`release-verification` job，和 6 平台构建同时跑）：`check:policy` / `check:server` / `check:desktop` / `check:agent-flow` / `check:adapters` / `check:persistence-upgrade`。构建完了但验证没过，就不发。
+
+所以发版前不需要本地跑 20 分钟的全量检查——CI 在构建期间顺手就验了。全量层（`nightly-quality.yml`）刻意不设定时：跑不跑、什么时候跑由维护者决定，`pr-quality-workflow.test.ts` 会拦住重新加回 `schedule:` 的改动。
 
 分层原则：**PR 只跑改动能影响到的范围**，因此它天然无法覆盖"没有 PR 碰过的检查"和"只有全套一起跑才暴露的问题"——这两个盲区交给手动触发的全量层；**真实模型/额度只出现在 Release 与维护者手动 smoke**，任何贡献者在没有 provider 的情况下都必须能跑通 PR 层的全部门禁。
 
@@ -117,23 +122,24 @@ PR 描述里请贴出你实际运行的命令和 summary。`quality:pr` / `quali
 
 ### 轻量验证（维护者日常发版）
 
-`bun run verify` 会跑完整 lane 矩阵，一次要 20 分钟以上。维护者日常发版**不要默认跑它**，按改动面挑窄命令即可。v0.7.1 发版时实际用这一组，覆盖了全部改动面：
+发版验证已经搬到 CI 里了，本地不需要再跑全量。日常流程：
+
+1. **开发时**：只跑改动面最窄的测试（`bun run check:impact` 会告诉你该跑什么）。
+2. **打 tag 前**（可选）：手动触发 GitHub Actions 里的 `Quality Check` workflow，确认代码库是绿的。
+3. **打 tag**：`release-desktop.yml` 自动跑内容门禁 + 并行验证 + 6 平台构建，全过了才发。
+
+如果确实要在本地跑一遍（比如网络不方便），用下面这组命令，覆盖面和 CI 验证一致：
 
 ```bash
-bun run check:policy              # 388 tests：policy、dead-imports、module-graph、contract 字节预算
-bun run check:server              # 6560 tests：src/ 全量
-bun run check:desktop             # lint + 8280 vitest + vite build
-bun run check:electron            # electron tsc + 663 tests + bundle
+bun run check:policy              # policy、dead-imports、module-graph、contract 字节预算
+bun run check:server              # src/ 全量
+bun run check:desktop             # lint + vitest + vite build
 bun run check:provider-contract   # provider/proxy/auth 契约
 bun run check:chat-contract       # desktop transport、store、首回合
 bun run check:persistence-upgrade # 持久化迁移与旧 fixture
 bun run check:agent-flow          # 无模型的 agent 端到端 8 场景
-bun run check:mobile              # Kotlin shell contract
 bun run check:adapters            # IM sidecar
-bun run check:docs                # site build + 内容检查
-bun run check:coverage            # 覆盖率与 changed-line 门槛
 bun run upstream:audit            # 发版面：未解决冲突、未归并的上游 note、note 版本/品牌
-bun run scripts/release.ts X.Y.Z --dry   # 发布预演
 ```
 
 `check:native`（完整 sidecar 构建 + 打包 + package smoke）最慢，仅在触碰 `native/`、`desktop/electron` 打包配置或发版脚本时跑。真正的 Release workflow 会在 6 个平台上重新构建，本机不必重复。
@@ -376,7 +382,7 @@ bun run quality:gate --mode baseline --allow-live
 bun run quality:gate --mode release --allow-live --provider-model <selector>:main
 ```
 
-release 模式会组合 PR checks、baseline catalog、live baseline、native checks，并用当前平台 canonical release artifact 跑 `package-smoke --package-kind release`。发版报告同样写入 `artifacts/quality-runs/<timestamp>/`。`release-desktop.yml` 只负责构建与发布，不运行 `bun run verify`；发版前质量证据来自 PR 门禁及维护者显式运行的全量检查和 release gate。
+release 模式会组合 PR checks、baseline catalog、live baseline、native checks，并用当前平台 canonical release artifact 跑 `package-smoke --package-kind release`。发版报告同样写入 `artifacts/quality-runs/<timestamp>/`。`release-desktop.yml` 在 CI 里跑内容门禁和并行验证（`check:policy` / `check:server` / `check:desktop` / `check:agent-flow` / `check:adapters` / `check:persistence-upgrade`），构建和验证都通过才发布。`quality:release` 是本地可选的更严格检查，额外覆盖 native 打包 smoke 和真实 provider baseline。
 
 release 模式下 live lane 不允许静默跳过。缺少 provider、真实模型额度或外部账号时，门禁会失败，并要求在发版记录里明确 blocker。
 
@@ -420,12 +426,14 @@ WINDOWS_CERTIFICATE_PASSWORD
 
 ### 发版前检查
 
+CI 会在构建期间自动跑验证，本地只需要确认内容对齐：
+
 ```bash
-bun run scripts/release.ts <version> --dry
-bun test scripts/pr/release-workflow.test.ts scripts/release-update-metadata.test.ts scripts/quality-gate/package-smoke/index.test.ts
-bun run check:policy
-bun run upstream:audit
+bun run scripts/release.ts <version> --dry   # 发布预演，检查版本/tag/notes 三者一致
+bun run upstream:audit                        # 发版面：未解决冲突、上游 note、品牌
 ```
+
+如果想在打 tag 前手动跑一轮完整验证，GitHub Actions 里有个 `Quality Check` workflow 可以手动触发。
 
 正式执行 `bun run scripts/release.ts <version>` 前，先确认对应的 `release-notes/v<version>.md` 已经存在。
 

@@ -55,9 +55,14 @@ For Windows x64 packaging use `cd desktop && bun run build:windows-x64`; it requ
 | Local | manual | The narrowest relevant tests, then whatever `bun run check:impact` selects | seconds |
 | PR (required) | `pull_request` | The deterministic lanes the impact report selects, including `check:agent-flow` | no model, no provider, no secret, runs on an untrusted fork |
 | Full sweep | Maintainer-triggered (`workflow_dispatch`) | Every deterministic lane with no path selection, plus module-graph health and `check:desktop-ui-smoke` | still no model, no secret |
-| Release | maintainer-run `bun run quality:release` (**not** `release-desktop.yml`) | Everything above, plus native/packaging smoke and maintainer-authorized live provider baselines | live models only here, only with explicit authorization |
+| Release | Tagging triggers `release-desktop.yml` automatically; the maintainer may also run `bun run quality:release` manually | CI runs a content gate plus parallel verification (see below); `quality:release` adds native/packaging smoke and maintainer-authorized live provider baselines | live models only in `quality:release`, only with explicit authorization |
 
-Note: `release-desktop.yml` deliberately runs no quality gate — tagging must not be blocked by `bun run verify`, and `scripts/pr/release-workflow.test.ts` guards that decision. Release-time evidence therefore comes from the PRs that were merged, plus whatever full sweeps the maintainer ran, plus the manual `quality:release`. The full sweep is deliberately not scheduled: spending ~90 minutes of CI is a decision, not a default, and `pr-quality-workflow.test.ts` fails if a `schedule:` is added back.
+`release-desktop.yml` now runs two gates:
+
+1. **Content gate** (`release-contract` job, ~30 seconds): verifies the tag matches `desktop/package.json`, `release-notes/vX.Y.Z.md` exists with the right title, and `upstream:audit` passes. If any of these fail, the build never starts.
+2. **Parallel verification** (`release-verification` job, runs alongside the 6-platform build): `check:policy` / `check:server` / `check:desktop` / `check:agent-flow` / `check:adapters` / `check:persistence-upgrade`. If the build finishes but verification fails, nothing is published.
+
+Pre-release checks no longer need a 20-minute local sweep — CI runs them during the build. The full sweep (`nightly-quality.yml`) is deliberately not scheduled: spending ~90 minutes of CI is a decision, not a default, and `pr-quality-workflow.test.ts` fails if a `schedule:` is added back.
 
 The split follows from what each tier can prove. A per-PR gate only ever covers what the diff reaches, so it is structurally blind to checks no recent PR selected and to failures that only appear when the whole suite runs together — the full sweep closes both, when the maintainer asks for it. Live model quota is spent only at release time, so every contributor can pass the required gate with no provider at all.
 
@@ -337,7 +342,7 @@ Before a release, run release mode:
 bun run quality:gate --mode release --allow-live --provider-model <selector>:main
 ```
 
-Release mode composes PR checks, baseline catalog validation, live baseline cases, provider smoke, native checks, and current-platform canonical release `package-smoke --package-kind release`. Reports are written to `artifacts/quality-runs/<timestamp>/`. `release-desktop.yml` builds and publishes artifacts without running `bun run verify`. Pre-release quality evidence comes from PR gates and explicitly run maintainer full checks and release gates.
+Release mode composes PR checks, baseline catalog validation, live baseline cases, provider smoke, native checks, and current-platform canonical release `package-smoke --package-kind release`. Reports are written to `artifacts/quality-runs/<timestamp>/`. `release-desktop.yml` runs content-gate and parallel verification in CI (`check:policy` / `check:server` / `check:desktop` / `check:agent-flow` / `check:adapters` / `check:persistence-upgrade`); publishing requires both the build and verification to pass. `quality:release` is an optional stricter local check that additionally covers native/packaging smoke and real provider baselines.
 
 In release mode, live lanes are not allowed to be silently skipped. Missing providers, model quota, or external account access will fail the gate and must be recorded as a release blocker.
 
@@ -381,12 +386,14 @@ Auto-update still works without Windows signing; users may just see a SmartScree
 
 ### Pre-release checks
 
+CI runs verification during the build. Locally, just confirm content alignment:
+
 ```bash
-bun run scripts/release.ts <version> --dry
-bun test scripts/pr/release-workflow.test.ts scripts/release-update-metadata.test.ts scripts/quality-gate/package-smoke/index.test.ts
-bun run check:policy
-bun run upstream:audit
+bun run scripts/release.ts <version> --dry   # dry-run: checks version/tag/notes consistency
+bun run upstream:audit                        # release surface: conflicts, upstream notes, branding
 ```
+
+To run a full verification before tagging, trigger the `Quality Check` workflow manually from GitHub Actions.
 
 Confirm `release-notes/v<version>.md` exists before running `bun run scripts/release.ts <version>` for real.
 
