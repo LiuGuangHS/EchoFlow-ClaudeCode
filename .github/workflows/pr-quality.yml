@@ -45,6 +45,24 @@ jobs:
         with:
           bun-version-file: package.json
 
+      - name: Cache root dependencies
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: bun-root-${{ hashFiles('bun.lock') }}
+
+      - name: Cache desktop dependencies
+        uses: actions/cache@v4
+        with:
+          path: desktop/node_modules
+          key: bun-desktop-${{ hashFiles('desktop/bun.lock') }}
+
+      - name: Cache adapter dependencies
+        uses: actions/cache@v4
+        with:
+          path: adapters/node_modules
+          key: bun-adapters-${{ hashFiles('adapters/bun.lock') }}
+
       - name: Collect changed files
         env:
           GH_TOKEN: ${{ github.token }}
@@ -86,6 +104,24 @@ jobs:
         with:
           bun-version-file: package.json
 
+      - name: Cache root dependencies
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: bun-root-${{ hashFiles('bun.lock') }}
+
+      - name: Cache desktop dependencies
+        uses: actions/cache@v4
+        with:
+          path: desktop/node_modules
+          key: bun-desktop-${{ hashFiles('desktop/bun.lock') }}
+
+      - name: Cache adapter dependencies
+        uses: actions/cache@v4
+        with:
+          path: adapters/node_modules
+          key: bun-adapters-${{ hashFiles('adapters/bun.lock') }}
+
       - name: Install root dependencies
         if: needs.scope-plan.outputs.policy_checks == 'true'
         run: bun install --frozen-lockfile
@@ -117,6 +153,24 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+      - name: Cache root dependencies
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: bun-root-${{ hashFiles('bun.lock') }}
+
+      - name: Cache desktop dependencies
+        uses: actions/cache@v4
+        with:
+          path: desktop/node_modules
+          key: bun-desktop-${{ hashFiles('desktop/bun.lock') }}
+
+      - name: Cache adapter dependencies
+        uses: actions/cache@v4
+        with:
+          path: adapters/node_modules
+          key: bun-adapters-${{ hashFiles('adapters/bun.lock') }}
+
       - name: Install root dependencies
         run: bun install --frozen-lockfile
       - name: Install desktop dependencies
@@ -137,6 +191,24 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+      - name: Cache root dependencies
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: bun-root-${{ hashFiles('bun.lock') }}
+
+      - name: Cache desktop dependencies
+        uses: actions/cache@v4
+        with:
+          path: desktop/node_modules
+          key: bun-desktop-${{ hashFiles('desktop/bun.lock') }}
+
+      - name: Cache adapter dependencies
+        uses: actions/cache@v4
+        with:
+          path: adapters/node_modules
+          key: bun-adapters-${{ hashFiles('adapters/bun.lock') }}
+
       - name: Install ripgrep
         run: sudo apt-get update && sudo apt-get install -y ripgrep
       - name: Install root dependencies
@@ -162,6 +234,24 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+      - name: Cache root dependencies
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: bun-root-${{ hashFiles('bun.lock') }}
+
+      - name: Cache desktop dependencies
+        uses: actions/cache@v4
+        with:
+          path: desktop/node_modules
+          key: bun-desktop-${{ hashFiles('desktop/bun.lock') }}
+
+      - name: Cache adapter dependencies
+        uses: actions/cache@v4
+        with:
+          path: adapters/node_modules
+          key: bun-adapters-${{ hashFiles('adapters/bun.lock') }}
+
       - name: Install root dependencies
         run: bun install --frozen-lockfile
       - name: Run offline provider contracts
@@ -179,6 +269,24 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+      - name: Cache root dependencies
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: bun-root-${{ hashFiles('bun.lock') }}
+
+      - name: Cache desktop dependencies
+        uses: actions/cache@v4
+        with:
+          path: desktop/node_modules
+          key: bun-desktop-${{ hashFiles('desktop/bun.lock') }}
+
+      - name: Cache adapter dependencies
+        uses: actions/cache@v4
+        with:
+          path: adapters/node_modules
+          key: bun-adapters-${{ hashFiles('adapters/bun.lock') }}
+
       - name: Install root dependencies
         run: bun install --frozen-lockfile
       - name: Install desktop dependencies
@@ -199,6 +307,24 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+      - name: Cache root dependencies
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: bun-root-${{ hashFiles('bun.lock') }}
+
+      - name: Cache desktop dependencies
+        uses: actions/cache@v4
+        with:
+          path: desktop/node_modules
+          key: bun-desktop-${{ hashFiles('desktop/bun.lock') }}
+
+      - name: Cache adapter dependencies
+        uses: actions/cache@v4
+        with:
+          path: adapters/node_modules
+          key: bun-adapters-${{ hashFiles('adapters/bun.lock') }}
+
       - name: Install root dependencies
         run: bun install --frozen-lockfile
       - name: Run deterministic agent flow
@@ -223,6 +349,24 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+      - name: Cache root dependencies
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: bun-root-${{ hashFiles('bun.lock') }}
+
+      - name: Cache desktop dependencies
+        uses: actions/cache@v4
+        with:
+          path: desktop/node_modules
+          key: bun-desktop-${{ hashFiles('desktop/bun.lock') }}
+
+      - name: Cache adapter dependencies
+        uses: actions/cache@v4
+        with:
+          path: adapters/node_modules
+          key: bun-adapters-${{ hashFiles('adapters/bun.lock') }}
+
       - name: Install adapter dependencies
         working-directory: adapters
         run: bun install --frozen-lockfile
@@ -244,6 +388,24 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+      - name: Cache root dependencies
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: bun-root-${{ hashFiles('bun.lock') }}
+
+      - name: Cache desktop dependencies
+        uses: actions/cache@v4
+        with:
+          path: desktop/node_modules
+          key: bun-desktop-${{ hashFiles('desktop/bun.lock') }}
+
+      - name: Cache adapter dependencies
+        uses: actions/cache@v4
+        with:
+          path: adapters/node_modules
+          key: bun-adapters-${{ hashFiles('adapters/bun.lock') }}
+
       - name: Install mobile dependencies
         run: bun install --frozen-lockfile
       - name: Run mobile checks
@@ -268,6 +430,24 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+      - name: Cache root dependencies
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: bun-root-${{ hashFiles('bun.lock') }}
+
+      - name: Cache desktop dependencies
+        uses: actions/cache@v4
+        with:
+          path: desktop/node_modules
+          key: bun-desktop-${{ hashFiles('desktop/bun.lock') }}
+
+      - name: Cache adapter dependencies
+        uses: actions/cache@v4
+        with:
+          path: adapters/node_modules
+          key: bun-adapters-${{ hashFiles('adapters/bun.lock') }}
+
       - name: Install root dependencies
         run: bun install --frozen-lockfile
       - name: Install desktop dependencies
@@ -291,6 +471,24 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+      - name: Cache root dependencies
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: bun-root-${{ hashFiles('bun.lock') }}
+
+      - name: Cache desktop dependencies
+        uses: actions/cache@v4
+        with:
+          path: desktop/node_modules
+          key: bun-desktop-${{ hashFiles('desktop/bun.lock') }}
+
+      - name: Cache adapter dependencies
+        uses: actions/cache@v4
+        with:
+          path: adapters/node_modules
+          key: bun-adapters-${{ hashFiles('adapters/bun.lock') }}
+
       - name: Run macOS Swift checks
         run: bun run check:swift
 
@@ -306,6 +504,24 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+      - name: Cache root dependencies
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: bun-root-${{ hashFiles('bun.lock') }}
+
+      - name: Cache desktop dependencies
+        uses: actions/cache@v4
+        with:
+          path: desktop/node_modules
+          key: bun-desktop-${{ hashFiles('desktop/bun.lock') }}
+
+      - name: Cache adapter dependencies
+        uses: actions/cache@v4
+        with:
+          path: adapters/node_modules
+          key: bun-adapters-${{ hashFiles('adapters/bun.lock') }}
+
       - name: Install root dependencies
         run: bun install --frozen-lockfile
       - name: Install desktop dependencies
@@ -344,6 +560,24 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+      - name: Cache root dependencies
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: bun-root-${{ hashFiles('bun.lock') }}
+
+      - name: Cache desktop dependencies
+        uses: actions/cache@v4
+        with:
+          path: desktop/node_modules
+          key: bun-desktop-${{ hashFiles('desktop/bun.lock') }}
+
+      - name: Cache adapter dependencies
+        uses: actions/cache@v4
+        with:
+          path: adapters/node_modules
+          key: bun-adapters-${{ hashFiles('adapters/bun.lock') }}
+
       - name: Install ripgrep
         run: sudo apt-get update && sudo apt-get install -y ripgrep
       - name: Install root dependencies

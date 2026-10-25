@@ -501,7 +501,7 @@ describe('release desktop workflow', () => {
 
     expect(workflow).toContain('name: desktop-update-metadata-${{ matrix.label }}')
     expect(workflow).toContain('name: desktop-release-artifacts-${{ matrix.label }}')
-    expect(publishJob).toContain('needs: build')
+    expect(publishJob).toMatch(/needs:\s*\n\s*- build/)
     expect(publishJob).toContain('actions/download-artifact@v5')
     expect(publishJob).toContain('pattern: desktop-release-artifacts-*')
     expect(publishJob).toContain('pattern: desktop-update-metadata-*')

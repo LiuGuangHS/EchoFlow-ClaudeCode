@@ -35,6 +35,48 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  release-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Upstream release audit
+        run: bun run upstream:audit
+
+      - name: Verify version matches tag
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./desktop/package.json').version")
+          EXPECTED_TAG="v${VERSION}"
+          if [ "${GITHUB_REF_NAME}" != "$EXPECTED_TAG" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match app version ${EXPECTED_TAG}"
+            exit 1
+          fi
+
+      - name: Verify release notes exist
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./desktop/package.json').version")
+          NOTES_FILE="release-notes/v${VERSION}.md"
+          if [ ! -f "$NOTES_FILE" ]; then
+            echo "::error::Missing release notes file: ${NOTES_FILE}"
+            exit 1
+          fi
+          if ! grep -qP "^# EchoFlow Code v${VERSION//./\\.}" "$NOTES_FILE"; then
+            echo "::error::Release note title does not match EchoFlow v${VERSION}"
+            exit 1
+          fi
+
   signing-preflight:
     runs-on: ubuntu-latest
     outputs:
@@ -110,8 +152,71 @@ jobs:
             echo "windows_signed=true" >> "$GITHUB_OUTPUT"
           fi
 
+  release-verification:
+    needs:
+      - release-contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Cache root dependencies
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: bun-root-${{ hashFiles('bun.lock') }}
+
+      - name: Cache desktop dependencies
+        uses: actions/cache@v4
+        with:
+          path: desktop/node_modules
+          key: bun-desktop-${{ hashFiles('desktop/bun.lock') }}
+
+      - name: Cache adapter dependencies
+        uses: actions/cache@v4
+        with:
+          path: adapters/node_modules
+          key: bun-adapters-${{ hashFiles('adapters/bun.lock') }}
+
+      - name: Install root dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: bun install --frozen-lockfile
+
+      - name: Install adapter dependencies
+        working-directory: adapters
+        run: bun install --frozen-lockfile
+
+      - name: Policy and gate regressions
+        run: bun run check:policy
+
+      - name: Root runtime tests
+        run: bun run check:server
+
+      - name: Desktop lint, tests, and build
+        run: bun run check:desktop
+
+      - name: Deterministic agent flow
+        run: bun run check:agent-flow
+
+      - name: Adapter tests
+        run: bun run check:adapters
+
+      - name: Persistence upgrade contracts
+        run: bun run check:persistence-upgrade
+
   build:
     needs:
+      - release-contract
       - signing-preflight
     strategy:
       fail-fast: false
@@ -201,6 +306,24 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: 22
+
+      - name: Cache root dependencies
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: bun-root-${{ hashFiles('bun.lock') }}
+
+      - name: Cache desktop dependencies
+        uses: actions/cache@v4
+        with:
+          path: desktop/node_modules
+          key: bun-desktop-${{ hashFiles('desktop/bun.lock') }}
+
+      - name: Cache adapter dependencies
+        uses: actions/cache@v4
+        with:
+          path: adapters/node_modules
+          key: bun-adapters-${{ hashFiles('adapters/bun.lock') }}
 
       - name: Install root dependencies
         run: bun install
@@ -777,7 +900,9 @@ jobs:
 
   publish-release:
     if: github.event_name == 'push' || inputs.draft == false || inputs.publish_draft_release == true
-    needs: build
+    needs:
+      - build
+      - release-verification
     runs-on: ubuntu-latest
 
     steps:
