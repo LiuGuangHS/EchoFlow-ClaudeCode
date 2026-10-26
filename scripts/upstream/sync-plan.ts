@@ -67,8 +67,9 @@ function compareParsedVersion(a: ParsedVersion, b: ParsedVersion) {
 /**
  * One upstream brand token and the fork token that replaces it.
  *
- * Order in the policy file is the replacement order — longest first, so a short
- * token cannot rewrite part of a longer one before the longer one is applied.
+ * Replacement runs longest-first regardless of the order in the policy file, so
+ * a short token cannot rewrite part of a longer one before the longer one is
+ * applied. Policy authors therefore do not have to keep the array sorted.
  */
 export type BrandToken = {
   upstream: string
