@@ -49,8 +49,8 @@ jobs:
         with:
           bun-version-file: package.json
 
-      - name: Upstream release audit
-        run: bun run upstream:audit
+      - name: Release surface audit
+        run: bun run check:release-surface
 
       - name: Verify version matches tag
         if: github.event_name == 'push'

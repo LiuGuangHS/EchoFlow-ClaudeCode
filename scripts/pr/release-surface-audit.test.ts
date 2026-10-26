@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { BRAND_FILES, auditReleaseSurface } from './audit'
+import { BRAND_FILES, auditReleaseSurface } from './release-surface-audit'
 
 const valid = {
   version: '0.5.6',
@@ -9,7 +9,7 @@ const valid = {
   unresolvedFiles: [],
 }
 
-describe('upstream release audit', () => {
+describe('release surface audit', () => {
   test('accepts a fork release note with no unresolved conflicts', () => {
     expect(auditReleaseSurface(valid)).toEqual([])
   })

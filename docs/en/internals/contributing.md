@@ -38,13 +38,22 @@ Do not commit local artifacts such as `artifacts/quality-runs/`, `node_modules/`
 ```bash
 bun run start                                   # or ./bin/echoflow-code: run the CLI locally
 SERVER_PORT=3456 bun run src/server/index.ts    # local API/WebSocket server used by desktop/
-cd desktop && bun run dev                       # desktop frontend in Vite
+cd desktop && bun run electron:dev              # default path: full Electron app, sidecars, hot reload
+cd desktop && bun run electron:build            # build and package the desktop app (not `bun run build`)
 cd desktop && bun run test                      # desktop Vitest suites
 cd desktop && bun run check:electron            # type-check the Electron host and rebuild bundles
-cd desktop && bun run build                     # type-check and produce a production build
+cd desktop && bun run build                     # type-check and produce a production build (frontend only)
 cd adapters && bun run test                     # all adapter tests; test:<platform> for one platform
 bun run docs:dev                                # docs preview; bun run docs:build to build
 ```
+
+Run desktop development and verification commands inside WSL when the repository is hosted there:
+
+```bash
+wsl.exe -d Ubuntu -- bash -lc 'cd /home/<user>/WorkSpace/EchoFlow-Code/desktop && bun run electron:dev'
+```
+
+Do not use the Vite-only `cd desktop && bun run dev` browser preview as the product test path; reserve it for explicitly isolated frontend work. For user-visible desktop changes, launch the full Electron app and exercise the affected workflow.
 
 For Windows x64 packaging use `cd desktop && bun run build:windows-x64`; it requires Bun/Bunx and Visual Studio 2022 Build Tools with the Desktop development with C++ workload.
 

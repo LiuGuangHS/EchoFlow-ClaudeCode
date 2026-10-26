@@ -39,6 +39,7 @@ bun install
 bun run start                                   # 或 ./bin/echoflow-code，本地运行 CLI
 SERVER_PORT=3456 bun run src/server/index.ts    # desktop/ 使用的本地 API/WebSocket 服务
 cd desktop && bun run electron:dev              # 默认开发路径：完整 Electron 应用、sidecar 与热更新
+cd desktop && bun run electron:build            # 构建并打包桌面应用（不要用 bun run build 代替）
 cd desktop && bun run test                      # 桌面端 Vitest 套件；只做聚焦回归检查
 cd desktop && bun run check:electron            # 校验 Electron host 代码并重建 bundle
 cd desktop && bun run build                     # 类型检查 + 生产构建

@@ -20,7 +20,7 @@ Update this file in the **same change** that makes one of its statements untrue:
 
 - A top-level directory, quality gate, or package script is added, removed, or renamed.
 - A `ChangeArea` is added or changed in `scripts/pr/change-policy.ts`.
-- A release, upstream-sync, or migration workflow changes.
+- A release, or migration workflow changes.
 - A file referenced from here is moved or renamed.
 
 Keep this file under 24 KB. Crossing that is the signal to move content out, not to trim prose. The hard limit is 28 KiB and is enforced by `scripts/pr/quality-contract.test.ts`.
@@ -44,17 +44,18 @@ Keep this file under 24 KB. Crossing that is the signal to move content out, not
 - Never commit generated output: `artifacts/`, coverage reports, `node_modules/`, build directories, or Rust `target/` trees.
 - `.claude/` stays local-only. It must never be a CI dependency or a committed source of truth. Run `bun run audit:harness` when changing agent guidance, quality policy, CI, or the agent toolset.
 
-## Fork Identity & Provider Policy
+## Identity & Provider Policy
 - Public/release brand: `EchoFlow Code`; executable/docs: `echoflow-code`.
-- When touching fork-owned identifiers, convert `cc-haha` → `echoflow`, `Claude-Code-Haha` → `EchoFlow-Code`, and `CC_HAHA_*` → `ECHOFLOW_*`. Retain historical names only for explicit compatibility, attribution, migration fixtures, or supported variables.
-- Retain upstream `Claude Code`, `Claude CLI`, `claude-code-*`, and `CLAUDE_CODE_*` terminology for upstream/runtime compatibility.
-- Fork calls to action and service links use EchoFlow surfaces, including `https://code.echoflow.cn/` and `https://api.echoflowai.cc/`.
-- `src/server/config/providerPresets.json` carries only official vendor APIs, official local integrations, official subscription/API integrations such as OpenCode Go, EchoFlow API, and custom. Judge a candidate preset by rule, not by an id list: reject anything upstream marks deprecated, any URL carrying promotion or tracking parameters (`utm_`, `invite`, `referral`, `?code=`), third-party relay or sponsor/referral gateways, and promotional copy. Currently rejected: `jiekouai`, `shengsuanyun`, `teamorouter`, `xuanshuapi`, `fennoai`, `qiniuai`, `atlascloud`, `apismart`.
-- Official vendor APIs and official OAuth integrations, including Grok Official, may be synchronized from upstream; private gateways use custom. An upstream provider or preset addition is rejected by default until it passes the rule above.
+- When touching inherited identifiers, convert `cc-haha` → `echoflow`, `Claude-Code-Haha` → `EchoFlow-Code`, and `CC_HAHA_*` → `ECHOFLOW_*`. Retain historical names only for explicit compatibility, attribution, migration fixtures, or supported variables.
+- Retain `Claude Code`, `Claude CLI`, `claude-code-*`, and `CLAUDE_CODE_*` terminology: those name the Claude Code runtime and its env contracts, and renaming them breaks the integration.
+- Calls to action and service links use EchoFlow surfaces, including `https://code.echoflow.cn/` and `https://api.echoflowai.cc/`.
+- `src/server/config/providerPresets.json` carries only official vendor APIs, official local integrations, official subscription/API integrations such as OpenCode Go, EchoFlow API, and custom. Judge a candidate preset by rule, not by an id list: reject anything a vendor marks deprecated, any URL carrying promotion or tracking parameters (`utm_`, `invite`, `referral`, `?code=`), third-party relay or sponsor/referral gateways, and promotional copy. Currently rejected: `jiekouai`, `shengsuanyun`, `teamorouter`, `xuanshuapi`, `fennoai`, `qiniuai`, `atlascloud`, `apismart`.
+- Official vendor APIs and official OAuth integrations, including Grok Official, may be adopted from the vendor's own documentation; private gateways use custom. A new provider or preset is rejected by default until it passes the rule above.
 
 ## Engineering Behavior Guardrails
 - Define the smallest behavior change and proof before editing. Keep changes surgical, use existing utilities, avoid dependencies and speculative abstractions, and remove only obsolescence created by the change. `ponytail` enforces this ladder; run `/ponytail-review` when a diff outgrows its proof.
 - Every changed line must trace to the request, a failing test, a verified bug, or a compatibility constraint. Stop and simplify if the diff grows beyond that proof.
+- Never apply blanket `--ours` or `--theirs`. Resolve per hunk: a conflict is two decisions at once, and picking a side wholesale keeps the wrong half of one of them.
 - Run the narrowest relevant test while iterating. Run `bun run verify` only when full validation is requested or before claiming a change is PR-ready or push-ready.
 - Coding style: TypeScript with 2-space indentation, ESM imports, no semicolons; `PascalCase` components and descriptive file names such as `teamWatcher.ts` or `AgentTranscript.tsx`; `camelCase` functions, hooks, and stores.
 - For structured data, use structured parsers or existing helpers instead of ad hoc string manipulation. Add succinct comments only where they clarify non-obvious control flow or external constraints.
@@ -99,15 +100,7 @@ Bun-based Coding Agent product with a CLI, local server, desktop app, IM adapter
 - Live model checks are separate maintainer evidence. Run them only after deterministic checks pass and a maintainer explicitly authorizes quota use; finding credentials on the machine is not authorization.
 
 ## Build, Test, and Development Commands
-Install root dependencies with `bun install`, plus `desktop/` or `adapters/` dependencies when you touch those surfaces. The full command list lives in `docs/internals/contributing.md`; the ones worth knowing before you start:
-
-- `bun run start` or `./bin/echoflow-code`: run the CLI locally.
-- `SERVER_PORT=3456 bun run src/server/index.ts`: start the local API/WebSocket server used by `desktop/`.
-- `cd desktop && bun run electron:dev`: the default desktop development path; start the complete Electron application with its sidecars and hot reload, and use this for ordinary manual verification.
-- `cd desktop && bun run electron:build`: build and package the desktop app (use this, not `bun run build` which only builds frontend).
-- `cd desktop && bun run test`: run desktop Vitest suites for focused regression checks.
-- Run desktop development and verification commands inside WSL from `/home/<user>/WorkSpace/EchoFlow-Code` when the repository is hosted in WSL. Do not use the Vite-only `bun run dev` browser preview as the normal product test path; reserve it for explicitly isolated frontend work. For user-visible desktop changes, prefer launching the complete app with `bun run electron:dev` and exercising the affected workflow.
-- `cd desktop && bun run build:windows-x64`: package the Windows x64 Electron app from PowerShell; requires Visual Studio 2022 Build Tools with the Desktop development with C++ workload.
+Install root dependencies with `bun install`, plus `desktop/` or `adapters/` dependencies when you touch those surfaces. The command list lives in `docs/internals/contributing.md`; know `bun run start`, `cd desktop && bun run electron:dev`, and `cd desktop && bun run electron:build` before you start.
 
 ## Test Design Direction
 Case law, the concrete regression examples, and the coverage caveats live in `docs/internals/contributing.md`. These are the parts that change how you write a test:
@@ -136,7 +129,7 @@ Every feature, bugfix, and behavior change ships with proof matching the changed
 - `~/.claude/settings.json` is user-owned shared state: preserve unknown fields on read/write, merge additively, and never write a repo-owned global `schemaVersion` into it.
 - Desktop Doctor and any automatic repair path must be deny-by-default. One-click repair may only mutate allowlisted, regenerable desktop UI state such as `echoflow-code-*` `localStorage` keys or native window state.
 - `echoflow-code-*` `localStorage` keys and the `echoflow-code` internal directory are active persistence contracts. The resolved config root comes from `CLAUDE_CONFIG_DIR` or the platform data directory; `~/.claude/echoflow-code/**` remains a supported legacy migration source. Do not rename any of these surfaces without a migration task, forward/backward compatibility tests, and explicit user-data preservation.
-- When merging upstream, preserve EchoFlow migration sources by default unless the user explicitly says the migration window is closed.
+- Preserve EchoFlow migration sources by default unless the user explicitly says the migration window is closed.
 - Windows AppUserModelID must stay equal to `desktop/package.json` `build.appId`; it controls toast attribution and taskbar identity. Branding changes must update Electron identity tests.
 - Doctor and repair flows must never mutate chat transcripts, model/provider config, Skills, MCP config, plugin state, IM bindings, adapter sessions, OAuth tokens, or team/session records unless a future task explicitly adds a reviewed, backup-first manual repair flow.
 - Protected files include `~/.claude/projects/**/*.jsonl`, `~/.claude/settings.json`, project `.claude/settings.json`, providers/settings/OAuth files under the resolved EchoFlow config root or legacy `~/.claude/echoflow-code/`, `~/.claude/adapters.json`, `~/.claude/adapter-sessions.json`, `~/.claude/skills`, project `.claude/skills`, `.mcp.json`, managed MCP config, `~/.claude/plugins/**`, and `~/.claude/teams/**`. Diagnose these paths only with redaction by default.
@@ -151,23 +144,19 @@ Every feature, bugfix, and behavior change ships with proof matching the changed
 
 ## Release Workflow
 - Desktop releases use plain `vX.Y.Z` tags matching `desktop/package.json`; `release-notes/vX.Y.Z.md`, `scripts/release.ts`, and `.github/workflows/release-desktop.yml` must agree. Tauri config is legacy.
-- The fork's `desktop/package.json` is the release-version source of truth. Increment the fork patch version exactly once per fork release; never create a tag or release note just because upstream shipped that version.
-- **Upstream sync version rule (maintainer decision, 2026-10-14):** when a sync merges one or more upstream releases, the fork's next version **follows the upstream version number**, and every merged upstream release's user-visible changes fold into that single fork release note. This supersedes the "fork line stays independent" reading above for sync-driven releases only: the maintainer needs fork and upstream versions to line up so a build can be traced to its upstream source at a glance. A fork-only release still increments the fork's own line.
-- Before release: on `main`, create notes, then run `bun run scripts/release.ts X.Y.Z --dry` and `bun run upstream:audit`. The release workflow runs content gate and verification in CI; optionally trigger the `Quality Check` workflow first for a full pre-tag sweep.
+- `desktop/package.json` is the release-version source of truth. EchoFlow ships on its own version line, one small release at a time: increment the patch once per release, and never create a tag or release note to mirror another project's numbering.
+- Before release: on `main`, create notes, then run `bun run scripts/release.ts X.Y.Z --dry` and `bun run check:release-surface`. The release workflow runs content gate and verification in CI; optionally trigger the `Quality Check` workflow first for a full pre-tag sweep.
 - The normal release command is `bun run scripts/release.ts X.Y.Z`; it creates the release commit and annotated tag. Do not move tags manually or upload local artifacts.
 - Push `git push origin main --tags`, wait for the release workflow, and verify the public release assets before announcing it. Report missing macOS signing/notarization secrets and unsigned Windows artifacts.
 
-## Upstream Sync Direction
-The full workflow, the conflict-matrix template, and the worked `v0.6.4` example live in `docs/internals/contributing.md`. These parts are not negotiable:
+## Independence & Reference Policy
+EchoFlow Code is standalone software. There is no upstream project this repository tracks, merges with, or versions against, and the old sync workflow is retired.
 
-- Write one complete conflict matrix first — file, base/ours/theirs behavior, final policy decision, validating command — and resolve it in one focused pass. Do not discover and patch conflicts one at a time.
-- Never apply blanket `--ours` or `--theirs`. Resolve per hunk. Where a file mixes fork branding with upstream logic, take the fork's brand with the upstream logic rather than either side wholesale.
-- `git add` and `git commit` require explicit developer confirmation. Never stage or commit a conflict resolution automatically.
-- Preserve fork identity and provider policy, sponsor-free public docs, persistence compatibility, the Electron release flow, and the quality gates. Reject upstream provider additions by default.
-- Audit public identity after every merge: README, docs, release notes, package metadata, diagnostics export, signing/privacy pages, updater links, and desktop About/profile defaults must not identify NanmiCoder/阿江 or `cc-haha` as the current EchoFlow author, maintainer, contact, or product.
-- Have `@code-reviewer` review the written resolutions and run `bun run check:policy` before asking the developer to stage; run `bun run verify` before calling the merge push-ready.
-- Sync-branch commands, bun only and run by hand (no scheduled sync automation; `.github/workflows/upstream-probe.yml` only reports status). **Run them in this order** — `upstream:resolve` needs the sync branch to exist on `origin`, which only `upstream:sync` creates: `bun run upstream:check` (read-only probe; `--strict` exits 1 on conflicts, `--base <branch>` retargets), `bun run upstream:sync` (publishes `sync/upstream-vX.Y.Z` at the upstream release commit with `--force-with-lease`; refuses when the remote branch holds different content. It publishes the release commit, **not** a resolved branch head, so it is step 2 only — finish a merge with a plain `git push origin sync/upstream-vX.Y.Z`), `bun run upstream:resolve` (**switches to and force-creates the sync branch, requires a clean worktree**; creates the branch from the release commit when `origin` lacks it, and needs `--force` to move a local branch that already points elsewhere), and `bun run upstream:audit` (read-only release-surface gate for unresolved conflicts, release-note version/brand, newer release-note files, and upstream branding in README / `package.json` / `desktop/package.json` / `AGENTS.md`). Work in a separate `git worktree` — `upstream:resolve` switches branches in the checkout it runs in. After it, run `bun run scripts/upstream/merge-state.ts --cwd <worktree> --resolve-brand` to clear brand-token-only hunks (writes file content only, never stages), then work the remaining hunks per the parallel-area procedure in `docs/internals/contributing.md`.
-- Plan the merge with `/superpowers:brainstorm` and `/superpowers:write-plan`, and put `@code-reviewer` on conflicted files, high-risk files, and provider-policy decisions.
+- Never merge, cherry-pick, vendor, or copy code from another project into this tree. Other projects — including any former upstream — are reference and learning material only. Read them, take the idea, and reimplement it here with our own code, our own names, and our own tests.
+- When a fix is inspired by elsewhere, the commit must stand on our own proof: a failing test we wrote, a verified bug we reproduced, or a compatibility constraint. "It came from that project" is not a provenance this repository accepts.
+- Do not attribute EchoFlow's authorship, maintenance, contact, or product identity to another project or its author in README, docs, release notes, package metadata, diagnostics export, signing/privacy pages, updater links, or desktop About/profile defaults.
+- Third-party copyright and permission notices stay with the code they cover. Move them to `THIRD_PARTY_LICENSES.md` when a file needs to carry its own license separately; never delete a notice a license requires us to keep. This is a legal floor, not a branding preference.
+- `bun run check:release-surface` is the standing gate: it rejects foreign-authored release notes, version/brand drift, unresolved conflicts, and upstream identity markers on the public surfaces.
 
 ## Commit & Pull Request Guidelines
 - Use Conventional Commit prefixes (`feat:`, `fix:`, `docs:`), imperative subjects scoped to one change, and normal product branch prefixes such as `fix/xxx`, `feat/xxx`, or `docs/xxx`. Do not create `codex/`-prefixed branches in this repository.
@@ -176,7 +165,7 @@ The full workflow, the conflict-matrix template, and the worked `v0.6.4` example
 - A PR description must include changed files, tests added or updated, coverage report path, E2E/live evidence or blocker, pass/fail/skip counts from the quality report when available, and remaining risk/rollback notes. A normal local agent handoff may be lighter: changed files, focused checks run, skipped full gates, and remaining risk/rollback notes.
 
 ## Deeper Guides
-- Contributor workflow, coverage policy, upstream-sync procedure, and test-design case law: `CONTRIBUTING.md` and `docs/internals/contributing.md`
+- Contributor workflow, coverage policy, and test-design case law: `CONTRIBUTING.md` and `docs/internals/contributing.md`
 - Directory responsibilities: `docs/internals/structure.md`
 - Package scripts and path routing: `package.json` and `scripts/pr/change-policy.ts`
 - PR evidence contract: `.github/pull_request_template.md`

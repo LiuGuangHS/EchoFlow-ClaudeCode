@@ -19,11 +19,11 @@ export type ReleaseAuditInput = {
 }
 
 /**
- * The public surfaces `AGENTS.md` requires auditing after every merge.
+ * The public surfaces `AGENTS.md` requires auditing before a release.
  *
  * A fixed list rather than a repository-wide scan: these are the files that
- * actually conflict during a sync (README, both package manifests) plus the one
- * that documents the rule, and a whitelist keeps false positives — the rule text
+ * carry product identity (README, both package manifests) plus the one that
+ * documents the rule, and a whitelist keeps false positives — the rule text
  * itself names the upstream project — from making the gate permanently red.
  */
 export const BRAND_FILES = [
@@ -164,8 +164,8 @@ if (import.meta.main) {
   const root = path.resolve(import.meta.dir, '..', '..')
   const errors = runReleaseAudit(root)
   if (errors.length > 0) {
-    console.error(['Upstream release audit failed:', ...errors.map(error => `- ${error}`)].join('\n'))
+    console.error(['Release surface audit failed:', ...errors.map(error => `- ${error}`)].join('\n'))
     process.exit(1)
   }
-  console.log('Upstream release audit passed.')
+  console.log('Release surface audit passed.')
 }
