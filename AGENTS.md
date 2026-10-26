@@ -1,6 +1,6 @@
 # Repository Agent Contract
 
-This file is the authoritative operating contract for AI coding agents and human contributors in this repository. Root `CLAUDE.md` is a short session-loaded summary that points here; if the two diverge, this file wins.
+This file is the authoritative operating contract for AI coding agents and human contributors in this repository. Any shorter summary of it defers here where the two diverge.
 
 Treat it as executable guidance: inspect the real code, make narrow changes, verify the affected behavior, and leave a handoff another maintainer can trust.
 
