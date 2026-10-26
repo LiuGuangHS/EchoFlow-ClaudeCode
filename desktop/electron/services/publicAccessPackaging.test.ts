@@ -20,8 +20,12 @@ describe('ngrok native packaging', () => {
   })
   it.each(['release-desktop.yml', 'build-desktop-dev.yml'])('%s installs native addons for cross-architecture packages', workflow => {
     const source = parse(readFileSync(path.join(repositoryRoot, '.github', 'workflows', workflow), 'utf8'))
-    const jobs = Object.values(source.jobs) as { steps?: { name?: string, run?: string, 'working-directory'?: string }[] }[]
-    const desktopInstalls = jobs.flatMap(job => job.steps ?? []).filter(step => step.name === 'Install desktop dependencies')
+    const jobs = source.jobs as Record<string, { steps?: { name?: string, run?: string, 'working-directory'?: string }[] }>
+    // Only the packaging job cross-builds. The verify jobs install for the host
+    // they run on and never hand a bundle to another architecture, so requiring
+    // every-CPU installs there adds download time without covering anything.
+    const steps = jobs.build?.steps ?? []
+    const desktopInstalls = steps.filter(step => step.name === 'Install desktop dependencies')
     expect(desktopInstalls.length).toBeGreaterThan(0)
     for (const step of desktopInstalls) {
       expect(step['working-directory']).toBe('desktop')
