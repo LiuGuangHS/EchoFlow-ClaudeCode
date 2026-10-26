@@ -547,7 +547,7 @@ bun run upstream:state --cwd ../EchoFlow-sync-v0.7.4
 bun run scripts/upstream/merge-state.ts --cwd ../EchoFlow-sync-v<版本> --resolve-brand
 ```
 
-它只解一种 hunk：两边归一化品牌词之后仍然相等的（`cc-haha` ↔ `echoflow` 这类纯品牌差异）。落盘保留 ours——这种 hunk 两边逻辑本就相同，ours 已经是「fork 品牌配上游逻辑」，而且只有它可能带着 fork 为兼容、归因或受支持变量而**有意保留**的历史名；改写 theirs 会把这类保留悄悄抹掉。其余 hunk 原样保留冲突标记，留给人工。三条边界：
+它只解一种 hunk：两边归一化品牌词之后仍然相等的（`cc-haha` ↔ `echoflow` 这类纯品牌差异）。落盘保留**品牌侧是 fork 的那一边**——这种 hunk 两边逻辑本就相同，挑品牌侧不需要读逻辑；而 fork 为兼容、归因或受支持变量而**有意保留**的历史名，也只可能出现在 fork 侧。注意两侧不固定是 ours：`upstream:resolve` 把工作分支建在上游 release commit 上、再把 fork main 合进来，此时 `ours` 是上游、`theirs` 才是 fork，所以按 hunk 判品牌侧，而不是一律取 ours——一律取 ours 会把 EchoFlow 洗回 `cc-haha`，连同 fork 的保留名一起抹掉。其余 hunk 原样保留冲突标记，留给人工。三条边界：
 
 - **只写文件内容，不暂存、不提交**。解完的文件仍是 `UU`，等维护者 `git add`。
 - `sync-policy.json` 里记为 `manual` 的路径整体跳过（当前是 `src/server/config/providerPresets.json`），无论它的 hunk 长什么样。

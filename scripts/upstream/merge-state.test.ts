@@ -520,6 +520,21 @@ describe('resolveBrandOnlyHunks', () => {
     expect(result.remaining).toBe(0)
   })
 
+  test('keeps the fork side when the merge direction is inverted', () => {
+    // `upstream:resolve` prepares the sync worktree on the upstream release
+    // commit and merges fork main into it, so HEAD/"ours" carries upstream brand
+    // and "theirs" carries the fork's. Keeping ours there would rewrite EchoFlow
+    // back to cc-haha across the tree.
+    const result = resolveBrandOnlyHunks({
+      content: 'a\n<<<<<<< HEAD\ncc-haha-api\n=======\nechoflow-api\n>>>>>>> x\nb\n',
+      policy,
+    })
+
+    expect(result.content).toBe('a\nechoflow-api\nb\n')
+    expect(result.resolved).toBe(1)
+    expect(result.remaining).toBe(0)
+  })
+
   test('leaves a semantic hunk marked and counts it as remaining', () => {
     const before = '<<<<<<< HEAD\nv2\n=======\nv1\n>>>>>>> x\n'
     const result = resolveBrandOnlyHunks({ content: before, policy })
@@ -559,9 +574,8 @@ describe('resolveBrandOnlyHunks', () => {
 
   test('keeps a deliberate historical token the fork side retained', () => {
     // AGENTS.md: historical names are retained for explicit compatibility, attribution,
-    // migration fixtures, or supported variables. A brand-only hunk is brand-equivalent
-    // on both sides, so ours already carries "fork brand over upstream logic" — and it
-    // is the only side that can hold a retention. Rewriting theirs would silently drop it.
+    // migration fixtures, or supported variables. The fork side is the only side that
+    // can hold a retention, so it is the side that must be kept — whichever side it is.
     const branding = parseSyncPolicy(JSON.stringify({
       brandTokens: [
         { upstream: 'CC_HAHA_', fork: 'ECHOFLOW_' },
@@ -571,6 +585,26 @@ describe('resolveBrandOnlyHunks', () => {
     }))
     const result = resolveBrandOnlyHunks({
       content: '<<<<<<< HEAD\nECHOFLOW_API_KEY fallback CC_HAHA_API_KEY\n=======\nCC_HAHA_API_KEY fallback CC_HAHA_API_KEY\n>>>>>>> x\n',
+      policy: branding,
+    })
+
+    expect(result.content).toBe('ECHOFLOW_API_KEY fallback CC_HAHA_API_KEY\n')
+    expect(result.resolved).toBe(1)
+  })
+
+  test('keeps the retention when the merge direction is inverted', () => {
+    // Same retention, flipped sides: the sync worktree puts the fork's retained
+    // form on "theirs". Keeping ours would drop the retention and keep upstream's
+    // plain pair — the damage a keep-ours rule does on the documented workflow.
+    const branding = parseSyncPolicy(JSON.stringify({
+      brandTokens: [
+        { upstream: 'CC_HAHA_', fork: 'ECHOFLOW_' },
+        { upstream: 'cc-haha', fork: 'echoflow' },
+      ],
+      fileDecisions: {},
+    }))
+    const result = resolveBrandOnlyHunks({
+      content: '<<<<<<< HEAD\nCC_HAHA_API_KEY fallback CC_HAHA_API_KEY\n=======\nECHOFLOW_API_KEY fallback CC_HAHA_API_KEY\n>>>>>>> x\n',
       policy: branding,
     })
 
@@ -665,10 +699,10 @@ describe('--resolve-brand', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  test('resolve-brand refuses when the merge direction is inverted', () => {
+  test('resolve-brand writes the fork brand on an inverted merge', () => {
     // The v0.7.4 worktree is this shape: HEAD is the upstream release commit and
-    // MERGE_HEAD is the fork. Keeping "ours" there would rewrite EchoFlow back to
-    // cc-haha across the tree, so the run must refuse rather than do it.
+    // MERGE_HEAD is the fork. A keep-ours rule would rewrite EchoFlow back to
+    // cc-haha here; the run must land on the fork brand instead.
     const repo = mkdtempSync(path.join(tmpdir(), 'merge-state-resolve-inverted-'))
     createConflict(repo, ['conflicted.ts'], {
       // main is HEAD ("ours") and carries the upstream brand; side is MERGE_HEAD
@@ -681,10 +715,12 @@ describe('--resolve-brand', () => {
 
     const result = runMain(repo, ['--cwd', repo, '--resolve-brand'])
 
-    expect(result.status).not.toBe(0)
-    expect(result.stderr).toContain('inverted')
-    // Nothing was rewritten — the conflict is still there for a human.
-    expect(readFileSync(path.join(repo, 'conflicted.ts'), 'utf8')).toContain('<<<<<<<')
+    // The merge is not finished: resolved content, still unmerged until staged.
+    expect(result.status).toBe(1)
+    const content = readFileSync(path.join(repo, 'conflicted.ts'), 'utf8')
+    expect(content).toContain('echoflow-api')
+    expect(content).not.toContain('cc-haha-api')
+    expect(content).not.toContain('<<<<<<<')
     rmSync(repo, { recursive: true, force: true })
   })
 

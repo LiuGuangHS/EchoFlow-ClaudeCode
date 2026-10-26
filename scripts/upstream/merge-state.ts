@@ -169,13 +169,19 @@ export function splitConflictHunks(content: string): ContentPart[] {
 /**
  * Applies the brand-only resolution to every conflict hunk in a file.
  *
- * A hunk that differs solely in brand tokens keeps **ours**. The two sides are
- * brand-equivalent, so ours already is "fork brand over upstream logic" — what
- * AGENTS.md prescribes — and it is the only side that can carry a historical
- * token the fork deliberately retained for compatibility, attribution, or
- * supported variables. Rewriting theirs would silently destroy that retention.
- * Every other hunk keeps its markers. Nothing here touches the index: staging
- * stays the maintainer's call.
+ * A hunk that differs solely in brand tokens keeps the **fork side** — whichever
+ * side of the markers already carries the fork brand. It is not always `ours`:
+ * `upstream:resolve` prepares the sync worktree on the upstream release commit
+ * and merges fork main into it, so there `ours` is upstream's identity and
+ * `theirs` is the fork's. Keeping `ours` would rewrite EchoFlow back to
+ * `cc-haha` across the tree, and it would also drop a historical token the fork
+ * deliberately retained for compatibility, attribution, or supported variables,
+ * because that retention lives on the fork side.
+ *
+ * A brand-only hunk is brand-equivalent on both sides, so the two candidate
+ * texts are the same product code under two names; picking by brand is safe
+ * without reading the logic. Every other hunk keeps its markers. Nothing here
+ * touches the index: staging stays the maintainer's call.
  */
 export function resolveBrandOnlyHunks(input: {
   content: string
@@ -197,7 +203,9 @@ export function resolveBrandOnlyHunks(input: {
 
     if (verdict === 'brand-only') {
       resolved += 1
-      return part.ours
+      return detectForkSide({ ours: part.ours, theirs: part.theirs, policy: input.policy }) === 'ours'
+        ? part.ours
+        : part.theirs
     }
 
     remaining += 1
@@ -509,30 +517,6 @@ export function readMergeState(root: string): MergeState {
 }
 
 /**
- * Reads both sides of the merge as brand-bearing text, for `detectForkSide`.
- *
- * `git grep` over each ref is the sample: it works whatever the tree shape, and
- * measuring the whole tree rather than one file is what makes the verdict
- * trustworthy on a merge of over a thousand paths.
- */
-function readMergeSides(root: string, policy: SyncPolicy): { ours: string, theirs: string } {
-  const pattern = policy.brandTokens
-    .map(token => token.fork.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-    .join('|')
-
-  if (pattern === '') {
-    return { ours: '', theirs: '' }
-  }
-
-  const side = (ref: string) => git(
-    ['grep', '-I', '-o', '-E', pattern, ref],
-    { cwd: root, allowFailure: true },
-  ).output
-
-  return { ours: side('HEAD'), theirs: side('MERGE_HEAD') }
-}
-
-/**
  * Rewrites brand-only conflict hunks in every marked file under `root`.
  *
  * Writes file content only. The index is never touched: a resolved file stays
@@ -542,21 +526,6 @@ function readMergeSides(root: string, policy: SyncPolicy): { ours: string, their
  */
 function applyBrandResolutions(root: string): BrandResolutionReport {
   const policy = loadSyncPolicy()
-
-  // The rewrite keeps the fork side. That is `ours` when you merge upstream into
-  // your branch, and `theirs` in a worktree sitting on the upstream release
-  // commit — the shape the v0.7.4 campaign is actually in. Refuse there rather
-  // than rewrite EchoFlow back to `cc-haha` across the tree.
-  const forkSide = detectForkSide({ ...readMergeSides(root, policy), policy })
-
-  if (forkSide === 'theirs') {
-    throw new Error(
-      '--resolve-brand refused: this merge is inverted (ours is the upstream side, '
-      + 'theirs is the fork side). Keeping "ours" would rewrite the fork brand back to '
-      + "upstream's. Resolve those hunks by hand, keeping the fork side.",
-    )
-  }
-
   const candidates = readMergeState(root).needsWork
   let rewritten = 0
   let manual = 0
@@ -602,14 +571,7 @@ function main() {
   let brandResolution: BrandResolutionReport | undefined
 
   if (argv.includes('--resolve-brand')) {
-    try {
-      brandResolution = applyBrandResolutions(root)
-    } catch (error) {
-      // A refusal is a verdict the caller asked for, not a crash: say it plainly
-      // and still print the report, which is accurate because nothing was written.
-      console.error(error instanceof Error ? error.message : String(error))
-      process.exitCode = 2
-    }
+    brandResolution = applyBrandResolutions(root)
   }
 
   // Read after any rewrite, so the report describes what is left rather than
