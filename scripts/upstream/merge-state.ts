@@ -28,6 +28,7 @@ import {
   areaOf,
   classifyConflictHunk,
   decisionFor,
+  detectForkSide,
   parseSyncPolicy,
   type SyncPolicy,
 } from './sync-plan'
@@ -508,6 +509,30 @@ export function readMergeState(root: string): MergeState {
 }
 
 /**
+ * Reads both sides of the merge as brand-bearing text, for `detectForkSide`.
+ *
+ * `git grep` over each ref is the sample: it works whatever the tree shape, and
+ * measuring the whole tree rather than one file is what makes the verdict
+ * trustworthy on a merge of over a thousand paths.
+ */
+function readMergeSides(root: string, policy: SyncPolicy): { ours: string, theirs: string } {
+  const pattern = policy.brandTokens
+    .map(token => token.fork.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('|')
+
+  if (pattern === '') {
+    return { ours: '', theirs: '' }
+  }
+
+  const side = (ref: string) => git(
+    ['grep', '-I', '-o', '-E', pattern, ref],
+    { cwd: root, allowFailure: true },
+  ).output
+
+  return { ours: side('HEAD'), theirs: side('MERGE_HEAD') }
+}
+
+/**
  * Rewrites brand-only conflict hunks in every marked file under `root`.
  *
  * Writes file content only. The index is never touched: a resolved file stays
@@ -517,6 +542,21 @@ export function readMergeState(root: string): MergeState {
  */
 function applyBrandResolutions(root: string): BrandResolutionReport {
   const policy = loadSyncPolicy()
+
+  // The rewrite keeps the fork side. That is `ours` when you merge upstream into
+  // your branch, and `theirs` in a worktree sitting on the upstream release
+  // commit — the shape the v0.7.4 campaign is actually in. Refuse there rather
+  // than rewrite EchoFlow back to `cc-haha` across the tree.
+  const forkSide = detectForkSide({ ...readMergeSides(root, policy), policy })
+
+  if (forkSide === 'theirs') {
+    throw new Error(
+      '--resolve-brand refused: this merge is inverted (ours is the upstream side, '
+      + 'theirs is the fork side). Keeping "ours" would rewrite the fork brand back to '
+      + "upstream's. Resolve those hunks by hand, keeping the fork side.",
+    )
+  }
+
   const candidates = readMergeState(root).needsWork
   let rewritten = 0
   let manual = 0
@@ -562,7 +602,14 @@ function main() {
   let brandResolution: BrandResolutionReport | undefined
 
   if (argv.includes('--resolve-brand')) {
-    brandResolution = applyBrandResolutions(root)
+    try {
+      brandResolution = applyBrandResolutions(root)
+    } catch (error) {
+      // A refusal is a verdict the caller asked for, not a crash: say it plainly
+      // and still print the report, which is accurate because nothing was written.
+      console.error(error instanceof Error ? error.message : String(error))
+      process.exitCode = 2
+    }
   }
 
   // Read after any rewrite, so the report describes what is left rather than

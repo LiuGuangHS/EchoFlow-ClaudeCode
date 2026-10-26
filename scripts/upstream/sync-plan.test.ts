@@ -4,6 +4,7 @@ import {
   areaOf,
   classifyConflictHunk,
   decisionFor,
+  detectForkSide,
   formatPlan,
   latestRelease,
   normalizeForkBrand,
@@ -548,5 +549,45 @@ describe('classifyConflictHunk', () => {
     // brand rename and a real edit must never be auto-resolved.
     expect(classifyConflictHunk({ ours: 'echoflow-api call()', theirs: 'cc-haha-api call2()', policy }))
       .toBe('semantic')
+  })
+})
+
+describe('detectForkSide', () => {
+  const policy = parseSyncPolicy(JSON.stringify({
+    brandTokens: [
+      { upstream: 'cc-haha', fork: 'echoflow' },
+      { upstream: 'CC_HAHA_', fork: 'ECHOFLOW_' },
+    ],
+    fileDecisions: {},
+  }))
+
+  test('reports ours as the fork side in the normal merge direction', () => {
+    // Normal: you merge upstream into your branch, so HEAD already carries the
+    // fork brand and the incoming side carries upstream's.
+    expect(detectForkSide({ ours: 'echoflow echoflow', theirs: 'cc-haha cc-haha', policy }))
+      .toBe('ours')
+  })
+
+  test('reports theirs as the fork side when the merge direction is inverted', () => {
+    // The v0.7.4 worktree is exactly this shape: HEAD is the upstream release
+    // commit and MERGE_HEAD is the fork. Resolving "keep ours" there would
+    // rewrite EchoFlow back to cc-haha across the tree.
+    expect(detectForkSide({ ours: 'cc-haha cc-haha', theirs: 'echoflow echoflow', policy }))
+      .toBe('theirs')
+  })
+
+  test('falls back to ours when neither side carries the fork brand', () => {
+    // Brand-agnostic content cannot say which side is which. Defaulting to ours
+    // keeps the previous behaviour for the normal direction rather than
+    // refusing to work on a merge that has no brand signal at all.
+    expect(detectForkSide({ ours: 'plain', theirs: 'plain', policy })).toBe('ours')
+  })
+
+  test('counts every policy token pair, not just one', () => {
+    expect(detectForkSide({
+      ours: 'CC_HAHA_API cc-haha',
+      theirs: 'ECHOFLOW_API echoflow echoflow',
+      policy,
+    })).toBe('theirs')
   })
 })

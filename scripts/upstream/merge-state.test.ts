@@ -195,8 +195,10 @@ describe('formatMergeState', () => {
 
     expect(report).not.toContain('本报告只读')
     expect(report).toContain('改写了 **3** 个品牌类冲突块')
-    expect(report).toContain('`a.ts`')
-    expect(report).toContain('`b.ts`')
+    // The joined form only the touched-file line produces: `a.ts` and `b.ts`
+    // also appear in the ready-to-stage list below, so asserting them bare would
+    // stay green even if the listing were dropped from the report.
+    expect(report).toContain('（2 个文件：`a.ts`、`b.ts`）')
     // Staging stays the maintainer's call even after the rewrite.
     expect(report).toContain('未暂存')
   })
@@ -660,6 +662,29 @@ describe('--resolve-brand', () => {
 
     expect(result.stdout).toContain('conflicted.ts')
     expect(result.stdout).not.toContain('本报告只读')
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  test('resolve-brand refuses when the merge direction is inverted', () => {
+    // The v0.7.4 worktree is this shape: HEAD is the upstream release commit and
+    // MERGE_HEAD is the fork. Keeping "ours" there would rewrite EchoFlow back to
+    // cc-haha across the tree, so the run must refuse rather than do it.
+    const repo = mkdtempSync(path.join(tmpdir(), 'merge-state-resolve-inverted-'))
+    createConflict(repo, ['conflicted.ts'], {
+      // main is HEAD ("ours") and carries the upstream brand; side is MERGE_HEAD
+      // ("theirs") and carries the fork brand. base must differ from both, or
+      // `git commit -a` has nothing to record on the branch.
+      content: branch => (branch === 'main'
+        ? 'cc-haha-api\n'
+        : branch === 'side' ? 'echoflow-api\n' : 'base\n'),
+    })
+
+    const result = runMain(repo, ['--cwd', repo, '--resolve-brand'])
+
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('inverted')
+    // Nothing was rewritten — the conflict is still there for a human.
+    expect(readFileSync(path.join(repo, 'conflicted.ts'), 'utf8')).toContain('<<<<<<<')
     rmSync(repo, { recursive: true, force: true })
   })
 

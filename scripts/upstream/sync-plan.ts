@@ -211,6 +211,30 @@ export function classifyConflictHunk(input: {
 }
 
 /**
+ * Which side of the merge already carries the fork's brand.
+ *
+ * `resolveBrandOnlyHunks` keeps the fork side, and in a normal merge that is
+ * ours — you merged upstream into your branch. It is not always ours: the
+ * v0.7.4 campaign sits in a worktree whose HEAD is the upstream release commit
+ * and whose MERGE_HEAD is the fork, so "keep ours" there would rewrite EchoFlow
+ * back to `cc-haha` across the tree. The side carrying more fork-brand tokens is
+ * the fork side; ties and brand-free content fall back to `ours`, which keeps
+ * the normal direction behaving as before rather than refusing to work.
+ */
+export function detectForkSide(input: {
+  ours: string
+  theirs: string
+  policy: SyncPolicy
+}): 'ours' | 'theirs' {
+  const count = (text: string) => input.policy.brandTokens.reduce(
+    (hits, token) => hits + text.split(token.fork).length - 1,
+    0,
+  )
+
+  return count(input.theirs) > count(input.ours) ? 'theirs' : 'ours'
+}
+
+/**
  * Keeps only `vX.Y.Z` release tags. Prerelease and fork-local tags such as
  * `v0.3.2-rc.1` are deliberately excluded: they are not upstream releases.
  */
