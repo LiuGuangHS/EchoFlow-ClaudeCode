@@ -1,21 +1,55 @@
-MIT License
+EchoFlow Code — Proprietary License
 
-Copyright (c) 2026 LiuGuangHS / EchoFlow Code
+Copyright (c) 2026 LiuGuangHS / EchoFlow Code. All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. SCOPE
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+This license covers only original work authored by LiuGuangHS / EchoFlow
+Code in this repository. "Original work" means code, documentation, assets
+and configuration written for EchoFlow Code, and not derived from any
+third-party source.
+
+
+2. THIRD-PARTY CODE IS NOT COVERED BY THIS FILE
+
+Significant portions of this software are derived from third-party source
+code. Those portions are NOT licensed under this file. They remain subject
+to the rights of their original owners and to the notices preserved in
+THIRD_PARTY_LICENSES.md, which is incorporated here by reference.
+
+In particular, the root `src/` runtime is derived from third-party source.
+See "Claude Code runtime (derived source)" in THIRD_PARTY_LICENSES.md for
+the provenance record this repository has carried since its first commit,
+and for the licensing history of those portions.
+
+Nothing in this file grants, purports to grant, or widens any licence to
+third-party code. No copyright in third-party code is claimed by EchoFlow
+Code.
+
+
+3. GRANT FOR ORIGINAL WORK
+
+All rights in the original work are reserved. No right is granted except
+under a separate written agreement signed by LiuGuangHS / EchoFlow Code.
+Copying, modification, redistribution, sublicensing, or commercial use of
+the original work outside such an agreement is not permitted.
+
+
+4. NO WARRANTY
+
+THE ORIGINAL WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT
+OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR
+THE USE OR OTHER DEALINGS IN THE ORIGINAL WORK.
+
+
+5. STATUS OF THIS FILE
+
+This file is a scope statement and a rights reservation. It is not a full
+end-user licence agreement. Permitted use, distribution terms, and
+commercial licensing require a separate lawyer-drafted agreement. Do not
+treat this file as one.

@@ -2,6 +2,71 @@
 
 This project includes code and binaries from the following open source projects.
 
+## Claude Code runtime (derived source)
+
+The root `src/` runtime is derived from third-party source code. EchoFlow Code
+claims no copyright in those portions and grants no licence to them.
+
+This repository's first commit carried the following notice. It is preserved
+here verbatim as the provenance record for the derived portions:
+
+> DISCLAIMER AND LICENSE
+>
+> Copyright (c) 2026 Anthropic, PBC. All rights reserved for the original source code.
+>
+> This repository is based on the Claude Code source code leaked from the Anthropic
+> npm registry on 2026-03-31. All original source code copyrights belong to Anthropic.
+>
+> THIS SOFTWARE IS PROVIDED FOR EDUCATIONAL AND RESEARCH PURPOSES ONLY.
+>
+> The purpose of this repository is to facilitate the study and research of AI Agent
+> engineering, including but not limited to:
+> - Agent architecture and design patterns
+> - Tool use and function calling mechanisms
+> - Multi-agent orchestration
+> - Terminal UI (TUI) implementation for AI applications
+> - MCP (Model Context Protocol) integration
+>
+> RESTRICTIONS:
+>
+> 1. This software SHALL NOT be used for any commercial purposes.
+> 2. This software SHALL NOT be used to compete with or replicate Anthropic's
+>    commercial products or services.
+> 3. This software SHALL NOT be redistributed, sublicensed, or sold in any form.
+> 4. Users SHALL comply with all applicable laws and regulations in their jurisdiction.
+>
+> NO WARRANTY:
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+> INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+> PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+> HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+> OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+> SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+>
+> By using this software, you acknowledge that:
+> - You understand this is leaked source code and all original rights belong to Anthropic.
+> - You will use it solely for learning and research of Agent engineering.
+> - You assume all legal risks and responsibilities arising from the use of this software.
+
+### Licensing history of the derived portions
+
+Recorded from this repository's own git history, so the change in statements is
+auditable:
+
+| Commit | Date | What the repository's LICENSE said |
+| --- | --- | --- |
+| `8bb3c0e11` | 2026-04-04 | The disclaimer quoted above. |
+| `9e9b5eeea` | 2026-07-29 | Replaced the disclaimer with an MIT licence under a different copyright holder (`cc-haha`). A repository cannot relicense third-party proprietary source by editing its own LICENSE file, so this did not widen anyone's rights to the derived portions. The notice above remains the record of provenance. |
+| `629ed2a2e` | 2026-09-17 | Copyright line changed to `LiuGuangHS / EchoFlow Code`, MIT text retained. |
+| — | 2026-10-26 | Original work moved to a proprietary licence in `LICENSE`. Derived portions remain third-party and are not covered by it. |
+
+### Open item
+
+`src/` is large and is being progressively replaced with independently written
+code. Until that completes, any distribution of this product needs legal review
+of the derived portions. This file records provenance; it is not that review.
+
 ## ripgrep
 
 - Project: ripgrep (https://github.com/BurntSushi/ripgrep)
