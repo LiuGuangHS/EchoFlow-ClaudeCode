@@ -6,7 +6,12 @@ import { ProviderSettings } from './ProviderSettings'
 import { ApiError } from '../../api/client'
 import { useProviderStore } from '../../stores/providerStore'
 import { useSettingsStore } from '../../stores/settingsStore'
+import { translate } from '../../i18n'
 import type { SavedProvider } from '../../types/provider'
+
+// The draft name is built by the component as `<endpoint label> · <token name>`.
+// The endpoint label goes through t(), so the expectation has to too.
+const dedicatedDraftName = `${translate('en', 'echoflowApiOfficialLogin.endpointDedicated')} · Dedicated key`
 
 type EchoFlowTokenSource = {
   endpoint: 'main' | 'dedicated'
@@ -195,13 +200,13 @@ describe('EchoFlow provider setup', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Select dedicated token' }))
     const tokenDialog = within(await screen.findByRole('dialog'))
-    expect(tokenDialog.getByDisplayValue('专线 · Dedicated key')).toBeInTheDocument()
+    expect(tokenDialog.getByDisplayValue(dedicatedDraftName)).toBeInTheDocument()
     fireEvent.click(tokenDialog.getByRole('button', { name: 'Cancel' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
 
     fireEvent.click(screen.getByRole('button', { name: /Add Model/ }))
     const regularDialog = within(screen.getByRole('dialog'))
-    expect(regularDialog.queryByDisplayValue('专线 · Dedicated key')).not.toBeInTheDocument()
+    expect(regularDialog.queryByDisplayValue(dedicatedDraftName)).not.toBeInTheDocument()
     fireEvent.click(regularDialog.getByRole('button', { name: 'Cancel' }))
   })
 

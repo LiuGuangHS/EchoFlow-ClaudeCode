@@ -292,8 +292,8 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
         <div className="flex items-center gap-4 px-4 py-3.5">
           <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${echoFlowHasAccount ? 'bg-[var(--color-success)]' : 'bg-[var(--color-text-tertiary)]'}`} />
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold text-[var(--color-text-primary)]">EchoFlow API 官方</div>
-            <div className="mt-0.5 text-xs text-[var(--color-text-tertiary)]">主站和专线接入，支持 Claude / OpenAI</div>
+            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t('settings.providers.echoflowAPIOfficialName')}</div>
+            <div className="mt-0.5 text-xs text-[var(--color-text-tertiary)]">{t('settings.providers.echoflowAPIOfficialDesc')}</div>
           </div>
         </div>
         <div className="border-t border-[var(--color-border-separator)] px-4 pb-4 pt-3">
@@ -391,7 +391,7 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
               const test = testResults[provider.id]
               const preset = presetMap.get(provider.presetId)
 
-              const displayKey = provider.keyPreview || (provider.hasApiKey ? '已配置凭据' : '未配置凭据')
+              const displayKey = provider.keyPreview || (provider.hasApiKey ? t('settings.providers.credentialConfigured') : t('settings.providers.credentialMissing'))
 
               return (
                 <SortableProviderCard
@@ -1098,7 +1098,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
   const [name, setName] = useState(
     provider?.name ??
     (echoFlowDraft
-      ? `${echoFlowDraft.endpoint === 'main' ? '主站' : '专线'} · ${echoFlowDraft.tokenName}`
+      ? `${echoFlowDraft.endpoint === 'main' ? t('echoflowApiOfficialLogin.endpointMain') : t('echoflowApiOfficialLogin.endpointDedicated')} · ${echoFlowDraft.tokenName}`
       : initialPreset.name)
   )
 

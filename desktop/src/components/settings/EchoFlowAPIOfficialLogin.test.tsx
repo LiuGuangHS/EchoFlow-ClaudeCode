@@ -2,6 +2,18 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import '@testing-library/jest-dom'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useProviderStore } from '../../stores/providerStore'
+import { useSettingsStore } from '../../stores/settingsStore'
+import { translate } from '../../i18n'
+
+// The component routes every label through t(). Deriving the expected strings from
+// translate() (and pinning a non-default locale) is what keeps these assertions
+// load-bearing: hardcoding the label again would render the wrong locale and fail.
+const L = (key: Parameters<typeof translate>[1]) => translate('en', key)
+const userIdSummary = (id: string) => new RegExp(`${L('echoflowApiOfficialLogin.userId')}：${id}`)
+const endpointTab = (endpoint: 'main' | 'dedicated') =>
+  L(endpoint === 'main' ? 'echoflowApiOfficialLogin.endpointMain' : 'echoflowApiOfficialLogin.endpointDedicated')
+const bindLabel = (endpoint: 'main' | 'dedicated') =>
+  translate('en', 'echoflowApiOfficialLogin.bindAccount', { endpoint: endpointTab(endpoint) })
 
 vi.mock('../../api/echoflow')
 let EchoFlowAPIOfficialLogin: typeof import('./EchoFlowAPIOfficialLogin').EchoFlowAPIOfficialLogin
@@ -41,6 +53,7 @@ describe('EchoFlowAPIOfficialLogin', () => {
     echoflowApi.getTokenKey = vi.fn()
   })
   beforeEach(() => {
+    useSettingsStore.setState({ locale: 'en' })
     useProviderStore.setState({ providers: [], activeId: null })
     vi.mocked(echoflowApi.getAccounts).mockReset()
     vi.mocked(echoflowApi.bindAccount).mockReset()
@@ -72,7 +85,7 @@ describe('EchoFlowAPIOfficialLogin', () => {
 
     render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
 
-    expect(await screen.findByText(/用户 ID：main-user/)).toBeInTheDocument()
+    expect(await screen.findByText(userIdSummary('main-user'))).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Main key.*sk-main…1234/ })).toBeInTheDocument()
     expect(screen.queryByText('专线 · Code')).not.toBeInTheDocument()
     expect(screen.queryByText('sk-mc****Dbj8')).not.toBeInTheDocument()
@@ -82,14 +95,14 @@ describe('EchoFlowAPIOfficialLogin', () => {
   it('shows one endpoint account at a time and keeps the account data isolated', async () => {
     render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
 
-    expect(await screen.findByText(/用户 ID：main-user/)).toBeInTheDocument()
-    expect(screen.queryByText(/用户 ID：dedicated-user/)).not.toBeInTheDocument()
+    expect(await screen.findByText(userIdSummary('main-user'))).toBeInTheDocument()
+    expect(screen.queryByText(userIdSummary('dedicated-user'))).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: /专线/ }))
+    fireEvent.click(screen.getByRole('button', { name: endpointTab('dedicated') }))
 
-    expect(screen.getByText(/用户 ID：dedicated-user/)).toBeInTheDocument()
-    expect(screen.queryByText(/用户 ID：main-user/)).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /专线/ })).toBeInTheDocument()
+    expect(screen.getByText(userIdSummary('dedicated-user'))).toBeInTheDocument()
+    expect(screen.queryByText(userIdSummary('main-user'))).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: endpointTab('dedicated') })).toBeInTheDocument()
     expect(screen.queryByText('management-main-secret')).not.toBeInTheDocument()
   })
 
@@ -97,29 +110,29 @@ describe('EchoFlowAPIOfficialLogin', () => {
     mockAccounts(null, null)
     render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
 
-    const userId = await screen.findByPlaceholderText('用户 ID')
-    const managementToken = screen.getByPlaceholderText('系统访问令牌')
+    const userId = await screen.findByPlaceholderText(L('echoflowApiOfficialLogin.userId'))
+    const managementToken = screen.getByPlaceholderText(L('echoflowApiOfficialLogin.managementToken'))
     fireEvent.change(userId, { target: { value: 'main-user' } })
     fireEvent.change(managementToken, { target: { value: 'main-management-secret' } })
 
-    fireEvent.click(screen.getByRole('button', { name: /专线/ }))
-    fireEvent.change(screen.getByPlaceholderText('用户 ID'), { target: { value: 'dedicated-user' } })
-    fireEvent.change(screen.getByPlaceholderText('系统访问令牌'), { target: { value: 'dedicated-management-secret' } })
+    fireEvent.click(screen.getByRole('button', { name: endpointTab('dedicated') }))
+    fireEvent.change(screen.getByPlaceholderText(L('echoflowApiOfficialLogin.userId')), { target: { value: 'dedicated-user' } })
+    fireEvent.change(screen.getByPlaceholderText(L('echoflowApiOfficialLogin.managementToken')), { target: { value: 'dedicated-management-secret' } })
 
-    fireEvent.click(screen.getByRole('button', { name: /主站/ }))
+    fireEvent.click(screen.getByRole('button', { name: endpointTab('main') }))
 
-    expect(screen.getByPlaceholderText('用户 ID')).toHaveValue('main-user')
-    expect(screen.getByPlaceholderText('系统访问令牌')).toHaveValue('main-management-secret')
-    fireEvent.click(screen.getByRole('button', { name: /专线/ }))
-    expect(screen.getByPlaceholderText('用户 ID')).toHaveValue('dedicated-user')
-    expect(screen.getByPlaceholderText('系统访问令牌')).toHaveValue('dedicated-management-secret')
+    expect(screen.getByPlaceholderText(L('echoflowApiOfficialLogin.userId'))).toHaveValue('main-user')
+    expect(screen.getByPlaceholderText(L('echoflowApiOfficialLogin.managementToken'))).toHaveValue('main-management-secret')
+    fireEvent.click(screen.getByRole('button', { name: endpointTab('dedicated') }))
+    expect(screen.getByPlaceholderText(L('echoflowApiOfficialLogin.userId'))).toHaveValue('dedicated-user')
+    expect(screen.getByPlaceholderText(L('echoflowApiOfficialLogin.managementToken'))).toHaveValue('dedicated-management-secret')
   })
 
   it('emits only endpoint-scoped token metadata when a key is selected', async () => {
     const onAddFromToken = vi.fn()
     render(<EchoFlowAPIOfficialLogin onAddFromToken={onAddFromToken} />)
 
-    await screen.findByText(/用户 ID：main-user/)
+    await screen.findByText(userIdSummary('main-user'))
     const tokenButton = screen.getByRole('button', { name: /Main key.*sk-main…1234/ })
     fireEvent.click(tokenButton)
 
@@ -150,23 +163,23 @@ describe('EchoFlowAPIOfficialLogin', () => {
     }))
     render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
 
-    const mainUserId = await screen.findByPlaceholderText('用户 ID')
+    const mainUserId = await screen.findByPlaceholderText(L('echoflowApiOfficialLogin.userId'))
     fireEvent.change(mainUserId, { target: { value: 'main-user' } })
-    fireEvent.change(screen.getByPlaceholderText('系统访问令牌'), { target: { value: 'main-management-secret' } })
-    fireEvent.click(screen.getByRole('button', { name: '绑定主站账户' }))
+    fireEvent.change(screen.getByPlaceholderText(L('echoflowApiOfficialLogin.managementToken')), { target: { value: 'main-management-secret' } })
+    fireEvent.click(screen.getByRole('button', { name: bindLabel('main') }))
 
     await waitFor(() => expect(vi.mocked(echoflowApi.bindAccount)).toHaveBeenCalledWith('main', 'main-user', 'main-management-secret'))
-    fireEvent.click(screen.getByRole('button', { name: /专线/ }))
-    expect(screen.getByPlaceholderText('用户 ID')).toHaveValue('')
-    expect(screen.getByPlaceholderText('系统访问令牌')).toHaveValue('')
+    fireEvent.click(screen.getByRole('button', { name: endpointTab('dedicated') }))
+    expect(screen.getByPlaceholderText(L('echoflowApiOfficialLogin.userId'))).toHaveValue('')
+    expect(screen.getByPlaceholderText(L('echoflowApiOfficialLogin.managementToken'))).toHaveValue('')
 
-    fireEvent.change(screen.getByPlaceholderText('用户 ID'), { target: { value: 'dedicated-user' } })
-    fireEvent.change(screen.getByPlaceholderText('系统访问令牌'), { target: { value: 'dedicated-management-secret' } })
-    fireEvent.click(screen.getByRole('button', { name: '绑定专线账户' }))
+    fireEvent.change(screen.getByPlaceholderText(L('echoflowApiOfficialLogin.userId')), { target: { value: 'dedicated-user' } })
+    fireEvent.change(screen.getByPlaceholderText(L('echoflowApiOfficialLogin.managementToken')), { target: { value: 'dedicated-management-secret' } })
+    fireEvent.click(screen.getByRole('button', { name: bindLabel('dedicated') }))
 
     await waitFor(() => expect(vi.mocked(echoflowApi.bindAccount)).toHaveBeenCalledWith('dedicated', 'dedicated-user', 'dedicated-management-secret'))
-    fireEvent.click(screen.getByRole('button', { name: /主站/ }))
-    expect(screen.getByText(/用户 ID：main-user/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: endpointTab('main') }))
+    expect(screen.getByText(userIdSummary('main-user'))).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /main key.*sk-main…1234/ })).toBeInTheDocument()
   })
 
@@ -174,14 +187,14 @@ describe('EchoFlowAPIOfficialLogin', () => {
     vi.mocked(echoflowApi.disconnectAccount).mockResolvedValue({ ok: true })
     render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
 
-    await screen.findByText(/用户 ID：main-user/)
-    fireEvent.click(screen.getByRole('button', { name: '解绑' }))
+    await screen.findByText(userIdSummary('main-user'))
+    fireEvent.click(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.unbind') }))
 
     await waitFor(() => expect(vi.mocked(echoflowApi.disconnectAccount)).toHaveBeenCalledWith('main'))
-    expect(screen.queryByText(/用户 ID：main-user/)).not.toBeInTheDocument()
+    expect(screen.queryByText(userIdSummary('main-user'))).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: /专线/ }))
-    expect(screen.getByText(/用户 ID：dedicated-user/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: endpointTab('dedicated') }))
+    expect(screen.getByText(userIdSummary('dedicated-user'))).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Dedicated key.*sk-dedicated…5678/ })).toBeInTheDocument()
   })
 
@@ -195,13 +208,13 @@ describe('EchoFlowAPIOfficialLogin', () => {
     })
     render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
 
-    await screen.findByText(/用户 ID：main-user/)
-    fireEvent.click(screen.getByRole('button', { name: /专线/ }))
-    fireEvent.click(screen.getByRole('button', { name: '刷新' }))
+    await screen.findByText(userIdSummary('main-user'))
+    fireEvent.click(screen.getByRole('button', { name: endpointTab('dedicated') }))
+    fireEvent.click(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.refresh') }))
 
     await waitFor(() => expect(vi.mocked(echoflowApi.refreshAccount)).toHaveBeenCalledWith('dedicated'))
     expect(screen.getByText(/Dedicated refreshed/)).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /主站/ }))
+    fireEvent.click(screen.getByRole('button', { name: endpointTab('main') }))
     expect(screen.getByText(/Main User/)).toBeInTheDocument()
     expect(screen.queryByText(/Dedicated refreshed/)).not.toBeInTheDocument()
   })
