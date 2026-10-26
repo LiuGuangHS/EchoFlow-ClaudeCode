@@ -103,8 +103,11 @@ describe('WsBridge: handler serialization', () => {
 
   beforeEach(async () => {
     connections = []
-    // port 0 → let the OS pick a free one
-    server = new WebSocketServer({ port: 0 })
+    // port 0 → let the OS pick a free one.
+    // host 127.0.0.1 → the production server binds there (`src/server/index.ts`),
+    // and the `ws` client cannot reach a `::`-bound listener via an IPv4
+    // loopback URL, so an unbound host made every connect fail.
+    server = new WebSocketServer({ port: 0, host: '127.0.0.1' })
     server.on('connection', (ws) => {
       connections.push(ws)
     })
