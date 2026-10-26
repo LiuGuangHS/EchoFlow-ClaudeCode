@@ -170,6 +170,54 @@ describe('formatMergeState', () => {
     expect(report).toContain('不暂存、不提交')
   })
 
+  test('a plain report still says it is read-only', () => {
+    const state = summarizeMergeState({
+      merging: 'abc123',
+      unmerged: [file({ path: 'a.ts' })],
+    })
+
+    // Without a resolution run the report never touched anything, so the
+    // read-only statement is the accurate one.
+    expect(formatMergeState(state)).toContain('本报告只读')
+  })
+
+  test('a resolve-brand run reports the rewrite instead of claiming read-only', () => {
+    const state = summarizeMergeState({
+      merging: 'abc123',
+      unmerged: [file({ path: 'a.ts' }), file({ path: 'b.ts' })],
+    })
+
+    const report = formatMergeState(state, {
+      rewrittenHunks: 3,
+      touchedFiles: ['a.ts', 'b.ts'],
+      manualFiles: 0,
+    })
+
+    expect(report).not.toContain('本报告只读')
+    expect(report).toContain('改写了 **3** 个品牌类冲突块')
+    expect(report).toContain('`a.ts`')
+    expect(report).toContain('`b.ts`')
+    // Staging stays the maintainer's call even after the rewrite.
+    expect(report).toContain('未暂存')
+  })
+
+  test('a resolve-brand run that found nothing says so rather than claiming read-only', () => {
+    const state = summarizeMergeState({
+      merging: 'abc123',
+      unmerged: [file({ path: 'a.ts' })],
+    })
+
+    const report = formatMergeState(state, {
+      rewrittenHunks: 0,
+      touchedFiles: [],
+      manualFiles: 1,
+    })
+
+    expect(report).not.toContain('本报告只读')
+    expect(report).toContain('未发现品牌类冲突块')
+    expect(report).toContain('跳过 1 个 manual 文件')
+  })
+
   test('returns a non-zero exit code for unresolved conflicts in JSON mode', () => {
     const script = path.join(import.meta.dir, 'merge-state.ts')
     const repo = mkdtempSync(path.join(tmpdir(), 'merge-state-json-conflict-'))
@@ -595,6 +643,23 @@ describe('--resolve-brand', () => {
     )
 
     expect(() => JSON.parse(result.stdout)).not.toThrow()
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  test('resolve-brand reports the rewritten file by name', () => {
+    const repo = mkdtempSync(path.join(tmpdir(), 'merge-state-resolve-report-'))
+    createConflict(repo, ['conflicted.ts'])
+    writeFileSync(
+      path.join(repo, 'conflicted.ts'),
+      '<<<<<<< HEAD\nechoflow-api\n=======\ncc-haha-api\n>>>>>>> x\n',
+    )
+
+    // Markdown mode is the human's view; it must describe what the run just did,
+    // not repeat the read-only disclaimer that was true before it ran.
+    const result = runMain(repo, ['--cwd', repo, '--resolve-brand'])
+
+    expect(result.stdout).toContain('conflicted.ts')
+    expect(result.stdout).not.toContain('本报告只读')
     rmSync(repo, { recursive: true, force: true })
   })
 

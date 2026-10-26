@@ -78,6 +78,23 @@ export type ContentPart =
   | { kind: 'conflict', ours: string, theirs: string, raw: string }
 
 /**
+ * What a `--resolve-brand` run actually did, for the report to describe.
+ *
+ * Passed in rather than derived from `MergeState` on purpose: the state is
+ * read after the rewrite, so it no longer remembers which hunks were brand-only
+ * and which files were written. Reporting "read-only" after rewriting file
+ * content would be a lie the maintainer cannot check from the state alone.
+ */
+export type BrandResolutionReport = {
+  /** Conflict hunks the run rewrote. */
+  rewrittenHunks: number
+  /** Files whose content the run changed. */
+  touchedFiles: string[]
+  /** Files the policy marks `manual`, which the run left byte-for-byte alone. */
+  manualFiles: number
+}
+
+/**
  * Splits file content into plain text and complete three-way conflict blocks.
  *
  * A block counts only as `<<<<<<< … ======= … >>>>>>>` on its own lines, which is
@@ -220,7 +237,7 @@ export function summarizeMergeState(input: {
   }
 }
 
-export function formatMergeState(state: MergeState): string {
+export function formatMergeState(state: MergeState, brandResolution?: BrandResolutionReport): string {
   if (!state.inProgress) {
     return [
       '## 合并状态',
@@ -239,8 +256,38 @@ export function formatMergeState(state: MergeState): string {
     '',
   ]
 
+  // What the run did, before the list of what is left: a maintainer reads this
+  // to decide whether to trust the content now sitting in the worktree.
+  if (brandResolution) {
+    if (brandResolution.rewrittenHunks > 0) {
+      const touched = [...brandResolution.touchedFiles].sort().map(file => `\`${file}\``).join('、')
+      lines.push(
+        `本次 \`--resolve-brand\` 改写了 **${brandResolution.rewrittenHunks}** 个品牌类冲突块`
+        + `（${brandResolution.touchedFiles.length} 个文件：${touched}）。只写文件内容、未暂存。`,
+        '',
+      )
+    } else {
+      lines.push('本次 `--resolve-brand` 未发现品牌类冲突块，文件内容未改动。', '')
+    }
+
+    if (brandResolution.manualFiles > 0) {
+      lines.push(`跳过 ${brandResolution.manualFiles} 个 manual 文件（按 \`sync-policy.json\` 保持原样）。`, '')
+    }
+  }
+
+  const footer = brandResolution
+    ? [
+      '`git add` 与 `git commit` 仍按 `AGENTS.md`「Upstream Sync Direction」由维护者逐文件确认后执行。',
+      '',
+    ]
+    : [
+      '本报告只读：不暂存、不提交。`git add` 与 `git commit` 仍按 `AGENTS.md`'
+      + '「Upstream Sync Direction」由维护者逐文件确认后执行。',
+      '',
+    ]
+
   if (state.unmerged.length === 0) {
-    lines.push('所有冲突都已解决并暂存，可以提交这次合并。', '')
+    lines.push('所有冲突都已解决并暂存，可以提交这次合并。', ...footer)
     return lines.join('\n')
   }
 
@@ -289,12 +336,7 @@ export function formatMergeState(state: MergeState): string {
     )
   }
 
-  lines.push(
-    '',
-    '本报告只读：不暂存、不提交。`git add` 与 `git commit` 仍按 `AGENTS.md`'
-    + '「Upstream Sync Direction」由维护者逐文件确认后执行。',
-    '',
-  )
+  lines.push('', ...footer)
 
   return lines.join('\n')
 }
@@ -473,11 +515,12 @@ export function readMergeState(root: string): MergeState {
  * for a human. Files the policy records as `manual` are left byte-for-byte alone,
  * whatever their hunks look like.
  */
-function applyBrandResolutions(root: string) {
+function applyBrandResolutions(root: string): BrandResolutionReport {
   const policy = loadSyncPolicy()
   const candidates = readMergeState(root).needsWork
   let rewritten = 0
   let manual = 0
+  const touchedFiles: string[] = []
 
   for (const entry of candidates) {
     if (!entry.present) {
@@ -495,6 +538,7 @@ function applyBrandResolutions(root: string) {
 
     if (outcome.content !== before) {
       writeFileSync(absolute, outcome.content)
+      touchedFiles.push(entry.path)
     }
 
     rewritten += outcome.resolved
@@ -504,6 +548,8 @@ function applyBrandResolutions(root: string) {
   console.error(
     `--resolve-brand: rewrote ${rewritten} brand-only hunk(s); left ${manual} manual file(s) untouched.`,
   )
+
+  return { rewrittenHunks: rewritten, touchedFiles, manualFiles: manual }
 }
 
 function main() {
@@ -513,8 +559,10 @@ function main() {
     ? path.resolve(argv[cwdIndex + 1])
     : path.resolve(import.meta.dir, '..', '..')
 
+  let brandResolution: BrandResolutionReport | undefined
+
   if (argv.includes('--resolve-brand')) {
-    applyBrandResolutions(root)
+    brandResolution = applyBrandResolutions(root)
   }
 
   // Read after any rewrite, so the report describes what is left rather than
@@ -529,7 +577,7 @@ function main() {
     return
   }
 
-  const markdown = formatMergeState(state)
+  const markdown = formatMergeState(state, brandResolution)
   const outIndex = argv.indexOf('--out')
   const out = outIndex >= 0 ? argv[outIndex + 1] : undefined
 
