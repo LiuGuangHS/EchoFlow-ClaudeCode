@@ -90,5 +90,8 @@ graphify-out/
 
 .learnings/
 
+# Research scratch (extracted third-party packages, doc snapshots, probes)
+.research/
+
 # Computer Use native helper build output (SwiftPM)
 native/cu-helper/.build/
