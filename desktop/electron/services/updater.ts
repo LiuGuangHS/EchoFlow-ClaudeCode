@@ -65,6 +65,7 @@ export type ElectronUpdaterRuntimeOptions = {
   feedUrl?: string | null
   feedUrls?: Array<string | null | undefined>
   metadataFeedUrl?: string | null
+  metadataFallbackUrls?: Array<string | null | undefined>
   downloadFeedUrls?: Array<string | null | undefined>
 }
 
@@ -200,6 +201,7 @@ export class ElectronUpdaterService {
   private readonly proxyController?: ElectronUpdaterProxyController
   private readonly updateConfigPath?: string
   private readonly metadataFeedUrl?: string
+  private readonly metadataFallbackUrls: string[]
   private readonly downloadFeedUrls: string[]
   private pendingUpdate: ElectronUpdateMetadata | null = null
   private lastFeedAttempts: ElectronUpdateFeedAttempt[] = []
@@ -215,6 +217,7 @@ export class ElectronUpdaterService {
     this.proxyController = proxyController
     this.updateConfigPath = runtimeOptions.updateConfigPath
     this.metadataFeedUrl = runtimeOptions.metadataFeedUrl?.trim() || undefined
+    this.metadataFallbackUrls = normalizeFeedUrls({ feedUrls: runtimeOptions.metadataFallbackUrls })
     this.downloadFeedUrls = normalizeFeedUrls({
       feedUrls: runtimeOptions.downloadFeedUrls ?? runtimeOptions.feedUrls,
       feedUrl: runtimeOptions.feedUrl,
@@ -262,28 +265,43 @@ export class ElectronUpdaterService {
     this.lastFeedAttempts = []
     this.downloaded = false
 
-    const metadataFeedUrl = this.metadataFeedUrl ?? this.downloadFeedUrls[0] ?? null
-
-    try {
-      if (metadataFeedUrl) this.setFeedUrl(metadataFeedUrl)
-      const update = await this.checkForUpdatesOnCurrentFeed()
-      if (!update) {
-        this.lastFeedAttempts = [{ feedUrl: metadataFeedUrl, result: 'no-update' }]
-        return null
-      }
-      const updateWithDiagnostics = withFeedDiagnostics(update, metadataFeedUrl ?? 'default feed', [])
-      this.pendingUpdate = updateWithDiagnostics
-      this.lastFeedAttempts = updateWithDiagnostics.feedAttempts ?? []
-      return updateWithDiagnostics
-    } catch (error) {
-      this.lastFeedAttempts = [{
-        feedUrl: metadataFeedUrl,
-        result: error instanceof MissingUpdateMetadataError ? 'missing-metadata' : 'error',
-        error: getErrorMessage(error),
-      }]
-      if (error instanceof MissingUpdateMetadataError) return null
-      throw withFeedAttemptErrorMessage(error, this.lastFeedAttempts)
+    const primaryFeedUrl = this.metadataFeedUrl ?? this.downloadFeedUrls[0] ?? null
+    // 顺序回退链：主元数据源不可用（缺 yml、网络错误、空响应）时继续试兜底源。
+    // 显式配置的单源没有兜底（metadataFallbackUrls 为空），链就只有主源。
+    const feedChain: Array<string | null> = [primaryFeedUrl]
+    for (const fallbackUrl of this.metadataFallbackUrls) {
+      if (!feedChain.includes(fallbackUrl)) feedChain.push(fallbackUrl)
     }
+
+    const attempts: ElectronUpdateFeedAttempt[] = []
+    let firstError: unknown = null
+    for (const feedUrl of feedChain) {
+      try {
+        if (feedUrl) this.setFeedUrl(feedUrl)
+        const update = await this.checkForUpdatesOnCurrentFeed()
+        if (!update) {
+          attempts.push({ feedUrl, result: 'no-update' })
+          continue
+        }
+        const updateWithDiagnostics = withFeedDiagnostics(update, feedUrl ?? 'default feed', attempts)
+        this.pendingUpdate = updateWithDiagnostics
+        this.lastFeedAttempts = updateWithDiagnostics.feedAttempts ?? []
+        return updateWithDiagnostics
+      } catch (error) {
+        attempts.push({
+          feedUrl,
+          result: error instanceof MissingUpdateMetadataError ? 'missing-metadata' : 'error',
+          error: getErrorMessage(error),
+        })
+        if (!(error instanceof MissingUpdateMetadataError) && firstError === null) firstError = error
+      }
+    }
+
+    this.lastFeedAttempts = attempts
+    // 全链缺元数据 = 静默无更新（与单源老行为一致）；出现过普通错误则必须抛出，
+    // 不能把「网络断了」伪装成「没有更新」。
+    if (firstError !== null) throw withFeedAttemptErrorMessage(firstError, attempts)
+    return null
   }
 
   getLastFeedAttempts(): ElectronUpdateFeedAttempt[] {

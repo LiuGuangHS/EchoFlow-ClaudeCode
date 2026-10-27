@@ -111,7 +111,7 @@ export type DesktopUpdate = {
 
 export type DesktopUpdateFeedAttempt = {
   feedUrl: string | null
-  result: 'selected' | 'no-update' | 'missing-metadata' | 'error'
+  result: 'selected' | 'no-update' | 'missing-metadata' | 'mismatched-metadata' | 'error'
   error?: string
 }
 

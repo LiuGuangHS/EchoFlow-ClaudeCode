@@ -1,11 +1,13 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import '@testing-library/jest-dom'
-import { afterEach, beforeEach, expect, it } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { useSettingsStore } from '@/stores/settingsStore'
+import { useUpdateStore } from '@/stores/updateStore'
 import { AboutSettings } from './AboutSettings'
 
 beforeEach(() => {
   useSettingsStore.setState({ locale: 'zh' })
+  useUpdateStore.setState({ status: 'idle', error: null, errorCode: null })
 })
 
 afterEach(() => {
@@ -32,4 +34,25 @@ it('opens the group QR in a dialog instead of pushing it below the fold', async 
 
   fireEvent.click(screen.getByRole('button', { name: 'Close dialog' }))
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+})
+
+it('guides users to the official download page when the update check fails', async () => {
+  useUpdateStore.setState({ status: 'error', errorCode: 'network', error: null })
+  const open = vi.spyOn(window, 'open').mockImplementation(() => null)
+  render(<AboutSettings />)
+
+  // 引导文案要露出地址本身：按钮点不动时用户也能照着手打。
+  expect(await screen.findByText(/code\.echoflow\.cn\/download/)).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '前往下载页' }))
+  expect(open).toHaveBeenCalledWith('https://code.echoflow.cn/download', '_blank', 'noopener,noreferrer')
+
+  open.mockRestore()
+})
+
+it('keeps the manual-download guidance hidden while there is no error code', () => {
+  useUpdateStore.setState({ status: 'idle', error: null, errorCode: null })
+  render(<AboutSettings />)
+
+  expect(screen.queryByText(/code\.echoflow\.cn\/download/)).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: '前往下载页' })).not.toBeInTheDocument()
 })

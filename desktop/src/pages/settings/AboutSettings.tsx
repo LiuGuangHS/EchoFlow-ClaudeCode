@@ -36,6 +36,8 @@ const UPDATE_ERROR_KEYS = {
 const GITHUB_REPO = 'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode'
 const GITHUB_ISSUES = `${GITHUB_REPO}/issues`
 const GITHUB_RELEASES = `${GITHUB_REPO}/releases`
+// 更新链路全断时的逃生口：引导用户去官网下载页手动拿新版。
+const MANUAL_DOWNLOAD_URL = 'https://code.echoflow.cn/download'
 const AUTHOR_GITHUB = 'https://github.com/LiuGuangHS'
 const SOCIAL_LINKS = [
   { name: 'Bilibili', icon: '/icons/bilibili.svg', url: 'https://space.bilibili.com/2095003664', label: 'EchoFlow AI' },
@@ -244,6 +246,19 @@ export function AboutSettings() {
               {t('update.checkedAt', { time: checkedAtText })}
             </p>
           )}
+
+          {updateStatus === 'error' && errorCode ? (
+            <div className="mt-3 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-3 py-3">
+              <p className="text-xs leading-5 text-[var(--color-text-secondary)]">
+                {t('update.manualDownloadHint')}
+              </p>
+              <div className="mt-2">
+                <Button size="sm" variant="secondary" onClick={() => openUrl(MANUAL_DOWNLOAD_URL)}>
+                  {t('update.manualDownloadAction')}
+                </Button>
+              </div>
+            </div>
+          ) : null}
 
           <div className="mt-3 border-t border-[var(--color-border-separator)] pt-3">
             <button

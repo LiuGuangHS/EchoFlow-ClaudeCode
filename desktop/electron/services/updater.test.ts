@@ -9,6 +9,7 @@ function fakeUpdater(): ElectronUpdaterLike & {
   checkForUpdates: ReturnType<typeof vi.fn>
   downloadUpdate: ReturnType<typeof vi.fn>
   quitAndInstall: ReturnType<typeof vi.fn>
+  setFeedURL: ReturnType<typeof vi.fn>
 } {
   let progressHandler: ((progress: { transferred?: number, total?: number }) => void) | null = null
   const updater = {
@@ -16,6 +17,7 @@ function fakeUpdater(): ElectronUpdaterLike & {
     checkForUpdates: vi.fn(),
     downloadUpdate: vi.fn(),
     quitAndInstall: vi.fn(),
+    setFeedURL: vi.fn(),
     on: vi.fn((_event, handler) => {
       progressHandler = handler
       return updater
@@ -32,6 +34,7 @@ function fakeUpdater(): ElectronUpdaterLike & {
     checkForUpdates: ReturnType<typeof vi.fn>
     downloadUpdate: ReturnType<typeof vi.fn>
     quitAndInstall: ReturnType<typeof vi.fn>
+    setFeedURL: ReturnType<typeof vi.fn>
   }
   return updater
 }
@@ -214,5 +217,127 @@ describe('Electron updater service', () => {
 
     expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true)
     expect(env).toEqual({ CLAUDE_CONFIG_DIR: 'E:\\external-data' })
+  })
+})
+
+const METADATA_FEED = 'https://code.echoflow.cn/update/'
+const FALLBACK_FEED = 'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest/download/'
+
+function channelMetadataMissing(feedUrl: string): Error {
+  return Object.assign(
+    new Error(`Cannot find latest-mac.yml in the latest release artifacts (${feedUrl}latest-mac.yml): HttpError: 404`),
+    { code: 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND' },
+  )
+}
+
+describe('Electron updater metadata fallback chain', () => {
+  it('falls back to the GitHub metadata feed when the own-domain mirror is missing', async () => {
+    const localUpdater = fakeUpdater()
+    localUpdater.checkForUpdates
+      .mockRejectedValueOnce(channelMetadataMissing(METADATA_FEED))
+      .mockResolvedValueOnce({ updateInfo: { version: '2.0.0', body: 'Notes' } })
+    const service = new ElectronUpdaterService(localUpdater, undefined, {
+      metadataFeedUrl: METADATA_FEED,
+      metadataFallbackUrls: [FALLBACK_FEED],
+    })
+
+    const update = await service.checkForUpdates()
+
+    expect(update).toMatchObject({ version: '2.0.0', feedUrl: FALLBACK_FEED })
+    expect(localUpdater.setFeedURL.mock.calls).toEqual([[METADATA_FEED], [FALLBACK_FEED]])
+    expect(service.getLastFeedAttempts()).toEqual([
+      { feedUrl: METADATA_FEED, result: 'missing-metadata', error: expect.any(String) },
+      { feedUrl: FALLBACK_FEED, result: 'selected' },
+    ])
+  })
+
+  it('falls back after a plain network error on the primary feed instead of swallowing the check', async () => {
+    const localUpdater = fakeUpdater()
+    localUpdater.checkForUpdates
+      .mockRejectedValueOnce(new Error('feed unavailable'))
+      .mockResolvedValueOnce({ updateInfo: { version: '2.0.0' } })
+    const service = new ElectronUpdaterService(localUpdater, undefined, {
+      metadataFeedUrl: METADATA_FEED,
+      metadataFallbackUrls: [FALLBACK_FEED],
+    })
+
+    await expect(service.checkForUpdates()).resolves.toMatchObject({ version: '2.0.0', feedUrl: FALLBACK_FEED })
+    expect(service.getLastFeedAttempts()).toEqual([
+      { feedUrl: METADATA_FEED, result: 'error', error: 'feed unavailable' },
+      { feedUrl: FALLBACK_FEED, result: 'selected' },
+    ])
+  })
+
+  it('queries the fallback feed when the primary feed reports no update', async () => {
+    const localUpdater = fakeUpdater()
+    localUpdater.checkForUpdates
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ updateInfo: { version: '2.0.0' } })
+    const service = new ElectronUpdaterService(localUpdater, undefined, {
+      metadataFeedUrl: METADATA_FEED,
+      metadataFallbackUrls: [FALLBACK_FEED],
+    })
+
+    await expect(service.checkForUpdates()).resolves.toMatchObject({ version: '2.0.0', feedUrl: FALLBACK_FEED })
+    expect(service.getLastFeedAttempts()).toEqual([
+      { feedUrl: METADATA_FEED, result: 'no-update' },
+      { feedUrl: FALLBACK_FEED, result: 'selected' },
+    ])
+  })
+
+  it('stays silent when every metadata feed is missing', async () => {
+    const localUpdater = fakeUpdater()
+    localUpdater.checkForUpdates
+      .mockRejectedValueOnce(channelMetadataMissing(METADATA_FEED))
+      .mockRejectedValueOnce(channelMetadataMissing(FALLBACK_FEED))
+    const service = new ElectronUpdaterService(localUpdater, undefined, {
+      metadataFeedUrl: METADATA_FEED,
+      metadataFallbackUrls: [FALLBACK_FEED],
+    })
+
+    await expect(service.checkForUpdates()).resolves.toBeNull()
+    expect(service.getLastFeedAttempts().map(attempt => attempt.result)).toEqual([
+      'missing-metadata',
+      'missing-metadata',
+    ])
+  })
+
+  it('reports every attempted feed when all of them fail with plain errors', async () => {
+    const localUpdater = fakeUpdater()
+    localUpdater.checkForUpdates
+      .mockRejectedValueOnce(new Error('mirror down'))
+      .mockRejectedValueOnce(new Error('github down'))
+    const service = new ElectronUpdaterService(localUpdater, undefined, {
+      metadataFeedUrl: METADATA_FEED,
+      metadataFallbackUrls: [FALLBACK_FEED],
+    })
+
+    const error = await service.checkForUpdates().then(() => null, (thrown: unknown) => thrown as Error)
+    expect(error).toBeInstanceOf(Error)
+    expect(error?.message).toContain('mirror down')
+    expect(error?.message).toContain('github down')
+    expect(service.getLastFeedAttempts().map(attempt => attempt.result)).toEqual(['error', 'error'])
+  })
+
+  it('rejects a download when every download feed serves mismatched metadata', async () => {
+    const localUpdater = fakeUpdater()
+    const updateInfo = { version: '2.0.0', files: [{ url: 'EchoFlow-Code-2.0.0-mac-arm64.dmg', sha512: 'meta-sha' }] }
+    localUpdater.checkForUpdates.mockResolvedValue({ updateInfo })
+    const service = new ElectronUpdaterService(localUpdater, undefined, {
+      metadataFeedUrl: METADATA_FEED,
+      downloadFeedUrls: ['https://dl1.test/feed/', 'https://dl2.test/feed/'],
+    })
+    await service.checkForUpdates()
+    localUpdater.checkForUpdates.mockResolvedValue({
+      updateInfo: { version: '2.0.0', files: [{ url: 'EchoFlow-Code-2.0.0-mac-arm64.dmg', sha512: 'other-sha' }] },
+    })
+
+    await expect(service.downloadUpdate(() => {})).rejects.toThrow('Update download failed')
+    expect(localUpdater.downloadUpdate).not.toHaveBeenCalled()
+    expect(service.getLastFeedAttempts().map(attempt => attempt.result)).toEqual([
+      'selected',
+      'mismatched-metadata',
+      'mismatched-metadata',
+    ])
   })
 })

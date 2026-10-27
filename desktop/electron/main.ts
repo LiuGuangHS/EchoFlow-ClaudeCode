@@ -507,6 +507,7 @@ function getUpdaterService() {
           const feedConfig = resolveUpdateFeedConfig(process.env)
           return {
             metadataFeedUrl: feedConfig.metadataUrl,
+            metadataFallbackUrls: feedConfig.metadataFallbackUrls,
             downloadFeedUrls: feedConfig.downloadFeedUrls,
           }
         })()),
