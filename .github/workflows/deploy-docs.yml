@@ -9,6 +9,12 @@ on:
       - 'package.json'
       - '.github/workflows/deploy-docs.yml'
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      release_tag:
+        description: 'Release tag (or bare version) whose assets are mirrored into /update/'
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -45,6 +51,21 @@ jobs:
         run: npm --prefix site run build
         env:
           DOCS_BASE: /
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      # Mirror the update channel files into site/dist/update/ and write
+      # site/dist/download/manifest.json before upload, so a failed mirror
+      # fails the workflow instead of silently deploying without them.
+      # Without a release_tag (ordinary docs deploys) this re-mirrors 'latest'.
+      - name: Mirror update metadata and build download manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag || 'latest' }}
+        run: bun run scripts/site-release-manifest.ts --release "$RELEASE_TAG" --out site/dist --repo "$GITHUB_REPOSITORY"
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

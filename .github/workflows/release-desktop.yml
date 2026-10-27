@@ -985,6 +985,8 @@ jobs:
 
   publish-release:
     if: github.event_name == 'push' || inputs.draft == false || inputs.publish_draft_release == true
+    outputs:
+      version: ${{ steps.version.outputs.value }}
     needs:
       - build
       - release-verify-gate
@@ -1161,3 +1163,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release view "v${{ steps.version.outputs.value }}" --json isDraft --jq 'if .isDraft then "release remains draft" else error("workflow-dispatch release was published unexpectedly") end' --repo "${{ github.repository }}"
+
+  # Mirror the update channel files to code.echoflow.cn/update/ and generate the
+  # download-page manifest after the complete GitHub release exists. GitHub
+  # Releases stays the full publish source; a failed mirror must fail the run.
+  # The condition matches the undraft step: draft releases never trigger a sync.
+  site-release-sync:
+    needs: publish-release
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.draft == false)
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/deploy-docs.yml
+    with:
+      release_tag: ${{ needs.publish-release.outputs.version }}
+    secrets: inherit

@@ -148,6 +148,7 @@ Every feature, bugfix, and behavior change ships with proof matching the changed
 - Before release: on `main`, create notes, then run `bun run scripts/release.ts X.Y.Z --dry` and `bun run check:release-surface`. The release workflow runs content gate and verification in CI; optionally trigger the `Quality Check` workflow first for a full pre-tag sweep.
 - The normal release command is `bun run scripts/release.ts X.Y.Z`; it creates the release commit and annotated tag. Do not move tags manually or upload local artifacts.
 - Push `git push origin main --tags`, wait for the release workflow, and verify the public release assets before announcing it. Report missing macOS signing/notarization secrets and unsigned Windows artifacts.
+- A published release additionally mirrors the update channel files to `code.echoflow.cn/update/` and writes the download-page manifest at `/download/manifest.json`; GitHub Releases stays the full publish source, and the mirror step runs before the site upload so a failed sync fails the workflow.
 
 ## Independence & Reference Policy
 EchoFlow Code is standalone software. There is no upstream project this repository tracks, merges with, or versions against, and the old sync workflow is retired.

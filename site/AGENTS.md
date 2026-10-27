@@ -23,6 +23,8 @@ Routes come from file paths (`docs/start/install.md` → `/start/install`). Rena
 
 Sidebar grouping comes from the `sections` array in the generator — register any new top-level `docs/` directory there or it sorts last with a bare directory name. Order inside a group comes from each document's `order` frontmatter.
 
+`/download/manifest.json` and `/update/latest*.yml` are not content: `deploy-docs.yml` writes them into `dist/` via `scripts/site-release-manifest.ts` after the build, they are never committed, and a local `npm run build` neither fetches nor needs them (the download page degrades to the GitHub Releases link when the manifest is absent).
+
 ## Design system
 
 `src/styles/base.css` holds shared tokens. The landing page uses the user-provided Wandor direction throughout: warm paper illustrations, a white-faded ambient video, Geist typography, Special Elite wordmark, liquid glass surfaces and black capsule controls. Keep the entire landing journey consistent, including features, onboarding, FAQ and download. Documentation uses the same paper, illustration, typography and terracotta palette, scoped through `src/docs/doc-wandor.css` so its reading surfaces remain legible in both themes. The public display name is `EchoFlow Code`; the CLI executable is `echoflow-code` and release artifacts are `EchoFlow-Code-<version>-*`. Keep the legacy `cc-haha` / `claude-haha` names only where they must match already-published artifacts, and never as the current product name. Rules:

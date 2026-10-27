@@ -543,6 +543,29 @@ describe('release desktop workflow', () => {
     expect(publishJob.indexOf('Validate standard update metadata set')).toBeLessThan(publishJob.indexOf('Publish complete GitHub release'))
   })
 
+  test('site release sync mirrors update metadata only after a published (undrafted) release', () => {
+    const workflow = readReleaseWorkflow()
+    const publishJob = extractJob(workflow, 'publish-release')
+    const syncJob = extractJob(workflow, 'site-release-sync')
+    const undraftCondition = "if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.draft == false)"
+
+    expect(publishJob).toContain('outputs:')
+    expect(publishJob).toContain('version: ${{ steps.version.outputs.value }}')
+    expect(syncJob).toBeTruthy()
+    expect(syncJob).toContain('needs: publish-release')
+    // 同步挂在 undraft 条件上：draft 发布绝不触发站点同步。
+    expect(syncJob).toContain(undraftCondition)
+    expect(publishJob).toContain(undraftCondition)
+    expect(syncJob).toContain('uses: ./.github/workflows/deploy-docs.yml')
+    expect(syncJob).toContain('release_tag: ${{ needs.publish-release.outputs.version }}')
+    // workflow_call 的 token 是调用方与被调方的交集：发布工作流本身不给 pages 权限，
+    // 就得在同步任务上单独声明，否则 Pages 部署只会在真实发版时失败。
+    expect(syncJob).toContain('permissions:')
+    expect(syncJob).toContain('pages: write')
+    expect(syncJob).toContain('id-token: write')
+    expect(workflow.indexOf('site-release-sync:')).toBeGreaterThan(workflow.indexOf('publish-release:'))
+  })
+
   test('release matrix asset basenames remain unique when final artifacts are flattened', () => {
     const desktopPackage = JSON.parse(readFileSync('desktop/package.json', 'utf8')) as {
       version: string

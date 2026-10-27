@@ -278,4 +278,19 @@ describe('docs deployment workflow', () => {
     expect(workflow).not.toContain('vitepress')
     expect(workflow).not.toContain('docs/.vitepress/dist')
   })
+
+  test('mirrors update metadata and the download manifest into every deploy', () => {
+    const workflow = readFileSync('.github/workflows/deploy-docs.yml', 'utf8')
+    const generateStep = 'bun run scripts/site-release-manifest.ts'
+
+    expect(workflow).toContain('workflow_call:')
+    expect(workflow).toContain('release_tag:')
+    expect(workflow).toContain(generateStep)
+    // 普通 docs 推送没有 release_tag：回退 latest，/update/ 与 manifest 不得消失。
+    expect(workflow).toContain("inputs.release_tag || 'latest'")
+    expect(workflow).toContain('--out site/dist')
+    // 生成步骤排在上传之前：同步失败即红，产物不会带着缺失的更新文件上线。
+    expect(workflow.indexOf('run: npm --prefix site run build')).toBeLessThan(workflow.indexOf(generateStep))
+    expect(workflow.indexOf(generateStep)).toBeLessThan(workflow.indexOf('path: site/dist'))
+  })
 })
