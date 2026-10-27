@@ -8,7 +8,7 @@ EchoFlow Code is a locally runnable Coding Agent for real repositories. It provi
 - EchoFlow API dedicated line / EchoFlowAPI专线: https://expapi.echoflowai.cc
 - EchoFlow AI online application site: https://ai.echoflow.cn
 - EchoFlow Code docs: https://code.echoflow.cn
-- Latest desktop download: https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest
+- Latest desktop download: https://code.echoflow.cn/download
 - GitHub source: https://github.com/LiuGuangHS/EchoFlow-ClaudeCode
 
 ## Recommended setup

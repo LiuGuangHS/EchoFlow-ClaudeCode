@@ -13,7 +13,7 @@ order: 1
 
 ## 挑对安装包
 
-所有安装包都在 [GitHub Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest)，按系统和 CPU 架构选一个：
+打开[下载页](https://code.echoflow.cn/download)，按系统和 CPU 架构直接下载安装包。各平台文件名对照：
 
 | 你的系统 | 下载 |
 |---|---|
@@ -23,6 +23,8 @@ order: 1
 | Windows ARM64 | `EchoFlow-Code-<版本>-win-arm64.exe` |
 | Linux x64 | `EchoFlow-Code-<版本>-linux-x86_64.AppImage` 或 `-linux-amd64.deb` |
 | Linux ARM64 | `EchoFlow-Code-<版本>-linux-arm64.AppImage` 或 `-linux-arm64.deb` |
+
+直链、其他架构和历史版本见 [GitHub Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest)。
 
 不确定自己是哪种架构：macOS 看「关于本机」里的芯片型号，Windows 看「设置 → 系统 → 系统信息」里的系统类型。别只凭机器牌子猜。
 
@@ -131,13 +133,13 @@ cp .env.example .env
 
 ## 升级
 
-**应用内更新（推荐）。** 打开「设置 → 关于 → 应用更新」，点「检查更新」。它会比对当前版本和 GitHub Releases 上的最新版本，有新版就下载，下载完提示「安装并重启」。
+**应用内更新（推荐）。** 打开「设置 → 关于 → 应用更新」，点「检查更新」。它会比对当前版本和官网更新服务上的最新版本，有新版就下载，下载完提示「安装并重启」。
 
 更新前先把正在跑的会话停掉，未提交的代码存好。
 
 下载卡住不动，多半是网络到不了 GitHub。同一个面板里有「高级更新代理」，可以切成系统代理或填一个本地 HTTP 代理地址（例如 `http://127.0.0.1:7890`）。这个代理只管应用自己的更新下载，不影响模型请求。
 
-**手动换包。** 从 Releases 下新版安装包，按上面各平台的步骤重装一遍即可。会话、服务商配置、技能、Agent、记忆都存在 `~/.claude` 下，不在应用目录里，覆盖安装不会动它们。
+**手动换包。** 从[下载页](https://code.echoflow.cn/download)下新版安装包，按上面各平台的步骤重装一遍即可。会话、服务商配置、技能、Agent、记忆都存在 `~/.claude` 下，不在应用目录里，覆盖安装不会动它们。
 
 :::warning
 安装器的数据保护不等于备份。真正重要的东西请自己另存一份。

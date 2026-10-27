@@ -9,7 +9,7 @@ order: 5
 
 按你看到的现象往下找。每条都是「现象 → 为什么 → 怎么办」。
 
-先确认一件事：你用的是 [GitHub Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest) 上的最新正式版。旧版本上的问题很多已经修掉了。
+先确认一件事：你用的是[下载页](https://code.echoflow.cn/download)上的最新正式版。旧版本上的问题很多已经修掉了。
 
 ## 装不上
 

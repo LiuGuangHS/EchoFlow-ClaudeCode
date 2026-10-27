@@ -13,7 +13,7 @@ The product is now called **EchoFlow Code**. Existing packages, installed apps, 
 
 ## Pick the right package
 
-Everything lives on [GitHub Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest). Choose by operating system and CPU architecture:
+Open the [download page](https://code.echoflow.cn/download) and download the installer for your operating system and CPU architecture. File names per platform:
 
 | Your system | Download |
 |---|---|
@@ -23,6 +23,8 @@ Everything lives on [GitHub Releases](https://github.com/LiuGuangHS/EchoFlow-Cla
 | Windows ARM64 | `EchoFlow-Code-<version>-win-arm64.exe` |
 | Linux x64 | `EchoFlow-Code-<version>-linux-x86_64.AppImage` or `-linux-amd64.deb` |
 | Linux ARM64 | `EchoFlow-Code-<version>-linux-arm64.AppImage` or `-linux-arm64.deb` |
+
+Direct links, other architectures, and older builds stay on [GitHub Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest).
 
 Not sure which architecture you have? On macOS check the chip listed in "About This Mac"; on Windows check the system type under Settings → System → About. Don't guess from the brand of the machine.
 
@@ -131,13 +133,13 @@ Requires [Bun](https://bun.sh) and Git. This runs the CLI only; for building the
 
 ## Updating
 
-**In-app updates (recommended).** Open Settings → About → App Updates and click "Check now". It compares your installed version against the latest GitHub Release, downloads the new build, and offers "Install and restart".
+**In-app updates (recommended).** Open Settings → About → App Updates and click "Check now". It compares your installed version against the latest release from the update service, downloads the new build, and offers "Install and restart".
 
 Before updating, stop any running sessions and save uncommitted work.
 
 If the download stalls, you probably can't reach GitHub. The same panel has an "Advanced update proxy" setting where you can switch to the system proxy or enter a local HTTP proxy address (`http://127.0.0.1:7890`, for instance). This proxy only affects the app's own update downloads — it has no effect on model requests.
 
-**Manual replacement.** Download the new installer from Releases and repeat the steps for your platform. Sessions, provider configuration, skills, agents, and memory live under `~/.claude`, not in the application directory, so installing over the top doesn't touch them.
+**Manual replacement.** Download the new installer from the [download page](https://code.echoflow.cn/download) and repeat the steps for your platform. Sessions, provider configuration, skills, agents, and memory live under `~/.claude`, not in the application directory, so installing over the top doesn't touch them.
 
 :::warning
 The installer's data protection is not a backup. Keep your own copy of anything you can't afford to lose.

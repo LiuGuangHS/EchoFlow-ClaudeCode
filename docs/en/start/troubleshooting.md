@@ -9,7 +9,7 @@ order: 5
 
 Find your symptom below. Each entry is "what you see → why → what to do".
 
-First, one check: make sure you're on the latest stable build from [GitHub Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest). A lot of problems on older versions are already fixed.
+First, one check: make sure you're on the latest stable build from the [download page](https://code.echoflow.cn/download). A lot of problems on older versions are already fixed.
 
 ## Won't install
 
