@@ -1,4 +1,5 @@
 const DIRECT_GITHUB_RELEASE_FEED_URL = 'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest/download/'
+// 加速前缀与 site/src/lib/releaseDownload.js 的 GITHUB_ACCELERATOR_PREFIX 必须一致，换镜像两处同改。
 const DEFAULT_PROXY_FEED_URL = `https://gh-proxy.org/${DIRECT_GITHUB_RELEASE_FEED_URL}`
 // 自有域名上的更新元数据镜像（/update/*.yml），发版时从 GitHub 发布资产逐字节镜像。
 // 元数据先走这里，GitHub 直连是兜底；安装包字节仍走下方 downloadFeedUrls。

@@ -402,6 +402,22 @@ release 模式下 live lane 不允许静默跳过。缺少 provider、真实模�
 
 Release workflow 先在各平台 matrix 里生成 `latest*.yml`，把同名 metadata 临时改名为 `latest-<platform>.yml`，最后由 `scripts/release-update-metadata.ts` 合并回 electron-updater 期望的标准文件名。不要改成各 matrix job 直接发布 GitHub Release，否则 metadata 会互相覆盖。
 
+### 更新通道与站点同步
+
+发版收尾会把更新链路镜像到官网（设计见 `docs/superpowers/specs/2026-10-26-update-channel-design.md`），三层分工：
+
+- **更新元数据**：应用先请求 `https://code.echoflow.cn/update/` 的 `latest*.yml`，失败（缺 yml、网络错误、空响应）自动回退 GitHub 直连；`ECHOFLOW_UPDATE_FEED_URL` 显式设置时是纯单源，不回退。
+- **安装包下载**：下载页与应用下载都是加速前缀（`gh-proxy.org`）优先、GitHub 直连兜底。
+- **失败引导**：应用内更新失败时，「设置 → 关于」引导用户到 `code.echoflow.cn/download` 手动下载新版。
+
+发版时 `release-desktop.yml` 的 `site-release-sync` 在 GitHub 发布完成后触发 `deploy-docs.yml`（`--release <tag>`）：`scripts/site-release-manifest.ts` 把四个 yml 逐字节镜像进 `site/dist/update/`，并按发布资产清单生成 `site/dist/download/manifest.json`。普通 docs 部署用 `--release latest` 重新生成，机器端点不会消失；同步步骤排在上传之前，失败即工作流红。
+
+三条不可破坏项：
+
+1. GitHub Releases 继续收到完整 electron-builder 资产集——存量应用只认编译在内的 GitHub feed，无法感知新通道。
+2. 镜像的 yml 必须与 GitHub 发布资产逐字节一致，禁止改写或重新序列化（Ed25519 签名校验其内容，改写即更新失败）。
+3. `artifactName` 保持 `EchoFlow-Code-${version}-${os}-${arch}.${ext}`——下载页 manifest 的文件名与安装包校验都依赖它。
+
 ### 签名 Secrets
 
 macOS 的签名与公证依赖以下 GitHub Actions repository secrets：
