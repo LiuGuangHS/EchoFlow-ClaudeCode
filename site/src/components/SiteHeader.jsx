@@ -6,6 +6,7 @@ import { useTheme } from '../lib/theme'
 import SearchDialog from './SearchDialog'
 
 export const GITHUB_URL = 'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode'
+// 保留 GitHub Releases 作为无 JS 与「其他架构」的兜底目标；主下载入口是站内 /download。
 export const DOWNLOAD_URL = 'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest'
 
 const copy = {
@@ -116,7 +117,7 @@ export default function SiteHeader({ activeSection, locale = 'zh', localeHref })
             <a aria-label="GitHub" className="icon-btn" href={GITHUB_URL} rel="noreferrer" target="_blank">
               <Icon name="github" />
             </a>
-            <a className="btn btn--primary header-download" href={DOWNLOAD_URL}>
+            <a className="btn btn--primary header-download" href={toSiteHref(locale === 'en' ? '/en/download' : '/download')}>
               <Icon name="download" size={16} />
               {c.download}
             </a>

@@ -1,0 +1,222 @@
+/* 下载页：产品动作页，不是文档也不是营销页。
+   密集、可读、控件尺寸稳定 —— 平台/架构切换时按钮不能跳动。 */
+
+.dl-page {
+  min-height: 100vh;
+  padding: calc(var(--sp-12) + 56px) var(--sp-6) var(--sp-12);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.dl-page__inner {
+  width: min(640px, 100%);
+  margin: 0 auto;
+}
+
+.dl-page__head {
+  margin-bottom: var(--sp-8);
+}
+
+.dl-page__head h1 {
+  margin: 0 0 var(--sp-3);
+  font-size: var(--fs-4xl);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+.dl-page__head p {
+  margin: 0;
+  max-width: 52ch;
+  color: var(--text-muted, var(--text));
+  font-size: var(--fs-md);
+  line-height: 1.6;
+  opacity: 0.75;
+}
+
+.dl-version {
+  display: inline-block;
+  margin-top: var(--sp-4);
+  padding: var(--sp-1) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill, 999px);
+  background: var(--surface-muted);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  opacity: 0.8;
+}
+
+.dl-picker {
+  display: grid;
+  gap: var(--sp-6);
+  padding: var(--sp-6);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg, 12px);
+  background: var(--surface-sunken);
+}
+
+.dl-field {
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.dl-field__label {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+
+.dl-field__hint {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  opacity: 0.6;
+}
+
+.dl-field__hint a {
+  color: var(--brand);
+}
+
+/* 分段控件：固定内边距 + tabular-nums，切换时不抖动 */
+.dl-segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, 8px);
+  background: var(--surface);
+  width: fit-content;
+}
+
+.dl-segmented button {
+  min-width: 88px;
+  padding: var(--sp-2) var(--sp-4);
+  border: 0;
+  border-radius: calc(var(--r-md, 8px) - 2px);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.dl-segmented button:hover {
+  background: var(--surface-hover);
+}
+
+.dl-segmented button[aria-pressed='true'] {
+  background: var(--brand);
+  color: var(--surface);
+}
+
+.dl-segmented button:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.dl-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  min-height: 48px;
+  padding: 0 var(--sp-6);
+  border: 0;
+  border-radius: var(--r-md, 8px);
+  background: var(--brand);
+  color: var(--surface);
+  font: inherit;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.dl-action:hover:not(:disabled) {
+  background: var(--brand-hover);
+}
+
+.dl-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.dl-action:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.dl-extras {
+  display: grid;
+  gap: var(--sp-2);
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--border);
+}
+
+.dl-extras ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dl-extras a {
+  color: var(--brand);
+  font-size: var(--fs-sm);
+  word-break: break-all;
+}
+
+.dl-empty {
+  display: grid;
+  gap: var(--sp-4);
+  justify-items: start;
+  padding: var(--sp-6);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg, 12px);
+  background: var(--surface-sunken);
+}
+
+.dl-empty p {
+  margin: 0;
+  font-size: var(--fs-md);
+}
+
+.dl-page__foot {
+  margin: var(--sp-8) 0 0;
+  font-size: var(--fs-sm);
+  opacity: 0.6;
+}
+
+@media (max-width: 620px) {
+  .dl-page {
+    padding: calc(var(--sp-10) + 56px) var(--sp-4) var(--sp-10);
+  }
+
+  .dl-page__head h1 {
+    font-size: var(--fs-3xl);
+  }
+
+  .dl-picker {
+    padding: var(--sp-4);
+  }
+
+  .dl-segmented {
+    width: 100%;
+  }
+
+  .dl-segmented button {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .dl-action {
+    width: 100%;
+  }
+}

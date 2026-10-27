@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import HomePage from './pages/home/HomePage'
+import DownloadPage from './pages/download/DownloadPage'
 import { resolveLegacyRoute, toSiteHref } from './content/docs'
 import { normalizeSitePath } from './lib/locale'
 
@@ -81,6 +82,10 @@ export default function App() {
 
   if (path === '/' || path === '/en') {
     return <HomePage locale={path === '/en' ? 'en' : 'zh'} />
+  }
+
+  if (path === '/download' || path === '/en/download') {
+    return <DownloadPage locale={path === '/en/download' ? 'en' : 'zh'} />
   }
 
   return (
