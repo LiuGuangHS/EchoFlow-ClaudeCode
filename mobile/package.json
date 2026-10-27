@@ -1,7 +1,7 @@
 {
   "name": "echoflow-code-mobile",
   "private": true,
-  "version": "0.7.1",
+  "version": "0.7.2",
   "scripts": {
     "check": "bun test test/*.test.ts",
     "test": "bun test test/*.test.ts",
