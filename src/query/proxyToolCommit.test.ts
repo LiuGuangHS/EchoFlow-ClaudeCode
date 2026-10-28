@@ -203,7 +203,12 @@ for (const scenario of scenarios) {
       }),
       stdin: 'ignore', stdout: 'pipe', stderr: 'pipe',
     })
-    const timeout = setTimeout(() => child.kill('SIGKILL'), 15_000)
+    // Hang guard, not a performance budget: the child boots a real query
+    // graph and legitimately runs 6–13s quiet, so under a loaded machine 15s
+    // was not always enough and the kill turned a slow run into a failure.
+    // Keep the guard below the per-test timeout so a slow run can never be
+    // killed first.
+    const timeout = setTimeout(() => child.kill('SIGKILL'), 45_000)
     try {
       const [exitCode, stdout, stderr] = await Promise.all([
         child.exited, new Response(child.stdout).text(), new Response(child.stderr).text(),
@@ -252,5 +257,5 @@ for (const scenario of scenarios) {
       await child.exited
       await rm(root, { recursive: true, force: true })
     }
-  }, 20_000)
+  }, 60_000)
 }

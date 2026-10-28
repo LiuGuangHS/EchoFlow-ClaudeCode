@@ -29,6 +29,10 @@ if (!process.env.BTW_LOOPBACK_FIXTURE) {
     } finally { await rm(root, { recursive: true, force: true }) }
   }, 60_000)
 } else {
+  // Hang guard, not a performance budget: the inner body boots the real
+  // runtime and makes loopback round trips, which a loaded machine stretches
+  // past bun test's 5s default. Keep inner (30s) below the outer kill guard
+  // (45s) below the outer test timeout (60s).
   test('real fork tools/cache/current context', async () => {
     ;(globalThis as any).MACRO = { BUILD_TIME: '' }
     const { z } = await import('zod')
@@ -97,5 +101,5 @@ if (!process.env.BTW_LOOPBACK_FIXTURE) {
       expect(main.signal.aborted).toBe(false)
       expect(JSON.stringify(parentMessages)).toBe(before)
     } finally { server.stop(true) }
-  })
+  }, 30_000)
 }
