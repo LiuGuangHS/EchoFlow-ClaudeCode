@@ -1413,7 +1413,11 @@ describe('SessionService', () => {
     await service.renameSession(sessionId, 'Renamed while scanning')
 
     const freshRequest = service.listSessions({ limit: 10, offset: 0 })
-    await new Promise((resolve) => setTimeout(resolve, 10))
+    // Starting the invalidated fresh scan is async work; poll for it instead of
+    // racing a fixed delay, which flakes red when the runner is under load.
+    for (let attempt = 0; attempt < 500 && scanCount < 2; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
     expect(scanCount).toBe(2)
 
     const freshResult = await freshRequest
