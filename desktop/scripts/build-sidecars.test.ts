@@ -518,10 +518,9 @@ describe('build-sidecars Windows x64 target mapping', () => {
       headers: { 'content-type': 'application/json' },
     })) as typeof fetch
 
-    const startedAt = performance.now()
     let guardTimer: ReturnType<typeof setTimeout> | undefined
     try {
-      await expect(Promise.race([
+      const rejection = await Promise.race([
         waitForCompiledSidecar({
           baseUrl: 'http://127.0.0.1:1',
           expectedSessionId: 'never-ready',
@@ -533,10 +532,20 @@ describe('build-sidecars Windows x64 target mapping', () => {
         new Promise<never>((_resolve, reject) => {
           guardTimer = setTimeout(
             () => reject(new Error('never-ending response body guard fired')),
-            250,
+            // Hang guard, not a budget: it only fires when the bounded read
+            // never settles because the deadline mechanism regressed.
+            5_000,
           )
         }),
-      ])).rejects.toThrow('compiled sidecar did not become ready')
+      ]).then(
+        () => { throw new Error('expected waitForCompiledSidecar to reject') },
+        (error: Error) => error,
+      )
+      expect(rejection.message).toContain('compiled sidecar did not become ready')
+      // Mechanism assertion: the bounded read was cut by the request deadline,
+      // never by waiting out the never-ending body. Wall-clock speed is not an
+      // invariant of this test — the timing window also covers OS teardown.
+      expect(rejection.message).toContain('compiled sidecar request deadline exceeded')
     } finally {
       if (guardTimer) clearTimeout(guardTimer)
       globalThis.fetch = originalFetch
@@ -547,7 +556,6 @@ describe('build-sidecars Windows x64 target mapping', () => {
       }
     }
 
-    expect(performance.now() - startedAt).toBeLessThan(150)
     expect(bodyCancelCount).toBeGreaterThan(0)
     rejectCancellation?.(new Error('late body cancellation rejection'))
     await new Promise(resolveWait => setTimeout(resolveWait, 0))
