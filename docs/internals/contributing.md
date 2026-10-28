@@ -68,7 +68,7 @@ Windows x64 打包用 `cd desktop && bun run build:windows-x64`，需要 Bun/Bun
 
 `release-desktop.yml` 现在跑两道门：
 
-1. **内容门禁**（`release-contract` job，30 秒）：tag 版本号、`release-notes/vX.Y.Z.md`、`upstream:audit` 三者对齐，不通过就不开始构建。
+1. **内容门禁**（`release-contract` job，30 秒）：tag 版本号、`release-notes/vX.Y.Z.md`、`check:release-surface` 三者对齐，不通过就不开始构建。
 2. **并行验证**（`release-verification` job，和 6 平台构建同时跑）：`check:policy` / `check:server` / `check:desktop` / `check:agent-flow` / `check:adapters` / `check:persistence-upgrade`。构建完了但验证没过，就不发。
 
 所以发版前不需要本地跑 20 分钟的全量检查——CI 在构建期间顺手就验了。全量层（`nightly-quality.yml`）刻意不设定时：跑不跑、什么时候跑由维护者决定，`pr-quality-workflow.test.ts` 会拦住重新加回 `schedule:` 的改动。
@@ -140,7 +140,7 @@ bun run check:chat-contract       # desktop transport、store、首回合
 bun run check:persistence-upgrade # 持久化迁移与旧 fixture
 bun run check:agent-flow          # 无模型的 agent 端到端 8 场景
 bun run check:adapters            # IM sidecar
-bun run upstream:audit            # 发版面：未解决冲突、未归并的上游 note、note 版本/品牌
+bun run check:release-surface     # 发版面：品牌标记、版本/品牌漂移、冲突残留
 ```
 
 `check:native`（完整 sidecar 构建 + 打包 + package smoke）最慢，仅在触碰 `native/`、`desktop/electron` 打包配置或发版脚本时跑。真正的 Release workflow 会在 6 个平台上重新构建，本机不必重复。
@@ -447,14 +447,14 @@ CI 会在构建期间自动跑验证，本地只需要确认内容对齐：
 
 ```bash
 bun run scripts/release.ts <version> --dry   # 发布预演，检查版本/tag/notes 三者一致
-bun run upstream:audit                        # 发版面：未解决冲突、上游 note、品牌
+bun run check:release-surface                # 发版面：品牌标记、版本/品牌漂移、冲突残留
 ```
 
 如果想在打 tag 前手动跑一轮完整验证，GitHub Actions 里有个 `Quality Check` workflow 可以手动触发。
 
 正式执行 `bun run scripts/release.ts <version>` 前，先确认对应的 `release-notes/v<version>.md` 已经存在。
 
-`upstream:audit` 是 release 模式的一条 lane（`upstream-release-audit`），所以跑 `bun run quality:gate --mode release` 时也会执行；但它只读、无外部依赖，单跑一次只要几十毫秒，发版前值得单独确认一次。
+`check:release-surface` 是 release workflow 的 `release-contract` job 里的第一条检查，也是 `push-quality.yml` 的门禁；它只读、无外部依赖，单跑一次只要几十毫秒，发版前值得单独确认一次。
 
 ### 验证一条真实更新链路
 
@@ -471,168 +471,15 @@ bun run upstream:audit                        # 发版面：未解决冲突、�
 
 ## 上游同步（维护者）
 
-fork 跟踪上游的**发布**，而不是上游 `main` 的移动顶端：上游 `main` 是开发分支，只有 release tag 才是 fork 能对齐的版本。同步是高风险操作，不可协商的约束写在根 `AGENTS.md` 的 "Upstream Sync Direction"；本节是完整流程。
+上游同步流程已于 2026-10-26 随脱钩决定整体退役。仓库不再跟踪、合并或对齐任何上游发布，`upstream:*` 脚本与 `scripts/upstream/` 已删除，`.github/workflows/upstream-sync.yml` 与 `upstream-probe.yml` 已移除。
 
-> 要把这次合并交给 agent 执行，用 `docs/_internal/upstream-sync-agent-handoff.md` 里那段自包含的提示词（含权限边界、策略常量和停机点）。
+仍然有效的只有两条与上游无关的通用纪律：
 
-### 四条命令
+- **冲突逐 hunk 裁决。** 任何合并冲突都是两个决定叠在一起，绝不整体套用 `--ours` 或 `--theirs`；按 hunk 读懂两侧再决定保留哪一半。
+- **合并发布前审计公开身份。** README、文档、release notes、包元数据、诊断导出、签名/隐私页、更新链接与桌面端「关于」默认值，都不得把外部项目或其作者写成 EchoFlow 的作者、维护者、联系人或产品身份。
 
-**按下表顺序执行** —— `upstream:resolve` 依赖 `upstream:sync` 已经在 `origin` 上发布了同步分支，反过来会在新 release 上直接报 `couldn't find remote ref`。
+公开身份的执行工具是 `bun run check:release-surface`。
 
-| 顺序 | 命令 | 作用 |
-| --- | --- | --- |
-| 1 | `bun run upstream:check` | 只读探测，报告判定结果，不改动任何东西 |
-| 2 | `bun run upstream:sync` | 推送同步分支（供下一步拉取，也是最终开 PR 的分支） |
-| 3 | `bun run upstream:resolve` | 把 `main` 合入同步分支，冲突留在工作区、不提交 |
-| 4 | `bun run upstream:audit` | 只读发版面检查：未解决冲突、release note 版本/品牌、高于当前版本的 release note，以及 `README.md` / `package.json` / `desktop/package.json` / `AGENTS.md` 里的上游品牌标记 |
-
-这些命令都要 bun（`packageManager: bun@1.3.14`）：脚本用了 `import.meta.dir`，Node 跑不了。
-
-能丢东西的两条约束：
-
-- `upstream:resolve` 内部是 `git switch --track --force-create <分支> origin/<分支>`（origin 上没有该分支时退回用 release commit 本地建分支）—— **会切换分支并覆盖同名本地分支**，且工作区必须干净，有未提交改动会直接报错退出。**在独立 worktree 里跑**：它会切换所在 checkout 的分支。若同名本地分支已指向别的提交，脚本会拒绝执行并提示先备份，确需覆盖时加 `--force`。
-- `upstream:sync` 用 `git push --force-with-lease`，而且**推的是上游 release commit，不是解决后的分支头**（`--publish` 推送 `${commit}:refs/heads/${branch}`，`commit` 来自 `fetchRelease()`）。所以它只用于第 2 步发布空白同步分支；收尾推送必须用 `git push origin sync/upstream-v<版本>`。远端同名分支内容不同时它会拒绝推送，不会覆盖人工解决过的冲突。
-
-因为第 3 步会切分支，同步工作统一在独立 worktree 里做：
-
-```bash
-git worktree add ../EchoFlow-sync-v<版本> sync/upstream-v<版本>
-cd ../EchoFlow-sync-v<版本>
-bun run upstream:resolve
-```
-
-这样主 checkout 不受影响，也正好匹配下面的 `upstream:state --cwd`。
-
-`upstream:check` 的可选参数：`--strict`（有冲突时退出码为 1，默认始终 0）、`--base <分支>`（默认 `main`）。
-
-**"是否已同步"按提交图判定**，不比较版本号：逐个检查 release commit 是否已是 base 分支的祖先，取最新的一个未合入项。fork 的版本线（`0.5.x`）与上游（`0.6.x`）本就不可比，用版本号判断会在 fork 版本号超过上游时静默漏掉同步。同理，**同步分支上存在某个 release 不等于该 release 已合入 `main`** —— 判定只看 base 分支。
-
-### 自动化边界
-
-**自动建分支、自动开 PR 的同步自动化保持移除状态。** 此前 `.github/workflows/upstream-sync.yml` 每三天探测上游 release，并创建 `sync/upstream-vX.Y.Z` 分支与 PR。它实际没有产出可合并的 PR：同步分支的冲突面很大，而用默认 `GITHUB_TOKEN` 开的 PR 不会触发 `pull_request` 工作流，拿不到 CI 结果，于是长期停在未合入状态。该工作流已删除，失败原因本身要保留——任何未来的同步自动化都必须先解决"PR 拿不到 CI"这一条。
-
-当前保留两类**只读**自动化（2026-10-18 增加），都不解决冲突、不提交、不推送：
-
-| 工作流 | 触发 | 行为 |
-| --- | --- | --- |
-| `.github/workflows/upstream-probe.yml` | 每天 09:00（北京时间）+ 手动 | 跑 `upstream:check`，把判定、冲突数、冲突清单写进固定盯梢 issue（label `upstream-probe`）；已同步则关闭该 issue |
-| `.github/workflows/sync-pr-conflict-map.yml` | `sync/upstream-*` 分支头的 PR（由维护者推送后手动开） | 对 PR 的 base 与 head 复算 `merge-tree`，评论冲突地图（按区域统计 + 逐文件矩阵模板），随 PR 更新而更新 |
-
-两类自动化的产出都是**给人看的情报**：盯梢 issue 回答"落后了几个 release、冲突多大"，PR 评论回答"这一轮要裁决哪些文件"。冲突矩阵的填写、`git add`/`git commit`、`upstream:sync` 仍按下面的手工路径由维护者执行；release 探测也仍可随时手工跑上面的三条命令。
-
-**第三类：本地合并状态（`bun run upstream:state`）。** 上面两类都只看已提交的历史，看不见"合并做了一半、冲突还没暂存"——而大冲突战役恰恰长时间停在这个状态。`scripts/upstream/merge-state.ts` 补这一格：
-
-```bash
-bun run upstream:state --cwd ../EchoFlow-sync-v0.7.4
-```
-
-它只读索引和工作区，按区域列出未解决冲突，并分成**已改完待暂存**与**仍需处理**两类（后者包括仍有冲突标记的文件，以及 delete/modify 冲突里已经不存在的文件）。有未解决冲突时退出码为 1，可直接当门禁用。`--cwd` 是必需的：合并通常在一个独立 worktree 里，省略它会去报告脚本自己所在的 checkout，从而误报"没有进行中的合并"。
-### 手工路径
-
-每个上游 release 都按这条路径同步：
-
-1. 从干净的 `main` 工作区开始，先检查已配置的 remote。
-2. 正常拉取 `origin`。拉上游分支时不带 tag：`git fetch upstream +refs/heads/*:refs/remotes/upstream/* --prune`；上游 release tag 可能与 fork 的 release tag 重名。
-3. 合并前先比较 `main...origin/main` 与 `main...upstream/main`。
-4. 用 merge commit 合并上游；**不要** rebase 公开的 `main`。
-5. 用 `/superpowers:brainstorm` 与 `/superpowers:write-plan` 规划这次合并（"合并上游，保留修复，替换品牌名"）；对冲突、高风险文件以及 provider 政策决策用 `@code-reviewer`。
-6. **动手前先写出完整的冲突矩阵**（见下），然后一轮把所有冲突解决完；不要逐个发现、逐个修补。
-7. 先跑 `bun run scripts/upstream/merge-state.ts --cwd <worktree> --resolve-brand` 收掉纯品牌差异的 hunk（见「自动裁决与并行解冲突」），再有意地解决剩下的文件内容，**绝不**整体套用 `--ours` 或 `--theirs`。保留 fork 身份与 provider 政策、无赞助的公开文档、持久化兼容、Electron 发布链路和质量门禁。
-8. 每次合并后审计公开身份：README、文档、release notes、包元数据、诊断导出、签名/隐私页面、更新链接，以及桌面端「关于」/个人资料默认值，都不能把 NanmiCoder/阿江 或 `cc-haha` 写成当前 EchoFlow 的作者、维护者、联系人或产品。
-9. 冲突分析与工作区编辑可以自动化，但 `git add` 和 `git commit` 必须由开发者显式确认。**绝不**自动暂存或提交冲突解决结果。
-10. 写完冲突解决后，让 `@code-reviewer` 审阅这些结果并运行 `bun run check:policy`，再请开发者暂存/提交。构建或类型检查失败时，按 `AI Coding Agent 修复循环` 一节定位并修复，重跑失败的窄检查，并在声称可推送前运行 `bun run verify`。
-11. 先推 `main`（或与 release tag 一起推），然后核对远端分支与 tag 指向。
-
-### 冲突矩阵模板
-
-一条一行，编辑前一次性写完：
-
-| 文件 | base / ours / theirs 行为 | 最终决策 | 验证命令 |
-| --- | --- | --- | --- |
-| `package.json` | 上游改版本与依赖，ours 是 fork 元数据 | `ours` | `bun run check:policy` |
-| `LICENSE` | 上游改版权行 | `ours` | 人工核对 |
-| `providerPresets.json` | 上游新增 provider 预设 | `manual`，逐条按规则裁定 | `bun run check:provider-contract` |
-| `desktop/src/stores/chatStore.ts` | 上游改会话标题逻辑，ours 是品牌文案 | 逐字段取舍：`title` 保 fork 品牌，`body` 吸上游逻辑 | `cd desktop && bun run test` |
-
-`providerPresets.json` 永远判 `manual`；品牌类文件（`package.json`、`LICENSE`、`README.md`、`desktop/package.json`、`AGENTS.md`）判 `ours`，并单独确认上游逻辑是否需要一并带走。
-
-### 自动裁决与并行解冲突
-
-四条命令跑完、`upstream:resolve` 把冲突留在工作区之后，先让机器收掉它**能确定性裁决**的那部分：
-
-```bash
-bun run scripts/upstream/merge-state.ts --cwd ../EchoFlow-sync-v<版本> --resolve-brand
-```
-
-它只解一种 hunk：两边归一化品牌词之后仍然相等的（`cc-haha` ↔ `echoflow` 这类纯品牌差异）。落盘保留**品牌侧是 fork 的那一边**——这种 hunk 两边逻辑本就相同，挑品牌侧不需要读逻辑；而 fork 为兼容、归因或受支持变量而**有意保留**的历史名，也只可能出现在 fork 侧。注意两侧不固定是 ours：`upstream:resolve` 把工作分支建在上游 release commit 上、再把 fork main 合进来，此时 `ours` 是上游、`theirs` 才是 fork，所以按 hunk 判品牌侧，而不是一律取 ours——一律取 ours 会把 EchoFlow 洗回 `cc-haha`，连同 fork 的保留名一起抹掉。其余 hunk 原样保留冲突标记，留给人工。三条边界：
-
-- **只写文件内容，不暂存、不提交**。解完的文件仍是 `UU`，等维护者 `git add`。
-- `sync-policy.json` 里记为 `manual` 的路径整体跳过（当前是 `src/server/config/providerPresets.json`），无论它的 hunk 长什么样。
-- 裁决规则在 `scripts/upstream/sync-policy.json`：品牌词映射和文件决策都是数据，改规则不必改解析器。退出码仍然回答「合并结束了吗」，只要还有未合并文件就是 1。
-
-剩下的语义冲突按 `areaOf` 分区并行处理，一个区一个 agent，各自跑所属门禁：
-
-| 区域 | 判断依据 | 验证命令 |
-| --- | --- | --- |
-| `desktop/src` | 上游 UI 改动意图 + fork 品牌 | `bun run check:desktop` |
-| `src/server` | 上游服务端语义 + provider 政策 | `bun run check:server` |
-| `desktop/electron` + `src/services` | 宿主进程与运行时 | `bun run check:desktop` / `bun run check:server` |
-| `docs/` 与杂项 | 文档一致性、品牌审计 | `bun run check:docs` |
-
-纪律不变，并行只是把分工摊开：
-
-- **hunk 级混合**——fork 品牌词 + 上游逻辑，不整文件取一边。
-- `providerPresets.json` 逐条按 provider 政策裁定（`AGENTS.md` 的规则，不是 id 白名单）。
-- 解完由 `@code-reviewer` 复核，`bun run check:policy` 通过后再请维护者 `git add` / `git commit`。
-
-治本在减面：冲突面长期集中在 `desktop/src` 与 `src/server`（历次同步约占七成）。新增定制尽量落在配置、adapter 或独立模块，少占上游也在改的共享路径，下一轮冲突才会真的变少。
-
-### 参考案例：v0.6.4 的选择性采纳
-
-这次合并走四阶段流程，是"选择性采纳"的范例。分支 `merge/upstream-v0.6.4-selective`，快照 tag `pre-merge-v0.6.4-snapshot`，预估 12–18 小时。
-
-- **策略**：Cherry-pick + 手动合并，而不是整包 merge。
-- **Phase 2 选中 6 个上游提交**（全部落地 `main`，cherry-pick 后生成新哈希）：Agent Teams 继承 lead model；队友权限提示路由；会话列表不再扫描全部 JSONL；恢复窗口拖拽；修复测试连接按钮塌陷；折叠控件与上下文表。
-- **唯一一处品牌冲突的解法**（`desktop/src/stores/chatStore.ts`）既不是 `--ours` 也不是 `--theirs`，而是逐字段取舍——`title` 保 EchoFlow 品牌，`body` 吸上游逻辑。这是整条同步哲学最凝练的体现。
-- **Phase 3 provider 决策**：上游 v0.6.4 新增的 7 个 provider 预设**全部拒绝**（5 个上游自己标了 `deprecated`，`atlascloud` 的链接带 `utm_campaign=cc-haha`，`apismart` 是赞助商），并恢复了上游删掉的 EchoFlow API。结论是 `providerPresets.json` **完全不改**。
-- **最终只落 1 个文件**：`desktop/build/getProcessInfo.nsh`。
-
-### 版本合并
-
-上游同步包含多个上游 release 时，不要把上游的 release note 文件或版本号原样带进 fork。fork 的 `desktop/package.json` 是版本唯一事实源：
-
-1. 下一个 fork 版本号由**最新的 fork 发布/tag** 决定，不由上游 tag 决定。
-2. 把与用户相关的上游改动合并进下一个 fork release note，挂 fork 的版本号。
-3. 每个 fork 发布只递增一次 patch 版本；**不要**因为合并了上游 `v0.6.4` / `v0.6.5` 就创建同名 tag。
-4. 上游专用 release note 的内容归并完成后删除，除非维护者明确要求保留。
-5. 提交前确认 `desktop/package.json`、合并后的 release note、发布脚本和 tag 计划用的是同一个 fork 版本。如果目标版本或待删文件有歧义，先问维护者再删。
-
-例如：如果 fork 还没发布 `v0.5.6`，就把上游改动并进 fork 的 `v0.5.6` release note，不要引入上游 `v0.6.x` 的 release note 或 tag。
-
-### 同步发版的版本号跟随（维护者 2026-10-14 定）
-
-**同步驱动的发版，fork 版本号跟随上游版本号**，并把本次合入的所有上游 release 的用户可见改动归并进同一个 fork release note。这样做是为了让 fork 产物能一眼追溯到对应的上游版本。约束：
-
-- 只有「合并上游」这一种发版跟随上游版本号；**纯 fork 自己的发版仍然走 fork 自己的版本线**，按上一节的规则递增。
-- 归并时只取上游 release note 里的用户可见内容，**不保留**上游版本标题、作者、资产名、compare 链接或仓库地址。
-- `desktop/package.json`、归并后的 release note、`scripts/release.ts` 和 tag 计划必须用同一个版本号。
-- 上游 `release-notes/vX.Y.Z.md` 文件在归并完成后删除。
-
-实践：v0.7.0 + v0.7.1 一并合入时，`desktop/package.json` 升到 `0.7.1`，两个上游 release note 的用户可见改动都写进 fork 的 `release-notes/v0.7.1.md`。
-
-### 本次同步后的执行规范
-
-本次 v0.6.6 同步实际产生了 15 个冲突文件，说明同步脚本负责定位和准备，不能替代人工决策。后续统一按下面的顺序执行：
-
-1. `upstream:check` 只读确认目标 release、当前 fork 版本、冲突数量和同步分支；先保存报告，再开始修改。报告里列出**本次涵盖的全部上游 release note**，逐个归并。
-2. `upstream:sync` 发布同步分支 —— 必须在 `upstream:resolve` 之前，后者要从 `origin` 拉取这个分支。
-3. 开独立 worktree 后 `upstream:resolve` 合并；它只负责合并，不自动暂存或提交。**在 worktree 里跑**，因为它会切换所在 checkout 的分支。
-4. 解决冲突前写完整矩阵，矩阵必须覆盖 `git diff --name-only --diff-filter=U` 的每个文件，并写明品牌、provider、持久化和测试取舍。
-5. 合并上游 release note 时，把用户可见内容归并到当前 EchoFlow release note；保留当前 fork 版本号、品牌、下载链接和比较链接，不保留上游版本标题、作者、资产名或仓库链接。多个上游 release 一并合入时（例如 v0.7.2 + v0.7.3 + v0.7.4），**每份 note 的内容都要归并**，不是只归最新的那份。
-6. 合并后依次执行 `upstream:audit`（含 README / `package.json` / `desktop/package.json` / `AGENTS.md` 的品牌扫描）、provider contract、`check:impact`、受影响的窄测试和 `check:policy`；服务器测试涉及动态端口时串行运行，避免并发测试互相抢占端口。
-7. 只有冲突内容、release note 和验证报告都可复核后，才由开发者明确确认 `git add`、`git commit`，再用**普通 `git push origin sync/upstream-v<版本>`** 推送并开 PR。**不要用 `upstream:sync` 收尾** —— 它推的是上游 release commit，不是解决后的分支头。
-
-这套顺序把“脚本能自动做的事”和“必须由维护者决定的事”分开，也避免把上游说明误删或把上游版本号带进 EchoFlow 发版线。
 
 ## PR 提交流程
 

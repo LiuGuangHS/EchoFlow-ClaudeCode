@@ -68,7 +68,7 @@ For Windows x64 packaging use `cd desktop && bun run build:windows-x64`; it requ
 
 `release-desktop.yml` now runs two gates:
 
-1. **Content gate** (`release-contract` job, ~30 seconds): verifies the tag matches `desktop/package.json`, `release-notes/vX.Y.Z.md` exists with the right title, and `upstream:audit` passes. If any of these fail, the build never starts.
+1. **Content gate** (`release-contract` job, ~30 seconds): verifies the tag matches `desktop/package.json`, `release-notes/vX.Y.Z.md` exists with the right title, and `check:release-surface` passes. If any of these fail, the build never starts.
 2. **Parallel verification** (`release-verification` job, runs alongside the 6-platform build): `check:policy` / `check:server` / `check:desktop` / `check:agent-flow` / `check:adapters` / `check:persistence-upgrade`. If the build finishes but verification fails, nothing is published.
 
 Pre-release checks no longer need a 20-minute local sweep — CI runs them during the build. The full sweep (`nightly-quality.yml`) is deliberately not scheduled: spending ~90 minutes of CI is a decision, not a default, and `pr-quality-workflow.test.ts` fails if a `schedule:` is added back.
@@ -399,14 +399,14 @@ CI runs verification during the build. Locally, just confirm content alignment:
 
 ```bash
 bun run scripts/release.ts <version> --dry   # dry-run: checks version/tag/notes consistency
-bun run upstream:audit                        # release surface: conflicts, upstream notes, branding
+bun run check:release-surface                # release surface: branding markers, version/brand drift, conflict residue
 ```
 
 To run a full verification before tagging, trigger the `Quality Check` workflow manually from GitHub Actions.
 
 Confirm `release-notes/v<version>.md` exists before running `bun run scripts/release.ts <version>` for real.
 
-`upstream:audit` is a lane of release mode (`upstream-release-audit`), so `bun run quality:gate --mode release` runs it too; it is read-only with no external dependencies and takes milliseconds, so it is worth confirming on its own before tagging.
+`check:release-surface` is the first check in the release workflow's `release-contract` job and a gate in `push-quality.yml`; it is read-only with no external dependencies and takes milliseconds, so it is worth confirming on its own before tagging.
 
 ### Verify one real update path
 
@@ -423,154 +423,15 @@ Platforms differ in what matters: on macOS confirm the release job used the sign
 
 ## Upstream Sync (maintainer)
 
-The fork tracks upstream **releases**, not upstream's moving tip: upstream `main` is a development branch, and only a release tag is something the fork can version against. Syncing is high-risk; the non-negotiable constraints live in `AGENTS.md` under "Upstream Sync Direction", and this section is the full procedure.
+The upstream sync workflow was retired in full on 2026-10-26 together with the decision to stop tracking any upstream. The repository no longer tracks, merges, or aligns with upstream releases. The `upstream:*` scripts and `scripts/upstream/` were deleted, and `.github/workflows/upstream-sync.yml` and `upstream-probe.yml` were removed.
 
-### Four commands
+Two general disciplines survive, and neither depends on upstream:
 
-**Run them in this order** — `upstream:resolve` needs the sync branch to already exist on `origin`, which only `upstream:sync` creates. Reversed, a fresh release fails with `couldn't find remote ref`.
+- **Adjudicate conflicts hunk by hunk.** A merge conflict is two decisions stacked together. Never apply blanket `--ours` or `--theirs`; read both sides per hunk and decide which half to keep.
+- **Audit public identity before shipping a merge.** README, docs, release notes, package metadata, diagnostics exports, signing and privacy pages, update links, and desktop "About" defaults must never name another project or its author as EchoFlow's author, maintainer, contact, or product identity.
 
-| Order | Command | Effect |
-| --- | --- | --- |
-| 1 | `bun run upstream:check` | Read-only probe. Reports the verdict, changes nothing. |
-| 2 | `bun run upstream:sync` | Publishes the sync branch, for the next step to fetch and for the PR to use. |
-| 3 | `bun run upstream:resolve` | Merges `main` into the sync branch locally, leaving conflicts in the tree. |
-| 4 | `bun run upstream:audit` | Read-only release-surface gate: unresolved conflicts, release-note version/brand, newer release notes, and upstream branding in `README.md` / `package.json` / `desktop/package.json` / `AGENTS.md`. |
+The executable check for public identity is `bun run check:release-surface`.
 
-All four need bun (`packageManager: bun@1.3.14`): the runner uses `import.meta.dir`, which Node does not provide.
-
-Two constraints that can cost you work:
-
-- `upstream:resolve` runs `git switch --track --force-create <branch> origin/<branch>` (falling back to the release commit when origin lacks the branch) — it **switches branches and overwrites a same-named local branch**, and it refuses to start when the worktree is dirty. **Run it in a separate worktree**: it switches the branch of whatever checkout it runs in. If a local branch of that name already points elsewhere, it refuses and tells you how to back it up first; `--force` accepts losing it.
-- `upstream:sync` pushes with `--force-with-lease`, and it **pushes the upstream release commit, not your resolved branch head** (`--publish` pushes `${commit}:refs/heads/${branch}`, where `commit` comes from `fetchRelease()`). Use it only for step 2, to publish the empty sync branch; finish with `git push origin sync/upstream-v<version>`. It refuses when the remote branch holds different content, so a manual resolution is never overwritten.
-
-Because step 3 switches branches, do the work in a separate worktree:
-
-```bash
-git worktree add ../EchoFlow-sync-v<version> sync/upstream-v<version>
-cd ../EchoFlow-sync-v<version>
-bun run upstream:resolve
-```
-
-This keeps the main checkout untouched and matches the `upstream:state --cwd` usage below.
-
-`upstream:check` flags: `--strict` (exit 1 when the merge conflicts; the default is always 0) and `--base <branch>` (default `main`).
-
-**"Already synced?" is answered from the commit graph, not from version numbers**: each release commit is tested for ancestry against the base branch, and the newest one that fails is the target. The fork ships its own version line (`0.5.x`) that cannot be compared with upstream's (`0.6.x`), so a version comparison silently reports "already synced" as soon as the fork version passes upstream's. For the same reason, **a release sitting on a sync branch is not a release merged into `main`** — only the base branch decides.
-
-### Automated path (reporting only)
-
-`.github/workflows/upstream-sync.yml` used to probe upstream releases every three days and open a `sync/upstream-vX.Y.Z` PR. It never produced a mergeable PR: the sync branch carried a large conflict surface, and PRs opened with the default `GITHUB_TOKEN` do not trigger `pull_request` workflows, so no CI result ever came back. The workflow is gone.
-
-What replaced it reports, and nothing more. Both jobs are read-only: they never create a branch, resolve a conflict, stage, commit, or push.
-
-- `.github/workflows/upstream-probe.yml` probes daily at 09:00 China Standard Time (UTC+8) and maintains a single labeled tracker issue ("上游同步盯梢"). Up to date closes the issue; behind opens or updates it with the release tag and the conflicting-file count.
-- `.github/workflows/sync-pr-conflict-map.yml` posts one conflict map per sync PR, keyed by an HTML marker comment so it updates in place on every push instead of stacking.
-
-The conflict matrix, `git add`/`git commit`, and `upstream:sync` stay on the manual path below. Run the three commands above by hand whenever you want a fresh reading.
-
-**A third surface covers local merge state** (`bun run upstream:state`). Both jobs above read committed history, so neither can see a merge that is half-resolved in a worktree — which is exactly where a large campaign spends its days. `scripts/upstream/merge-state.ts` reports the unmerged paths by area and splits them into *resolved but not staged* and *still needs work* (remaining conflict markers, plus files a delete/modify conflict left absent). It exits 1 while anything is unresolved, so a gate can use it.
-
-```bash
-bun run upstream:state --cwd ../EchoFlow-sync-v0.7.4
-```
-
-`--cwd` is required in practice: the merge normally lives in a separate worktree, and without it the script reports on the checkout it sits in and claims no merge is in progress.
-
-### Manual path
-
-Use this for every upstream release:
-
-1. Start from a clean `main` worktree and inspect the configured remotes.
-2. Fetch `origin` normally. Fetch upstream branches without tags: `git fetch upstream +refs/heads/*:refs/remotes/upstream/* --prune`. Upstream release tags can share names with fork release tags.
-3. Compare `main...origin/main` and `main...upstream/main` before merging.
-4. Merge upstream with a merge commit; **do not** rebase public `main`.
-5. Plan the merge ("merge upstream, keep the fixes, replace the brand") with `/superpowers:brainstorm` and `/superpowers:write-plan`; use `@code-reviewer` on conflicted files, high-risk files, and provider-policy decisions.
-6. **Write one complete conflict matrix before editing** (see below), then resolve the whole matrix in one pass. Do not discover and patch conflicts one at a time.
-7. Run `bun run scripts/upstream/merge-state.ts --cwd <worktree> --resolve-brand` first to clear the purely brand-token hunks (see "Auto-adjudication and parallel conflict work"), then resolve the remaining file contents intentionally; **never** apply blanket `--ours` or `--theirs`. Preserve fork identity and provider policy, sponsor-free public docs, persistence compatibility, the Electron release flow, and the quality gates.
-8. Audit public identity after every merge: README, docs, release notes, package metadata, diagnostics export, signing/privacy pages, updater links, and desktop About/profile defaults must not identify NanmiCoder/阿江 or `cc-haha` as the current EchoFlow author, maintainer, contact, or product.
-9. Conflict analysis and worktree edits may be automated, but `git add` and `git commit` require explicit developer confirmation. **Never** stage or commit a conflict resolution automatically.
-10. After writing resolutions, have `@code-reviewer` review them and run `bun run check:policy` before asking the developer to stage or commit. If a build or type check fails, locate it through the "AI Coding Agent Fix Loop" section, rerun the narrow failed check, and run `bun run verify` before claiming push-readiness.
-11. Push `main` before or together with release tags, then verify the remote branch and tag targets.
-
-### Conflict matrix template
-
-One row per file, written in full before you edit anything:
-
-| File | base / ours / theirs behavior | Final decision | Validating command |
-| --- | --- | --- | --- |
-| `package.json` | Upstream changes version and deps, ours holds fork metadata | `ours` | `bun run check:policy` |
-| `LICENSE` | Upstream changes the copyright line | `ours` | manual check |
-| `providerPresets.json` | Upstream adds provider presets | `manual`, ruled one by one | `bun run check:provider-contract` |
-| `desktop/src/stores/chatStore.ts` | Upstream changes session-title logic, ours holds brand copy | per-field: keep fork branding in `title`, take upstream logic in `body` | `cd desktop && bun run test` |
-
-`providerPresets.json` is always `manual`. Brand-owned files (`package.json`, `LICENSE`, `README.md`, `desktop/package.json`, `AGENTS.md`) are `ours`, with a separate decision about whether upstream logic needs to come along.
-
-### Auto-adjudication and parallel conflict work
-
-After the four commands have run and `upstream:resolve` has left the conflicts in the worktree, let the machine take the part it can decide **deterministically**:
-
-```bash
-bun run scripts/upstream/merge-state.ts --cwd ../EchoFlow-sync-v<version> --resolve-brand
-```
-
-It resolves exactly one kind of hunk: those whose two sides are still equal once brand tokens are normalized (`cc-haha` ↔ `echoflow` and friends). What lands is **the fork side** — whichever side of the markers already carries the fork brand. A brand-only hunk is brand-equivalent on both sides, so picking by brand needs no reading of the logic; and a historical name the fork deliberately retained for compatibility, attribution, or supported variables can only live on the fork side. The side is not always `ours`: `upstream:resolve` creates the sync branch on the upstream release commit and merges fork main into it, so there `ours` is upstream and `theirs` is the fork — which is why the choice is per hunk, not always ours. Always taking `ours` would rewrite EchoFlow back to `cc-haha` and drop the fork's retained names with it. Every other hunk keeps its markers for a human. Three boundaries:
-
-- **File content only, never staged and never committed.** A resolved file is still `UU` until the maintainer runs `git add`.
-- Paths recorded as `manual` in `sync-policy.json` are skipped entirely (currently `src/server/config/providerPresets.json`), whatever their hunks look like.
-- The rules live in `scripts/upstream/sync-policy.json`: brand-token mappings and file decisions are data, so changing a rule does not mean changing the resolver. The exit code still answers "is the merge finished?" and is 1 as long as any file is unmerged.
-
-The remaining semantic conflicts are worked in parallel by `areaOf` area, one agent per area, each running its own gate:
-
-| Area | What decides the hunk | Validating command |
-| --- | --- | --- |
-| `desktop/src` | Upstream UI intent + fork branding | `bun run check:desktop` |
-| `src/server` | Upstream server semantics + provider policy | `bun run check:server` |
-| `desktop/electron` + `src/services` | Host process and runtime | `bun run check:desktop` / `bun run check:server` |
-| `docs/` and the rest | Doc consistency, brand audit | `bun run check:docs` |
-
-The discipline does not change; parallelism only makes the division visible:
-
-- **Hunk-level mixing** — fork brand tokens with upstream logic, never one side wholesale.
-- `providerPresets.json` is ruled entry by entry against the provider policy in `AGENTS.md`, not against a list of ids.
-- Once resolved, `@code-reviewer` reviews the results and `bun run check:policy` must pass before the maintainer is asked to `git add` / `git commit`.
-
-The lasting fix is a smaller conflict surface: conflicts cluster in `desktop/src` and `src/server` (roughly seven in ten across syncs). Put new customization in configuration, adapters, or standalone modules and stay off the shared paths upstream is also editing, and the next round will genuinely have less to decide.
-
-### Worked example: the selective v0.6.4 merge
-
-This merge ran the four-phase flow and is the reference for selective adoption. Branch `merge/upstream-v0.6.4-selective`, snapshot tag `pre-merge-v0.6.4-snapshot`, estimated 12-18 hours.
-
-- **Strategy**: cherry-pick plus manual merge, not a wholesale merge.
-- **Phase 2 selected 6 upstream commits** (all landed in `main`, under new hashes after cherry-pick): Agent Teams inheriting the lead model; teammate permission prompt routing; session list no longer scanning every JSONL; restored window dragging; the test-connection button collapse; and the fold control with context table.
-- **The one brand conflict** (`desktop/src/stores/chatStore.ts`) was resolved by per-field choice rather than `--ours` or `--theirs`: keep EchoFlow branding in `title`, take the upstream logic in `body`. It is the clearest statement of the whole sync philosophy.
-- **Phase 3 provider decision**: all 7 provider presets added upstream in v0.6.4 were **rejected** (5 were marked `deprecated` upstream, `atlascloud` carried `utm_campaign=cc-haha`, `apismart` was a sponsor), and the EchoFlow API preset upstream had deleted was restored. The conclusion: `providerPresets.json` **did not change at all**.
-- **One file landed in the end**: `desktop/build/getProcessInfo.nsh`.
-
-### Version consolidation
-
-When a sync contains multiple upstream releases, do not carry upstream release-note files or upstream version numbers into the fork unchanged. The fork's `desktop/package.json` is the release-version source of truth:
-
-1. Determine the next fork release from the latest **fork** release/tag, not from the upstream tag.
-2. Consolidate user-relevant upstream changes into the next fork release note under the fork's version.
-3. Increment the fork patch version exactly once per fork release; **do not** create same-named tags merely because upstream `v0.6.4` or `v0.6.5` was merged.
-4. Remove upstream-only release-note files after their useful content has been consolidated, unless the maintainer explicitly asks to retain them.
-5. Before committing, verify that `desktop/package.json`, the consolidated release note, release scripts, and any tag plan all use the same fork version. If the target version or the file to remove is ambiguous, ask the maintainer before deleting it.
-
-For example, if the fork has not released `v0.5.6`, merge upstream changes into the fork's `v0.5.6` release note and do not introduce upstream `v0.6.x` release notes or tags.
-
-### Execution rules learned from this sync
-
-The v0.6.6 sync produced 15 conflicted files in practice. The sync script can locate and prepare the merge, but it cannot replace maintainer decisions. Use this sequence for future syncs:
-
-1. Use `upstream:check` read-only to confirm the target release, fork version, conflict count and sync branch; save its report before editing. The report lists **every upstream release note this sync covers** — fold all of them.
-2. Run `upstream:sync` to publish the sync branch. It must come before `upstream:resolve`, which fetches that branch from `origin`.
-3. Create a separate worktree, then `upstream:resolve` to merge. It must not stage or commit automatically. **Run it in a worktree** because it switches the branch of the checkout it runs in.
-4. Write the complete matrix before resolving conflicts. It must cover every file from `git diff --name-only --diff-filter=U` and state the branding, provider, persistence and test decisions.
-5. When merging an upstream release note, fold user-visible content into the current EchoFlow release note. Keep the fork version, brand, download links and comparison links; remove upstream version headings, authors, asset names and repository links. When several upstream releases land at once (v0.7.2 + v0.7.3 + v0.7.4, say), **fold every note**, not just the newest.
-6. After the merge, run `upstream:audit` (including the brand scan over `README.md`, `package.json`, `desktop/package.json` and `AGENTS.md`), provider contract, `check:impact`, affected focused tests and `check:policy` in that order. Run server tests that use dynamic ports serially so concurrent tests do not compete for ports.
-7. Only after the conflict resolutions, release note and verification report are reviewable should the developer explicitly confirm `git add` and `git commit`, then push with a plain **`git push origin sync/upstream-v<version>`** and open the PR. Do not close the sync with `upstream:sync`: it pushes the upstream release commit, not your resolved branch head.
-
-This separates automatable preparation from maintainer decisions and prevents both accidental deletion of upstream documentation and accidental import of upstream version numbers into the EchoFlow release line.
 
 ## PR Workflow
 

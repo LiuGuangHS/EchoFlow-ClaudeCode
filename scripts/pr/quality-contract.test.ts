@@ -45,8 +45,15 @@ describe('feature quality contract', () => {
     expect(agents).not.toContain('### Manual Sync Workflow')
     expect(agents).not.toContain('### Automated Release Tracking')
 
-    expect(contributing).toContain('冲突矩阵')
-    expect(englishContributing).toContain('conflict matrix')
+    // The upstream sync procedure is retired, but the two disciplines that
+    // survive it — per-hunk conflict adjudication and the public-identity
+    // audit — are still load-bearing and must stay documented.
+    expect(contributing).toContain('冲突逐 hunk 裁决')
+    expect(englishContributing).toContain('Adjudicate conflicts hunk by hunk')
+    // The retired scripts must not reappear as instructions.
+    expect(contributing).not.toContain('bun run upstream:audit')
+    expect(contributing).not.toContain('bun run upstream:sync')
+    expect(englishContributing).not.toContain('bun run upstream:audit')
 
     // The agent toolset is documented in docs/ and pointed at from AGENTS.md.
     // ECC is no longer the toolset, and re-inlining its commands would put a
@@ -356,5 +363,29 @@ describe('feature quality contract', () => {
         : existsSync(target)
       expect(alive, `excluded \`${target}\` matches nothing; drop it or fix the path`).toBe(true)
     }
+  })
+
+  test('keeps the root test harness preloads load-bearing', () => {
+    // A bunfig preload that is empty (or that no longer patches anything) is a
+    // silent no-op: the suite still passes, the commit message still claims the
+    // preload is wired in, and the failure only shows up as unexplained flakes
+    // under load. `test-preload.ts` was once committed as a 0-byte file while
+    // its commit message said the test runtime was patched.
+    const bunfig = readFileSync('bunfig.toml', 'utf8')
+    const preloadPaths = [...bunfig.matchAll(/preload\s*=\s*\["\.\/([^"]+)"\]/g)].map((match) => match[1])
+
+    expect(preloadPaths.length).toBeGreaterThan(0)
+    for (const preloadPath of preloadPaths) {
+      expect(existsSync(preloadPath), `bunfig.toml preloads \`${preloadPath}\`, which does not exist`).toBe(true)
+      const source = readFileSync(preloadPath, 'utf8')
+      expect(
+        source.trim().length,
+        `\`${preloadPath}\` is empty, so the preload it declares is a no-op`,
+      ).toBeGreaterThan(0)
+    }
+
+    // The test preload must actually patch the runtime it claims to harden.
+    const testPreload = readFileSync('test-preload.ts', 'utf8')
+    expect(testPreload).toContain('serveWithTransientBindRetry')
   })
 })
