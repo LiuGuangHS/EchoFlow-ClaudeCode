@@ -10,6 +10,7 @@ import { handleSessionCollaborationApi } from './api/sessionCollaboration.js'
 
 import { handleApiRequest } from './router.js'
 import { buildStartupFailureMessage } from './startupFailureMessage.js'
+import { serveWithTransientBindRetry } from './serveWithTransientBindRetry.js'
 import { handleWebSocket, type WebSocketData } from './ws/handler.js'
 import { resolveCors, isAllowedBuiltInOrigin, withCors, type CorsResolution } from './middleware/cors.js'
 import { requireAuth, requireH5Token } from './middleware/auth.js'
@@ -304,7 +305,7 @@ export function startServer(port = PORT, host = HOST) {
   void localIndexCoordinator.start().catch(() => undefined)
 
   try {
-    server = Bun.serve<WebSocketData>({
+    server = serveWithTransientBindRetry(() => Bun.serve<WebSocketData>({
       port,
       hostname: host,
       idleTimeout: HTTP_CONNECTION_IDLE_TIMEOUT_SECONDS,
@@ -694,7 +695,7 @@ export function startServer(port = PORT, host = HOST) {
       },
 
       websocket: handleWebSocket,
-    })
+    }))
     const disposeCollaboration = configureSessionCollaborationHost(localConnectHost, server.port)
     const stop = server.stop.bind(server)
     server.stop = (closeActiveConnections?: boolean) => {

@@ -6,6 +6,7 @@ import type { Server, ServerWebSocket, WebSocketHandler } from 'bun'
 import { isLocalAccessAuthorized } from './localAccessAuth.js'
 import { setResponseHeaders } from './middleware/responseHeaders.js'
 import { remoteProviderRouteAllowed, remoteSettingsRouteAllowed, type ApiRequestContext } from './remoteBrowserPolicy.js'
+import { serveWithTransientBindRetry } from './serveWithTransientBindRetry.js'
 import type { WebSocketData } from './ws/handler.js'
 
 const PREFIX = '/api/public-access'
@@ -155,7 +156,7 @@ export class PublicAccessServer {
     this.load()
     if (publicUrl) this.setOrigin(publicUrl)
     if (this.server) return this.status()
-    this.server = Bun.serve<RemoteData>({
+    this.server = serveWithTransientBindRetry(() => Bun.serve<RemoteData>({
       hostname: '127.0.0.1', port: 0, idleTimeout: 0, maxRequestBodySize: 16 * 1024 * 1024,
       fetch: (req, server) => this.fetch(req, server),
       websocket: {
@@ -178,7 +179,7 @@ export class PublicAccessServer {
         },
         drain: ws => this.deps.websocket.drain?.(ws),
       },
-    })
+    }))
     this.timer = setInterval(() => this.prune(), 10_000)
     this.timer.unref()
     return this.status()

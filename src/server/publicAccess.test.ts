@@ -164,4 +164,27 @@ describe('public transport boundary', () => {
     expect(isPublicBusinessPathAllowed(new URL('https://example.test/api/models/current'), 'PUT')).toBe(true)
     expect(isPublicBusinessPathAllowed(new URL('https://example.test/api/effort'), 'PUT')).toBe(true)
   })
+
+  test('enable recovers from a transient masked bind failure with one retry', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'remote-access-test-'))
+    const bunGlobal = Bun as unknown as { serve: typeof Bun.serve }
+    const originalServe = bunGlobal.serve
+    let calls = 0
+    // The exact shape Bun 1.3.14 throws for a spurious bind failure under CPU
+    // load (probe: kernel healthy, immediate retry succeeds).
+    bunGlobal.serve = ((...args: Parameters<typeof Bun.serve>) => {
+      calls++
+      if (calls === 1) throw Object.assign(new Error('Failed to start server. Is port 0 in use?'), { code: 'EADDRINUSE', errno: 0, syscall: 'listen' })
+      return originalServe(...args)
+    }) as typeof Bun.serve
+    const service = new PublicAccessServer({ storePath: path.join(dir, 'devices.json'), handleApiRequest: async () => new Response(), handleStatic: async () => null, websocket: { message() {} }, serverPort: () => 3456 })
+    cleanups.push(() => {
+      bunGlobal.serve = originalServe
+      service.disable()
+      rmSync(dir, { recursive: true, force: true })
+    })
+    const status = service.enable('https://fixture.ngrok-free.app')
+    expect(calls).toBe(2)
+    expect(Number.isInteger(status.port) && (status.port ?? 0) > 0).toBe(true)
+  })
 })
