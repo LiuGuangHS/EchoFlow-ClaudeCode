@@ -25,6 +25,12 @@ beforeEach(async () => {
     runtime: { start: async (_, message) => { started.push(message) }, enqueue: async (_, message) => { injected.push(message) }, stop: async () => {} },
   }
   service = new SessionCollaborationService(deps)
+  // The constructor loads state.json in the background while test bodies seed
+  // that path with an in-place truncating write. A write landing mid-read tears
+  // the read, `ready` rejects, and nothing awaits this instance again, so the
+  // run dies on an unhandled rejection with a misleading stack. status() awaits
+  // `ready` without mutating the store, so the load settles before any body runs.
+  await service.status()
 })
 afterEach(async () => { await rm(directory, { recursive: true, force: true }) })
 
