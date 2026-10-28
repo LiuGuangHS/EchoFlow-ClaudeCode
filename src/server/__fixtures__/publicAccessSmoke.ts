@@ -19,9 +19,15 @@ await writeFile(path.join(managedSettingsDir, 'settings.json'), JSON.stringify({
 process.env.CLAUDE_CLI_PATH = path.join(import.meta.dir, '../__tests__/fixtures/mock-sdk-cli.ts')
 const server = startServer(0, '127.0.0.1')
 const base = `http://127.0.0.1:${server.port}`
-const control = (route: string, body?: unknown) => fetch(`${base}/api/public-access${route}`, {
-  method: body === undefined ? 'GET' : 'POST', headers: { Authorization: `Bearer ${process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN}` }, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-})
+const control = async (route: string, body?: unknown) => {
+  const response = await fetch(`${base}/api/public-access${route}`, {
+    method: body === undefined ? 'GET' : 'POST', headers: { Authorization: `Bearer ${process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN}` }, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  })
+  // A failed control call must fail here with its body, not surface later as a
+  // downstream parse error from the error payload's missing fields.
+  if (!response.ok) throw new Error(`control ${route} returned ${response.status}: ${await response.text()}`)
+  return response
+}
 let socket: WebSocket | undefined
 try {
   const denied = await fetch(`${base}/api/public-access`)
