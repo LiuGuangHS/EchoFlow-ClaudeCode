@@ -284,11 +284,12 @@ export function getAnthropicApiKeyWithSource(
 
     if (
       !apiKeyEnv &&
+      !process.env.ANTHROPIC_AUTH_TOKEN &&
       !process.env.CLAUDE_CODE_OAUTH_TOKEN &&
       !process.env.CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR
     ) {
       throw new Error(
-        'ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN env var is required',
+        'ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, or CLAUDE_CODE_OAUTH_TOKEN env var is required',
       )
     }
 

@@ -92,6 +92,9 @@ async function runRelay(options: {
       }),
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
       CLAUDE_CODE_SKIP_UPDATE_CHECK: '1',
+      // The desktop launches this CLI without a CI flag. With CI inherited from the
+      // runner, provider-managed bearer auth exits before the relay receives a request.
+      CI: '',
       ...options.env,
     }),
     stdin: 'ignore', stdout: 'pipe', stderr: 'pipe',
