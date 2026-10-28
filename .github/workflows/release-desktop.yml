@@ -256,11 +256,21 @@ jobs:
           path: desktop/node_modules
           key: bun-desktop-${{ runner.os }}-${{ hashFiles('desktop/bun.lock') }}
 
+      - name: Cache adapter dependencies
+        uses: actions/cache@v4
+        with:
+          path: adapters/node_modules
+          key: bun-adapters-${{ runner.os }}-${{ hashFiles('adapters/bun.lock') }}
+
       - name: Install root dependencies
         run: bun install --frozen-lockfile
 
       - name: Install desktop dependencies
         working-directory: desktop
+        run: bun install --frozen-lockfile
+
+      - name: Install adapter dependencies
+        working-directory: adapters
         run: bun install --frozen-lockfile
 
       - name: Desktop lint, tests, and build

@@ -92,6 +92,19 @@ describe('release desktop workflow', () => {
     }
   })
 
+  test('release desktop verification installs adapter dependencies before compiling sidecars', () => {
+    const workflow = readReleaseWorkflow()
+    const job = extractJob(workflow, 'verify-desktop')
+
+    expect(job).toContain('path: adapters/node_modules')
+    expect(job).toContain("key: bun-adapters-${{ runner.os }}-${{ hashFiles('adapters/bun.lock') }}")
+    expect(job).toContain('working-directory: adapters')
+    expect(job).toContain('run: bun install --frozen-lockfile')
+    expect(job.indexOf('working-directory: adapters')).toBeLessThan(
+      job.indexOf('run: bun run check:desktop'),
+    )
+  })
+
   test('Windows x64 builds execute the compiled sidecar before packaging', () => {
     for (const workflowPath of [
       '.github/workflows/build-desktop-dev.yml',
