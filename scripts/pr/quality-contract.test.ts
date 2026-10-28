@@ -10,6 +10,10 @@ describe('feature quality contract', () => {
     // Leave room for the small nested guidance files loaded by affected areas.
     expect(Buffer.byteLength(agents)).toBeLessThan(28 * 1024)
 
+    // The 24 KB soft threshold is the signal to move content out, not just a
+    // line of prose. Leaving it unasserted is how it silently gets crossed.
+    expect(Buffer.byteLength(agents)).toBeLessThan(24 * 1024)
+
     // AGENTS.md states direction; procedures and case law live in docs/.
     // Assert the obligations themselves rather than `## ` section headings, so
     // the file can be restructured without a false failure.
