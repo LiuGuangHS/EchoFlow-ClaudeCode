@@ -16,6 +16,7 @@ import {
   parseLcov,
   prefixRelativeLcovSourcePaths,
   runCommand,
+  changedLineScopes,
 } from './coverage'
 
 describe('coverage gate helpers', () => {
@@ -275,6 +276,39 @@ describe('coverage gate helpers', () => {
       }],
       90,
     )
+
+    expect(result.files).toEqual([])
+    expect(result.total).toBe(0)
+    expect(result.failures).toEqual([])
+  })
+
+  test('excludes subprocess fixture harnesses from changed-line coverage', () => {
+    // Smoke harnesses under `__fixtures__/` run as bare subprocesses without
+    // coverage instrumentation, so they can never report line data. Counting
+    // them as changed production lines buries the gate in structurally
+    // uncoverable rows (real failure: publicAccessSmoke.ts 0/9). Every
+    // changed-line scope shares matchesScope, so every scope must carry the
+    // exclusion — root-runtime and adapters included.
+    const changedLines = parseChangedLinesFromDiff([
+      'diff --git a/src/server/__fixtures__/publicAccessSmoke.ts b/src/server/__fixtures__/publicAccessSmoke.ts',
+      '--- a/src/server/__fixtures__/publicAccessSmoke.ts',
+      '+++ b/src/server/__fixtures__/publicAccessSmoke.ts',
+      '@@ -22,0 +23,2 @@',
+      '+const control = async (route) => {',
+      '+  return route',
+      'diff --git a/src/query/__fixtures__/queryHarness.ts b/src/query/__fixtures__/queryHarness.ts',
+      '--- a/src/query/__fixtures__/queryHarness.ts',
+      '+++ b/src/query/__fixtures__/queryHarness.ts',
+      '@@ -4,0 +5,1 @@',
+      '+export const harness = true',
+      'diff --git a/adapters/__fixtures__/adapterHarness.ts b/adapters/__fixtures__/adapterHarness.ts',
+      '--- a/adapters/__fixtures__/adapterHarness.ts',
+      '+++ b/adapters/__fixtures__/adapterHarness.ts',
+      '@@ -4,0 +5,1 @@',
+      '+export const harness = true',
+    ].join('\n'))
+
+    const result = evaluateChangedLineCoverage(changedLines, new Map(), changedLineScopes, 90)
 
     expect(result.files).toEqual([])
     expect(result.total).toBe(0)

@@ -115,21 +115,21 @@ const ROOT_COVERAGE_SCOPES: CoverageScope[] = [
     id: 'server-api',
     title: 'Server/API',
     includePrefixes: ['src/server/'],
-    excludePathFragments: ['/__tests__/', '/fixtures/'],
+    excludePathFragments: ['/__tests__/', '/fixtures/', '/__fixtures__/'],
     excludeSuffixes: ['.test.ts', '.test.tsx'],
   },
   {
     id: 'agent-tools',
     title: 'Agent tools',
     includePrefixes: ['src/tools/'],
-    excludePathFragments: ['/__tests__/', '/fixtures/'],
+    excludePathFragments: ['/__tests__/', '/fixtures/', '/__fixtures__/'],
     excludeSuffixes: ['.test.ts', '.test.tsx'],
   },
   {
     id: 'agent-utils',
     title: 'Agent utils',
     includePrefixes: ['src/utils/'],
-    excludePathFragments: ['/__tests__/', '/fixtures/'],
+    excludePathFragments: ['/__tests__/', '/fixtures/', '/__fixtures__/'],
     excludeSuffixes: ['.test.ts', '.test.tsx'],
   },
 ]
@@ -139,6 +139,7 @@ const ADAPTERS_SCOPE: CoverageScope = {
   title: 'IM adapters',
   includePrefixes: ['adapters/'],
   excludePrefixes: ['adapters/node_modules/'],
+  excludePathFragments: ['/__fixtures__/'],
   excludeSuffixes: ['.test.ts', '.test.tsx', '.d.ts'],
 }
 
@@ -165,6 +166,7 @@ const DESKTOP_SCOPE: CoverageScope = {
     // primitives render, which their own tests already do.
     'desktop/src/dev/',
   ],
+  excludePathFragments: ['/__fixtures__/'],
   excludeSuffixes: ['.test.ts', '.test.tsx', '.d.ts', 'vite-env.d.ts', '.css'],
 }
 
@@ -173,7 +175,7 @@ const ROOT_RUNTIME_CHANGED_SCOPE: CoverageScope = {
   title: 'Root runtime',
   includePrefixes: ['src/'],
   excludePrefixes: ['src/server/', 'src/tools/', 'src/utils/'],
-  excludePathFragments: ['/__tests__/', '/fixtures/'],
+  excludePathFragments: ['/__tests__/', '/fixtures/', '/__fixtures__/'],
   excludeSuffixes: ['.test.ts', '.test.tsx', '.d.ts'],
 }
 
@@ -183,6 +185,8 @@ const CHANGED_LINE_SCOPES = [
   ADAPTERS_SCOPE,
   DESKTOP_SCOPE,
 ]
+// Exported for regression tests pinning the production scope definitions.
+export const changedLineScopes = CHANGED_LINE_SCOPES
 const TEST_FILE_PATTERN = /\.test\.[cm]?[jt]sx?$/
 
 function nowId() {
