@@ -75,6 +75,10 @@ async function startTestServer() {
 
   const { startServer } = await import('../../index.js')
   server = startServer(0, '127.0.0.1')
+  // A started test server must report the concrete port the kernel assigned:
+  // if startup misreports the bind, every later request would fail against a
+  // phantom endpoint instead of naming the real problem.
+  expect(Number.isInteger(server.port) && server.port > 0).toBe(true)
   baseUrl = `http://127.0.0.1:${server.port}`
   wsUrl = `ws://127.0.0.1:${server.port}`
 }

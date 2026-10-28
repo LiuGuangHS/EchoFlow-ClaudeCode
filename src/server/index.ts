@@ -9,6 +9,7 @@ import { handleSessionCollaborationApi } from './api/sessionCollaboration.js'
  */
 
 import { handleApiRequest } from './router.js'
+import { buildStartupFailureMessage } from './startupFailureMessage.js'
 import { handleWebSocket, type WebSocketData } from './ws/handler.js'
 import { resolveCors, isAllowedBuiltInOrigin, withCors, type CorsResolution } from './middleware/cors.js'
 import { requireAuth, requireH5Token } from './middleware/auth.js'
@@ -709,10 +710,7 @@ export function startServer(port = PORT, host = HOST) {
   } catch (error) {
     publicAccess.disable()
     publicAccessServers.delete(publicAccess)
-    const message = error instanceof Error && error.message
-      ? error.message
-      : `Failed to start server. Is port ${port} in use?`
-    throw new Error(message, { cause: error })
+    throw new Error(buildStartupFailureMessage(error, host, port), { cause: error })
   }
 
   // Bun.serve is already accepting requests. Both projections remain
