@@ -178,6 +178,13 @@ const policyExactPaths = new Set([
   'package.json',
   'scripts/harness-audit.js',
   'scripts/harness-audit.test.ts',
+  // Root test-harness configuration. `bunfig.toml` and the preload files it
+  // loads decide how every root test executes — a diff that changes them
+  // changes the behaviour of the whole root suite, so it must select the
+  // policy lane instead of falling through to no area and no check.
+  'bunfig.toml',
+  'preload.ts',
+  'test-preload.ts',
 ])
 
 const docsExactPaths = new Set([

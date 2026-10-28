@@ -216,6 +216,20 @@ describe('evaluateChangePolicy', () => {
     expect(result.checks.coverage).toBe(false)
   })
 
+  test('keeps root test-harness configuration on the policy lane', () => {
+    // `bunfig.toml` and the preload files it loads decide how every root test
+    // executes. Before this routing existed they fell through to no area and
+    // no check, so a diff that rewrote the root test harness passed the PR
+    // gates without running a single surface check.
+    for (const harnessPath of ['bunfig.toml', 'preload.ts', 'test-preload.ts']) {
+      const result = evaluateChangePolicy([harnessPath])
+      expect(result.checks.policy).toBe(true)
+      expect(result.checks.server).toBe(false)
+      expect(result.checks.desktop).toBe(false)
+      expect(result.checks.coverage).toBe(false)
+    }
+  })
+
   test('does not require a test file for non-executable desktop assets', () => {
     const result = evaluateChangePolicy([
       'desktop/src/styles/chat.css',
