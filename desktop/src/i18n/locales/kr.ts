@@ -4297,6 +4297,7 @@ export const kr: Record<TranslationKey, string> = {
   'configImport.theme': '테마',
   'configImport.language': '언어',
   'configImport.runtime': '런타임',
+  'echoflowApiOfficialLogin.endpointSwitch': '회선 선택',
   'echoflowApiOfficialLogin.endpointMain': '메인',
   'echoflowApiOfficialLogin.endpointDedicated': '전용선',
   'echoflowApiOfficialLogin.endpointHint': '메인과 전용선은 동시에 연결할 수 있습니다. 여기서 전환하는 것은 보고 관리하는 회선이며, 다른 회선은 끊지 않습니다.',

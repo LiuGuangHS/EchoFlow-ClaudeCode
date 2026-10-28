@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Eye, EyeOff, RefreshCw, Unlink } from 'lucide-react'
+import { Button } from '@/components/ui/Button'
+import { SegmentedControl } from '@/components/ui/SegmentedControl'
 import {
   ECHOFLOW_BASE_URLS,
   echoflowApi,
@@ -155,64 +157,87 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
     }
   }
 
-  const inputBase = 'min-w-0 flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:border-[var(--color-brand)] focus:outline-none'
   const accountSummary = account
     ? `${t('echoflowApiOfficialLogin.userId')}：${account.userId}${account.username ? ` · ${account.username}` : ''}${account.balance !== undefined ? ` · ${t('echoflowApiOfficialLogin.balance')} ${formatQuota(account.balance)}` : ''} · ${account.refreshedAt ? new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(account.refreshedAt) : t('echoflowApiOfficialLogin.neverSynced')}`
     : t('echoflowApiOfficialLogin.neverSynced')
 
+  const endpointSegments = (['main', 'dedicated'] as const).map((endpoint) => ({
+    value: endpoint,
+    label: (
+      <span className="flex items-center gap-2">
+        <span
+          className={`h-2 w-2 rounded-full ${accounts[endpoint] ? 'bg-[var(--color-success)]' : 'bg-[var(--color-text-tertiary)]'}`}
+          aria-hidden="true"
+        />
+        {endpointLabels[endpoint]}
+      </span>
+    ),
+  }))
+
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex gap-1 rounded-lg bg-[var(--color-surface-container-low)] p-1">
-        {(['main', 'dedicated'] as const).map((endpoint) => {
-          const endpointAccount = accounts[endpoint]
-          return (
-            <button
-              key={endpoint}
-              type="button"
-              onClick={() => {
-                setSelectedEndpoint(endpoint)
-                setError(null)
-              }}
-              className={`flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2 text-xs ${selectedEndpoint === endpoint ? 'bg-[var(--color-surface)] font-medium text-[var(--color-text-primary)] shadow-sm' : 'text-[var(--color-text-secondary)]'}`}
-            >
-              <span className={`h-2 w-2 rounded-full ${endpointAccount ? 'bg-[var(--color-success)]' : 'bg-[var(--color-text-tertiary)]'}`} />
-              {endpointLabels[endpoint]}
-            </button>
-          )
-        })}
-      </div>
+      {/* `tablist`, not the default `radiogroup`: switching endpoints swaps the
+          whole panel below it — summary, credential fields, and token list are
+          per-endpoint — so a screen reader should announce a tab with a
+          panel, not a selected value in a set. */}
+      <SegmentedControl
+        items={endpointSegments}
+        value={selectedEndpoint}
+        onChange={(endpoint) => {
+          setSelectedEndpoint(endpoint)
+          setError(null)
+        }}
+        label={t('echoflowApiOfficialLogin.endpointSwitch')}
+        as="tablist"
+        appearance="raised"
+        size="sm"
+        layout="fill"
+      />
       <p className="text-xs text-[var(--color-text-tertiary)]">{t('echoflowApiOfficialLogin.endpointHint')}</p>
 
-      <div className="rounded-lg border border-[var(--color-border-separator)] bg-[var(--color-surface-container-low)] p-3">
-        {!account || showCredentialEditor ? (
-          <div className="flex items-center gap-2">
-            <input value={currentCredentials.userId} onChange={(event) => updateCredentials({ userId: event.target.value })} placeholder={t('echoflowApiOfficialLogin.userId')} className={`${inputBase} text-center`} />
-            <div className="relative flex-1">
-              <input type={showManagementToken ? 'text' : 'password'} value={currentCredentials.managementToken} onChange={(event) => updateCredentials({ managementToken: event.target.value })} placeholder={t('echoflowApiOfficialLogin.managementToken')} className={`${inputBase} pr-9 text-center`} />
-              <button type="button" onClick={() => setShowManagementToken((current) => !current)} className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)]" aria-label={showManagementToken ? t('echoflowApiOfficialLogin.hideManagementToken') : t('echoflowApiOfficialLogin.showManagementToken')}>
-                {showManagementToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
-            </div>
-            <button type="button" onClick={() => void saveAccount()} disabled={isSavingAccount || !currentCredentials.userId.trim() || !currentCredentials.managementToken.trim()} className="shrink-0 rounded-md bg-[var(--color-brand)] px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
-              {isSavingAccount
-                ? t('echoflowApiOfficialLogin.saving')
-                : account
-                  ? t('echoflowApiOfficialLogin.updateToken')
-                  : t('echoflowApiOfficialLogin.bindAccount', { endpoint: endpointLabels[selectedEndpoint] })}
+      {!account || showCredentialEditor ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <input value={currentCredentials.userId} onChange={(event) => updateCredentials({ userId: event.target.value })} placeholder={t('echoflowApiOfficialLogin.userId')} aria-label={t('echoflowApiOfficialLogin.userId')} className="min-w-0 flex-1 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:border-[var(--color-brand)] focus:outline-none" />
+          <div className="relative min-w-0 flex-1">
+            <input type={showManagementToken ? 'text' : 'password'} value={currentCredentials.managementToken} onChange={(event) => updateCredentials({ managementToken: event.target.value })} placeholder={t('echoflowApiOfficialLogin.managementToken')} aria-label={t('echoflowApiOfficialLogin.managementToken')} className="w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 pr-10 text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:border-[var(--color-brand)] focus:outline-none" />
+            <button type="button" onClick={() => setShowManagementToken((current) => !current)} className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)] transition-colors hover:text-[var(--color-text-secondary)]" aria-label={showManagementToken ? t('echoflowApiOfficialLogin.hideManagementToken') : t('echoflowApiOfficialLogin.showManagementToken')}>
+              {showManagementToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
-            {account && <button type="button" onClick={() => setShowCredentialEditor(false)} className="shrink-0 rounded-md border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-text-secondary)]">{t('echoflowApiOfficialLogin.cancel')}</button>}
           </div>
-        ) : (
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0 flex-1 text-sm text-[var(--color-text-secondary)]">{accountSummary}</div>
-            <div className="flex shrink-0 items-center gap-2">
-              <button type="button" onClick={() => setShowCredentialEditor(true)} className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-text-secondary)]">{t('echoflowApiOfficialLogin.updateToken')}</button>
-              <button type="button" onClick={() => void refreshAccount()} disabled={isRefreshing} className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-text-secondary)]"><RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />{t('echoflowApiOfficialLogin.refresh')}</button>
-              <button type="button" onClick={() => void disconnectAccount()} disabled={isDisconnecting} className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-text-secondary)]"><Unlink className="h-4 w-4" />{t('echoflowApiOfficialLogin.unbind')}</button>
-            </div>
+          {/* The primitive's DISABLED_FILL keeps the label legible on a solid
+              ink button; `disabled:opacity-50` washed both out to 2.34:1. */}
+          <Button
+            variant="primary"
+            size="md"
+            className="shrink-0"
+            onClick={() => void saveAccount()}
+            loading={isSavingAccount}
+            disabled={isSavingAccount || !currentCredentials.userId.trim() || !currentCredentials.managementToken.trim()}
+          >
+            {account ? t('echoflowApiOfficialLogin.updateToken') : t('echoflowApiOfficialLogin.bindAccount', { endpoint: endpointLabels[selectedEndpoint] })}
+          </Button>
+          {account && (
+            <Button variant="secondary" size="md" className="shrink-0" onClick={() => setShowCredentialEditor(false)}>
+              {t('echoflowApiOfficialLogin.cancel')}
+            </Button>
+          )}
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0 flex-1 text-sm text-[var(--color-text-secondary)]">{accountSummary}</div>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button variant="secondary" size="sm" onClick={() => setShowCredentialEditor(true)}>
+              {t('echoflowApiOfficialLogin.updateToken')}
+            </Button>
+            <Button variant="secondary" size="sm" icon={<RefreshCw className="h-4 w-4" />} onClick={() => void refreshAccount()} loading={isRefreshing}>
+              {t('echoflowApiOfficialLogin.refresh')}
+            </Button>
+            <Button variant="secondary" size="sm" icon={<Unlink className="h-4 w-4" />} onClick={() => void disconnectAccount()} loading={isDisconnecting}>
+              {t('echoflowApiOfficialLogin.unbind')}
+            </Button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {account && (
         <div className="flex flex-col gap-2">
@@ -245,7 +270,7 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
                       })
                     }}
                     disabled={alreadyAdded}
-                    className={`flex items-center gap-2.5 rounded-lg border px-3 py-2 text-left transition-colors ${
+                    className={`flex items-center gap-2.5 rounded-[var(--radius-md)] border px-3 py-2 text-left transition-colors ${
                       alreadyAdded
                         ? 'cursor-not-allowed border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] opacity-50'
                         : 'border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] hover:border-[var(--color-brand)] hover:bg-[var(--color-surface-hover)]'
@@ -272,7 +297,14 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
         </div>
       )}
 
-      {error && <p className="text-xs text-[var(--color-error)]">{error}</p>}
+      {error && (
+        <p
+          role="alert"
+          className="rounded-[var(--radius-md)] bg-[var(--color-error-container)] px-3 py-2 text-[13px] text-[var(--color-on-error-container)]"
+        >
+          {error}
+        </p>
+      )}
     </div>
   )
 }

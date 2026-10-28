@@ -285,9 +285,12 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
 
       {(actionFailed || (browserMode && providerLoadError)) && <p role="alert" className="mb-3 text-sm text-[var(--color-error)]">{t('publicAccess.genericError')}</p>}
 
+      {/* The one card that owns the account. A raised surface plus the card
+          shadow separates it from the provider rows below, which are all
+          border-only — without the shadow the two read as the same weight. */}
       <div
         data-testid="echoflow-api-official-provider"
-        className="relative mb-2 flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)]"
+        className="relative mb-4 flex flex-col rounded-[var(--radius-xl)] border border-[var(--color-primary-fixed-dim)] bg-[var(--color-surface-container-low)] shadow-[var(--shadow-card)]"
       >
         <div className="flex items-center gap-4 px-4 py-3.5">
           <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${echoFlowHasAccount ? 'bg-[var(--color-success)]' : 'bg-[var(--color-text-tertiary)]'}`} />
@@ -548,20 +551,24 @@ function SortableProviderCard({
       ref={setNodeRef}
       style={style}
       data-testid={providerItemTestId(item)}
-      className={`group relative flex flex-col rounded-[var(--radius-xl)] transition-[background-color,border-color,box-shadow] duration-150 ease-out ${
+      className={`group relative flex flex-col rounded-[var(--radius-lg)] transition-[background-color,border-color,box-shadow] duration-150 ease-out ${
         isActive
           ? 'border-[1.5px] border-[var(--color-primary-fixed-dim)] bg-[var(--color-surface-container-low)]'
           : 'border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] hover:border-[var(--color-outline)] hover:bg-[var(--color-surface-hover)]'
       } ${isDragging ? 'shadow-[var(--shadow-overlay)] opacity-90' : ''}`}
     >
-      <div className={browserMode ? "flex flex-wrap items-center gap-2 px-3.5 py-3" : "flex items-center gap-2 px-3.5 py-3"}>
+      <div className={browserMode ? "flex flex-wrap items-center gap-2 px-3.5 py-2.5" : "flex items-center gap-2 px-3.5 py-2.5"}>
+        {/* The handle stays hidden until the row is hovered or focused, the
+            same reveal rule as the action buttons below. Five always-visible
+            grips out-shouted the provider names they belong to. Touch/H5 keeps
+            it visible — there is no hover to reveal it. */}
         <button
           type="button"
           {...attributes}
           {...listeners}
           aria-label={dragLabel}
           title={dragLabel}
-          className="flex h-8 w-8 shrink-0 cursor-grab items-center justify-center rounded-[var(--radius-sm)] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-surface-container-high)] hover:text-[var(--color-text-secondary)] focus:outline-none focus-visible:shadow-[var(--shadow-focus-ring)] active:cursor-grabbing"
+          className="flex h-8 w-8 shrink-0 cursor-grab items-center justify-center rounded-[var(--radius-sm)] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-surface-container-high)] hover:text-[var(--color-text-secondary)] focus:outline-none focus-visible:shadow-[var(--shadow-focus-ring)] active:cursor-grabbing [html[data-touch-h5]_&]:opacity-100 sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100"
           style={{ touchAction: 'none' }}
         >
           <GripVertical className="h-4 w-4" />

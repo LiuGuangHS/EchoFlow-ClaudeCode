@@ -4292,6 +4292,7 @@ Row 9, all 8 cells: continuing from straight down, turning left through lower-le
   'configImport.apiKeyRequired': 'API Key',
   'configImport.unknown': 'Unknown configuration',
 
+  'echoflowApiOfficialLogin.endpointSwitch': 'Select endpoint',
   'echoflowApiOfficialLogin.endpointMain': 'Main',
   'echoflowApiOfficialLogin.endpointDedicated': 'Dedicated',
   'echoflowApiOfficialLogin.endpointHint': 'Main and dedicated can be bound at the same time. This switches the line you are viewing and managing; it does not disconnect the other one.',

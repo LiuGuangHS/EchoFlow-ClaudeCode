@@ -4294,6 +4294,7 @@ export const zh: Record<TranslationKey, string> = {
   'configImport.theme': '主題',
   'configImport.language': '語言',
   'configImport.runtime': '執行環境',
+  'echoflowApiOfficialLogin.endpointSwitch': '選擇線路',
   'echoflowApiOfficialLogin.endpointMain': '主站',
   'echoflowApiOfficialLogin.endpointDedicated': '專線',
   'echoflowApiOfficialLogin.endpointHint': '主站和專線可以同時綁定；這裡切換的是檢視和管理的線路，不會斷開另一條線路。',

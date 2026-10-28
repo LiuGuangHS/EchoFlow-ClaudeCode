@@ -4295,6 +4295,7 @@ export const jp: Record<TranslationKey, string> = {
   'configImport.theme': 'テーマ',
   'configImport.language': '言語',
   'configImport.runtime': 'ランタイム',
+  'echoflowApiOfficialLogin.endpointSwitch': '回線を選択',
   'echoflowApiOfficialLogin.endpointMain': 'メイン',
   'echoflowApiOfficialLogin.endpointDedicated': '専用線',
   'echoflowApiOfficialLogin.endpointHint': 'メインと専用線は同時にバインドできます。ここで切り替えるのは表示・管理する回線で、もう一方の回線は切断されません。',

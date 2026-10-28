@@ -4294,6 +4294,7 @@ export const zh: Record<TranslationKey, string> = {
   'configImport.manualConfig': '你仍需手动配置',
   'configImport.apiKeyRequired': 'API Key',
   'configImport.unknown': '未知配置',
+  'echoflowApiOfficialLogin.endpointSwitch': '选择线路',
   'echoflowApiOfficialLogin.endpointMain': '主站',
   'echoflowApiOfficialLogin.endpointDedicated': '专线',
   'echoflowApiOfficialLogin.endpointHint': '主站和专线可以同时绑定；这里切换的是查看和管理的线路，不会断开另一条线路。',
