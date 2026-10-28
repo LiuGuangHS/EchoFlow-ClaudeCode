@@ -67,6 +67,15 @@ auditable:
 code. Until that completes, any distribution of this product needs legal review
 of the derived portions. This file records provenance; it is not that review.
 
+## DeepSeek Harness (dsh)
+
+- Project: DeepSeek Harness (https://github.com/deepseek-ai/deepseek-harness), consumed as npm packages under the `@deepseek-ai` scope
+- Included as: the execution runtime behind `harness/` — the ACP server that drives EchoFlow's agent sessions
+- Version: 0.2.1-rc.2 (pinned exactly; dsh is a developer preview and its npm `latest` tag points at an older release)
+- License: MIT
+- Scope of use: unmodified npm dependency. No dsh source is vendored, copied, or modified in this repository; EchoFlow's own profile, bundles, and seam client live separately under `harness/`.
+- Not included: the on-demand `@deepseek-ai/dsh-subagent-claude-code` bundle, which carries Anthropic-originated platform payloads, is not part of this project's dependency graph.
+
 ## ripgrep
 
 - Project: ripgrep (https://github.com/BurntSushi/ripgrep)

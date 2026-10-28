@@ -48,6 +48,7 @@ describe('PR quality workflow', () => {
     expect(workflow).toContain("if: needs.scope-plan.outputs.desktop_native_checks == 'true'")
     expect(workflow).toContain("if: needs.scope-plan.outputs.docs_checks == 'true'")
     expect(workflow).toContain("if: needs.scope-plan.outputs.coverage_checks == 'true'")
+    expect(workflow).toContain("if: needs.scope-plan.outputs.harness_checks == 'true'")
   })
 
   test('installs frozen dependencies before policy regressions without blocking product routing', () => {
@@ -73,6 +74,7 @@ describe('PR quality workflow', () => {
       'persistence-checks',
       'docs-checks',
       'coverage-checks',
+      'harness-checks',
     ]) {
       expect(jobs[jobId].needs).toBe('scope-plan')
     }

@@ -33,6 +33,7 @@ jobs:
       policy_checks: ${{ steps.policy.outputs.policy_checks }}
       docs_checks: ${{ steps.policy.outputs.docs_checks }}
       coverage_checks: ${{ steps.policy.outputs.coverage_checks }}
+      harness_checks: ${{ steps.policy.outputs.harness_checks }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -547,6 +548,27 @@ jobs:
       - name: Run docs checks
         run: npm --prefix site ci && npm --prefix site run build && npm --prefix site run check
 
+  harness-checks:
+    name: harness-checks
+    needs: scope-plan
+    if: needs.scope-plan.outputs.harness_checks == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      # dsh requires Node >= 24.9.0; the harness workspace installs its own
+      # npm dependency tree and never touches the root node_modules.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: harness/package-lock.json
+      - name: Install harness dependencies
+        run: npm --prefix harness ci
+      - name: Run harness checks
+        run: npm --prefix harness test
+
   coverage-checks:
     name: coverage-checks
     needs: scope-plan
@@ -672,6 +694,7 @@ jobs:
           require_selected "persistence-checks" "${{ needs.scope-plan.outputs.persistence_checks }}" "${{ needs.persistence-checks.result }}"
           require_selected "docs-checks" "${{ needs.scope-plan.outputs.docs_checks }}" "${{ needs.docs-checks.result }}"
           require_selected "coverage-checks" "${{ needs.scope-plan.outputs.coverage_checks }}" "${{ needs.coverage-checks.result }}"
+          require_selected "harness-checks" "${{ needs.scope-plan.outputs.harness_checks }}" "${{ needs.harness-checks.result }}"
 
           if [ "$failures" -gt 0 ]; then
             exit 1

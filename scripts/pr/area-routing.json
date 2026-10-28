@@ -43,6 +43,9 @@
     "cli-core": {
       "prefixes": ["bin/", "src/"],
       "excludePrefixes": ["src/server/"]
+    },
+    "harness": {
+      "prefixes": ["harness/"]
     }
   }
 }

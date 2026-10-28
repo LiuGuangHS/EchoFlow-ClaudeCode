@@ -131,6 +131,40 @@ describe('evaluateChangePolicy', () => {
     expect(result.blocked).toBe(false)
   })
 
+  test('routes the dsh seam workspace to its own lane without widening coverage or native packaging', () => {
+    const result = evaluateChangePolicy([
+      'harness/profile/package.json',
+      'harness/bundles/egress-guard/src/index.js',
+    ])
+
+    expect(result.areas).toEqual(['harness'])
+    expect(result.areaLabels).toEqual(['area:harness'])
+    expect(result.checks.harness).toBe(true)
+    // The seam workspace carries its own npm toolchain and shares no module
+    // graph with the rest of the repository, so its diffs must not select the
+    // bun-side lanes.
+    expect(result.checks.coverage).toBe(false)
+    expect(result.checks.desktop).toBe(false)
+    expect(result.checks.desktopNative).toBe(false)
+    expect(result.checks.server).toBe(false)
+    expect(result.checks.policy).toBe(false)
+  })
+
+  test('keeps harness changes off the desktop and server lanes when combined with them', () => {
+    const result = evaluateChangePolicy([
+      'desktop/electron/main.ts',
+      'harness/src/nodeFloor.js',
+    ])
+
+    // Import-aware selection: each surface keeps its own lane, and neither
+    // borrows the other's check.
+    expect(result.areas).toEqual(['desktop', 'harness'])
+    expect(result.checks.harness).toBe(true)
+    expect(result.checks.desktopNative).toBe(true)
+    expect(result.checks.desktop).toBe(false)
+    expect(result.checks.server).toBe(false)
+  })
+
   test('allows production changes when matching tests are included', () => {
     const result = evaluateChangePolicy([
       'desktop/src/pages/Settings.tsx',

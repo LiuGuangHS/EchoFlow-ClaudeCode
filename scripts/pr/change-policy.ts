@@ -12,6 +12,7 @@ export type ChangeArea =
   | 'release'
   | 'mobile'
   | 'cli-core'
+  | 'harness'
 
 export type ChangePolicyResult = {
   files: string[]
@@ -37,6 +38,7 @@ export type ChangePolicyResult = {
     policy: boolean
     docs: boolean
     coverage: boolean
+    harness: boolean
   }
 }
 
@@ -52,6 +54,7 @@ const areaLabels: Record<ChangeArea, string> = {
   release: 'area:release',
   mobile: 'area:mobile',
   'cli-core': 'area:cli-core',
+  harness: 'area:harness',
 }
 
 type AreaRule = {
@@ -383,6 +386,7 @@ export function evaluateChangePolicy(
   // the rule can drift, and `areasForPath` already excludes agent instruction
   // files — which `files.some(...)` would have pulled into this lane.
   const touchesMobile = areas.has('mobile')
+  const touchesHarness = areas.has('harness')
   const touchesProviderContract = selectionFiles.some((file) => startsWithAny(file, providerContractPrefixes))
   const touchesChatContract = selectionFiles.some((file) => startsWithAny(file, chatContractPrefixes))
   const touchesAgentFlow = selectionFiles.some((file) => startsWithAny(file, agentFlowPrefixes))
@@ -434,6 +438,7 @@ export function evaluateChangePolicy(
       policy: touchesPolicy,
       docs: touchesDocs,
       coverage: touchesCoverage,
+      harness: touchesHarness,
     },
   }
 }
@@ -475,7 +480,7 @@ function formatSummary(result: ChangePolicyResult) {
     'PR change policy',
     `  Areas: ${result.areas.length ? result.areas.join(', ') : 'none'}`,
     `  Labels: ${result.labels.length ? result.labels.join(', ') : 'none'}`,
-    `  Checks: desktop=${result.checks.desktop}, server=${result.checks.server}, adapters=${result.checks.adapters}, mobile=${result.checks.mobile}, desktopNative=${result.checks.desktopNative}, providerContract=${result.checks.providerContract}, chatContract=${result.checks.chatContract}, agentFlow=${result.checks.agentFlow}, persistence=${result.checks.persistence}, policy=${result.checks.policy}, docs=${result.checks.docs}, coverage=${result.checks.coverage}`,
+    `  Checks: desktop=${result.checks.desktop}, server=${result.checks.server}, adapters=${result.checks.adapters}, mobile=${result.checks.mobile}, desktopNative=${result.checks.desktopNative}, providerContract=${result.checks.providerContract}, chatContract=${result.checks.chatContract}, agentFlow=${result.checks.agentFlow}, persistence=${result.checks.persistence}, policy=${result.checks.policy}, docs=${result.checks.docs}, coverage=${result.checks.coverage}, harness=${result.checks.harness}`,
   ]
 
   if (result.cliCoreFiles.length > 0) {
@@ -532,6 +537,7 @@ function writeGithubOutputs(result: ChangePolicyResult) {
     policy_checks: String(result.checks.policy),
     docs_checks: String(result.checks.docs),
     coverage_checks: String(result.checks.coverage),
+    harness_checks: String(result.checks.harness),
   }
 
   appendFileSync(
