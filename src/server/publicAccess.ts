@@ -194,6 +194,9 @@ export class PublicAccessServer {
     if (this.timer) clearInterval(this.timer)
     this.timer = null
     for (const ws of this.sockets) ws.close(1008, 'Remote access disabled')
+    // Never await this: Bun 1.3.14 makes stop(true) hang after server-side
+    // ws.close() calls (the promise never settles and the listener lingers).
+    // The disabled state is enforced above at the fetch layer regardless.
     listener?.stop(true)
     return this.status()
   }

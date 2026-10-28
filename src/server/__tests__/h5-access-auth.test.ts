@@ -27,7 +27,7 @@ let originalTrustedRendererOrigin: string | undefined
 let originalPetAccessToken: string | undefined
 let originalServerPort = 3456
 const PHONE_ORIGIN = 'https://phone.example'
-const SERVER_STOP_WAIT_MS = 500
+const SERVER_STOP_HANG_GUARD_MS = 30_000
 
 async function waitForServer(url: string): Promise<void> {
   for (let attempt = 0; attempt < 50; attempt += 1) {
@@ -42,6 +42,30 @@ async function waitForServer(url: string): Promise<void> {
   }
 
   throw new Error(`Timed out waiting for server at ${url}`)
+}
+
+async function probeServing(url: string): Promise<boolean> {
+  // A response of any kind means the handler is still live. Both a refusal
+  // and a hung connect mean nothing is being served — Bun 1.3.14 leaves the
+  // listener socket in inconsistent states after stop().
+  try {
+    await fetch(url, { signal: AbortSignal.timeout(1_000) })
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function waitForServerToStopServing(url: string, hangGuardMs: number): Promise<void> {
+  const deadline = Date.now() + hangGuardMs
+  let quietProbes = 0
+  while (Date.now() < deadline) {
+    quietProbes = (await probeServing(url)) ? 0 : quietProbes + 1
+    if (quietProbes >= 2) return
+    await Bun.sleep(50)
+  }
+
+  throw new Error(`Server at ${url} still answers requests ${hangGuardMs}ms after stop`)
 }
 
 function resolvePrivateLanBaseUrl(port: number): string | null {
@@ -86,14 +110,14 @@ async function stopRemoteServer(): Promise<void> {
   await stopServerRuntimeForShutdown({ waitForCli: false })
   if (!runningServer) return
 
-  let timeout: ReturnType<typeof setTimeout> | undefined
-  await Promise.race([
-    runningServer.stop(true),
-    new Promise<void>((resolve) => {
-      timeout = setTimeout(resolve, SERVER_STOP_WAIT_MS)
-    }),
-  ])
-  if (timeout) clearTimeout(timeout)
+  // Bun 1.3.14: once the server itself has called ws.close() on any socket —
+  // rejecting an SDK connection, for example — server.stop(true)'s promise
+  // never settles and the listener lingers, so awaiting it hangs shutdown.
+  // Kick the stop and define completion by the observable that matters: the
+  // server stops answering requests. The hang guard throws so a server that
+  // genuinely fails to stop cannot leak into the next test.
+  void runningServer.stop(true)
+  await waitForServerToStopServing(`${baseUrl}/health`, SERVER_STOP_HANG_GUARD_MS)
 }
 
 async function restartRemoteServer(options: { authRequired?: boolean } = {}): Promise<void> {
@@ -273,6 +297,23 @@ afterEach(async () => {
 })
 
 describe('remote H5 auth and CORS integration', () => {
+  test('stopRemoteServer resolves only once the server stops answering requests', async () => {
+    // A deliberately slow stop() models a shutdown that legitimately outlasts
+    // the old 500ms give-up budget: the helper must not report success while
+    // the server still answers requests.
+    const runningServer = server!
+    const originalStop = runningServer.stop.bind(runningServer)
+    ;(runningServer as { stop: typeof runningServer.stop }).stop = (closeActiveConnections?: boolean) =>
+      new Promise<void>((resolve) => {
+        setTimeout(() => {
+          originalStop(closeActiveConnections)
+          resolve()
+        }, 1_000)
+      })
+    await stopRemoteServer()
+    expect(await probeServing(`${baseUrl}/health`)).toBe(false)
+  })
+
   test('allows configured dev renderer H5 preflight but requires the process token for requests', async () => {
     process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'fixture-desktop-token'
     process.env.ECHOFLOW_TRUSTED_RENDERER_ORIGIN = 'http://localhost:1420'
