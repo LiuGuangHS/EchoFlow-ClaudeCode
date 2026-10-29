@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { existsSync, readFileSync, appendFileSync } from 'node:fs'
+import areaRoutingConfig from './area-routing.json'
 import { dependentFilesForChangeSet } from './module-graph'
 
 export type ChangeArea =
@@ -53,15 +54,19 @@ const areaLabels: Record<ChangeArea, string> = {
   'cli-core': 'area:cli-core',
 }
 
-const cliCorePrefixes = [
-  'bin/',
-  'src/entrypoints/',
-  'src/screens/',
-  'src/components/',
-  'src/commands/',
-  'src/tools/',
-  'src/utils/',
-]
+type AreaRule = {
+  prefixes?: string[]
+  exact?: string[]
+  excludePrefixes?: string[]
+}
+
+// Path-to-area routing is shared data: `pr-triage.yml` reads this same file
+// from the base revision through the GitHub API, so advisory labels cannot
+// drift into a second prefix graph. `desktop` includes the native helper,
+// `mobile` is its own Android shell, `server` includes shipped runtime helpers
+// and root tests, and `cli-core` excludes `src/server/`.
+const areaRules = areaRoutingConfig.areas as Record<ChangeArea, AreaRule>
+const cliCoreRule = areaRules['cli-core']
 
 const desktopNativeExactPaths = new Set([
   'bun.lock',
@@ -69,6 +74,7 @@ const desktopNativeExactPaths = new Set([
   'desktop/bun.lock',
   'desktop/package.json',
   'desktop/package-lock.json',
+  'desktop/bunfig.toml',
   'desktop/electron/tsconfig.json',
   'desktop/scripts/build-macos-arm64.sh',
   'desktop/scripts/build-windows-x64.ps1',
@@ -156,7 +162,18 @@ const persistencePrefixes = [
 ]
 
 const policyPrefixes = [
+  '.agents/',
   '.github/workflows/',
+  'bin/',
+  // Shipped helper content and cross-module tests must not fall through to a
+  // green PR with no lane. Runtime helpers are written to the user's disk by
+  // the server, and root tests exercise the same runtime as src/.
+  'runtime/',
+  'tests/',
+  // Test/compiler support outside the runtime source roots still changes how
+  // executable code is built or checked.
+  'fixtures/',
+  'stubs/',
   // `scripts/pr/dead-imports.ts` owns these three source roots — every root no
   // compiler checks for unreferenced imports. The lane is selected by prefix, and
   // that check reads its files rather than importing them, so the import graph
@@ -187,30 +204,6 @@ const policyExactPaths = new Set([
   'test-preload.ts',
 ])
 
-const docsExactPaths = new Set([
-  'README.md',
-  'README.zh-CN.md',
-  'package.json',
-  'package-lock.json',
-  '.github/workflows/deploy-docs.yml',
-])
-
-const releaseExactPaths = new Set([
-  '.github/workflows/pr-quality.yml',
-  '.github/workflows/pr-triage.yml',
-  '.github/workflows/release-desktop.yml',
-  '.github/workflows/build-desktop-dev.yml',
-  'scripts/pr/change-policy.ts',
-  'scripts/pr/change-policy.test.ts',
-  'scripts/pr/check-pr.ts',
-  'scripts/pr/run-server-tests.ts',
-  'scripts/release.ts',
-  'desktop/electron/tsconfig.json',
-  'desktop/scripts/build-macos-arm64.sh',
-  'desktop/scripts/build-windows-x64.ps1',
-  'desktop/scripts/build-linux.sh',
-])
-
 const coveragePolicyExactPaths = new Set([
   'scripts/quality-gate/coverage-baseline.json',
   'scripts/quality-gate/coverage-thresholds.json',
@@ -225,7 +218,8 @@ function startsWithAny(path: string, prefixes: string[]) {
 }
 
 function isCliCorePath(path: string) {
-  return startsWithAny(path, cliCorePrefixes)
+  return startsWithAny(path, cliCoreRule.prefixes ?? []) &&
+    !startsWithAny(path, cliCoreRule.excludePrefixes ?? [])
 }
 
 function isAgentInstructionPath(path: string) {
@@ -239,40 +233,13 @@ function areasForPath(path: string): ChangeArea[] {
     return []
   }
 
-  if (path.startsWith('desktop/') || path.startsWith('native/')) {
-    areas.add('desktop')
-  }
-
-  // `mobile/` is its own native Android app with its own `bun run check` and
-  // release workflow. It shares no module graph with the rest of the
-  // repository, so a diff there selects the mobile surface check.
-  if (path.startsWith('mobile/')) {
-    areas.add('mobile')
-  }
-
-  if (path.startsWith('src/server/')) {
-    areas.add('server')
-  }
-
-  if (path.startsWith('adapters/')) {
-    areas.add('adapters')
-  }
-
-  if (
-    path.startsWith('docs/') ||
-    path.startsWith('site/') ||
-    path.startsWith('release-notes/') ||
-    docsExactPaths.has(path)
-  ) {
-    areas.add('docs')
-  }
-
-  if (releaseExactPaths.has(path)) {
-    areas.add('release')
-  }
-
-  if (isCliCorePath(path)) {
-    areas.add('cli-core')
+  for (const area of Object.keys(areaRules) as ChangeArea[]) {
+    const rule = areaRules[area]
+    const matches = startsWithAny(path, rule.prefixes ?? []) ||
+      (rule.exact ?? []).includes(path)
+    if (matches && !startsWithAny(path, rule.excludePrefixes ?? [])) {
+      areas.add(area)
+    }
   }
 
   return [...areas]
@@ -299,11 +266,30 @@ function changedProductionFiles(files: string[], predicate: (file: string) => bo
   ))
 }
 
+function adapterPackageRoot(path: string) {
+  const rest = path.slice('adapters/'.length)
+  const separator = rest.indexOf('/')
+  return separator === -1 ? 'adapters/' : `adapters/${rest.slice(0, separator)}/`
+}
+
+export function adapterMissingTestSignals(files: string[]) {
+  const packages = new Set(
+    changedProductionFiles(files, (file) => file.startsWith('adapters/'))
+      .map(adapterPackageRoot),
+  )
+
+  return [...packages]
+    .sort()
+    .filter((root) => !hasMatchingTest(files, (file) => file.startsWith(root)))
+    .map((root) => (
+      `Adapter product files changed without a matching adapter test file in the PR: ${root.replace(/\/$/, '')}`
+    ))
+}
+
 function missingTestSignals(files: string[]) {
   const signals: string[] = []
   const desktopProd = changedProductionFiles(files, (file) => file.startsWith('desktop/src/'))
   const serverProd = changedProductionFiles(files, (file) => file.startsWith('src/server/'))
-  const adapterProd = changedProductionFiles(files, (file) => file.startsWith('adapters/'))
   const mobileProd = changedProductionFiles(files, (file) => file.startsWith('mobile/'))
   const rootRuntimeProd = changedProductionFiles(files, (file) => (
     file.startsWith('src/') &&
@@ -316,9 +302,7 @@ function missingTestSignals(files: string[]) {
   if (serverProd.length > 0 && !hasMatchingTest(files, (file) => file.startsWith('src/server/'))) {
     signals.push('Server product files changed without a server test file in the PR.')
   }
-  if (adapterProd.length > 0 && !hasMatchingTest(files, (file) => file.startsWith('adapters/'))) {
-    signals.push('Adapter product files changed without an adapter test file in the PR.')
-  }
+  signals.push(...adapterMissingTestSignals(files))
   if (mobileProd.length > 0 && !hasMatchingTest(files, (file) => file.startsWith('mobile/'))) {
     signals.push('Mobile product files changed without a mobile test file in the PR.')
   }
@@ -393,6 +377,7 @@ export function evaluateChangePolicy(
     file.startsWith('desktop/src-tauri/') ||
     desktopNativeExactPaths.has(file)
   ))
+  const touchesServer = areas.has('server')
   // `mobile/` uses one prefix for both the area and the check, so the check
   // reads area membership instead of repeating the predicate. A second copy of
   // the rule can drift, and `areasForPath` already excludes agent instruction
@@ -408,14 +393,7 @@ export function evaluateChangePolicy(
     isAgentInstructionPath(file)
   ))
 
-  const touchesDocs = files.some((file) => (
-    !isAgentInstructionPath(file) && (
-      file.startsWith('docs/') ||
-      file.startsWith('site/') ||
-      file.startsWith('release-notes/') ||
-      docsExactPaths.has(file)
-    )
-  ))
+  const touchesDocs = areas.has('docs')
   const touchesCoverage = files.some((file) => (
     (isExecutableSourcePath(file) && (
       file.startsWith('desktop/src/') ||
@@ -443,7 +421,9 @@ export function evaluateChangePolicy(
     missingTestSignals: missingTests,
     checks: {
       desktop: touchesDesktopWeb,
-      server: selectionFiles.some((file) => file.startsWith('src/') && !isAgentInstructionPath(file)),
+      server: touchesServer || areas.has('cli-core') || selectionFiles.some((file) => (
+        (file.startsWith('src/') || file.startsWith('tests/')) && !isAgentInstructionPath(file)
+      )),
       adapters: selectionFiles.some((file) => file.startsWith('adapters/') && !isAgentInstructionPath(file)),
       mobile: touchesMobile,
       desktopNative: touchesDesktopNative,

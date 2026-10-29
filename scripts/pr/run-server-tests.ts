@@ -9,10 +9,9 @@ import { createSandboxedTestEnvironment } from './test-environment'
 
 const root = process.cwd()
 // The root runtime is wider than src/server: CLI commands, query handling,
-// shared services, tools, and utils all ship in the same Bun product. Keeping a
-// single src root prevents approved CLI/core changes from receiving a green
-// server check without their existing tests ever being discovered.
-const roots = ['src']
+// shared services, tools, and utils all ship in the same Bun product. The
+// cross-module tests at the repository root exercise that same runtime.
+const roots = ['src', 'tests']
 const excludedFiles = quarantinedPathSet(loadQuarantineManifest())
 const TEST_PROCESS_CONCURRENCY = 4
 const TEST_FILE_PATTERN = /\.test\.[cm]?[jt]sx?$/

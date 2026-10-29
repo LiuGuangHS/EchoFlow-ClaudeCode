@@ -19,11 +19,11 @@ Otherwise it belongs in `docs/` with a one-line pointer. Move the content — do
 Update this file in the **same change** that makes one of its statements untrue:
 
 - A top-level directory, quality gate, or package script is added, removed, or renamed.
-- A `ChangeArea` is added or changed in `scripts/pr/change-policy.ts`.
+- A `ChangeArea` is added or changed in `scripts/pr/change-policy.ts` or `scripts/pr/area-routing.json`.
 - A release, or migration workflow changes.
 - A file referenced from here is moved or renamed.
 
-Keep this file under 24 KB. Crossing that is the signal to move content out, not to trim prose. The hard limit is 28 KiB and is enforced by `scripts/pr/quality-contract.test.ts`.
+Keep this file under 24 KiB. Crossing that is the signal to move content out, not to trim prose. The hard limit is 28 KiB and is enforced by `scripts/pr/quality-contract.test.ts`.
 
 ## Language Policy
 - Repository-level agent instructions and operational rules are written in English.
@@ -34,7 +34,7 @@ Keep this file under 24 KB. Crossing that is the signal to move content out, not
 ## Agent Operating Rules
 - Work autonomously on clear, reversible tasks. Do not stop to ask whether to proceed with obvious next steps; ask only for destructive actions, missing authority, or genuinely branching product decisions.
 - Prefer the installed agent toolset over recreating planning, review, debugging, or design workflows. Superpowers ships **skills, not slash commands** — invoke them with the Skill tool by their real names: `superpowers:brainstorming` → `superpowers:writing-plans` → `superpowers:executing-plans` for design and planning, `code-review:code-review` for review, `ponytail:ponytail-review` for minimal-code discipline, `frontend-design` for desktop/web UI. Verify a tool exists before you name it in a handoff; a tool that cannot be invoked is not evidence. No plugin replaces the gates in this file, and the contract stays tool-independent; details in `docs/internals/contributing.md`.
-- Identify the changed surface first. The canonical vocabulary is the `ChangeArea` union in `scripts/pr/change-policy.ts`: `desktop`, `server`, `adapters`, `docs`, `release`, `mobile`, `cli-core`. The prose surfaces in this file map onto it, and `native/` routes to the `desktop` area. Do not invent a surface name that has no area and no check behind it.
+- Identify the changed surface first. The canonical vocabulary is the `ChangeArea` union in `scripts/pr/change-policy.ts`: `desktop`, `server`, `adapters`, `docs`, `release`, `mobile`, `cli-core`. The prose surfaces in this file map onto it: `native/` routes to `desktop`, `site/` to `docs`, and `.github/workflows/**` selects the policy lane. Path-to-area routing lives in `scripts/pr/area-routing.json`; `pr-triage.yml` reads that file from the base revision, never from PR head. Do not invent a surface name that has no area and no check behind it.
 - `cli-core` covers `bin/` and the root `src/` runtime paths. Changes there are blocked until the PR carries the `allow-cli-core-change` label and a maintainer approves.
 - Treat root `src/` as the upstream-derived native Claude Code runtime: prefer not to modify it directly. Enhance behavior through configuration, dependency upgrades, and adapters/services in EchoFlow-owned surfaces (such as `desktop/`, `src/server/`, or existing orchestration boundaries) where practical. When a change to native `src/` is unavoidable, keep it minimal, isolated, covered by focused regression tests, and document the compatibility reason; the `cli-core` approval requirement still applies.
 - Check `git status --short` before editing. The worktree may already contain user changes; never revert, overwrite, restage, or reformat unrelated files.
@@ -97,7 +97,7 @@ Bun-based Coding Agent product with a CLI, local server, desktop app, IM adapter
 - Required PR checks must be deterministic and work on an untrusted fork: no real models, public network, repository secrets, saved providers, or real user home/config. Server-booting lanes run in a sandbox config dir (`scripts/quality-gate/sandbox.ts`) and fail if they wrote to the developer's real `~/.claude`. Live model checks are separate maintainer evidence that require explicit authorization. `docs/internals/contributing.md` carries the full gate layering and the per-lane constraints.
 
 ## Build, Test, and Development Commands
-Install root dependencies with `bun install`, plus `desktop/` or `adapters/` dependencies when you touch those surfaces. The command list lives in `docs/internals/contributing.md`; know `bun run start`, `cd desktop && bun run electron:dev`, and `cd desktop && bun run electron:build` before you start.
+Install root dependencies with `bun install`, plus `desktop/` or `adapters/` dependencies when you touch those surfaces. The command list and development loop live in `docs/internals/contributing.md`.
 
 ## Test Design Direction
 Case law, the concrete regression examples, and the coverage caveats live in `docs/internals/contributing.md`. These are the parts that change how you write a test:

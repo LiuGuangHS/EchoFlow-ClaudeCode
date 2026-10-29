@@ -1,8 +1,18 @@
 import { describe, expect, test } from 'bun:test'
+import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { buildReport, parseArgs } from './harness-audit.js'
+import { fileURLToPath } from 'node:url'
+import { buildReport, parseArgs, REQUIRED_CHECK_IDS } from './harness-audit.js'
+
+const auditScript = fileURLToPath(new URL('./harness-audit.js', import.meta.url))
+
+function runAudit(rootDir: string, ...args: string[]) {
+  return spawnSync(process.execPath, [auditScript, '--format=json', '--root', rootDir, ...args], {
+    encoding: 'utf8',
+  })
+}
 
 function fixture(options: { provider?: string; consumer?: boolean } = {}): string {
   const rootDir = mkdtempSync(join(tmpdir(), 'harness-audit-'))
@@ -77,8 +87,68 @@ describe('repository harness audit', () => {
       help: false,
       root: resolve('fixture'),
     })
+    expect(parseArgs(['node', 'scripts/harness-audit.js', '--fail-on=consumer-ci-workflow', '--fail-on', 'brand-residue-scan'])).toMatchObject({
+      failOn: ['consumer-ci-workflow', 'brand-residue-scan'],
+    })
+    expect(parseArgs(['node', 'scripts/harness-audit.js', '--fail-on-required']).failOnRequired).toBe(true)
     expect(parseArgs(['node', 'scripts/harness-audit.js', '--help']).help).toBe(true)
     expect(() => parseArgs(['node', 'scripts/harness-audit.js', '--format', 'yaml'])).toThrow('Invalid format')
     expect(() => parseArgs(['node', 'scripts/harness-audit.js', 'unknown'])).toThrow('Invalid scope')
+  })
+
+  test('exits nonzero when a named required check fails', () => {
+    const rootDir = fixture({ consumer: true })
+    try {
+      const failing = runAudit(rootDir, '--fail-on=consumer-instructions')
+
+      expect(failing.status).toBe(1)
+      const report = JSON.parse(failing.stdout)
+      expect(report.checks.find((check: { id: string }) => check.id === 'consumer-instructions')?.pass).toBe(false)
+      expect(failing.stderr).toContain('consumer-instructions')
+
+      writeFileSync(join(rootDir, 'AGENTS.md'), '# Fixture instructions\n')
+      const passing = runAudit(rootDir, '--fail-on=consumer-instructions')
+
+      expect(passing.status).toBe(0)
+      expect(JSON.parse(passing.stdout).checks.find((check: { id: string }) => check.id === 'consumer-instructions')?.pass).toBe(true)
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  test('rejects a required check id that the scope does not evaluate', () => {
+    const rootDir = fixture({ consumer: true })
+    try {
+      const result = runAudit(rootDir, '--fail-on=not-a-check')
+
+      expect(result.status).toBe(1)
+      expect(result.stderr).toContain('Unknown fail-on check: not-a-check')
+      expect(() => JSON.parse(result.stdout)).toThrow()
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true })
+    }
+  })
+
+  test('keeps every required check id in the evaluated report', () => {
+    const report = buildReport('repo', { rootDir: process.cwd() })
+    const evaluated = new Set(report.checks.map((check) => check.id))
+
+    for (const checkId of REQUIRED_CHECK_IDS) {
+      expect(evaluated.has(checkId), checkId).toBe(true)
+    }
+  })
+
+  test('enforces the required check policy through the CLI', () => {
+    const rootDir = fixture({ consumer: true })
+    try {
+      const result = runAudit(rootDir, '--fail-on-required')
+
+      expect(result.status).toBe(1)
+      expect(JSON.parse(result.stdout).target_mode).toBe('consumer')
+      expect(result.stderr).toContain('Required checks failed:')
+      expect(result.stderr).toContain('consumer-ci-workflow')
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true })
+    }
   })
 })

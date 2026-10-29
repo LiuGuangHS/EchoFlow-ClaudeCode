@@ -239,7 +239,7 @@ bun run check:release-surface     # 发版面：品牌标记、版本/品牌漂�
 所有新功能、bugfix 和行为变化都必须带着可验证证据交付。这条规则同时约束人和 AI Coding Agent：
 
 - 先声明变更面：`desktop`、`server`、`adapter`、`native`、`docs`、`provider/runtime`、`agent-loop` 或 `release`。
-- 可执行 JS/TS 生产代码变更必须同 PR 带同区域测试；`scripts/pr/change-policy.ts` 分别检查 `desktop/src/`、`src/server/`、其余 `src/` 和 `adapters/` 四个区域，除非维护者显式加 `allow-missing-tests`。文案或 CSS 等非可执行文件不因这一规则单独要求新增测试，仍需完成 impact 选中的检查。
+- 可执行 JS/TS 生产代码变更必须同 PR 带同区域测试；`scripts/pr/change-policy.ts` 按 desktop、server、adapter 包（`adapters/<platform>/`）、mobile 和其余 root runtime 分别检查，除非维护者显式加 `allow-missing-tests`。文案或 CSS 等非可执行文件不因这一规则单独要求新增测试，仍需完成 impact 选中的检查。
 - 纯逻辑写单元测试；server/API/provider/runtime 写 API 或 request-shape 测试；桌面 UI/store/API 写 Vitest/Testing Library；跨 UI、WebSocket、provider proxy、native sidecar、发布打包的用户流程要补 E2E 或桌面 UI smoke。
 - agent loop、工具调用、provider 路由、模型选择、文件编辑、权限、会话恢复、桌面聊天改动，PR 内必须有 mock/fixture 测试；live smoke 或 baseline 仅在确定性检查通过且维护者明确授权额度后运行。发现本机 provider 不代表获得授权，未运行时如实说明。
 - 覆盖率是功能的一部分。本项目按 Google/Microsoft 风格执行：生成物/构建产物不计入产品覆盖率，维护中的产品区域要逐步达到 75-80%+，新增或变更的可执行生产代码行必须满足 `coverage-thresholds.json` 里的 changed-line coverage 门槛。
@@ -278,6 +278,10 @@ bun run quality:gate --mode baseline --allow-live --provider-model minimax:main:
 ## PR CI 合并门禁
 
 `.github/workflows/pr-quality.yml` 会在 PR `opened`、`synchronize`、`reopened`、`ready_for_review`、`labeled`、`unlabeled` 时触发。`scope-plan` 不安装依赖，只负责稳定地产生影响面计划；`policy-enforcement` 独立安装锁定依赖并执行 policy，因此 policy 失败也不会吞掉产品测试结果。产品 job 只依赖 `scope-plan`，按路径选择 desktop、server、adapter、native、provider contract、chat contract、persistence、docs 和 coverage lane。最后的 `pr-quality-gate` 会严格核对每个 job：选中的必须 success，未选中的必须 skipped，cancelled 或缺失结果都不能误判为通过。
+
+路径到 area 的统一数据在 `scripts/pr/area-routing.json`。`change-policy.ts` 直接消费它，`pr-triage.yml` 则从 base revision 通过 GitHub API 读取同一文件，不 checkout、不安装依赖、也不执行 PR 代码。因此 `site/` 归 docs、`native/` 归 desktop、`.github/workflows/**` 选择 policy lane，advisory label 不会形成第二套前缀表。
+
+`bun run audit:harness` 以 `--fail-on-required` 运行：固定的仓库契约检查（`REQUIRED_CHECK_IDS`）失败会非零退出；其余 rubric 发现，例如仍在兼容窗口内的历史命名，只报告、不阻断。
 
 仓库侧应在 GitHub branch protection / ruleset 中保护 `main`，并把 `pr-quality-gate` 设为 required status check。CODEOWNERS 要求维护者审查 workflow、quality policy 以及 provider/WebSocket 等高风险边界；本机 hook 只做提醒，真正阻止低质量 merge 的是 PR gate。
 

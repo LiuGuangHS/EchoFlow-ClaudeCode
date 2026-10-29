@@ -22,6 +22,23 @@ const CATEGORIES = [
 
 const RUBRIC_VERSION = '2026-05-19';
 
+// Repository contracts that every PR can affect without owning a dedicated
+// lane. Environment-dependent installs, project-local overrides, advisory
+// hygiene, and the deferred CC_HAHA_* compatibility migration stay visible in
+// the score but not blocking until their own changes land.
+const REQUIRED_CHECK_IDS = [
+  'consumer-ci-workflow',
+  'consumer-instructions',
+  'consumer-secret-hygiene',
+  'consumer-security-policy',
+  'consumer-test-suite',
+  'docs-locale-mirror',
+  'github-codeowners',
+  'github-issue-templates',
+  'github-pr-template',
+  'github-workflows',
+];
+
 const PROVIDERS = {
   Vercel: {
     detect: (rootDir) =>
@@ -74,6 +91,8 @@ function parseArgs(argv) {
     scope: 'repo',
     format: 'text',
     help: false,
+    failOn: [],
+    failOnRequired: false,
     root: path.resolve(process.env.AUDIT_ROOT || process.cwd()),
   };
 
@@ -82,6 +101,11 @@ function parseArgs(argv) {
 
     if (arg === '--help' || arg === '-h') {
       parsed.help = true;
+      continue;
+    }
+
+    if (arg === '--fail-on-required') {
+      parsed.failOnRequired = true;
       continue;
     }
 
@@ -103,6 +127,16 @@ function parseArgs(argv) {
       continue;
     }
 
+    if (arg === '--fail-on') {
+      const checkId = args[index + 1];
+      if (!checkId || checkId.startsWith('-')) {
+        throw new Error('Missing value for --fail-on');
+      }
+      parsed.failOn.push(checkId);
+      index += 1;
+      continue;
+    }
+
     if (arg.startsWith('--format=')) {
       parsed.format = arg.split('=')[1].toLowerCase();
       continue;
@@ -115,6 +149,15 @@ function parseArgs(argv) {
 
     if (arg.startsWith('--root=')) {
       parsed.root = path.resolve(arg.slice('--root='.length));
+      continue;
+    }
+
+    if (arg.startsWith('--fail-on=')) {
+      const checkId = arg.slice('--fail-on='.length);
+      if (!checkId) {
+        throw new Error('Missing value for --fail-on');
+      }
+      parsed.failOn.push(checkId);
       continue;
     }
 
@@ -1215,10 +1258,12 @@ function printText(report) {
 function showHelp(exitCode = 0) {
   console.log(`
 Usage: node scripts/harness-audit.js [scope] [--scope <repo|hooks|skills|commands|agents>] [--format <text|json>]
-       [--root <path>]
+       [--root <path>] [--fail-on-required] [--fail-on <check-id>]...
 
 Deterministic harness audit based on explicit file/rule checks.
 Audits the current working directory by default and auto-detects repo mode vs consumer-project mode.
+--fail-on-required exits 1 when any repository contract check fails.
+--fail-on exits 1 when the named check fails or is not evaluated by the selected scope.
 `);
   process.exit(exitCode);
 }
@@ -1233,11 +1278,27 @@ function main() {
     }
 
     const report = buildReport(args.scope, { rootDir: args.root });
+    const requiredIds = args.failOnRequired ? REQUIRED_CHECK_IDS : [];
+    const required = [...new Set([...requiredIds, ...args.failOn])];
+    const unknownRequired = required.filter(
+      (checkId) => !report.checks.some((check) => check.id === checkId)
+    );
+    if (unknownRequired.length > 0) {
+      throw new Error(`Unknown fail-on check: ${unknownRequired.join(', ')}`);
+    }
 
     if (args.format === 'json') {
       console.log(JSON.stringify(report, null, 2));
     } else {
       printText(report);
+    }
+
+    const failedRequired = report.checks.filter(
+      (check) => required.includes(check.id) && !check.pass
+    );
+    if (failedRequired.length > 0) {
+      console.error(`Required checks failed: ${failedRequired.map((check) => check.id).join(', ')}`);
+      process.exitCode = 1;
     }
   } catch (error) {
     console.error(`Error: ${error.message}`);
@@ -1254,4 +1315,5 @@ export {
   parseArgs,
   findPluginInstall,
   compareVersionDesc,
+  REQUIRED_CHECK_IDS,
 };

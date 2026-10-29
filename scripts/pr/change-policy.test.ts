@@ -30,6 +30,15 @@ describe('evaluateChangePolicy', () => {
     expect(result.checks.server).toBe(true)
   })
 
+  test('routes docs-site, native-helper, and workflow paths to their owning surfaces', () => {
+    expect(evaluateChangePolicy(['site/src/App.tsx']).areaLabels).toEqual(['area:docs'])
+    expect(evaluateChangePolicy(['native/cu-helper/Sources/main.swift']).areaLabels).toEqual(['area:desktop'])
+
+    const workflow = evaluateChangePolicy(['.github/workflows/custom.yml'])
+    expect(workflow.areas).toEqual([])
+    expect(workflow.checks.policy).toBe(true)
+  })
+
   test('keeps docs-only changes on the docs lane', () => {
     const result = evaluateChangePolicy([
       'docs/index.md',
@@ -70,7 +79,27 @@ describe('evaluateChangePolicy', () => {
     expect(result.checks.desktopNative).toBe(false)
     expect(result.checks.coverage).toBe(true)
     expect(result.blocked).toBe(true)
-    expect(result.missingTestSignals).toEqual(['Adapter product files changed without an adapter test file in the PR.'])
+    expect(result.missingTestSignals).toEqual(['Adapter product files changed without a matching adapter test file in the PR: adapters/telegram'])
+  })
+
+  test('requires a test in the adapter package that changed', () => {
+    const missing = evaluateChangePolicy([
+      'adapters/wechat/index.ts',
+      'adapters/telegram/__tests__/telegram.test.ts',
+    ])
+
+    expect(missing.missingTestSignals).toEqual([
+      'Adapter product files changed without a matching adapter test file in the PR: adapters/wechat',
+    ])
+
+    const covered = evaluateChangePolicy([
+      'adapters/wechat/index.ts',
+      'adapters/common/attachment/image-block-watcher.ts',
+      'adapters/wechat/__tests__/protocol.test.ts',
+      'adapters/common/attachment/__tests__/image-block-watcher.test.ts',
+    ])
+
+    expect(covered.missingTestSignals).toEqual([])
   })
 
   test('routes the native mobile shell to its own lane without widening coverage or native packaging', () => {
@@ -230,6 +259,66 @@ describe('evaluateChangePolicy', () => {
     }
   })
 
+  test('routes shipped helpers and test harnesses to executable checks', () => {
+    const helper = evaluateChangePolicy(['runtime/win_helper.py'])
+    expect(helper.areas).toEqual(['server'])
+    expect(helper.checks.server).toBe(true)
+    expect(helper.checks.policy).toBe(true)
+
+    const desktopHarness = evaluateChangePolicy(['desktop/bunfig.toml'])
+    expect(desktopHarness.areas).toEqual(['desktop'])
+    expect(desktopHarness.checks.desktopNative).toBe(true)
+    expect(desktopHarness.checks.policy).toBe(false)
+
+    for (const path of [
+      'stubs/color-diff-napi.ts',
+      'fixtures/e8c7b0.json',
+      '.agents/skills/release-announcement/SKILL.md',
+      'tests/formatTokens.test.ts',
+    ]) {
+      const result = evaluateChangePolicy([path])
+      expect(result.checks.policy).toBe(true)
+    }
+
+    const rootTests = evaluateChangePolicy(['tests/formatTokens.test.ts'])
+    expect(rootTests.areas).toEqual(['server'])
+    expect(rootTests.checks.server).toBe(true)
+  })
+
+  test('selects a check for every tracked top-level directory', () => {
+    const listed = Bun.spawnSync(['git', 'ls-files'], { stdout: 'pipe' })
+    expect(listed.exitCode).toBe(0)
+    const files = listed.stdout.toString().trim().split('\n')
+    const representativeByRoot = new Map<string, string>()
+    for (const file of files) {
+      if (!file.includes('/')) continue
+      const root = file.split('/')[0]
+      if (!representativeByRoot.has(root) || file.endsWith('/AGENTS.md')) {
+        representativeByRoot.set(root, file)
+      }
+    }
+
+    for (const [root, file] of representativeByRoot) {
+      const result = evaluateChangePolicy([file])
+      expect(Object.values(result.checks).some(Boolean), `${root}: ${file}`).toBe(true)
+    }
+  })
+
+  test('applies cli-core approval to the whole root runtime except server', () => {
+    const runtime = evaluateChangePolicy(['src/services/example.ts'])
+    expect(runtime.areas).toEqual(['cli-core'])
+    expect(runtime.cliCoreFiles).toEqual(['src/services/example.ts'])
+    expect(runtime.blocked).toBe(true)
+
+    const server = evaluateChangePolicy(['src/server/example.ts'])
+    expect(server.areas).toEqual(['server'])
+    expect(server.cliCoreFiles).toEqual([])
+
+    const entrypoint = evaluateChangePolicy(['bin/echoflow-code'], ['allow-cli-core-change'])
+    expect(entrypoint.checks.server).toBe(true)
+    expect(entrypoint.checks.policy).toBe(true)
+  })
+
   test('does not require a test file for non-executable desktop assets', () => {
     const result = evaluateChangePolicy([
       'desktop/src/styles/chat.css',
@@ -252,7 +341,7 @@ describe('evaluateChangePolicy', () => {
     const covered = evaluateChangePolicy([
       'src/services/api/client.ts',
       'src/services/api/client.test.ts',
-    ])
+    ], ['allow-cli-core-change'])
     expect(covered.blocked).toBe(false)
     expect(covered.missingTestSignals).toEqual([])
   })
@@ -391,12 +480,12 @@ describe('evaluateChangePolicy dependent-file widening', () => {
   test('keeps areas, labels, and the missing-test block scoped to the actual diff', () => {
     const result = evaluateChangePolicy(
       ['src/shared/modelReasoning.ts', 'src/shared/modelReasoning.test.ts'],
-      [],
+      ['allow-cli-core-change'],
       ['desktop/src/lib/runtimeSelection.ts', 'desktop/src/stores/chatStore.ts'],
     )
 
     // A hub edit must not demand desktop tests for files the author never touched.
-    expect(result.areas).toEqual([])
+    expect(result.areas).toEqual(['cli-core'])
     expect(result.missingTestSignals).toEqual([])
     expect(result.blocked).toBe(false)
     expect(result.files).toEqual(['src/shared/modelReasoning.test.ts', 'src/shared/modelReasoning.ts'])

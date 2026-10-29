@@ -36,7 +36,7 @@ describe('PR quality workflow', () => {
 
     expect(workflow).toContain('scope-plan:')
     expect(workflow).toContain('harness-audit:')
-    expect(workflow).toContain('node scripts/harness-audit.js repo --format json')
+    expect(workflow).toContain('node scripts/harness-audit.js repo --format json --fail-on-required')
     expect(workflow).toContain('--plan-only')
     expect(workflow).toContain("if: needs.scope-plan.outputs.desktop_checks == 'true'")
     expect(workflow).toContain("if: needs.scope-plan.outputs.server_checks == 'true'")

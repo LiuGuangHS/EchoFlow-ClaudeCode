@@ -10,7 +10,7 @@ describe('feature quality contract', () => {
     // Leave room for the small nested guidance files loaded by affected areas.
     expect(Buffer.byteLength(agents)).toBeLessThan(28 * 1024)
 
-    // The 24 KB soft threshold is the signal to move content out, not just a
+    // The 24 KiB soft threshold is the signal to move content out, not just a
     // line of prose. Leaving it unasserted is how it silently gets crossed.
     expect(Buffer.byteLength(agents)).toBeLessThan(24 * 1024)
 
@@ -19,7 +19,7 @@ describe('feature quality contract', () => {
     // the file can be restructured without a false failure.
     expect(agents).toContain('## How This Contract Is Maintained')
     expect(agents).toContain('Otherwise it belongs in `docs/` with a one-line pointer')
-    expect(agents).toContain('under 24 KB')
+    expect(agents).toContain('under 24 KiB')
     expect(agents).toContain('Check `git status --short` before editing')
     expect(agents).toContain('Production code changes under `desktop/src`, `src/server`, `src/tools`, `src/utils`, or `adapters`')
     expect(agents).toContain('`bun run check:impact`')
@@ -94,6 +94,23 @@ describe('feature quality contract', () => {
       ...(docsGuidance.match(/top-level sections: ([^\n]+?)\./)?.[1] ?? '').matchAll(/`([a-z-]+)\//g),
     ].map((match) => match[1])
     expect(documentedSections).toEqual(sectionIds)
+  })
+
+  test('keeps area routing in one shared data file', () => {
+    const policy = readFileSync('scripts/pr/change-policy.ts', 'utf8')
+    const routing = JSON.parse(readFileSync('scripts/pr/area-routing.json', 'utf8')) as {
+      areas: Record<string, { prefixes?: string[]; exact?: string[]; excludePrefixes?: string[] }>
+    }
+    const union = policy.match(/export type ChangeArea =([\s\S]*?)\n\n/)?.[1] ?? ''
+    const changeAreas = [...union.matchAll(/'([a-z][a-z-]*)'/g)].map((match) => match[1])
+
+    expect(policy).toContain("from './area-routing.json'")
+    expect(Object.keys(routing.areas).sort()).toEqual(changeAreas.sort())
+    expect(routing.areas.desktop.prefixes).toContain('native/')
+    expect(routing.areas.docs.prefixes).toContain('site/')
+    expect(routing.areas.server.prefixes).toContain('runtime/')
+    expect(routing.areas.server.prefixes).toContain('tests/')
+    expect(routing.areas['cli-core'].excludePrefixes).toContain('src/server/')
   })
 
   test('keeps every repository path the contract points at resolving', () => {
@@ -187,7 +204,7 @@ describe('feature quality contract', () => {
     const englishContributing = readFileSync('docs/en/internals/contributing.md', 'utf8')
     const rootContributing = readFileSync('CONTRIBUTING.md', 'utf8')
 
-    expect(packageJson.scripts?.['audit:harness']).toBe('node scripts/harness-audit.js repo --format json')
+    expect(packageJson.scripts?.['audit:harness']).toBe('node scripts/harness-audit.js repo --format json --fail-on-required')
     expect(packageJson.scripts?.verify).toBe('bun run quality:pr')
     expect(packageJson.scripts?.['quality:verify']).toBe('bun run quality:pr')
     expect(packageJson.scripts?.['quality:push']).toBe('bun run quality:gate --mode pr --skip coverage')
@@ -239,6 +256,7 @@ describe('feature quality contract', () => {
     expect(serverRunner).toContain("'--max-concurrency=1'")
     expect(serverRunner).toContain("'--timeout=20000'")
     expect(serverRunner).toContain('TEST_PROCESS_CONCURRENCY = 4')
+    expect(serverRunner).toContain("const roots = ['src', 'tests']")
     expect(serverRunner).toContain('TEST_FILE_PATTERN')
     expect(serverRunner).toContain("'--no-env-file'")
     expect(serverRunner).toContain('createSandboxedTestEnvironment')

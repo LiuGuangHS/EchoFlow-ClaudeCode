@@ -10,7 +10,7 @@ import { loadQuarantineManifest, quarantinedPathSet } from './quarantine'
 type CoverageMetric = {
   total: number
   covered: number
-  pct: number
+  pct: number | null
 }
 
 type CoverageSummary = {
@@ -210,11 +210,15 @@ function parseArgs(argv: string[]) {
 }
 
 function pct(covered: number, total: number) {
-  return total === 0 ? 100 : Number(((covered / total) * 100).toFixed(2))
+  return total === 0 ? null : Number(((covered / total) * 100).toFixed(2))
 }
 
 function metric(covered: number, total: number): CoverageMetric {
   return { covered, total, pct: pct(covered, total) }
+}
+
+function formatPct(value: number | null) {
+  return value === null ? 'n/a' : `${value}%`
 }
 
 function normalize(path: string, rootDir = ROOT_DIR) {
@@ -288,7 +292,9 @@ function walkTestFiles(path: string, files: string[], excluded: Set<string>, roo
 export function collectServerTestFiles(rootDir = ROOT_DIR, quarantineManifest = loadQuarantineManifest()) {
   const excluded = quarantinedPathSet(quarantineManifest)
   const files: string[] = []
-  walkTestFiles(join(rootDir, 'src'), files, excluded, rootDir)
+  for (const root of ['src', 'tests']) {
+    walkTestFiles(join(rootDir, root), files, excluded, rootDir)
+  }
   return files.sort()
 }
 
@@ -758,6 +764,7 @@ export function evaluateThresholds(
     const minimums = thresholds.minimums[suite.id] ?? {}
     for (const [metricName, minimum] of Object.entries(minimums)) {
       const actual = suite.summary[metricName as keyof CoverageSummary].pct
+      if (actual === null) continue
       if (actual + Number.EPSILON < minimum) {
         failures.push(`${suite.id}: ${metricName} coverage ${actual}% is below minimum ${minimum}%`)
       }
@@ -767,9 +774,11 @@ export function evaluateThresholds(
     if (!baselineSummary) continue
     for (const metricName of ['lines', 'functions', 'branches', 'statements'] as const) {
       const actual = suite.summary[metricName].pct
-      const expected = baselineSummary[metricName].pct - allowedDrop
+      const baselinePct = baselineSummary[metricName].pct
+      if (actual === null || baselinePct === null) continue
+      const expected = baselinePct - allowedDrop
       if (actual + Number.EPSILON < expected) {
-        failures.push(`${suite.id}: ${metricName} coverage ${actual}% dropped below baseline ${baselineSummary[metricName].pct}%`)
+        failures.push(`${suite.id}: ${metricName} coverage ${actual}% dropped below baseline ${baselinePct}%`)
       }
     }
   }
@@ -777,13 +786,14 @@ export function evaluateThresholds(
   return failures
 }
 
-function evaluateTargetGaps(suites: SuiteCoverage[], thresholds: CoverageThresholds) {
+export function evaluateTargetGaps(suites: SuiteCoverage[], thresholds: CoverageThresholds) {
   const gaps: string[] = []
   for (const suite of suites) {
     if (suite.status !== 'passed' || !suite.summary) continue
     const targets = thresholds.targets?.[suite.id] ?? {}
     for (const [metricName, target] of Object.entries(targets)) {
       const actual = suite.summary[metricName as keyof CoverageSummary].pct
+      if (actual === null) continue
       if (actual + Number.EPSILON < target) {
         gaps.push(`${suite.id}: ${metricName} coverage ${actual}% is below target ${target}%`)
       }
@@ -812,10 +822,10 @@ function renderReport(report: CoverageReport) {
     lines.push(`| ${[
       suite.title,
       suite.status,
-      summary ? `${summary.lines.pct}%` : '-',
-      summary ? `${summary.functions.pct}%` : '-',
-      summary ? `${summary.branches.pct}%` : '-',
-      summary ? `${summary.statements.pct}%` : '-',
+      summary ? formatPct(summary.lines.pct) : '-',
+      summary ? formatPct(summary.functions.pct) : '-',
+      summary ? formatPct(summary.branches.pct) : '-',
+      summary ? formatPct(summary.statements.pct) : '-',
     ].join(' | ')} |`)
   }
 

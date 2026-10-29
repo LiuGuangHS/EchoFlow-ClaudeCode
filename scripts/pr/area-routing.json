@@ -1,0 +1,48 @@
+{
+  "areas": {
+    "desktop": {
+      "prefixes": ["desktop/", "native/"]
+    },
+    "mobile": {
+      "prefixes": ["mobile/"]
+    },
+    "server": {
+      "prefixes": ["src/server/", "runtime/", "tests/"]
+    },
+    "adapters": {
+      "prefixes": ["adapters/"]
+    },
+    "docs": {
+      "prefixes": ["docs/", "site/", "release-notes/"],
+      "exact": [
+        "README.md",
+        "README.zh-CN.md",
+        "package.json",
+        "package-lock.json",
+        ".github/workflows/deploy-docs.yml"
+      ]
+    },
+    "release": {
+      "exact": [
+        ".github/workflows/pr-quality.yml",
+        ".github/workflows/pr-triage.yml",
+        ".github/workflows/release-desktop.yml",
+        ".github/workflows/build-desktop-dev.yml",
+        "scripts/pr/area-routing.json",
+        "scripts/pr/change-policy.ts",
+        "scripts/pr/change-policy.test.ts",
+        "scripts/pr/check-pr.ts",
+        "scripts/pr/run-server-tests.ts",
+        "scripts/release.ts",
+        "desktop/electron/tsconfig.json",
+        "desktop/scripts/build-macos-arm64.sh",
+        "desktop/scripts/build-windows-x64.ps1",
+        "desktop/scripts/build-linux.sh"
+      ]
+    },
+    "cli-core": {
+      "prefixes": ["bin/", "src/"],
+      "excludePrefixes": ["src/server/"]
+    }
+  }
+}

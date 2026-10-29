@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { evaluateChangePolicy } from './change-policy'
+import { adapterMissingTestSignals, evaluateChangePolicy } from './change-policy'
 import { changedFilesForLocalPrCheck } from './changed-files'
 import { dependentFilesForChangeSet } from './module-graph'
 
@@ -88,7 +88,6 @@ function coverageWarnings(files: string[]) {
   const warnings: string[] = []
   const desktopProd = changedProductionFiles(files, (file) => file.startsWith('desktop/src/'))
   const serverProd = changedProductionFiles(files, (file) => file.startsWith('src/server/'))
-  const adapterProd = changedProductionFiles(files, (file) => file.startsWith('adapters/'))
   const agentRuntimeProd = changedProductionFiles(files, (file) => (
     file.startsWith('src/server/ws/') ||
     file.startsWith('src/server/services/conversation') ||
@@ -104,9 +103,7 @@ function coverageWarnings(files: string[]) {
     warnings.push('Server product files changed without a server test file in the PR.')
   }
 
-  if (adapterProd.length > 0 && !hasMatchingTest(files, (file) => file.startsWith('adapters/'))) {
-    warnings.push('Adapter product files changed without an adapter test file in the PR.')
-  }
+  warnings.push(...adapterMissingTestSignals(files))
 
   if (agentRuntimeProd.length > 0) {
     warnings.push('Agent/model runtime path changed: prefer request-shape/mock tests in PR and maintainer live-model smoke before release.')
@@ -131,7 +128,9 @@ function riskNotes(files: string[]) {
     notes.push('Provider/search behavior changed: PR gate uses mock tests; live-provider tests should stay maintainer-only.')
   }
   if (files.some((file) => file.startsWith('.github/workflows/') || file.startsWith('scripts/pr/'))) {
-    notes.push('CI/policy changed: inspect the PR workflow behavior itself, not just application tests.')
+    notes.push(
+      'CI/policy changed: `PR Quality / policy-enforcement` is the authoritative policy lane; inspect the workflow behavior itself, not just application tests.',
+    )
   }
 
   return notes

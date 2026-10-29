@@ -29,8 +29,11 @@ function formatDuration(ms: number) {
   return `${(ms / 1000).toFixed(1)}s`
 }
 
-function formatMetric(metric: { pct: number; covered: number; total: number } | undefined) {
-  return metric ? `${metric.pct}% (${metric.covered}/${metric.total})` : '-'
+function formatMetric(metric: { pct: number | null; covered: number; total: number } | undefined) {
+  if (!metric) return '-'
+  return metric.pct === null
+    ? `n/a (${metric.covered}/${metric.total})`
+    : `${metric.pct}% (${metric.covered}/${metric.total})`
 }
 
 function renderSummaryList(lines: string[], title: string, items: string[]) {

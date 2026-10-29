@@ -84,7 +84,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Audit the agent toolset and quality contracts
-        run: node scripts/harness-audit.js repo --format json
+        run: node scripts/harness-audit.js repo --format json --fail-on-required
 
   policy-enforcement:
     name: policy-enforcement

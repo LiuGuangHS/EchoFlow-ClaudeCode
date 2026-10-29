@@ -8,6 +8,7 @@ import {
   collectServerTestFiles,
   coverageScopesForFiles,
   evaluateChangedLineCoverage,
+  evaluateTargetGaps,
   evaluateThresholds,
   hasUsableCoverageSummary,
   hasUsableLcov,
@@ -153,11 +154,27 @@ describe('coverage gate helpers', () => {
 
   test('rejects empty aggregate coverage summaries', () => {
     expect(hasUsableCoverageSummary({
-      lines: { total: 0, covered: 0, pct: 100 },
-      functions: { total: 0, covered: 0, pct: 100 },
-      branches: { total: 0, covered: 0, pct: 100 },
-      statements: { total: 0, covered: 0, pct: 100 },
+      lines: { total: 0, covered: 0, pct: null },
+      functions: { total: 0, covered: 0, pct: null },
+      branches: { total: 0, covered: 0, pct: null },
+      statements: { total: 0, covered: 0, pct: null },
     })).toBe(false)
+  })
+
+  test('marks metrics with no instrumented data as unavailable', () => {
+    const summary = parseLcov([
+      'SF:src/server/routes.ts',
+      'FNF:2',
+      'FNH:2',
+      'LF:2',
+      'LH:1',
+      'end_of_record',
+    ].join('\n'))
+
+    expect(summary.lines.pct).toBe(50)
+    expect(summary.functions.pct).toBe(100)
+    expect(summary.branches).toEqual({ covered: 0, total: 0, pct: null })
+    expect(hasUsableCoverageSummary(summary)).toBe(true)
   })
 
   test('prefixes package-relative lcov source paths for changed-line coverage', () => {
@@ -404,10 +421,12 @@ describe('coverage gate helpers', () => {
       mkdirSync(join(root, 'src/services'), { recursive: true })
       mkdirSync(join(root, 'src/tools'), { recursive: true })
       mkdirSync(join(root, 'src/utils'), { recursive: true })
+      mkdirSync(join(root, 'tests'), { recursive: true })
       writeFileSync(join(root, 'src/server/__tests__/active.test.ts'), '')
       writeFileSync(join(root, 'src/server/__tests__/component.test.tsx'), '')
       writeFileSync(join(root, 'src/server/__tests__/quarantined.test.ts'), '')
       writeFileSync(join(root, 'src/services/runtime.test.ts'), '')
+      writeFileSync(join(root, 'tests/root-runtime.test.ts'), '')
 
       const files = collectServerTestFiles(root, {
         quarantined: [
@@ -426,6 +445,7 @@ describe('coverage gate helpers', () => {
         'src/server/__tests__/active.test.ts',
         'src/server/__tests__/component.test.tsx',
         'src/services/runtime.test.ts',
+        'tests/root-runtime.test.ts',
       ])
     } finally {
       rmSync(root, { recursive: true, force: true })
@@ -462,6 +482,58 @@ describe('coverage gate helpers', () => {
     })
 
     expect(failures).toEqual(['new-suite: branches coverage 80% is below minimum 85%'])
+  })
+
+  test('skips unavailable metrics without skipping the measurable ones', () => {
+    const summary = parseLcov([
+      'SF:src/server/routes.ts',
+      'FNF:1',
+      'FNH:1',
+      'LF:2',
+      'LH:1',
+      'end_of_record',
+    ].join('\n'))
+    const suite = {
+      id: 'root',
+      title: 'Root',
+      status: 'passed' as const,
+      command: ['bun', 'test'],
+      durationMs: 1,
+      logPath: 'coverage.log',
+      summary,
+    }
+    const root = mkdtempSync(join(tmpdir(), 'echoflow-code-baseline-'))
+    try {
+      const baselinePath = join(root, 'coverage-baseline.json')
+      writeFileSync(baselinePath, JSON.stringify({
+        schemaVersion: 1,
+        suites: {
+          root: {
+            lines: { total: 2, covered: 1, pct: 50 },
+            functions: { total: 1, covered: 1, pct: 100 },
+            branches: { total: 10, covered: 8, pct: 80 },
+            statements: { total: 2, covered: 1, pct: 50 },
+          },
+        },
+      }))
+
+      expect(evaluateThresholds([suite], {
+        schemaVersion: 1,
+        minimums: { root: { lines: 80, branches: 80 } },
+        ratchet: { baselinePath, allowedDropPercent: 0 },
+      }, root)).toEqual([
+        'root: lines coverage 50% is below minimum 80%',
+      ])
+      expect(evaluateTargetGaps([suite], {
+        schemaVersion: 1,
+        minimums: {},
+        targets: { root: { lines: 80, branches: 80 } },
+      })).toEqual([
+        'root: lines coverage 50% is below target 80%',
+      ])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })
 

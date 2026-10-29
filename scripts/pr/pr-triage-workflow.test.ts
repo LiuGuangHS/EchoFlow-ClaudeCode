@@ -20,6 +20,26 @@ describe('PR triage workflow comment', () => {
     expect(workflow).not.toContain('secrets.')
   })
 
+  test('reads area routing from the trusted base revision instead of duplicating prefixes', () => {
+    const workflow = readFileSync('.github/workflows/pr-triage.yml', 'utf8')
+
+    expect(workflow).toContain("path: 'scripts/pr/area-routing.json'")
+    expect(workflow).toContain('context.payload.pull_request.base.sha')
+    expect(workflow).toContain('rule.prefixes')
+    expect(workflow).toContain('rule.exact')
+    expect(workflow).toContain('rule.excludePrefixes')
+    expect(workflow).not.toContain("'src/entrypoints/'")
+    expect(workflow).not.toContain("filename.startsWith('site/')")
+    expect(workflow).not.toContain("filename.startsWith('native/')")
+  })
+
+  test('points workflow changes at the authoritative policy lane', () => {
+    const workflow = readFileSync('.github/workflows/pr-triage.yml', 'utf8')
+
+    expect(workflow).toContain(".github/workflows/")
+    expect(workflow).toContain('policy-enforcement')
+  })
+
   test('surfaces missing-test and coverage-baseline policy branches', () => {
     const workflow = readFileSync('.github/workflows/pr-triage.yml', 'utf8')
 

@@ -51,43 +51,33 @@ jobs:
 
             const areas = new Set()
             const cliCoreFiles = []
-            const cliPrefixes = [
-              'bin/',
-              'src/entrypoints/',
-              'src/screens/',
-              'src/components/',
-              'src/commands/',
-              'src/tools/',
-              'src/utils/',
-            ]
-            const docsExact = new Set(['README.md', 'README.zh-CN.md', 'package.json', 'package-lock.json', '.github/workflows/deploy-docs.yml'])
-            const releaseExact = new Set([
-              '.github/workflows/pr-quality.yml',
-              '.github/workflows/pr-triage.yml',
-              '.github/workflows/release-desktop.yml',
-              '.github/workflows/build-desktop-dev.yml',
-              'scripts/pr/change-policy.ts',
-              'scripts/pr/change-policy.test.ts',
-              'scripts/pr/check-pr.ts',
-              'scripts/pr/run-server-tests.ts',
-              'scripts/release.ts',
-              'desktop/electron/tsconfig.json',
-              'desktop/scripts/build-linux.sh',
-              'desktop/scripts/build-macos-arm64.sh',
-              'desktop/scripts/build-windows-x64.ps1',
-            ])
+            // The base revision is trusted data. Never fetch this file from the
+            // PR head, and never execute repository code in this workflow.
+            const routingFile = await github.rest.repos.getContent({
+              owner,
+              repo,
+              path: 'scripts/pr/area-routing.json',
+              ref: context.payload.pull_request.base.sha,
+            })
+            if (Array.isArray(routingFile.data) || routingFile.data.type !== 'file') {
+              throw new Error('scripts/pr/area-routing.json is not a file on the base revision')
+            }
+            const routing = JSON.parse(Buffer.from(routingFile.data.content, 'base64').toString('utf8'))
+            const isAgentInstruction = (filename) => /(^|\/)AGENTS(?:\.override)?\.md$/.test(filename)
+            const ruleMatches = (filename, rule) => {
+              if (isAgentInstruction(filename)) return false
+              const matches = (rule.prefixes || []).some((prefix) => filename.startsWith(prefix)) ||
+                (rule.exact || []).includes(filename)
+              return matches && !(rule.excludePrefixes || []).some((prefix) => filename.startsWith(prefix))
+            }
 
-            for (const filename of filenames) {
-              if (filename.startsWith('desktop/')) areas.add('area:desktop')
-              if (filename.startsWith('mobile/')) areas.add('area:mobile')
-              if (filename.startsWith('src/server/')) areas.add('area:server')
-              if (filename.startsWith('adapters/')) areas.add('area:adapters')
-              if (filename.startsWith('docs/') || filename.startsWith('release-notes/') || docsExact.has(filename)) areas.add('area:docs')
-              if (releaseExact.has(filename)) areas.add('area:release')
-              if (cliPrefixes.some((prefix) => filename.startsWith(prefix))) {
-                areas.add('area:cli-core')
-                cliCoreFiles.push(filename)
-              }
+            for (const [area, rule] of Object.entries(routing.areas)) {
+              const matching = filenames.filter((filename) => ruleMatches(filename, rule))
+              if (matching.length === 0) continue
+              const label = `area:${area}`
+              if (!managedLabels[label]) throw new Error(`Unknown area label in area-routing.json: ${label}`)
+              areas.add(label)
+              if (area === 'cli-core') cliCoreFiles.push(...matching)
             }
 
             if (cliCoreFiles.length > 0 && !currentLabels.has('allow-cli-core-change')) {
@@ -117,6 +107,11 @@ jobs:
               !file.startsWith('src/tools/') &&
               !file.startsWith('src/utils/')
             )
+            const adapterPackages = new Set(adapterProduct.map((file) => {
+              const rest = file.slice('adapters/'.length)
+              const separator = rest.indexOf('/')
+              return separator === -1 ? 'adapters/' : `adapters/${rest.slice(0, separator)}/`
+            }))
             const missingTestSignals = []
             if (desktopProduct.length > 0 && !hasTest('desktop/src/')) {
               missingTestSignals.push('Desktop product files changed without a desktop test file in the PR.')
@@ -124,8 +119,10 @@ jobs:
             if (serverProduct.length > 0 && !hasTest('src/server/')) {
               missingTestSignals.push('Server product files changed without a server test file in the PR.')
             }
-            if (adapterProduct.length > 0 && !hasTest('adapters/')) {
-              missingTestSignals.push('Adapter product files changed without an adapter test file in the PR.')
+            for (const root of [...adapterPackages].sort()) {
+              if (!hasTest(root)) {
+                missingTestSignals.push(`Adapter product files changed without a matching adapter test file in the PR: ${root.replace(/\/$/, '')}`)
+              }
             }
             if (agentRuntimeProduct.length > 0 && !filenames.some((file) =>
               (file.startsWith('src/tools/') || file.startsWith('src/utils/')) &&
@@ -176,7 +173,7 @@ jobs:
               riskNotes.push('Provider/search behavior changed: PR gate uses mock tests; live-provider tests stay maintainer-only.')
             }
             if (filenames.some((file) => file.startsWith('.github/workflows/') || file.startsWith('scripts/pr/'))) {
-              riskNotes.push('CI/policy changed: inspect workflow behavior itself, not just application tests.')
+              riskNotes.push('CI/policy changed: `PR Quality / policy-enforcement` is the authoritative policy lane; inspect workflow behavior itself, not just application tests.')
             }
             if (riskNotes.length === 0) {
               riskNotes.push('No special risk notes from changed paths.')
