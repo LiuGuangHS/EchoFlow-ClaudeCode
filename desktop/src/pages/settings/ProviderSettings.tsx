@@ -297,6 +297,7 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
           <div className="min-w-0 flex-1">
             <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t('settings.providers.echoflowAPIOfficialName')}</div>
             <div className="mt-0.5 text-xs text-[var(--color-text-tertiary)]">{t('settings.providers.echoflowAPIOfficialDesc')}</div>
+            <div className="mt-1 text-[11px] text-[var(--color-text-tertiary)]">{t('settings.providers.echoflowAPIOfficialDisclaimer')}</div>
           </div>
         </div>
         <div className="border-t border-[var(--color-border-separator)] px-4 pb-4 pt-3">

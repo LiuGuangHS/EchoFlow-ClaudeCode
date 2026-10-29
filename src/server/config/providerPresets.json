@@ -15,7 +15,7 @@
   },
   {
     "id": "echoflowai",
-    "name": "EchoFlow API",
+    "name": "EchoFlow SiHub",
     "baseUrl": "https://api.echoflowai.cc",
     "apiFormat": "anthropic",
     "defaultModels": {
@@ -27,7 +27,7 @@
     "needsApiKey": true,
     "websiteUrl": "https://api.echoflowai.cc/",
     "apiKeyUrl": "https://api.echoflowai.cc/register",
-    "promoText": "一站式接入 500+ 模型，支持 Claude / OpenAI 协议，访问高速稳定。新用户注册赠送试用。",
+    "promoText": "推荐接入 500+ 模型，支持 Claude / OpenAI 协议，访问高速稳定。新用户注册赠送试用。",
     "featured": true,
     "authStrategy": "auth_token",
     "modelContextWindows": {

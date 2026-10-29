@@ -361,7 +361,7 @@ function getEchoFlowLoginSession(): EchoFlowLoginSession {
     createWindow(partition): EchoFlowLoginWindow {
       const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
       const loginWindow = new BrowserWindow({
-        title: 'EchoFlow 账号登录',
+        title: 'EchoFlow SiHub 账号登录',
         width: 520,
         height: 720,
         show: true,
