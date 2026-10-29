@@ -45,7 +45,6 @@ import { hasRunningBackgroundTasks } from '../../lib/backgroundTasks'
 import { collectAttentionIds } from '../../lib/sessionAttention'
 import { getSessionWorkspaceState, getSessionSeedWorkDir } from '../../lib/sessionWorkspace'
 import { SessionAttentionMark } from './SessionAttentionMark'
-import { EchoFlowAccountDock } from './EchoFlowAccountDock'
 
 const desktopHost = getDesktopHost()
 const isDesktopRuntime = desktopHost.isDesktop
@@ -1469,27 +1468,24 @@ export function Sidebar({
         <div className="flex-1" aria-hidden="true" />
       )}
 
-      {(
-        <div
-          data-testid="sidebar-settings-dock"
-          className={`sidebar-settings-dock absolute bottom-0 left-0 right-0 border-t border-[var(--color-border)] p-3 ${expanded ? '' : 'flex justify-center'}`}
+      <div
+        data-testid="sidebar-settings-dock"
+        className={`sidebar-settings-dock absolute bottom-0 left-0 right-0 border-t border-[var(--color-border)] p-3 ${expanded ? '' : 'flex justify-center'}`}
+      >
+        <NavItem
+          active={activeTabId === SETTINGS_TAB_ID}
+          collapsed={!expanded}
+          label={t('sidebar.settings')}
+          touchFriendly={isMobile}
+          onClick={() => {
+            useTabStore.getState().openTab(SETTINGS_TAB_ID, t('sidebar.settings'), 'settings')
+            closeMobileDrawer()
+          }}
+          icon={<span className="material-symbols-outlined text-[18px]">settings</span>}
         >
-          <EchoFlowAccountDock />
-          <NavItem
-            active={activeTabId === SETTINGS_TAB_ID}
-            collapsed={!expanded}
-            label={t('sidebar.settings')}
-            touchFriendly={isMobile}
-            onClick={() => {
-              useTabStore.getState().openTab(SETTINGS_TAB_ID, t('sidebar.settings'), 'settings')
-              closeMobileDrawer()
-            }}
-            icon={<span className="material-symbols-outlined text-[18px]">settings</span>}
-          >
-            {t('sidebar.settings')}
-          </NavItem>
-        </div>
-      )}
+          {t('sidebar.settings')}
+        </NavItem>
+      </div>
 
       {contextMenu && (
         <div

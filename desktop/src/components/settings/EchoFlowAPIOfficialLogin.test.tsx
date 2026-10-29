@@ -16,6 +16,13 @@ const bindLabel = (endpoint: 'main' | 'dedicated') =>
   translate('en', 'echoflowApiOfficialLogin.bindAccount', { endpoint: endpointTab(endpoint) })
 
 vi.mock('../../api/echoflow')
+const hostMocks = vi.hoisted(() => ({ openLogin: vi.fn(), signOut: vi.fn() }))
+vi.mock('@/lib/desktopHost', () => ({
+  getDesktopHost: () => ({
+    capabilities: { echoFlowAccount: true },
+    echoFlow: hostMocks,
+  }),
+}))
 let EchoFlowAPIOfficialLogin: typeof import('./EchoFlowAPIOfficialLogin').EchoFlowAPIOfficialLogin
 let echoflowApi: typeof import('../../api/echoflow').echoflowApi
 
@@ -61,6 +68,7 @@ describe('EchoFlowAPIOfficialLogin', () => {
     vi.mocked(echoflowApi.disconnectAccount).mockReset()
     vi.mocked(echoflowApi.getTokenKey).mockReset()
     vi.mocked(echoflowApi.getTokenKey).mockResolvedValue({ token: { id: 'shared-token-id', name: 'Main key', key: 'sk-main-secret' } })
+    hostMocks.openLogin.mockReset()
     mockAccounts()
   })
 
@@ -90,6 +98,41 @@ describe('EchoFlowAPIOfficialLogin', () => {
     expect(screen.queryByText('专线 · Code')).not.toBeInTheDocument()
     expect(screen.queryByText('sk-mc****Dbj8')).not.toBeInTheDocument()
     expect(useProviderStore.getState().providers).toContainEqual(activeProvider)
+  })
+
+  it('signs in with the selected endpoint and refreshes that account', async () => {
+    mockAccounts(null, null)
+    hostMocks.openLogin.mockResolvedValue('authenticated')
+    vi.mocked(echoflowApi.refreshAccount).mockResolvedValue({ account: mainAccount })
+    render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: L('echoflowApiOfficialLogin.signIn') }))
+    await waitFor(() => expect(hostMocks.openLogin).toHaveBeenCalledWith('main'))
+    await waitFor(() => expect(echoflowApi.refreshAccount).toHaveBeenCalledWith('main'))
+
+    fireEvent.click(screen.getByRole('tab', { name: endpointTab('dedicated') }))
+    fireEvent.click(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.signIn') }))
+    await waitFor(() => expect(hostMocks.openLogin).toHaveBeenLastCalledWith('dedicated'))
+  })
+
+  it('keeps the manual token form available under the advanced section', async () => {
+    mockAccounts(null, null)
+    render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
+
+    expect(await screen.findByText(L('echoflowApiOfficialLogin.manualBind'))).toBeInTheDocument()
+    fireEvent.change(screen.getByPlaceholderText(L('echoflowApiOfficialLogin.userId')), { target: { value: 'manual-user' } })
+    fireEvent.change(screen.getByPlaceholderText(L('echoflowApiOfficialLogin.managementToken')), { target: { value: 'manual-token' } })
+    fireEvent.click(screen.getByRole('button', { name: bindLabel('main') }))
+
+    await waitFor(() => expect(echoflowApi.bindAccount).toHaveBeenCalledWith('main', 'manual-user', 'manual-token'))
+  })
+
+  it('asks for a new sign-in when the stored session is no longer live', async () => {
+    mockAccounts({ ...mainAccount, live: false }, null)
+    render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
+
+    expect(await screen.findByText(L('echoflowApiOfficialLogin.needsRelogin'))).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.signIn') })).toBeInTheDocument()
   })
 
   it('shows one endpoint account at a time and keeps the account data isolated', async () => {
