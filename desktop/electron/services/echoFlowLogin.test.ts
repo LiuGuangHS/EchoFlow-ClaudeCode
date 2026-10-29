@@ -1,18 +1,15 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  DEDICATED_LOGIN_PROFILE,
   EchoFlowLoginSession,
+  MAIN_LOGIN_PROFILE,
+  readPageIdentity,
   siteCookieHeader,
-  type EchoFlowLoginIdentity,
+  type EchoFlowLoginCredential,
+  type EchoFlowLoginProfile,
   type EchoFlowLoginWindow,
   type EchoFlowWindowOpenResult,
-  type SiteCookie,
 } from './echoFlowLogin'
-
-type VerifySessionFn = (
-  cookies: readonly SiteCookie[],
-  identity: EchoFlowLoginIdentity,
-) => Promise<boolean>
-type ResolveIdentityFn = (cookies: readonly SiteCookie[]) => Promise<EchoFlowLoginIdentity | null>
 
 class FakeLoginWindow implements EchoFlowLoginWindow {
   readonly navigation = new Map<string, (event: { preventDefault(): void }, url: string) => void>()
@@ -24,10 +21,13 @@ class FakeLoginWindow implements EchoFlowLoginWindow {
   loadCount = 0
   loadFailed?: (event: unknown, errorCode: number, errorDescription: string, validatedURL: string, isMainFrame: boolean) => void
   loadFinished?: () => void
-  cookies: SiteCookie[] = []
-  pageUrl = 'https://api.echoflowai.cc/login'
+  pageUrl = MAIN_LOGIN_PROFILE.url
   localStorageUser: string | null = null
-  removeCookie = vi.fn(async (_url: string, _name: string) => { this.cookies = [] })
+  credential: EchoFlowLoginCredential | null = null
+
+  signIn(credential: EchoFlowLoginCredential) {
+    this.credential = credential
+  }
 
   webContents = {
     on: (event: 'will-navigate' | 'will-redirect' | 'did-fail-load' | 'did-finish-load', listener: (...args: never[]) => void) => {
@@ -40,13 +40,6 @@ class FakeLoginWindow implements EchoFlowLoginWindow {
     },
     getURL: () => this.pageUrl,
     executeJavaScript: vi.fn(async (_code: string, _userGesture?: boolean) => this.localStorageUser),
-  }
-
-  session = {
-    cookies: {
-      get: vi.fn(async (_filter: { url: string }) => this.cookies),
-      remove: this.removeCookie,
-    },
   }
 
   on(event: 'closed', listener: () => void) {
@@ -80,17 +73,6 @@ class FakeLoginWindow implements EchoFlowLoginWindow {
     this.navigation.get(event)?.({ preventDefault }, url)
     return preventDefault
   }
-
-  addSessionCookie() {
-    this.cookies = [{
-      name: 'session',
-      value: 'private-cookie',
-      domain: 'api.echoflowai.cc',
-      path: '/',
-      secure: true,
-      httpOnly: true,
-    }]
-  }
 }
 
 async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
@@ -101,28 +83,41 @@ async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<voi
   }
 }
 
-function makeLogin(options: {
-  verifySession?: VerifySessionFn
-  resolveIdentity?: ResolveIdentityFn
-  readCookies?: () => Promise<SiteCookie[]>
-  clearCookies?: () => Promise<void>
+const TEST_DEDICATED: EchoFlowLoginProfile = {
+  endpoint: 'dedicated',
+  url: 'https://gateway.example/login',
+  origin: 'https://gateway.example',
+  partition: 'persist:echoflow-dedicated-login',
+  allowedHosts: new Set(),
+}
+
+type MakeLoginOptions = {
+  persisted?: boolean
+  readCredential?: (endpoint: 'main' | 'dedicated', window: EchoFlowLoginWindow | null) => Promise<EchoFlowLoginCredential | null>
+  verifySession?: (endpoint: 'main' | 'dedicated', credential: EchoFlowLoginCredential) => Promise<boolean>
+  clearCookies?: (endpoint: 'main' | 'dedicated') => Promise<void>
   loadRetries?: number
   loadTimeoutMs?: number
   loginTimeoutMs?: number
-} = {}) {
+}
+
+function makeLogin(options: MakeLoginOptions = {}) {
   const window = new FakeLoginWindow()
   const createWindow = vi.fn(async () => window)
-  const verifySession = vi.fn(options.verifySession
-    ?? (async (cookies: readonly SiteCookie[], identity: EchoFlowLoginIdentity) =>
-      cookies.length > 0 && identity.userId !== ''))
-  const resolveIdentity = vi.fn(options.resolveIdentity
-    ?? (async (): Promise<EchoFlowLoginIdentity | null> => ({ userId: '106452', username: 'site-user' })))
+  const credential: EchoFlowLoginCredential = { kind: 'session', userId: '106452', username: 'site-user', cookie: 'session=live' }
+  // A persisted credential belongs to the restore path; a live one appears
+  // only after the page signs in, exactly like the real site.
+  const readCredential = vi.fn(options.readCredential
+    ?? (async (_endpoint: 'main' | 'dedicated', target: EchoFlowLoginWindow | null) =>
+      (target as FakeLoginWindow | null)?.credential ?? (options.persisted ? credential : null)))
+  const verifySession = vi.fn(options.verifySession ?? (async () => true))
+  const clearCookies = vi.fn(options.clearCookies ?? (async () => {}))
   const login = new EchoFlowLoginSession({
     createWindow,
+    profiles: { main: MAIN_LOGIN_PROFILE, dedicated: TEST_DEDICATED },
+    readCredential,
     verifySession,
-    resolveIdentity,
-    readCookies: options.readCookies,
-    clearCookies: options.clearCookies,
+    clearCookies,
     pollIntervalMs: 10,
     identityRetryMs: 10,
     loadTimeoutMs: options.loadTimeoutMs ?? 500,
@@ -130,7 +125,7 @@ function makeLogin(options: {
     loadRetryDelayMs: 5,
     loadRetries: options.loadRetries ?? 3,
   })
-  return { login, window, createWindow, verifySession, resolveIdentity }
+  return { login, window, createWindow, readCredential, verifySession, clearCookies, credential }
 }
 
 describe('EchoFlow site login session', () => {
@@ -142,21 +137,33 @@ describe('EchoFlow site login session', () => {
     ])).toBe('session=opaque==')
   })
 
-  it('opens the fixed main-site login page and authenticates once the site session appears', async () => {
-    const { login, window, createWindow, verifySession } = makeLogin()
+  it('opens the main profile in its own partition and authenticates from its credential', async () => {
+    const { login, window, createWindow, verifySession, credential } = makeLogin()
     const result = login.open()
     await waitFor(() => createWindow.mock.calls.length === 1)
 
     expect(createWindow).toHaveBeenCalledWith('persist:echoflow-site-login')
     expect(window.loadedUrl).toBe('https://api.echoflowai.cc/login')
 
-    window.addSessionCookie()
+    window.signIn(credential)
     await expect(result).resolves.toBe('authenticated')
-    expect(verifySession).toHaveBeenCalledWith(window.cookies, { userId: '106452', username: 'site-user' })
+    expect(verifySession).toHaveBeenCalledWith('main', credential)
     expect(window.closedCount).toBe(1)
   })
 
-  it('allows only the site and its OAuth providers to navigate the login window', async () => {
+  it('loads the profile of the endpoint it was opened for', async () => {
+    const { login, window, createWindow } = makeLogin()
+    const result = login.open('dedicated')
+    await waitFor(() => window.loadCount === 1)
+
+    expect(createWindow).toHaveBeenCalledWith('persist:echoflow-dedicated-login')
+    expect(window.loadedUrl).toBe('https://gateway.example/login')
+
+    window.close()
+    await expect(result).resolves.toBe('cancelled')
+  })
+
+  it('allows only the profile origin and its OAuth hosts to navigate the login window', async () => {
     const { login, window, createWindow } = makeLogin()
     const result = login.open()
     await waitFor(() => createWindow.mock.calls.length === 1)
@@ -173,7 +180,7 @@ describe('EchoFlow site login session', () => {
     await expect(result).resolves.toBe('cancelled')
   })
 
-  it('denies arbitrary popups and keeps OAuth popups inside the login partition', async () => {
+  it('denies arbitrary popups and keeps OAuth popups inside the profile partition', async () => {
     const { login, window, createWindow } = makeLogin()
     const result = login.open()
     await waitFor(() => createWindow.mock.calls.length === 1)
@@ -190,33 +197,19 @@ describe('EchoFlow site login session', () => {
     await expect(result).resolves.toBe('cancelled')
   })
 
-  it('keeps waiting when the site session cannot be resolved into an identity', async () => {
+  it('keeps waiting when the profile cannot resolve a credential', async () => {
     const { login, window, createWindow, verifySession } = makeLogin({
-      resolveIdentity: async () => null,
+      readCredential: async () => null,
     })
     const result = login.open()
     await waitFor(() => createWindow.mock.calls.length === 1)
 
-    window.addSessionCookie()
     await new Promise(resolve => setTimeout(resolve, 60))
     expect(verifySession).not.toHaveBeenCalled()
     expect(window.closedCount).toBe(0)
 
     window.close()
     await expect(result).resolves.toBe('cancelled')
-  })
-
-  it('falls back to the identity the site stores in its own page', async () => {
-    const { login, window, createWindow, verifySession } = makeLogin({
-      resolveIdentity: async () => null,
-    })
-    const result = login.open()
-    await waitFor(() => createWindow.mock.calls.length === 1)
-
-    window.localStorageUser = JSON.stringify({ id: 2001, username: 'page-user' })
-    window.addSessionCookie()
-    await expect(result).resolves.toBe('authenticated')
-    expect(verifySession).toHaveBeenCalledWith(window.cookies, { userId: '2001', username: 'page-user' })
   })
 
   it('keeps the login window open when session verification is unavailable', async () => {
@@ -226,7 +219,6 @@ describe('EchoFlow site login session', () => {
     const result = login.open()
     await waitFor(() => createWindow.mock.calls.length === 1)
 
-    window.addSessionCookie()
     await new Promise(resolve => setTimeout(resolve, 60))
     expect(window.closedCount).toBe(0)
 
@@ -235,22 +227,21 @@ describe('EchoFlow site login session', () => {
   })
 
   it('fails after three rejected session bootstraps instead of waiting for the login timeout', async () => {
-    const { login, window, createWindow, verifySession } = makeLogin({
+    const { login, window, createWindow, verifySession, credential } = makeLogin({
       verifySession: async () => false,
       loginTimeoutMs: 60_000,
     })
     const result = login.open()
     await waitFor(() => createWindow.mock.calls.length === 1)
 
-    window.addSessionCookie()
-
+    window.signIn(credential)
     await expect(result).resolves.toBe('failed')
     expect(verifySession).toHaveBeenCalledTimes(3)
     expect(window.closedCount).toBe(1)
   })
 
   it('retries a transient main-frame load failure instead of failing the login', async () => {
-    const { login, window, createWindow } = makeLogin()
+    const { login, window, createWindow, credential } = makeLogin()
     const result = login.open()
     await waitFor(() => createWindow.mock.calls.length === 1)
 
@@ -258,7 +249,7 @@ describe('EchoFlow site login session', () => {
     expect(window.closedCount).toBe(0)
     await waitFor(() => window.loadCount === 2)
 
-    window.addSessionCookie()
+    window.signIn(credential)
     await expect(result).resolves.toBe('authenticated')
   })
 
@@ -298,8 +289,11 @@ describe('EchoFlow site login session', () => {
     expect(window.closedCount).toBe(1)
   })
 
-  it('fails instead of hanging when no session appears before the login timeout', async () => {
-    const { login, window, createWindow } = makeLogin({ loginTimeoutMs: 40 })
+  it('fails instead of hanging when no credential appears before the login timeout', async () => {
+    const { login, window, createWindow } = makeLogin({
+      readCredential: async () => null,
+      loginTimeoutMs: 40,
+    })
     const result = login.open()
     await waitFor(() => createWindow.mock.calls.length === 1)
 
@@ -309,7 +303,7 @@ describe('EchoFlow site login session', () => {
   })
 
   it('reuses one login window and resolves cancellation when the user closes it', async () => {
-    const { login, window, createWindow } = makeLogin()
+    const { login, window, createWindow } = makeLogin({ readCredential: async () => null })
     const first = login.open()
     await waitFor(() => createWindow.mock.calls.length === 1)
 
@@ -322,64 +316,57 @@ describe('EchoFlow site login session', () => {
     await expect(second).resolves.toBe('cancelled')
   })
 
-  it('restores an existing site session without opening the login window', async () => {
-    const cookies: SiteCookie[] = [{ name: 'session', value: 'existing-cookie' }]
-    const { login, createWindow, verifySession, resolveIdentity } = makeLogin({
-      readCookies: async () => cookies,
-    })
+  it('restores an existing main credential without opening the login window', async () => {
+    const { login, createWindow, readCredential, verifySession, credential } = makeLogin({ persisted: true })
 
     await expect(login.open()).resolves.toBe('authenticated')
     expect(createWindow).not.toHaveBeenCalled()
-    expect(resolveIdentity).toHaveBeenCalledWith(cookies)
-    expect(verifySession).toHaveBeenCalledWith(cookies, { userId: '106452', username: 'site-user' })
+    expect(readCredential).toHaveBeenCalledWith('main', null)
+    expect(verifySession).toHaveBeenCalledWith('main', credential)
   })
 
-  it('rehydrates only after validating cookies from the persistent jar', async () => {
-    const cookies: SiteCookie[] = [{ name: 'session', value: 'existing-cookie' }]
-    const { login, verifySession } = makeLogin({ readCookies: async () => cookies })
+  it('rehydrates an endpoint only after its credential verifies', async () => {
+    const restored = makeLogin({ persisted: true })
+    await expect(restored.login.rehydrate('main')).resolves.toBe(true)
+    expect(restored.verifySession).toHaveBeenCalledWith('main', restored.credential)
 
-    await expect(login.rehydrate()).resolves.toBe(true)
-    expect(verifySession).toHaveBeenCalledWith(cookies, { userId: '106452', username: 'site-user' })
-    await expect(login.getCookies()).resolves.toEqual(cookies)
+    const empty = makeLogin({ readCredential: async () => null })
+    await expect(empty.login.rehydrate('main')).resolves.toBe(false)
+
+    const rejected = makeLogin({ verifySession: async () => false })
+    await expect(rejected.login.rehydrate('main')).resolves.toBe(false)
   })
 
-  it('does not report cookies before the session is verified', async () => {
-    const cookies: SiteCookie[] = [{ name: 'session', value: 'existing-cookie' }]
-    const { login } = makeLogin({ readCookies: async () => cookies })
-
-    await expect(login.getCookies()).resolves.toEqual([])
-  })
-
-  it('does not rehydrate when the jar has no cookies or verification fails', async () => {
-    const empty = makeLogin({ readCookies: async () => [] })
-    await expect(empty.login.rehydrate()).resolves.toBe(false)
-    await expect(empty.login.getCookies()).resolves.toEqual([])
-
-    const rejected = makeLogin({
-      readCookies: async () => [{ name: 'session', value: 'expired-cookie' }],
-      verifySession: async () => false,
-    })
-    await expect(rejected.login.rehydrate()).resolves.toBe(false)
-  })
-
-  it('signs out through the host cookie hook when one is provided', async () => {
-    const clearCookies = vi.fn(async () => {})
-    const { login } = makeLogin({ clearCookies })
-
-    await login.clear()
-    expect(clearCookies).toHaveBeenCalledOnce()
-    await expect(login.getCookies()).resolves.toEqual([])
-  })
-
-  it('cancels a pending login and removes partition cookies on sign-out', async () => {
-    const { login, window, createWindow } = makeLogin()
+  it('clears only the endpoint it was asked to sign out of', async () => {
+    const { login, window, createWindow, clearCookies } = makeLogin({ readCredential: async () => null })
     const result = login.open()
     await waitFor(() => createWindow.mock.calls.length === 1)
-    window.addSessionCookie()
 
-    await login.clear()
+    await login.clear('main')
     await expect(result).resolves.toBe('cancelled')
-    expect(window.removeCookie).toHaveBeenCalledWith('https://api.echoflowai.cc/', 'session')
-    await expect(login.getCookies()).resolves.toEqual([])
+    expect(clearCookies).toHaveBeenCalledWith('main')
+    expect(window.closedCount).toBe(1)
+  })
+
+  it('reads the identity the main site stores in its own page', async () => {
+    const { window } = makeLogin()
+    window.localStorageUser = JSON.stringify({ id: 2001, username: 'page-user' })
+
+    await expect(readPageIdentity(window, MAIN_LOGIN_PROFILE.origin))
+      .resolves.toEqual({ userId: '2001', username: 'page-user' })
+  })
+
+  it('ignores a page identity read from another origin', async () => {
+    const { window } = makeLogin()
+    window.localStorageUser = JSON.stringify({ id: 2001, username: 'page-user' })
+    window.pageUrl = 'https://evil.example/login'
+
+    await expect(readPageIdentity(window, MAIN_LOGIN_PROFILE.origin)).resolves.toBeNull()
+  })
+
+  it('keeps the dedicated profile on the gateway origin', () => {
+    expect(DEDICATED_LOGIN_PROFILE.url).toBe('https://expapi.echoflowai.cc/login')
+    expect(DEDICATED_LOGIN_PROFILE.origin).toBe('https://expapi.echoflowai.cc')
+    expect(DEDICATED_LOGIN_PROFILE.partition).toBe('persist:echoflow-dedicated-login')
   })
 })

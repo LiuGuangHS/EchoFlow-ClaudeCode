@@ -7,6 +7,11 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const noPayload: Validator = value => value === undefined
+const echoFlowLoginEndpoint: Validator = value =>
+  value === undefined
+  || (isRecord(value)
+    && hasOnlyKeys(value, ['endpoint'])
+    && (value.endpoint === 'main' || value.endpoint === 'dedicated'))
 const optionalRecord: Validator = value => value === undefined || isRecord(value)
 const stringPayload: Validator = value => typeof value === 'string'
 const booleanPayload: Validator = value => typeof value === 'boolean'
@@ -342,7 +347,7 @@ const localePreference: Validator = value =>
   || value === 'kr'
 
 export const ELECTRON_IPC_VALIDATORS = {
-  [ELECTRON_IPC_CHANNELS.echoFlowLoginOpen]: noPayload,
+  [ELECTRON_IPC_CHANNELS.echoFlowLoginOpen]: echoFlowLoginEndpoint,
   [ELECTRON_IPC_CHANNELS.echoFlowSignOut]: noPayload,
   [ELECTRON_IPC_CHANNELS.appGetVersion]: noPayload,
   [ELECTRON_IPC_CHANNELS.appGetLocalePreference]: noPayload,

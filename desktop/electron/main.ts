@@ -1,5 +1,14 @@
 import { PublicAccessManager } from './services/publicAccess'
-import { EchoFlowLoginSession, ECHOFLOW_LOGIN_ORIGIN, ECHOFLOW_LOGIN_PARTITION, siteCookieHeader, type EchoFlowLoginIdentity, type EchoFlowLoginWindow, type SiteCookie } from './services/echoFlowLogin'
+import {
+  EchoFlowLoginSession,
+  ECHOFLOW_LOGIN_PROFILES,
+  readPageIdentity,
+  siteCookieHeader,
+  type EchoFlowLoginCredential,
+  type EchoFlowLoginEndpoint,
+  type EchoFlowLoginWindow,
+  type SiteCookie,
+} from './services/echoFlowLogin'
 import { resolveSiteIdentity } from './services/echoFlowSiteIdentity'
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, screen, session, systemPreferences, WebContentsView } from 'electron'
 import { autoUpdater } from 'electron-updater'
@@ -283,44 +292,61 @@ function getServerRuntime() {
 }
 
 
-function echoFlowLoginCookies() {
-  return session.fromPartition(ECHOFLOW_LOGIN_PARTITION).cookies
+async function readEchoFlowSiteCookies(endpoint: EchoFlowLoginEndpoint): Promise<SiteCookie[]> {
+  const profile = ECHOFLOW_LOGIN_PROFILES[endpoint]
+  return await session.fromPartition(profile.partition).cookies.get({ url: profile.origin })
 }
 
-async function readEchoFlowSiteCookies(): Promise<SiteCookie[]> {
-  return await echoFlowLoginCookies().get({ url: ECHOFLOW_LOGIN_ORIGIN })
-}
-
-async function clearEchoFlowSiteCookies(): Promise<void> {
-  const cookies = await readEchoFlowSiteCookies()
-  await Promise.all(cookies.map(cookie => echoFlowLoginCookies().remove(
-    `${ECHOFLOW_LOGIN_ORIGIN}${cookie.path && cookie.path.startsWith('/') ? cookie.path : `/${cookie.path || ''}`}`,
+async function clearEchoFlowSiteCookies(endpoint: EchoFlowLoginEndpoint = 'main'): Promise<void> {
+  const profile = ECHOFLOW_LOGIN_PROFILES[endpoint]
+  const cookies = session.fromPartition(profile.partition).cookies
+  const existing = await cookies.get({ url: profile.origin })
+  await Promise.all(existing.map(cookie => cookies.remove(
+    `${profile.origin}${cookie.path && cookie.path.startsWith('/') ? cookie.path : `/${cookie.path || ''}`}`,
     cookie.name,
   )))
 }
 
-async function bootstrapEchoFlowSiteSession(
-  cookies: readonly SiteCookie[],
-  identity: EchoFlowLoginIdentity,
-): Promise<boolean> {
+async function readEchoFlowLoginCredential(
+  endpoint: EchoFlowLoginEndpoint,
+  window: EchoFlowLoginWindow | null,
+): Promise<EchoFlowLoginCredential | null> {
+  if (endpoint !== 'main') return null
+  const profile = ECHOFLOW_LOGIN_PROFILES.main
+  const cookies = await readEchoFlowSiteCookies(endpoint)
   const cookie = siteCookieHeader(cookies)
-  if (!cookie || !identity) return false
+  if (!cookie) return null
+  let identity = await resolveSiteIdentity(cookie)
+  if (!identity && window) identity = await readPageIdentity(window, profile.origin)
+  if (!identity) return null
+  return { kind: 'session', userId: identity.userId, username: identity.username, cookie }
+}
+
+async function bootstrapEchoFlowAccount(
+  endpoint: EchoFlowLoginEndpoint,
+  credential: EchoFlowLoginCredential,
+): Promise<boolean> {
+  if (endpoint !== 'main' || credential.kind !== 'session') return false
   try {
     const runtime = getServerRuntime()
     const serverUrl = await runtime.getServerUrl()
     const bridgeToken = runtime.getSiteSessionBridgeToken()
     if (!bridgeToken) return false
-    const response = await fetch(`${serverUrl}/api/echoflow/site-session`, {
+    const response = await fetch(`${serverUrl}/api/echoflow/account/session`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'x-echoflow-site-session-bridge': bridgeToken,
       },
-      body: JSON.stringify({ cookie, userId: identity.userId }),
+      body: JSON.stringify({
+        endpoint,
+        kind: 'session',
+        cookie: credential.cookie,
+        userId: credential.userId,
+      }),
       signal: AbortSignal.timeout(15_000),
     })
-    if (!response.ok) return false
-    return true
+    return response.ok
   } catch {
     return false
   }
@@ -355,12 +381,9 @@ function getEchoFlowLoginSession(): EchoFlowLoginSession {
       // session, so the window needs no extra fields.
       return loginWindow as unknown as EchoFlowLoginWindow
     },
-    verifySession: bootstrapEchoFlowSiteSession,
-    resolveIdentity: async (cookies) => {
-      const cookieHeader = siteCookieHeader(cookies)
-      return cookieHeader ? await resolveSiteIdentity(cookieHeader) : null
-    },
-    readCookies: readEchoFlowSiteCookies,
+    profiles: ECHOFLOW_LOGIN_PROFILES,
+    readCredential: readEchoFlowLoginCredential,
+    verifySession: bootstrapEchoFlowAccount,
     clearCookies: clearEchoFlowSiteCookies,
   })
   return echoFlowLoginSession
@@ -761,7 +784,10 @@ function registerIpcHandlers() {
     if (getWorkspaceBrowserService().handleMessageFromView(event.sender, raw)) return
     void getPreviewService().sendMessageToRenderer(event.sender, raw, mainWindow?.webContents)
   })
-  registerHandler(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, async () => await getEchoFlowLoginSession().open())
+  registerHandler(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, async (_event, payload) => {
+    const requested = (payload as { endpoint?: unknown } | undefined)?.endpoint
+    return await getEchoFlowLoginSession().open(requested === 'dedicated' ? 'dedicated' : 'main')
+  })
   registerHandler(ELECTRON_IPC_CHANNELS.echoFlowSignOut, async () => await signOutEchoFlowSiteSession())
   registerHandler(ELECTRON_IPC_CHANNELS.publicAccessGetStatus, () => getPublicAccessManager().getStatus())
   registerHandler(ELECTRON_IPC_CHANNELS.publicAccessSaveCredential, (_event, payload) => getPublicAccessManager().saveCredential(payload as string))

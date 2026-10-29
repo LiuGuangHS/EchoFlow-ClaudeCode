@@ -9,8 +9,11 @@ import {
 } from './capabilities'
 
 describe('Electron IPC capabilities', () => {
-  it('allows only the main app to request EchoFlow sign-in with no payload', () => {
+  it('allows only the main app to request EchoFlow sign-in for a known endpoint', () => {
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, undefined)).toBe(true)
+    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, { endpoint: 'main' })).toBe(true)
+    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, { endpoint: 'dedicated' })).toBe(true)
+    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, { endpoint: 'other' })).toBe(false)
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, { cookie: 'secret' })).toBe(false)
     expect(isElectronIpcChannelAllowedForPetWindow(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen)).toBe(false)
   })

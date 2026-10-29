@@ -2,11 +2,9 @@ import { parseSiteIdentity, type EchoFlowLoginIdentity } from './echoFlowSiteIde
 
 export type { EchoFlowLoginIdentity } from './echoFlowSiteIdentity'
 
-export const ECHOFLOW_LOGIN_URL = 'https://api.echoflowai.cc/login'
-export const ECHOFLOW_LOGIN_ORIGIN = 'https://api.echoflowai.cc'
-export const ECHOFLOW_LOGIN_PARTITION = 'persist:echoflow-site-login'
-
 export type EchoFlowLoginResult = 'authenticated' | 'cancelled' | 'failed'
+
+export type EchoFlowLoginEndpoint = 'main' | 'dedicated'
 
 export type SiteCookie = {
   name: string
@@ -15,6 +13,55 @@ export type SiteCookie = {
   path?: string
   secure?: boolean
   httpOnly?: boolean
+}
+
+/**
+ * The one credential a login profile can hand back to the host. A page may
+ * expose either the main site's session cookie or the gateway's access token;
+ * the host decides what each endpoint accepts.
+ */
+export type EchoFlowLoginCredential =
+  | { kind: 'session'; userId: string; username?: string; cookie: string }
+  | { kind: 'bearer'; userId: string; username?: string; accessToken: string }
+
+export type EchoFlowLoginProfile = {
+  endpoint: EchoFlowLoginEndpoint
+  url: string
+  origin: string
+  partition: string
+  allowedHosts: ReadonlySet<string>
+}
+
+/**
+ * The site's OAuth buttons navigate the login window itself, so these hosts
+ * must survive the navigation guard. Keep this list exact: a suffix match
+ * would turn `evilgithub.com` into a trusted destination.
+ */
+const MAIN_ALLOWED_OAUTH_HOSTS = new Set([
+  'github.com',
+  'accounts.google.com',
+  'oauth.telegram.org',
+])
+
+export const MAIN_LOGIN_PROFILE: EchoFlowLoginProfile = {
+  endpoint: 'main',
+  url: 'https://api.echoflowai.cc/login',
+  origin: 'https://api.echoflowai.cc',
+  partition: 'persist:echoflow-site-login',
+  allowedHosts: MAIN_ALLOWED_OAUTH_HOSTS,
+}
+
+export const DEDICATED_LOGIN_PROFILE: EchoFlowLoginProfile = {
+  endpoint: 'dedicated',
+  url: 'https://expapi.echoflowai.cc/login',
+  origin: 'https://expapi.echoflowai.cc',
+  partition: 'persist:echoflow-dedicated-login',
+  allowedHosts: new Set(),
+}
+
+export const ECHOFLOW_LOGIN_PROFILES: Record<EchoFlowLoginEndpoint, EchoFlowLoginProfile> = {
+  main: MAIN_LOGIN_PROFILE,
+  dedicated: DEDICATED_LOGIN_PROFILE,
 }
 
 export type EchoFlowWindowOpenResult =
@@ -30,12 +77,6 @@ export interface EchoFlowLoginWindow {
     getURL(): string
     executeJavaScript(code: string, userGesture?: boolean): Promise<unknown>
   }
-  session: {
-    cookies: {
-      get(filter: { url: string }): Promise<SiteCookie[]>
-      remove(url: string, name: string): Promise<void>
-    }
-  }
   on(event: 'closed', listener: () => void): void
   loadURL(url: string): Promise<void>
   focus(): void
@@ -44,10 +85,11 @@ export interface EchoFlowLoginWindow {
 
 export type EchoFlowLoginSessionDeps = {
   createWindow: (partition: string) => Promise<EchoFlowLoginWindow> | EchoFlowLoginWindow
-  verifySession: (cookies: readonly SiteCookie[], identity: EchoFlowLoginIdentity) => Promise<boolean>
-  resolveIdentity: (cookies: readonly SiteCookie[]) => Promise<EchoFlowLoginIdentity | null>
-  readCookies?: () => Promise<SiteCookie[]>
-  clearCookies?: () => Promise<void>
+  profiles: Record<EchoFlowLoginEndpoint, EchoFlowLoginProfile>
+  /** Reads the signed-in credential from a live window, or from the persistent jar when `window` is null. */
+  readCredential: (endpoint: EchoFlowLoginEndpoint, window: EchoFlowLoginWindow | null) => Promise<EchoFlowLoginCredential | null>
+  verifySession: (endpoint: EchoFlowLoginEndpoint, credential: EchoFlowLoginCredential) => Promise<boolean>
+  clearCookies?: (endpoint: EchoFlowLoginEndpoint) => Promise<void>
   /** Timing knobs exist so tests do not wait on wall-clock seconds. */
   pollIntervalMs?: number
   identityRetryMs?: number
@@ -64,50 +106,61 @@ const DEFAULT_LOGIN_TIMEOUT_MS = 10 * 60_000
 const DEFAULT_LOAD_RETRY_DELAY_MS = 750
 const DEFAULT_LOAD_RETRIES = 3
 /**
- * A signed-in site cookie that the local bridge rejects three times in a row is
- * a real configuration failure, not a slow handshake. Waiting for the login
- * timeout would leave the user staring at a signed-in console for ten minutes.
+ * A signed-in site credential that the local bridge rejects three times in a
+ * row is a real configuration failure, not a slow handshake. Waiting for the
+ * login timeout would leave the user staring at a signed-in console for ten
+ * minutes.
  */
 const MAX_IDENTITY_REJECTIONS = 3
 
-/**
- * The site's OAuth buttons navigate the login window itself, so these hosts
- * must survive the navigation guard. Keep this list exact: a suffix match
- * would turn `evilgithub.com` into a trusted destination.
- */
-const ALLOWED_OAUTH_HOSTS = new Set([
-  'github.com',
-  'accounts.google.com',
-  'oauth.telegram.org',
-])
-
-export function isAllowedSiteNavigation(value: string): boolean {
+export function isAllowedProfileNavigation(profile: EchoFlowLoginProfile, value: string): boolean {
   try {
     const url = new URL(value)
-    return url.origin === ECHOFLOW_LOGIN_ORIGIN || ALLOWED_OAUTH_HOSTS.has(url.hostname)
+    return url.origin === profile.origin || profile.allowedHosts.has(url.hostname)
   } catch {
     return false
   }
 }
 
 /**
- * Owns the site login window and its cookies.
+ * Reads the signed-in record the main site stores for its own route guard.
+ * Only the id and username are read.
+ */
+export async function readPageIdentity(
+  window: EchoFlowLoginWindow,
+  origin: string,
+): Promise<EchoFlowLoginIdentity | null> {
+  try {
+    if (new URL(window.webContents.getURL()).origin !== origin) return null
+    const raw = await window.webContents.executeJavaScript(
+      'window.localStorage.getItem("user")',
+      true,
+    )
+    return parseSiteIdentity(raw)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Owns the site login window and its credential.
  *
- * Completion is decided by the session cookie, not by one observed request.
- * The site signs users in through several paths (its own form, GitHub, Google,
- * Telegram, an already-valid session), and only some of them produce a
- * `POST /api/user/login`. Polling the partition and resolving the account from
- * the cookie covers all of them; every failure path ends in an explicit result
- * so the renderer can stop waiting.
+ * Completion is decided by the credential the profile resolves, not by one
+ * observed request. A page can sign users in through several paths (its own
+ * form, GitHub, Google, Telegram, an already-valid session), and only some of
+ * them produce a request the host can observe. Polling the profile covers all
+ * of them; every failure path ends in an explicit result so the renderer can
+ * stop waiting.
  */
 export class EchoFlowLoginSession {
   private window: EchoFlowLoginWindow | null = null
+  private activeProfile: EchoFlowLoginProfile | null = null
   private pending: Promise<EchoFlowLoginResult> | null = null
   private opening: Promise<void> | null = null
   private restoring: Promise<boolean> | null = null
-  private loginSession: EchoFlowLoginWindow['session'] | null = null
+  private restoringEndpoint: EchoFlowLoginEndpoint | null = null
   private settled: ((result: EchoFlowLoginResult) => void) | null = null
-  private loginVerified = false
+  private readonly verified = new Set<EchoFlowLoginEndpoint>()
   private loadRetriesUsed = 0
   private loadRetryTimer: ReturnType<typeof setTimeout> | null = null
   private loadTimer: ReturnType<typeof setTimeout> | null = null
@@ -115,7 +168,7 @@ export class EchoFlowLoginSession {
   private pollTimer: ReturnType<typeof setInterval> | null = null
   private identityInFlight = false
   private identityRejections = 0
-  private lastIdentityCookieHeader = ''
+  private lastCredentialKey = ''
   private lastIdentityAttemptAt = 0
 
   private readonly pollIntervalMs: number
@@ -134,56 +187,36 @@ export class EchoFlowLoginSession {
     this.loadRetryLimit = deps.loadRetries ?? DEFAULT_LOAD_RETRIES
   }
 
-  async open(): Promise<EchoFlowLoginResult> {
+  async open(endpoint: EchoFlowLoginEndpoint = 'main'): Promise<EchoFlowLoginResult> {
     if (this.pending) {
       this.focusWindow()
       return this.pending
     }
 
-    // An existing partition cookie is the common "already signed in" case.
-    // Reusing it avoids opening a window that the site would immediately
-    // redirect away from the login page.
-    if (await this.restoreSession()) return 'authenticated'
+    // An existing credential is the common "already signed in" case. Reusing
+    // it avoids opening a window that the site would immediately redirect
+    // away from the login page.
+    if (await this.restoreSession(endpoint)) return 'authenticated'
     if (this.pending) {
       this.focusWindow()
       return this.pending
     }
 
-    this.loginVerified = false
     this.pending = new Promise(resolve => { this.settled = resolve })
-    this.opening = this.startWindow()
+    this.opening = this.startWindow(endpoint)
     void this.opening.then(() => { this.opening = null })
     return this.pending
   }
 
-  async getCookies(): Promise<SiteCookie[]> {
-    if (!this.loginVerified) return []
-    return await this.readSiteCookies()
+  async rehydrate(endpoint: EchoFlowLoginEndpoint = 'main'): Promise<boolean> {
+    this.verified.delete(endpoint)
+    return await this.restoreSession(endpoint)
   }
 
-  async rehydrate(): Promise<boolean> {
-    this.loginVerified = false
-    return await this.restoreSession()
-  }
-
-  async clear(): Promise<void> {
-    this.cancelLogin()
-    if (this.deps.clearCookies) {
-      await this.deps.clearCookies()
-      this.loginVerified = false
-      return
-    }
-    const session = this.loginSession
-    if (!session) {
-      this.loginVerified = false
-      return
-    }
-    const cookies = await session.cookies.get({ url: ECHOFLOW_LOGIN_ORIGIN })
-    await Promise.all(cookies.map(cookie => session.cookies.remove(
-      `${ECHOFLOW_LOGIN_ORIGIN}${cookiePath(cookie)}`,
-      cookie.name,
-    )))
-    this.loginVerified = false
+  async clear(endpoint: EchoFlowLoginEndpoint = 'main'): Promise<void> {
+    this.verified.delete(endpoint)
+    if (this.activeProfile?.endpoint === endpoint) this.cancelLogin()
+    await this.deps.clearCookies?.(endpoint)
   }
 
   private focusWindow(): void {
@@ -191,55 +224,57 @@ export class EchoFlowLoginSession {
     else void this.opening?.then(() => this.window?.focus())
   }
 
-  private restoreSession(): Promise<boolean> {
-    this.restoring ??= this.tryRestoreSession()
+  private restoreSession(endpoint: EchoFlowLoginEndpoint): Promise<boolean> {
+    if (this.restoringEndpoint !== endpoint) {
+      this.restoring = null
+      this.restoringEndpoint = endpoint
+    }
+    this.restoring ??= this.tryRestoreSession(endpoint)
       .catch(() => false)
       .finally(() => { this.restoring = null })
     return this.restoring
   }
 
-  private async tryRestoreSession(): Promise<boolean> {
-    const cookies = await this.readSiteCookies()
-    if (!cookies.length) return false
-    const identity = await this.deps.resolveIdentity(cookies)
-    if (!identity) return false
-    if (!await this.deps.verifySession(cookies, identity)) return false
-    this.loginVerified = true
+  private async tryRestoreSession(endpoint: EchoFlowLoginEndpoint): Promise<boolean> {
+    const credential = await this.deps.readCredential(endpoint, null)
+    if (!credential) return false
+    if (!await this.deps.verifySession(endpoint, credential)) return false
+    this.verified.add(endpoint)
     return true
-  }
-
-  private async readSiteCookies(): Promise<SiteCookie[]> {
-    if (this.deps.readCookies) return await this.deps.readCookies()
-    if (!this.loginSession) return []
-    return await this.loginSession.cookies.get({ url: ECHOFLOW_LOGIN_ORIGIN })
   }
 
   private cancelLogin(): void {
     this.clearTimers()
-    if (!this.window) return
     const window = this.window
     this.window = null
-    try {
-      window.close()
-    } catch {
-      // The window may already be gone; the pending promise still settles.
+    this.activeProfile = null
+    if (window) {
+      try {
+        window.close()
+      } catch {
+        // The window may already be gone; the pending promise still settles.
+      }
+      this.finish('cancelled')
+      return
     }
-    this.finish('cancelled')
+    if (this.pending) this.finish('cancelled')
   }
 
-  private async startWindow(): Promise<void> {
+  private async startWindow(endpoint: EchoFlowLoginEndpoint): Promise<void> {
+    const profile = this.deps.profiles[endpoint]
     let window: EchoFlowLoginWindow | null = null
     try {
-      window = await this.deps.createWindow(ECHOFLOW_LOGIN_PARTITION)
+      window = await this.deps.createWindow(profile.partition)
       this.window = window
+      this.activeProfile = profile
       this.identityRejections = 0
-      this.loginSession = window.session
+      this.lastCredentialKey = ''
       const loginWindow = window
 
-      window.webContents.setWindowOpenHandler(details => this.onWindowOpen(details.url))
+      window.webContents.setWindowOpenHandler(details => this.onWindowOpen(profile, details.url))
       for (const event of ['will-navigate', 'will-redirect'] as const) {
         window.webContents.on(event, (navigation, target) => {
-          if (!isAllowedSiteNavigation(target)) navigation.preventDefault()
+          if (!isAllowedProfileNavigation(profile, target)) navigation.preventDefault()
         })
       }
       window.webContents.on('did-finish-load', () => {
@@ -260,11 +295,11 @@ export class EchoFlowLoginSession {
         this.loginTimeoutMs,
       )
       this.pollTimer = setInterval(
-        () => { void this.pollSession(loginWindow) },
+        () => { void this.pollSession(loginWindow, endpoint) },
         this.pollIntervalMs,
       )
 
-      await window.loadURL(ECHOFLOW_LOGIN_URL)
+      await window.loadURL(profile.url)
     } catch (error) {
       this.failAndClose(window, 'window-start-failed', error)
     }
@@ -286,40 +321,36 @@ export class EchoFlowLoginSession {
     if (this.loadRetryTimer) clearTimeout(this.loadRetryTimer)
     this.loadRetryTimer = setTimeout(() => {
       this.loadRetryTimer = null
-      if (this.window === window) void window.loadURL(ECHOFLOW_LOGIN_URL).catch(() => {})
+      const profile = this.activeProfile
+      if (this.window === window && profile) void window.loadURL(profile.url).catch(() => {})
     }, this.loadRetryDelayMs * this.loadRetriesUsed)
   }
 
-  private async pollSession(window: EchoFlowLoginWindow): Promise<void> {
-    if (this.window !== window || this.identityInFlight || this.loginVerified) return
+  private async pollSession(window: EchoFlowLoginWindow, endpoint: EchoFlowLoginEndpoint): Promise<void> {
+    if (this.window !== window || this.identityInFlight || this.verified.has(endpoint)) return
 
-    let cookies: SiteCookie[]
+    let credential: EchoFlowLoginCredential | null
     try {
-      cookies = await this.readSiteCookies()
+      credential = await this.deps.readCredential(endpoint, window)
     } catch {
       return
     }
-    if (this.window !== window || !cookies.length) return
+    if (this.window !== window || !credential) return
 
-    const cookieHeader = siteCookieHeader(cookies)
-    if (!cookieHeader) return
-
+    const fingerprint = credentialFingerprint(credential)
     const now = Date.now()
     if (
-      cookieHeader === this.lastIdentityCookieHeader
+      fingerprint === this.lastCredentialKey
       && now - this.lastIdentityAttemptAt < this.identityRetryMs
     ) return
-    // A different cookie means a new sign-in attempt, not a retry of the failure.
-    if (cookieHeader !== this.lastIdentityCookieHeader) this.identityRejections = 0
-    this.lastIdentityCookieHeader = cookieHeader
+    // A different credential means a new sign-in attempt, not a retry of the failure.
+    if (fingerprint !== this.lastCredentialKey) this.identityRejections = 0
+    this.lastCredentialKey = fingerprint
     this.lastIdentityAttemptAt = now
 
     this.identityInFlight = true
     try {
-      let identity = await this.deps.resolveIdentity(cookies)
-      if (!identity && this.window === window) identity = await this.readPageIdentity(window)
-      if (!identity || this.window !== window) return
-      if (!await this.deps.verifySession(cookies, identity)) {
+      if (!await this.deps.verifySession(endpoint, credential)) {
         this.identityRejections += 1
         if (this.identityRejections >= MAX_IDENTITY_REJECTIONS) {
           this.failAndClose(window, 'bootstrap-rejected')
@@ -327,7 +358,7 @@ export class EchoFlowLoginSession {
         return
       }
       this.identityRejections = 0
-      this.loginVerified = true
+      this.verified.add(endpoint)
       this.finishAndClose(window, 'authenticated')
     } catch {
       // Transient read or bridge failures are retried on the next poll.
@@ -336,32 +367,14 @@ export class EchoFlowLoginSession {
     }
   }
 
-  /**
-   * Fallback for consoles that reject a cookie-only `/api/user/self`. The site
-   * already stores the signed-in record it uses for its own route guard; only
-   * the id and username are read.
-   */
-  private async readPageIdentity(window: EchoFlowLoginWindow): Promise<EchoFlowLoginIdentity | null> {
-    try {
-      if (new URL(window.webContents.getURL()).origin !== ECHOFLOW_LOGIN_ORIGIN) return null
-      const raw = await window.webContents.executeJavaScript(
-        'window.localStorage.getItem("user")',
-        true,
-      )
-      return parseSiteIdentity(raw)
-    } catch {
-      return null
-    }
-  }
-
-  private onWindowOpen(url: string): EchoFlowWindowOpenResult {
-    if (!isAllowedSiteNavigation(url)) return { action: 'deny' }
+  private onWindowOpen(profile: EchoFlowLoginProfile, url: string): EchoFlowWindowOpenResult {
+    if (!isAllowedProfileNavigation(profile, url)) return { action: 'deny' }
     return {
       action: 'allow',
       overrideBrowserWindowOptions: {
         autoHideMenuBar: true,
         webPreferences: {
-          partition: ECHOFLOW_LOGIN_PARTITION,
+          partition: profile.partition,
           contextIsolation: true,
           nodeIntegration: false,
           sandbox: true,
@@ -373,6 +386,7 @@ export class EchoFlowLoginSession {
   private onWindowClosed(window: EchoFlowLoginWindow): void {
     if (this.window !== window) return
     this.window = null
+    this.activeProfile = null
     this.clearTimers()
     this.finish('cancelled')
   }
@@ -380,6 +394,7 @@ export class EchoFlowLoginSession {
   private finishAndClose(window: EchoFlowLoginWindow, result: EchoFlowLoginResult): void {
     if (this.window !== window) return
     this.window = null
+    this.activeProfile = null
     this.clearTimers()
     try {
       window.close()
@@ -397,6 +412,7 @@ export class EchoFlowLoginSession {
     const target = window ?? this.window
     if (target && this.window !== target) return
     if (target) this.window = null
+    this.activeProfile = null
     this.clearTimers()
     if (target) {
       try {
@@ -441,6 +457,12 @@ export class EchoFlowLoginSession {
   }
 }
 
+function credentialFingerprint(credential: EchoFlowLoginCredential): string {
+  return credential.kind === 'session'
+    ? `session:${credential.userId}:${credential.cookie}`
+    : `bearer:${credential.userId}:${credential.accessToken}`
+}
+
 const COOKIE_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
 
 /** Convert Electron's host-only cookie records to a safe Cookie request header. */
@@ -449,9 +471,4 @@ export function siteCookieHeader(cookies: readonly SiteCookie[]): string {
     .filter(cookie => COOKIE_NAME_PATTERN.test(cookie.name) && !/[;\r\n\0]/.test(cookie.value))
     .map(cookie => `${cookie.name}=${cookie.value}`)
     .join('; ')
-}
-
-function cookiePath(cookie: SiteCookie): string {
-  const value = cookie.path || '/'
-  return value.startsWith('/') ? value : `/${value}`
 }

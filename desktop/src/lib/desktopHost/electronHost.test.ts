@@ -5,12 +5,16 @@ import { createElectronHost } from './electronHost'
 import { PUBLIC_ACCESS_CONSENT_VERSION, type WorkspaceBrowserMenuOptions } from './types'
 
 describe('electron desktop host', () => {
-  it('opens site sign-in without sending credentials through renderer IPC', async () => {
+  it('opens site sign-in for the requested endpoint without sending credentials through renderer IPC', async () => {
     const invoke = vi.fn().mockResolvedValue('authenticated')
     const host = createElectronHost({ invoke, subscribe: vi.fn() })
 
     await expect(host.echoFlow.openLogin()).resolves.toBe('authenticated')
-    expect(invoke).toHaveBeenCalledWith(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, undefined)
+    expect(invoke).toHaveBeenCalledWith(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, { endpoint: 'main' })
+
+    invoke.mockClear()
+    await expect(host.echoFlow.openLogin('dedicated')).resolves.toBe('authenticated')
+    expect(invoke).toHaveBeenCalledWith(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, { endpoint: 'dedicated' })
   })
   it('forwards a failed site sign-in result to the renderer', async () => {
     const invoke = vi.fn().mockResolvedValue('failed')
