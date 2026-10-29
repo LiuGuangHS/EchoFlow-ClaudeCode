@@ -17,10 +17,48 @@ export const GITHUB_RELEASES_URL = `https://github.com/${GITHUB_REPOSITORY}/rele
 // 与 desktop/electron/services/updateFeed.ts 的 DEFAULT_PROXY_FEED_URL 同源，换镜像两处一起改。
 export const GITHUB_ACCELERATOR_PREFIX = 'https://gh-proxy.org/'
 
+const [GITHUB_OWNER, GITHUB_REPOSITORY_NAME] = GITHUB_REPOSITORY.split('/')
+const GITHUB_PAGES_ORIGIN = `https://${GITHUB_OWNER.toLowerCase()}.github.io/${GITHUB_REPOSITORY_NAME}`
+// 自定义域名由 EdgeOne 独立构建，可能缺少 CI 写进 dist 的机器端点。Pages 始终是
+// deploy-docs.yml 上传的完整产物，作为同源 manifest 缺失时的只读副本。
+export const DOWNLOAD_MANIFEST_FALLBACK_URL = `${GITHUB_PAGES_ORIGIN}${DOWNLOAD_MANIFEST_PATH}`
+
 const PLATFORM_LABELS = { mac: 'macOS', win: 'Windows', linux: 'Linux' }
+const PLATFORM_ALIASES = {
+  mac: 'mac',
+  macos: 'mac',
+  win: 'win',
+  windows: 'win',
+  linux: 'linux',
+}
+const SAFE_PATH_SEGMENT = /^v?[0-9A-Za-z][0-9A-Za-z._-]*$/
 
 export function platformLabel(platform) {
   return PLATFORM_LABELS[platform] ?? platform
+}
+
+/** 接受下载页的短名与落地页显示的系统名；未知值返回 null，交给 UA 或默认值。 */
+export function normalizeDownloadPlatform(value) {
+  if (typeof value !== 'string') return null
+  return PLATFORM_ALIASES[value.trim().toLowerCase()] ?? null
+}
+
+/** 落地页底部的系统选择带进下载页；未知系统不拼参数。 */
+export function downloadPagePath(locale, platform) {
+  const route = locale === 'en' ? '/en/download' : '/download'
+  const normalized = normalizeDownloadPlatform(platform)
+  return normalized ? `${route}?platform=${normalized}` : route
+}
+
+/** 合法显式选择优先；没有或非法时沿用 UA 推断。 */
+export function resolveInitialPlatform(search, userAgent = '') {
+  let requested = null
+  try {
+    requested = normalizeDownloadPlatform(new URLSearchParams(search || '').get('platform'))
+  } catch {
+    requested = null
+  }
+  return requested ?? pickPlatformArch(userAgent).platform
 }
 
 /**
@@ -115,6 +153,59 @@ export async function startDirectDownload(candidates, options = {}) {
   return 'fallback'
 }
 
+function isSafePathSegment(value) {
+  return typeof value === 'string'
+    && SAFE_PATH_SEGMENT.test(value)
+    && !value.includes('..')
+}
+
+function isSafeFileName(value) {
+  return typeof value === 'string'
+    && value === value.trim()
+    && /^[0-9A-Za-z][0-9A-Za-z._-]*$/.test(value)
+    && !value.includes('..')
+}
+
+function isFileMap(value, { allowEmpty }) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const entries = Object.entries(value)
+  if (!allowEmpty && entries.length === 0) return false
+  return entries.every(([key, fileName]) => (
+    typeof key === 'string'
+    && key.length > 0
+    && isSafeFileName(fileName)
+  ))
+}
+
+/**
+ * manifest 决定安装包 URL，必须只接受发布脚本实际生成的形状。
+ * 路径段与文件名同时校验，避免一个被篡改的 manifest 把下载带到别的 tag 或目录。
+ */
+export function isValidDownloadManifest(manifest) {
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) return false
+  if (!isSafePathSegment(manifest.tag)) return false
+  if (typeof manifest.version !== 'string' || !SAFE_PATH_SEGMENT.test(manifest.version)) return false
+  if (!isFileMap(manifest.assets, { allowEmpty: false })) return false
+  if (manifest.extras !== undefined && !isFileMap(manifest.extras, { allowEmpty: true })) return false
+  return true
+}
+
+async function readDownloadManifest(url, fetchImpl) {
+  try {
+    const response = await fetchImpl(url, { cache: 'no-store' })
+    if (!response?.ok) return null
+
+    // SPA 的 404 也返回 200 的 index.html；仅看 status 会把 HTML 当 manifest。
+    const contentType = response.headers?.get?.('content-type')
+    if (typeof contentType === 'string' && /text\/html/i.test(contentType)) return null
+
+    const manifest = await response.json()
+    return isValidDownloadManifest(manifest) ? manifest : null
+  } catch {
+    return null
+  }
+}
+
 export async function loadDownloadManifest(options = {}) {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch
   if (!fetchImpl) return null
@@ -122,13 +213,13 @@ export async function loadDownloadManifest(options = {}) {
   // BASE_URL 以 / 结尾（Vite 默认就是 '/'），直接拼会得到 '//download/manifest.json'，
   // 那是协议相对地址，请求会打到名叫 download 的主机上 —— 先把尾斜杠去掉再拼。
   const base = String(options.baseUrl ?? '').replace(/\/+$/, '')
+  const sameOriginUrl = `${base}${DOWNLOAD_MANIFEST_PATH}`
+  const sameOrigin = await readDownloadManifest(sameOriginUrl, fetchImpl)
+  if (sameOrigin) return sameOrigin
 
-  try {
-    const response = await fetchImpl(`${base}${DOWNLOAD_MANIFEST_PATH}`, { cache: 'no-store' })
-    if (!response?.ok) return null
-    const manifest = await response.json()
-    return manifest && typeof manifest === 'object' ? manifest : null
-  } catch {
-    return null
-  }
+  const fallbackUrl = String(
+    options.fallbackManifestUrl ?? DOWNLOAD_MANIFEST_FALLBACK_URL,
+  ).trim()
+  if (!fallbackUrl || fallbackUrl === sameOriginUrl) return null
+  return readDownloadManifest(fallbackUrl, fetchImpl)
 }
