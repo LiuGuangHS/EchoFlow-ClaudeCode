@@ -143,6 +143,80 @@ export async function readPageIdentity(
 }
 
 /**
+ * The dedicated gateway keeps its JWT on the page: `auth_token`, `auth_user`
+ * and `token_expires_at` are its own storage keys. The values are read and
+ * handed to the local server; nothing here is logged.
+ */
+export type DedicatedStorageSnapshot = {
+  token: string | null
+  user: string | null
+  expiresAt: string | null
+}
+
+function dedicatedExpiry(value: string | null): number | null {
+  if (!value) return null
+  const numeric = Number(value)
+  if (Number.isFinite(numeric)) {
+    // Seconds and milliseconds are both plausible; below 1e12 it is seconds.
+    return numeric < 1e12 ? numeric * 1000 : numeric
+  }
+  const parsed = Date.parse(value)
+  return Number.isNaN(parsed) ? null : parsed
+}
+
+export function parseDedicatedCredential(
+  snapshot: DedicatedStorageSnapshot | null,
+  now = Date.now(),
+): EchoFlowLoginCredential | null {
+  const accessToken = snapshot?.token?.trim()
+  if (!snapshot || !accessToken) return null
+  // An expired token is the page mid-refresh, not a completed sign-in: keep
+  // polling and let the fresh token finish the login.
+  const expiry = dedicatedExpiry(snapshot.expiresAt)
+  if (expiry !== null && expiry <= now) return null
+
+  let user: unknown
+  try {
+    user = snapshot.user ? JSON.parse(snapshot.user) : null
+  } catch {
+    return null
+  }
+  if (!user || typeof user !== 'object') return null
+
+  const record = user as Record<string, unknown>
+  const rawId = record.id ?? record.user_id ?? record.userId
+  const userId = typeof rawId === 'number' ? String(rawId) : typeof rawId === 'string' ? rawId.trim() : ''
+  if (!userId) return null
+  const rawName = record.username ?? record.name
+  const username = typeof rawName === 'string' && rawName.trim() ? rawName.trim() : undefined
+
+  return { kind: 'bearer', userId, ...(username ? { username } : {}), accessToken }
+}
+
+export async function readDedicatedCredential(
+  window: EchoFlowLoginWindow,
+  origin: string,
+  now = Date.now(),
+): Promise<EchoFlowLoginCredential | null> {
+  try {
+    if (new URL(window.webContents.getURL()).origin !== origin) return null
+    const raw = await window.webContents.executeJavaScript(
+      '(() => ({ token: localStorage.getItem("auth_token"), user: localStorage.getItem("auth_user"), expiresAt: localStorage.getItem("token_expires_at") }))()',
+      true,
+    )
+    if (!raw || typeof raw !== 'object') return null
+    const snapshot = raw as Partial<DedicatedStorageSnapshot>
+    return parseDedicatedCredential({
+      token: typeof snapshot.token === 'string' ? snapshot.token : null,
+      user: typeof snapshot.user === 'string' ? snapshot.user : null,
+      expiresAt: typeof snapshot.expiresAt === 'string' ? snapshot.expiresAt : null,
+    }, now)
+  } catch {
+    return null
+  }
+}
+
+/**
  * Owns the site login window and its credential.
  *
  * Completion is decided by the credential the profile resolves, not by one

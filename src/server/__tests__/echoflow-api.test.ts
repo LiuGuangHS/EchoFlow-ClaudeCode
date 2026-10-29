@@ -623,6 +623,44 @@ describe('EchoFlow account API', () => {
     }
   })
 
+  test('sets a dedicated gateway bearer credential only through the Electron bridge', async () => {
+    const originalFetch = globalThis.fetch
+    const oldBridge = process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN
+    process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN = 'electron-only-bridge-secret'
+    globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
+      expect(String(input)).toBe('https://expapi.echoflowai.cc/api/v1/auth/me')
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer gateway-token')
+      return Response.json({ data: { id: 7, username: 'gateway-user' } })
+    }) as typeof fetch
+
+    const makeBearerRequest = (headers: Record<string, string>) => {
+      const req = new Request('http://localhost:3456/api/echoflow/account/credential', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify({ endpoint: 'dedicated', kind: 'bearer', accessToken: 'gateway-token', userId: '7' }),
+      })
+      const url = new URL(req.url)
+      return { req, url, segments: url.pathname.split('/').filter(Boolean) }
+    }
+
+    try {
+      const unauthorized = makeBearerRequest({})
+      expect((await handleEchoFlowApi(unauthorized.req, unauthorized.url, unauthorized.segments)).status).toBe(403)
+
+      const authorized = makeBearerRequest({ 'x-echoflow-site-session-bridge': 'electron-only-bridge-secret' })
+      const response = await handleEchoFlowApi(authorized.req, authorized.url, authorized.segments)
+      const body = await response.json() as { account: Record<string, unknown> }
+
+      expect(response.status).toBe(200)
+      expect(body.account).toMatchObject({ userId: '7', username: 'gateway-user', endpoint: 'dedicated' })
+      expect(JSON.stringify(body)).not.toContain('gateway-token')
+    } finally {
+      globalThis.fetch = originalFetch
+      if (oldBridge === undefined) delete process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN
+      else process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN = oldBridge
+    }
+  })
+
   test('sets a main-site session credential only through the Electron bridge', async () => {
     const originalFetch = globalThis.fetch
     const oldBridge = process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN
@@ -633,7 +671,7 @@ describe('EchoFlow account API', () => {
     }) as typeof fetch
 
     const makeSessionRequest = (headers: Record<string, string>) => {
-      const req = new Request('http://localhost:3456/api/echoflow/account/session', {
+      const req = new Request('http://localhost:3456/api/echoflow/account/credential', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...headers },
         body: JSON.stringify({ endpoint: 'main', kind: 'session', cookie: 'session=live', userId: '851842' }),

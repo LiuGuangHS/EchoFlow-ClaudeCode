@@ -3,6 +3,8 @@ import {
   DEDICATED_LOGIN_PROFILE,
   EchoFlowLoginSession,
   MAIN_LOGIN_PROFILE,
+  parseDedicatedCredential,
+  readDedicatedCredential,
   readPageIdentity,
   siteCookieHeader,
   type EchoFlowLoginCredential,
@@ -23,6 +25,7 @@ class FakeLoginWindow implements EchoFlowLoginWindow {
   loadFinished?: () => void
   pageUrl = MAIN_LOGIN_PROFILE.url
   localStorageUser: string | null = null
+  localStorage: Record<string, string | null> = {}
   credential: EchoFlowLoginCredential | null = null
 
   signIn(credential: EchoFlowLoginCredential) {
@@ -39,7 +42,15 @@ class FakeLoginWindow implements EchoFlowLoginWindow {
       this.windowOpen = handler
     },
     getURL: () => this.pageUrl,
-    executeJavaScript: vi.fn(async (_code: string, _userGesture?: boolean) => this.localStorageUser),
+    // Mirrors the expression main.ts evaluates for the dedicated gateway.
+    executeJavaScript: vi.fn(async (code: string, _userGesture?: boolean) =>
+      code.includes('auth_token')
+        ? {
+            token: this.localStorage.auth_token ?? null,
+            user: this.localStorage.auth_user ?? null,
+            expiresAt: this.localStorage.token_expires_at ?? null,
+          }
+        : this.localStorageUser),
   }
 
   on(event: 'closed', listener: () => void) {
@@ -368,5 +379,49 @@ describe('EchoFlow site login session', () => {
     expect(DEDICATED_LOGIN_PROFILE.url).toBe('https://expapi.echoflowai.cc/login')
     expect(DEDICATED_LOGIN_PROFILE.origin).toBe('https://expapi.echoflowai.cc')
     expect(DEDICATED_LOGIN_PROFILE.partition).toBe('persist:echoflow-dedicated-login')
+  })
+})
+
+describe('dedicated gateway credential', () => {
+  it('reads the gateway access token and its user from the login page storage', async () => {
+    const window = new FakeLoginWindow()
+    window.pageUrl = DEDICATED_LOGIN_PROFILE.url
+    window.localStorage = {
+      auth_token: 'jwt-access-token',
+      auth_user: JSON.stringify({ id: 7, username: 'gateway-user' }),
+      token_expires_at: String(Date.now() + 60_000),
+    }
+
+    await expect(readDedicatedCredential(window, DEDICATED_LOGIN_PROFILE.origin)).resolves.toEqual({
+      kind: 'bearer',
+      userId: '7',
+      username: 'gateway-user',
+      accessToken: 'jwt-access-token',
+    })
+  })
+
+  it('ignores an expired gateway token so the login keeps waiting for a fresh one', async () => {
+    const expiredSeconds = String(Math.floor((Date.now() - 60_000) / 1000))
+    await expect(parseDedicatedCredential({
+      token: 'jwt-access-token',
+      user: '{"id":7}',
+      expiresAt: expiredSeconds,
+    })).toBeNull()
+  })
+
+  it('refuses a gateway session that carries no user id', async () => {
+    await expect(parseDedicatedCredential({
+      token: 'jwt-access-token',
+      user: '{"username":"gateway-user"}',
+      expiresAt: null,
+    })).toBeNull()
+  })
+
+  it('ignores storage from a page that is not the dedicated origin', async () => {
+    const window = new FakeLoginWindow()
+    window.pageUrl = MAIN_LOGIN_PROFILE.url
+    window.localStorage = { auth_token: 'jwt-access-token', auth_user: '{"id":7}' }
+
+    await expect(readDedicatedCredential(window, DEDICATED_LOGIN_PROFILE.origin)).resolves.toBeNull()
   })
 })

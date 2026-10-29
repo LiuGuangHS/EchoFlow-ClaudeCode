@@ -2,6 +2,7 @@ import { PublicAccessManager } from './services/publicAccess'
 import {
   EchoFlowLoginSession,
   ECHOFLOW_LOGIN_PROFILES,
+  readDedicatedCredential,
   readPageIdentity,
   siteCookieHeader,
   type EchoFlowLoginCredential,
@@ -311,7 +312,11 @@ async function readEchoFlowLoginCredential(
   endpoint: EchoFlowLoginEndpoint,
   window: EchoFlowLoginWindow | null,
 ): Promise<EchoFlowLoginCredential | null> {
-  if (endpoint !== 'main') return null
+  if (endpoint === 'dedicated') {
+    // The gateway keeps its JWT in page storage, so this credential exists
+    // only while the login window is open; it is deliberately not persisted.
+    return window ? await readDedicatedCredential(window, ECHOFLOW_LOGIN_PROFILES.dedicated.origin) : null
+  }
   const profile = ECHOFLOW_LOGIN_PROFILES.main
   const cookies = await readEchoFlowSiteCookies(endpoint)
   const cookie = siteCookieHeader(cookies)
@@ -326,24 +331,23 @@ async function bootstrapEchoFlowAccount(
   endpoint: EchoFlowLoginEndpoint,
   credential: EchoFlowLoginCredential,
 ): Promise<boolean> {
-  if (endpoint !== 'main' || credential.kind !== 'session') return false
+  // Each endpoint accepts exactly the credential its own page produces.
+  if (credential.kind === 'session' && endpoint !== 'main') return false
+  if (credential.kind === 'bearer' && endpoint !== 'dedicated') return false
   try {
     const runtime = getServerRuntime()
     const serverUrl = await runtime.getServerUrl()
     const bridgeToken = runtime.getSiteSessionBridgeToken()
     if (!bridgeToken) return false
-    const response = await fetch(`${serverUrl}/api/echoflow/account/session`, {
+    const response = await fetch(`${serverUrl}/api/echoflow/account/credential`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'x-echoflow-site-session-bridge': bridgeToken,
       },
-      body: JSON.stringify({
-        endpoint,
-        kind: 'session',
-        cookie: credential.cookie,
-        userId: credential.userId,
-      }),
+      body: JSON.stringify(credential.kind === 'session'
+        ? { endpoint, kind: 'session', cookie: credential.cookie, userId: credential.userId }
+        : { endpoint, kind: 'bearer', accessToken: credential.accessToken, userId: credential.userId }),
       signal: AbortSignal.timeout(15_000),
     })
     return response.ok

@@ -92,3 +92,64 @@ describe('EchoFlowApiService credentials', () => {
     ).rejects.toMatchObject({ code: 'token_invalid' })
   })
 })
+
+function stubGateway() {
+  const calls: { url: string; headers: Headers }[] = []
+  globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input)
+    calls.push({ url, headers: new Headers(init?.headers) })
+    if (url.endsWith('/api/v1/auth/me')) {
+      return Response.json({
+        data: { id: 7, username: 'gateway-user', quota: 500_000, group: 'default' },
+      })
+    }
+    return Response.json({ success: true, data: { items: [] } })
+  }) as typeof fetch
+  return calls
+}
+
+describe('EchoFlowApiService dedicated bearer accounts', () => {
+  test('reads the dedicated account from the gateway with the bearer token', async () => {
+    const calls = stubGateway()
+    const service = new EchoFlowApiService()
+
+    const account = await service.setCredential('dedicated', {
+      kind: 'bearer',
+      userId: '7',
+      accessToken: 'eyJhbGciOi.dedicated-token.sig',
+    })
+
+    expect(account).toMatchObject({ userId: '7', username: 'gateway-user', endpoint: 'dedicated', live: true })
+    expect(calls.map(call => call.url)).toEqual(['https://expapi.echoflowai.cc/api/v1/auth/me'])
+    expect(calls[0]?.headers.get('authorization')).toBe('Bearer eyJhbGciOi.dedicated-token.sig')
+
+    const raw = await readAccountFile()
+    expect(raw).toContain('"credential": "bearer"')
+    expect(raw).not.toContain('dedicated-token')
+  })
+
+  test('refreshes the dedicated account without asking the gateway for tokens', async () => {
+    const calls = stubGateway()
+    const service = new EchoFlowApiService()
+    await service.setCredential('dedicated', {
+      kind: 'bearer',
+      userId: '7',
+      accessToken: 'eyJhbGciOi.dedicated-token.sig',
+    })
+    calls.length = 0
+
+    const account = await service.refreshAccount('dedicated')
+
+    expect(account).toMatchObject({ userId: '7', endpoint: 'dedicated', live: true })
+    expect(calls.map(call => call.url)).toEqual(['https://expapi.echoflowai.cc/api/v1/auth/me'])
+  })
+
+  test('rejects a bearer credential for the main site', async () => {
+    stubSite()
+    const service = new EchoFlowApiService()
+
+    await expect(
+      service.setCredential('main', { kind: 'bearer', userId: '7', accessToken: 'gateway-token' }),
+    ).rejects.toMatchObject({ code: 'token_invalid' })
+  })
+})

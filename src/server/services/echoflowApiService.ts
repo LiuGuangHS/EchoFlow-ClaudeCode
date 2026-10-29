@@ -119,7 +119,12 @@ export class EchoFlowApiService {
   }
 
   async setCredential(endpoint: EchoFlowEndpoint, credential: EchoFlowCredential): Promise<EchoFlowAccount> {
+    // The main site signs in with a cookie and the gateway with its own bearer
+    // token, so each kind is only valid on the endpoint it comes from.
     if (credential.kind === 'session' && endpoint === 'dedicated') {
+      throw new EchoFlowApiError('token_invalid')
+    }
+    if (credential.kind === 'bearer' && endpoint === 'main') {
       throw new EchoFlowApiError('token_invalid')
     }
     const trimmed: EchoFlowCredential = { ...credential, userId: credential.userId.trim() }
@@ -184,7 +189,9 @@ export class EchoFlowApiService {
       credential: credential.kind,
       ...(credential.kind === 'token' ? { managementToken: credential.managementToken } : {}),
       ...user,
-      tokens: await this.listTokensWithCredential(endpoint),
+      // The gateway has no token list; a bearer account keeps the metadata it
+      // was created with instead of asking an endpoint that does not exist.
+      tokens: credential.kind === 'bearer' ? account.tokens : await this.listTokensWithCredential(endpoint),
       refreshedAt: Date.now(),
       endpoint,
     }
@@ -212,6 +219,26 @@ export class EchoFlowApiService {
   }
 
   private async validateCredential(credential: EchoFlowCredential, endpoint: EchoFlowEndpoint): Promise<EchoFlowUserInfo> {
+    if (credential.kind === 'bearer') {
+      const me = await this.fetchManagementApi<{
+        data?: { id?: number | string; quota?: number; balance?: number; group?: string; username?: string; name?: string }
+        quota?: number
+        balance?: number
+        group?: string
+        username?: string
+        name?: string
+      }>('/api/v1/auth/me', credential, endpoint)
+
+      const account = me.data ?? me
+      return {
+        balance: typeof account.quota === 'number'
+          ? account.quota / 500000
+          : typeof account.balance === 'number' ? account.balance : 0,
+        userGroup: account.group ?? 'default',
+        username: account.username ?? account.name ?? '',
+      }
+    }
+
     const data = await this.fetchManagementApi<{ success?: boolean; message?: string; data?: { quota?: number; group?: string; username?: string } }>(
       '/api/user/self',
       credential,
