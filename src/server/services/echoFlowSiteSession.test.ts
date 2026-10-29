@@ -25,6 +25,19 @@ describe('EchoFlowSiteSession', () => {
     expect(session.getStatus()).toEqual(account)
   })
 
+  it('accepts an account whose site quota is negative', async () => {
+    const fetcher = mock(async () => response({
+      success: true,
+      data: { id: 851842, username: 'zhijun2003', quota: -11002 },
+    })) as unknown as typeof fetch
+    const session = new EchoFlowSiteSession({ fetch: fetcher, now: () => 1234 })
+
+    const account = await session.setSession({ cookie: 'session=live', userId: '851842' })
+
+    // The site allows debt; a negative quota is a real balance, not a bad response.
+    expect(account.balance).toBeCloseTo(-0.022004, 10)
+  })
+
   it('rejects blank or header-injected cookies before making a request', async () => {
     const fetcher = mock(async () => response({ success: true, data: {} })) as unknown as typeof fetch
     const session = new EchoFlowSiteSession({ fetch: fetcher })

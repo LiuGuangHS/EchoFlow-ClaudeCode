@@ -104,7 +104,7 @@ export class EchoFlowSiteSession {
       || !(typeof userId === 'string' && userId.trim() !== '' || typeof userId === 'number' && Number.isSafeInteger(userId) && userId > 0)
       || String(userId) !== expectedUserId
       || typeof username !== 'string' || username.trim() === ''
-      || typeof quota !== 'number' || !Number.isFinite(quota) || quota < 0) {
+      || typeof quota !== 'number' || !Number.isFinite(quota)) {
       throw new EchoFlowSiteSessionError('invalid_response')
     }
 
