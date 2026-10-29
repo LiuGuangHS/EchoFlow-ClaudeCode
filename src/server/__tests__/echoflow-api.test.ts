@@ -622,6 +622,43 @@ describe('EchoFlow account API', () => {
       globalThis.fetch = originalFetch
     }
   })
+
+  test('sets a main-site session credential only through the Electron bridge', async () => {
+    const originalFetch = globalThis.fetch
+    const oldBridge = process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN
+    process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN = 'electron-only-bridge-secret'
+    globalThis.fetch = mock(async (input: string | URL | Request) => {
+      expect(String(input)).toBe('https://api.echoflowai.cc/api/user/self')
+      return Response.json({ success: true, data: { id: 851842, username: 'zhijun2003', quota: 1_000_000 } })
+    }) as typeof fetch
+
+    const makeSessionRequest = (headers: Record<string, string>) => {
+      const req = new Request('http://localhost:3456/api/echoflow/account/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify({ endpoint: 'main', kind: 'session', cookie: 'session=live', userId: '851842' }),
+      })
+      const url = new URL(req.url)
+      return { req, url, segments: url.pathname.split('/').filter(Boolean) }
+    }
+
+    try {
+      const unauthorized = makeSessionRequest({})
+      expect((await handleEchoFlowApi(unauthorized.req, unauthorized.url, unauthorized.segments)).status).toBe(403)
+
+      const authorized = makeSessionRequest({ 'x-echoflow-site-session-bridge': 'electron-only-bridge-secret' })
+      const response = await handleEchoFlowApi(authorized.req, authorized.url, authorized.segments)
+      const body = await response.json() as { account: Record<string, unknown> }
+
+      expect(response.status).toBe(200)
+      expect(body.account).toMatchObject({ userId: '851842', username: 'zhijun2003' })
+      expect(JSON.stringify(body)).not.toContain('session=live')
+    } finally {
+      globalThis.fetch = originalFetch
+      if (oldBridge === undefined) delete process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN
+      else process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN = oldBridge
+    }
+  })
 })
 
 describe('EchoFlow site session API', () => {

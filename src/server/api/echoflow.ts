@@ -61,6 +61,12 @@ const EchoFlowSiteSessionBootstrapSchema = z.object({
   cookie: z.string().min(1).max(16 * 1024).refine(value => !/[\r\n\0]/.test(value)),
   userId: z.string().trim().min(1).max(128).refine(value => !/[\r\n\0]/.test(value)),
 })
+const EchoFlowAccountSessionSchema = z.object({
+  endpoint: z.enum(['main', 'dedicated']).default('main'),
+  kind: z.literal('session'),
+  cookie: EchoFlowSiteSessionBootstrapSchema.shape.cookie,
+  userId: EchoFlowSiteSessionBootstrapSchema.shape.userId,
+})
 
 function hasSiteSessionBridgeToken(req: Request): boolean {
   const expected = process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN ?? ''
@@ -101,6 +107,19 @@ export async function handleEchoFlowApi(
     if (!action && req.method === 'GET') {
       const accounts = await service.getAccounts()
       return Response.json({ account: accounts.main, accounts })
+    }
+
+    if (action === 'account' && segments[3] === 'session' && req.method === 'POST') {
+      if (context.remoteBrowser) return Response.json({ error: 'desktop_only' }, { status: 403 })
+      if (!hasSiteSessionBridgeToken(req)) return Response.json({ error: 'desktop_bridge_required' }, { status: 403 })
+      const input = EchoFlowAccountSessionSchema.parse(await req.json())
+      return Response.json({
+        account: await service.setCredential(input.endpoint, {
+          kind: 'session',
+          userId: input.userId,
+          cookie: input.cookie,
+        }),
+      })
     }
 
     if (action === 'account') {
