@@ -68,12 +68,12 @@ type StoredEchoFlowAccount = {
 }
 
 type StoredEchoFlowAccounts = {
-  schemaVersion: 2
+  schemaVersion: 3
   accounts: Record<EchoFlowEndpoint, StoredEchoFlowAccount | null>
 }
 
 const EMPTY_ACCOUNTS: StoredEchoFlowAccounts = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   accounts: { main: null, dedicated: null },
 }
 
@@ -303,14 +303,23 @@ export class EchoFlowApiService {
   private async readAccounts(): Promise<StoredEchoFlowAccounts> {
     try {
       const parsed = JSON.parse(await fs.readFile(this.getAccountPath(), 'utf-8')) as unknown
-      if (isStoredAccounts(parsed)) return parsed
+      const normalized = normalizeStoredAccounts(parsed)
+      if (normalized) {
+        if ((parsed as { schemaVersion?: unknown }).schemaVersion !== 3) {
+          await this.backupAccountsFile()
+          await this.writeAccounts(normalized)
+        }
+        return normalized
+      }
       if (isStoredAccount(parsed)) {
+        await this.backupAccountsFile()
         const endpoint: EchoFlowEndpoint = parsed.endpoint === 'dedicated' ? 'dedicated' : 'main'
+        const account = { ...parsed, credential: parsed.credential ?? 'token', endpoint }
         const migrated: StoredEchoFlowAccounts = {
-          schemaVersion: 2,
+          schemaVersion: 3,
           accounts: {
-            main: endpoint === 'dedicated' ? null : { ...parsed, endpoint },
-            dedicated: endpoint === 'dedicated' ? { ...parsed, endpoint } : null,
+            main: endpoint === 'dedicated' ? null : account,
+            dedicated: endpoint === 'dedicated' ? account : null,
           },
         }
         await this.writeAccounts(migrated)
@@ -325,8 +334,11 @@ export class EchoFlowApiService {
       const parsed = JSON.parse(await fs.readFile(this.getLegacyAccountPath(), 'utf-8')) as unknown
       if (!isStoredAccount(parsed)) return { ...EMPTY_ACCOUNTS, accounts: { ...EMPTY_ACCOUNTS.accounts } }
       const migrated: StoredEchoFlowAccounts = {
-        schemaVersion: 2,
-        accounts: { main: { ...parsed, endpoint: 'main' }, dedicated: null },
+        schemaVersion: 3,
+        accounts: {
+          main: { ...parsed, credential: parsed.credential ?? 'token', endpoint: 'main' },
+          dedicated: null,
+        },
       }
       await this.writeAccounts(migrated)
       await fs.unlink(this.getLegacyAccountPath()).catch((error) => {
@@ -337,6 +349,13 @@ export class EchoFlowApiService {
       if (errnoCode(error) === 'ENOENT') return { ...EMPTY_ACCOUNTS, accounts: { ...EMPTY_ACCOUNTS.accounts } }
       throw error
     }
+  }
+
+  private async backupAccountsFile(): Promise<void> {
+    const accountPath = this.getAccountPath()
+    const backupPath = `${accountPath}.bak-before-migration-${Date.now()}`
+    await fs.copyFile(accountPath, backupPath)
+    await fs.chmod(backupPath, 0o600)
   }
 
   private async writeAccounts(accounts: StoredEchoFlowAccounts): Promise<void> {
@@ -407,13 +426,23 @@ function maskKey(key: string): string {
   return `${key.slice(0, 6)}****${key.slice(-4)}`
 }
 
-function isStoredAccounts(value: unknown): value is StoredEchoFlowAccounts {
-  if (!value || typeof value !== 'object') return false
+function normalizeStoredAccounts(value: unknown): StoredEchoFlowAccounts | null {
+  if (!value || typeof value !== 'object') return null
   const record = value as { schemaVersion?: unknown; accounts?: unknown }
-  if (record.schemaVersion !== 2 || !record.accounts || typeof record.accounts !== 'object') return false
+  if ((record.schemaVersion !== 2 && record.schemaVersion !== 3) || !record.accounts || typeof record.accounts !== 'object') return null
   const accounts = record.accounts as Record<string, unknown>
-  return (accounts.main === null || isStoredAccount(accounts.main)) &&
-    (accounts.dedicated === null || isStoredAccount(accounts.dedicated))
+  const main = toStoredAccount(accounts.main)
+  const dedicated = toStoredAccount(accounts.dedicated)
+  if (accounts.main !== null && !main) return null
+  if (accounts.dedicated !== null && !dedicated) return null
+  // Root-level unknown fields survive the v2 -> v3 rewrite.
+  return { ...record, schemaVersion: 3, accounts: { main, dedicated } }
+}
+
+function toStoredAccount(value: unknown): StoredEchoFlowAccount | null {
+  if (value === null) return null
+  if (!isStoredAccount(value)) return null
+  return { ...value, credential: value.credential ?? 'token' }
 }
 
 function isStoredAccount(value: unknown): value is StoredEchoFlowAccount {

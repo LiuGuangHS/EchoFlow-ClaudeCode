@@ -220,7 +220,7 @@ describe('EchoFlow account API', () => {
       expect(JSON.stringify(accounts)).not.toContain('legacy-management-')
 
       const stored = await readStoredJson<{ schemaVersion: number; accounts: Record<'main' | 'dedicated', { userId: string; managementToken: string; endpoint?: string } | null> }>('echoflow-account.json')
-      expect(stored.schemaVersion).toBe(2)
+      expect(stored.schemaVersion).toBe(3)
       expect(stored.accounts[endpoint]).toMatchObject({ userId: `legacy-${endpoint}`, managementToken: `legacy-management-${endpoint}`, endpoint })
       expect(stored.accounts[endpoint === 'main' ? 'dedicated' : 'main']).toBeNull()
     }
