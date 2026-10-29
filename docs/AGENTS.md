@@ -17,6 +17,16 @@ Seven top-level sections: `start/`, `cases/`, `desktop/`, `mobile/`, `im/`, `cli
 
 `docs/en/` mirrors the Chinese tree file for file. Keep Chinese pages and their `docs/en/` counterparts aligned.
 
+## Where documentation lives
+
+- **Product docs** are the seven sections above plus their `docs/en/` mirrors. The site generator publishes only these.
+- **Site assets** live in `docs/images/` and `docs/public/`; `site/src/generated/` is build output and stays gitignored.
+- **Release history** lives in `release-notes/`. Governance and entry documents such as `README.md`, `CONTRIBUTING.md`, and `SECURITY.md` stay at the repository root.
+- **Maintainer-only runbooks, design notes, and handoffs** live in `docs/_internal/`. Completed material moves to `docs/_internal/archive/`. These files are excluded from the site and must not be linked from product pages.
+- **Agent instructions** are the root and nested `AGENTS.md` files. They guide contributors and agents; they are not product documentation.
+- **`docs/superpowers/` is local planning**, gitignored and never tracked. A tracked page must not link to it; fold any durable conclusion into `internals/` first.
+- Active architecture plans may sit at the repository root until they land. When one completes, move its durable conclusions into `internals/` and archive or delete the process draft.
+
 ## Frontmatter (required on every page)
 
 ```yaml

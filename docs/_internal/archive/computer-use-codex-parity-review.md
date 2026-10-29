@@ -136,7 +136,7 @@ Codex 的 client 二进制 multiplex **至少 4 个** MCP server：`ComputerUseM
 若后台确实读不到全树，则 `get_app_state` 返回的是空壳树，模型按 index 点什么都点不到 —— **整个语义循环的前提不成立**。
 
 **验证成本极低**：用安装版 `.app` 对同一个 Electron 应用前台/后台各跑一次 `get_app_state`，比较 `elementCount`。
-见 `computer-use-native-manual-qa.md` §2.1–2.2。**这条应排在所有其他工作之前。**
+见 `../computer-use-native-manual-qa.md` §2.1–2.2。**这条应排在所有其他工作之前。**
 
 （旁证但不足以定论：Codex 有 `activate*` 选择器并监听 `NSWorkspaceDidActivateApplicationNotification`，
 但也可能只服务它自己的授权窗口——**未证实**。）

@@ -96,7 +96,7 @@ bun run check:desktop-ui-smoke # real desktop UI + real permission dialog + mock
 
 Neither needs a provider, credentials, or the public network. `check:agent-flow` covers session creation, runtime selection, first-turn streaming, tool execution, permission allow/deny, tool failure, API error, interrupt, reconnect permission replay, and session recovery. `check:desktop-ui-smoke` clicks the real Allow button in a real browser; it needs `agent-browser` and installed desktop dependencies and skips with a printed reason when either is missing.
 
-`agent-browser` belongs to that committed lane (which runs headless on Linux CI) and to the maintainer-run `desktop/scripts/e2e-*-agent-browser.sh` scripts. For ad-hoc browser work (manual verification, screenshots, exploratory UI checks), use the `ego-browser` skill instead; do not treat `agent-browser` as a general-purpose browser tool just because it appears in the repository.
+`agent-browser` belongs to that committed lane (which runs headless on Linux CI) and to the maintainer-run `desktop/scripts/e2e-*-agent-browser.sh` scripts. For ad-hoc browser work (manual verification, screenshots, exploratory UI checks), use the installed `playwright` plugin or the `browser` tools instead; do not treat `agent-browser` as a general-purpose browser tool just because it appears in the repository.
 
 Every quality-gate lane that boots the real server runs against a sandbox config dir (`scripts/quality-gate/sandbox.ts`) and fails if it wrote to the developer's real `~/.claude`.
 
@@ -374,6 +374,22 @@ In-app updates are driven by `electron-updater`, with artifacts hosted on GitHub
 
 The release workflow generates `latest*.yml` inside each platform matrix job, renames colliding metadata to `latest-<platform>.yml`, and finally lets `scripts/release-update-metadata.ts` merge them back into the standard filenames electron-updater expects. Do not change this so each matrix job publishes the GitHub Release directly — the metadata files would overwrite each other.
 
+### Update channel and site sync
+
+Release finishing mirrors the update channel to the public site, with three separate responsibilities:
+
+- **Update metadata**: the app requests `latest*.yml` from `https://code.echoflow.cn/update/` first, then falls back to GitHub directly on a missing file, network error, or empty response. When `ECHOFLOW_UPDATE_FEED_URL` is set, it is the only source and there is no fallback.
+- **Installer downloads**: the download page and in-app download prefer the `gh-proxy.org` acceleration prefix, with GitHub direct download as the fallback.
+- **Failure guidance**: when an in-app update fails, Settings → About points the user to `code.echoflow.cn/download` for a manual download.
+
+On release, `site-release-sync` in `release-desktop.yml` triggers `deploy-docs.yml` with `--release <tag>` after the GitHub release completes. `scripts/site-release-manifest.ts` copies the four yml files byte-for-byte into `site/dist/update/` and writes `site/dist/download/manifest.json` from the release asset list. Ordinary docs deploys use `--release latest` so the machine endpoints remain present; the sync step runs before the upload, so a failed sync fails the workflow.
+
+Three invariants must not break:
+
+1. GitHub Releases keeps the complete electron-builder asset set. Existing apps only know the compiled-in GitHub feed and cannot discover a new channel.
+2. Mirrored yml files must stay byte-for-byte identical to the GitHub release assets. Do not rewrite or re-serialize them: Ed25519 signatures cover their contents, and any change breaks updates.
+3. Keep `artifactName` as `EchoFlow-Code-${version}-${os}-${arch}.${ext}`. The download-page manifest file names and installer verification both depend on it.
+
 ### Signing secrets
 
 macOS signing and notarization depend on these GitHub Actions repository secrets:
@@ -425,7 +441,7 @@ Every release should be verified by upgrading from the previous stable build at 
 
 Platforms differ in what matters: on macOS confirm the release job used the signed artifacts and the launch-policy check passed; on Windows confirm `latest.yml`, `.exe`, and `.exe.blockmap` are all in the release assets, and remember that a SmartScreen prompt on an unsigned build does not mean the updater failed; on Linux verify auto-update through the AppImage, since `.deb` ships as a manual installer only.
 
-## Upstream Sync (maintainer)
+## Upstream Sync (retired)
 
 The upstream sync workflow was retired in full on 2026-10-26 together with the decision to stop tracking any upstream. The repository no longer tracks, merges, or aligns with upstream releases. The `upstream:*` scripts and `scripts/upstream/` were deleted, and `.github/workflows/upstream-sync.yml` and `upstream-probe.yml` were removed.
 

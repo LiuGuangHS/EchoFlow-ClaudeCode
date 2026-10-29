@@ -1,13 +1,13 @@
 ---
 title: Computer Use Architecture
 nav_title: Computer Use
-description: Tool registration, coordinate mapping, authorization gates, the Python bridge, and safety limits.
+description: Tool registration, coordinate mapping, authorization gates, the helper bridge, and safety limits.
 order: 12
 ---
 
 # Computer Use Architecture
 
-Between the model asking for a click and the mouse actually moving sit four gates: tool definitions, authorization checks, the Python bridge, and a platform helper. This page takes each one apart. For setup and everyday usage, start with the [Computer Use guide](../desktop/computer-use.md).
+Between the model asking for a click and the mouse actually moving sit four gates: tool definitions, authorization checks, the helper bridge, and a platform helper. This page takes each one apart. For setup and everyday usage, start with the [Computer Use guide](../desktop/computer-use.md).
 
 ## Layers
 
@@ -24,15 +24,14 @@ Session authorization and safe dispatch
 EchoFlow Code integration
   src/utils/computerUse/
   ↓
-Python bridge
-  src/utils/computerUse/pythonBridge.ts
+Platform routing
+  src/utils/computerUse/helperBridge.ts
   ↓
-Platform helper
-  runtime/mac_helper.py
-  runtime/win_helper.py
+macOS: native/cu-helper (Swift daemon)
+Windows: runtime/win_helper.py (Python bridge)
 ```
 
-The tool and authorization layers remain platform-independent where possible. Platform differences are concentrated in `ComputerExecutor` capabilities and the Python helpers.
+The tool and authorization layers remain platform-independent where possible. Platform differences are concentrated in `ComputerExecutor` capabilities, the helper bridge, and the platform helpers.
 
 ## Tool registration
 
@@ -158,27 +157,24 @@ Important constraints:
 - After the user exits, further Teach calls must stop.
 - The host capability decides whether Teach tools are exposed.
 
-## Python bridge
+## Helper bridge
 
-`src/utils/computerUse/pythonBridge.ts`:
+`src/utils/computerUse/helperBridge.ts` routes by platform:
 
-1. Resolves `.runtime` in the managed user configuration directory.
-2. Synchronizes the current platform helper and requirements.
-3. Creates a venv with the detected or configured Python.
-4. Installs or updates dependencies based on the requirements hash.
-5. invokes the helper with `command + JSON payload`.
-6. returns a uniform JSON result or error to TypeScript.
+- macOS reaches the signed native `cu-helper` daemon, which reads the AX tree and handles capture, injection, and the virtual cursor without a Python compatibility layer.
+- Windows reaches `src/utils/computerUse/pythonBridge.ts`, which resolves `.runtime`, synchronizes the helper and requirements, creates a venv, installs or updates dependencies by requirements hash, and invokes the helper with `command + JSON payload`.
+
+Platform differences stay inside the bridge and the helpers; session authorization, action policy, and coordinate checks remain in TypeScript.
 
 Runtime files:
 
 | Path | Responsibility |
 |---|---|
-| `runtime/mac_helper.py` | macOS screenshots, applications, mouse, keyboard, and clipboard |
-| `runtime/win_helper.py` | Windows equivalents |
-| `runtime/requirements.txt` | macOS Python dependencies |
+| `native/cu-helper/` | Native macOS helper: AX tree, capture, injection, virtual cursor, and daemon |
+| `runtime/win_helper.py` | Windows Python helper |
 | `runtime/requirements-win.txt` | Windows Python dependencies |
 
-Each helper invocation is a bounded subprocess request. Helpers do not read model state; TypeScript owns session authorization and action policy.
+A Windows helper invocation is a bounded subprocess request; macOS uses a long-lived daemon, but TypeScript still authorizes and schedules every action. Helpers do not read model state; TypeScript owns session authorization and action policy.
 
 ## Host integration
 
@@ -214,9 +210,11 @@ Settings is the configuration entry point. Actual calls still execute inside the
 | `src/vendor/computer-use-mcp/types.ts` | Capabilities, grants, and session types |
 | `src/utils/computerUse/common.ts` | Platform support and capabilities |
 | `src/utils/computerUse/gates.ts` | Global switch and sub-capability defaults |
-| `src/utils/computerUse/executor.ts` | Python bridge executor |
-| `src/utils/computerUse/pythonBridge.ts` | venv, dependencies, and subprocess protocol |
+| `src/utils/computerUse/helperBridge.ts` | Routes to the native daemon or the Python helper |
+| `src/utils/computerUse/executor.ts` | Platform-independent `ComputerExecutor` |
+| `src/utils/computerUse/pythonBridge.ts` | Windows venv, dependencies, and subprocess protocol |
 | `src/utils/computerUse/wrapper.tsx` | CLI permission UI and session context |
+| `native/cu-helper/` | Native macOS helper and daemon |
 | `src/server/api/computer-use.ts` | Desktop Settings API |
 | `desktop/src/pages/ComputerUseSettings.tsx` | Desktop Settings UI |
 

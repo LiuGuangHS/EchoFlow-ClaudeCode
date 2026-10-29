@@ -45,7 +45,7 @@ artifacts/quality-runs/<timestamp>/logs/<lane>.log
 改动涉及用户可见 UI、跨 WebSocket/进程流程、Electron host 或 native/packaging 时，除了自动门禁外，还应在真机上验证相关流程。纯样式、纯工具或已有组件单元测试能够完整证明的改动，不要求重复无关流程：
 
 - 优先使用 `bun run check:desktop-ui-smoke` 的隔离 mock runtime 验证真实桌面 UI
-- 需要手动启动服务和桌面端时，复用 `scripts/quality-gate/sandbox.ts` 的临时配置和测试环境，避免服务读写真实 `~/.claude`；临时浏览器操作使用 `ego-browser` skill
+- 需要手动启动服务和桌面端时，复用 `scripts/quality-gate/sandbox.ts` 的临时配置和测试环境，避免服务读写真实 `~/.claude`；临时浏览器操作使用已安装的 `playwright` 插件或 `browser` 工具
 - 验证改动涉及的交互流程：页面渲染、按钮/表单行为、弹窗、快捷键、多窗口等
 - 必要时打本地 macOS 包 `desktop/scripts/build-macos-arm64.sh` 做完整验证
 

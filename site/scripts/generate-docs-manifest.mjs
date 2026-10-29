@@ -19,8 +19,8 @@ export const paths = {
   siteDir
 }
 
-const excludedDirectoryNames = new Set(['superpowers', 'ui-clone', 'public', 'images', '_internal'])
-const excludedFiles = new Set(['AGENTS.md', 'config-link-system.md'])
+const excludedDirectoryNames = new Set(['superpowers', 'public', 'images', '_internal'])
+const excludedFiles = new Set(['AGENTS.md'])
 
 /** 分区顺序与标题。新增一个 docs/ 顶层目录时在这里登记，否则会排到最后并显示裸目录名。 */
 export const sections = [

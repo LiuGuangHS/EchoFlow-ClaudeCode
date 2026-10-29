@@ -96,7 +96,7 @@ bun run check:desktop-ui-smoke # 真实桌面 UI + 真实权限对话框 + mock 
 
 两条通道都不需要 provider、凭据或公网。`check:agent-flow` 覆盖新建 Session → 选运行时 → 首轮流式 → 工具调用 → 权限批准/拒绝 → 工具失败 → API 错误 → 中断 → 断线重连权限重放 → 会话恢复。`check:desktop-ui-smoke` 在真实浏览器里点真实的 Allow 按钮，需要 `agent-browser` 与已安装的 desktop 依赖，缺失时会打印原因并跳过。
 
-`agent-browser` 只属于这条已提交的 lane（在 Linux CI 上以 headless 方式运行）以及维护者手动执行的 `desktop/scripts/e2e-*-agent-browser.sh`。临时的浏览器操作（手动验证、截图、探索性 UI 检查）请走 `ego-browser` skill，不要因为仓库里出现 `agent-browser` 就把它当通用浏览器工具。
+`agent-browser` 只属于这条已提交的 lane（在 Linux CI 上以 headless 方式运行）以及维护者手动执行的 `desktop/scripts/e2e-*-agent-browser.sh`。临时的浏览器操作（手动验证、截图、探索性 UI 检查）请使用已安装的 `playwright` 插件或 `browser` 工具，不要因为仓库里出现 `agent-browser` 就把它当通用浏览器工具。
 
 所有会启动真实 server 的 quality-gate lane 都跑在沙箱配置目录里（`scripts/quality-gate/sandbox.ts`），并在结束时校验没有写过开发者真实的 `~/.claude`；写了就判定 lane 失败。
 
@@ -408,7 +408,7 @@ Release workflow 先在各平台 matrix 里生成 `latest*.yml`，把同名 meta
 
 ### 更新通道与站点同步
 
-发版收尾会把更新链路镜像到官网（设计见 `docs/superpowers/specs/2026-10-26-update-channel-design.md`），三层分工：
+发版收尾会把更新链路镜像到官网，三层分工：
 
 - **更新元数据**：应用先请求 `https://code.echoflow.cn/update/` 的 `latest*.yml`，失败（缺 yml、网络错误、空响应）自动回退 GitHub 直连；`ECHOFLOW_UPDATE_FEED_URL` 显式设置时是纯单源，不回退。
 - **安装包下载**：下载页与应用下载都是加速前缀（`gh-proxy.org`）优先、GitHub 直连兜底。
@@ -473,7 +473,7 @@ bun run check:release-surface                # 发版面：品牌标记、版本
 
 各平台的重点不同：macOS 要确认 release job 走的是签名产物且启动策略检查通过；Windows 要确认 `latest.yml`、`.exe`、`.exe.blockmap` 都在 Release 资产里，未签名时的 SmartScreen 提示不代表 updater 失败；Linux 优先用 AppImage 验证自动更新，`.deb` 只作手动安装包发布。
 
-## 上游同步（维护者）
+## 上游同步（已退役）
 
 上游同步流程已于 2026-10-26 随脱钩决定整体退役。仓库不再跟踪、合并或对齐任何上游发布，`upstream:*` 脚本与 `scripts/upstream/` 已删除，`.github/workflows/upstream-sync.yml` 与 `upstream-probe.yml` 已移除。
 

@@ -1,8 +1,10 @@
 # Computer Use 重新设计 — 交接 context(新 worktree 从零开始用)
 
+> **已归档**：本文是重设计阶段的交接材料；当前实现见 `docs/internals/computer-use.md` 和 `native/cu-helper/`。
+>
 > 配套文档(同目录,一起带走):
 > - `computer-use-codex-redesign.md` —— 架构对比 + 重设计规格 + 对抗式审计(根因为什么慢/不顺/不准)
-> - `computer-use-codex-impl-blueprint.md` —— **权威实现规格**(skyshot 精确文本格式 / 遍历 / 注入梯度 / 工具面 / staleness / 截图 / per-app)
+> - `computer-use-codex-impl-blueprint.md` —— **权威实现规格**(skyshot 精确文本格式 / 遍历 / 注入梯度 / 工具面 / staleness / 截图 / per-app)，现已归档到 `../computer-use-codex-impl-blueprint.md`
 
 ---
 

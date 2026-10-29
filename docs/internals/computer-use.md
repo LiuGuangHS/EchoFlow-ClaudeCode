@@ -1,13 +1,13 @@
 ---
 title: Computer Use 架构
 nav_title: Computer Use
-description: 工具注册、坐标换算、授权检查、Python Bridge 与当前安全边界。
+description: 工具注册、坐标换算、授权检查、Helper Bridge 与当前安全边界。
 order: 12
 ---
 
 # Computer Use 架构
 
-从模型发出一次点击，到鼠标真的动起来，中间隔着工具定义、授权检查、Python Bridge 和平台 Helper 四道关。这一篇拆开讲这四道关各自把住什么。开启步骤和日常用法见 [Computer Use 使用指南](../desktop/computer-use.md)。
+从模型发出一次点击，到鼠标真的动起来，中间隔着工具定义、授权检查、Helper Bridge 和平台 Helper 四道关。这一篇拆开讲这四道关各自把住什么。开启步骤和日常用法见 [Computer Use 使用指南](../desktop/computer-use.md)。
 
 ## 分层结构
 
@@ -24,12 +24,11 @@ order: 12
 EchoFlow Code 集成
   src/utils/computerUse/
   ↓
-Python Bridge
-  src/utils/computerUse/pythonBridge.ts
+平台路由
+  src/utils/computerUse/helperBridge.ts
   ↓
-平台 Helper
-  runtime/mac_helper.py
-  runtime/win_helper.py
+macOS: native/cu-helper（Swift daemon）
+Windows: runtime/win_helper.py（Python Bridge）
 ```
 
 工具层与安全调度尽量保持平台无关。平台差异集中在 `ComputerExecutor` capability 和 Python helper 中。
@@ -158,27 +157,24 @@ request_teach_access
 - 用户选择退出后，后续 Teach 调用必须停止。
 - 是否公开 Teach 工具由宿主 capability 决定。
 
-## Python Bridge
+## Helper Bridge
 
-`src/utils/computerUse/pythonBridge.ts` 负责：
+`src/utils/computerUse/helperBridge.ts` 按平台路由：
 
-1. 确定用户配置目录中的 `.runtime`。
-2. 同步当前平台的 helper 和 requirements。
-3. 使用自动检测或用户配置的 Python 创建 venv。
-4. 依据 requirements 哈希安装或更新依赖。
-5. 以 `command + JSON payload` 调用 helper。
-6. 把统一 JSON 结果或错误返回 TypeScript。
+- macOS 走签名的原生 `cu-helper` daemon，直接读取 AX 树并执行截图、注入和虚拟光标；不再经过 Python 兼容层。
+- Windows 走 `src/utils/computerUse/pythonBridge.ts`，由它确定 `.runtime`、同步 helper 与 requirements、创建 venv、按 requirements 哈希安装依赖，并以 `command + JSON payload` 调用 helper。
+
+平台差异只留在 Bridge 和 helper 内；会话授权、动作策略和坐标检查仍在 TypeScript 层完成。
 
 运行时文件：
 
 | 路径 | 职责 |
 |---|---|
-| `runtime/mac_helper.py` | macOS 截图、应用、鼠标、键盘和剪贴板 |
-| `runtime/win_helper.py` | Windows 对应实现 |
-| `runtime/requirements.txt` | macOS Python 依赖 |
+| `native/cu-helper/` | macOS 原生 helper：AX 树、截图、注入、虚拟光标和 daemon |
+| `runtime/win_helper.py` | Windows Python helper |
 | `runtime/requirements-win.txt` | Windows Python 依赖 |
 
-Helper 每次调用是一个有边界的子进程请求。它不会直接读取模型状态；所有会话授权和动作策略都在 TypeScript 层决定。
+Windows helper 每次调用是一个有边界的子进程请求；macOS 使用长驻 daemon，但每次动作仍由 TypeScript 层授权和调度。Helper 不会直接读取模型状态；所有会话授权和动作策略都在 TypeScript 层决定。
 
 ## Host 集成
 
@@ -214,9 +210,11 @@ Helper 每次调用是一个有边界的子进程请求。它不会直接读取�
 | `src/vendor/computer-use-mcp/types.ts` | capability、授权和会话类型 |
 | `src/utils/computerUse/common.ts` | 平台支持和 capability |
 | `src/utils/computerUse/gates.ts` | 启用开关和子能力默认值 |
-| `src/utils/computerUse/executor.ts` | Python Bridge 执行器 |
-| `src/utils/computerUse/pythonBridge.ts` | venv、依赖和子进程协议 |
+| `src/utils/computerUse/helperBridge.ts` | 按平台路由到原生 daemon 或 Python helper |
+| `src/utils/computerUse/executor.ts` | `ComputerExecutor` 平台无关执行器 |
+| `src/utils/computerUse/pythonBridge.ts` | Windows venv、依赖和子进程协议 |
 | `src/utils/computerUse/wrapper.tsx` | CLI 权限交互和会话上下文 |
+| `native/cu-helper/` | macOS 原生 helper 与 daemon |
 | `src/server/api/computer-use.ts` | 桌面设置 API |
 | `desktop/src/pages/ComputerUseSettings.tsx` | 桌面设置界面 |
 

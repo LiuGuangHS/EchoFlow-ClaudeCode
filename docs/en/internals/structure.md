@@ -58,21 +58,40 @@ The repository contains the CLI/TUI, local Server, Electron desktop app, IM adap
 │   └── src-tauri/                  # Historical code and current package resources; not the Host
 ├── adapters/
 │   ├── common/                     # Shared config, pairing, messaging, and WS bridge
-│   ├── telegram/
-│   ├── feishu/
-│   ├── wechat/
 │   ├── dingtalk/
+│   ├── feishu/
+│   ├── qq/
+│   ├── slack/
+│   ├── telegram/
+│   ├── wechat/
+│   ├── wecom/
 │   └── whatsapp/
+├── mobile/                         # Kotlin Android shell
+├── native/
+│   └── cu-helper/                  # Native macOS Computer Use Swift helper
 ├── runtime/
-│   ├── mac_helper.py               # macOS Computer Use helper
 │   ├── win_helper.py               # Windows Computer Use helper
-│   ├── requirements.txt
 │   └── requirements-win.txt
 ├── scripts/                        # Root quality, release, and maintenance scripts
 ├── tests/                          # Cross-module tests and fixtures
 ├── site/                           # React docs site, content index, and static build
 └── docs/                           # Chinese and English Markdown content
 ```
+
+## Documentation layout
+
+| Location | Purpose | Published |
+| --- | --- | --- |
+| `docs/{start,cases,desktop,mobile,im,cli,internals}/` | Chinese product documentation | Yes |
+| `docs/en/` | English mirrors, aligned file by file | Yes |
+| `docs/images/`, `docs/public/` | Site images and static assets | Yes |
+| `release-notes/` | GitHub Release history | No, separate release output |
+| `docs/_internal/` | Maintainer runbooks, design notes, and `archive/` | No |
+| Root and per-surface `AGENTS.md` | Agent and contributor guidance | No |
+| `docs/superpowers/` | Local plans, gitignored | No; never link from a public page |
+| `site/src/generated/` | Generated docs index and content | No, gitignored |
+
+Renaming a public page requires updating both `LEGACY_ROUTES` and `legacyRoutes` in `scripts/prepare-static-output.mjs`. When a process draft lands, fold the facts that still matter into `docs/internals/`, then archive it under `docs/_internal/archive/`; public pages must not link to `_internal/`, `archive/`, or `docs/superpowers/`.
 
 ## Runtime boundaries
 

@@ -464,7 +464,7 @@ function findPluginInstall(rootDir) {
 // docs/AGENTS.md declares that `docs/en/` mirrors the Chinese tree file for
 // file. Pages missing a counterpart are reported rather than allowlisted: the
 // fix is to write the mirror or move the page out of docs/ entirely.
-const DOCS_TREE_EXCLUDED_DIRS = new Set(['superpowers', 'ui-clone', 'public', 'images', '_internal', 'en']);
+const DOCS_TREE_EXCLUDED_DIRS = new Set(['superpowers', 'public', 'images', '_internal', 'en']);
 const DOCS_TREE_EXCLUDED_FILES = new Set(['AGENTS.md']);
 
 // Fork-owned brand strings must not survive in shipped source. Tests, fixtures

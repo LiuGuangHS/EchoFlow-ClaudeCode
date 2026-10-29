@@ -58,21 +58,40 @@ order: 3
 │   └── src-tauri/                  # 历史代码及现用打包资源；非当前 Host
 ├── adapters/
 │   ├── common/                     # 配置、配对、消息与 WS 共享层
-│   ├── telegram/
-│   ├── feishu/
-│   ├── wechat/
 │   ├── dingtalk/
+│   ├── feishu/
+│   ├── qq/
+│   ├── slack/
+│   ├── telegram/
+│   ├── wechat/
+│   ├── wecom/
 │   └── whatsapp/
+├── mobile/                         # Kotlin Android 壳
+├── native/
+│   └── cu-helper/                  # macOS Computer Use 原生 Swift helper
 ├── runtime/
-│   ├── mac_helper.py               # macOS Computer Use helper
 │   ├── win_helper.py               # Windows Computer Use helper
-│   ├── requirements.txt
 │   └── requirements-win.txt
 ├── scripts/                        # 根项目质量门禁、发布与维护脚本
 ├── tests/                          # 跨模块测试与测试资源
 ├── site/                           # React 文档站、内容索引与静态构建
 └── docs/                           # 中英文 Markdown 文档内容
 ```
+
+## 文档分布
+
+| 位置 | 作用 | 是否发布 |
+| --- | --- | --- |
+| `docs/{start,cases,desktop,mobile,im,cli,internals}/` | 中文产品文档 | 是 |
+| `docs/en/` | 英文镜像，逐文件对齐 | 是 |
+| `docs/images/`、`docs/public/` | 站点图片与静态资源 | 是 |
+| `release-notes/` | GitHub Release 历史 | 否，独立发布产物 |
+| `docs/_internal/` | 维护者 runbook、设计/评审与 `archive/` | 否 |
+| 根目录与各 surface 的 `AGENTS.md` | Agent 与贡献者指导 | 否 |
+| `docs/superpowers/` | 本地计划，gitignore | 否，禁止从公开页链接 |
+| `site/src/generated/` | 文档站生成的索引与内容 | 否，gitignore |
+
+公开页改名要同时更新 `LEGACY_ROUTES` 和 `scripts/prepare-static-output.mjs` 的 `legacyRoutes`。过程稿完成后，先把仍然有效的事实提炼到 `docs/internals/`，再归档到 `docs/_internal/archive/`；不要从公开页链接 `_internal/`、`archive/` 或 `docs/superpowers/`。
 
 ## 运行边界
 

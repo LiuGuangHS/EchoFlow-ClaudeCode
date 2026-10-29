@@ -119,4 +119,4 @@ salt) → dlsym。**所以导入表、`strings`、`nm` 全都看不见它真正�
 | `focusSettleMs` 被人调小 | 后台首击被吞 |
 | `makeMouse` 调用点漏传 `targetPid` | 新路径完全走不到（犯过一次） |
 
-真机步骤见 `computer-use-native-manual-qa.md` §2.5。
+真机步骤见 `../computer-use-native-manual-qa.md` §2.5。

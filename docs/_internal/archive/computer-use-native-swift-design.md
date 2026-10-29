@@ -1,10 +1,12 @@
 # Computer Use 原生化设计方案（Swift Helper）
 
+> **已归档**：Swift helper 已落地，本文保留设计背景；现行实现见 `native/cu-helper/` 和 `docs/internals/computer-use.md`。
+>
 > 目标：把底层执行层从 `pyautogui`（HID 层模拟，独占鼠标）替换为原生 Swift helper（按 PID 定向注入 + Accessibility + ScreenCaptureKit），实现 **不抢占用户鼠标键盘** 与 **后台窗口操作/截图**，向 Codex Computer Use 的体验对齐。
 >
 > 本文是**技术方案/评审稿**，不含落地代码。决策点见末尾「八、待决策」。
 
-相关文档：[Computer Use 架构深度解析](./computer-use.md) · [功能指南](../desktop/computer-use.md)
+相关文档：[Computer Use 架构深度解析](../../internals/computer-use.md) · [功能指南](../../desktop/computer-use.md)
 
 ---
 
