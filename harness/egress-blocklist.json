@@ -1,0 +1,56 @@
+{
+  "plugins": [
+    {
+      "id": "llm-deepseek",
+      "reason": "Official DeepSeek Messages adapter; sends model traffic to deepseek-official."
+    },
+    {
+      "id": "llm-deepseek-account",
+      "reason": "DeepSeek account provider authentication and discovery."
+    },
+    {
+      "id": "deepseek-account",
+      "reason": "Browser PKCE authorization for DeepSeek platform accounts."
+    },
+    {
+      "id": "deepseek-llm-api-extensions",
+      "reason": "Adds DeepSeek-only request fields to official LLM API calls."
+    },
+    {
+      "id": "session-log-deepseek",
+      "reason": "Uploads incremental session logs to the official DeepSeek API."
+    },
+    {
+      "id": "plugin-package-inventory-deepseek",
+      "reason": "Sends the active plugin inventory with official DeepSeek requests."
+    },
+    {
+      "id": "session-telemetry-otel",
+      "reason": "Exports session logs over OTLP HTTP to the vendor collector."
+    },
+    {
+      "id": "otel",
+      "reason": "OTLP channels default to the vendor collector endpoint."
+    },
+    {
+      "id": "web-search-deepseek",
+      "reason": "DeepSeek-backed web search provider."
+    },
+    {
+      "id": "web-deepseek-api",
+      "reason": "DeepSeek Search and Fetch API providers."
+    }
+  ],
+  "hosts": [
+    "dsh-otel-collector.deepseeksvc.com",
+    "api.deepseek.com",
+    "platform.deepseek.com"
+  ],
+  "routes": [
+    "deepseek-official",
+    "deepseek-account"
+  ],
+  "requiredPlugins": [
+    "egress-guard"
+  ]
+}

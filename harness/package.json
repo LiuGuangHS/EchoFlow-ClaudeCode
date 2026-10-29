@@ -8,12 +8,15 @@
   },
   "scripts": {
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "preview": "node preview.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.4.0",
     "@deepseek-ai/dsh-acp-app": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-app-boot": "0.2.1-rc.2"
+    "@deepseek-ai/dsh-app-boot": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-base": "0.2.1-rc.2",
+    "@echoflow/egress-guard": "file:./bundles/egress-guard"
   },
   "devDependencies": {
     "vitest": "^4.1.11"

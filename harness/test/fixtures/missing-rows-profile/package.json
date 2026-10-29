@@ -1,0 +1,11 @@
+{
+  "name": "dsh-profile-missing-rows-fixture",
+  "private": true,
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@echoflow/egress-guard"
+      ]
+    }
+  }
+}

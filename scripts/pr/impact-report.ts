@@ -60,6 +60,9 @@ function commandList(result: ReturnType<typeof evaluateChangePolicy>) {
   if (result.checks.docs) {
     commands.push('bun run check:docs')
   }
+  if (result.checks.harness) {
+    commands.push('bun run check:harness')
+  }
   if (result.checks.coverage) {
     commands.push('bun run check:coverage')
   }

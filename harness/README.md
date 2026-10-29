@@ -13,7 +13,7 @@ packages, and every line under this directory is EchoFlow's own code.
 | --- | --- |
 | `profile/` | The `echoflow` dsh profile: bundles, patches, and the zero-egress overrides |
 | `bundles/` | EchoFlow-owned dsh plugins that dsh does not ship (currently `egress-guard`) |
-| `src/` | The seam client that drives dsh over ACP |
+| `src/` | The boot sequence (`boot.js`) and the ACP seam client that drives dsh |
 | `egress-blocklist.json` | The plugins and hosts the profile must never use |
 | `test/` | The `check:harness` lane |
 
@@ -29,7 +29,13 @@ root repository's own Node floor is lower, so the two floors differ on purpose.
 ```bash
 npm --prefix harness ci      # install exactly the locked tree
 npm --prefix harness test    # the check:harness lane
+npm --prefix harness run preview
 ```
+
+`preview` boots the real launcher with a temporary `HOME`/`DSH_HOME` and points
+the model provider at a loopback gateway on `127.0.0.1`. It needs no
+credentials and no network, so it is the quickest way to see a full turn:
+handshake, `session/new`, one streamed prompt, and a bounded exit.
 
 ## Why the versions are pinned exactly
 
@@ -57,11 +63,19 @@ an upgrade is a deliberate, reviewed step — never an automatic one.
 
 ## Wave handoff
 
-Wave 1 replaces the desktop's `npx`-launched dsh with this seam:
+The next plan is `docs/superpowers/plans/2026-10-29-dsh-wave1-runtime-contract-driver.md`:
+it builds the runtime contract and the dsh ACP driver in `src/server/runtime/`. It
+does **not** swap the desktop's `npx` sidecar for this seam. That sidecar serves a
+dsh web UI window, which an ACP driver deliberately does not provide; it stays as
+the transitional implementation until the readiness work and the optional
+native-dsh engine decide its fate.
+
+Three things carry into later waves:
 
 - `desktop/electron/services/nodeRuntime.ts` raises the desktop Node floor to
-  `24.9.0` and uses `checkNodeFloor` from `src/nodeFloor.js`.
-- `desktop/electron/services/deepseekHarnessRuntime.ts` boots the `echoflow`
-  profile over ACP instead of launching the upstream CLI, consuming
-  `src/acpClient.js`.
+  `24.9.0` and uses `checkNodeFloor` from `src/nodeFloor.js`. The readiness wave
+  owns that switch.
+- The driver takes its launcher command from
+  `RuntimeInstallation.executablePath`, so where the launcher ships from is a
+  packaging decision for the release wave, not a driver change.
 - The desktop's own product analytics joins `egress-blocklist.json`.

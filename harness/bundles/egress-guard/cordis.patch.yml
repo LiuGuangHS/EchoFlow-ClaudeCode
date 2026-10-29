@@ -1,0 +1,7 @@
+# EchoFlow's runtime egress guard. The profile patch is a static layer: a home
+# patch, a --patch overlay, or a future reloader can re-enable a row it
+# disabled, so the final tree is checked at boot and after every profile
+# reload. A violation stops the process instead of letting it run unguarded.
+- insert:
+    - id: egress-guard
+      name: '@echoflow/egress-guard'

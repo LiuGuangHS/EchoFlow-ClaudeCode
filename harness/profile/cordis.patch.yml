@@ -1,0 +1,56 @@
+# EchoFlow profile patch. It applies after the dsh-base and dsh-acp-app bundle
+# layers and before any user home patch or command-line overlay.
+#
+# Two kinds of change live here:
+#   1. replace vendor defaults that name DeepSeek, before a session can resolve
+#      a model (ACP initialize and session/new both read them);
+#   2. disable every plugin that would reach a DeepSeek host.
+#
+# A launcher still adds a final hard-disable layer, so a later user patch cannot
+# re-open these rows.
+
+- id: agent-default-model
+  config:
+    provider: echoflow
+    model: echoflow-default
+
+- id: acp
+  config:
+    provider: echoflow
+    model: echoflow-default
+
+# Keep explicit URL fetch. No search provider is mounted, so a model-visible
+# search fails locally with a structured WebError instead of reaching DeepSeek.
+- id: web
+  config:
+    fetchProvider: http
+
+- id: llm-deepseek
+  disabled: true
+
+- id: llm-deepseek-account
+  disabled: true
+
+- id: deepseek-account
+  disabled: true
+
+- id: deepseek-llm-api-extensions
+  disabled: true
+
+- id: session-log-deepseek
+  disabled: true
+
+- id: plugin-package-inventory-deepseek
+  disabled: true
+
+- id: session-telemetry-otel
+  disabled: true
+
+- id: otel
+  disabled: true
+
+- id: web-search-deepseek
+  disabled: true
+
+- id: web-deepseek-api
+  disabled: true
