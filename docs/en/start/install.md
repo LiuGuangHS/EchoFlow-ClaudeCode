@@ -139,7 +139,7 @@ Before updating, stop any running sessions and save uncommitted work.
 
 If the download stalls, you probably can't reach GitHub. The same panel has an "Advanced update proxy" setting where you can switch to the system proxy or enter a local HTTP proxy address (`http://127.0.0.1:7890`, for instance). This proxy only affects the app's own update downloads — it has no effect on model requests.
 
-**Manual replacement.** Download the new installer from the [download page](https://code.echoflow.cn/download) and repeat the steps for your platform. Sessions, provider configuration, skills, agents, and memory live under `~/.claude`, not in the application directory, so installing over the top doesn't touch them.
+**Manual replacement.** Settings → About → App Updates always offers an "Open download page" button. You can also open the [download page](https://code.echoflow.cn/download) directly, download the new installer, and repeat the steps for your platform. Sessions, provider configuration, skills, agents, and memory live under `~/.claude`, not in the application directory, so installing over the top doesn't touch them.
 
 :::warning
 The installer's data protection is not a backup. Keep your own copy of anything you can't afford to lose.

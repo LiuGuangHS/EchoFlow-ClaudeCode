@@ -247,16 +247,17 @@ export function AboutSettings() {
             </p>
           )}
 
+          <div className="mt-3">
+            <Button size="sm" variant="secondary" onClick={() => openUrl(MANUAL_DOWNLOAD_URL)}>
+              {t('update.manualDownloadAction')}
+            </Button>
+          </div>
+
           {updateStatus === 'error' && errorCode ? (
             <div className="mt-3 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-3 py-3">
               <p className="text-xs leading-5 text-[var(--color-text-secondary)]">
                 {t('update.manualDownloadHint')}
               </p>
-              <div className="mt-2">
-                <Button size="sm" variant="secondary" onClick={() => openUrl(MANUAL_DOWNLOAD_URL)}>
-                  {t('update.manualDownloadAction')}
-                </Button>
-              </div>
             </div>
           ) : null}
 
