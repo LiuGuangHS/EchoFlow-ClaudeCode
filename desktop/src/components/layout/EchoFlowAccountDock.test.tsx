@@ -40,6 +40,27 @@ describe('EchoFlowAccountDock', () => {
     expect(await screen.findByText('zhijun2003')).toBeInTheDocument()
   })
 
+  it('shows a retry action when site sign-in fails instead of appearing stuck', async () => {
+    vi.mocked(echoflowApi.getSiteSession).mockResolvedValue({ account: null })
+    vi.mocked(hostMock.echoFlow.openLogin).mockResolvedValue('failed')
+
+    render(<EchoFlowAccountDock />)
+    fireEvent.click(await screen.findByRole('button', { name: 'echoflowAccount.signIn' }))
+
+    expect(await screen.findByRole('button', { name: 'echoflowAccount.loginFailed' })).toBeInTheDocument()
+  })
+
+  it('returns to the sign-in action when the user cancels the login window', async () => {
+    vi.mocked(echoflowApi.getSiteSession).mockResolvedValue({ account: null })
+    vi.mocked(hostMock.echoFlow.openLogin).mockResolvedValue('cancelled')
+
+    render(<EchoFlowAccountDock />)
+    fireEvent.click(await screen.findByRole('button', { name: 'echoflowAccount.signIn' }))
+
+    await waitFor(() => expect(hostMock.echoFlow.openLogin).toHaveBeenCalledOnce())
+    expect(screen.getByRole('button', { name: 'echoflowAccount.signIn' })).toBeInTheDocument()
+  })
+
   it('shows username and balance and signs out without exposing cookie data', async () => {
     vi.mocked(echoflowApi.getSiteSession).mockResolvedValue({ account })
     render(<EchoFlowAccountDock />)

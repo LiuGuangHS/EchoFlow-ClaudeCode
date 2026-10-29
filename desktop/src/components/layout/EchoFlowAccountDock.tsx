@@ -10,6 +10,7 @@ export function EchoFlowAccountDock() {
   const [account, setAccount] = useState<EchoFlowSiteAccount | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(false)
+  const [loginFailed, setLoginFailed] = useState(false)
 
   const refresh = useCallback(async () => {
     try {
@@ -29,10 +30,13 @@ export function EchoFlowAccountDock() {
     if (busy) return
     setBusy(true)
     setError(false)
+    setLoginFailed(false)
     try {
-      if (await host.echoFlow.openLogin() === 'authenticated') await refresh()
+      const result = await host.echoFlow.openLogin()
+      if (result === 'authenticated') await refresh()
+      else if (result === 'failed') setLoginFailed(true)
     } catch {
-      setError(true)
+      setLoginFailed(true)
     } finally {
       setBusy(false)
     }
@@ -66,8 +70,18 @@ export function EchoFlowAccountDock() {
         <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
       </button>
     </> : <button type="button" onClick={() => void signIn()} disabled={busy} className="flex min-w-0 flex-1 items-center gap-2 text-left hover:text-[var(--color-brand)] disabled:opacity-50">
-      <span className="min-w-0 flex-1 truncate">{error ? t('echoflowAccount.loadFailed') : t('echoflowAccount.signIn')}</span>
-      <LogIn className="h-4 w-4 shrink-0" aria-hidden="true" />
+      <span className="min-w-0 flex-1 truncate">
+        {loginFailed
+          ? t('echoflowAccount.loginFailed')
+          : busy
+            ? t('echoflowAccount.signingIn')
+            : error
+              ? t('echoflowAccount.loadFailed')
+              : t('echoflowAccount.signIn')}
+      </span>
+      {busy
+        ? <RefreshCw className="h-4 w-4 shrink-0 animate-spin" aria-hidden="true" />
+        : <LogIn className="h-4 w-4 shrink-0" aria-hidden="true" />}
     </button>}
   </div>
 }

@@ -438,7 +438,7 @@ export type DesktopHost = {
   isDesktop: boolean
   capabilities: DesktopHostCapabilities
   echoFlow: {
-    openLogin(): Promise<'authenticated' | 'cancelled'>
+    openLogin(): Promise<'authenticated' | 'cancelled' | 'failed'>
     signOut(): Promise<void>
   }
   runtimeDiscovery: {

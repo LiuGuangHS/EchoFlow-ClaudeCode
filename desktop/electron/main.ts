@@ -1,6 +1,6 @@
 import { PublicAccessManager } from './services/publicAccess'
 import { EchoFlowLoginSession, ECHOFLOW_LOGIN_ORIGIN, ECHOFLOW_LOGIN_PARTITION, siteCookieHeader, type EchoFlowLoginIdentity, type EchoFlowLoginWindow, type SiteCookie } from './services/echoFlowLogin'
-import { createEchoFlowLoginIdentityReader } from './services/echoFlowLoginIdentity'
+import { resolveSiteIdentity } from './services/echoFlowSiteIdentity'
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, screen, session, systemPreferences, WebContentsView } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import path from 'node:path'
@@ -117,7 +117,6 @@ import {
 let mainWindow: BrowserWindow | null = null
 let serverRuntime: ElectronServerRuntime | null = null
 let echoFlowLoginSession: EchoFlowLoginSession | null = null
-let echoFlowSiteIdentity: EchoFlowLoginIdentity | null = null
 let deepSeekHarnessRuntime: DeepSeekHarnessRuntime | null = null
 let deepSeekHarnessWindow: BrowserWindow | null = null
 let publicAccessManager: PublicAccessManager | null = null
@@ -300,10 +299,12 @@ async function clearEchoFlowSiteCookies(): Promise<void> {
   )))
 }
 
-async function bootstrapEchoFlowSiteSession(cookies: readonly SiteCookie[], identity?: EchoFlowLoginIdentity): Promise<boolean> {
+async function bootstrapEchoFlowSiteSession(
+  cookies: readonly SiteCookie[],
+  identity: EchoFlowLoginIdentity,
+): Promise<boolean> {
   const cookie = siteCookieHeader(cookies)
-  const accountIdentity = identity ?? echoFlowSiteIdentity
-  if (!cookie || !accountIdentity) return false
+  if (!cookie || !identity) return false
   try {
     const runtime = getServerRuntime()
     const serverUrl = await runtime.getServerUrl()
@@ -315,11 +316,10 @@ async function bootstrapEchoFlowSiteSession(cookies: readonly SiteCookie[], iden
         'Content-Type': 'application/json',
         'x-echoflow-site-session-bridge': bridgeToken,
       },
-      body: JSON.stringify({ cookie, userId: accountIdentity.userId }),
+      body: JSON.stringify({ cookie, userId: identity.userId }),
       signal: AbortSignal.timeout(15_000),
     })
     if (!response.ok) return false
-    if (identity) echoFlowSiteIdentity = identity
     return true
   } catch {
     return false
@@ -348,13 +348,18 @@ function getEchoFlowLoginSession(): EchoFlowLoginSession {
         },
       })
 
-      const identityReader = createEchoFlowLoginIdentityReader(loginWindow.webContents.debugger as never)
-      loginWindow.webContents.once('destroyed', () => identityReader.dispose())
-      return Object.assign(loginWindow, {
-        webContents: Object.assign(loginWindow.webContents, { readIdentity: () => identityReader.read() }),
-      }) as unknown as EchoFlowLoginWindow
+      // Electron exposes BrowserWindow.webContents as a getter-only accessor.
+      // Assigning to it (for example with Object.assign) throws after the
+      // window has already been shown, leaving an orphan modal window that
+      // never loads. The session reads the account from the site's own
+      // session, so the window needs no extra fields.
+      return loginWindow as unknown as EchoFlowLoginWindow
     },
     verifySession: bootstrapEchoFlowSiteSession,
+    resolveIdentity: async (cookies) => {
+      const cookieHeader = siteCookieHeader(cookies)
+      return cookieHeader ? await resolveSiteIdentity(cookieHeader) : null
+    },
     readCookies: readEchoFlowSiteCookies,
     clearCookies: clearEchoFlowSiteCookies,
   })
@@ -375,7 +380,6 @@ async function signOutEchoFlowSiteSession(): Promise<void> {
   })
   if (!response.ok) throw new Error('Could not sign out of the EchoFlow account.')
   await getEchoFlowLoginSession().clear()
-  echoFlowSiteIdentity = null
 }
 
 function getDeepSeekHarnessRuntime() {

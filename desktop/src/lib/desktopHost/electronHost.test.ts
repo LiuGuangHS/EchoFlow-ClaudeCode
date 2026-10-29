@@ -12,6 +12,12 @@ describe('electron desktop host', () => {
     await expect(host.echoFlow.openLogin()).resolves.toBe('authenticated')
     expect(invoke).toHaveBeenCalledWith(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, undefined)
   })
+  it('forwards a failed site sign-in result to the renderer', async () => {
+    const invoke = vi.fn().mockResolvedValue('failed')
+    const host = createElectronHost({ invoke, subscribe: vi.fn() })
+
+    await expect(host.echoFlow.openLogin()).resolves.toBe('failed')
+  })
   it('routes Claude Code runtime settings through narrow runtime IPC boundaries', async () => {
     const status = { defaultRuntimeId: 'bundled' as const, hasInstalledRuntime: false }
     const invoke = vi.fn()
