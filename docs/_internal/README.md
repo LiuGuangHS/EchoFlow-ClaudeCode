@@ -6,6 +6,7 @@
 
 | 文档 | 用途 |
 | --- | --- |
+| `decoupling-plan.md` | 脱钩与重写的现行重构计划（原根目录 `DECOUPLING_PLAN.md`） |
 | `release-windows.md` | 桌面端发布与自动更新 runbook |
 | `computer-use-native-manual-qa.md` | macOS/Windows Computer Use 真机验收步骤 |
 | `computer-use-codex-impl-blueprint.md` | Codex 原生 Computer Use 兼容契约与实现边界 |
@@ -20,6 +21,4 @@
 
 ## 生命周期
 
-- 设计、评审或交接文档落地后，把仍然有效的事实补进 `docs/internals/**` 或对应 surface 的 `AGENTS.md`，再把过程稿移到 `archive/`。
-- 公开文档不要链接 `_internal/`、`archive/` 或 `docs/superpowers/`。`docs/superpowers/` 是被 gitignore 的本地计划，不属于仓库内容。
-- 根目录的 `DECOUPLING_PLAN.md` 是尚未归档的现行重构计划；工作完成后，再判断哪些结论应进入公开 internals，哪些应移到本目录。
+规则见 `docs/AGENTS.md` 的 “Where documentation lives”：有效事实进 `docs/internals/**` 或对应 surface 的 `AGENTS.md`，完成的材料进 `archive/`，本目录不从公开页链接。

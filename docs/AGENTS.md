@@ -9,7 +9,7 @@ Two audiences, nothing else. If a page serves neither, it does not belong here.
 - **People using the app** — `start/`, `cases/`, `desktop/`, `mobile/`, `im/`. No prior code knowledge assumed.
 - **People reading the source** — `internals/`, `cli/`. Architecture, implementation, contributing.
 
-Internal process artefacts (migration task lists, validation checklists, design proposals, release runbooks) are not documentation. Keep them out of `docs/`, or fold the durable part into `internals/contributing.md`.
+Internal process artefacts (migration task lists, validation checklists, design proposals, release runbooks) are not documentation. Keep them out of the published sections: maintainer-only material lives in `_internal/`, and completed material moves to `_internal/archive/`. Fold any durable fact into the relevant `internals/` page.
 
 ## Structure
 
