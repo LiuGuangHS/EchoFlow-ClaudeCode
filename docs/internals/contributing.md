@@ -168,7 +168,7 @@ bun run check:release-surface     # 发版面：品牌标记、版本/品牌漂�
 
 ## Agent 工具链
 
-本仓库的默认工具链是五个插件，覆盖设计、规划、评审与最小化实现。它们加速流程，但**不替代门禁**：`bun run check:impact`、各 surface 检查、`bun run check:policy` 与 `bun run verify` 仍然是唯一裁判。插件与本仓库约定冲突时，以 `AGENTS.md` 和本文档为准。
+本仓库的默认工具链是五个插件，覆盖设计、规划、评审与最小化实现。它们加速流程，但**不替代门禁**：`bun run check:impact`、各 surface 检查、`bun run check:policy` 与 `bun run verify` 仍然是唯一裁判。插件与本仓库约定冲突时，方向与政策以 `AGENTS.md` 为准，流程细节以本文档为准。
 
 | 插件 | 用途 | 入口 |
 | --- | --- | --- |
@@ -234,6 +234,11 @@ bun run check:release-surface     # 发版面：品牌标记、版本/品牌漂�
 
 仓库技能的描述只写适用任务和必要的区分信息，操作细节放正文或引用文件。多工作流技能用短入口路由；避免为了覆盖更多关键词而扩大触发范围。模型默认值、工具格式和压缩行为属于产品实现，更新相关文档前应先核对源码。
 
+合并与发布时另有两条通用纪律：
+
+- **冲突逐 hunk 裁决。** 任何合并冲突都是两个决定叠在一起，绝不整体套用 `--ours` 或 `--theirs`；按 hunk 读懂两侧再决定保留哪一半。
+- **合并发布前审计公开身份。** README、文档、release notes、包元数据、诊断导出、签名/隐私页、更新链接与桌面端「关于」默认值，都不得把外部项目或其作者写成 EchoFlow 的作者、维护者、联系人或产品身份。执行工具是 `bun run check:release-surface`。
+
 ## Feature Quality Contract
 
 所有新功能、bugfix 和行为变化都必须带着可验证证据交付。这条规则同时约束人和 AI Coding Agent：
@@ -287,21 +292,16 @@ bun run quality:gate --mode baseline --allow-live --provider-model minimax:main:
 
 ## 按改动范围补充测试
 
-根据你改动的区域补充运行：
+`bun run check:impact` 会按改动路径和 import 图打印 `## Required local checks`，直接执行那份清单即可。最常用的入口：
 
 ```bash
 bun run check:server      # 服务端 API、WebSocket、provider、会话等测试
 bun run check:desktop     # 桌面端 lint、Vitest、生产构建
 bun run check:adapters    # IM adapter 测试
-bun run check:mobile      # Kotlin Android 移动端外壳：元数据与原生集成契约
-bun run check:native      # 桌面 sidecar、Electron host 与 package-smoke 检查
-bun run check:provider-contract # Provider/runtime/proxy 的离线契约测试
-bun run check:chat-contract     # WebSocket、会话与桌面 chat store 契约测试
-bun run check:persistence-upgrade # 持久化迁移和旧 fixture 兼容性
 bun run check:docs        # 独立安装、构建并检查 site/ React 文档站
-bun run check:quarantine  # 维护者 baseline/release quarantine 审计
-bun run check:coverage    # 按改动区域运行 root、desktop、adapters 覆盖率与 ratchet 门禁；必要时全量
 ```
+
+移动端、native、provider/chat contract、持久化与覆盖率的入口见 `package.json` 的 `check:*` 脚本；这里不再维护第二份清单。
 
 如果只改了很窄的文件，先跑对应的定向测试即可；只有在声明 PR-ready/full validation 时才需要本地再跑 `bun run verify`，托管 CI 仍会执行所有被选中的必需 lane。
 
@@ -472,18 +472,6 @@ bun run check:release-surface                # 发版面：品牌标记、版本
 6. 确认历史附件上下文、子 Agent 详情和任务状态可以恢复；打开桌宠，验证悬浮窗口与当前会话导航。
 
 各平台的重点不同：macOS 要确认 release job 走的是签名产物且启动策略检查通过；Windows 要确认 `latest.yml`、`.exe`、`.exe.blockmap` 都在 Release 资产里，未签名时的 SmartScreen 提示不代表 updater 失败；Linux 优先用 AppImage 验证自动更新，`.deb` 只作手动安装包发布。
-
-## 上游同步（已退役）
-
-上游同步流程已于 2026-10-26 随脱钩决定整体退役。仓库不再跟踪、合并或对齐任何上游发布，`upstream:*` 脚本与 `scripts/upstream/` 已删除，`.github/workflows/upstream-sync.yml` 与 `upstream-probe.yml` 已移除。
-
-仍然有效的只有两条与上游无关的通用纪律：
-
-- **冲突逐 hunk 裁决。** 任何合并冲突都是两个决定叠在一起，绝不整体套用 `--ours` 或 `--theirs`；按 hunk 读懂两侧再决定保留哪一半。
-- **合并发布前审计公开身份。** README、文档、release notes、包元数据、诊断导出、签名/隐私页、更新链接与桌面端「关于」默认值，都不得把外部项目或其作者写成 EchoFlow 的作者、维护者、联系人或产品身份。
-
-公开身份的执行工具是 `bun run check:release-surface`。
-
 
 ## PR 提交流程
 

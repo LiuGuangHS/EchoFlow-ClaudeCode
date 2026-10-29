@@ -142,7 +142,7 @@ Claim PR-ready/full validation only after `bun run verify` passes for the final 
 
 ## Agent Toolset
 
-The default toolset is five plugins covering design, planning, review, and minimal implementation. They accelerate the workflow but **do not replace the gates**: `bun run check:impact`, the surface checks, `bun run check:policy`, and `bun run verify` remain the only authority. Where a plugin disagrees with this repository, `AGENTS.md` and this document win.
+The default toolset is five plugins covering design, planning, review, and minimal implementation. They accelerate the workflow but **do not replace the gates**: `bun run check:impact`, the surface checks, `bun run check:policy`, and `bun run verify` remain the only authority. Where a plugin disagrees with this repository, `AGENTS.md` wins on direction and policy, and this document wins on procedure.
 
 | Plugin | Purpose | Entry point |
 | --- | --- | --- |
@@ -202,6 +202,11 @@ The "How This Contract Is Maintained" section of `AGENTS.md` turns that principl
 
 Repository skill descriptions should identify the applicable task and necessary distinctions; put operational detail in the body or referenced files. Use a short router for multiple workflows and avoid broadening triggers just to match more keywords. Model defaults, tool formats, and compaction behavior describe product implementation, so check the source before updating those docs.
 
+Two general disciplines apply when merging and releasing:
+
+- **Adjudicate conflicts hunk by hunk.** A merge conflict is two decisions stacked together. Never apply blanket `--ours` or `--theirs`; read both sides per hunk and decide which half to keep.
+- **Audit public identity before shipping a merge.** README, docs, release notes, package metadata, diagnostics exports, signing and privacy pages, update links, and desktop "About" defaults must never name another project or its author as EchoFlow's author, maintainer, contact, or product identity. The executable check is `bun run check:release-surface`.
+
 ## Feature Quality Contract
 
 Every feature, bugfix, and behavior change must ship with verifiable evidence. This rule applies to human authors and AI coding agents:
@@ -255,21 +260,16 @@ Repository settings should protect `main` with GitHub branch protection / rulese
 
 ## Area-Specific Checks
 
-Run the checks that match the files you changed:
+`bun run check:impact` prints a `## Required local checks` list derived from the changed paths and the import graph; run that list. The most common entry points:
 
 ```bash
 bun run check:server      # Server API, WebSocket, providers, sessions, and related tests
 bun run check:desktop     # Desktop lint, Vitest, and production build
 bun run check:adapters    # IM adapter tests
-bun run check:mobile      # Kotlin Android shell: metadata and native integration contracts
-bun run check:native      # Desktop sidecars, Electron host, and package-smoke checks
-bun run check:provider-contract # Offline provider/runtime/proxy contract tests
-bun run check:chat-contract     # WebSocket, session, and desktop chat-store contracts
-bun run check:persistence-upgrade # Persistence migrations and old-fixture compatibility
 bun run check:docs        # Isolated install, build, and validation for the site/ React docs
-bun run check:quarantine  # Maintainer baseline/release quarantine audit
-bun run check:coverage    # Coverage and ratchet for changed root, desktop, and adapter areas; full when needed
 ```
+
+Entry points for mobile, native, provider/chat contracts, persistence, and coverage live in the `check:*` scripts in `package.json`; do not maintain a second list here.
 
 Focused tests are the normal development loop. Run `bun run verify` locally when claiming PR-ready/full validation; hosted CI still executes every selected required lane.
 
@@ -440,18 +440,6 @@ Every release should be verified by upgrading from the previous stable build at 
 6. Confirm historical attachment context, subagent details, and task state restore correctly; open a pet window and check the overlay and current-session navigation.
 
 Platforms differ in what matters: on macOS confirm the release job used the signed artifacts and the launch-policy check passed; on Windows confirm `latest.yml`, `.exe`, and `.exe.blockmap` are all in the release assets, and remember that a SmartScreen prompt on an unsigned build does not mean the updater failed; on Linux verify auto-update through the AppImage, since `.deb` ships as a manual installer only.
-
-## Upstream Sync (retired)
-
-The upstream sync workflow was retired in full on 2026-10-26 together with the decision to stop tracking any upstream. The repository no longer tracks, merges, or aligns with upstream releases. The `upstream:*` scripts and `scripts/upstream/` were deleted, and `.github/workflows/upstream-sync.yml` and `upstream-probe.yml` were removed.
-
-Two general disciplines survive, and neither depends on upstream:
-
-- **Adjudicate conflicts hunk by hunk.** A merge conflict is two decisions stacked together. Never apply blanket `--ours` or `--theirs`; read both sides per hunk and decide which half to keep.
-- **Audit public identity before shipping a merge.** README, docs, release notes, package metadata, diagnostics exports, signing and privacy pages, update links, and desktop "About" defaults must never name another project or its author as EchoFlow's author, maintainer, contact, or product identity.
-
-The executable check for public identity is `bun run check:release-surface`.
-
 
 ## PR Workflow
 
