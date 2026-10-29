@@ -20,18 +20,7 @@ bun run verify
 
 `git push` 不再自动运行本地质量门禁。需要质量检查时请手动运行 `bun run quality:push` 或 `bun run verify`；完整覆盖率仍以 `bun run verify` 为准。
 
-只改了某个模块时可以用窄命令快速迭代：
-
-| 改动范围 | 快速验证 |
-| --- | --- |
-| CLI / Server / 工具 | `bun run check:server` |
-| 桌面端 | `bun run check:desktop` |
-| IM Adapter | `bun run check:adapters` |
-| 桌面 Electron / 原生打包 | `bun run check:native` |
-| Provider / runtime / proxy | `bun run check:provider-contract` |
-| 桌面聊天 / WebSocket / 会话 | `bun run check:chat-contract` |
-| 持久化格式与迁移 | `bun run check:persistence-upgrade` |
-| 文档 | `bun run check:docs` |
+需要窄范围迭代时，直接跑 `bun run check:impact`，按输出的 `## Required local checks` 执行。最常用的入口是 `bun run check:server`、`bun run check:desktop`、`bun run check:adapters` 和 `bun run check:docs`；完整清单以 `package.json` 和 impact 输出为准，不在文档里维护第二份。
 
 门禁失败时，查看最新质量报告和对应 lane 日志定位问题：
 
@@ -51,11 +40,7 @@ artifacts/quality-runs/<timestamp>/logs/<lane>.log
 
 ## 3. PR 必须附上影响范围和测试说明
 
-每个 PR 的描述里必须包含：
-
-- **影响范围**：改了哪些模块（desktop / server / adapter / native / docs / provider / agent-loop）
-- **测试说明**：跑了哪些测试、覆盖率情况、手工测试了哪些流程（用户可见或跨进程桌面改动需有真机记录）
-- **剩余风险**：已知未覆盖的边界或需要后续跟进的点
+每个 PR 的描述按 [`.github/pull_request_template.md`](.github/pull_request_template.md) 填写：变更面、测试、覆盖率证据、E2E/live 证据、剩余风险与回滚。模板是提交时的强制清单，这里不再重复。
 
 provider/runtime、agent-loop、文件编辑、权限、session 等核心路径必须先通过离线 mock/fixture/contract 测试。真实模型验证只由拥有可信 secrets 和额度的维护者在高风险合并或发版前运行：
 
