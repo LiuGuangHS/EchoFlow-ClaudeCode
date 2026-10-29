@@ -76,6 +76,14 @@ of the derived portions. This file records provenance; it is not that review.
 - Scope of use: unmodified npm dependency. No dsh source is vendored, copied, or modified in this repository; EchoFlow's own profile, bundles, and seam client live separately under `harness/`.
 - Not included: the on-demand `@deepseek-ai/dsh-subagent-claude-code` bundle, which carries Anthropic-originated platform payloads, is not part of this project's dependency graph.
 
+## Agent Client Protocol TypeScript SDK
+
+- Project: Agent Client Protocol TypeScript SDK (https://github.com/agentclientprotocol/typescript-sdk)
+- Included as: the client half of the ACP seam under `harness/src/acpClient.js`, and the product-side driver at `src/server/runtime/dshDriver.ts`; both speak the protocol to the dsh runtime
+- Version: 1.4.0 (pinned exactly)
+- License: Apache-2.0
+- Scope of use: unmodified npm dependency; no SDK source is vendored or modified.
+
 ## ripgrep
 
 - Project: ripgrep (https://github.com/BurntSushi/ripgrep)

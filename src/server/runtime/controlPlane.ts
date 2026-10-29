@@ -1,0 +1,182 @@
+/**
+ * The runtime control plane: the product-facing surface over any engine driver.
+ *
+ * It owns the maps upper layers should never assemble themselves — which
+ * installation is connected, which product session maps to which driver
+ * session, and what that session's engine can actually do. Drivers stay
+ * interchangeable behind it; nothing here mentions an engine protocol.
+ */
+import { randomUUID } from 'node:crypto'
+import {
+  UnsupportedRuntimeCapabilityError,
+  type Capability,
+  type DriverId,
+  type InstallationId,
+  type InterruptResult,
+  type RuntimeCapabilities,
+  type RuntimeConnection,
+  type RuntimeDriver,
+  type RuntimeEvent,
+  type RuntimeExit,
+  type RuntimeInstallation,
+  type RuntimeSession,
+  type UserTurn,
+} from './contract.js'
+
+type CapabilityGroup = keyof RuntimeCapabilities
+
+/** Dotted capability paths, e.g. `prompt.text` or `observability.usage`. */
+export type CapabilityPath = {
+  [G in CapabilityGroup]: `${G}.${keyof RuntimeCapabilities[G] & string}`
+}[CapabilityGroup]
+
+export class UnknownRuntimeDriverError extends Error {
+  constructor(driverId: string) {
+    super(`no driver registered for ${driverId}`)
+    this.name = 'UnknownRuntimeDriverError'
+  }
+}
+
+export class UnknownRuntimeInstallationError extends Error {
+  constructor(installationId: string) {
+    super(`no live connection for installation ${installationId}`)
+    this.name = 'UnknownRuntimeInstallationError'
+  }
+}
+
+export class UnknownRuntimeSessionError extends Error {
+  constructor(sessionId: string) {
+    super(`no open session ${sessionId}`)
+    this.name = 'UnknownRuntimeSessionError'
+  }
+}
+
+export type RuntimeHost = {
+  registerDriver(driver: RuntimeDriver): void
+  connect(input: {
+    installation: RuntimeInstallation
+    cwd: string
+    env?: Record<string, string | undefined>
+  }): Promise<{ runId: string; connection: RuntimeConnection }>
+  openSession(input: { installationId: InstallationId; sessionId: string; cwd: string }): Promise<RuntimeSession>
+  getSession(sessionId: string): RuntimeSession
+  capabilitiesOf(sessionId: string): RuntimeCapabilities
+  /** Throws `UnsupportedRuntimeCapabilityError` unless the engine claims the capability natively. */
+  requireCapability(sessionId: string, path: CapabilityPath): void
+  send(sessionId: string, turn: UserTurn): AsyncIterable<RuntimeEvent>
+  respondApproval(sessionId: string, requestId: string, optionId: string): Promise<void>
+  interrupt(sessionId: string): Promise<InterruptResult>
+  closeSession(sessionId: string): Promise<void>
+  onConnectionExit(listener: (event: { installationId: InstallationId; exit: RuntimeExit }) => void): () => void
+  close(): Promise<void>
+}
+
+export type RuntimeHostOptions = {
+  newRunId?: () => string
+}
+
+export function createRuntimeHost(options: RuntimeHostOptions = {}): RuntimeHost {
+  const newRunId = options.newRunId ?? (() => randomUUID())
+  const drivers = new Map<DriverId, RuntimeDriver>()
+  const connections = new Map<InstallationId, { connection: RuntimeConnection; runId: string }>()
+  const sessions = new Map<string, { session: RuntimeSession; installationId: InstallationId }>()
+  const exitListeners = new Set<(event: { installationId: InstallationId; exit: RuntimeExit }) => void>()
+  const exitSubscriptions = new Map<InstallationId, () => void>()
+  let closing: Promise<void> | null = null
+
+  function forgetSessions(installationId: InstallationId) {
+    for (const [sessionId, entry] of sessions) {
+      if (entry.installationId === installationId) sessions.delete(sessionId)
+    }
+  }
+
+  function requireSession(sessionId: string): RuntimeSession {
+    const entry = sessions.get(sessionId)
+    if (entry === undefined) throw new UnknownRuntimeSessionError(sessionId)
+    return entry.session
+  }
+
+  return {
+    registerDriver(driver) {
+      drivers.set(driver.driverId, driver)
+    },
+
+    async connect({ installation, cwd, env }) {
+      const driver = drivers.get(installation.driverId)
+      if (driver === undefined) throw new UnknownRuntimeDriverError(installation.driverId)
+      const runId = newRunId()
+      const connection = await driver.start({ installation, runId, cwd, env })
+      connections.set(installation.installationId, { connection, runId })
+      exitSubscriptions.set(
+        installation.installationId,
+        connection.onExit((exit) => {
+          connections.delete(installation.installationId)
+          exitSubscriptions.get(installation.installationId)?.()
+          exitSubscriptions.delete(installation.installationId)
+          forgetSessions(installation.installationId)
+          for (const listener of exitListeners) listener({ installationId: installation.installationId, exit })
+        }),
+      )
+      return { runId, connection }
+    },
+
+    async openSession({ installationId, sessionId, cwd }) {
+      const entry = connections.get(installationId)
+      if (entry === undefined) throw new UnknownRuntimeInstallationError(installationId)
+      if (sessions.has(sessionId)) throw new Error(`session ${sessionId} is already open`)
+      const session = await entry.connection.openSession({ sessionId, cwd })
+      sessions.set(sessionId, { session, installationId })
+      return session
+    },
+
+    getSession: requireSession,
+
+    capabilitiesOf(sessionId) {
+      return requireSession(sessionId).capabilities
+    },
+
+    requireCapability(sessionId, path) {
+      const [group, key] = path.split('.') as [CapabilityGroup, string]
+      const capability = (requireSession(sessionId).capabilities[group] as Record<string, Capability>)[key]
+      if (capability?.state !== 'native') throw new UnsupportedRuntimeCapabilityError(path)
+    },
+
+    send(sessionId, turn) {
+      return requireSession(sessionId).send(turn)
+    },
+
+    respondApproval(sessionId, requestId, optionId) {
+      return requireSession(sessionId).respondApproval(requestId, optionId)
+    },
+
+    interrupt(sessionId) {
+      return requireSession(sessionId).interrupt()
+    },
+
+    async closeSession(sessionId) {
+      const entry = sessions.get(sessionId)
+      if (entry === undefined) return
+      sessions.delete(sessionId)
+      await entry.session.close()
+    },
+
+    onConnectionExit(listener) {
+      exitListeners.add(listener)
+      return () => {
+        exitListeners.delete(listener)
+      }
+    },
+
+    close() {
+      if (closing !== null) return closing
+      closing = (async () => {
+        const open = [...connections.values()]
+        sessions.clear()
+        // The exit handler clears `connections`; snapshot first so a synchronous
+        // exit cannot shorten the loop.
+        await Promise.all(open.map(({ connection }) => connection.close()))
+      })()
+      return closing
+    },
+  }
+}

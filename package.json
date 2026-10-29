@@ -27,7 +27,7 @@
     "check:native": "bun run check:swift && cd desktop && bun run build:sidecars && bun run test:compiled-sidecar-smoke && bun run check:electron && CSC_IDENTITY_AUTO_DISCOVERY=false bun run electron:package:dir && cd .. && bun run test:package-smoke:current",
     "check:docs": "npm --prefix site ci --loglevel=error && npm --prefix site run --loglevel=error build && npm --prefix site run --loglevel=error check",
     "check:persistence-upgrade": "bun run scripts/quality-gate/persistence-upgrade.ts",
-    "check:harness": "npm --prefix harness test",
+    "check:harness": "npm --prefix harness ci && npm --prefix harness test",
     "check:quarantine": "bun run scripts/quality-gate/quarantine.ts --enforce-review-date",
     "check:coverage": "bun run scripts/quality-gate/coverage.ts",
     "hooks:install": "bun run scripts/git-hooks/install.ts",
@@ -53,6 +53,7 @@
     "check:computer-use-signed-chain": "bun run scripts/quality-gate/computer-use-signed-chain.ts"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "1.4.0",
     "@anthropic-ai/sandbox-runtime": "^0.0.44",
     "@anthropic-ai/sdk": "^0.80.0",
     "@aws-sdk/client-bedrock-runtime": "^3.1020.0",

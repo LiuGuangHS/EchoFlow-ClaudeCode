@@ -1,0 +1,52 @@
+/**
+ * What dsh actually offers through ACP, as far as this driver exercises it.
+ *
+ * The default is `unsupported`: a capability is claimed only after a test
+ * drives it. "Try it and see" turns an unsupported request into a silent
+ * downgrade, which the contract forbids.
+ */
+import type { Capability, CapabilityState, RuntimeCapabilities } from './contract.js'
+
+function cap(state: CapabilityState, note?: string): Capability {
+  return { state, source: 'protocol-baseline', ...(note === undefined ? {} : { note }) }
+}
+
+const native = (note?: string) => cap('native', note)
+const unsupported = (note?: string) => cap('unsupported', note)
+
+export function dshBaselineCapabilities(): RuntimeCapabilities {
+  return {
+    session: {
+      list: unsupported(),
+      resume: unsupported(),
+      fork: unsupported(),
+      close: unsupported('close detaches; native session close is not exercised'),
+      delete: unsupported(),
+    },
+    prompt: {
+      text: native(),
+      image: unsupported(),
+      embeddedResource: unsupported(),
+      steer: unsupported(),
+    },
+    approval: {
+      tool: native(),
+      command: unsupported(),
+      fileChange: unsupported(),
+      userInput: unsupported(),
+      network: unsupported(),
+    },
+    extensions: {
+      mcpStdio: unsupported(),
+      mcpHttp: unsupported(),
+      hooks: unsupported(),
+      skills: unsupported(),
+      plugins: unsupported(),
+    },
+    observability: {
+      usage: native('dsh emits usage_update only when the provider reports usage'),
+      cost: unsupported(),
+      diffs: unsupported(),
+    },
+  }
+}
