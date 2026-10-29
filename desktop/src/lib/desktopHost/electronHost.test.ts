@@ -22,6 +22,17 @@ describe('electron desktop host', () => {
 
     await expect(host.echoFlow.openLogin()).resolves.toBe('failed')
   })
+  it('signs out one endpoint at a time so the other line stays connected', async () => {
+    const invoke = vi.fn().mockResolvedValue(undefined)
+    const host = createElectronHost({ invoke, subscribe: vi.fn() })
+
+    await host.echoFlow.signOut()
+    expect(invoke).toHaveBeenCalledWith(ELECTRON_IPC_CHANNELS.echoFlowSignOut, { endpoint: 'main' })
+
+    invoke.mockClear()
+    await host.echoFlow.signOut('dedicated')
+    expect(invoke).toHaveBeenCalledWith(ELECTRON_IPC_CHANNELS.echoFlowSignOut, { endpoint: 'dedicated' })
+  })
   it('routes Claude Code runtime settings through narrow runtime IPC boundaries', async () => {
     const status = { defaultRuntimeId: 'bundled' as const, hasInstalledRuntime: false }
     const invoke = vi.fn()

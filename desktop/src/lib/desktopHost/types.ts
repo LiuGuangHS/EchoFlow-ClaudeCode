@@ -440,7 +440,7 @@ export type DesktopHost = {
   capabilities: DesktopHostCapabilities
   echoFlow: {
     openLogin(endpoint?: EchoFlowLoginEndpoint): Promise<'authenticated' | 'cancelled' | 'failed'>
-    signOut(): Promise<void>
+    signOut(endpoint?: EchoFlowLoginEndpoint): Promise<void>
   }
   runtimeDiscovery: {
     list(options?: { includeWsl?: boolean }): Promise<RuntimeDiscoveryResult>

@@ -57,6 +57,7 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
   const account = accounts[selectedEndpoint]
   const currentCredentials = credentials[selectedEndpoint]
   const tokenOptions = account?.tokens ?? []
+  const canSignIn = getDesktopHost().capabilities.echoFlowAccount
 
   const endpointLabels: Record<EchoFlowEndpoint, string> = {
     main: t('echoflowApiOfficialLogin.endpointMain'),
@@ -165,7 +166,13 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
     setIsDisconnecting(true)
     setError(null)
     try {
-      await echoflowApi.disconnectAccount(selectedEndpoint)
+      // In Electron only the host can drop the partition cookies; without that
+      // the next rehydrate would silently sign the user back in.
+      if (canSignIn) {
+        await getDesktopHost().echoFlow.signOut(selectedEndpoint)
+      } else {
+        await echoflowApi.disconnectAccount(selectedEndpoint)
+      }
       setAccounts((current) => {
         const next = { ...current, [selectedEndpoint]: null }
         onBindingChange?.(Boolean(next.main || next.dedicated))
@@ -198,8 +205,6 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
       </span>
     ),
   }))
-
-  const canSignIn = getDesktopHost().capabilities.echoFlowAccount
 
   const credentialForm = (
         <div className="flex flex-wrap items-center gap-2">

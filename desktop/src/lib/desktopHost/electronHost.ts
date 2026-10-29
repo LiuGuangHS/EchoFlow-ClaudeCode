@@ -91,7 +91,7 @@ export function createElectronHost(bridge: ElectronHostBridge): DesktopHost {
     },
     echoFlow: {
       openLogin: (endpoint = 'main') => invoke(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, { endpoint }),
-      signOut: () => invoke(ELECTRON_IPC_CHANNELS.echoFlowSignOut),
+      signOut: (endpoint = 'main') => invoke(ELECTRON_IPC_CHANNELS.echoFlowSignOut, { endpoint }),
     },
     runtimeDiscovery: {
       list: options => invoke(ELECTRON_IPC_CHANNELS.runtimeDiscoveryGet, options),

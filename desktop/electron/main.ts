@@ -389,20 +389,30 @@ function getEchoFlowLoginSession(): EchoFlowLoginSession {
   return echoFlowLoginSession
 }
 
+const ECHOFLOW_LOGIN_ENDPOINTS: EchoFlowLoginEndpoint[] = ['main', 'dedicated']
+
 async function rehydrateEchoFlowSiteSession(): Promise<void> {
-  await getEchoFlowLoginSession().rehydrate()
+  const login = getEchoFlowLoginSession()
+  // Each line keeps its own partition and stored account, so one line failing
+  // to rehydrate must not stop the other from coming back.
+  await Promise.all(ECHOFLOW_LOGIN_ENDPOINTS.map(endpoint => login.rehydrate(endpoint)))
 }
 
-async function signOutEchoFlowSiteSession(): Promise<void> {
+async function signOutEchoFlowSiteSession(endpoint: EchoFlowLoginEndpoint = 'main'): Promise<void> {
   const runtime = getServerRuntime()
   const serverUrl = await runtime.getServerUrl()
-  const response = await fetch(`${serverUrl}/api/echoflow/site-session`, {
+  const response = await fetch(`${serverUrl}/api/echoflow/account`, {
     method: 'DELETE',
-    headers: { Authorization: `Bearer ${runtime.getLocalAccessToken()}` },
+    headers: {
+      Authorization: `Bearer ${runtime.getLocalAccessToken()}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ endpoint }),
     signal: AbortSignal.timeout(10_000),
   })
   if (!response.ok) throw new Error('Could not sign out of the EchoFlow account.')
-  await getEchoFlowLoginSession().clear()
+  // Clearing only this partition leaves the other endpoint signed in.
+  await getEchoFlowLoginSession().clear(endpoint)
 }
 
 function getDeepSeekHarnessRuntime() {
@@ -788,7 +798,10 @@ function registerIpcHandlers() {
     const requested = (payload as { endpoint?: unknown } | undefined)?.endpoint
     return await getEchoFlowLoginSession().open(requested === 'dedicated' ? 'dedicated' : 'main')
   })
-  registerHandler(ELECTRON_IPC_CHANNELS.echoFlowSignOut, async () => await signOutEchoFlowSiteSession())
+  registerHandler(ELECTRON_IPC_CHANNELS.echoFlowSignOut, async (_event, payload) => {
+    const requested = (payload as { endpoint?: unknown } | undefined)?.endpoint
+    await signOutEchoFlowSiteSession(requested === 'dedicated' ? 'dedicated' : 'main')
+  })
   registerHandler(ELECTRON_IPC_CHANNELS.publicAccessGetStatus, () => getPublicAccessManager().getStatus())
   registerHandler(ELECTRON_IPC_CHANNELS.publicAccessSaveCredential, (_event, payload) => getPublicAccessManager().saveCredential(payload as string))
   registerHandler(ELECTRON_IPC_CHANNELS.publicAccessDeleteCredential, () => getPublicAccessManager().deleteCredential())

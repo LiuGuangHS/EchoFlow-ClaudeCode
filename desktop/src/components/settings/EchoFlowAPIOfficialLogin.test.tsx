@@ -4,6 +4,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { useProviderStore } from '../../stores/providerStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { translate } from '../../i18n'
+import type { EchoFlowAccount } from '../../api/echoflow'
 
 // The component routes every label through t(). Deriving the expected strings from
 // translate() (and pinning a non-default locale) is what keeps these assertions
@@ -16,10 +17,10 @@ const bindLabel = (endpoint: 'main' | 'dedicated') =>
   translate('en', 'echoflowApiOfficialLogin.bindAccount', { endpoint: endpointTab(endpoint) })
 
 vi.mock('../../api/echoflow')
-const hostMocks = vi.hoisted(() => ({ openLogin: vi.fn(), signOut: vi.fn() }))
+const hostMocks = vi.hoisted(() => ({ openLogin: vi.fn(), signOut: vi.fn(), echoFlowAccount: true }))
 vi.mock('@/lib/desktopHost', () => ({
   getDesktopHost: () => ({
-    capabilities: { echoFlowAccount: true },
+    capabilities: { echoFlowAccount: hostMocks.echoFlowAccount },
     echoFlow: hostMocks,
   }),
 }))
@@ -42,7 +43,7 @@ const dedicatedAccount = {
   tokens: [{ id: 'shared-token-id', name: 'Dedicated key', keyPreview: 'sk-dedicated…5678' }],
 }
 
-function mockAccounts(main: typeof mainAccount | null = mainAccount, dedicated: typeof dedicatedAccount | null = dedicatedAccount) {
+function mockAccounts(main: EchoFlowAccount | null = mainAccount, dedicated: EchoFlowAccount | null = dedicatedAccount) {
   vi.mocked(echoflowApi.getAccounts).mockResolvedValue({
     account: main,
     accounts: { main, dedicated },
@@ -69,6 +70,8 @@ describe('EchoFlowAPIOfficialLogin', () => {
     vi.mocked(echoflowApi.getTokenKey).mockReset()
     vi.mocked(echoflowApi.getTokenKey).mockResolvedValue({ token: { id: 'shared-token-id', name: 'Main key', key: 'sk-main-secret' } })
     hostMocks.openLogin.mockReset()
+    hostMocks.signOut.mockReset()
+    hostMocks.echoFlowAccount = true
     mockAccounts()
   })
 
@@ -227,6 +230,22 @@ describe('EchoFlowAPIOfficialLogin', () => {
   })
 
   it('disconnects only the selected endpoint account', async () => {
+    hostMocks.signOut.mockResolvedValue(undefined)
+    render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
+
+    await screen.findByText(userIdSummary('main-user'))
+    fireEvent.click(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.unbind') }))
+
+    await waitFor(() => expect(hostMocks.signOut).toHaveBeenCalledWith('main'))
+    expect(screen.queryByText(userIdSummary('main-user'))).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: endpointTab('dedicated') }))
+    expect(screen.getByText(userIdSummary('dedicated-user'))).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Dedicated key.*sk-dedicated…5678/ })).toBeInTheDocument()
+  })
+
+  it('still disconnects in a browser host that cannot clear the sign-in cookies', async () => {
+    hostMocks.echoFlowAccount = false
     vi.mocked(echoflowApi.disconnectAccount).mockResolvedValue({ ok: true })
     render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
 
@@ -234,11 +253,8 @@ describe('EchoFlowAPIOfficialLogin', () => {
     fireEvent.click(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.unbind') }))
 
     await waitFor(() => expect(vi.mocked(echoflowApi.disconnectAccount)).toHaveBeenCalledWith('main'))
+    expect(hostMocks.signOut).not.toHaveBeenCalled()
     expect(screen.queryByText(userIdSummary('main-user'))).not.toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole('tab', { name: endpointTab('dedicated') }))
-    expect(screen.getByText(userIdSummary('dedicated-user'))).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Dedicated key.*sk-dedicated…5678/ })).toBeInTheDocument()
   })
 
   it('refreshes only the selected endpoint account', async () => {
