@@ -52,9 +52,6 @@ export async function handleApiRequest(req: Request, url: URL, context: ApiReque
 }
 
 async function handleApiRequestWithoutPerformance(req: Request, url: URL, context: ApiRequestContext = {}): Promise<Response> {
-  if (context.remoteBrowser && /^\/api\/echoflow\/site-session(?:\/|$)/u.test(url.pathname)) {
-    return Response.json({ error: 'desktop_only' }, { status: 403 })
-  }
   if (!context.remoteBrowser) return routeApiRequest(req, url, { projectProviderSecrets: false }, context)
   const parts = url.pathname.split('/').filter(Boolean)
   const isProvider = parts[1] === 'providers'

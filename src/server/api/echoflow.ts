@@ -1,7 +1,6 @@
 import { timingSafeEqual } from 'node:crypto'
 import { z } from 'zod'
 import { EchoFlowApiError, EchoFlowApiService } from '../services/echoflowApiService.js'
-import { EchoFlowSiteSession, EchoFlowSiteSessionError } from '../services/echoFlowSiteSession.js'
 import { LegacyMigrationService } from '../services/legacyMigrationService.js'
 import { isLocalAccessAuthorized } from '../localAccessAuth.js'
 import { ProviderService, toPublicProvider } from '../services/providerService.js'
@@ -10,7 +9,6 @@ import { errorResponse } from '../middleware/errorHandler.js'
 import { CreateProviderSchema, TestProviderSchema } from '../types/provider.js'
 
 const service = new EchoFlowApiService()
-const siteSession = new EchoFlowSiteSession()
 const providerService = new ProviderService()
 const ECHOFLOW_PRESET_ID = 'echoflowai'
 const ECHOFLOW_BASE_URLS = {
@@ -57,7 +55,7 @@ const EchoFlowTokenSchema = z.object({
 const LegacyMigrationConfirmationSchema = z.object({
   confirmed: z.literal(true),
 })
-const EchoFlowSiteSessionBootstrapSchema = z.object({
+const EchoFlowSiteCookiesSchema = z.object({
   cookie: z.string().min(1).max(16 * 1024).refine(value => !/[\r\n\0]/.test(value)),
   userId: z.string().trim().min(1).max(128).refine(value => !/[\r\n\0]/.test(value)),
 })
@@ -65,8 +63,8 @@ const EchoFlowAccountCredentialSchema = z.discriminatedUnion('kind', [
   z.object({
     endpoint: z.enum(['main', 'dedicated']).default('main'),
     kind: z.literal('session'),
-    cookie: EchoFlowSiteSessionBootstrapSchema.shape.cookie,
-    userId: EchoFlowSiteSessionBootstrapSchema.shape.userId,
+    cookie: EchoFlowSiteCookiesSchema.shape.cookie,
+    userId: EchoFlowSiteCookiesSchema.shape.userId,
   }),
   z.object({
     endpoint: z.literal('dedicated'),
@@ -94,23 +92,6 @@ export async function handleEchoFlowApi(
 ): Promise<Response> {
   try {
     const action = segments[2]
-
-    if (action === 'site-session') {
-      if (context.remoteBrowser) return Response.json({ error: 'desktop_only' }, { status: 403 })
-      const operation = segments[3]
-      if (req.method === 'POST' && !operation) {
-        if (!hasSiteSessionBridgeToken(req)) return Response.json({ error: 'desktop_bridge_required' }, { status: 403 })
-        const input = EchoFlowSiteSessionBootstrapSchema.parse(await req.json())
-        return Response.json({ account: await siteSession.setSession(input) })
-      }
-      if (!isLocalAccessAuthorized(req)) return Response.json({ error: 'local_access_required' }, { status: 403 })
-      if (req.method === 'GET' && !operation) return Response.json({ account: siteSession.getStatus() })
-      if (req.method === 'POST' && operation === 'refresh') return Response.json({ account: await siteSession.refresh() })
-      if (req.method === 'DELETE' && !operation) {
-        siteSession.clear()
-        return Response.json({ ok: true })
-      }
-    }
 
     if (!action && req.method === 'GET') {
       const accounts = await service.getAccounts()
@@ -250,10 +231,6 @@ export async function handleEchoFlowApi(
   } catch (error) {
     if (error instanceof z.ZodError) {
       return Response.json({ error: 'invalid_request' }, { status: 400 })
-    }
-    if (error instanceof EchoFlowSiteSessionError) {
-      const status = error.code === 'session_invalid' ? 401 : 502
-      return Response.json({ error: error.code }, { status })
     }
     if (error instanceof EchoFlowApiError) {
       return Response.json({ error: error.code }, { status: error.code === 'token_invalid' ? 400 : 502 })
