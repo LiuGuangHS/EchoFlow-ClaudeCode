@@ -26,6 +26,8 @@ class FakeLoginWindow implements EchoFlowLoginWindow {
   pageUrl = MAIN_LOGIN_PROFILE.url
   localStorageUser: string | null = null
   localStorage: Record<string, string | null> = {}
+  // A page that rendered something; blank-page tests set this to ''.
+  bodyText = 'sign in'
   credential: EchoFlowLoginCredential | null = null
 
   signIn(credential: EchoFlowLoginCredential) {
@@ -42,15 +44,17 @@ class FakeLoginWindow implements EchoFlowLoginWindow {
       this.windowOpen = handler
     },
     getURL: () => this.pageUrl,
-    // Mirrors the expression main.ts evaluates for the dedicated gateway.
-    executeJavaScript: vi.fn(async (code: string, _userGesture?: boolean) =>
-      code.includes('auth_token')
+    executeJavaScript: vi.fn(async (code: string, _userGesture?: boolean) => {
+      if (code.includes('innerText')) return this.bodyText.trim().length
+      // Mirrors the expression main.ts evaluates for the dedicated gateway.
+      return code.includes('auth_token')
         ? {
             token: this.localStorage.auth_token ?? null,
             user: this.localStorage.auth_user ?? null,
             expiresAt: this.localStorage.token_expires_at ?? null,
           }
-        : this.localStorageUser),
+        : this.localStorageUser
+    }),
   }
 
   on(event: 'closed', listener: () => void) {
@@ -218,6 +222,25 @@ describe('EchoFlow site login session', () => {
     await new Promise(resolve => setTimeout(resolve, 60))
     expect(verifySession).not.toHaveBeenCalled()
     expect(window.closedCount).toBe(0)
+
+    window.close()
+    await expect(result).resolves.toBe('cancelled')
+  })
+
+  it('reloads a blank login page once instead of waiting on a credential that cannot arrive', async () => {
+    const { login, window, createWindow } = makeLogin()
+    window.bodyText = ''
+    const result = login.open()
+    await waitFor(() => createWindow.mock.calls.length === 1)
+    window.finishLoad()
+
+    await waitFor(() => window.loadCount === 2)
+    expect(window.loadedUrl).toBe('https://api.echoflowai.cc/login')
+
+    // One retry only: a page that stays blank must not reload in a loop.
+    window.finishLoad()
+    await new Promise(resolve => setTimeout(resolve, 80))
+    expect(window.loadCount).toBe(2)
 
     window.close()
     await expect(result).resolves.toBe('cancelled')

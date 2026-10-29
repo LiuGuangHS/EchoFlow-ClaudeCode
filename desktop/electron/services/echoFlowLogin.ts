@@ -112,6 +112,12 @@ const DEFAULT_LOAD_RETRIES = 3
  * minutes.
  */
 const MAX_IDENTITY_REJECTIONS = 3
+/**
+ * A page that finished loading and still renders no text is the known
+ * blank-consoles failure; three polls is long enough to rule out a paint in
+ * progress and short enough that the user does not stare at white.
+ */
+const BLANK_POLLS_BEFORE_RELOAD = 3
 
 export function isAllowedProfileNavigation(profile: EchoFlowLoginProfile, value: string): boolean {
   try {
@@ -243,6 +249,10 @@ export class EchoFlowLoginSession {
   private identityInFlight = false
   private identityRejections = 0
   private lastCredentialKey = ''
+  private pageLoaded = false
+  private blankPolls = 0
+  private blankReloaded = false
+  private blankCheckInFlight = false
   private lastIdentityAttemptAt = 0
 
   private readonly pollIntervalMs: number
@@ -343,6 +353,9 @@ export class EchoFlowLoginSession {
       this.activeProfile = profile
       this.identityRejections = 0
       this.lastCredentialKey = ''
+      this.pageLoaded = false
+      this.blankPolls = 0
+      this.blankReloaded = false
       const loginWindow = window
 
       window.webContents.setWindowOpenHandler(details => this.onWindowOpen(profile, details.url))
@@ -354,6 +367,8 @@ export class EchoFlowLoginSession {
       window.webContents.on('did-finish-load', () => {
         this.loadRetriesUsed = 0
         this.clearLoadTimeout()
+        this.pageLoaded = true
+        this.blankPolls = 0
       })
       window.webContents.on('did-fail-load', (_event, errorCode, description, _url, isMainFrame) => {
         if (this.window === loginWindow) this.onLoadFailed(loginWindow, errorCode, description, isMainFrame)
@@ -369,7 +384,10 @@ export class EchoFlowLoginSession {
         this.loginTimeoutMs,
       )
       this.pollTimer = setInterval(
-        () => { void this.pollSession(loginWindow, endpoint) },
+        () => {
+          void this.pollSession(loginWindow, endpoint)
+          void this.checkBlankLoginPage(loginWindow)
+        },
         this.pollIntervalMs,
       )
 
@@ -398,6 +416,38 @@ export class EchoFlowLoginSession {
       const profile = this.activeProfile
       if (this.window === window && profile) void window.loadURL(profile.url).catch(() => {})
     }, this.loadRetryDelayMs * this.loadRetriesUsed)
+  }
+
+  /**
+   * The site bundle sometimes finishes loading without painting anything, and
+   * the window then sits white until the login timeout. One reload recovers
+   * that; a second blank page is a real failure and keeps waiting.
+   */
+  private async checkBlankLoginPage(window: EchoFlowLoginWindow): Promise<void> {
+    if (this.window !== window || !this.pageLoaded || this.blankReloaded || this.blankCheckInFlight) return
+    this.blankCheckInFlight = true
+    try {
+      const length = await window.webContents.executeJavaScript(
+        'document.body?.innerText?.trim().length ?? 0',
+        true,
+      )
+      if (this.window !== window || !this.pageLoaded) return
+      if (typeof length !== 'number' || length > 0) {
+        this.blankPolls = 0
+        return
+      }
+      this.blankPolls += 1
+      if (this.blankPolls < BLANK_POLLS_BEFORE_RELOAD) return
+      // shortcut: host-side blank check, replace with the site's own preload-error handler once the site repo ships it.
+      this.blankReloaded = true
+      this.blankPolls = 0
+      const profile = this.activeProfile
+      if (profile) await window.loadURL(profile.url).catch(() => {})
+    } catch {
+      // Mid-navigation; the next poll checks again.
+    } finally {
+      this.blankCheckInFlight = false
+    }
   }
 
   private async pollSession(window: EchoFlowLoginWindow, endpoint: EchoFlowLoginEndpoint): Promise<void> {
