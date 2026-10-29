@@ -78,6 +78,7 @@ function TaskPreview({ task, locale, onClose }: { task: Preview; locale: Landing
 function Nav({ locale }: { locale: LandingLocale }) {
   const [open, setOpen] = useState(false)
   const en = locale === 'en'
+  const downloadHref = toSiteHref(downloadPagePath(locale))
   const toggleRef = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     const close = (event: globalThis.KeyboardEvent) => {
@@ -94,7 +95,7 @@ function Nav({ locale }: { locale: LandingLocale }) {
       <a href="#faqs" onClick={() => setOpen(false)}>{en ? 'FAQs' : '常见问题'}</a>
       <a className="wander-nav__mobile-docs" href={toSiteHref(en ? '/en/start' : '/start')}>{en ? 'Documentation' : '使用文档'}</a>
     </nav>
-    <div className="wander-header__actions"><a className="wander-doc-link" href={toSiteHref(en ? '/en/start' : '/start')}>{en ? 'Docs' : '使用文档'}<ArrowUpRight size={15} /></a><a className="wander-locale" href={toSiteHref(en ? '/' : '/en')} lang={en ? 'zh-CN' : 'en'} aria-label={en ? 'Switch to Chinese' : '切换为英文'} onClick={() => rememberLocale(en ? 'zh' : 'en')}>{en ? '中文' : 'EN'}</a><a className="wander-primary" href="#download">{en ? 'Get EchoFlow Code' : '免费下载'}<ArrowUpRight size={17} /></a><button ref={toggleRef} className="wander-icon wander-menu" aria-label={en ? 'Toggle navigation' : '切换导航'} aria-expanded={open} aria-controls="wander-nav" onClick={() => setOpen(!open)}>{open ? <X /> : <Menu />}</button></div>
+    <div className="wander-header__actions"><a className="wander-doc-link" href={toSiteHref(en ? '/en/start' : '/start')}>{en ? 'Docs' : '使用文档'}<ArrowUpRight size={15} /></a><a className="wander-locale" href={toSiteHref(en ? '/' : '/en')} lang={en ? 'zh-CN' : 'en'} aria-label={en ? 'Switch to Chinese' : '切换为英文'} onClick={() => rememberLocale(en ? 'zh' : 'en')}>{en ? '中文' : 'EN'}</a><a className="wander-primary" href={downloadHref}>{en ? 'Get EchoFlow Code' : '免费下载'}<ArrowUpRight size={17} /></a><button ref={toggleRef} className="wander-icon wander-menu" aria-label={en ? 'Toggle navigation' : '切换导航'} aria-expanded={open} aria-controls="wander-nav" onClick={() => setOpen(!open)}>{open ? <X /> : <Menu />}</button></div>
   </header>
 }
 
