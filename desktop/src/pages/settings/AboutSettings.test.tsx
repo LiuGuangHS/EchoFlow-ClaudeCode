@@ -49,10 +49,14 @@ it('guides users to the official download page when the update check fails', asy
   open.mockRestore()
 })
 
-it('keeps the manual-download guidance hidden while there is no error code', () => {
+it('offers a manual download even while the update check is healthy', async () => {
   useUpdateStore.setState({ status: 'idle', error: null, errorCode: null })
+  const open = vi.spyOn(window, 'open').mockImplementation(() => null)
   render(<AboutSettings />)
+  await screen.findByText((_, node) => node?.tagName === 'SPAN' && node.textContent === '版本 0.1.0')
 
-  expect(screen.queryByText(/code\.echoflow\.cn\/download/)).not.toBeInTheDocument()
-  expect(screen.queryByRole('button', { name: '前往下载页' })).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '前往下载页' }))
+  expect(open).toHaveBeenCalledWith('https://code.echoflow.cn/download', '_blank', 'noopener,noreferrer')
+
+  open.mockRestore()
 })

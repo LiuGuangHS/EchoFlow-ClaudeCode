@@ -4,10 +4,12 @@ import { describe, test } from 'node:test'
 import {
   GITHUB_ACCELERATOR_PREFIX,
   buildDownloadCandidates,
+  downloadPagePath,
   loadDownloadManifest,
   pickPlatformArch,
   resolveDownloadTarget,
   resolveExtraDownloads,
+  resolveInitialPlatform,
   startDirectDownload,
 } from './releaseDownload.js'
 
@@ -60,6 +62,44 @@ describe('pickPlatformArch', () => {
 
   test('falls back to Windows x64 for an unknown UA', () => {
     assert.deepEqual(pickPlatformArch(''), { platform: 'win', arch: 'x64' })
+  })
+})
+
+describe('downloadPagePath', () => {
+  test('carries the landing-page operating system into the download route', () => {
+    assert.equal(downloadPagePath('zh', 'Windows'), '/download?platform=win')
+    assert.equal(downloadPagePath('en', 'macOS'), '/en/download?platform=mac')
+    assert.equal(downloadPagePath('zh', 'Linux'), '/download?platform=linux')
+  })
+
+  test('omits the query when the platform is unknown', () => {
+    assert.equal(downloadPagePath('zh', 'BeOS'), '/download')
+  })
+})
+
+describe('resolveInitialPlatform', () => {
+  test('prefers a valid platform query over user-agent detection', () => {
+    assert.equal(
+      resolveInitialPlatform('?platform=win', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'),
+      'win',
+    )
+  })
+
+  test('accepts the labels used by the landing page', () => {
+    assert.equal(resolveInitialPlatform('?platform=macOS', ''), 'mac')
+    assert.equal(resolveInitialPlatform('?platform=Windows', ''), 'win')
+    assert.equal(resolveInitialPlatform('?platform=Linux', ''), 'linux')
+  })
+
+  test('ignores an unknown platform and falls back to the user agent', () => {
+    assert.equal(
+      resolveInitialPlatform('?platform=beos', 'Mozilla/5.0 (X11; Linux x86_64)'),
+      'linux',
+    )
+  })
+
+  test('falls back to the user agent when the query is malformed', () => {
+    assert.equal(resolveInitialPlatform('%', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'), 'win')
   })
 })
 
@@ -149,12 +189,15 @@ describe('startDirectDownload', () => {
 })
 
 describe('loadDownloadManifest', () => {
+  const PAGES_MANIFEST_URL = 'https://pages.test/EchoFlow-ClaudeCode/download/manifest.json'
+
   // Vite 的 BASE_URL 是 '/'。和 '/download/manifest.json' 直接拼会得到协议相对地址
   // '//download/manifest.json'，请求打到名叫 download 的主机上，manifest 永远取不到。
   test('joins the Vite base "/" without producing a protocol-relative URL', async () => {
     const calls = []
     const manifest = await loadDownloadManifest({
       baseUrl: '/',
+      fallbackManifestUrl: PAGES_MANIFEST_URL,
       fetchImpl: async (url) => {
         calls.push(url)
         return { ok: true, json: async () => MANIFEST }
@@ -169,6 +212,7 @@ describe('loadDownloadManifest', () => {
     const calls = []
     await loadDownloadManifest({
       baseUrl: '/preview/',
+      fallbackManifestUrl: PAGES_MANIFEST_URL,
       fetchImpl: async (url) => {
         calls.push(url)
         return { ok: true, json: async () => MANIFEST }
@@ -178,12 +222,127 @@ describe('loadDownloadManifest', () => {
     assert.deepEqual(calls, ['/preview/download/manifest.json'])
   })
 
-  test('returns null on a missing manifest instead of throwing', async () => {
+  test('reads the official Pages copy when the same-origin manifest is missing', async () => {
+    const calls = []
     const manifest = await loadDownloadManifest({
       baseUrl: '/',
-      fetchImpl: async () => ({ ok: false, status: 404 }),
+      fallbackManifestUrl: PAGES_MANIFEST_URL,
+      fetchImpl: async (url) => {
+        calls.push(url)
+        if (url === PAGES_MANIFEST_URL) return { ok: true, json: async () => MANIFEST }
+        return { ok: false, status: 404 }
+      },
     })
 
+    assert.deepEqual(calls, ['/download/manifest.json', PAGES_MANIFEST_URL])
+    assert.equal(manifest, MANIFEST)
+  })
+
+  test('skips an HTML response from the same origin and reads the Pages copy', async () => {
+    const calls = []
+    const manifest = await loadDownloadManifest({
+      baseUrl: '/',
+      fallbackManifestUrl: PAGES_MANIFEST_URL,
+      fetchImpl: async (url) => {
+        calls.push(url)
+        if (url === PAGES_MANIFEST_URL) return { ok: true, json: async () => MANIFEST }
+        return {
+          ok: true,
+          headers: { get: () => 'text/html; charset=utf-8' },
+          json: async () => { throw new SyntaxError('Unexpected token <') },
+        }
+      },
+    })
+
+    assert.deepEqual(calls, ['/download/manifest.json', PAGES_MANIFEST_URL])
+    assert.equal(manifest, MANIFEST)
+  })
+
+  test('falls back when a JSON response cannot be parsed', async () => {
+    const calls = []
+    const manifest = await loadDownloadManifest({
+      baseUrl: '/',
+      fallbackManifestUrl: PAGES_MANIFEST_URL,
+      fetchImpl: async (url) => {
+        calls.push(url)
+        if (url === PAGES_MANIFEST_URL) return { ok: true, json: async () => MANIFEST }
+        return {
+          ok: true,
+          headers: { get: () => 'application/json' },
+          json: async () => { throw new SyntaxError('Unexpected end of JSON input') },
+        }
+      },
+    })
+
+    assert.deepEqual(calls, ['/download/manifest.json', PAGES_MANIFEST_URL])
+    assert.equal(manifest, MANIFEST)
+  })
+
+  test('rejects an invalid manifest shape and reads the Pages copy', async () => {
+    const calls = []
+    const manifest = await loadDownloadManifest({
+      baseUrl: '/',
+      fallbackManifestUrl: PAGES_MANIFEST_URL,
+      fetchImpl: async (url) => {
+        calls.push(url)
+        if (url === PAGES_MANIFEST_URL) return { ok: true, json: async () => MANIFEST }
+        return { ok: true, json: async () => ({ version: '0.7.1', assets: {} }) }
+      },
+    })
+
+    assert.deepEqual(calls, ['/download/manifest.json', PAGES_MANIFEST_URL])
+    assert.equal(manifest, MANIFEST)
+  })
+
+  test('reads the Pages copy when the same-origin request fails', async () => {
+    const calls = []
+    const manifest = await loadDownloadManifest({
+      baseUrl: '/',
+      fallbackManifestUrl: PAGES_MANIFEST_URL,
+      fetchImpl: async (url) => {
+        calls.push(url)
+        if (url === PAGES_MANIFEST_URL) return { ok: true, json: async () => MANIFEST }
+        throw new TypeError('network error')
+      },
+    })
+
+    assert.deepEqual(calls, ['/download/manifest.json', PAGES_MANIFEST_URL])
+    assert.equal(manifest, MANIFEST)
+  })
+
+  test('rejects a manifest whose release tag or asset name is not a path segment', async () => {
+    for (const invalid of [
+      { ...MANIFEST, tag: '../other-release' },
+      { ...MANIFEST, assets: { ...MANIFEST.assets, 'win-x64': '../EchoFlow-Code.exe' } },
+    ]) {
+      const calls = []
+      const manifest = await loadDownloadManifest({
+        baseUrl: '/',
+        fallbackManifestUrl: PAGES_MANIFEST_URL,
+        fetchImpl: async (url) => {
+          calls.push(url)
+          if (url === PAGES_MANIFEST_URL) return { ok: true, json: async () => MANIFEST }
+          return { ok: true, json: async () => invalid }
+        },
+      })
+
+      assert.deepEqual(calls, ['/download/manifest.json', PAGES_MANIFEST_URL])
+      assert.equal(manifest, MANIFEST)
+    }
+  })
+
+  test('returns null only after both sources fail', async () => {
+    const calls = []
+    const manifest = await loadDownloadManifest({
+      baseUrl: '/',
+      fallbackManifestUrl: PAGES_MANIFEST_URL,
+      fetchImpl: async (url) => {
+        calls.push(url)
+        return { ok: false, status: 404 }
+      },
+    })
+
+    assert.deepEqual(calls, ['/download/manifest.json', PAGES_MANIFEST_URL])
     assert.equal(manifest, null)
   })
 })

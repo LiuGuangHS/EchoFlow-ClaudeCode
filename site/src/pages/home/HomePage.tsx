@@ -5,6 +5,7 @@ import { GITHUB_URL } from '@/components/SiteHeader'
 import ImageViewer from '@/components/ImageViewer'
 import { toSiteHref } from '@/content/docs'
 import { rememberLocale } from '@/lib/locale'
+import { downloadPagePath } from '@/lib/releaseDownload'
 import { setPageMeta } from '@/lib/meta'
 import { guideScreenshots } from './guideContent'
 import { landingContent } from './landingContent'
@@ -77,6 +78,7 @@ function TaskPreview({ task, locale, onClose }: { task: Preview; locale: Landing
 function Nav({ locale }: { locale: LandingLocale }) {
   const [open, setOpen] = useState(false)
   const en = locale === 'en'
+  const downloadHref = toSiteHref(downloadPagePath(locale))
   const toggleRef = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     const close = (event: globalThis.KeyboardEvent) => {
@@ -93,7 +95,7 @@ function Nav({ locale }: { locale: LandingLocale }) {
       <a href="#faqs" onClick={() => setOpen(false)}>{en ? 'FAQs' : '常见问题'}</a>
       <a className="wander-nav__mobile-docs" href={toSiteHref(en ? '/en/start' : '/start')}>{en ? 'Documentation' : '使用文档'}</a>
     </nav>
-    <div className="wander-header__actions"><a className="wander-doc-link" href={toSiteHref(en ? '/en/start' : '/start')}>{en ? 'Docs' : '使用文档'}<ArrowUpRight size={15} /></a><a className="wander-locale" href={toSiteHref(en ? '/' : '/en')} lang={en ? 'zh-CN' : 'en'} aria-label={en ? 'Switch to Chinese' : '切换为英文'} onClick={() => rememberLocale(en ? 'zh' : 'en')}>{en ? '中文' : 'EN'}</a><a className="wander-primary" href="#download">{en ? 'Get EchoFlow Code' : '免费下载'}<ArrowUpRight size={17} /></a><button ref={toggleRef} className="wander-icon wander-menu" aria-label={en ? 'Toggle navigation' : '切换导航'} aria-expanded={open} aria-controls="wander-nav" onClick={() => setOpen(!open)}>{open ? <X /> : <Menu />}</button></div>
+    <div className="wander-header__actions"><a className="wander-doc-link" href={toSiteHref(en ? '/en/start' : '/start')}>{en ? 'Docs' : '使用文档'}<ArrowUpRight size={15} /></a><a className="wander-locale" href={toSiteHref(en ? '/' : '/en')} lang={en ? 'zh-CN' : 'en'} aria-label={en ? 'Switch to Chinese' : '切换为英文'} onClick={() => rememberLocale(en ? 'zh' : 'en')}>{en ? '中文' : 'EN'}</a><a className="wander-primary" href={downloadHref}>{en ? 'Get EchoFlow Code' : '免费下载'}<ArrowUpRight size={17} /></a><button ref={toggleRef} className="wander-icon wander-menu" aria-label={en ? 'Toggle navigation' : '切换导航'} aria-expanded={open} aria-controls="wander-nav" onClick={() => setOpen(!open)}>{open ? <X /> : <Menu />}</button></div>
   </header>
 }
 
@@ -209,7 +211,8 @@ function Closing({ locale }: { locale: LandingLocale }) {
   const en = locale === 'en'
   const c = landingContent[locale]
   const [platform, setPlatform] = useState('macOS')
-  return <footer className="wander-closing" id="download"><img className="wander-landscape" src={landscape} alt="" loading="lazy" /><div className="wander-closing__content"><span className="wander-eyebrow">{en ? 'YOUR TIME. YOUR POSSIBILITIES.' : '你的时间，你的可能。'}</span><h2>{en ? <>Your next idea<br />starts <em>here.</em></> : <>下一件想做的事，<br /><em>从这里开始。</em></>}</h2><p>{c.closing.body}</p><div className="wander-platforms" aria-label={en ? 'Choose your operating system' : '选择你的操作系统'}>{['macOS', 'Windows', 'Linux'].map((name, index) => { const Symbol = [Command, Monitor, Laptop][index]; return <button key={name} aria-pressed={platform === name} onClick={() => setPlatform(name)}><Symbol size={15} />{name}</button> })}</div><a className="wander-primary wander-download" href={toSiteHref(en ? '/en/download' : '/download')}><Download size={18} />{en ? `Get EchoFlow Code for ${platform}` : `下载 ${platform} 版`}<ArrowUpRight size={18} /></a><span className="wander-closing__hint">{en ? 'Pick your architecture on the download page · Free' : '在下载页选择对应架构 · 免费'}</span></div><div className="wander-footer"><a className="wander-wordmark" href="#wander-title">EchoFlow Code</a><span>{en ? 'A little more room for life.' : '给生活，多留一点空间。'}</span><nav aria-label={en ? 'Footer navigation' : '页脚导航'}><a href={toSiteHref(en ? '/en/start' : '/start')}>{en ? 'Docs' : '文档'}</a><a href={GITHUB_URL} target="_blank" rel="noreferrer"><Code2 size={14} />GitHub</a><a href={toSiteHref(en ? '/en/start/privacy' : '/start/privacy')}>{en ? 'Privacy' : '隐私'}</a><a href={toSiteHref(en ? '/' : '/en')} onClick={() => rememberLocale(en ? 'zh' : 'en')}>{en ? '中文' : 'English'}</a></nav></div></footer>
+  const downloadHref = toSiteHref(downloadPagePath(locale, platform))
+  return <footer className="wander-closing" id="download"><img className="wander-landscape" src={landscape} alt="" loading="lazy" /><div className="wander-closing__content"><span className="wander-eyebrow">{en ? 'YOUR TIME. YOUR POSSIBILITIES.' : '你的时间，你的可能。'}</span><h2>{en ? <>Your next idea<br />starts <em>here.</em></> : <>下一件想做的事，<br /><em>从这里开始。</em></>}</h2><p>{c.closing.body}</p><div className="wander-platforms" aria-label={en ? 'Choose your operating system' : '选择你的操作系统'}>{['macOS', 'Windows', 'Linux'].map((name, index) => { const Symbol = [Command, Monitor, Laptop][index]; return <button key={name} aria-pressed={platform === name} onClick={() => setPlatform(name)}><Symbol size={15} />{name}</button> })}</div><a className="wander-primary wander-download" href={downloadHref}><Download size={18} />{en ? `Get EchoFlow Code for ${platform}` : `下载 ${platform} 版`}<ArrowUpRight size={18} /></a><span className="wander-closing__hint">{en ? 'Pick your architecture on the download page · Free' : '在下载页选择对应架构 · 免费'}</span></div><div className="wander-footer"><a className="wander-wordmark" href="#wander-title">EchoFlow Code</a><span>{en ? 'A little more room for life.' : '给生活，多留一点空间。'}</span><nav aria-label={en ? 'Footer navigation' : '页脚导航'}><a href={toSiteHref(en ? '/en/start' : '/start')}>{en ? 'Docs' : '文档'}</a><a href={GITHUB_URL} target="_blank" rel="noreferrer"><Code2 size={14} />GitHub</a><a href={toSiteHref(en ? '/en/start/privacy' : '/start/privacy')}>{en ? 'Privacy' : '隐私'}</a><a href={toSiteHref(en ? '/' : '/en')} onClick={() => rememberLocale(en ? 'zh' : 'en')}>{en ? '中文' : 'English'}</a></nav></div></footer>
 }
 
 export default function HomePage({ locale = 'en' }: { locale?: LandingLocale }) {

@@ -9,9 +9,9 @@ import {
   GITHUB_RELEASES_URL,
   buildDownloadCandidates,
   loadDownloadManifest,
-  pickPlatformArch,
   platformLabel,
   resolveExtraDownloads,
+  resolveInitialPlatform,
   startDirectDownload,
 } from '../../lib/releaseDownload'
 import './download.css'
@@ -72,8 +72,10 @@ const copy = {
 } as const
 
 function initialSelection(): { platform: Platform; arch: Arch } {
-  const detected = pickPlatformArch(typeof navigator === 'undefined' ? '' : navigator.userAgent)
-  return { platform: detected.platform as Platform, arch: detected.arch as Arch }
+  const search = typeof window === 'undefined' ? '' : window.location.search
+  const userAgent = typeof navigator === 'undefined' ? '' : navigator.userAgent
+  const platform = resolveInitialPlatform(search, userAgent) as Platform
+  return { platform, arch: ARCHES[platform][0] }
 }
 
 export default function DownloadPage({ locale = 'en' }: { locale?: Locale }) {

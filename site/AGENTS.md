@@ -23,7 +23,7 @@ Routes come from file paths (`docs/start/install.md` → `/start/install`). Rena
 
 Sidebar grouping comes from the `sections` array in the generator — register any new top-level `docs/` directory there or it sorts last with a bare directory name. Order inside a group comes from each document's `order` frontmatter.
 
-`/download/manifest.json` and `/update/latest*.yml` are not content: `deploy-docs.yml` writes them into `dist/` via `scripts/site-release-manifest.ts` after the build, they are never committed, and a local `npm run build` neither fetches nor needs them (the download page degrades to the GitHub Releases link when the manifest is absent).
+`/download/manifest.json` and `/update/latest*.yml` are not content: `deploy-docs.yml` writes them into `dist/` via `scripts/site-release-manifest.ts` after the build, they are never committed, and a local `npm run build` neither fetches nor needs them. The download page reads the same-origin manifest first, then the official GitHub Pages copy when the custom domain was built without those files, and finally degrades to the GitHub Releases link when both are absent.
 
 ## Design system
 
