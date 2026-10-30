@@ -35,6 +35,12 @@ describe('dshBaselineCapabilities', () => {
     expect(caps.config.reasoningEffort).toMatchObject({ state: 'native', source: 'protocol-baseline' })
   })
 
+  test('claims session close and context pressure, which the driver now exercises', () => {
+    const caps = dshBaselineCapabilities()
+    expect(caps.session.close).toMatchObject({ state: 'native', source: 'protocol-baseline' })
+    expect(caps.observability.contextPressure).toMatchObject({ state: 'native', source: 'protocol-baseline' })
+  })
+
   test('every leaf carries a state and a source', () => {
     for (const leaf of Object.values(dshBaselineCapabilities()).flatMap(group => Object.values(group))) {
       expect(['native', 'unsupported']).toContain(leaf.state)

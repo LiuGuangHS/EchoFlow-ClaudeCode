@@ -240,4 +240,22 @@ describe('dshDriver over a real ACP child process', () => {
     expect(readCalls().some(call => call.method === 'session/prompt')).toBe(false)
     await connection.close()
   })
+
+  test('closing a session closes it on the engine, not just the local router', async () => {
+    const { connection, readCalls } = await openWithCallLog()
+    const session = await connection.openSession({ sessionId: 'session-1', cwd: process.cwd() })
+    await session.close()
+    expect(readCalls().filter(call => call.method === 'session/close').map(call => call.params.sessionId))
+      .toEqual([session.nativeSessionId])
+    await connection.close()
+  })
+
+  test('closing an already closed session does not send a second close', async () => {
+    const { connection, readCalls } = await openWithCallLog()
+    const session = await connection.openSession({ sessionId: 'session-1', cwd: process.cwd() })
+    await session.close()
+    await session.close()
+    expect(readCalls().filter(call => call.method === 'session/close')).toHaveLength(1)
+    await connection.close()
+  })
 })

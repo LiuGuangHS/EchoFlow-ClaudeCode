@@ -312,6 +312,7 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
       const stamp = createEventStamper({ sessionId, runId: input.runId, now })
       const pendingApprovals = new Map<string, PendingApproval>()
       let activeTurn: TurnState | null = null
+      let closed = false
 
       function cancelPendingApprovals() {
         const pending = [...pendingApprovals.values()]
@@ -472,7 +473,14 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
         },
         interrupt,
         async close() {
+          if (closed) return
+          closed = true
           if (activeTurn !== null) await interrupt()
+          // dispose() only tears down the local router; the engine keeps the
+          // session (and its context) until session/close lands.
+          await connection.agent
+            .request(AGENT_METHODS.session_close, { sessionId: active.sessionId })
+            .catch(() => {})
           active.dispose()
           sessions.delete(active.sessionId)
         },

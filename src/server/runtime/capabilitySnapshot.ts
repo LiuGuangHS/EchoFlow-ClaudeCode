@@ -20,7 +20,7 @@ export function dshBaselineCapabilities(): RuntimeCapabilities {
       list: unsupported(),
       resume: unsupported(),
       fork: unsupported(),
-      close: unsupported('close detaches; native session close is not exercised'),
+      close: native('ACP session/close; product restart path untested'),
       delete: unsupported(),
     },
     prompt: {
@@ -72,7 +72,7 @@ export function dshBaselineCapabilities(): RuntimeCapabilities {
       usage: native('dsh emits usage_update only when the provider reports usage'),
       cost: unsupported(),
       diffs: unsupported(),
-      contextPressure: unsupported(),
+      contextPressure: native('usage_update carries the used/size context window'),
       stats: unsupported(),
     },
   }
