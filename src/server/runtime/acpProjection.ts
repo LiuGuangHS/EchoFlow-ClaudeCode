@@ -5,13 +5,12 @@
  * becomes a diagnostic carrying the native payload, so a newer dsh cannot make
  * a turn go quiet.
  */
-import type { RuntimeEventBody } from './contract.js'
+import type { RuntimeEventBody, SessionConfigState } from './contract.js'
 
 /** ACP updates that carry metadata the contract has no product meaning for yet. */
 const METADATA_UPDATES = new Set([
   'available_commands_update',
   'current_mode_update',
-  'config_option_update',
   'session_info_update',
   'plan_update',
   'plan_removed',
@@ -36,8 +35,13 @@ export function projectSessionUpdate(update: unknown): RuntimeEventBody | null {
       if (text !== null) return { kind: 'assistant.delta', text }
       return diagnostic('info', 'acp.unsupported_content', 'the agent sent content this driver does not render', update)
     }
-    case 'agent_thought_chunk':
-      return diagnostic('info', 'acp.agent_thought', 'the agent sent a reasoning chunk', update)
+    case 'agent_thought_chunk': {
+      const text = textOf(record)
+      if (text !== null) return { kind: 'assistant.thinking', text }
+      return diagnostic('info', 'acp.unsupported_content', 'the agent sent content this driver does not render', update)
+    }
+    case 'config_option_update':
+      return { kind: 'config.changed', options: configOptions(record.configOptions) }
     case 'tool_call':
       return {
         kind: 'tool.started',
@@ -77,6 +81,15 @@ function toolUpdate(record: AnyUpdate, native: unknown): RuntimeEventBody {
 function usage(record: AnyUpdate, native: unknown): RuntimeEventBody {
   const body = { kind: 'usage' as const, native }
   return typeof record.cost === 'number' ? { ...body, cost: record.cost } : body
+}
+
+/** ACP sends the whole option table, with select values and booleans mixed. */
+function configOptions(raw: unknown): SessionConfigState[] {
+  if (!Array.isArray(raw)) return []
+  return raw.map((option) => {
+    const { id, name, currentValue } = (option ?? {}) as AnyUpdate
+    return { id: String(id ?? ''), name: String(name ?? ''), value: String(currentValue ?? '') }
+  })
 }
 
 function textOf(record: AnyUpdate): string | null {

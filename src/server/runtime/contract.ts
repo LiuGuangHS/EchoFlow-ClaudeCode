@@ -201,9 +201,13 @@ export type RuntimeEventEnvelope = {
   source: RuntimeEventSource
 }
 
+export type SessionConfigState = { id: string; name: string; value: string }
+
 export type RuntimeEventBody =
   | { kind: 'session.state'; state: 'idle' | 'running' | 'awaiting_approval' | 'closed' }
+  | { kind: 'config.changed'; options: SessionConfigState[] }
   | { kind: 'assistant.delta'; text: string }
+  | { kind: 'assistant.thinking'; text: string }
   | { kind: 'assistant.message'; text: string; native: unknown }
   | { kind: 'tool.started'; toolCallId: string; name: string; input: unknown; native: unknown }
   | { kind: 'tool.updated'; toolCallId: string; native: unknown }

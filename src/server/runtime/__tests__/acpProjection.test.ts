@@ -45,7 +45,7 @@ describe('projectSessionUpdate', () => {
   })
 
   test('turns metadata updates into info diagnostics instead of dropping them', () => {
-    for (const sessionUpdate of ['available_commands_update', 'current_mode_update', 'config_option_update', 'session_info_update', 'plan_update', 'plan_removed', 'compaction_update']) {
+    for (const sessionUpdate of ['available_commands_update', 'current_mode_update', 'session_info_update', 'plan_update', 'plan_removed', 'compaction_update']) {
       expect(projectSessionUpdate({ sessionUpdate })).toMatchObject({
         kind: 'diagnostic', level: 'info', code: `acp.${sessionUpdate}`,
       })
@@ -64,5 +64,32 @@ describe('projectSessionUpdate', () => {
   test('maps a non-text assistant chunk to an info diagnostic', () => {
     expect(projectSessionUpdate({ sessionUpdate: 'agent_message_chunk', content: { type: 'image' } }))
       .toMatchObject({ kind: 'diagnostic', level: 'info', code: 'acp.unsupported_content' })
+  })
+
+  test('projects an ACP thought chunk as assistant.thinking', () => {
+    expect(projectSessionUpdate({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'plan' } }))
+      .toEqual({ kind: 'assistant.thinking', text: 'plan' })
+  })
+
+  test('maps a non-text thought chunk to an info diagnostic', () => {
+    expect(projectSessionUpdate({ sessionUpdate: 'agent_thought_chunk', content: { type: 'image' } }))
+      .toMatchObject({ kind: 'diagnostic', level: 'info', code: 'acp.unsupported_content' })
+  })
+
+  test('projects a config option update as config.changed with the whole option table', () => {
+    const update = {
+      sessionUpdate: 'config_option_update',
+      configOptions: [
+        { id: 'model', name: 'Model', type: 'select', currentValue: 'echoflow/kimi-k3', options: [] },
+        { id: 'reasoning_effort', name: 'Reasoning effort', type: 'select', currentValue: 'high', options: [] },
+      ],
+    }
+    expect(projectSessionUpdate(update)).toEqual({
+      kind: 'config.changed',
+      options: [
+        { id: 'model', name: 'Model', value: 'echoflow/kimi-k3' },
+        { id: 'reasoning_effort', name: 'Reasoning effort', value: 'high' },
+      ],
+    })
   })
 })
