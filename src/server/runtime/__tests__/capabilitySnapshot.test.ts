@@ -19,6 +19,16 @@ describe('dshBaselineCapabilities', () => {
     expect(caps.observability.diffs.state).toBe('unsupported')
   })
 
+  test('exposes the addon and extension capability groups as unsupported by default', () => {
+    const caps = dshBaselineCapabilities()
+    expect(caps.config.model.state).toBe('unsupported')
+    expect(caps.commands.catalog.state).toBe('unsupported')
+    expect(caps.jobs.list.state).toBe('unsupported')
+    expect(caps.subagent.delegate.state).toBe('unsupported')
+    expect(caps.checkpoints.files.state).toBe('unsupported')
+    expect(caps.prompt.queue.state).toBe('native')
+  })
+
   test('every leaf carries a state and a source', () => {
     for (const leaf of Object.values(dshBaselineCapabilities()).flatMap(group => Object.values(group))) {
       expect(['native', 'unsupported']).toContain(leaf.state)

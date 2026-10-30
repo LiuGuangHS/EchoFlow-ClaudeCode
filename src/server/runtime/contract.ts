@@ -29,7 +29,7 @@ export type RuntimeInstallation = {
 
 export type CapabilityState = 'native' | 'unsupported'
 
-export type CapabilitySource = 'handshake' | 'protocol-baseline' | 'version-assumption'
+export type CapabilitySource = 'handshake' | 'protocol-baseline' | 'version-assumption' | 'extension'
 
 export type Capability = {
   state: CapabilityState
@@ -50,6 +50,12 @@ export type RuntimeCapabilities = {
     image: Capability
     embeddedResource: Capability
     steer: Capability
+    queue: Capability
+  }
+  config: {
+    model: Capability
+    reasoningEffort: Capability
+    permissionMode: Capability
   }
   approval: {
     tool: Capability
@@ -58,17 +64,38 @@ export type RuntimeCapabilities = {
     userInput: Capability
     network: Capability
   }
+  commands: {
+    catalog: Capability
+    execute: Capability
+  }
+  subagent: {
+    delegate: Capability
+    control: Capability
+  }
+  jobs: {
+    list: Capability
+    output: Capability
+    kill: Capability
+  }
+  checkpoints: {
+    session: Capability
+    files: Capability
+  }
   extensions: {
     mcpStdio: Capability
     mcpHttp: Capability
     hooks: Capability
     skills: Capability
     plugins: Capability
+    schedule: Capability
+    teams: Capability
   }
   observability: {
     usage: Capability
     cost: Capability
     diffs: Capability
+    contextPressure: Capability
+    stats: Capability
   }
 }
 

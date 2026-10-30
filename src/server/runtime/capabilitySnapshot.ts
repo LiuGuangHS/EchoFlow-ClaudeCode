@@ -28,6 +28,12 @@ export function dshBaselineCapabilities(): RuntimeCapabilities {
       image: unsupported(),
       embeddedResource: unsupported(),
       steer: unsupported(),
+      queue: native('ACP inbox queues the next turn'),
+    },
+    config: {
+      model: unsupported(),
+      reasoningEffort: unsupported(),
+      permissionMode: unsupported(),
     },
     approval: {
       tool: native(),
@@ -36,17 +42,38 @@ export function dshBaselineCapabilities(): RuntimeCapabilities {
       userInput: unsupported(),
       network: unsupported(),
     },
+    commands: {
+      catalog: unsupported(),
+      execute: unsupported(),
+    },
+    subagent: {
+      delegate: unsupported(),
+      control: unsupported(),
+    },
+    jobs: {
+      list: unsupported(),
+      output: unsupported(),
+      kill: unsupported(),
+    },
+    checkpoints: {
+      session: unsupported(),
+      files: unsupported(),
+    },
     extensions: {
       mcpStdio: unsupported(),
       mcpHttp: unsupported(),
       hooks: unsupported(),
       skills: unsupported(),
       plugins: unsupported(),
+      schedule: unsupported(),
+      teams: unsupported(),
     },
     observability: {
       usage: native('dsh emits usage_update only when the provider reports usage'),
       cost: unsupported(),
       diffs: unsupported(),
+      contextPressure: unsupported(),
+      stats: unsupported(),
     },
   }
 }
