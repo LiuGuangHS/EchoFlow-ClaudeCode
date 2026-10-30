@@ -44,10 +44,16 @@ export class UnknownRuntimeInstallationError extends Error {
   }
 }
 
-export class UnknownRuntimeSessionError extends Error {
-  constructor(sessionId: string) {
+export class UnknownRuntimeSessionError extends Error {  constructor(sessionId: string) {
     super(`no open session ${sessionId}`)
     this.name = 'UnknownRuntimeSessionError'
+  }
+}
+
+export class RuntimeSessionAlreadyOpenError extends Error {
+  constructor(sessionId: string) {
+    super(`session ${sessionId} is already open`)
+    this.name = 'RuntimeSessionAlreadyOpenError'
   }
 }
 
@@ -104,17 +110,31 @@ export function createRuntimeHost(options: RuntimeHostOptions = {}): RuntimeHost
     async connect({ installation, cwd, env }) {
       const driver = drivers.get(installation.driverId)
       if (driver === undefined) throw new UnknownRuntimeDriverError(installation.driverId)
+      const installationId = installation.installationId
+      const previous = connections.get(installationId)
+      if (previous !== undefined) {
+        // Replace, don't leak: the old engine's sessions die with it, and its
+        // late exit must not touch whatever replaces it.
+        exitSubscriptions.get(installationId)?.()
+        exitSubscriptions.delete(installationId)
+        connections.delete(installationId)
+        forgetSessions(installationId)
+        await previous.connection.close()
+      }
       const runId = newRunId()
       const connection = await driver.start({ installation, runId, cwd, env })
-      connections.set(installation.installationId, { connection, runId })
+      connections.set(installationId, { connection, runId })
       exitSubscriptions.set(
-        installation.installationId,
+        installationId,
         connection.onExit((exit) => {
-          connections.delete(installation.installationId)
-          exitSubscriptions.get(installation.installationId)?.()
-          exitSubscriptions.delete(installation.installationId)
-          forgetSessions(installation.installationId)
-          for (const listener of exitListeners) listener({ installationId: installation.installationId, exit })
+          // A replaced connection can report its exit after this point; it is
+          // not the live one and must not clear it.
+          if (connections.get(installationId)?.connection !== connection) return
+          connections.delete(installationId)
+          exitSubscriptions.get(installationId)?.()
+          exitSubscriptions.delete(installationId)
+          forgetSessions(installationId)
+          for (const listener of exitListeners) listener({ installationId, exit })
         }),
       )
       return { runId, connection }
@@ -123,7 +143,7 @@ export function createRuntimeHost(options: RuntimeHostOptions = {}): RuntimeHost
     async openSession({ installationId, sessionId, cwd }) {
       const entry = connections.get(installationId)
       if (entry === undefined) throw new UnknownRuntimeInstallationError(installationId)
-      if (sessions.has(sessionId)) throw new Error(`session ${sessionId} is already open`)
+      if (sessions.has(sessionId)) throw new RuntimeSessionAlreadyOpenError(sessionId)
       const session = await entry.connection.openSession({ sessionId, cwd })
       sessions.set(sessionId, { session, installationId })
       return session

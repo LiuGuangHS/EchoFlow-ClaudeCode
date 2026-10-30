@@ -311,6 +311,45 @@ describe('dshDriver over a real ACP child process', () => {
     await connection.close()
   })
 
+  test('writing to a dead engine does not crash the driver process', async () => {
+    const driver = createDshDriver({ resolveCommand: command })
+    const connection = await driver.start({ installation, runId: 'run-1', cwd: process.cwd() })
+    const session = await connection.openSession({ sessionId: 'session-1', cwd: process.cwd() })
+    const exited = new Promise(resolve => connection.onExit(resolve))
+    await collect(session.send({ text: 'die' }))
+    await exited
+    const events = await collect(session.send({ text: 'hello' }))
+    expect(events.filter(event => event.kind === 'turn.completed')).toHaveLength(1)
+    await connection.close()
+  })
+
+  test('an engine that stopped reading stdin does not crash the driver process', async () => {
+    const driver = createDshDriver({ resolveCommand: command })
+    const connection = await driver.start({ installation, runId: 'run-1', cwd: process.cwd() })
+    const session = await connection.openSession({ sessionId: 'session-1', cwd: process.cwd() })
+    await collect(session.send({ text: 'close-stdin' }))
+    await new Promise(resolve => setTimeout(resolve, 100))
+    // The pipe is broken but the process is alive: the write must fail the turn,
+    // not raise an uncaught EPIPE that takes the whole server down.
+    const events = await collect(session.send({ text: 'hello' }))
+    expect(events.filter(event => event.kind === 'turn.completed')).toHaveLength(1)
+    await connection.close()
+  })
+
+  test('a stalled consumer does not grow the turn buffer without bound', async () => {
+    const driver = createDshDriver({ resolveCommand: command, turnBufferLimit: 4 })
+    const connection = await driver.start({ installation, runId: 'run-1', cwd: process.cwd() })
+    const session = await connection.openSession({ sessionId: 'session-1', cwd: process.cwd() })
+    const iterator = session.send({ text: 'flood' })[Symbol.asyncIterator]()
+    await iterator.next()
+    // Stop reading while the engine keeps talking: the buffer must cap itself.
+    await new Promise(resolve => setTimeout(resolve, 400))
+    const rest = []
+    for (let next = await iterator.next(); !next.done; next = await iterator.next()) rest.push(next.value)
+    expect(rest.some(event => event.kind === 'diagnostic' && event.code === 'runtime.turn_buffer_overflow')).toBe(true)
+    await connection.close()
+  })
+
   test('an engine-initiated turn between user turns is not attributed to the next send', async () => {
     const driver = createDshDriver({ resolveCommand: command, engineTurnIdleMs: 100 })
     const connection = await driver.start({ installation, runId: 'run-1', cwd: process.cwd() })

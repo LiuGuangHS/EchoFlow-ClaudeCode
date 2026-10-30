@@ -37,7 +37,7 @@ function createFakeDriver(shape: FakeShape): RuntimeDriver {
     engineId: 'dsh',
     driverId: 'dsh-acp',
     async probe() {
-      return { ok: true, version: null, protocolVersion: null, error: null }
+      return { ok: true, version: null, agentVersion: null, protocolVersion: null, error: null }
     },
     async start(input: RuntimeStartInput): Promise<RuntimeConnection> {
       return createFakeConnection(shape, input.runId, () => `fake-native-${(sessions += 1)}`)
@@ -157,6 +157,10 @@ function createFakeSession(shape: FakeShape, input: FakeInput): RuntimeSession {
       interruptRequested = true
       interruptWaiter?.()
       return { status: 'cancelled', forcedTerminate: false }
+    },
+    onEngineTurn() {
+      // The fakes never start turns on their own.
+      return () => {}
     },
     async close() {
       active = false

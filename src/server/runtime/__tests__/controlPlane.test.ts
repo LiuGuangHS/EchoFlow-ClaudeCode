@@ -6,6 +6,7 @@ import {
   type RuntimeInstallation,
 } from '../contract.js'
 import {
+  RuntimeSessionAlreadyOpenError,
   UnknownRuntimeDriverError,
   UnknownRuntimeInstallationError,
   UnknownRuntimeSessionError,
@@ -55,6 +56,66 @@ describe('runtime control plane', () => {
     expect(() => host.send('session-404', { text: 'hello' })).toThrow(UnknownRuntimeSessionError)
     expect(() => host.getSession('session-404')).toThrow(UnknownRuntimeSessionError)
     expect(() => host.respondApproval('session-404', 'approval-1', 'allow')).toThrow(UnknownRuntimeSessionError)
+    await host.close()
+  })
+
+  test('a second connect for the same installation closes the first connection', async () => {
+    const base = createFakeDshShapedDriver()
+    let closed = 0
+    const driver: RuntimeDriver = {
+      ...base,
+      async start(input) {
+        const connection = await base.start(input)
+        return {
+          ...connection,
+          async close() {
+            closed += 1
+            await connection.close()
+          },
+        }
+      },
+    }
+    const host = createRuntimeHost()
+    host.registerDriver(driver)
+    await host.connect({ installation, cwd: '/tmp' })
+    await host.connect({ installation, cwd: '/tmp' })
+    expect(closed).toBe(1)
+    await host.close()
+  })
+
+  test('a late exit from the replaced connection leaves the new one usable', async () => {
+    const exits: Array<(exit: { code: number | null; signal: string | null }) => void> = []
+    const base = createFakeDshShapedDriver()
+    const driver: RuntimeDriver = {
+      ...base,
+      async start(input) {
+        const connection = await base.start(input)
+        return {
+          ...connection,
+          onExit(listener) {
+            exits.push(listener)
+            // A real child process cannot be unsubscribed from: its exit may
+            // arrive after the connection was replaced.
+            return () => {}
+          },
+        }
+      },
+    }
+    const host = createRuntimeHost()
+    host.registerDriver(driver)
+    await host.connect({ installation, cwd: '/tmp' })
+    const second = await host.connect({ installation, cwd: '/tmp' })
+    await host.openSession({ installationId: 'inst-1', sessionId: 'session-1', cwd: '/tmp' })
+    exits[0]?.({ code: 1, signal: null })
+    expect(host.capabilitiesOf('session-1')).toBeDefined()
+    await second.connection.close()
+    await host.close()
+  })
+
+  test('reopening the same product session id is a typed error', async () => {
+    const { host } = await hostWithSession()
+    await expect(host.openSession({ installationId: 'inst-1', sessionId: 'session-1', cwd: '/tmp' }))
+      .rejects.toBeInstanceOf(RuntimeSessionAlreadyOpenError)
     await host.close()
   })
 

@@ -4,7 +4,7 @@
  * The driver's tests spawn this file through `process.execPath`, so the driver
  * is proven against a separate process, not an in-process fake. Scripted by the
  * prompt text: `hello`, `needs-approval`, `slow`, `stray-permission`,
- * `schedule-fired`, `schedule-failed`.
+ * `schedule-fired`, `schedule-failed`, `die`, `flood`.
  */
 import { appendFileSync, writeFileSync } from 'node:fs'
 import { Readable, Writable } from 'node:stream'
@@ -138,6 +138,25 @@ app.onRequest(AGENT_METHODS.session_prompt, async (ctx) => {
       }, 30)
       setTimeout(() => process.exit(1), 60)
       return { stopReason: 'end_turn' as const }
+
+    case 'close-stdin':
+      // Stop reading stdin but keep the transport alive: the driver's next
+      // write hits a closed pipe while it still believes the engine is up.
+      setTimeout(() => process.stdin.destroy(), 30)
+      return { stopReason: 'end_turn' as const }
+
+    case 'die':
+      // Answer, then die between turns: the next write goes to a dead pipe.
+      setTimeout(() => process.exit(3), 30)
+      return { stopReason: 'end_turn' as const }
+
+    case 'flood': {
+      for (let i = 0; i < 20; i += 1) {
+        await send(`chunk ${i}`)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+      return { stopReason: 'end_turn' as const }
+    }
 
     default:
       await send(`unscripted prompt: ${text}`)

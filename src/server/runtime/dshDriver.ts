@@ -46,6 +46,8 @@ export type DshDriverOptions = {
   closeTimeoutMs?: number
   /** Quiet period that ends a turn the engine started on its own. */
   engineTurnIdleMs?: number
+  /** Events held for a consumer that stopped reading before the oldest are dropped. */
+  turnBufferLimit?: number
 }
 
 const STARTUP_TIMEOUT_MS = 15_000
@@ -77,10 +79,19 @@ type TurnState = {
   done: boolean
 }
 
-function createTurnChannel(): TurnChannel {
+type TurnChannelOptions = {
+  /** Bound on events held for a consumer that stopped reading. */
+  limit: number
+  /** The warning to leave in the stream when the bound is hit. */
+  overflowEvent: () => RuntimeEvent
+}
+
+function createTurnChannel(options: TurnChannelOptions): TurnChannel {
+  const limit = Math.max(1, options.limit)
   const buffer: RuntimeEvent[] = []
   const waiters: Array<(result: IteratorResult<RuntimeEvent>) => void> = []
   let closed = false
+  let overflowPending = false
 
   const settle = () => {
     while (waiters.length > 0) {
@@ -98,6 +109,14 @@ function createTurnChannel(): TurnChannel {
   return {
     push(event) {
       if (closed) return
+      // A consumer that walked away must not grow this forever. Drop the oldest
+      // events — never the terminal one — and say once that it happened.
+      while (buffer.length >= limit) {
+        const index = buffer.findIndex((buffered) => buffered.kind !== 'turn.completed')
+        if (index === -1) break
+        buffer.splice(index, 1)
+        overflowPending = true
+      }
       buffer.push(event)
       settle()
     },
@@ -106,6 +125,10 @@ function createTurnChannel(): TurnChannel {
       settle()
     },
     next() {
+      if (overflowPending) {
+        overflowPending = false
+        return Promise.resolve({ done: false, value: options.overflowEvent() })
+      }
       if (buffer.length > 0) return Promise.resolve({ done: false, value: buffer.shift()! })
       if (closed) return Promise.resolve({ done: true, value: undefined })
       return new Promise((resolve) => waiters.push(resolve))
@@ -209,6 +232,7 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
   const interruptTimeoutMs = options.interruptTimeoutMs ?? 5_000
   const closeTimeoutMs = options.closeTimeoutMs ?? 10_000
   const engineTurnIdleMs = options.engineTurnIdleMs ?? 1_000
+  const turnBufferLimit = options.turnBufferLimit ?? 2_000
 
   async function connect(input: RuntimeStartInput): Promise<RuntimeConnection> {
     const [command, ...args] = resolveCommand(input.installation)
@@ -258,6 +282,10 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
       for (const listener of exitListeners) listener(value)
     }
     child.once('exit', (code, signal) => recordExit({ code, signal }))
+    // An engine that stops reading stdin cannot receive another prompt; without
+    // this listener the next write raises an uncaught EPIPE and takes the server
+    // down with it.
+    child.stdin?.on('error', () => recordExit({ code: null, signal: null }))
 
     let startupReject: ((error: RuntimeStartupError) => void) | null = null
     const startupFailure = new Promise<never>((_, reject) => {
@@ -402,8 +430,21 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
         }
       }
 
+      function newTurnChannel(): TurnChannel {
+        return createTurnChannel({
+          limit: turnBufferLimit,
+          overflowEvent: () =>
+            stamp({
+              kind: 'diagnostic',
+              level: 'warn',
+              code: 'runtime.turn_buffer_overflow',
+              message: 'the consumer stopped reading; the oldest turn events were dropped',
+            }),
+        })
+      }
+
       function startEngineTurn(): TurnState {
-        const channel = createTurnChannel()
+        const channel = newTurnChannel()
         let settle!: () => void
         const finished = new Promise<void>((resolve) => {
           settle = resolve
@@ -537,7 +578,7 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
         // The user takes the floor: what the engine was saying on its own ends
         // here instead of leaking into this turn.
         finishEngineTurn('end_turn')
-        const channel = createTurnChannel()
+        const channel = newTurnChannel()
         let settle!: () => void
         const finished = new Promise<void>((resolve) => {
           settle = resolve
