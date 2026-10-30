@@ -213,6 +213,7 @@ export type SessionConfigState = { id: string; name: string; value: string }
 
 export type RuntimeEventBody =
   | { kind: 'session.state'; state: 'idle' | 'running' | 'awaiting_approval' | 'closed' }
+  | { kind: 'turn.started'; origin: 'engine'; native: unknown }
   | { kind: 'config.changed'; options: SessionConfigState[] }
   | { kind: 'assistant.delta'; text: string }
   | { kind: 'assistant.thinking'; text: string }
@@ -257,6 +258,12 @@ export type RuntimeSession = {
   readonly capabilities: RuntimeCapabilities
 
   send(input: UserTurn): AsyncIterable<RuntimeEvent>
+  /**
+   * Turns the engine starts on its own — schedule firings, background jobs,
+   * subagents — between user turns. One listener consumes the stream; a turn
+   * started with no listener is dropped.
+   */
+  onEngineTurn(listener: (events: AsyncIterable<RuntimeEvent>) => void): () => void
   respondApproval(requestId: string, optionId: string): Promise<void>
   interrupt(): Promise<InterruptResult>
   close(): Promise<void>

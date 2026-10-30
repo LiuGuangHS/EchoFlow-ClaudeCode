@@ -43,6 +43,8 @@ export type DshDriverOptions = {
   newApprovalId?: () => string
   interruptTimeoutMs?: number
   closeTimeoutMs?: number
+  /** Quiet period that ends a turn the engine started on its own. */
+  engineTurnIdleMs?: number
 }
 
 const STARTUP_TIMEOUT_MS = 15_000
@@ -191,6 +193,7 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
   const resolveCommand = options.resolveCommand ?? ((installation) => [installation.executablePath])
   const interruptTimeoutMs = options.interruptTimeoutMs ?? 5_000
   const closeTimeoutMs = options.closeTimeoutMs ?? 10_000
+  const engineTurnIdleMs = options.engineTurnIdleMs ?? 1_000
 
   async function connect(input: RuntimeStartInput): Promise<RuntimeConnection> {
     const [command, ...args] = resolveCommand(input.installation)
@@ -322,7 +325,10 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
     ): { session: RuntimeSession; approve(params: PermissionParams): Promise<PermissionResponse> } {
       const stamp = createEventStamper({ sessionId, runId: input.runId, now })
       const pendingApprovals = new Map<string, PendingApproval>()
+      const engineListeners = new Set<(events: AsyncIterable<RuntimeEvent>) => void>()
       let activeTurn: TurnState | null = null
+      let engineTurn: TurnState | null = null
+      let engineIdleTimer: ReturnType<typeof setTimeout> | null = null
       let closed = false
 
       function cancelPendingApprovals() {
@@ -356,24 +362,90 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
         completeTurn(state, 'error')
       }
 
-      async function runTurn(state: TurnState, turn: UserTurn) {
-        // The prompt response arrives as a `stop` message, so failures are caught
-        // here rather than by the consumer of the stream.
-        void active.prompt(promptBlocks(turn)).catch((error: unknown) => failTurn(state, error))
+      /** The session's single reader of the update cursor: one pump, always on. */
+      async function pump() {
         try {
           for (;;) {
             const message = await active.nextUpdate()
-            if (state.done) return
+            if (closed) return
             if (message.kind === 'stop') {
-              completeTurn(state, turnReason(message.stopReason))
-              return
+              if (activeTurn !== null) completeTurn(activeTurn, turnReason(message.stopReason))
+              else finishEngineTurn(turnReason(message.stopReason))
+              continue
             }
             const body = projectSessionUpdate(message.update)
-            if (body !== null) state.channel.push(stamp(body))
+            if (body === null) continue
+            if (activeTurn !== null) activeTurn.channel.push(stamp(body))
+            else pushEngineEvent(body)
           }
         } catch (error) {
-          failTurn(state, error)
+          if (closed) return
+          // The cursor is gone. Fail whichever turn was live; the next send
+          // reports the dead engine through its own prompt rejection.
+          if (activeTurn !== null) failTurn(activeTurn, error)
+          else failEngineTurn(error)
         }
+      }
+
+      function startEngineTurn(): TurnState {
+        const channel = createTurnChannel()
+        let settle!: () => void
+        const finished = new Promise<void>((resolve) => {
+          settle = resolve
+        })
+        const state: TurnState = { channel, finished, settle, done: false }
+        engineTurn = state
+        channel.push(stamp({ kind: 'turn.started', origin: 'engine', native: null }))
+        const stream: AsyncIterable<RuntimeEvent> = {
+          [Symbol.asyncIterator]: () => ({ next: () => channel.next() }),
+        }
+        for (const listener of engineListeners) listener(stream)
+        return state
+      }
+
+      function pushEngineEvent(body: RuntimeEventBody) {
+        const state = engineTurn ?? startEngineTurn()
+        state.channel.push(stamp(body))
+        // ACP has no end-of-turn notification for work the engine starts on its
+        // own, so the turn is over when the engine stops talking.
+        if (engineIdleTimer !== null) clearTimeout(engineIdleTimer)
+        engineIdleTimer = setTimeout(() => finishEngineTurn('end_turn'), engineTurnIdleMs)
+        engineIdleTimer.unref?.()
+      }
+
+      function finishEngineTurn(reason: TurnReason) {
+        const state = engineTurn
+        if (state === null || state.done) return
+        if (engineIdleTimer !== null) {
+          clearTimeout(engineIdleTimer)
+          engineIdleTimer = null
+        }
+        engineTurn = null
+        state.done = true
+        state.channel.push(stamp({ kind: 'turn.completed', reason, native: { reason } }))
+        state.channel.close()
+        state.settle()
+      }
+
+      function failEngineTurn(error: unknown) {
+        const state = engineTurn
+        if (state === null || state.done) return
+        state.channel.push(
+          stamp({
+            kind: 'diagnostic',
+            level: 'error',
+            code: 'acp.turn_failed',
+            message: error instanceof Error ? error.message : String(error),
+            native: error,
+          }),
+        )
+        finishEngineTurn('error')
+      }
+
+      function runTurn(state: TurnState, turn: UserTurn) {
+        // The prompt response arrives as a `stop` the pump reads; a rejected
+        // prompt is the only failure this side has to catch itself.
+        void active.prompt(promptBlocks(turn)).catch((error: unknown) => failTurn(state, error))
       }
 
       async function interruptTurn(state: TurnState): Promise<InterruptResult> {
@@ -447,6 +519,9 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
         if ((turn.attachments?.length ?? 0) > 0 && capabilities.prompt.image.state !== 'native') {
           throw new UnsupportedRuntimeCapabilityError('prompt.image')
         }
+        // The user takes the floor: what the engine was saying on its own ends
+        // here instead of leaking into this turn.
+        finishEngineTurn('end_turn')
         const channel = createTurnChannel()
         let settle!: () => void
         const finished = new Promise<void>((resolve) => {
@@ -455,7 +530,7 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
         const state: TurnState = { channel, finished, settle, done: false }
         activeTurn = state
         channel.push(stamp({ kind: 'session.state', state: 'running' }, 'echoflow'))
-        void runTurn(state, turn)
+        runTurn(state, turn)
         return {
           [Symbol.asyncIterator]() {
             return {
@@ -476,6 +551,12 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
         nativeSessionId: active.sessionId,
         capabilities: dshBaselineCapabilities(),
         send,
+        onEngineTurn(listener) {
+          engineListeners.add(listener)
+          return () => {
+            engineListeners.delete(listener)
+          }
+        },
         async respondApproval(requestId, optionId) {
           const resolve = pendingApprovals.get(requestId)
           if (resolve === undefined) throw new Error(`unknown approval request: ${requestId}`)
@@ -486,6 +567,7 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
         async close() {
           if (closed) return
           closed = true
+          finishEngineTurn('cancelled')
           if (activeTurn !== null) await interrupt()
           // dispose() only tears down the local router; the engine keeps the
           // session (and its context) until session/close lands.
@@ -496,6 +578,8 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
           sessions.delete(active.sessionId)
         },
       }
+
+      void pump()
 
       return { session, approve }
     }

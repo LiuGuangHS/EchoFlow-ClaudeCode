@@ -35,6 +35,14 @@ async function waitForFile(path: string) {
   throw new Error(`${path} never appeared`)
 }
 
+async function waitUntil(condition: () => boolean) {
+  for (let i = 0; i < 200; i += 1) {
+    if (condition()) return
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
+  throw new Error('condition never became true')
+}
+
 /** Requests cross the process boundary, so the fixture appends them to a file. */
 async function openWithCallLog(options: { rejectConfigIds?: string[]; agentCapabilities?: unknown } = {}) {
   const sandbox = mkdtempSync(join(tmpdir(), 'echoflow-calls-'))
@@ -272,6 +280,42 @@ describe('dshDriver over a real ACP child process', () => {
     await session.close()
     await session.close()
     expect(readCalls().filter(call => call.method === 'session/close')).toHaveLength(1)
+    await connection.close()
+  })
+
+  test('an engine-initiated turn between user turns is not attributed to the next send', async () => {
+    const driver = createDshDriver({ resolveCommand: command, engineTurnIdleMs: 100 })
+    const connection = await driver.start({ installation, runId: 'run-1', cwd: process.cwd() })
+    const session = await connection.openSession({ sessionId: 'session-1', cwd: process.cwd() })
+    await collect(session.send({ text: 'hello' }))
+
+    const engineTurns: string[][] = []
+    session.onEngineTurn(async (events) => {
+      const kinds: string[] = []
+      for await (const event of events) kinds.push(event.kind)
+      engineTurns.push(kinds)
+    })
+    await collect(session.send({ text: 'schedule-fired' }))
+    await waitUntil(() => engineTurns.length === 1)
+    expect(engineTurns[0]).toEqual(['turn.started', 'assistant.delta', 'turn.completed'])
+
+    const second = await collect(session.send({ text: 'hello' }))
+    expect(second.filter(event => event.kind === 'assistant.delta').map(event => event.text))
+      .toEqual(['hello from fixture'])
+    await connection.close()
+  })
+
+  test('the pump survives an engine-initiated turn that fails', async () => {
+    const driver = createDshDriver({ resolveCommand: command, engineTurnIdleMs: 100 })
+    const connection = await driver.start({ installation, runId: 'run-1', cwd: process.cwd() })
+    const session = await connection.openSession({ sessionId: 'session-1', cwd: process.cwd() })
+    const seen: string[] = []
+    session.onEngineTurn(async (events) => {
+      for await (const event of events) seen.push(event.kind)
+    })
+    await collect(session.send({ text: 'schedule-failed' }))
+    await waitUntil(() => seen.includes('turn.completed'))
+    await expect(collect(session.send({ text: 'hello' }))).resolves.toBeDefined()
     await connection.close()
   })
 })

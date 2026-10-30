@@ -3,7 +3,8 @@
  *
  * The driver's tests spawn this file through `process.execPath`, so the driver
  * is proven against a separate process, not an in-process fake. Scripted by the
- * prompt text: `hello`, `needs-approval`, `slow`, `stray-permission`.
+ * prompt text: `hello`, `needs-approval`, `slow`, `stray-permission`,
+ * `schedule-fired`, `schedule-failed`.
  */
 import { appendFileSync, writeFileSync } from 'node:fs'
 import { Readable, Writable } from 'node:stream'
@@ -113,6 +114,29 @@ app.onRequest(AGENT_METHODS.session_prompt, async (ctx) => {
             if (marker !== undefined) writeFileSync(marker, response.outcome.outcome)
           })
       }, 50)
+      return { stopReason: 'end_turn' as const }
+
+    case 'schedule-fired':
+      // Answer the prompt, then speak with no prompt in flight — how an
+      // autonomous schedule or background job reaches the client.
+      setTimeout(() => {
+        void ctx.client.notify(CLIENT_METHODS.session_update, {
+          sessionId,
+          update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'engine note' } },
+        })
+      }, 50)
+      return { stopReason: 'end_turn' as const }
+
+    case 'schedule-failed':
+      // An autonomous turn that opens and then dies with the engine: the only
+      // failure mode ACP offers, since an update itself cannot fail.
+      setTimeout(() => {
+        void ctx.client.notify(CLIENT_METHODS.session_update, {
+          sessionId,
+          update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'engine note' } },
+        })
+      }, 30)
+      setTimeout(() => process.exit(1), 60)
       return { stopReason: 'end_turn' as const }
 
     default:
