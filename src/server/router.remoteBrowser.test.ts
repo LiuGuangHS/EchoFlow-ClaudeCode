@@ -140,7 +140,7 @@ describe('remote browser API routing', () => {
     expect((await handleApiRequest(new Request(url, { method: 'PUT', body: '{broken' }), url, { remoteBrowser: true })).status).toBe(400)
   })
 
-  test('denies public-access callers from bootstrapping an EchoFlow site session', async () => {
+  test('denies public-access callers from setting an EchoFlow account credential', async () => {
     const previousBridge = process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN
     const previousFetch = globalThis.fetch
     process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN = 'electron-only-secret'
@@ -149,11 +149,11 @@ describe('remote browser API routing', () => {
       data: { id: 1, username: 'must-not-load', quota: 500_000 },
     }))) as typeof fetch
     try {
-      const url = new URL('https://fixture.invalid/api/echoflow/site-session')
+      const url = new URL('https://fixture.invalid/api/echoflow/account/credential')
       const response = await handleApiRequest(new Request(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-echoflow-site-session-bridge': 'electron-only-secret' },
-        body: JSON.stringify({ cookie: 'session=private' }),
+        body: JSON.stringify({ endpoint: 'main', kind: 'session', cookie: 'session=private', userId: '1' }),
       }), url, { remoteBrowser: true })
       expect(response.status).toBe(403)
     } finally {

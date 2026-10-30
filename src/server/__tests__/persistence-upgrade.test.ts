@@ -3,6 +3,7 @@ import * as fs from 'fs/promises'
 import * as os from 'os'
 import * as path from 'path'
 import { ProviderService } from '../services/providerService.js'
+import { EchoFlowApiService } from '../services/echoflowApiService.js'
 import { SettingsService } from '../services/settingsService.js'
 import {
   CURRENT_PROVIDER_INDEX_SCHEMA_VERSION,
@@ -503,5 +504,30 @@ describe('persistent storage upgrade migrations', () => {
       },
       'future-official': { main: 'future-model' },
     })
+  })
+
+  test('upgrades the v2 EchoFlow account file to v3 with a backup and preserved fields', async () => {
+    const echoFlowDir = path.join(tempDir, 'echoflow-code')
+    await fs.mkdir(echoFlowDir, { recursive: true })
+    const accountPath = path.join(echoFlowDir, 'echoflow-account.json')
+    const fixture = await fs.readFile(path.join(import.meta.dir, 'fixtures', 'echoflow-account-v2.json'), 'utf-8')
+    await fs.writeFile(accountPath, fixture)
+
+    const accounts = await new EchoFlowApiService().getAccounts()
+    expect(accounts.main?.userId).toBe('851842')
+
+    const migrated = JSON.parse(await fs.readFile(accountPath, 'utf-8'))
+    expect(migrated.schemaVersion).toBe(3)
+    expect(migrated.rootFutureField).toEqual({ keep: true })
+    expect(migrated.accounts.main).toMatchObject({
+      credential: 'token',
+      managementToken: 'fixture-management-token',
+      futureField: { keep: true },
+    })
+
+    const backups = (await listFiles(echoFlowDir))
+      .filter(name => name.startsWith('echoflow-account.json.bak-before-migration-'))
+    expect(backups).toHaveLength(1)
+    expect(JSON.parse(await fs.readFile(path.join(echoFlowDir, backups[0]!), 'utf-8'))).toEqual(JSON.parse(fixture))
   })
 })

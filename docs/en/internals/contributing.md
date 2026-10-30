@@ -96,7 +96,7 @@ bun run check:desktop-ui-smoke # real desktop UI + real permission dialog + mock
 
 Neither needs a provider, credentials, or the public network. `check:agent-flow` covers session creation, runtime selection, first-turn streaming, tool execution, permission allow/deny, tool failure, API error, interrupt, reconnect permission replay, and session recovery. `check:desktop-ui-smoke` clicks the real Allow button in a real browser; it needs `agent-browser` and installed desktop dependencies and skips with a printed reason when either is missing.
 
-`agent-browser` belongs to that committed lane (which runs headless on Linux CI) and to the maintainer-run `desktop/scripts/e2e-*-agent-browser.sh` scripts. For ad-hoc browser work (manual verification, screenshots, exploratory UI checks), use the installed `playwright` plugin or the `browser` tools instead; do not treat `agent-browser` as a general-purpose browser tool just because it appears in the repository.
+`agent-browser` belongs to that committed lane (which runs headless on Linux CI) and to the maintainer-run `desktop/scripts/e2e-*-agent-browser.sh` scripts. For ad-hoc browser work (manual verification, screenshots, exploratory UI checks), use whatever browser automation the session actually has (a browser MCP, a browser plugin, or headless Chrome) instead; do not treat `agent-browser` as a general-purpose browser tool just because it appears in the repository.
 
 Every quality-gate lane that boots the real server runs against a sandbox config dir (`scripts/quality-gate/sandbox.ts`) and fails if it wrote to the developer's real `~/.claude`.
 

@@ -44,11 +44,21 @@ export type EchoFlowAccount = {
   tokens?: EchoFlowTokenSummary[]
   refreshedAt?: number
   endpoint?: EchoFlowEndpoint
+  /** A session or bearer account is usable only while this process holds it. */
+  live?: boolean
 }
+
+export type EchoFlowCredential =
+  | { kind: 'token'; userId: string; managementToken: string }
+  | { kind: 'session'; userId: string; cookie: string }
+  | { kind: 'bearer'; userId: string; accessToken: string }
+
+type EchoFlowCredentialKind = EchoFlowCredential['kind']
 
 type StoredEchoFlowAccount = {
   userId: string
-  managementToken: string
+  credential?: EchoFlowCredentialKind
+  managementToken?: string
   balance?: number
   userGroup?: string
   username?: string
@@ -58,12 +68,12 @@ type StoredEchoFlowAccount = {
 }
 
 type StoredEchoFlowAccounts = {
-  schemaVersion: 2
+  schemaVersion: 3
   accounts: Record<EchoFlowEndpoint, StoredEchoFlowAccount | null>
 }
 
 const EMPTY_ACCOUNTS: StoredEchoFlowAccounts = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   accounts: { main: null, dedicated: null },
 }
 
@@ -75,6 +85,8 @@ const ENDPOINTS = {
 export class EchoFlowApiService {
   constructor(private defaultBaseUrl = ENDPOINTS.main) {}
 
+  private readonly credentials = new Map<EchoFlowEndpoint, EchoFlowCredential>()
+
   private getBaseUrl(endpoint?: EchoFlowEndpoint): string {
     if (!endpoint) return this.defaultBaseUrl
     return ENDPOINTS[endpoint] || this.defaultBaseUrl
@@ -83,9 +95,18 @@ export class EchoFlowApiService {
   async getAccounts(): Promise<Record<EchoFlowEndpoint, EchoFlowAccount | null>> {
     const stored = await this.readAccounts()
     return {
-      main: stored.accounts.main ? toPublicAccount(stored.accounts.main) : null,
-      dedicated: stored.accounts.dedicated ? toPublicAccount(stored.accounts.dedicated) : null,
+      main: stored.accounts.main ? toPublicAccount(stored.accounts.main, this.isLive('main', stored.accounts.main)) : null,
+      dedicated: stored.accounts.dedicated ? toPublicAccount(stored.accounts.dedicated, this.isLive('dedicated', stored.accounts.dedicated)) : null,
     }
+  }
+
+  private isLive(endpoint: EchoFlowEndpoint, account: StoredEchoFlowAccount): boolean {
+    // Token accounts keep their credential on disk; session and bearer
+    // credentials live in memory only, so they are usable only in this process.
+    if (account.credential === 'session' || account.credential === 'bearer') {
+      return this.credentials.has(endpoint)
+    }
+    return true
   }
 
   async getAccount(endpoint: EchoFlowEndpoint = 'main'): Promise<EchoFlowAccount | null> {
@@ -93,9 +114,52 @@ export class EchoFlowApiService {
     return accounts[endpoint]
   }
 
+  clearCredential(endpoint: EchoFlowEndpoint): void {
+    this.credentials.delete(endpoint)
+  }
+
+  async setCredential(endpoint: EchoFlowEndpoint, credential: EchoFlowCredential): Promise<EchoFlowAccount> {
+    // The main site signs in with a cookie and the gateway with its own bearer
+    // token, so each kind is only valid on the endpoint it comes from.
+    if (credential.kind === 'session' && endpoint === 'dedicated') {
+      throw new EchoFlowApiError('token_invalid')
+    }
+    if (credential.kind === 'bearer' && endpoint === 'main') {
+      throw new EchoFlowApiError('token_invalid')
+    }
+    const trimmed: EchoFlowCredential = { ...credential, userId: credential.userId.trim() }
+    if (!trimmed.userId) throw new EchoFlowApiError('token_invalid')
+
+    const user = await this.validateCredential(trimmed, endpoint)
+    this.credentials.set(endpoint, trimmed)
+
+    const accounts = await this.readAccounts()
+    const previous = accounts.accounts[endpoint]
+    const stored: StoredEchoFlowAccount = trimmed.kind === 'token'
+      ? {
+          userId: trimmed.userId,
+          credential: 'token',
+          managementToken: trimmed.managementToken,
+          ...user,
+          tokens: await this.listTokensWithCredential(endpoint),
+          refreshedAt: Date.now(),
+          endpoint,
+        }
+      : {
+          // The cookie or bearer token stays in memory; only identity is stored.
+          userId: trimmed.userId,
+          credential: trimmed.kind,
+          username: user.username || previous?.username,
+          endpoint,
+        }
+    accounts.accounts[endpoint] = stored
+    await this.writeAccounts(accounts)
+    return toPublicAccount(stored, true)
+  }
+
   async bindAccount(userId: string, managementToken: string, endpoint: EchoFlowEndpoint = 'main'): Promise<EchoFlowAccount> {
     const account = await this.refreshWithCredentials(userId, managementToken, endpoint)
-    const stored = { ...account, managementToken, endpoint }
+    const stored = { ...account, credential: 'token' as const, managementToken, endpoint }
     const accounts = await this.readAccounts()
     accounts.accounts[endpoint] = stored
     await this.writeAccounts(accounts)
@@ -114,11 +178,36 @@ export class EchoFlowApiService {
     const accounts = await this.readAccounts()
     const account = accounts.accounts[endpoint]
     if (!account) throw new EchoFlowApiError('token_invalid')
-    const refreshed = await this.refreshWithCredentials(account.userId, account.managementToken, endpoint)
-    const stored = { ...refreshed, managementToken: account.managementToken, endpoint }
+    const credential = this.credentials.get(endpoint) ?? storedCredential(account)
+    if (!credential) throw new EchoFlowApiError('token_invalid')
+    this.credentials.set(endpoint, credential)
+
+    let user: EchoFlowUserInfo
+    try {
+      user = await this.validateCredential(credential, endpoint)
+    } catch (error) {
+      // A rejected credential must not keep the account looking live: the UI
+      // offers sign-in again only when the account is not live.
+      if (error instanceof EchoFlowApiError && error.code === 'token_invalid') {
+        this.credentials.delete(endpoint)
+      }
+      throw error
+    }
+    const stored: StoredEchoFlowAccount = {
+      ...account,
+      userId: credential.userId,
+      credential: credential.kind,
+      ...(credential.kind === 'token' ? { managementToken: credential.managementToken } : {}),
+      ...user,
+      // The gateway has no token list; a bearer account keeps the metadata it
+      // was created with instead of asking an endpoint that does not exist.
+      tokens: credential.kind === 'bearer' ? account.tokens : await this.listTokensWithCredential(endpoint),
+      refreshedAt: Date.now(),
+      endpoint,
+    }
     accounts.accounts[endpoint] = stored
     await this.writeAccounts(accounts)
-    return toPublicAccount(stored)
+    return toPublicAccount(stored, true)
   }
 
   async selectAccountToken(endpoint: EchoFlowEndpoint, id: string): Promise<EchoFlowTokenOption> {
@@ -129,16 +218,40 @@ export class EchoFlowApiService {
   }
 
   async disconnectAccount(endpoint: EchoFlowEndpoint = 'main'): Promise<void> {
+    this.credentials.delete(endpoint)
     const accounts = await this.readAccounts()
     accounts.accounts[endpoint] = null
     await this.writeAccounts(accounts)
   }
 
   async validateManagementToken(userId: string, token: string, endpoint: EchoFlowEndpoint = 'main'): Promise<EchoFlowUserInfo> {
+    return await this.validateCredential({ kind: 'token', userId, managementToken: token }, endpoint)
+  }
+
+  private async validateCredential(credential: EchoFlowCredential, endpoint: EchoFlowEndpoint): Promise<EchoFlowUserInfo> {
+    if (credential.kind === 'bearer') {
+      const me = await this.fetchManagementApi<{
+        data?: { id?: number | string; quota?: number; balance?: number; group?: string; username?: string; name?: string }
+        quota?: number
+        balance?: number
+        group?: string
+        username?: string
+        name?: string
+      }>('/api/v1/auth/me', credential, endpoint)
+
+      const account = me.data ?? me
+      return {
+        balance: typeof account.quota === 'number'
+          ? account.quota / 500000
+          : typeof account.balance === 'number' ? account.balance : 0,
+        userGroup: account.group ?? 'default',
+        username: account.username ?? account.name ?? '',
+      }
+    }
+
     const data = await this.fetchManagementApi<{ success?: boolean; message?: string; data?: { quota?: number; group?: string; username?: string } }>(
       '/api/user/self',
-      userId,
-      token,
+      credential,
       endpoint,
     )
 
@@ -155,6 +268,16 @@ export class EchoFlowApiService {
   }
 
   async listTokens(userId: string, token: string, endpoint: EchoFlowEndpoint = 'main'): Promise<EchoFlowTokenOption[]> {
+    return await this.listTokensForCredential({ kind: 'token', userId, managementToken: token }, endpoint)
+  }
+
+  async listTokensWithCredential(endpoint: EchoFlowEndpoint = 'main'): Promise<EchoFlowTokenOption[]> {
+    const credential = this.credentials.get(endpoint)
+    if (!credential) throw new EchoFlowApiError('token_invalid')
+    return await this.listTokensForCredential(credential, endpoint)
+  }
+
+  private async listTokensForCredential(credential: EchoFlowCredential, endpoint: EchoFlowEndpoint = 'main'): Promise<EchoFlowTokenOption[]> {
     const pageSize = 100
     const tokens: EchoFlowTokenOption[] = []
     const seen = new Set<string>()
@@ -166,7 +289,7 @@ export class EchoFlowApiService {
       const data = await this.fetchManagementApi<{
         success?: boolean
         data?: unknown[] | { items?: unknown[]; tokens?: unknown[]; records?: unknown[] }
-      }>(`/api/token/?p=${page}&size=${pageSize}`, userId, token, endpoint)
+      }>(`/api/token/?p=${page}&size=${pageSize}`, credential, endpoint)
 
       if (!data.success) break
       const rawList = Array.isArray(data.data)
@@ -217,14 +340,23 @@ export class EchoFlowApiService {
   private async readAccounts(): Promise<StoredEchoFlowAccounts> {
     try {
       const parsed = JSON.parse(await fs.readFile(this.getAccountPath(), 'utf-8')) as unknown
-      if (isStoredAccounts(parsed)) return parsed
+      const normalized = normalizeStoredAccounts(parsed)
+      if (normalized) {
+        if ((parsed as { schemaVersion?: unknown }).schemaVersion !== 3) {
+          await this.backupAccountsFile()
+          await this.writeAccounts(normalized)
+        }
+        return normalized
+      }
       if (isStoredAccount(parsed)) {
+        await this.backupAccountsFile()
         const endpoint: EchoFlowEndpoint = parsed.endpoint === 'dedicated' ? 'dedicated' : 'main'
+        const account = { ...parsed, credential: parsed.credential ?? 'token', endpoint }
         const migrated: StoredEchoFlowAccounts = {
-          schemaVersion: 2,
+          schemaVersion: 3,
           accounts: {
-            main: endpoint === 'dedicated' ? null : { ...parsed, endpoint },
-            dedicated: endpoint === 'dedicated' ? { ...parsed, endpoint } : null,
+            main: endpoint === 'dedicated' ? null : account,
+            dedicated: endpoint === 'dedicated' ? account : null,
           },
         }
         await this.writeAccounts(migrated)
@@ -239,8 +371,11 @@ export class EchoFlowApiService {
       const parsed = JSON.parse(await fs.readFile(this.getLegacyAccountPath(), 'utf-8')) as unknown
       if (!isStoredAccount(parsed)) return { ...EMPTY_ACCOUNTS, accounts: { ...EMPTY_ACCOUNTS.accounts } }
       const migrated: StoredEchoFlowAccounts = {
-        schemaVersion: 2,
-        accounts: { main: { ...parsed, endpoint: 'main' }, dedicated: null },
+        schemaVersion: 3,
+        accounts: {
+          main: { ...parsed, credential: parsed.credential ?? 'token', endpoint: 'main' },
+          dedicated: null,
+        },
       }
       await this.writeAccounts(migrated)
       await fs.unlink(this.getLegacyAccountPath()).catch((error) => {
@@ -251,6 +386,13 @@ export class EchoFlowApiService {
       if (errnoCode(error) === 'ENOENT') return { ...EMPTY_ACCOUNTS, accounts: { ...EMPTY_ACCOUNTS.accounts } }
       throw error
     }
+  }
+
+  private async backupAccountsFile(): Promise<void> {
+    const accountPath = this.getAccountPath()
+    const backupPath = `${accountPath}.bak-before-migration-${Date.now()}`
+    await fs.copyFile(accountPath, backupPath)
+    await fs.chmod(backupPath, 0o600)
   }
 
   private async writeAccounts(accounts: StoredEchoFlowAccounts): Promise<void> {
@@ -266,14 +408,15 @@ export class EchoFlowApiService {
     }
   }
 
-  private async fetchManagementApi<T>(pathname: string, userId: string, token: string, endpoint: EchoFlowEndpoint = 'main'): Promise<T> {
+  private async fetchManagementApi<T>(pathname: string, credential: EchoFlowCredential, endpoint: EchoFlowEndpoint = 'main'): Promise<T> {
     const baseUrl = this.getBaseUrl(endpoint)
+    const headers = credential.kind === 'session'
+      ? { Cookie: credential.cookie, 'New-Api-User': credential.userId }
+      : credential.kind === 'bearer'
+        ? { Authorization: `Bearer ${credential.accessToken}` }
+        : { 'new-api-user': credential.userId, Authorization: credential.managementToken }
     const response = await fetch(`${baseUrl}${pathname}`, {
-      headers: {
-        'content-type': 'application/json',
-        'new-api-user': userId,
-        Authorization: token,
-      },
+      headers: { 'content-type': 'application/json', ...headers },
     }).catch(() => { throw new EchoFlowApiError('service_unavailable') })
 
     if (response.status === 401 || response.status === 403) throw new EchoFlowApiError('token_invalid', response.status)
@@ -283,9 +426,10 @@ export class EchoFlowApiService {
   }
 }
 
-function toPublicAccount(account: StoredEchoFlowAccount): EchoFlowAccount {
+function toPublicAccount(account: StoredEchoFlowAccount, live = true): EchoFlowAccount {
   return {
     userId: account.userId,
+    live,
     ...(typeof account.balance === 'number' ? { balance: account.balance } : {}),
     ...(account.userGroup ? { userGroup: account.userGroup } : {}),
     ...(account.username ? { username: account.username } : {}),
@@ -319,19 +463,39 @@ function maskKey(key: string): string {
   return `${key.slice(0, 6)}****${key.slice(-4)}`
 }
 
-function isStoredAccounts(value: unknown): value is StoredEchoFlowAccounts {
-  if (!value || typeof value !== 'object') return false
+function normalizeStoredAccounts(value: unknown): StoredEchoFlowAccounts | null {
+  if (!value || typeof value !== 'object') return null
   const record = value as { schemaVersion?: unknown; accounts?: unknown }
-  if (record.schemaVersion !== 2 || !record.accounts || typeof record.accounts !== 'object') return false
+  if ((record.schemaVersion !== 2 && record.schemaVersion !== 3) || !record.accounts || typeof record.accounts !== 'object') return null
   const accounts = record.accounts as Record<string, unknown>
-  return (accounts.main === null || isStoredAccount(accounts.main)) &&
-    (accounts.dedicated === null || isStoredAccount(accounts.dedicated))
+  const main = toStoredAccount(accounts.main)
+  const dedicated = toStoredAccount(accounts.dedicated)
+  if (accounts.main !== null && !main) return null
+  if (accounts.dedicated !== null && !dedicated) return null
+  // Root-level unknown fields survive the v2 -> v3 rewrite.
+  return { ...record, schemaVersion: 3, accounts: { main, dedicated } }
+}
+
+function toStoredAccount(value: unknown): StoredEchoFlowAccount | null {
+  if (value === null) return null
+  if (!isStoredAccount(value)) return null
+  return { ...value, credential: value.credential ?? 'token' }
 }
 
 function isStoredAccount(value: unknown): value is StoredEchoFlowAccount {
-  return !!value && typeof value === 'object' &&
-    typeof (value as { userId?: unknown }).userId === 'string' &&
-    typeof (value as { managementToken?: unknown }).managementToken === 'string'
+  if (!value || typeof value !== 'object') return false
+  const record = value as { userId?: unknown; managementToken?: unknown; credential?: unknown }
+  if (typeof record.userId !== 'string') return false
+  if (record.credential === 'session' || record.credential === 'bearer') return true
+  return typeof record.managementToken === 'string'
+}
+
+/** Only a token account can be rebuilt from disk; session and bearer cannot. */
+function storedCredential(account: StoredEchoFlowAccount): EchoFlowCredential | null {
+  if ((account.credential ?? 'token') === 'token' && account.managementToken) {
+    return { kind: 'token', userId: account.userId, managementToken: account.managementToken }
+  }
+  return null
 }
 
 function errnoCode(error: unknown): string | undefined {

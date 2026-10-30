@@ -12,6 +12,7 @@ import {
 import { useProviderStore } from '../../stores/providerStore'
 import { normalizeProviderBaseUrl } from '../../config/providerPresets'
 import { useTranslation } from '../../i18n'
+import { getDesktopHost } from '@/lib/desktopHost'
 
 
 type Props = {
@@ -48,6 +49,7 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
   const [showManagementToken, setShowManagementToken] = useState(false)
   const [isSavingAccount, setIsSavingAccount] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [isSigningIn, setIsSigningIn] = useState(false)
   const [isDisconnecting, setIsDisconnecting] = useState(false)
   const [showCredentialEditor, setShowCredentialEditor] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -55,6 +57,7 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
   const account = accounts[selectedEndpoint]
   const currentCredentials = credentials[selectedEndpoint]
   const tokenOptions = account?.tokens ?? []
+  const canSignIn = getDesktopHost().capabilities.echoFlowAccount
 
   const endpointLabels: Record<EchoFlowEndpoint, string> = {
     main: t('echoflowApiOfficialLogin.endpointMain'),
@@ -121,6 +124,29 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
     }
   }
 
+  // The account lives on the site, so signing in there is the only way to
+  // obtain a credential we can manage; the window hands it back over IPC.
+  const signIn = async () => {
+    if (isSigningIn) return
+    const endpoint = selectedEndpoint
+    setIsSigningIn(true)
+    setError(null)
+    try {
+      const outcome = await getDesktopHost().echoFlow.openLogin(endpoint)
+      if (outcome === 'authenticated') {
+        const { account: signedIn } = await echoflowApi.refreshAccount(endpoint)
+        setAccounts((current) => ({ ...current, [endpoint]: signedIn }))
+        onBindingChange?.(true)
+      } else if (outcome === 'failed') {
+        setError(t('echoflowApiOfficialLogin.signInFailed'))
+      }
+    } catch {
+      setError(t('echoflowApiOfficialLogin.signInFailed'))
+    } finally {
+      setIsSigningIn(false)
+    }
+  }
+
   const refreshAccount = async () => {
     if (isRefreshing || !account) return
     setIsRefreshing(true)
@@ -130,6 +156,13 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
       setAccounts((current) => ({ ...current, [selectedEndpoint]: refreshedAccount }))
     } catch {
       setError(t('echoflowApiOfficialLogin.refreshFailed'))
+      // The server drops a credential the site rejected, so re-read the list:
+      // a now-dead account stops looking live and the sign-in button returns.
+      await echoflowApi.getAccounts()
+        .then(({ account: legacyAccount, accounts: loaded }) => {
+          setAccounts(loaded ?? { main: legacyAccount, dedicated: null })
+        })
+        .catch(() => {})
     } finally {
       setIsRefreshing(false)
     }
@@ -140,7 +173,13 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
     setIsDisconnecting(true)
     setError(null)
     try {
-      await echoflowApi.disconnectAccount(selectedEndpoint)
+      // In Electron only the host can drop the partition cookies; without that
+      // the next rehydrate would silently sign the user back in.
+      if (canSignIn) {
+        await getDesktopHost().echoFlow.signOut(selectedEndpoint)
+      } else {
+        await echoflowApi.disconnectAccount(selectedEndpoint)
+      }
       setAccounts((current) => {
         const next = { ...current, [selectedEndpoint]: null }
         onBindingChange?.(Boolean(next.main || next.dedicated))
@@ -174,28 +213,7 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
     ),
   }))
 
-  return (
-    <div className="flex flex-col gap-3">
-      {/* `tablist`, not the default `radiogroup`: switching endpoints swaps the
-          whole panel below it — summary, credential fields, and token list are
-          per-endpoint — so a screen reader should announce a tab with a
-          panel, not a selected value in a set. */}
-      <SegmentedControl
-        items={endpointSegments}
-        value={selectedEndpoint}
-        onChange={(endpoint) => {
-          setSelectedEndpoint(endpoint)
-          setError(null)
-        }}
-        label={t('echoflowApiOfficialLogin.endpointSwitch')}
-        as="tablist"
-        appearance="raised"
-        size="sm"
-        layout="fill"
-      />
-      <p className="text-xs text-[var(--color-text-tertiary)]">{t('echoflowApiOfficialLogin.endpointHint')}</p>
-
-      {!account || showCredentialEditor ? (
+  const credentialForm = (
         <div className="flex flex-wrap items-center gap-2">
           <input value={currentCredentials.userId} onChange={(event) => updateCredentials({ userId: event.target.value })} placeholder={t('echoflowApiOfficialLogin.userId')} aria-label={t('echoflowApiOfficialLogin.userId')} className="min-w-0 flex-1 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus:border-[var(--color-brand)] focus:outline-none" />
           <div className="relative min-w-0 flex-1">
@@ -222,20 +240,72 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
             </Button>
           )}
         </div>
-      ) : (
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0 flex-1 text-sm text-[var(--color-text-secondary)]">{accountSummary}</div>
-          <div className="flex shrink-0 items-center gap-2">
-            <Button variant="secondary" size="sm" onClick={() => setShowCredentialEditor(true)}>
-              {t('echoflowApiOfficialLogin.updateToken')}
-            </Button>
-            <Button variant="secondary" size="sm" icon={<RefreshCw className="h-4 w-4" />} onClick={() => void refreshAccount()} loading={isRefreshing}>
-              {t('echoflowApiOfficialLogin.refresh')}
-            </Button>
-            <Button variant="secondary" size="sm" icon={<Unlink className="h-4 w-4" />} onClick={() => void disconnectAccount()} loading={isDisconnecting}>
-              {t('echoflowApiOfficialLogin.unbind')}
-            </Button>
+  )
+
+  return (
+    <div className="flex flex-col gap-3">
+      {/* `tablist`, not the default `radiogroup`: switching endpoints swaps the
+          whole panel below it — summary, credential fields, and token list are
+          per-endpoint — so a screen reader should announce a tab with a
+          panel, not a selected value in a set. */}
+      <SegmentedControl
+        items={endpointSegments}
+        value={selectedEndpoint}
+        onChange={(endpoint) => {
+          setSelectedEndpoint(endpoint)
+          setError(null)
+        }}
+        label={t('echoflowApiOfficialLogin.endpointSwitch')}
+        as="tablist"
+        appearance="raised"
+        size="sm"
+        layout="fill"
+      />
+      <p className="text-xs text-[var(--color-text-tertiary)]">{t('echoflowApiOfficialLogin.endpointHint')}</p>
+
+      {showCredentialEditor ? (
+        credentialForm
+      ) : account ? (
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0 flex-1 text-sm text-[var(--color-text-secondary)]">{accountSummary}</div>
+            <div className="flex shrink-0 items-center gap-2">
+              <Button variant="secondary" size="sm" onClick={() => setShowCredentialEditor(true)}>
+                {t('echoflowApiOfficialLogin.updateToken')}
+              </Button>
+              {account.live === false ? (
+                <Button variant="primary" size="sm" onClick={() => void signIn()} loading={isSigningIn}>
+                  {t('echoflowApiOfficialLogin.signIn')}
+                </Button>
+              ) : (
+                <Button variant="secondary" size="sm" icon={<RefreshCw className="h-4 w-4" />} onClick={() => void refreshAccount()} loading={isRefreshing}>
+                  {t('echoflowApiOfficialLogin.refresh')}
+                </Button>
+              )}
+              <Button variant="secondary" size="sm" icon={<Unlink className="h-4 w-4" />} onClick={() => void disconnectAccount()} loading={isDisconnecting}>
+                {t('echoflowApiOfficialLogin.unbind')}
+              </Button>
+            </div>
           </div>
+          {account.live === false && (
+            <p className="text-xs text-[var(--color-text-tertiary)]">{t('echoflowApiOfficialLogin.needsRelogin')}</p>
+          )}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {canSignIn && (
+            <div>
+              <Button variant="primary" size="md" onClick={() => void signIn()} loading={isSigningIn}>
+                {t('echoflowApiOfficialLogin.signIn')}
+              </Button>
+            </div>
+          )}
+          <details>
+            <summary className="w-fit cursor-pointer text-xs text-[var(--color-text-secondary)]">
+              {t('echoflowApiOfficialLogin.manualBind')}
+            </summary>
+            <div className="mt-2">{credentialForm}</div>
+          </details>
         </div>
       )}
 

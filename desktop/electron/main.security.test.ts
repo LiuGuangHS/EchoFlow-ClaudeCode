@@ -29,7 +29,7 @@ const workspaceBrowserServiceSource = mainSource.slice(
 )
 
 describe('Electron preview security boundary', () => {
-  it('restricts EchoFlow site-session IPC to the main desktop frame', () => {
+  it('restricts EchoFlow account IPC to the main desktop frame', () => {
     expect(mainSource).toContain("channel.startsWith('desktop:echoflow:')")
     expect(mainSource).toContain('senderWindow !== mainWindow || event.senderFrame !== event.sender.mainFrame')
   })

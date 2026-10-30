@@ -3,6 +3,7 @@ import '@testing-library/jest-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { providersApi } from '../../api/providers'
 import { ProviderSettings } from './ProviderSettings'
+import { BUNDLED_PROVIDER_PRESETS } from '../../config/providerPresets'
 import { ApiError } from '../../api/client'
 import { useProviderStore } from '../../stores/providerStore'
 import { useSettingsStore } from '../../stores/settingsStore'
@@ -107,6 +108,13 @@ describe('EchoFlow provider setup', () => {
   afterEach(() => {
     cleanup()
     vi.restoreAllMocks()
+  })
+
+  it('states the legal-region limit on the EchoFlow SiHub card', async () => {
+    render(<ProviderSettings />)
+
+    expect(await screen.findByText(translate('en', 'settings.providers.echoflowAPIOfficialName'))).toBeInTheDocument()
+    expect(screen.getByText(translate('en', 'settings.providers.echoflowAPIOfficialDisclaimer'))).toBeInTheDocument()
   })
 
   it('opens the shared configuration modal without creating a provider', async () => {
@@ -392,7 +400,8 @@ describe('saved and legacy providers', () => {
     for (const provider of savedProviders) {
       expect(dialog.queryByRole('button', { name: provider.name })).not.toBeInTheDocument()
     }
-    expect(dialog.getByRole('button', { name: 'EchoFlow API' })).toBeInTheDocument()
+    // The chip is the preset's own name, so the copy rule owns the label.
+    expect(dialog.getByRole('button', { name: BUNDLED_PROVIDER_PRESETS.find((preset) => preset.id === 'echoflowai')!.name })).toBeInTheDocument()
     expect(dialog.getByRole('button', { name: 'Custom' })).toBeInTheDocument()
   })
 

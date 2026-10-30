@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 2,
+  "rootFutureField": { "keep": true },
+  "accounts": {
+    "main": {
+      "userId": "851842",
+      "managementToken": "fixture-management-token",
+      "username": "fixture-user",
+      "balance": 2,
+      "userGroup": "default",
+      "tokens": [
+        {
+          "id": "token-1",
+          "name": "Fixture key",
+          "key": "sk-fixture-key"
+        }
+      ],
+      "refreshedAt": 1700000000000,
+      "endpoint": "main",
+      "futureField": { "keep": true }
+    },
+    "dedicated": null
+  }
+}

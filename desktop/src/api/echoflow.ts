@@ -9,13 +9,6 @@ import type {
 
 export type EchoFlowEndpoint = 'main' | 'dedicated'
 
-export type EchoFlowSiteAccount = {
-  userId: string
-  username: string
-  balance: number
-  refreshedAt: number
-}
-
 export const ECHOFLOW_BASE_URLS: Record<EchoFlowEndpoint, string> = {
   main: 'https://api.echoflowai.cc',
   dedicated: 'https://expapi.echoflowai.cc',
@@ -38,6 +31,8 @@ export interface EchoFlowAccount {
   tokens?: EchoFlowTokenOption[]
   refreshedAt?: number
   endpoint?: EchoFlowEndpoint
+  /** False when the stored credential is a session this process no longer holds. */
+  live?: boolean
 }
 
 export type EchoFlowTokenSource = {
@@ -58,8 +53,6 @@ type EchoFlowTokenSelectionResponse =
   | { provider: { id: string } }
 
 export const echoflowApi = {
-  getSiteSession: () => api.get<{ account: EchoFlowSiteAccount | null }>('/api/echoflow/site-session'),
-  refreshSiteSession: () => api.post<{ account: EchoFlowSiteAccount }>('/api/echoflow/site-session/refresh', {}),
   getAccounts: () => api.get<{
     account: EchoFlowAccount | null
     accounts: Record<EchoFlowEndpoint, EchoFlowAccount | null>

@@ -36,6 +36,18 @@ describe('selectableProviderPresets', () => {
   })
 })
 
+describe('EchoFlow preset copy', () => {
+  it('presents EchoFlow SiHub as recommended access instead of an official or region-locked service', () => {
+    const echoflow = BUNDLED_PROVIDER_PRESETS.filter((preset) => preset.id === 'echoflowai')
+
+    expect(echoflow).toHaveLength(1)
+    const copy = `${echoflow[0]!.name} ${echoflow[0]!.promoText ?? ''}`
+    expect(copy).toContain('EchoFlow SiHub')
+    expect(copy).toMatch(/推荐|recommended/i)
+    expect(copy).not.toMatch(/官方|official|공식|公式|清雲|청운|国内|中国|china/i)
+  })
+})
+
 describe('bundled provider presets', () => {
   it('contains only approved official, local, EchoFlow, and custom entries', () => {
     const bundledIds = BUNDLED_PROVIDER_PRESETS.map((preset) => preset.id)
