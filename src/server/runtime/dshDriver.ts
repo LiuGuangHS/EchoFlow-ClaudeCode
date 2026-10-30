@@ -277,16 +277,27 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
       )
       handshakeTimer.unref?.()
     })
-    let handshake: { protocolVersion?: number; agentCapabilities?: Record<string, unknown> } | null = null
+    let answered: {
+      protocolVersion?: number
+      agentCapabilities?: Record<string, unknown>
+      agentInfo?: { name?: string; version?: string }
+    }
     try {
-      handshake = (await Promise.race([
+      answered = (await Promise.race([
         connection.agent.request(AGENT_METHODS.initialize, {
           protocolVersion: PROTOCOL_VERSION,
           clientCapabilities: {},
         }),
         startupFailure,
         handshakeTimeout,
-      ])) as typeof handshake
+      ])) as typeof answered
+      // Anything else may answer our initialize; its replies are not ours to read.
+      if (answered.protocolVersion !== PROTOCOL_VERSION) {
+        throw new RuntimeStartupError(
+          `the dsh runtime answered ACP protocol ${String(answered.protocolVersion)}, this driver speaks ${PROTOCOL_VERSION}`,
+          stderr,
+        )
+      }
     } catch (error) {
       try {
         connection.close()
@@ -490,10 +501,12 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
     }
 
     let closing: Promise<void> | null = null
-    const capabilities = capabilitiesFromHandshake(handshake)
+    const capabilities = capabilitiesFromHandshake(answered)
+    const handshake = { protocolVersion: PROTOCOL_VERSION, agentVersion: answered.agentInfo?.version ?? null }
 
     return {
       capabilities,
+      handshake,
 
       async openSession({ sessionId, cwd, model, reasoningEffort }) {
         const active = await connection.agent.buildSession(cwd).start()
@@ -570,12 +583,20 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
     async probe(installation): Promise<RuntimeProbe> {
       try {
         const connection = await connect({ installation, runId: 'probe', cwd: process.cwd() })
+        const probe: RuntimeProbe = {
+          ok: true,
+          version: installation.version ?? null,
+          agentVersion: connection.handshake?.agentVersion ?? null,
+          protocolVersion: connection.handshake?.protocolVersion ?? null,
+          error: null,
+        }
         await connection.close()
-        return { ok: true, version: null, protocolVersion: PROTOCOL_VERSION, error: null }
+        return probe
       } catch (error) {
         return {
           ok: false,
           version: null,
+          agentVersion: null,
           protocolVersion: null,
           error: error instanceof Error ? error.message : String(error),
         }

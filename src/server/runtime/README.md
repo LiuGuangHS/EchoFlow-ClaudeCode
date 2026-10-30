@@ -22,7 +22,7 @@ product / desktop / server features
 | Approval bridge | The engine's permission request gets a product-side `requestId`; the UI answers by that id; an approval arriving with no live turn is answered `cancelled` so the engine never waits forever. | `dshDriver.ts` |
 | Turn lifecycle | One active turn per session; a second `send()` throws `RuntimeBusyError` (no implicit queue). `interrupt()` returns `cancelled` only after the engine confirms it; if the engine ignores the cancel it returns `cancelling` and the turn stays active. A consumer that abandons the stream cancels its own turn — and only its own. | `dshDriver.ts` |
 | Session routing | `RuntimeHost` owns the installation → connection → product-session maps, rejects unknown ids with typed errors, and forgets a dead connection's sessions. | `controlPlane.ts` |
-| Startup diagnostics | A launcher that dies during the handshake rejects with `RuntimeStartupError` carrying the process's stderr, before the startup timeout. | `dshDriver.ts` |
+| Startup diagnostics | A launcher that dies during the handshake rejects with `RuntimeStartupError` carrying the process's stderr, before the startup timeout. A handshake answering a different ACP protocol version is rejected the same way. | `dshDriver.ts` |
 
 ## Public surface
 
@@ -41,9 +41,10 @@ snapshot or absent from the API:
 
 - Native session list / resume / fork / delete. `listSessions()` and
   `resumeSession()` throw `UnsupportedRuntimeCapabilityError`.
-- MCP servers, images, embedded resources, steering, hooks, skills, plugins.
-- `probe()` runs in the process cwd and reports the protocol version this client
-  requested, not the handshake result.
+- MCP servers, embedded resources, steering, hooks, skills, plugins. Images are
+  supported only when the handshake's `promptCapabilities.image` says so.
+- `probe()` runs in the process cwd, reports the installation version it was
+  given, and reports the agent version the handshake answered with.
 - No desktop, WebSocket, or session-store wiring yet — this layer has no product
   consumer.
 - The dsh driver is tested against `__fixtures__/fixtureAcpAgent.ts`, not against

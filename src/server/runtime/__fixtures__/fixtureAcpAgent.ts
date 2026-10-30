@@ -29,10 +29,13 @@ const options = [
 ]
 
 const agentCapabilities = JSON.parse(process.env.FIXTURE_AGENT_CAPABILITIES ?? '{}')
+// Handshake knobs ride on argv so probe(), which passes no env, can vary them.
+const handshake = JSON.parse(process.argv[2] ?? '{}')
 
 app.onRequest(AGENT_METHODS.initialize, () => ({
-  protocolVersion: PROTOCOL_VERSION,
+  protocolVersion: handshake.protocolVersion ?? PROTOCOL_VERSION,
   agentCapabilities,
+  ...(handshake.agentInfo === undefined ? {} : { agentInfo: handshake.agentInfo }),
 }))
 
 app.onRequest(AGENT_METHODS.session_new, (ctx) => {

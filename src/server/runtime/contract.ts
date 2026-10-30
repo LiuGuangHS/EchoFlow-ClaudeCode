@@ -111,9 +111,17 @@ export type RuntimeStartInput = {
 
 export type RuntimeProbe = {
   ok: boolean
+  /** The installation's own version, resolved by the caller; an ACP handshake cannot tell us. */
   version: string | null
+  /** What the engine answers the handshake with — never the version we requested. */
+  agentVersion: string | null
   protocolVersion: number | null
   error: string | null
+}
+
+export type RuntimeHandshake = {
+  protocolVersion: number
+  agentVersion: string | null
 }
 
 export type SessionModelRef = { provider: string; model: string }
@@ -235,6 +243,8 @@ export type RuntimeDriver = {
 
 export type RuntimeConnection = {
   readonly capabilities: RuntimeCapabilities
+  /** What the engine answered in the ACP handshake; absent for drivers without one. */
+  readonly handshake?: RuntimeHandshake
   openSession(input: NewSessionInput): Promise<RuntimeSession>
   resumeSession(input: ResumeSessionInput): Promise<RuntimeSession>
   listSessions(query: ListSessionsQuery): AsyncIterable<NativeSessionSummary>

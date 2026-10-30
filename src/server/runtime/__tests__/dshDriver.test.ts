@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { PROTOCOL_VERSION } from '@agentclientprotocol/sdk'
 import { RuntimeBusyError, RuntimeStartupError, UnsupportedRuntimeCapabilityError } from '../contract.js'
 import { createDshDriver } from '../dshDriver.js'
 
@@ -169,6 +170,21 @@ describe('dshDriver over a real ACP child process', () => {
   test('probe reports a successful handshake without opening a session', async () => {
     const driver = createDshDriver({ resolveCommand: command })
     expect(await driver.probe(installation)).toMatchObject({ ok: true, error: null })
+  })
+
+  test('rejects a handshake whose protocol version is not the one we speak', async () => {
+    const driver = createDshDriver({ resolveCommand: () => [process.execPath, fixture, JSON.stringify({ protocolVersion: 99 })] })
+    const failure = await driver.start({ installation, runId: 'run-1', cwd: process.cwd() }).catch(error => error)
+    expect(failure).toBeInstanceOf(RuntimeStartupError)
+    expect(failure.message).toContain('99')
+  })
+
+  test('probe reports the version the agent answered with, not the one we asked for', async () => {
+    const driver = createDshDriver({
+      resolveCommand: () => [process.execPath, fixture, JSON.stringify({ agentInfo: { name: 'fixture', version: '9.9.9' } })],
+    })
+    expect(await driver.probe(installation))
+      .toMatchObject({ ok: true, protocolVersion: PROTOCOL_VERSION, agentVersion: '9.9.9', version: null })
   })
 
   test('probe reports a failed launch instead of throwing', async () => {
