@@ -138,7 +138,23 @@ export type NativeSessionSummary = { nativeSessionId: string; cwd?: string; upda
 
 export type RuntimeExit = { code: number | null; signal: string | null }
 
-export type UserTurn = { text: string }
+export type RuntimeAttachment = {
+  kind: 'image'
+  mimeType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+  dataBase64: string
+}
+
+export type RuntimeReference = {
+  kind: 'file' | 'session' | 'url'
+  uri: string
+  label?: string
+}
+
+export type UserTurn = {
+  text: string
+  attachments?: RuntimeAttachment[]
+  references?: RuntimeReference[]
+}
 
 // --- Approvals (spec §3.7) ---
 

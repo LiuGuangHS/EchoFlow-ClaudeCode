@@ -28,9 +28,11 @@ const options = [
   { optionId: 'deny', name: 'Deny', kind: 'reject_once' },
 ]
 
+const agentCapabilities = JSON.parse(process.env.FIXTURE_AGENT_CAPABILITIES ?? '{}')
+
 app.onRequest(AGENT_METHODS.initialize, () => ({
   protocolVersion: PROTOCOL_VERSION,
-  agentCapabilities: {},
+  agentCapabilities,
 }))
 
 app.onRequest(AGENT_METHODS.session_new, (ctx) => {
@@ -57,6 +59,7 @@ app.onNotification(AGENT_METHODS.session_cancel, () => {
 })
 
 app.onRequest(AGENT_METHODS.session_prompt, async (ctx) => {
+  record('session/prompt', ctx.params)
   const { sessionId, prompt } = ctx.params
   const text = prompt.map((block) => (block.type === 'text' ? block.text : '')).join('')
   const send = (chunk: string) =>

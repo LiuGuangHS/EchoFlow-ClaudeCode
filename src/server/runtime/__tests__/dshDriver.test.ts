@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { RuntimeBusyError, RuntimeStartupError } from '../contract.js'
+import { RuntimeBusyError, RuntimeStartupError, UnsupportedRuntimeCapabilityError } from '../contract.js'
 import { createDshDriver } from '../dshDriver.js'
 
 const fixture = join(import.meta.dir, '..', '__fixtures__', 'fixtureAcpAgent.ts')
@@ -35,7 +35,7 @@ async function waitForFile(path: string) {
 }
 
 /** Requests cross the process boundary, so the fixture appends them to a file. */
-async function openWithCallLog(options: { rejectConfigIds?: string[] } = {}) {
+async function openWithCallLog(options: { rejectConfigIds?: string[]; agentCapabilities?: unknown } = {}) {
   const sandbox = mkdtempSync(join(tmpdir(), 'echoflow-calls-'))
   sandboxes.push(sandbox)
   const callsPath = join(sandbox, 'calls.ndjson')
@@ -47,6 +47,7 @@ async function openWithCallLog(options: { rejectConfigIds?: string[] } = {}) {
     env: {
       FIXTURE_CALLS_MARKER: callsPath,
       FIXTURE_REJECT_CONFIG_IDS: (options.rejectConfigIds ?? []).join(','),
+      FIXTURE_AGENT_CAPABILITIES: JSON.stringify(options.agentCapabilities ?? {}),
     },
   })
   const readCalls = () =>
@@ -213,6 +214,30 @@ describe('dshDriver over a real ACP child process', () => {
     await expect(connection.openSession({ sessionId: 'session-1', cwd: process.cwd(), reasoningEffort: 'high' }))
       .rejects.toThrow()
     expect(readCalls().some(call => call.method === 'session/close')).toBe(true)
+    await connection.close()
+  })
+
+  test('projects attachments and references into ACP prompt content in order', async () => {
+    const { connection, readCalls } = await openWithCallLog({ agentCapabilities: { promptCapabilities: { image: true } } })
+    const session = await connection.openSession({ sessionId: 'session-1', cwd: process.cwd() })
+    await collect(session.send({
+      text: 'look',
+      attachments: [{ kind: 'image', mimeType: 'image/png', dataBase64: 'AA==' }],
+      references: [{ kind: 'file', uri: 'file:///tmp/a.ts', label: 'a.ts' }],
+    }))
+    const prompt = readCalls().find(call => call.method === 'session/prompt')
+    expect(prompt.params.prompt.map(block => block.type)).toEqual(['text', 'image', 'resource_link'])
+    expect(prompt.params.prompt[1]).toMatchObject({ mimeType: 'image/png', data: 'AA==' })
+    expect(prompt.params.prompt[2]).toMatchObject({ uri: 'file:///tmp/a.ts', name: 'a.ts' })
+    await connection.close()
+  })
+
+  test('rejects image turns when the handshake advertises no image support', async () => {
+    const { connection, readCalls } = await openWithCallLog({ agentCapabilities: { promptCapabilities: { image: false } } })
+    const session = await connection.openSession({ sessionId: 'session-1', cwd: process.cwd() })
+    expect(() => session.send({ text: 'x', attachments: [{ kind: 'image', mimeType: 'image/png', dataBase64: 'AA==' }] }))
+      .toThrow(UnsupportedRuntimeCapabilityError)
+    expect(readCalls().some(call => call.method === 'session/prompt')).toBe(false)
     await connection.close()
   })
 })

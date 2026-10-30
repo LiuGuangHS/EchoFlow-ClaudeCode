@@ -23,6 +23,7 @@ import {
   type ApprovalDecision,
   type InterruptResult,
   type RuntimeConnection,
+  type RuntimeCapabilities,
   type RuntimeDriver,
   type RuntimeEvent,
   type RuntimeEventBody,
@@ -110,8 +111,7 @@ function createTurnChannel(): TurnChannel {
 }
 
 /** Resolves `true` when the promise did not settle in time. */
-function settleWithin(promise: Promise<unknown>, timeoutMs: number): Promise<boolean> {
-  return new Promise((resolve) => {
+function settleWithin(promise: Promise<unknown>, timeoutMs: number): Promise<boolean> {  return new Promise((resolve) => {
     const timer = setTimeout(() => resolve(true), timeoutMs)
     timer.unref?.()
     void promise.then(
@@ -125,6 +125,36 @@ function settleWithin(promise: Promise<unknown>, timeoutMs: number): Promise<boo
       },
     )
   })
+}
+
+/** Only what the agent declared in the handshake may be claimed as native. */
+function capabilitiesFromHandshake(
+  handshake: { agentCapabilities?: Record<string, unknown> } | null,
+): RuntimeCapabilities {
+  const capabilities = dshBaselineCapabilities()
+  const prompt = handshake?.agentCapabilities?.promptCapabilities as { image?: unknown } | undefined
+  if (prompt?.image === true) {
+    capabilities.prompt.image = { state: 'native', source: 'handshake' }
+  }
+  return capabilities
+}
+
+type PromptContent = Parameters<ActiveSession['prompt']>[0]
+
+/** Text first, then attachments, then references — the order the user built. */
+function promptBlocks(turn: UserTurn): PromptContent {
+  const blocks: Array<
+    | { type: 'text'; text: string }
+    | { type: 'image'; mimeType: string; data: string }
+    | { type: 'resource_link'; uri: string; name: string }
+  > = [{ type: 'text', text: turn.text }]
+  for (const attachment of turn.attachments ?? []) {
+    blocks.push({ type: 'image', mimeType: attachment.mimeType, data: attachment.dataBase64 })
+  }
+  for (const reference of turn.references ?? []) {
+    blocks.push({ type: 'resource_link', uri: reference.uri, name: reference.label ?? reference.uri })
+  }
+  return blocks as PromptContent
 }
 
 function approvalEffect(kind: string) {
@@ -247,15 +277,16 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
       )
       handshakeTimer.unref?.()
     })
+    let handshake: { protocolVersion?: number; agentCapabilities?: Record<string, unknown> } | null = null
     try {
-      await Promise.race([
+      handshake = (await Promise.race([
         connection.agent.request(AGENT_METHODS.initialize, {
           protocolVersion: PROTOCOL_VERSION,
           clientCapabilities: {},
         }),
         startupFailure,
         handshakeTimeout,
-      ])
+      ])) as typeof handshake
     } catch (error) {
       try {
         connection.close()
@@ -313,10 +344,10 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
         completeTurn(state, 'error')
       }
 
-      async function runTurn(state: TurnState, text: string) {
+      async function runTurn(state: TurnState, turn: UserTurn) {
         // The prompt response arrives as a `stop` message, so failures are caught
         // here rather than by the consumer of the stream.
-        void active.prompt(text).catch((error: unknown) => failTurn(state, error))
+        void active.prompt(promptBlocks(turn)).catch((error: unknown) => failTurn(state, error))
         try {
           for (;;) {
             const message = await active.nextUpdate()
@@ -401,6 +432,9 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
 
       function send(turn: UserTurn): AsyncIterable<RuntimeEvent> {
         if (activeTurn !== null) throw new RuntimeBusyError()
+        if ((turn.attachments?.length ?? 0) > 0 && capabilities.prompt.image.state !== 'native') {
+          throw new UnsupportedRuntimeCapabilityError('prompt.image')
+        }
         const channel = createTurnChannel()
         let settle!: () => void
         const finished = new Promise<void>((resolve) => {
@@ -409,7 +443,7 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
         const state: TurnState = { channel, finished, settle, done: false }
         activeTurn = state
         channel.push(stamp({ kind: 'session.state', state: 'running' }, 'echoflow'))
-        void runTurn(state, turn.text)
+        void runTurn(state, turn)
         return {
           [Symbol.asyncIterator]() {
             return {
@@ -448,9 +482,10 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
     }
 
     let closing: Promise<void> | null = null
+    const capabilities = capabilitiesFromHandshake(handshake)
 
     return {
-      capabilities: dshBaselineCapabilities(),
+      capabilities,
 
       async openSession({ sessionId, cwd, model, reasoningEffort }) {
         const active = await connection.agent.buildSession(cwd).start()
