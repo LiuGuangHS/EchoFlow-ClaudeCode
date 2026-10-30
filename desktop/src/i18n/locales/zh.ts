@@ -4316,7 +4316,7 @@ export const zh: Record<TranslationKey, string> = {
   'echoflowApiOfficialLogin.noTokens': '当前账户没有可用的 API Key，请先在 EchoFlow 控制台创建。',
   'echoflowApiOfficialLogin.loadFailed': '无法读取 EchoFlow 账户信息。',
   'echoflowApiOfficialLogin.bindFailed': '账户绑定失败，请检查当前线路的用户 ID 和系统访问令牌。',
-  'echoflowApiOfficialLogin.refreshFailed': '刷新失败，请更新当前线路的系统访问令牌后重试。',
+  'echoflowApiOfficialLogin.refreshFailed': '刷新失败，请重新登录，或更新当前线路的凭据后重试。',
   'echoflowApiOfficialLogin.disconnectFailed': '解除当前线路账户失败。',
   'echoflowApiOfficialLogin.neverSynced': '尚未同步',
   'echoflowApiOfficialLogin.balance': '余额',

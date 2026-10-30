@@ -4317,7 +4317,7 @@ export const jp: Record<TranslationKey, string> = {
   'echoflowApiOfficialLogin.noTokens': 'このアカウントには利用可能な API キーがありません。先に EchoFlow コンソールで作成してください。',
   'echoflowApiOfficialLogin.loadFailed': 'EchoFlow アカウント情報を読み取れませんでした。',
   'echoflowApiOfficialLogin.bindFailed': 'アカウントのバインドに失敗しました。この回線のユーザー ID とシステムアクセストークンを確認してください。',
-  'echoflowApiOfficialLogin.refreshFailed': '更新に失敗しました。この回線のシステムアクセストークンを更新して再試行してください。',
+  'echoflowApiOfficialLogin.refreshFailed': '更新に失敗しました。再ログインするか、この回線の認証情報を更新して再試行してください。',
   'echoflowApiOfficialLogin.disconnectFailed': 'この回線のアカウントを切断できませんでした。',
   'echoflowApiOfficialLogin.neverSynced': '未同期',
   'echoflowApiOfficialLogin.balance': '残高',

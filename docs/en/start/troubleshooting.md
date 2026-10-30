@@ -117,11 +117,11 @@ For local models (LM Studio / Ollama), **do not append `/v1` to the base URL** �
 
 **What to do** — Keep the app running through the whole flow; complete the authorization in your system browser with the same account; disable proxies and blocking extensions; and check that your system clock is correct, since a skewed clock breaks the handshake. If the browser never opens, click "Copy authorization link" and paste it manually.
 
-### Binding an EchoFlow account fails
+### Signing in to EchoFlow SiHub fails
 
-**Why** — Usually one of three things: a mistyped user ID, an expired system access token, or the wrong line (main site versus dedicated line).
+**Why** — Usually one of three things: the window closed before the site sign-in finished, the wrong line was selected (main site versus dedicated line), or a manual binding whose token has expired.
 
-**What to do** — Check that the line tab matches the account; the two lines bind independently and their credentials never overwrite each other. Regenerate the token under Security settings → System access token in the console and use **Update token**. If the balance still reads "not synced yet" after binding, click **Refresh** once.
+**What to do** — Check that the line tab matches the account; the two lines sign in independently and their credentials never overwrite each other. Click **Sign in to EchoFlow SiHub** again; a transient network fault or a local server restart can close the window early. With manual binding, regenerate the token under Security settings → System access token in the console and use **Update token**. If the balance still reads "not synced yet" after signing in, click **Refresh** once.
 
 ### The model selector stops responding
 

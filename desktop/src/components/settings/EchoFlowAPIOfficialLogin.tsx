@@ -156,6 +156,13 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
       setAccounts((current) => ({ ...current, [selectedEndpoint]: refreshedAccount }))
     } catch {
       setError(t('echoflowApiOfficialLogin.refreshFailed'))
+      // The server drops a credential the site rejected, so re-read the list:
+      // a now-dead account stops looking live and the sign-in button returns.
+      await echoflowApi.getAccounts()
+        .then(({ account: legacyAccount, accounts: loaded }) => {
+          setAccounts(loaded ?? { main: legacyAccount, dedicated: null })
+        })
+        .catch(() => {})
     } finally {
       setIsRefreshing(false)
     }

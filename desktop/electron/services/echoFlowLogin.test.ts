@@ -9,6 +9,7 @@ import {
   siteCookieHeader,
   type EchoFlowLoginCredential,
   type EchoFlowLoginProfile,
+  type EchoFlowLoginVerification,
   type EchoFlowLoginWindow,
   type EchoFlowWindowOpenResult,
 } from './echoFlowLogin'
@@ -109,8 +110,9 @@ const TEST_DEDICATED: EchoFlowLoginProfile = {
 type MakeLoginOptions = {
   persisted?: boolean
   readCredential?: (endpoint: 'main' | 'dedicated', window: EchoFlowLoginWindow | null) => Promise<EchoFlowLoginCredential | null>
-  verifySession?: (endpoint: 'main' | 'dedicated', credential: EchoFlowLoginCredential) => Promise<boolean>
+  verifySession?: (endpoint: 'main' | 'dedicated', credential: EchoFlowLoginCredential) => Promise<EchoFlowLoginVerification>
   clearCookies?: (endpoint: 'main' | 'dedicated') => Promise<void>
+  clearStorage?: (endpoint: 'main' | 'dedicated') => Promise<void>
   loadRetries?: number
   loadTimeoutMs?: number
   loginTimeoutMs?: number
@@ -125,14 +127,16 @@ function makeLogin(options: MakeLoginOptions = {}) {
   const readCredential = vi.fn(options.readCredential
     ?? (async (_endpoint: 'main' | 'dedicated', target: EchoFlowLoginWindow | null) =>
       (target as FakeLoginWindow | null)?.credential ?? (options.persisted ? credential : null)))
-  const verifySession = vi.fn(options.verifySession ?? (async () => true))
+  const verifySession = vi.fn(options.verifySession ?? (async () => 'ok' as EchoFlowLoginVerification))
   const clearCookies = vi.fn(options.clearCookies ?? (async () => {}))
+  const clearStorage = vi.fn(options.clearStorage ?? (async () => {}))
   const login = new EchoFlowLoginSession({
     createWindow,
     profiles: { main: MAIN_LOGIN_PROFILE, dedicated: TEST_DEDICATED },
     readCredential,
     verifySession,
     clearCookies,
+    clearStorage,
     pollIntervalMs: 10,
     identityRetryMs: 10,
     loadTimeoutMs: options.loadTimeoutMs ?? 500,
@@ -140,7 +144,7 @@ function makeLogin(options: MakeLoginOptions = {}) {
     loadRetryDelayMs: 5,
     loadRetries: options.loadRetries ?? 3,
   })
-  return { login, window, createWindow, readCredential, verifySession, clearCookies, credential }
+  return { login, window, createWindow, readCredential, verifySession, clearCookies, clearStorage, credential }
 }
 
 describe('EchoFlow site login session', () => {
@@ -260,9 +264,32 @@ describe('EchoFlow site login session', () => {
     await expect(result).resolves.toBe('cancelled')
   })
 
+  it('does not count an unverifiable credential as a rejection', async () => {
+    let mode: EchoFlowLoginVerification = 'unavailable'
+    const { login, window, createWindow, credential } = makeLogin({
+      verifySession: async () => mode,
+      loginTimeoutMs: 60_000,
+    })
+    const result = login.open()
+    await waitFor(() => createWindow.mock.calls.length === 1)
+
+    window.signIn(credential)
+    // Several polls beyond the rejection budget: an unavailable bridge is not
+    // a verdict, so the window must stay open rather than authenticate or fail.
+    await new Promise(resolve => setTimeout(resolve, 80))
+    expect(window.closedCount).toBe(0)
+    let settled = false
+    void result.then(() => { settled = true })
+    expect(settled).toBe(false)
+
+    mode = 'ok'
+    await expect(result).resolves.toBe('authenticated')
+    expect(window.closedCount).toBe(1)
+  })
+
   it('fails after three rejected session bootstraps instead of waiting for the login timeout', async () => {
-    const { login, window, createWindow, verifySession, credential } = makeLogin({
-      verifySession: async () => false,
+    const { login, window, createWindow, verifySession, clearCookies, clearStorage, credential } = makeLogin({
+      verifySession: async () => 'rejected',
       loginTimeoutMs: 60_000,
     })
     const result = login.open()
@@ -272,6 +299,10 @@ describe('EchoFlow site login session', () => {
     await expect(result).resolves.toBe('failed')
     expect(verifySession).toHaveBeenCalledTimes(3)
     expect(window.closedCount).toBe(1)
+    // The rejected credential is wiped before the window closes, so reopening
+    // the login page cannot replay it.
+    expect(clearCookies).toHaveBeenCalledWith('main')
+    expect(clearStorage).toHaveBeenCalledWith('main')
   })
 
   it('retries a transient main-frame load failure instead of failing the login', async () => {
@@ -367,18 +398,21 @@ describe('EchoFlow site login session', () => {
     const empty = makeLogin({ readCredential: async () => null })
     await expect(empty.login.rehydrate('main')).resolves.toBe(false)
 
-    const rejected = makeLogin({ verifySession: async () => false })
+    const rejected = makeLogin({ verifySession: async () => 'rejected' })
     await expect(rejected.login.rehydrate('main')).resolves.toBe(false)
   })
 
   it('clears only the endpoint it was asked to sign out of', async () => {
-    const { login, window, createWindow, clearCookies } = makeLogin({ readCredential: async () => null })
+    const { login, window, createWindow, clearCookies, clearStorage } = makeLogin({ readCredential: async () => null })
     const result = login.open()
     await waitFor(() => createWindow.mock.calls.length === 1)
 
     await login.clear('main')
     await expect(result).resolves.toBe('cancelled')
     expect(clearCookies).toHaveBeenCalledWith('main')
+    // The gateway keeps its token in page storage, so clearing cookies alone
+    // would let the next login silently reuse the signed-out account.
+    expect(clearStorage).toHaveBeenCalledWith('main')
     expect(window.closedCount).toBe(1)
   })
 

@@ -138,6 +138,20 @@ describe('EchoFlowAPIOfficialLogin', () => {
     expect(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.signIn') })).toBeInTheDocument()
   })
 
+  it('offers sign-in again when a refresh discovers the credential was rejected', async () => {
+    vi.mocked(echoflowApi.getAccounts)
+      .mockResolvedValueOnce({ account: mainAccount, accounts: { main: mainAccount, dedicated: null } })
+      .mockResolvedValue({ account: null, accounts: { main: { ...mainAccount, live: false }, dedicated: null } })
+    vi.mocked(echoflowApi.refreshAccount).mockRejectedValue(new Error('token_invalid'))
+
+    render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
+    await screen.findByText(userIdSummary('main-user'))
+    fireEvent.click(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.refresh') }))
+
+    expect(await screen.findByRole('button', { name: L('echoflowApiOfficialLogin.signIn') })).toBeInTheDocument()
+    expect(screen.getByText(L('echoflowApiOfficialLogin.refreshFailed'))).toBeInTheDocument()
+  })
+
   it('shows one endpoint account at a time and keeps the account data isolated', async () => {
     render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
 

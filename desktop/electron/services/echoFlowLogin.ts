@@ -68,6 +68,13 @@ export type EchoFlowWindowOpenResult =
   | { action: 'deny' }
   | { action: 'allow'; overrideBrowserWindowOptions?: Record<string, unknown> }
 
+/**
+ * The host's verdict on a credential. `unavailable` means the local server
+ * could not be asked at all (not running, missing bridge token, timeout); that
+ * is not evidence against the credential and must not close the window.
+ */
+export type EchoFlowLoginVerification = 'ok' | 'rejected' | 'unavailable'
+
 export interface EchoFlowLoginWindow {
   webContents: {
     on(event: 'will-navigate' | 'will-redirect', listener: (navigation: { preventDefault(): void }, url: string) => void): void
@@ -88,8 +95,10 @@ export type EchoFlowLoginSessionDeps = {
   profiles: Record<EchoFlowLoginEndpoint, EchoFlowLoginProfile>
   /** Reads the signed-in credential from a live window, or from the persistent jar when `window` is null. */
   readCredential: (endpoint: EchoFlowLoginEndpoint, window: EchoFlowLoginWindow | null) => Promise<EchoFlowLoginCredential | null>
-  verifySession: (endpoint: EchoFlowLoginEndpoint, credential: EchoFlowLoginCredential) => Promise<boolean>
+  verifySession: (endpoint: EchoFlowLoginEndpoint, credential: EchoFlowLoginCredential) => Promise<EchoFlowLoginVerification>
   clearCookies?: (endpoint: EchoFlowLoginEndpoint) => Promise<void>
+  /** Wipes the partition's page storage, where the gateway keeps its token. */
+  clearStorage?: (endpoint: EchoFlowLoginEndpoint) => Promise<void>
   /** Timing knobs exist so tests do not wait on wall-clock seconds. */
   pollIntervalMs?: number
   identityRetryMs?: number
@@ -300,7 +309,12 @@ export class EchoFlowLoginSession {
   async clear(endpoint: EchoFlowLoginEndpoint = 'main'): Promise<void> {
     this.verified.delete(endpoint)
     if (this.activeProfile?.endpoint === endpoint) this.cancelLogin()
-    await this.deps.clearCookies?.(endpoint)
+    // Both must run even when one of them fails: the gateway token lives in
+    // storage, the main site session in cookies.
+    await Promise.all([
+      this.deps.clearCookies?.(endpoint),
+      this.deps.clearStorage?.(endpoint),
+    ])
   }
 
   private focusWindow(): void {
@@ -322,7 +336,7 @@ export class EchoFlowLoginSession {
   private async tryRestoreSession(endpoint: EchoFlowLoginEndpoint): Promise<boolean> {
     const credential = await this.deps.readCredential(endpoint, null)
     if (!credential) return false
-    if (!await this.deps.verifySession(endpoint, credential)) return false
+    if (await this.deps.verifySession(endpoint, credential) !== 'ok') return false
     this.verified.add(endpoint)
     return true
   }
@@ -474,13 +488,26 @@ export class EchoFlowLoginSession {
 
     this.identityInFlight = true
     try {
-      if (!await this.deps.verifySession(endpoint, credential)) {
+      const verdict = await this.deps.verifySession(endpoint, credential)
+      if (verdict === 'rejected') {
         this.identityRejections += 1
         if (this.identityRejections >= MAX_IDENTITY_REJECTIONS) {
+          // The credential the page handed back is the old one; wipe it before
+          // closing so a retry cannot replay the same rejection loop.
+          try {
+            await Promise.all([
+              this.deps.clearCookies?.(endpoint),
+              this.deps.clearStorage?.(endpoint),
+            ])
+          } catch {
+            // Wiping is best-effort; the window still has to close.
+          }
           this.failAndClose(window, 'bootstrap-rejected')
         }
         return
       }
+      // `unavailable` is the bridge not answering, not a verdict: keep waiting.
+      if (verdict !== 'ok') return
       this.identityRejections = 0
       this.verified.add(endpoint)
       this.finishAndClose(window, 'authenticated')

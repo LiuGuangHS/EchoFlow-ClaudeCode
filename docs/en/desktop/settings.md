@@ -13,7 +13,7 @@ Click **Settings** at the bottom of the sidebar. Seventeen tabs appear on the le
 
 Shared model configuration. This tab was called **Providers** before 0.5.5, when it was renamed to Model Settings / Model Management — same place, same contents.
 
-Sign in to Claude, ChatGPT, or Grok with an account (no API key required), add any Anthropic- or OpenAI-compatible service with an API key, or bind an [official EchoFlow account](../start/account.md) and build channels from its call tokens. This is where service credentials, endpoints, and model mappings live; it is not the execution runtime for a session. Choosing a provider, model, or effort inside a session creates a session-level override without replacing this shared configuration.
+Sign in to Claude, ChatGPT, or Grok with an account (no API key required), add any Anthropic- or OpenAI-compatible service with an API key, or sign in to [EchoFlow SiHub](../start/account.md) and build channels from its call tokens. This is where service credentials, endpoints, and model mappings live; it is not the execution runtime for a session. Choosing a provider, model, or effort inside a session creates a session-level override without replacing this shared configuration.
 
 You'll come here once during setup and rarely again. Full steps in [Connecting a model](../start/models.md).
 

@@ -11,7 +11,7 @@ EchoFlow Code ships without a model. It's the shell that does the work; you have
 
 Click "Settings" at the bottom of the sidebar, then pick the first tab, **Model Settings** (called "Providers" in older builds). From there you have four routes:
 
-- **You have an EchoFlow account** — bind the account and pick a call token to build a channel, with no vendor keys to apply for. See [Bind an EchoFlow account](./account.md).
+- **You have an EchoFlow SiHub account** — sign in and pick a call token to build a channel, with no vendor keys to apply for. See [Sign in to EchoFlow SiHub](./account.md).
 - **You have an official account** — Claude, ChatGPT, and Grok each have a built-in card. One click opens a browser sign-in. No API key to type.
 - **You have a third-party API key** — DeepSeek, Kimi, Zhipu GLM and others come as presets. Paste the key and you're done.
 - **You want it free** — run LM Studio or Ollama on your own machine. The model runs on your GPU, costs nothing, and works offline.
@@ -44,7 +44,7 @@ With an API key in hand, this is the fastest route. Click "Add Model", pick some
 
 The built-in presets, as they appear in the dialog:
 
-- **EchoFlow API** — the EchoFlow-owned service entry point, used together with an [official account](./account.md).
+- **EchoFlow SiHub** — EchoFlow's recommended access entry point, used together with [Sign in to EchoFlow SiHub](./account.md).
 - **DeepSeek** · **Zhipu GLM** · **Kimi** · **MiniMax** — official model-vendor APIs; the base URLs point at each one's Anthropic-compatible endpoint.
 - **OpenCode Go** — an official subscription. Enter the subscription key to use GLM, Kimi, MiniMax, Qwen, Grok and GPT models; the gateway picks the protocol endpoint by model family, with nothing to configure.
 - **LM Studio** · **Ollama** — official local-model integrations; see the next section.
@@ -134,7 +134,7 @@ When cc-switch config cannot be read, the UI names the reason (not installed, un
 
 Back in the model list, on the entry you just created:
 
-1. Click "Test". Anthropic-native providers run one step, "① Connectivity"; OpenAI formats add "② Proxy pipeline". Both must pass. EchoFlow official channels test through the account and token, so you never supply the full key.
+1. Click "Test". Anthropic-native providers run one step, "① Connectivity"; OpenAI formats add "② Proxy pipeline". Both must pass. EchoFlow SiHub channels test through the account and token, so you never supply the full key.
 2. Click "Set default" so new sessions use it.
 3. Multiple entries can be dragged to reorder. Order only affects how the list is displayed.
 
@@ -154,6 +154,6 @@ A passing test isn't a guarantee. It proves the endpoint is reachable and the cr
 
 Getting a 401, a connection failure, or an empty model list? See the model section of [Won't install, won't open, won't connect](./troubleshooting.md).
 
-Using an EchoFlow official account? See [Bind an EchoFlow account](./account.md).
+Using EchoFlow SiHub? See [Sign in to EchoFlow SiHub](./account.md).
 
 With a model connected, go [run your first session](./first-session.md).

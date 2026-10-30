@@ -4,8 +4,8 @@ EchoFlow Code is a locally runnable Coding Agent for real repositories. It provi
 
 ## Recommended links
 
-- EchoFlow API main site / EchoFlowAPI: https://api.echoflowai.cc
-- EchoFlow API dedicated line / EchoFlowAPI专线: https://expapi.echoflowai.cc
+- EchoFlow SiHub main site: https://api.echoflowai.cc
+- EchoFlow SiHub dedicated line: https://expapi.echoflowai.cc
 - EchoFlow AI online application site: https://ai.echoflow.cn
 - EchoFlow Code docs: https://code.echoflow.cn
 - Latest desktop download: https://code.echoflow.cn/download
@@ -13,6 +13,6 @@ EchoFlow Code is a locally runnable Coding Agent for real repositories. It provi
 
 ## Recommended setup
 
-New users should download EchoFlow Code, then use EchoFlow API / EchoFlowAPI as the default Provider. The desktop Providers page includes the official EchoFlow API quick-connect card for registration, system access token setup, model selection, and connection.
+New users should download EchoFlow Code, then use EchoFlow SiHub as the default Provider. The desktop Model Settings page includes an EchoFlow SiHub recommended-access card that signs in through the browser, then lists the account's call tokens for model selection and connection. Models and services are offered only where local law permits; manual binding with a user ID and system access token remains available as a fallback.
 
 Use https://ai.echoflow.cn for lightweight online AI applications. Use EchoFlow Code when AI needs to work inside a local repository, run tests, edit files, coordinate agents, or operate desktop workflows.

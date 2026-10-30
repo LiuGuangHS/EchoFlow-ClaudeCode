@@ -11,7 +11,7 @@ EchoFlow Code 自己不带模型，它只是那个替你干活的壳。装完之
 
 点侧边栏最底部的「设置」，选左边第一栏「**模型配置**」（旧版叫「服务商」）。接下来你有四条路：
 
-- **有 EchoFlow 官方账号** — 绑定账号后选一枚调用令牌就能建渠道，不用自己申请厂商密钥。见[绑定 EchoFlow 官方账户](./account.md)。
+- **有 EchoFlow SiHub 账号** — 登录后选一枚调用令牌就能建渠道，不用自己申请厂商密钥。见[登录 EchoFlow SiHub](./account.md)。
 - **有官方账号** — Claude、ChatGPT、Grok 三张内置卡，点一下走浏览器登录，不用填 API 密钥。
 - **有第三方 API 密钥** — DeepSeek、Kimi、智谱 GLM 这些都有现成预设，填个密钥就能用。
 - **想完全免费** — 本机跑 LM Studio 或 Ollama，模型在你自己的显卡上，一分钱不花，断网也能用。
@@ -44,7 +44,7 @@ EchoFlow Code 自己不带模型，它只是那个替你干活的壳。装完之
 
 内置预设（按弹窗里的排列）：
 
-- **EchoFlow API** — EchoFlow 自有服务入口，配合[官方账户](./account.md)使用。
+- **EchoFlow SiHub** — EchoFlow 的推荐接入入口，配合[登录 EchoFlow SiHub](./account.md)使用。
 - **DeepSeek** · **Zhipu GLM** · **Kimi** · **MiniMax** — 官方模型厂商 API，接口地址是各家的 Anthropic 兼容端点。
 - **OpenCode Go** — 官方订阅服务。填入订阅密钥后可用 GLM、Kimi、MiniMax、Qwen、Grok、GPT 等模型，网关按模型族自动选择协议端点，不需要手动配。
 - **LM Studio** · **Ollama** — 官方本地模型集成，见下一节。
@@ -134,7 +134,7 @@ EchoFlow Code 自己不带模型，它只是那个替你干活的壳。装完之
 
 回到模型配置列表，对着刚加的这一条：
 
-1. 点「测试」。Anthropic 原生格式只测一步「① 连通」；OpenAI 格式会多测一步「② 代理转换」。两步都绿了才算通。EchoFlow 官方渠道的测试走账户 + 令牌，不需要你提供完整 Key。
+1. 点「测试」。Anthropic 原生格式只测一步「① 连通」；OpenAI 格式会多测一步「② 代理转换」。两步都绿了才算通。EchoFlow SiHub 渠道的测试走账户 + 令牌，不需要你提供完整 Key。
 2. 点「设为默认」，让新会话默认用它。
 3. 多条配置可以拖动排序，顺序只影响列表显示。
 
@@ -154,6 +154,6 @@ EchoFlow Code 自己不带模型，它只是那个替你干活的壳。装完之
 
 连不上、401、模型列表是空的？去 [装不上 / 打不开 / 连不上](./troubleshooting.md) 的「模型连不通」一节。
 
-用 EchoFlow 官方账号的话，看[绑定 EchoFlow 官方账户](./account.md)。
+用 EchoFlow SiHub 的话，看[登录 EchoFlow SiHub](./account.md)。
 
 模型接好了，就可以 [跑通第一条会话](./first-session.md) 了。

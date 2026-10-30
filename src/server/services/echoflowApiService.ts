@@ -182,7 +182,17 @@ export class EchoFlowApiService {
     if (!credential) throw new EchoFlowApiError('token_invalid')
     this.credentials.set(endpoint, credential)
 
-    const user = await this.validateCredential(credential, endpoint)
+    let user: EchoFlowUserInfo
+    try {
+      user = await this.validateCredential(credential, endpoint)
+    } catch (error) {
+      // A rejected credential must not keep the account looking live: the UI
+      // offers sign-in again only when the account is not live.
+      if (error instanceof EchoFlowApiError && error.code === 'token_invalid') {
+        this.credentials.delete(endpoint)
+      }
+      throw error
+    }
     const stored: StoredEchoFlowAccount = {
       ...account,
       userId: credential.userId,

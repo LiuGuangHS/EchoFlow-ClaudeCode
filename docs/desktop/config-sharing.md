@@ -76,4 +76,4 @@ payload 的完整字段、验证规则和有效期见[深链接协议](./deep-li
 - [设置速查](./settings.md) — 「配置生成器」在设置里的位置
 - [深链接协议](./deep-link-protocol.md) — 链接格式、payload 字段与验证规则
 - [连接模型服务](../start/models.md) — API Key、官方账号登录怎么配
-- [EchoFlow 账户](../start/account.md) — 官方账户与调用令牌
+- [EchoFlow SiHub](../start/account.md) — 推荐接入与调用令牌

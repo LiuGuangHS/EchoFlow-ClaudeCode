@@ -4316,7 +4316,7 @@ export const zh: Record<TranslationKey, string> = {
   'echoflowApiOfficialLogin.noTokens': '目前帳戶沒有可用的 API Key，請先在 EchoFlow 控制台建立。',
   'echoflowApiOfficialLogin.loadFailed': '無法讀取 EchoFlow 帳戶資訊。',
   'echoflowApiOfficialLogin.bindFailed': '帳戶綁定失敗，請檢查目前線路的使用者 ID 和系統存取權杖。',
-  'echoflowApiOfficialLogin.refreshFailed': '重新整理失敗，請更新目前線路的系統存取權杖後重試。',
+  'echoflowApiOfficialLogin.refreshFailed': '重新整理失敗，請重新登入，或更新目前線路的憑證後重試。',
   'echoflowApiOfficialLogin.disconnectFailed': '解除目前線路帳戶失敗。',
   'echoflowApiOfficialLogin.neverSynced': '尚未同步',
   'echoflowApiOfficialLogin.balance': '餘額',

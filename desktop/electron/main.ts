@@ -7,6 +7,7 @@ import {
   siteCookieHeader,
   type EchoFlowLoginCredential,
   type EchoFlowLoginEndpoint,
+  type EchoFlowLoginVerification,
   type EchoFlowLoginWindow,
   type SiteCookie,
 } from './services/echoFlowLogin'
@@ -308,13 +309,22 @@ async function clearEchoFlowSiteCookies(endpoint: EchoFlowLoginEndpoint = 'main'
   )))
 }
 
+async function clearEchoFlowSiteStorage(endpoint: EchoFlowLoginEndpoint = 'main'): Promise<void> {
+  // The dedicated gateway keeps its JWT in localStorage, and Electron persists
+  // that partition to disk. Without this, signing out and signing in again
+  // would hand back the old account with no input.
+  const profile = ECHOFLOW_LOGIN_PROFILES[endpoint]
+  await session.fromPartition(profile.partition).clearStorageData({ storages: ['localstorage'] })
+}
+
 async function readEchoFlowLoginCredential(
   endpoint: EchoFlowLoginEndpoint,
   window: EchoFlowLoginWindow | null,
 ): Promise<EchoFlowLoginCredential | null> {
   if (endpoint === 'dedicated') {
-    // The gateway keeps its JWT in page storage, so this credential exists
-    // only while the login window is open; it is deliberately not persisted.
+    // The gateway keeps its JWT in page storage. We never copy it into the
+    // account file; sign-out wipes that storage (clearEchoFlowSiteStorage) so
+    // the next login cannot replay it.
     return window ? await readDedicatedCredential(window, ECHOFLOW_LOGIN_PROFILES.dedicated.origin) : null
   }
   const profile = ECHOFLOW_LOGIN_PROFILES.main
@@ -330,15 +340,16 @@ async function readEchoFlowLoginCredential(
 async function bootstrapEchoFlowAccount(
   endpoint: EchoFlowLoginEndpoint,
   credential: EchoFlowLoginCredential,
-): Promise<boolean> {
+): Promise<EchoFlowLoginVerification> {
   // Each endpoint accepts exactly the credential its own page produces.
-  if (credential.kind === 'session' && endpoint !== 'main') return false
-  if (credential.kind === 'bearer' && endpoint !== 'dedicated') return false
+  if (credential.kind === 'session' && endpoint !== 'main') return 'rejected'
+  if (credential.kind === 'bearer' && endpoint !== 'dedicated') return 'rejected'
   try {
     const runtime = getServerRuntime()
     const serverUrl = await runtime.getServerUrl()
     const bridgeToken = runtime.getSiteSessionBridgeToken()
-    if (!bridgeToken) return false
+    // No server to ask yet: the credential is unverified, not rejected.
+    if (!bridgeToken) return 'unavailable'
     const response = await fetch(`${serverUrl}/api/echoflow/account/credential`, {
       method: 'POST',
       headers: {
@@ -350,9 +361,16 @@ async function bootstrapEchoFlowAccount(
         : { endpoint, kind: 'bearer', accessToken: credential.accessToken, userId: credential.userId }),
       signal: AbortSignal.timeout(15_000),
     })
-    return response.ok
+    if (response.ok) return 'ok'
+    // Only the site saying the credential is bad is a verdict; a bridge or
+    // upstream failure is the server not answering and keeps the window open.
+    if (response.status === 400) {
+      const body = await response.json().catch(() => null) as { error?: unknown } | null
+      if (body?.error === 'token_invalid') return 'rejected'
+    }
+    return 'unavailable'
   } catch {
-    return false
+    return 'unavailable'
   }
 }
 
@@ -389,6 +407,7 @@ function getEchoFlowLoginSession(): EchoFlowLoginSession {
     readCredential: readEchoFlowLoginCredential,
     verifySession: bootstrapEchoFlowAccount,
     clearCookies: clearEchoFlowSiteCookies,
+    clearStorage: clearEchoFlowSiteStorage,
   })
   return echoFlowLoginSession
 }

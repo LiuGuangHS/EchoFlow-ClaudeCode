@@ -4314,7 +4314,7 @@ Row 9, all 8 cells: continuing from straight down, turning left through lower-le
   'echoflowApiOfficialLogin.noTokens': 'This account has no available API key. Create one in the EchoFlow console first.',
   'echoflowApiOfficialLogin.loadFailed': 'Could not read EchoFlow account information.',
   'echoflowApiOfficialLogin.bindFailed': 'Could not bind the account. Check this line’s user ID and system access token.',
-  'echoflowApiOfficialLogin.refreshFailed': 'Refresh failed. Update this line’s system access token and try again.',
+  'echoflowApiOfficialLogin.refreshFailed': 'Refresh failed. Sign in again, or update this line’s credential, then retry.',
   'echoflowApiOfficialLogin.disconnectFailed': 'Could not disconnect the account on this line.',
   'echoflowApiOfficialLogin.neverSynced': 'Not synced yet',
   'echoflowApiOfficialLogin.balance': 'Balance',

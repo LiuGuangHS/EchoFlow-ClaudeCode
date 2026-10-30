@@ -700,6 +700,31 @@ describe('EchoFlow account API', () => {
 })
 
 describe('EchoFlow credential bridge', () => {
+  test('drops a credential the site rejects so the account stops looking live', async () => {
+    const originalFetch = globalThis.fetch
+    let rejected = false
+    globalThis.fetch = mock(async (input: string | URL | Request) => {
+      expect(String(input)).toBe('https://api.echoflowai.cc/api/user/self')
+      return Response.json(rejected
+        ? { success: false, message: 'invalid session' }
+        : { success: true, data: { id: 851842, username: 'zhijun2003', quota: 1_000_000 } })
+    }) as typeof fetch
+
+    try {
+      const service = new EchoFlowApiService()
+      await service.setCredential('main', { kind: 'session', userId: '851842', cookie: 'session=live' })
+      expect((await service.getAccounts()).main?.live).toBe(true)
+
+      rejected = true
+      await expect(service.refreshAccount('main')).rejects.toMatchObject({ code: 'token_invalid' })
+      // The UI offers sign-in again only when the account is not live, so a
+      // credential the site rejected must not stay in the memory map.
+      expect((await service.getAccounts()).main?.live).toBe(false)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
   test('no longer serves a separate site-session route', async () => {
     const url = new URL('http://localhost:3456/api/echoflow/site-session')
     const response = await handleEchoFlowApi(

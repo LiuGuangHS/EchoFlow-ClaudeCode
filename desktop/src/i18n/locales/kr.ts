@@ -4319,7 +4319,7 @@ export const kr: Record<TranslationKey, string> = {
   'echoflowApiOfficialLogin.noTokens': '이 계정에는 사용 가능한 API 키가 없습니다. 먼저 EchoFlow 콘솔에서 만드세요.',
   'echoflowApiOfficialLogin.loadFailed': 'EchoFlow 계정 정보를 읽을 수 없습니다.',
   'echoflowApiOfficialLogin.bindFailed': '계정 연결에 실패했습니다. 이 회선의 사용자 ID와 시스템 액세스 토큰을 확인하세요.',
-  'echoflowApiOfficialLogin.refreshFailed': '새로고침에 실패했습니다. 이 회선의 시스템 액세스 토큰을 업데이트한 뒤 다시 시도하세요.',
+  'echoflowApiOfficialLogin.refreshFailed': '새로고침에 실패했습니다. 다시 로그인하거나 이 회선의 자격 증명을 업데이트한 뒤 다시 시도하세요.',
   'echoflowApiOfficialLogin.disconnectFailed': '이 회선의 계정 연결을 해제하지 못했습니다.',
   'echoflowApiOfficialLogin.neverSynced': '아직 동기화되지 않음',
   'echoflowApiOfficialLogin.balance': '잔액',
