@@ -22,6 +22,7 @@ import {
   UnsupportedRuntimeCapabilityError,
   type ApprovalDecision,
   type InterruptResult,
+  type McpServerSpec,
   type RuntimeConnection,
   type RuntimeCapabilities,
   type RuntimeDriver,
@@ -138,6 +139,10 @@ function capabilitiesFromHandshake(
   if (prompt?.image === true) {
     capabilities.prompt.image = { state: 'native', source: 'handshake' }
   }
+  const mcp = handshake?.agentCapabilities?.mcpCapabilities as { http?: unknown } | undefined
+  if (mcp?.http === true) {
+    capabilities.extensions.mcpHttp = { state: 'native', source: 'handshake' }
+  }
   return capabilities
 }
 
@@ -159,8 +164,18 @@ function promptBlocks(turn: UserTurn): PromptContent {
   return blocks as PromptContent
 }
 
-function approvalEffect(kind: string) {
-  switch (kind) {
+/** ACP spells env vars and headers as arrays of pairs, not maps. */
+function pairs(map: Record<string, string> | undefined) {
+  return Object.entries(map ?? {}).map(([name, value]) => ({ name, value }))
+}
+
+function toAcpMcpServer(server: McpServerSpec) {
+  return server.kind === 'http'
+    ? { type: 'http' as const, name: server.name, url: server.url, headers: pairs(server.headers) }
+    : { name: server.name, command: server.command, args: server.args ?? [], env: pairs(server.env) }
+}
+
+function approvalEffect(kind: string) {  switch (kind) {
     case 'allow_once':
       return 'allow-once' as const
     case 'allow_always':
@@ -592,8 +607,14 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
       capabilities,
       handshake,
 
-      async openSession({ sessionId, cwd, model, reasoningEffort }) {
-        const active = await connection.agent.buildSession(cwd).start()
+      async openSession({ sessionId, cwd, mcpServers, model, reasoningEffort }) {
+        // ACP only allows HTTP MCP servers when the agent advertised support.
+        if ((mcpServers ?? []).some((server) => server.kind === 'http') && capabilities.extensions.mcpHttp.state !== 'native') {
+          throw new UnsupportedRuntimeCapabilityError('extensions.mcpHttp')
+        }
+        let builder = connection.agent.buildSession(cwd)
+        for (const server of mcpServers ?? []) builder = builder.withMcpServer(toAcpMcpServer(server))
+        const active = await builder.start()
         try {
           if (model !== undefined) {
             await connection.agent.request(AGENT_METHODS.session_set_config_option, {

@@ -60,8 +60,8 @@ export function dshBaselineCapabilities(): RuntimeCapabilities {
       files: unsupported(),
     },
     extensions: {
-      mcpStdio: unsupported(),
-      mcpHttp: unsupported(),
+      mcpStdio: native('session/new mcpServers; ACP requires stdio support'),
+      mcpHttp: unsupported('claimed only when the handshake advertises mcpCapabilities.http'),
       hooks: unsupported(),
       skills: unsupported(),
       plugins: unsupported(),

@@ -42,8 +42,9 @@ snapshot or absent from the API:
 
 - Native session list / resume / fork / delete. `listSessions()` and
   `resumeSession()` throw `UnsupportedRuntimeCapabilityError`.
-- MCP servers, embedded resources, steering, hooks, skills, plugins. Images are
-  supported only when the handshake's `promptCapabilities.image` says so.
+- Embedded resources, steering, hooks, skills, plugins. Stdio MCP servers work
+  everywhere; images and HTTP MCP servers only when the handshake advertises
+  them (`promptCapabilities.image`, `mcpCapabilities.http`).
 - `probe()` runs in the process cwd, reports the installation version it was
   given, and reports the agent version the handshake answered with.
 - No desktop, WebSocket, or session-store wiring yet — this layer has no product

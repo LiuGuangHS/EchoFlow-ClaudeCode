@@ -283,6 +283,34 @@ describe('dshDriver over a real ACP child process', () => {
     await connection.close()
   })
 
+  test('passes declared MCP servers into session/new', async () => {
+    const { connection, readCalls } = await openWithCallLog({ agentCapabilities: { mcpCapabilities: { http: true } } })
+    await connection.openSession({
+      sessionId: 'session-1',
+      cwd: process.cwd(),
+      mcpServers: [
+        { kind: 'stdio', name: 'fs', command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem'] },
+        { kind: 'http', name: 'docs', url: 'https://example.test/mcp', headers: { Authorization: 'Bearer x' } },
+      ],
+    })
+    expect(readCalls().find(call => call.method === 'session/new').params.mcpServers).toEqual([
+      { name: 'fs', command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem'], env: [] },
+      { type: 'http', name: 'docs', url: 'https://example.test/mcp', headers: [{ name: 'Authorization', value: 'Bearer x' }] },
+    ])
+    await connection.close()
+  })
+
+  test('rejects an HTTP MCP server the handshake did not advertise', async () => {
+    const { connection, readCalls } = await openWithCallLog()
+    await expect(connection.openSession({
+      sessionId: 'session-1',
+      cwd: process.cwd(),
+      mcpServers: [{ kind: 'http', name: 'docs', url: 'https://example.test/mcp' }],
+    })).rejects.toBeInstanceOf(UnsupportedRuntimeCapabilityError)
+    expect(readCalls().some(call => call.method === 'session/new')).toBe(false)
+    await connection.close()
+  })
+
   test('an engine-initiated turn between user turns is not attributed to the next send', async () => {
     const driver = createDshDriver({ resolveCommand: command, engineTurnIdleMs: 100 })
     const connection = await driver.start({ installation, runId: 'run-1', cwd: process.cwd() })

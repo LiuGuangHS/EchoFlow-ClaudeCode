@@ -15,7 +15,8 @@ describe('dshBaselineCapabilities', () => {
     const caps = dshBaselineCapabilities()
     expect(caps.prompt.image.state).toBe('unsupported')
     expect(caps.approval.network.state).toBe('unsupported')
-    expect(caps.extensions.mcpStdio.state).toBe('unsupported')
+    expect(caps.extensions.hooks.state).toBe('unsupported')
+    expect(caps.extensions.mcpHttp.state).toBe('unsupported')
     expect(caps.observability.diffs.state).toBe('unsupported')
   })
 
