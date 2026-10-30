@@ -84,10 +84,25 @@ function createFakeSession(shape: FakeShape, input: FakeInput): RuntimeSession {
   let interruptRequested = false
   let interruptWaiter: (() => void) | null = null
   let pending: { requestId: string; resolve: (optionId: string) => void } | null = null
+  const engineListeners = new Set<(events: AsyncIterable<RuntimeEvent>) => void>()
 
   const state = (value: 'idle' | 'running') => stamp({ kind: 'session.state', state: value }, 'echoflow')
   const completed = (reason: 'end_turn' | 'cancelled') =>
     stamp({ kind: 'turn.completed', reason, native: native({ stopReason: reason }) })
+
+  async function* eventsOf(events: RuntimeEvent[]): AsyncGenerator<RuntimeEvent> {
+    for (const event of events) yield event
+  }
+
+  function emitEngineTurn() {
+    const events = [
+      stamp({ kind: 'turn.started', origin: 'engine', native: native({ origin: 'engine' }) }),
+      stamp({ kind: 'assistant.delta', text: 'engine note' }),
+      completed('end_turn'),
+    ]
+    // Each listener gets its own iterator over the same script.
+    for (const listener of engineListeners) listener(eventsOf(events))
+  }
 
   function waitForInterrupt(): Promise<void> {
     if (interruptRequested) return Promise.resolve()
@@ -97,45 +112,60 @@ function createFakeSession(shape: FakeShape, input: FakeInput): RuntimeSession {
   }
 
   async function* turn(text: string): AsyncGenerator<RuntimeEvent> {
-    yield state('running')
-    if (text === 'hello') {
-      yield stamp({ kind: 'assistant.delta', text: 'one' })
-      yield stamp({ kind: 'assistant.delta', text: 'two' })
-      yield completed('end_turn')
-    } else if (text === 'ask') {
-      const requestId = `approval-${input.nativeSessionId}`
-      let answer!: (optionId: string) => void
-      const pendingAnswer = new Promise<string>((resolve) => {
-        answer = resolve
-      })
-      pending = { requestId, resolve: answer }
-      yield stamp({
-        kind: 'approval.requested',
-        request: {
+    try {
+      yield state('running')
+      if (text === 'hello') {
+        yield stamp({ kind: 'assistant.delta', text: 'one' })
+        yield stamp({ kind: 'assistant.delta', text: 'two' })
+        yield completed('end_turn')
+      } else if (text === 'think') {
+        yield stamp({ kind: 'assistant.thinking', text: 'planning' })
+        yield stamp({ kind: 'assistant.delta', text: 'answer' })
+        yield completed('end_turn')
+      } else if (text === 'usage') {
+        yield stamp({ kind: 'usage', contextUsed: 10, contextSize: 100, native: native({ used: 10, size: 100 }) })
+        yield completed('end_turn')
+      } else if (text === 'schedule') {
+        yield completed('end_turn')
+        // Speak after the user's turn, the way an armed job would.
+        setTimeout(emitEngineTurn, 20)
+      } else if (text === 'ask') {
+        const requestId = `approval-${input.nativeSessionId}`
+        let answer!: (optionId: string) => void
+        const pendingAnswer = new Promise<string>((resolve) => {
+          answer = resolve
+        })
+        pending = { requestId, resolve: answer }
+        yield stamp({
+          kind: 'approval.requested',
+          request: {
+            requestId,
+            kind: 'tool',
+            title: 'Run a tool',
+            details: {},
+            options: [{ id: 'allow', label: 'Allow', effect: 'allow-once' }],
+            native: native({ toolCallId: 'tool-1' }),
+          },
+        })
+        const optionId = await pendingAnswer
+        pending = null
+        yield stamp({
+          kind: 'approval.resolved',
           requestId,
-          kind: 'tool',
-          title: 'Run a tool',
-          details: {},
-          options: [{ id: 'allow', label: 'Allow', effect: 'allow-once' }],
-          native: native({ toolCallId: 'tool-1' }),
-        },
-      })
-      const optionId = await pendingAnswer
-      pending = null
-      yield stamp({
-        kind: 'approval.resolved',
-        requestId,
-        decision: { requestId, optionId, decidedBy: 'user', at: Date.now() },
-      })
-      yield completed('end_turn')
-    } else if (text === 'slow') {
-      await waitForInterrupt()
-      yield completed('cancelled')
-    } else {
-      yield completed('end_turn')
+          decision: { requestId, optionId, decidedBy: 'user', at: Date.now() },
+        })
+        yield completed('end_turn')
+      } else if (text === 'slow') {
+        await waitForInterrupt()
+        yield completed('cancelled')
+      } else {
+        yield completed('end_turn')
+      }
+      yield state('idle')
+    } finally {
+      // An abandoned stream still ends its turn, exactly like a real driver.
+      active = false
     }
-    yield state('idle')
-    active = false
   }
 
   return {
@@ -143,6 +173,9 @@ function createFakeSession(shape: FakeShape, input: FakeInput): RuntimeSession {
     capabilities,
     send(turnInput: UserTurn) {
       if (active) throw new RuntimeBusyError()
+      if ((turnInput.attachments?.length ?? 0) > 0 && capabilities.prompt.image.state !== 'native') {
+        throw new UnsupportedRuntimeCapabilityError('prompt.image')
+      }
       active = true
       return turn(turnInput.text)
     },
@@ -158,9 +191,11 @@ function createFakeSession(shape: FakeShape, input: FakeInput): RuntimeSession {
       interruptWaiter?.()
       return { status: 'cancelled', forcedTerminate: false }
     },
-    onEngineTurn() {
-      // The fakes never start turns on their own.
-      return () => {}
+    onEngineTurn(listener) {
+      engineListeners.add(listener)
+      return () => {
+        engineListeners.delete(listener)
+      }
     },
     async close() {
       active = false
