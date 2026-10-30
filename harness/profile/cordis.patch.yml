@@ -54,3 +54,36 @@
 
 - id: web-deepseek-api
   disabled: true
+
+# The first addon set. These are new rows, so they arrive through one insert:
+# a non-insert patch row must name an id the bundles already mounted.
+- insert:
+    - id: hooks-claude-code
+      name: '@deepseek-ai/dsh-hooks-claude-code'
+      config:
+        # Empty until the launcher points it at CLAUDE_CONFIG_DIR's hooks file;
+        # the bridge stays inert rather than reading someone else's config.
+        configPath: ''
+
+    - id: workspace-changes
+      name: '@deepseek-ai/dsh-workspace-changes'
+      config:
+        maxFiles: 500
+
+    # Scheduling needs the Host Session controller and a Session persistence
+    # backend that acknowledges session/flush; neither exists in this headless
+    # ACP composition, so the row would wait forever. Keep it visible and
+    # disabled until that path lands, and enable tool-schedule with it.
+    - id: schedule
+      name: '@deepseek-ai/dsh-schedule'
+      disabled: true
+
+    - id: tool-schedule
+      name: '@deepseek-ai/dsh-tool-schedule'
+      disabled: true
+
+    - id: session-reference
+      name: '@deepseek-ai/dsh-session-reference'
+
+    - id: session-stats
+      name: '@deepseek-ai/dsh-session-stats'

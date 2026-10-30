@@ -122,6 +122,35 @@ describe('the echoflow profile blocks every outbound path', () => {
     }
   })
 
+  // The first addon set rides the same rc as the core, so mounting it is also
+  // the proof that the profile patch can add a row the bundles never mounted.
+  test.each([
+    ['hooks-claude-code', '@deepseek-ai/dsh-hooks-claude-code'],
+    ['workspace-changes', '@deepseek-ai/dsh-workspace-changes'],
+    ['session-reference', '@deepseek-ai/dsh-session-reference'],
+    ['session-stats', '@deepseek-ai/dsh-session-stats'],
+  ])('the echoflow profile mounts %s', (id, name) => {
+    const { entries } = composeEffectiveProfile()
+    const entry = findEntry(entries, id) as { name?: string; disabled?: unknown } | undefined
+    expect(entry, `${id} must be mounted by the profile patch`).toBeDefined()
+    expect(entry?.name).toBe(name)
+    expect(entry?.disabled).not.toBe(true)
+  })
+
+  // Scheduling waits for the Host Session controller, which this headless
+  // composition does not mount. The rows stay in the config so the wait is
+  // written down instead of silently absent.
+  test.each([
+    ['schedule', '@deepseek-ai/dsh-schedule'],
+    ['tool-schedule', '@deepseek-ai/dsh-tool-schedule'],
+  ])('keeps %s off until the session-controller path exists', (id, name) => {
+    const { entries } = composeEffectiveProfile()
+    const entry = findEntry(entries, id) as { name?: string; disabled?: unknown } | undefined
+    expect(entry, `${id} must stay in the profile for the later enable`).toBeDefined()
+    expect(entry?.name).toBe(name)
+    expect(entry?.disabled).toBe(true)
+  })
+
   test('a later overlay cannot re-enable a blocklisted plugin', () => {
     const overlay = writePatchFile(
       're-enable.yml',
