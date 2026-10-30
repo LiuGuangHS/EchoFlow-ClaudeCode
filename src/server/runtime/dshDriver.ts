@@ -452,8 +452,32 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
     return {
       capabilities: dshBaselineCapabilities(),
 
-      async openSession({ sessionId, cwd }) {
+      async openSession({ sessionId, cwd, model, reasoningEffort }) {
         const active = await connection.agent.buildSession(cwd).start()
+        try {
+          if (model !== undefined) {
+            await connection.agent.request(AGENT_METHODS.session_set_config_option, {
+              sessionId: active.sessionId,
+              configId: 'model',
+              value: `${model.provider}/${model.model}`,
+            })
+          }
+          if (reasoningEffort !== undefined) {
+            await connection.agent.request(AGENT_METHODS.session_set_config_option, {
+              sessionId: active.sessionId,
+              configId: 'reasoning_effort',
+              value: reasoningEffort,
+            })
+          }
+        } catch (error) {
+          // A half-open session with the wrong model is worse than no session:
+          // later prompts would silently run on the engine default.
+          await connection.agent
+            .request(AGENT_METHODS.session_close, { sessionId: active.sessionId })
+            .catch(() => {})
+          active.dispose()
+          throw error
+        }
         const created = createSession(sessionId, active)
         sessions.set(active.sessionId, created)
         return created.session

@@ -21,12 +21,18 @@ describe('dshBaselineCapabilities', () => {
 
   test('exposes the addon and extension capability groups as unsupported by default', () => {
     const caps = dshBaselineCapabilities()
-    expect(caps.config.model.state).toBe('unsupported')
+    expect(caps.config.permissionMode.state).toBe('unsupported')
     expect(caps.commands.catalog.state).toBe('unsupported')
     expect(caps.jobs.list.state).toBe('unsupported')
     expect(caps.subagent.delegate.state).toBe('unsupported')
     expect(caps.checkpoints.files.state).toBe('unsupported')
     expect(caps.prompt.queue.state).toBe('native')
+  })
+
+  test('claims session config only for the ids the driver actually sets', () => {
+    const caps = dshBaselineCapabilities()
+    expect(caps.config.model).toMatchObject({ state: 'native', source: 'protocol-baseline' })
+    expect(caps.config.reasoningEffort).toMatchObject({ state: 'native', source: 'protocol-baseline' })
   })
 
   test('every leaf carries a state and a source', () => {

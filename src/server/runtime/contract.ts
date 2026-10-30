@@ -116,7 +116,19 @@ export type RuntimeProbe = {
   error: string | null
 }
 
-export type NewSessionInput = { sessionId: string; cwd: string; mcpServers?: unknown[] }
+export type SessionModelRef = { provider: string; model: string }
+
+export type McpServerSpec =
+  | { kind: 'stdio'; name: string; command: string; args?: string[]; env?: Record<string, string> }
+  | { kind: 'http'; name: string; url: string; headers?: Record<string, string> }
+
+export type NewSessionInput = {
+  sessionId: string
+  cwd: string
+  mcpServers?: McpServerSpec[]
+  model?: SessionModelRef
+  reasoningEffort?: string
+}
 
 export type ResumeSessionInput = { sessionId: string; nativeSessionId: string; cwd: string }
 

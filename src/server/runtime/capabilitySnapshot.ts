@@ -31,8 +31,8 @@ export function dshBaselineCapabilities(): RuntimeCapabilities {
       queue: native('ACP inbox queues the next turn'),
     },
     config: {
-      model: unsupported(),
-      reasoningEffort: unsupported(),
+      model: native('session/set_config_option, configId "model"'),
+      reasoningEffort: native('session/set_config_option, configId "reasoning_effort"'),
       permissionMode: unsupported(),
     },
     approval: {

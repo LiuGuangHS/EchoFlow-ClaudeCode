@@ -34,6 +34,28 @@ async function waitForFile(path: string) {
   throw new Error(`${path} never appeared`)
 }
 
+/** Requests cross the process boundary, so the fixture appends them to a file. */
+async function openWithCallLog(options: { rejectConfigIds?: string[] } = {}) {
+  const sandbox = mkdtempSync(join(tmpdir(), 'echoflow-calls-'))
+  sandboxes.push(sandbox)
+  const callsPath = join(sandbox, 'calls.ndjson')
+  const driver = createDshDriver({ resolveCommand: command })
+  const connection = await driver.start({
+    installation,
+    runId: 'run-1',
+    cwd: process.cwd(),
+    env: {
+      FIXTURE_CALLS_MARKER: callsPath,
+      FIXTURE_REJECT_CONFIG_IDS: (options.rejectConfigIds ?? []).join(','),
+    },
+  })
+  const readCalls = () =>
+    existsSync(callsPath)
+      ? readFileSync(callsPath, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
+      : []
+  return { connection, readCalls }
+}
+
 describe('dshDriver over a real ACP child process', () => {
   test('completes one turn and stamps every event with the product session and run', async () => {
     const { connection, session } = await open()
@@ -170,5 +192,27 @@ describe('dshDriver over a real ACP child process', () => {
     await connection.close()
     expect(exits).toHaveLength(1)
     expect(exits[0].code).toBe(0)
+  })
+
+  test('applies the requested model and reasoning effort through set_config_option', async () => {
+    const { connection, readCalls } = await openWithCallLog()
+    await connection.openSession({
+      sessionId: 'session-1',
+      cwd: process.cwd(),
+      model: { provider: 'echoflow', model: 'kimi-k3' },
+      reasoningEffort: 'high',
+    })
+    const sets = readCalls().filter(call => call.method === 'session/set_config_option')
+    expect(sets.map(call => [call.params.configId, call.params.value]))
+      .toEqual([['model', 'echoflow/kimi-k3'], ['reasoning_effort', 'high']])
+    await connection.close()
+  })
+
+  test('a rejected config option closes the half-open session and throws', async () => {
+    const { connection, readCalls } = await openWithCallLog({ rejectConfigIds: ['reasoning_effort'] })
+    await expect(connection.openSession({ sessionId: 'session-1', cwd: process.cwd(), reasoningEffort: 'high' }))
+      .rejects.toThrow()
+    expect(readCalls().some(call => call.method === 'session/close')).toBe(true)
+    await connection.close()
   })
 })

@@ -5,12 +5,20 @@
  * is proven against a separate process, not an in-process fake. Scripted by the
  * prompt text: `hello`, `needs-approval`, `slow`, `stray-permission`.
  */
-import { writeFileSync } from 'node:fs'
+import { appendFileSync, writeFileSync } from 'node:fs'
 import { Readable, Writable } from 'node:stream'
 import { AGENT_METHODS, CLIENT_METHODS, PROTOCOL_VERSION, agent, ndJsonStream } from '@agentclientprotocol/sdk'
 
 const marker = process.env.FIXTURE_PERMISSION_MARKER
+const callsMarker = process.env.FIXTURE_CALLS_MARKER
+const rejectConfigIds = new Set((process.env.FIXTURE_REJECT_CONFIG_IDS ?? '').split(',').filter(Boolean))
 const app = agent({ name: 'fixture-acp-agent' })
+
+/** Requests cross the process boundary, so the test reads them from a file. */
+function record(method: string, params: unknown) {
+  if (callsMarker === undefined) return
+  appendFileSync(callsMarker, `${JSON.stringify({ method, params })}\n`)
+}
 
 let sessionCounter = 0
 let cancelCurrentTurn: (() => void) | null = null
@@ -25,9 +33,21 @@ app.onRequest(AGENT_METHODS.initialize, () => ({
   agentCapabilities: {},
 }))
 
-app.onRequest(AGENT_METHODS.session_new, () => {
+app.onRequest(AGENT_METHODS.session_new, (ctx) => {
+  record('session/new', ctx.params)
   sessionCounter += 1
   return { sessionId: `fixture-native-${sessionCounter}` }
+})
+
+app.onRequest(AGENT_METHODS.session_set_config_option, (ctx) => {
+  record('session/set_config_option', ctx.params)
+  if (rejectConfigIds.has(ctx.params.configId)) throw new Error(`unsupported config: ${ctx.params.configId}`)
+  return { configOptions: [] }
+})
+
+app.onRequest(AGENT_METHODS.session_close, (ctx) => {
+  record('session/close', ctx.params)
+  return {}
 })
 
 app.onNotification(AGENT_METHODS.session_cancel, () => {
