@@ -78,9 +78,20 @@ function toolUpdate(record: AnyUpdate, native: unknown): RuntimeEventBody {
   return { kind: 'tool.updated', toolCallId, native }
 }
 
+/** ACP reports context pressure, not per-turn tokens; only these three fields are real. */
 function usage(record: AnyUpdate, native: unknown): RuntimeEventBody {
-  const body = { kind: 'usage' as const, native }
-  return typeof record.cost === 'number' ? { ...body, cost: record.cost } : body
+  const body: Extract<RuntimeEventBody, { kind: 'usage' }> = { kind: 'usage', native }
+  if (isFiniteNumber(record.used)) body.contextUsed = record.used
+  if (isFiniteNumber(record.size)) body.contextSize = record.size
+  const cost = record.cost as { amount?: unknown; currency?: unknown } | null | undefined
+  if (isFiniteNumber(cost?.amount) && typeof cost?.currency === 'string' && cost.currency !== '') {
+    body.cost = { amount: cost.amount, currency: cost.currency }
+  }
+  return body
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
 }
 
 /** ACP sends the whole option table, with select values and booleans mixed. */

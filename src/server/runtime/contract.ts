@@ -216,7 +216,7 @@ export type RuntimeEventBody =
   | { kind: 'approval.requested'; request: ApprovalRequest }
   | { kind: 'approval.resolved'; requestId: string; decision: ApprovalDecision }
   | { kind: 'file.changed'; paths: string[]; patch?: string; native: unknown }
-  | { kind: 'usage'; inputTokens?: number; outputTokens?: number; cost?: number; native: unknown }
+  | { kind: 'usage'; contextUsed?: number; contextSize?: number; cost?: { amount: number; currency: string }; native: unknown }
   | { kind: 'turn.completed'; reason: 'end_turn' | 'cancelled' | 'error' | 'max_tokens' | 'refusal'; native: unknown }
   | { kind: 'engine.exited'; code: number | null; signal: string | null }
   | { kind: 'diagnostic'; level: 'info' | 'warn' | 'error'; code: string; message: string; native?: unknown }

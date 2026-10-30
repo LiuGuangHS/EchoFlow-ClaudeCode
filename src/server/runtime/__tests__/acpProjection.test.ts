@@ -44,6 +44,18 @@ describe('projectSessionUpdate', () => {
       .toMatchObject({ kind: 'usage', native: { used: 10, size: 100 } })
   })
 
+  test('lifts the context window numbers ACP actually sends', () => {
+    const update = { sessionUpdate: 'usage_update', used: 10, size: 100, cost: { amount: 0.5, currency: 'USD' } }
+    expect(projectSessionUpdate(update))
+      .toEqual({ kind: 'usage', contextUsed: 10, contextSize: 100, cost: { amount: 0.5, currency: 'USD' }, native: update })
+  })
+
+  test('omits a malformed cost instead of coercing it', () => {
+    const body = projectSessionUpdate({ sessionUpdate: 'usage_update', used: 1, size: 2, cost: 'free' })
+    expect(body).toMatchObject({ kind: 'usage', contextUsed: 1, contextSize: 2 })
+    expect(body !== null && 'cost' in body).toBe(false)
+  })
+
   test('turns metadata updates into info diagnostics instead of dropping them', () => {
     for (const sessionUpdate of ['available_commands_update', 'current_mode_update', 'session_info_update', 'plan_update', 'plan_removed', 'compaction_update']) {
       expect(projectSessionUpdate({ sessionUpdate })).toMatchObject({
