@@ -23,9 +23,9 @@ const CATEGORIES = [
 const RUBRIC_VERSION = '2026-05-19';
 
 // Repository contracts that every PR can affect without owning a dedicated
-// lane. Environment-dependent installs, project-local overrides, advisory
-// hygiene, and the deferred CC_HAHA_* compatibility migration stay visible in
-// the score but not blocking until their own changes land.
+// lane. Environment-dependent installs, project-local overrides, and advisory
+// hygiene stay visible in the score but not blocking until their own changes
+// land.
 const REQUIRED_CHECK_IDS = [
   'consumer-ci-workflow',
   'consumer-instructions',
