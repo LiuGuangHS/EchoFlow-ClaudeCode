@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { teamsApi } from '../api/teams'
+import { ApiError } from '../api/client'
 import type { TeamTaskAnchor } from '../api/teams'
 import type {
   TeamSummary,
@@ -1097,6 +1098,12 @@ export const useTeamStore = create<TeamStore>((set, get) => ({
       ) return
     }
 
+    if (
+      !options?.force &&
+      !known?.snapshots.length &&
+      Date.now() - (teamDiscoveryCompletedAt.get(sessionId) ?? 0) < TEAM_DISCOVERY_TTL_MS
+    ) return
+
     const storeGeneration = teamStoreGeneration
     const discoveryGeneration = (teamDiscoveryGenerations.get(sessionId) ?? 0) + 1
     teamDiscoveryGenerations.set(sessionId, discoveryGeneration)
@@ -1203,9 +1210,19 @@ export const useTeamStore = create<TeamStore>((set, get) => ({
       }))
       syncTeamMemberSessions(detail, latest)
       teamDiscoveryCompletedAt.set(sessionId, Date.now())
-    } catch {
+    } catch (err) {
       // Workbench discovery supplements the session; an ordinary conversation
-      // or a legacy sidecar must still open without an error surface.
+      // or a legacy sidecar must still open without an error surface. A 404 is
+      // the authoritative "no team yet" answer, so remember it for the TTL
+      // instead of repeating the full discovery on every poll.
+      if (
+        err instanceof ApiError &&
+        err.status === 404 &&
+        teamStoreGeneration === storeGeneration &&
+        teamDiscoveryGenerations.get(sessionId) === discoveryGeneration
+      ) {
+        teamDiscoveryCompletedAt.set(sessionId, Date.now())
+      }
     }
   },
 
