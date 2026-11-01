@@ -3,14 +3,15 @@
  * Local preview of the EchoFlow Agent launcher.
  *
  * Boots the real launcher with the real EchoFlow profile, but points the model
- * provider at a loopback gateway that speaks the OpenAI completions SSE shape.
- * No provider credential and no network beyond 127.0.0.1, so this runs on any
- * machine and every contributor sees the same output.
+ * provider at dsh's own mock Messages server, scripted to call the real `bash`
+ * tool once. The turn therefore exercises the whole loop — model -> tool call
+ * -> permission -> process -> tool result -> answer — with no provider
+ * credential and no network beyond 127.0.0.1.
  *
  * Usage: npm run preview
  */
-import { createServer } from 'node:http'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { startMockLlmServer } from '@deepseek-ai/dsh-llm-mock-server'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -19,68 +20,15 @@ import { connectAcp } from './src/acpClient.js'
 const harnessRoot = dirname(fileURLToPath(import.meta.url))
 const MODEL = 'echoflow-mock'
 const API_KEY = 'echoflow-preview-key'
-const REPLY = [
-  '我是运行在 EchoFlow 自有启动器上的 agent。',
-  '这一轮回复没有经过任何外网模型，',
-  '全部来自本地回环网关的测试数据。',
-]
+const TOOL_COMMAND = "printf 'hello from the echoflow agent\\n' > hello.txt && cat hello.txt"
+const TOOL_ARGUMENTS = JSON.stringify({
+  description: 'Write and read back a file',
+  command: TOOL_COMMAND,
+})
+const FINAL_REPLY = '我已经用 bash 写好并读回了 hello.txt，内容就在上面那行。'
 
 const line = () => console.log('─'.repeat(64))
-const step = (index, text) => console.log(`\n[${index}/4] ${text}`)
-
-function startGateway(requests) {
-  return new Promise((resolve) => {
-    const server = createServer((req, res) => {
-      const chunks = []
-      req.on('data', chunk => chunks.push(chunk))
-      req.on('end', () => {
-        requests.push({
-          method: req.method,
-          url: req.url,
-          authorization: req.headers.authorization,
-          body: Buffer.concat(chunks).toString('utf8'),
-        })
-        if (req.method !== 'POST' || !req.url?.endsWith('/chat/completions')) {
-          res.writeHead(404).end()
-          return
-        }
-        res.writeHead(200, {
-          'content-type': 'text/event-stream',
-          'cache-control': 'no-cache',
-          connection: 'keep-alive',
-        })
-        const send = (delta, finishReason) => {
-          res.write(`data: ${JSON.stringify({
-            id: 'chatcmpl-echoflow-preview',
-            object: 'chat.completion.chunk',
-            created: 1,
-            model: MODEL,
-            choices: [{ index: 0, delta, finish_reason: finishReason }],
-          })}\n\n`)
-        }
-        send({ role: 'assistant', content: '' }, null)
-        let index = 0
-        const tick = () => {
-          if (index >= REPLY.length) {
-            send({}, 'stop')
-            res.write('data: [DONE]\n\n')
-            res.end()
-            return
-          }
-          const text = REPLY[index++]
-          send({ content: text }, null)
-          setTimeout(tick, 120)
-        }
-        tick()
-      })
-    })
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address()
-      if (address === null || typeof address === 'string') throw new Error('gateway did not bind')
-      resolve({ server, url: `http://127.0.0.1:${address.port}/v1` })
-    })
-  })
-}
+const step = (index, text) => console.log(`\n[${index}/5] ${text}`)
 
 function writeHomePatch(dshHome, baseURL) {
   writeFileSync(join(dshHome, 'cordis.patch.yml'), [
@@ -88,8 +36,8 @@ function writeHomePatch(dshHome, baseURL) {
     '  config:',
     '    providers:',
     '      echoflow:',
-    '        displayName: EchoFlow preview (loopback)',
-    '        api: openai-completions',
+    '        displayName: EchoFlow preview (loopback mock)',
+    '        api: anthropic-messages',
     `        baseURL: ${baseURL}`,
     '        apiKeyEnv: ECHOFLOW_API_KEY',
     '        models:',
@@ -108,6 +56,25 @@ function writeHomePatch(dshHome, baseURL) {
   ].join('\n'))
 }
 
+/** Show the agent's own tool activity as it happens, not after the fact. */
+function reportUpdate(update) {
+  if (update?.sessionUpdate === 'agent_message_chunk' && update.content?.type === 'text') {
+    process.stdout.write(update.content.text)
+    return
+  }
+  if (update?.sessionUpdate === 'tool_call') {
+    console.log(`  工具调用   ${update.title ?? update.kind ?? 'tool'} [${update.status ?? 'pending'}]`)
+    return
+  }
+  if (update?.sessionUpdate === 'tool_call_update') {
+    const text = (update.content ?? [])
+      .filter(part => part?.type === 'content' && part.content?.type === 'text')
+      .map(part => part.content.text.trim())
+      .join('\n')
+    console.log(`  工具状态   ${update.status ?? 'update'}${text ? ` · ${text}` : ''}`)
+  }
+}
+
 async function main() {
   const blocklist = JSON.parse(readFileSync(join(harnessRoot, 'egress-blocklist.json'), 'utf8'))
   const sandbox = mkdtempSync(join(tmpdir(), 'echoflow-preview-'))
@@ -117,20 +84,32 @@ async function main() {
   const workspace = join(sandbox, 'workspace')
   for (const dir of [home, dshHome, agentsHome, workspace]) mkdirSync(dir, { recursive: true })
 
-  const requests = []
-  const gateway = await startGateway(requests)
-  writeHomePatch(dshHome, gateway.url)
+  // One scripted tool call, then ordinary answers. The mock speaks the
+  // Anthropic Messages wire shape, and every request is recorded.
+  const mock = await startMockLlmServer({
+    apiKey: API_KEY,
+    sequence: ['tool_call_success', 'success'],
+    repeatLast: true,
+    toolName: 'bash',
+    toolArguments: TOOL_ARGUMENTS,
+    successText: FINAL_REPLY,
+    chunkSize: 10,
+    chunkDelayMs: 20,
+  })
+  let session
+  try {
+    writeHomePatch(dshHome, mock.baseURL)
 
   line()
   console.log('EchoFlow Agent · 本地预览')
   line()
   console.log(`启动器     ${join(harnessRoot, 'src', 'dshProcess.js')}`)
   console.log(`沙箱       ${sandbox}`)
-  console.log(`模型网关   ${gateway.url}  (127.0.0.1 回环，无外网)`)
+  console.log(`模型网关   ${mock.baseURL}/v1/messages  (官方 dsh mock，127.0.0.1 回环)`)
   console.log(`出网封锁   ${blocklist.plugins.length} 个插件 · ${blocklist.hosts.length} 个域名`)
   console.log(`运行时守卫 ${blocklist.requiredPlugins?.join(', ') ?? '无'}（启动前后 + 重载时复检）`)
 
-  const session = await connectAcp({
+  session = await connectAcp({
     cwd: workspace,
     env: {
       HOME: home,
@@ -142,6 +121,14 @@ async function main() {
       PATH: process.env.PATH ?? '',
       LANG: process.env.LANG ?? 'C.UTF-8',
       ECHOFLOW_API_KEY: API_KEY,
+    },
+    // The preview has no permission UI; take the first allow the engine offers.
+    onPermission: (request) => {
+      const allow = request.options?.find(option =>
+        option.kind === 'allow_once' || option.kind === 'allow_always')
+      return allow === undefined
+        ? { outcome: { outcome: 'cancelled' } }
+        : { outcome: { outcome: 'selected', optionId: allow.optionId } }
     },
   })
 
@@ -155,28 +142,28 @@ async function main() {
   const configText = JSON.stringify(created.configOptions ?? {})
   console.log(`  DeepSeek 路由 ${configText.includes('deepseek-') ? '仍存在（异常）' : '已移除'}`)
 
-  step(2, '发送一轮 prompt，流式读取回复')
-  process.stdout.write('  模型 → ')
-  const result = await session.prompt('用一句话介绍你自己', {
-    onUpdate: (update) => {
-      if (update?.sessionUpdate === 'agent_message_chunk' && update.content?.type === 'text') {
-        process.stdout.write(update.content.text)
-      }
-    },
+  step(2, '发一轮需要动手的 prompt，观察 agent 自己调工具')
+  const result = await session.prompt('在沙箱里创建 hello.txt，把内容读回来告诉我。', {
+    onUpdate: reportUpdate,
   })
   console.log(`\n  stopReason ${result.stopReason}`)
 
-  step(3, '回环网关收到的请求')
-  console.log(`  请求数     ${requests.length}`)
-  for (const request of requests) {
-    const body = JSON.parse(request.body || '{}')
-    console.log(`  ${request.method} ${request.url}`)
-    console.log(`  model      ${body.model}`)
-    console.log(`  stream     ${body.stream}`)
-    console.log(`  鉴权       ${request.authorization === `Bearer ${API_KEY}` ? 'Bearer *** (匹配)' : '缺失'}`)
+  step(3, '官方 mock 网关收到的请求')
+  console.log(`  请求数     ${mock.requests.length}`)
+  for (const request of mock.requests) {
+    const body = request.body ?? {}
+    const tools = Array.isArray(body.tools) ? body.tools.length : 0
+    console.log(`  #${request.attempt} ${request.path} · ${request.behavior} · model ${body.model ?? '?'} · tools ${tools} · chunks ${request.chunksSent}`)
   }
 
-  step(4, '关闭连接，观察有界退出')
+  step(4, '沙箱里真的多了一个文件')
+  try {
+    console.log(`  hello.txt  ${JSON.stringify(readFileSync(join(workspace, 'hello.txt'), 'utf8'))}`)
+  } catch {
+    console.log('  hello.txt  没有生成（工具调用未执行）')
+  }
+
+  step(5, '关闭连接，观察有界退出')
   const exit = await session.close()
   console.log(`  退出码     ${exit.code}`)
   if (exit.stderr.trim()) {
@@ -185,9 +172,12 @@ async function main() {
   }
   line()
 
-  rmSync(sandbox, { recursive: true, force: true })
-  await new Promise(resolve => gateway.server.close(resolve))
   process.exitCode = exit.code === 0 ? 0 : 1
+  } finally {
+    await session?.close().catch(() => {})
+    await mock.close()
+    rmSync(sandbox, { recursive: true, force: true })
+  }
 }
 
 main().catch((error) => {

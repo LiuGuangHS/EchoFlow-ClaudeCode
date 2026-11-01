@@ -14,6 +14,11 @@ import { fileURLToPath } from 'node:url'
 const defaultLauncher = join(dirname(fileURLToPath(import.meta.url)), 'dshProcess.js')
 const CLOSE_TIMEOUT_MS = 10_000
 
+export function registerPermissionHandler(app, onPermission) {
+  app.onRequest('session/request_permission', (request) =>
+    onPermission?.(request.params) ?? { outcome: { outcome: 'cancelled' } })
+}
+
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
@@ -44,11 +49,7 @@ export async function connectAcp(options = {}) {
 
   const stream = ndJsonStream(Writable.toWeb(child.stdin), Readable.toWeb(child.stdout))
   const app = client({ name: 'echoflow-harness' })
-  // This surface has no permission UI yet. Answering instead of leaving the
-  // request unanswered keeps an unexpected tool permit from hanging the turn.
-  app.onRequest('session/request_permission', () => ({
-    outcome: { outcome: 'cancelled' },
-  }))
+  registerPermissionHandler(app, options.onPermission)
   const agent = app.connect(stream).agent
 
   let active
@@ -66,6 +67,11 @@ export async function connectAcp(options = {}) {
   }
 
   return {
+    async requestPermissionForTest(params) {
+      const testAgent = agent()
+      return testAgent.connectWith(app, context => context.requestPermission(params))
+    },
+
     async initialize() {
       return agent.request('initialize', {
         protocolVersion: PROTOCOL_VERSION,

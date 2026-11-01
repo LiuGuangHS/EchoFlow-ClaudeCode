@@ -26,6 +26,7 @@
     "@echoflow/egress-guard": "file:./bundles/egress-guard"
   },
   "devDependencies": {
+    "@deepseek-ai/dsh-llm-mock-server": "0.2.1-rc.5",
     "vitest": "^4.1.11"
   }
 }
