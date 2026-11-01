@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test'
+import type { Capability } from '../contract.js'
 import { dshBaselineCapabilities } from '../capabilitySnapshot.js'
+
+/** Every source a capability may cite; a leaf naming one outside this list is a bug. */
+const SOURCES: Capability['source'][] = ['handshake', 'protocol-baseline', 'version-assumption', 'extension']
 
 describe('dshBaselineCapabilities', () => {
   test('declares only what this driver exercises as native', () => {
@@ -27,7 +31,7 @@ describe('dshBaselineCapabilities', () => {
     expect(caps.jobs.list.state).toBe('unsupported')
     expect(caps.subagent.delegate.state).toBe('unsupported')
     expect(caps.checkpoints.files.state).toBe('unsupported')
-    expect(caps.prompt.queue.state).toBe('native')
+    expect(caps.prompt.queue.state).toBe('unsupported')
   })
 
   test('claims session config only for the ids the driver actually sets', () => {
@@ -45,8 +49,16 @@ describe('dshBaselineCapabilities', () => {
   test('every leaf carries a state and a source', () => {
     for (const leaf of Object.values(dshBaselineCapabilities()).flatMap(group => Object.values(group))) {
       expect(['native', 'unsupported']).toContain(leaf.state)
-      expect(['handshake', 'protocol-baseline', 'version-assumption']).toContain(leaf.source)
+      expect(SOURCES).toContain(leaf.source)
     }
+  })
+
+  test('a capability sourced from an extension is a valid leaf', () => {
+    // No driver emits this source yet; the contract has to allow it before one can.
+    const leaf: Capability = { state: 'native', source: 'extension' }
+    expect(['native', 'unsupported']).toContain(leaf.state)
+    expect(SOURCES).toContain(leaf.source)
+    expect(leaf.source).toBe('extension')
   })
 
   test('returns a fresh snapshot each call', () => {

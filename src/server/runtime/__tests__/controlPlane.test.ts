@@ -6,6 +6,7 @@ import {
   type RuntimeInstallation,
 } from '../contract.js'
 import {
+  RuntimeHostClosedError,
   RuntimeSessionAlreadyOpenError,
   UnknownRuntimeDriverError,
   UnknownRuntimeInstallationError,
@@ -110,6 +111,172 @@ describe('runtime control plane', () => {
     expect(host.capabilitiesOf('session-1')).toBeDefined()
     await second.connection.close()
     await host.close()
+  })
+
+  test('concurrent connects for one installation leave no connection the host cannot close', async () => {
+    const base = createFakeDshShapedDriver()
+    let started = 0
+    let closed = 0
+    const driver: RuntimeDriver = {
+      ...base,
+      async start(input) {
+        started += 1
+        await new Promise(resolve => setTimeout(resolve, 10))
+        const connection = await base.start(input)
+        return {
+          ...connection,
+          async close() {
+            closed += 1
+            await connection.close()
+          },
+        }
+      },
+    }
+    const host = createRuntimeHost()
+    host.registerDriver(driver)
+    await Promise.allSettled([host.connect({ installation, cwd: '/tmp' }), host.connect({ installation, cwd: '/tmp' })])
+    await host.close()
+    expect(closed).toBe(started)
+  })
+
+  test('concurrent opens of one product session id open one engine session', async () => {
+    const base = createFakeDshShapedDriver()
+    let opened = 0
+    const driver: RuntimeDriver = {
+      ...base,
+      async start(input) {
+        const connection = await base.start(input)
+        return {
+          ...connection,
+          async openSession(request) {
+            opened += 1
+            await new Promise(resolve => setTimeout(resolve, 10))
+            return connection.openSession(request)
+          },
+        }
+      },
+    }
+    const host = createRuntimeHost()
+    host.registerDriver(driver)
+    await host.connect({ installation, cwd: '/tmp' })
+    const results = await Promise.allSettled([
+      host.openSession({ installationId: 'inst-1', sessionId: 'session-1', cwd: '/tmp' }),
+      host.openSession({ installationId: 'inst-1', sessionId: 'session-1', cwd: '/tmp' }),
+    ])
+    expect(opened).toBe(1)
+    expect(results.map(result => result.status).sort()).toEqual(['fulfilled', 'rejected'])
+    expect((results.find(result => result.status === 'rejected') as PromiseRejectedResult).reason)
+      .toBeInstanceOf(RuntimeSessionAlreadyOpenError)
+    await host.close()
+  })
+
+  test('close waits for an in-flight connect and closes its eventual connection', async () => {
+    const base = createFakeDshShapedDriver()
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let closed = 0
+    const host = createRuntimeHost()
+    host.registerDriver({
+      ...base,
+      async start(input) {
+        await gate
+        const connection = await base.start(input)
+        return {
+          ...connection,
+          async close() {
+            closed += 1
+            await connection.close()
+          },
+        }
+      },
+    })
+    const connecting = host.connect({ installation, cwd: '/tmp' })
+    const closing = host.close()
+    release()
+    await Promise.all([connecting, closing])
+    expect(closed).toBe(1)
+    await expect(host.openSession({ installationId: 'inst-1', sessionId: 'late', cwd: '/tmp' }))
+      .rejects.toBeInstanceOf(RuntimeHostClosedError)
+  })
+
+  test('an open finishing after connection replacement is closed and never registered', async () => {
+    const base = createFakeDshShapedDriver()
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let staleClosed = 0
+    let starts = 0
+    const host = createRuntimeHost()
+    host.registerDriver({
+      ...base,
+      async start(input) {
+        const connection = await base.start(input)
+        if (++starts !== 1) return connection
+        return {
+          ...connection,
+          async openSession(request) {
+            const session = await connection.openSession(request)
+            await gate
+            return {
+              ...session,
+              async close() {
+                staleClosed += 1
+                await session.close()
+              },
+            }
+          },
+        }
+      },
+    })
+    await host.connect({ installation, cwd: '/tmp' })
+    const opening = host.openSession({ installationId: 'inst-1', sessionId: 'session-1', cwd: '/tmp' })
+    const outcome = Promise.allSettled([opening])
+    await host.connect({ installation, cwd: '/tmp' })
+    release()
+    const [result] = await outcome
+    expect(result?.status).toBe('rejected')
+    expect(staleClosed).toBe(1)
+    expect(() => host.getSession('session-1')).toThrow(UnknownRuntimeSessionError)
+    await host.openSession({ installationId: 'inst-1', sessionId: 'session-1', cwd: '/tmp' })
+    await host.close()
+  })
+
+  test('close waits for an in-flight session open and closes its eventual session', async () => {
+    const base = createFakeDshShapedDriver()
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let sessionClosed = 0
+    const host = createRuntimeHost()
+    host.registerDriver({
+      ...base,
+      async start(input) {
+        const connection = await base.start(input)
+        return {
+          ...connection,
+          async openSession(request) {
+            const session = await connection.openSession(request)
+            await gate
+            return {
+              ...session,
+              async close() {
+                sessionClosed += 1
+                await session.close()
+              },
+            }
+          },
+        }
+      },
+    })
+    await host.connect({ installation, cwd: '/tmp' })
+    const opening = host.openSession({ installationId: 'inst-1', sessionId: 'session-1', cwd: '/tmp' })
+    let closeFinished = false
+    const closing = host.close().then(() => { closeFinished = true })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(closeFinished).toBe(false)
+    release()
+    const [result] = await Promise.allSettled([opening, closing])
+    expect(result?.status).toBe('rejected')
+    expect(sessionClosed).toBe(1)
+    expect(() => host.getSession('session-1')).toThrow(UnknownRuntimeSessionError)
   })
 
   test('reopening the same product session id is a typed error', async () => {

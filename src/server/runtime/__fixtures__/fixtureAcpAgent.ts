@@ -3,9 +3,11 @@
  *
  * The driver's tests spawn this file through `process.execPath`, so the driver
  * is proven against a separate process, not an in-process fake. Scripted by the
- * prompt text: `hello`, `needs-approval`, `slow`, `stray-permission`,
- * `schedule-fired`, `schedule-failed`, `die`, `flood`.
+ * prompt text: `hello`, `needs-approval`, `slow`, `slow-chatty`, `unresponsive`,
+ * `stray-permission`, `schedule-fired`, `schedule-failed`, `close-stdin`, `die`,
+ * `die-midturn`, `die-midturn-leaky`, `reject-prompt`, `config-update`, `flood`.
  */
+import { spawn } from 'node:child_process'
 import { appendFileSync, writeFileSync } from 'node:fs'
 import { Readable, Writable } from 'node:stream'
 import { AGENT_METHODS, CLIENT_METHODS, PROTOCOL_VERSION, agent, ndJsonStream } from '@agentclientprotocol/sdk'
@@ -13,6 +15,8 @@ import { AGENT_METHODS, CLIENT_METHODS, PROTOCOL_VERSION, agent, ndJsonStream } 
 const marker = process.env.FIXTURE_PERMISSION_MARKER
 const callsMarker = process.env.FIXTURE_CALLS_MARKER
 const rejectConfigIds = new Set((process.env.FIXTURE_REJECT_CONFIG_IDS ?? '').split(',').filter(Boolean))
+const ignoreClose = process.env.FIXTURE_IGNORE_CLOSE === '1'
+const writeAfterClose = process.env.FIXTURE_WRITE_AFTER_CLOSE === '1'
 const app = agent({ name: 'fixture-acp-agent' })
 
 /** Requests cross the process boundary, so the test reads them from a file. */
@@ -23,6 +27,7 @@ function record(method: string, params: unknown) {
 
 let sessionCounter = 0
 let cancelCurrentTurn: (() => void) | null = null
+let refusedPrompt = false
 
 const options = [
   { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
@@ -51,8 +56,9 @@ app.onRequest(AGENT_METHODS.session_set_config_option, (ctx) => {
   return { configOptions: [] }
 })
 
-app.onRequest(AGENT_METHODS.session_close, (ctx) => {
+app.onRequest(AGENT_METHODS.session_close, async (ctx) => {
   record('session/close', ctx.params)
+  if (ignoreClose) await new Promise<void>(() => {})
   return {}
 })
 
@@ -92,6 +98,14 @@ app.onRequest(AGENT_METHODS.session_prompt, async (ctx) => {
       await new Promise<void>((resolve) => {
         cancelCurrentTurn = resolve
       })
+      return { stopReason: 'cancelled' as const }
+
+    case 'slow-chatty':
+      // Answer cancel the way a real engine does: one last update, then the stop.
+      await new Promise<void>((resolve) => {
+        cancelCurrentTurn = resolve
+      })
+      await send('wrapping up')
       return { stopReason: 'cancelled' as const }
 
     case 'unresponsive':
@@ -150,6 +164,64 @@ app.onRequest(AGENT_METHODS.session_prompt, async (ctx) => {
       setTimeout(() => process.exit(3), 30)
       return { stopReason: 'end_turn' as const }
 
+    case 'die-midturn':
+      // Die while the turn is still open: no stopReason ever arrives, so the
+      // driver has to close the turn itself.
+      await send('partial')
+      process.exit(4)
+
+    case 'die-midturn-leaky': {
+      // Same death, but a descendant inherits stdout and outlives us: the read
+      // pipe does not tear down, so only the exit event can close the turn.
+      // stdin is deliberately not inherited — a later write to the dead engine
+      // has to fail rather than buffer silently.
+      await send('partial')
+      spawn(process.execPath, ['-e', 'setTimeout(() => {}, 8000)'], { stdio: ['ignore', 'inherit', 'ignore'] })
+      process.exit(4)
+    }
+
+    case 'reject-prompt':
+      // Refuse the request itself, the way an engine that will not take a
+      // prompt does: the turn has to fail through the prompt rejection.
+      if (!refusedPrompt) {
+        refusedPrompt = true
+        throw new Error('the engine refused this prompt')
+      }
+      await send('hello after a refusal')
+      return { stopReason: 'end_turn' as const }
+
+    case 'config-update':
+      // Publish the engine's configuration catalog the way ACP does: select
+      // values with candidates and groups, and a real boolean value.
+      await ctx.client.notify(CLIENT_METHODS.session_update, {
+        sessionId,
+        update: {
+          sessionUpdate: 'config_option_update',
+          configOptions: [
+            {
+              type: 'select',
+              id: 'model',
+              name: 'Model',
+              category: 'model',
+              currentValue: 'echoflow/kimi-k3',
+              options: [
+                { group: 'main', name: 'Main', options: [{ value: 'echoflow/kimi-k3', name: 'Kimi K3', description: 'default' }] },
+                { group: 'other', name: 'Other', options: [{ value: 'echoflow/other', name: 'Other model' }] },
+              ],
+            },
+            {
+              type: 'select',
+              id: 'reasoning_effort',
+              name: 'Reasoning effort',
+              currentValue: 'high',
+              options: [{ value: 'low', name: 'Low' }, { value: 'high', name: 'High' }],
+            },
+            { type: 'boolean', id: 'thinking', name: 'Thinking', currentValue: true },
+          ],
+        },
+      })
+      return { stopReason: 'end_turn' as const }
+
     case 'flood': {
       for (let i = 0; i < 20; i += 1) {
         await send(`chunk ${i}`)
@@ -170,4 +242,13 @@ const stream = ndJsonStream(
 )
 const connection = app.connect(stream)
 
-connection.closed.then(() => process.exit(0), () => process.exit(1))
+if (writeAfterClose) {
+  // Keep talking after the client hung up, the way a late reply or a final
+  // notification reaches a driver that has already closed its reader.
+  connection.closed.then(() => {
+    process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'late', update: {} } })}\n`)
+    setTimeout(() => process.exit(0), 100)
+  })
+} else {
+  connection.closed.then(() => process.exit(0), () => process.exit(1))
+}

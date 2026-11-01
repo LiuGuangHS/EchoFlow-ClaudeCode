@@ -92,16 +92,124 @@ describe('projectSessionUpdate', () => {
     const update = {
       sessionUpdate: 'config_option_update',
       configOptions: [
-        { id: 'model', name: 'Model', type: 'select', currentValue: 'echoflow/kimi-k3', options: [] },
-        { id: 'reasoning_effort', name: 'Reasoning effort', type: 'select', currentValue: 'high', options: [] },
+        {
+          type: 'select',
+          id: 'model',
+          name: 'Model',
+          category: 'model',
+          currentValue: 'echoflow/kimi-k3',
+          options: [
+            { group: 'main', name: 'Main', options: [{ value: 'echoflow/kimi-k3', name: 'Kimi K3', description: 'default' }] },
+            { group: 'other', name: 'Other', options: [{ value: 'echoflow/other', name: 'Other model' }] },
+          ],
+        },
+        {
+          type: 'select',
+          id: 'reasoning_effort',
+          name: 'Reasoning effort',
+          currentValue: 'high',
+          options: [{ value: 'low', name: 'Low' }, { value: 'high', name: 'High' }],
+        },
+        { type: 'boolean', id: 'thinking', name: 'Thinking', currentValue: true },
       ],
     }
     expect(projectSessionUpdate(update)).toEqual({
       kind: 'config.changed',
       options: [
-        { id: 'model', name: 'Model', value: 'echoflow/kimi-k3' },
-        { id: 'reasoning_effort', name: 'Reasoning effort', value: 'high' },
+        {
+          kind: 'select',
+          id: 'model',
+          name: 'Model',
+          category: 'model',
+          value: 'echoflow/kimi-k3',
+          options: [
+            { name: 'Main', options: [{ value: 'echoflow/kimi-k3', name: 'Kimi K3', description: 'default' }] },
+            { name: 'Other', options: [{ value: 'echoflow/other', name: 'Other model' }] },
+          ],
+        },
+        {
+          kind: 'select',
+          id: 'reasoning_effort',
+          name: 'Reasoning effort',
+          value: 'high',
+          options: [{ value: 'low', name: 'Low' }, { value: 'high', name: 'High' }],
+        },
+        { kind: 'boolean', id: 'thinking', name: 'Thinking', value: true },
       ],
     })
+  })
+
+  test('keeps option candidates, groups, categories and boolean values', () => {
+    const update = {
+      sessionUpdate: 'config_option_update',
+      configOptions: [
+        {
+          type: 'select',
+          id: 'model',
+          name: 'Model',
+          category: 'model',
+          description: 'which model to run',
+          currentValue: 'echoflow/kimi-k3',
+          options: [
+            { group: 'main', name: 'Main', options: [{ value: 'echoflow/kimi-k3', name: 'Kimi K3', description: 'default' }] },
+            { group: 'other', name: 'Other', options: [{ value: 'echoflow/other', name: 'Other model' }] },
+          ],
+        },
+        {
+          type: 'select',
+          id: 'reasoning_effort',
+          name: 'Reasoning effort',
+          currentValue: 'high',
+          options: [{ value: 'low', name: 'Low' }, { value: 'high', name: 'High' }],
+        },
+        { type: 'boolean', id: 'thinking', name: 'Thinking', currentValue: true },
+      ],
+    }
+    const projected = projectSessionUpdate(update) as { options: Array<Record<string, unknown>> }
+    const [model, reasoning, thinking] = projected.options
+    // A category and a description survive the projection instead of being flattened away.
+    expect(model).toMatchObject({ kind: 'select', category: 'model', description: 'which model to run' })
+    // A group becomes a nested list keyed by its label.
+    expect(model.options).toEqual([
+      { name: 'Main', options: [{ value: 'echoflow/kimi-k3', name: 'Kimi K3', description: 'default' }] },
+      { name: 'Other', options: [{ value: 'echoflow/other', name: 'Other model' }] },
+    ])
+    // A flat candidate list survives as-is.
+    expect(reasoning.options).toEqual([{ value: 'low', name: 'Low' }, { value: 'high', name: 'High' }])
+    // A boolean stays a boolean; stringifying it would make `false` indistinguishable from absent.
+    expect(thinking).toMatchObject({ kind: 'boolean', value: true })
+    expect(typeof thinking.value).toBe('boolean')
+  })
+
+  test('drops null optional fields instead of rendering the string "null"', () => {
+    const projected = projectSessionUpdate({
+      sessionUpdate: 'config_option_update',
+      configOptions: [
+        {
+          type: 'select',
+          id: 'model',
+          name: 'Model',
+          category: null,
+          description: null,
+          currentValue: 'a',
+          options: [{ value: 'a', name: 'A', description: null }],
+        },
+      ],
+    }) as { options: Array<Record<string, unknown>> }
+    const [model] = projected.options
+    // ACP allows an explicit null on these optional fields; that is absent, not the word "null".
+    expect(model).toEqual({ kind: 'select', id: 'model', name: 'Model', value: 'a', options: [{ value: 'a', name: 'A' }] })
+    expect('category' in model).toBe(false)
+    expect('description' in model).toBe(false)
+    expect((model.options as Array<Record<string, unknown>>)[0].description).toBeUndefined()
+  })
+
+  test('keeps a false boolean as a real false', () => {
+    const projected = projectSessionUpdate({
+      sessionUpdate: 'config_option_update',
+      configOptions: [{ type: 'boolean', id: 'thinking', name: 'Thinking', currentValue: false }],
+    }) as { options: Array<Record<string, unknown>> }
+    expect(projected.options[0]).toMatchObject({ kind: 'boolean', value: false })
+    expect(typeof projected.options[0].value).toBe('boolean')
   })
 })

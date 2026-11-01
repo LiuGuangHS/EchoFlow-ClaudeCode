@@ -5,7 +5,7 @@
  * becomes a diagnostic carrying the native payload, so a newer dsh cannot make
  * a turn go quiet.
  */
-import type { RuntimeEventBody, SessionConfigState } from './contract.js'
+import type { RuntimeEventBody, SessionConfigGroup, SessionConfigState } from './contract.js'
 
 /** ACP updates that carry metadata the contract has no product meaning for yet. */
 const METADATA_UPDATES = new Set([
@@ -95,11 +95,44 @@ function isFiniteNumber(value: unknown): value is number {
 }
 
 /** ACP sends the whole option table, with select values and booleans mixed. */
+function configOptionCandidates(raw: unknown): SessionConfigState['options'] {
+  if (!Array.isArray(raw)) return []
+  return raw.map((entry) => {
+    const record = (entry ?? {}) as AnyUpdate
+    const nested = record.options
+    if (Array.isArray(nested)) {
+      return {
+        name: String(record.name ?? ''),
+        options: configOptionCandidates(nested) as SessionConfigGroup['options'],
+      }
+    }
+    return {
+      value: String(record.value ?? ''),
+      name: String(record.name ?? ''),
+      ...(record.description == null ? {} : { description: String(record.description) }),
+    }
+  })
+}
+
 function configOptions(raw: unknown): SessionConfigState[] {
   if (!Array.isArray(raw)) return []
   return raw.map((option) => {
-    const { id, name, currentValue } = (option ?? {}) as AnyUpdate
-    return { id: String(id ?? ''), name: String(name ?? ''), value: String(currentValue ?? '') }
+    const record = (option ?? {}) as AnyUpdate
+    const base = {
+      id: String(record.id ?? ''),
+      name: String(record.name ?? ''),
+      // ACP makes these `string | null`: an explicit null is absent, not the word "null".
+      ...(record.category == null ? {} : { category: String(record.category) }),
+      ...(record.description == null ? {} : { description: String(record.description) }),
+    }
+    // value has to stay the variant `kind` promises, not a stringified copy.
+    if (record.type === 'boolean') return { ...base, kind: 'boolean' as const, value: record.currentValue === true }
+    return {
+      ...base,
+      kind: 'select' as const,
+      value: String(record.currentValue ?? ''),
+      options: configOptionCandidates(record.options),
+    }
   })
 }
 

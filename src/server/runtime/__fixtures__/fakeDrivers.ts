@@ -192,8 +192,12 @@ function createFakeSession(shape: FakeShape, input: FakeInput): RuntimeSession {
       return { status: 'cancelled', forcedTerminate: false }
     },
     onEngineTurn(listener) {
+      if (engineListeners.size > 0) throw new Error('an engine turn listener is already registered')
       engineListeners.add(listener)
+      let disposed = false
       return () => {
+        if (disposed) return
+        disposed = true
         engineListeners.delete(listener)
       }
     },

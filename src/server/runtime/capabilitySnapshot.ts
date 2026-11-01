@@ -28,7 +28,7 @@ export function dshBaselineCapabilities(): RuntimeCapabilities {
       image: unsupported(),
       embeddedResource: unsupported(),
       steer: unsupported(),
-      queue: native('ACP inbox queues the next turn'),
+      queue: unsupported(),
     },
     config: {
       model: native('session/set_config_option, configId "model"'),

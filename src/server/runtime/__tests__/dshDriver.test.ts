@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test'
+import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PROTOCOL_VERSION } from '@agentclientprotocol/sdk'
-import { RuntimeBusyError, RuntimeStartupError, UnsupportedRuntimeCapabilityError } from '../contract.js'
+import { RuntimeBusyError, RuntimeStartupError, UnsupportedRuntimeCapabilityError, type RuntimeEvent } from '../contract.js'
 import { createDshDriver } from '../dshDriver.js'
 
 const fixture = join(import.meta.dir, '..', '__fixtures__', 'fixtureAcpAgent.ts')
@@ -44,7 +45,7 @@ async function waitUntil(condition: () => boolean) {
 }
 
 /** Requests cross the process boundary, so the fixture appends them to a file. */
-async function openWithCallLog(options: { rejectConfigIds?: string[]; agentCapabilities?: unknown } = {}) {
+async function openWithCallLog(options: { rejectConfigIds?: string[]; agentCapabilities?: unknown; env?: Record<string, string> } = {}) {
   const sandbox = mkdtempSync(join(tmpdir(), 'echoflow-calls-'))
   sandboxes.push(sandbox)
   const callsPath = join(sandbox, 'calls.ndjson')
@@ -57,6 +58,7 @@ async function openWithCallLog(options: { rejectConfigIds?: string[]; agentCapab
       FIXTURE_CALLS_MARKER: callsPath,
       FIXTURE_REJECT_CONFIG_IDS: (options.rejectConfigIds ?? []).join(','),
       FIXTURE_AGENT_CAPABILITIES: JSON.stringify(options.agentCapabilities ?? {}),
+      ...options.env,
     },
   })
   const readCalls = () =>
@@ -187,17 +189,35 @@ describe('dshDriver over a real ACP child process', () => {
     expect(failure.message).toContain('99')
   })
 
-  test('probe reports the version the agent answered with, not the one we asked for', async () => {
+  test('probe reports the protocol version the handshake answered with', async () => {
     const driver = createDshDriver({
       resolveCommand: () => [process.execPath, fixture, JSON.stringify({ agentInfo: { name: 'fixture', version: '9.9.9' } })],
     })
+    // The installation fixture carries no version, so the effective version is
+    // the handshake's answer alone.
     expect(await driver.probe(installation))
-      .toMatchObject({ ok: true, protocolVersion: PROTOCOL_VERSION, agentVersion: '9.9.9', version: null })
+      .toMatchObject({ ok: true, protocolVersion: PROTOCOL_VERSION, agentVersion: '9.9.9', version: '9.9.9' })
   })
 
   test('probe reports a failed launch instead of throwing', async () => {
     const driver = createDshDriver({ resolveCommand: () => [process.execPath, '-e', 'process.exit(3)'] })
     expect(await driver.probe(installation)).toMatchObject({ ok: false })
+  })
+
+  test('probe reports the handshake version as version', async () => {
+    const driver = createDshDriver({
+      resolveCommand: () => [process.execPath, fixture, JSON.stringify({ agentInfo: { name: 'fixture', version: '9.9.9' } })],
+    })
+    expect(await driver.probe({ executablePath: fixture, version: '1.0.0' } as never))
+      .toMatchObject({ ok: true, version: '9.9.9', agentVersion: '9.9.9' })
+  })
+
+  test('probe keeps the installation version when the handshake carries none', async () => {
+    const driver = createDshDriver({
+      resolveCommand: () => [process.execPath, fixture, JSON.stringify({ agentInfo: { name: 'fixture' } })],
+    })
+    expect(await driver.probe({ executablePath: fixture, version: '1.0.0' } as never))
+      .toMatchObject({ ok: true, version: '1.0.0', agentVersion: null })
   })
 
   test('start rejects with a typed error carrying stderr when the launcher dies immediately', async () => {
@@ -228,8 +248,41 @@ describe('dshDriver over a real ACP child process', () => {
       reasoningEffort: 'high',
     })
     const sets = readCalls().filter(call => call.method === 'session/set_config_option')
+    // dsh lists model choices in its session config catalog as this JSON pair;
+    // a "provider/model" string does not match the shape those candidates carry.
     expect(sets.map(call => [call.params.configId, call.params.value]))
-      .toEqual([['model', 'echoflow/kimi-k3'], ['reasoning_effort', 'high']])
+      .toEqual([['model', '["echoflow","kimi-k3"]'], ['reasoning_effort', 'high']])
+    await connection.close()
+  })
+
+  test('config.changed keeps the engine catalog over a real child process', async () => {
+    const { connection } = await openWithCallLog()
+    const session = await connection.openSession({ sessionId: 'session-1', cwd: process.cwd() })
+    const events = await collect(session.send({ text: 'config-update' }))
+    const changed = events.find(event => event.kind === 'config.changed')
+    // The whole option table crosses the process boundary: candidates and groups
+    // for a select, and a boolean kept as a boolean.
+    expect(changed.options).toEqual([
+      {
+        kind: 'select',
+        id: 'model',
+        name: 'Model',
+        category: 'model',
+        value: 'echoflow/kimi-k3',
+        options: [
+          { name: 'Main', options: [{ value: 'echoflow/kimi-k3', name: 'Kimi K3', description: 'default' }] },
+          { name: 'Other', options: [{ value: 'echoflow/other', name: 'Other model' }] },
+        ],
+      },
+      {
+        kind: 'select',
+        id: 'reasoning_effort',
+        name: 'Reasoning effort',
+        value: 'high',
+        options: [{ value: 'low', name: 'Low' }, { value: 'high', name: 'High' }],
+      },
+      { kind: 'boolean', id: 'thinking', name: 'Thinking', value: true },
+    ])
     await connection.close()
   })
 
@@ -283,6 +336,92 @@ describe('dshDriver over a real ACP child process', () => {
     await connection.close()
   })
 
+  test('close finishes locally even when the engine ignores session/close and cancel', async () => {
+    const { connection, readCalls } = await openWithCallLog({ env: { FIXTURE_IGNORE_CLOSE: '1' } })
+    const session = await connection.openSession({ sessionId: 'session-1', cwd: process.cwd() })
+    const turn = collect(session.send({ text: 'unresponsive' }))
+    const started = Date.now()
+    await session.close()
+    expect(Date.now() - started).toBeLessThan(2_250)
+    // close() must not return before the turn it owns has been laid down.
+    const events = await turn
+    expect(events.filter(event => event.kind === 'turn.completed')).toHaveLength(1)
+    expect(events.at(-1)).toMatchObject({ kind: 'session.state', state: 'idle' })
+    await session.close()
+    expect(readCalls().filter(call => call.method === 'session/close')).toHaveLength(1)
+    await connection.close()
+  })
+
+  test('closing a session mid-turn keeps the engine stop and does not wait out the budget', async () => {
+    const { connection, session } = await open()
+    const iterator = session.send({ text: 'slow' })[Symbol.asyncIterator]()
+    await iterator.next()
+    const started = Date.now()
+    await session.close()
+    // The fixture answers cancel at once; only a dropped stop makes close sit
+    // out the whole 2 s session budget.
+    expect(Date.now() - started).toBeLessThan(1_000)
+    const rest = []
+    for (let next = await iterator.next(); !next.done; next = await iterator.next()) rest.push(next.value)
+    expect(rest.filter(event => event.kind === 'turn.completed')).toHaveLength(1)
+    await connection.close()
+  })
+
+  test('closing mid-turn still reads the stop when the engine sends an update before it', async () => {
+    const { connection, session } = await open()
+    const iterator = session.send({ text: 'slow-chatty' })[Symbol.asyncIterator]()
+    await iterator.next()
+    const started = Date.now()
+    await session.close()
+    expect(Date.now() - started).toBeLessThan(1_000)
+    const rest = []
+    for (let next = await iterator.next(); !next.done; next = await iterator.next()) rest.push(next.value)
+    expect(rest.filter(event => event.kind === 'turn.completed').map(event => event.reason)).toEqual(['cancelled'])
+    await connection.close()
+  })
+
+  test('openSession settles when the engine ignores the cleanup close of a rejected config', async () => {
+    const driver = createDshDriver({ resolveCommand: command, sessionCloseTimeoutMs: 200 })
+    const connection = await driver.start({
+      installation,
+      runId: 'run-1',
+      cwd: process.cwd(),
+      env: { FIXTURE_REJECT_CONFIG_IDS: 'reasoning_effort', FIXTURE_IGNORE_CLOSE: '1' },
+    })
+    const started = Date.now()
+    await expect(connection.openSession({ sessionId: 'session-1', cwd: process.cwd(), reasoningEffort: 'high' }))
+      .rejects.toThrow()
+    expect(Date.now() - started).toBeLessThan(1_000)
+    await connection.close()
+  })
+
+  test('engine output after the connection closed does not crash the driver process', async () => {
+    const { connection } = await openWithCallLog({ env: { FIXTURE_WRITE_AFTER_CLOSE: '1' } })
+    const crashes: unknown[] = []
+    const onCrash = (error: unknown) => crashes.push(error)
+    process.on('uncaughtException', onCrash)
+    try {
+      const exited = new Promise(resolve => connection.onExit(resolve))
+      await connection.close()
+      await exited
+      // Let any late 'data' callback run before looking.
+      await new Promise(resolve => setTimeout(resolve, 50))
+      expect(crashes).toEqual([])
+    } finally {
+      process.off('uncaughtException', onCrash)
+    }
+  })
+
+  test('session capabilities carry what the handshake negotiated', async () => {
+    const { connection } = await openWithCallLog({
+      agentCapabilities: { promptCapabilities: { image: true }, mcpCapabilities: { http: true } },
+    })
+    const session = await connection.openSession({ sessionId: 'session-1', cwd: process.cwd() })
+    expect(session.capabilities.prompt.image).toMatchObject({ state: 'native', source: 'handshake' })
+    expect(session.capabilities.extensions.mcpHttp).toMatchObject({ state: 'native', source: 'handshake' })
+    await connection.close()
+  })
+
   test('passes declared MCP servers into session/new', async () => {
     const { connection, readCalls } = await openWithCallLog({ agentCapabilities: { mcpCapabilities: { http: true } } })
     await connection.openSession({
@@ -322,6 +461,62 @@ describe('dshDriver over a real ACP child process', () => {
     expect(events.filter(event => event.kind === 'turn.completed')).toHaveLength(1)
     await connection.close()
   })
+
+  test('a send after the engine refused a prompt still completes', async () => {
+    const { connection, session } = await open()
+    const events = await collect(session.send({ text: 'reject-prompt' }))
+    expect(events.filter(event => event.kind === 'turn.completed').map(event => event.reason)).toEqual(['error'])
+    // The refusal also leaves an error entry in the update queue; it must not
+    // cost the session its reader, or this turn's stop is never picked up.
+    const after = await collect(session.send({ text: 'hello' }))
+    expect(after.filter(event => event.kind === 'turn.completed')).toHaveLength(1)
+    await connection.close()
+  })
+
+  test('a turn closes when stdout closes without ending', async () => {
+    let child: ChildProcess | undefined
+    const spawn = ((file: string, args: string[], options: SpawnOptions) => {
+      child = nodeSpawn(file, args, options)
+      return child
+    }) as typeof nodeSpawn
+    const driver = createDshDriver({ resolveCommand: command, spawn })
+    const connection = await driver.start({ installation, runId: 'run-1', cwd: process.cwd() })
+    const session = await connection.openSession({ sessionId: 'session-1', cwd: process.cwd() })
+    const turn = session.send({ text: 'slow' })
+    // A destroyed pipe emits 'close' with neither 'end' nor 'error'. The engine
+    // is still alive, so only the pipe can tell the driver this turn is over.
+    child!.stdout!.destroy()
+    const events = await collect(turn)
+    expect(events.filter(event => event.kind === 'turn.completed').map(event => event.reason)).toEqual(['error'])
+    await connection.close()
+  }, 3000)
+
+  test('a turn that dies mid-stream is closed as an error and the session stays usable', async () => {
+    const driver = createDshDriver({ resolveCommand: command })
+    const connection = await driver.start({ installation, runId: 'run-1', cwd: process.cwd() })
+    const session = await connection.openSession({ sessionId: 'session-1', cwd: process.cwd() })
+    const events = await collect(session.send({ text: 'die-midturn' }))
+    // The engine dies mid-stream, so no stopReason ever arrives: the driver has to
+    // lay the turn down itself instead of leaving the iterator open forever.
+    expect(events.filter(event => event.kind === 'turn.completed').map(event => event.reason)).toEqual(['error'])
+    expect(events.some(event => event.kind === 'diagnostic' && event.code === 'acp.turn_failed')).toBe(true)
+    const after = await collect(session.send({ text: 'hello' }))
+    expect(after.filter(event => event.kind === 'turn.completed')).toHaveLength(1)
+    await connection.close()
+  })
+
+  test('a turn still closes when the engine exits but a descendant keeps stdout open', async () => {
+    const driver = createDshDriver({ resolveCommand: command })
+    const connection = await driver.start({ installation, runId: 'run-1', cwd: process.cwd() })
+    const session = await connection.openSession({ sessionId: 'session-1', cwd: process.cwd() })
+    // Stream teardown never happens here — the descendant holds the pipe — so the
+    // engine's exit itself has to be what lays the turn down.
+    const events = await collect(session.send({ text: 'die-midturn-leaky' }))
+    expect(events.filter(event => event.kind === 'turn.completed').map(event => event.reason)).toEqual(['error'])
+    const after = await collect(session.send({ text: 'hello' }))
+    expect(after.filter(event => event.kind === 'turn.completed')).toHaveLength(1)
+    await connection.close()
+  }, 5000)
 
   test('an engine that stopped reading stdin does not crash the driver process', async () => {
     const driver = createDshDriver({ resolveCommand: command })
@@ -383,6 +578,59 @@ describe('dshDriver over a real ACP child process', () => {
     await collect(session.send({ text: 'schedule-failed' }))
     await waitUntil(() => seen.includes('turn.completed'))
     await expect(collect(session.send({ text: 'hello' }))).resolves.toBeDefined()
+    await connection.close()
+  })
+
+  test('a throwing engine listener does not stop the pump', async () => {
+    const driver = createDshDriver({ resolveCommand: command, engineTurnIdleMs: 100 })
+    const connection = await driver.start({ installation, runId: 'run-1', cwd: process.cwd() })
+    const session = await connection.openSession({ sessionId: 'session-1', cwd: process.cwd() })
+    const streams: Array<AsyncIterable<RuntimeEvent>> = []
+    session.onEngineTurn((events) => {
+      streams.push(events)
+      throw new Error('listener blew up')
+    })
+    await collect(session.send({ text: 'schedule-fired' }))
+    await waitUntil(() => streams.length === 1)
+    const events = await collect(streams[0])
+    expect(events.some((event: { kind?: string; code?: string }) => event.kind === 'diagnostic' && event.code === 'runtime.engine_listener_failed')).toBe(true)
+    // The contract only knows info/warn/error; any other level falls through
+    // a consumer's switch.
+    expect(events.find((event: { code?: string }) => event.code === 'runtime.engine_listener_failed')).toMatchObject({ level: 'warn' })
+    expect(events.some((event: { kind?: string }) => event.kind === 'turn.completed')).toBe(true)
+    const after = await collect(session.send({ text: 'hello' }))
+    expect(after.filter((event: { kind?: string }) => event.kind === 'turn.completed')).toHaveLength(1)
+    await connection.close()
+  })
+
+  test('a rejecting engine listener does not stop the pump', async () => {
+    const driver = createDshDriver({ resolveCommand: command, engineTurnIdleMs: 100 })
+    const connection = await driver.start({ installation, runId: 'run-1', cwd: process.cwd() })
+    const session = await connection.openSession({ sessionId: 'session-1', cwd: process.cwd() })
+    const streams: Array<AsyncIterable<RuntimeEvent>> = []
+    session.onEngineTurn((events) => {
+      streams.push(events)
+      return Promise.reject(new Error('listener rejected'))
+    })
+    await collect(session.send({ text: 'schedule-fired' }))
+    await waitUntil(() => streams.length === 1)
+    const events = await collect(streams[0])
+    expect(events.some((event: { kind?: string; code?: string }) => event.kind === 'diagnostic' && event.code === 'runtime.engine_listener_failed')).toBe(true)
+    expect(events.some((event: { kind?: string }) => event.kind === 'turn.completed')).toBe(true)
+    const after = await collect(session.send({ text: 'hello' }))
+    expect(after.filter((event: { kind?: string }) => event.kind === 'turn.completed')).toHaveLength(1)
+    await connection.close()
+  })
+
+  test('a second engine listener registration throws and its disposer is idempotent', async () => {
+    const driver = createDshDriver({ resolveCommand: command, engineTurnIdleMs: 100 })
+    const connection = await driver.start({ installation, runId: 'run-1', cwd: process.cwd() })
+    const session = await connection.openSession({ sessionId: 'session-1', cwd: process.cwd() })
+    const dispose = session.onEngineTurn(() => {})
+    expect(() => session.onEngineTurn(() => {})).toThrow('an engine turn listener is already registered')
+    dispose()
+    dispose()
+    expect(() => session.onEngineTurn(() => {})).not.toThrow()
     await connection.close()
   })
 })

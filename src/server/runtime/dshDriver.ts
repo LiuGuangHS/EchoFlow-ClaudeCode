@@ -44,6 +44,8 @@ export type DshDriverOptions = {
   newApprovalId?: () => string
   interruptTimeoutMs?: number
   closeTimeoutMs?: number
+  /** Budget for a session close, across interrupt and session/close together. */
+  sessionCloseTimeoutMs?: number
   /** Quiet period that ends a turn the engine started on its own. */
   engineTurnIdleMs?: number
   /** Events held for a consumer that stopped reading before the oldest are dropped. */
@@ -231,6 +233,7 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
   const resolveCommand = options.resolveCommand ?? ((installation) => [installation.executablePath])
   const interruptTimeoutMs = options.interruptTimeoutMs ?? 5_000
   const closeTimeoutMs = options.closeTimeoutMs ?? 10_000
+  const sessionCloseTimeoutMs = options.sessionCloseTimeoutMs ?? 2_000
   const engineTurnIdleMs = options.engineTurnIdleMs ?? 1_000
   const turnBufferLimit = options.turnBufferLimit ?? 2_000
 
@@ -249,14 +252,25 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
 
     const stdout = new ReadableStream<Uint8Array>({
       start(controller) {
-        child.stdout?.on('data', (chunk: Buffer) => controller.enqueue(new Uint8Array(chunk)))
-        child.stdout?.on('end', () => {
+        const endInput = () => {
           try {
             controller.close()
           } catch {
-            // already closed by the connection teardown
+            // already closed by the connection teardown or the other event
+          }
+        }
+        child.stdout?.on('data', (chunk: Buffer) => {
+          try {
+            controller.enqueue(new Uint8Array(chunk))
+          } catch {
+            // the connection closed its reader; late engine output has no one
+            // to read it, and throwing here is uncaught and kills the server
           }
         })
+        child.stdout?.on('end', endInput)
+        // A destroyed pipe emits 'close' without 'end'. Closing, not erroring,
+        // keeps a normal end's still-queued tail when 'close' follows it.
+        child.stdout?.on('close', endInput)
         child.stdout?.on('error', (error) => controller.error(error))
       },
     })
@@ -405,28 +419,45 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
         completeTurn(state, 'error')
       }
 
+      // The engine process is the authority on whether it is still working. Its
+      // pipes can outlive it — a descendant may have inherited stdout — so exit,
+      // not stream teardown, is what has to lay a live turn down.
+      let engineGone = false
+      void exited.then(() => {
+        engineGone = true
+        const gone = new Error('the engine exited mid-turn')
+        if (activeTurn !== null) failTurn(activeTurn, gone)
+        if (engineTurn !== null) failEngineTurn(gone)
+      })
+
       /** The session's single reader of the update cursor: one pump, always on. */
       async function pump() {
-        try {
-          for (;;) {
-            const message = await active.nextUpdate()
+        for (;;) {
+          let message
+          try {
+            message = await active.nextUpdate()
+          } catch (error) {
             if (closed) return
-            if (message.kind === 'stop') {
-              if (activeTurn !== null) completeTurn(activeTurn, turnReason(message.stopReason))
-              else finishEngineTurn(turnReason(message.stopReason))
-              continue
-            }
-            const body = projectSessionUpdate(message.update)
-            if (body === null) continue
-            if (activeTurn !== null) activeTurn.channel.push(stamp(body))
-            else pushEngineEvent(body)
+            if (activeTurn !== null) failTurn(activeTurn, error)
+            else failEngineTurn(error)
+            // A refused prompt rejects one read but leaves the queue usable; a
+            // closed connection fails it for good, so reading on would spin.
+            if (connection.signal.aborted) return
+            continue
           }
-        } catch (error) {
-          if (closed) return
-          // The cursor is gone. Fail whichever turn was live; the next send
-          // reports the dead engine through its own prompt rejection.
-          if (activeTurn !== null) failTurn(activeTurn, error)
-          else failEngineTurn(error)
+          // A closing session still owes its live turn the engine's stop: the
+          // cancel that close() sent is answered here, and dropping it would
+          // leave close() waiting out its whole budget.
+          if (closed && activeTurn === null) return
+          if (message.kind === 'stop') {
+            if (activeTurn !== null) completeTurn(activeTurn, turnReason(message.stopReason))
+            else finishEngineTurn(turnReason(message.stopReason))
+            continue
+          }
+          const body = projectSessionUpdate(message.update)
+          if (body === null) continue
+          if (activeTurn !== null) activeTurn.channel.push(stamp(body))
+          else pushEngineEvent(body)
         }
       }
 
@@ -443,6 +474,33 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
         })
       }
 
+      /** A listener that throws or rejects must not take the pump down with it. */
+      function notifyEngineListener(
+        listener: (events: AsyncIterable<RuntimeEvent>) => void | Promise<void>,
+        stream: AsyncIterable<RuntimeEvent>,
+        state: TurnState,
+      ) {
+        const report = (error: unknown) => {
+          state.channel.push(
+            stamp({
+              kind: 'diagnostic',
+              level: 'warn',
+              code: 'runtime.engine_listener_failed',
+              message: error instanceof Error ? error.message : String(error),
+              native: error,
+            }),
+          )
+        }
+        try {
+          const result = listener(stream)
+          if (result && typeof (result as Promise<void>).then === 'function') {
+            void (result as Promise<void>).then(undefined, report)
+          }
+        } catch (error) {
+          report(error)
+        }
+      }
+
       function startEngineTurn(): TurnState {
         const channel = newTurnChannel()
         let settle!: () => void
@@ -455,7 +513,7 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
         const stream: AsyncIterable<RuntimeEvent> = {
           [Symbol.asyncIterator]: () => ({ next: () => channel.next() }),
         }
-        for (const listener of engineListeners) listener(stream)
+        for (const listener of engineListeners) notifyEngineListener(listener, stream, state)
         return state
       }
 
@@ -499,8 +557,10 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
       }
 
       function runTurn(state: TurnState, turn: UserTurn) {
-        // The prompt response arrives as a `stop` the pump reads; a rejected
-        // prompt is the only failure this side has to catch itself.
+        // The prompt response arrives as a `stop` the pump reads; a live engine
+        // reports a failure only by rejecting the prompt. A dead one is refused
+        // before the prompt is sent.
+        if (engineGone) return failTurn(state, new Error('the engine is not running'))
         void active.prompt(promptBlocks(turn)).catch((error: unknown) => failTurn(state, error))
       }
 
@@ -605,11 +665,15 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
 
       const session: RuntimeSession = {
         nativeSessionId: active.sessionId,
-        capabilities: dshBaselineCapabilities(),
+        capabilities: capabilitiesFromHandshake(answered),
         send,
         onEngineTurn(listener) {
+          if (engineListeners.size > 0) throw new Error('an engine turn listener is already registered')
           engineListeners.add(listener)
+          let disposed = false
           return () => {
+            if (disposed) return
+            disposed = true
             engineListeners.delete(listener)
           }
         },
@@ -624,12 +688,17 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
           if (closed) return
           closed = true
           finishEngineTurn('cancelled')
-          if (activeTurn !== null) await interrupt()
-          // dispose() only tears down the local router; the engine keeps the
-          // session (and its context) until session/close lands.
-          await connection.agent
-            .request(AGENT_METHODS.session_close, { sessionId: active.sessionId })
-            .catch(() => {})
+          // The engine may ignore both cancel and session/close, so they are
+          // sent together and the teardown is budgeted. dispose() only drops
+          // the local router — the engine keeps the session until close lands.
+          const teardown = Promise.allSettled([
+            activeTurn === null ? Promise.resolve() : interrupt(),
+            connection.agent.request(AGENT_METHODS.session_close, { sessionId: active.sessionId }),
+          ])
+          await settleWithin(teardown, sessionCloseTimeoutMs)
+          // Unlike interrupt(), a session being torn down has no reader left to
+          // lie to, so the turn is laid down locally once the budget runs out.
+          if (activeTurn !== null) completeTurn(activeTurn, 'cancelled')
           active.dispose()
           sessions.delete(active.sessionId)
         },
@@ -661,7 +730,7 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
             await connection.agent.request(AGENT_METHODS.session_set_config_option, {
               sessionId: active.sessionId,
               configId: 'model',
-              value: `${model.provider}/${model.model}`,
+              value: JSON.stringify([model.provider, model.model]),
             })
           }
           if (reasoningEffort !== undefined) {
@@ -674,9 +743,10 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
         } catch (error) {
           // A half-open session with the wrong model is worse than no session:
           // later prompts would silently run on the engine default.
-          await connection.agent
-            .request(AGENT_METHODS.session_close, { sessionId: active.sessionId })
-            .catch(() => {})
+          await settleWithin(
+            connection.agent.request(AGENT_METHODS.session_close, { sessionId: active.sessionId }),
+            sessionCloseTimeoutMs,
+          )
           active.dispose()
           throw error
         }
@@ -731,7 +801,7 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
         const connection = await connect({ installation, runId: 'probe', cwd: process.cwd() })
         const probe: RuntimeProbe = {
           ok: true,
-          version: installation.version ?? null,
+          version: connection.handshake?.agentVersion ?? installation.version ?? null,
           agentVersion: connection.handshake?.agentVersion ?? null,
           protocolVersion: connection.handshake?.protocolVersion ?? null,
           error: null,

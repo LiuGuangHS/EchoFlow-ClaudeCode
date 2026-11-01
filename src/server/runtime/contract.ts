@@ -111,7 +111,7 @@ export type RuntimeStartInput = {
 
 export type RuntimeProbe = {
   ok: boolean
-  /** The installation's own version, resolved by the caller; an ACP handshake cannot tell us. */
+  /** Effective engine version: the handshake's answer when it carries one, else the installation's resolved version. */
   version: string | null
   /** What the engine answers the handshake with — never the version we requested. */
   agentVersion: string | null
@@ -209,7 +209,18 @@ export type RuntimeEventEnvelope = {
   source: RuntimeEventSource
 }
 
-export type SessionConfigState = { id: string; name: string; value: string }
+export type SessionConfigCandidate = { value: string; name: string; description?: string }
+export type SessionConfigGroup = { name: string; options: SessionConfigCandidate[] }
+
+export type SessionConfigState = {
+  id: string
+  name: string
+  kind: 'select' | 'boolean'
+  category?: string
+  description?: string
+  value: string | boolean
+  options?: Array<SessionConfigCandidate | SessionConfigGroup>
+}
 
 export type RuntimeEventBody =
   | { kind: 'session.state'; state: 'idle' | 'running' | 'awaiting_approval' | 'closed' }
@@ -263,7 +274,7 @@ export type RuntimeSession = {
    * subagents — between user turns. One listener consumes the stream; a turn
    * started with no listener is dropped.
    */
-  onEngineTurn(listener: (events: AsyncIterable<RuntimeEvent>) => void): () => void
+  onEngineTurn(listener: (events: AsyncIterable<RuntimeEvent>) => void | Promise<void>): () => void
   respondApproval(requestId: string, optionId: string): Promise<void>
   interrupt(): Promise<InterruptResult>
   close(): Promise<void>
