@@ -1196,24 +1196,25 @@ describe('ConversationService', () => {
       baseUrl: 'https://api.echoflowai.cc',
       apiFormat: 'anthropic',
       models: {
-        main: 'claude-sonnet-4-6',
-        haiku: 'claude-haiku-4-5',
-        sonnet: 'claude-sonnet-4-6',
-        opus: 'claude-opus-4-7',
+        main: 'claude-sonnet-5-5',
+        fable: 'claude-fable-5-1',
+        haiku: 'claude-haiku-5-5',
+        sonnet: 'claude-sonnet-5-5',
+        opus: 'claude-opus-5-5',
       },
     })
 
     const service = new ConversationService() as any
     const env = (await service.buildChildEnv('/tmp', undefined, {
       providerId: provider.id,
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5-5',
     })) as Record<string, string>
 
     expect(env.ANTHROPIC_BASE_URL).toBe('https://api.echoflowai.cc')
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe('provider-key')
     expect(env.ANTHROPIC_API_KEY).toBe('')
-    expect(env.ANTHROPIC_MODEL).toBe('claude-sonnet-4-6')
-    expect(env.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS).toContain('claude-sonnet-4-6')
+    expect(env.ANTHROPIC_MODEL).toBe('claude-sonnet-5-5')
+    expect(env.CLAUDE_CODE_MODEL_CONTEXT_WINDOWS).toContain('claude-sonnet-5-5')
     expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES).toBe(
       'thinking,effort,adaptive_thinking,xhigh_effort,max_effort',
     )

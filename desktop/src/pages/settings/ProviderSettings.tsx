@@ -759,16 +759,47 @@ function stripModel1mMarkers(models: ModelMapping): ModelMapping {
   }
 }
 
-function getInitialModel1mSupport(
+function isModel1mCapable(
+  model: string | undefined,
+  provider: SavedProvider | undefined,
+  preset: ProviderPreset | undefined,
+): boolean {
+  const raw = model?.trim() ?? ''
+  if (!raw) return false
+  if (hasModel1mMarker(raw)) return true
+  const stripped = stripModel1mMarker(raw)
+  const known = provider?.modelContextWindows?.[stripped] ?? preset?.modelContextWindows?.[stripped]
+  // Only a reported 1M window ticks the box. An unknown model stays opt-in:
+  // ticking it appends `[1m]` to the id, and that silently breaks whatever the
+  // endpoint actually allows.
+  return known !== undefined && known >= 1_000_000
+}
+
+export function getInitialModel1mSupport(
   models: ModelMapping,
   provider?: SavedProvider,
+  preset?: ProviderPreset,
 ): Model1mSupport {
+  // The box describes the model's real window, not the slot it sits in. A 1M
+  // model starts ticked so the user only clears what they do not want; a model
+  // the provider reports as smaller stays unticked, because ticking it is what
+  // makes auto-compaction fail silently.
+  const tick = (slot: keyof Model1mSupport, model: string | undefined): boolean => {
+    const saved = provider?.model1mSupport?.[slot]
+    if (saved === false) return false
+    if (saved === true && model && !hasModel1mMarker(model)) {
+      const stripped = stripModel1mMarker(model)
+      const known = provider?.modelContextWindows?.[stripped] ?? preset?.modelContextWindows?.[stripped]
+      if (known !== undefined && known < 1_000_000) return false
+    }
+    return saved === true || isModel1mCapable(model, provider, preset)
+  }
   return {
-    main: provider?.model1mSupport?.main === true || hasModel1mMarker(models.main),
-    fable: provider?.model1mSupport?.fable === true || (models.fable ? hasModel1mMarker(models.fable) : false),
-    haiku: provider?.model1mSupport?.haiku === true || hasModel1mMarker(models.haiku),
-    sonnet: provider?.model1mSupport?.sonnet === true || hasModel1mMarker(models.sonnet),
-    opus: provider?.model1mSupport?.opus === true || hasModel1mMarker(models.opus),
+    main: tick('main', models.main),
+    fable: tick('fable', models.fable),
+    haiku: tick('haiku', models.haiku),
+    sonnet: tick('sonnet', models.sonnet),
+    opus: tick('opus', models.opus),
   }
 }
 
@@ -788,10 +819,6 @@ function applyModel1mSupportMapping(
     sonnet: applyModel1mSupport(models.sonnet, model1mSupport.sonnet),
     opus: applyModel1mSupport(models.opus, model1mSupport.opus),
   }
-}
-
-function hasAnyModel1mSupport(model1mSupport: Model1mSupport): boolean {
-  return MODEL_SLOTS.some((slot) => model1mSupport[slot])
 }
 
 function normalizeModelMapping(models: ModelMapping): ModelMapping {
@@ -1095,6 +1122,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
   const initialModel1mSupport = getInitialModel1mSupport(
     provider?.models ?? initialPreset.defaultModels,
     provider,
+    initialPreset,
   )
   const initialModelContextInputs = apply1mSupportToContextInputs(
     getModelContextInputs(initialModels, initialPreset, provider),
@@ -1278,7 +1306,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
     setApiFormat(preset.apiFormat ?? 'anthropic')
     setAuthStrategy(getPresetAuthStrategy(preset))
     const nextModels = stripModel1mMarkers(preset.defaultModels)
-    const nextModel1mSupport = getInitialModel1mSupport(preset.defaultModels)
+    const nextModel1mSupport = getInitialModel1mSupport(preset.defaultModels, undefined, preset)
     const nextModelContextInputs = apply1mSupportToContextInputs(
       getModelContextInputs(nextModels, preset),
       nextModel1mSupport,
@@ -1634,9 +1662,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
     const normalizedModels = normalizeModelMapping(models)
     const parsedAutoCompactWindow = parseAutoCompactWindowInput(autoCompactWindow)
     const parsedModelContextWindows = buildModelContextWindows(models, modelContextInputs)
-    const storedModel1mSupport = hasAnyModel1mSupport(model1mSupport)
-      ? model1mSupport
-      : undefined
+    const storedModel1mSupport = model1mSupport
     const storedImageGeneration = imageGeneration.enabled
       ? {
           model: imageGeneration.model.trim(),

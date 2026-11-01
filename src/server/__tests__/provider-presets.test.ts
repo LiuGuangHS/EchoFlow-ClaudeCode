@@ -79,10 +79,16 @@ describe('provider presets API', () => {
       baseUrl: 'https://api.echoflowai.cc',
       authStrategy: 'auth_token',
       defaultModels: {
-        main: 'claude-sonnet-4-6',
-        haiku: 'claude-haiku-4-5',
-        sonnet: 'claude-sonnet-4-6',
-        opus: 'claude-opus-4-7',
+        main: 'claude-sonnet-5-5',
+        fable: 'claude-fable-5-1',
+        haiku: 'claude-haiku-5-5',
+        sonnet: 'claude-sonnet-5-5',
+        opus: 'claude-opus-5-5',
+      },
+      modelContextWindows: {
+        'claude-sonnet-4-6': 1_000_000,
+        'claude-opus-4-7': 1_000_000,
+        'claude-haiku-4-5': 200_000,
       },
     })
     expect(deepseek).toMatchObject({
