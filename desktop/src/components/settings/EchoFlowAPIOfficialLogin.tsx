@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Eye, EyeOff, RefreshCw, Unlink } from 'lucide-react'
+import { ExternalLink, Eye, EyeOff, Plus, RefreshCw, Unlink } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { SegmentedControl } from '@/components/ui/SegmentedControl'
 import {
@@ -13,6 +13,7 @@ import { useProviderStore } from '../../stores/providerStore'
 import { normalizeProviderBaseUrl } from '../../config/providerPresets'
 import { useTranslation } from '../../i18n'
 import { getDesktopHost } from '@/lib/desktopHost'
+import { ApiError } from '../../api/client'
 
 
 type Props = {
@@ -28,6 +29,12 @@ type Credentials = {
 type Accounts = Record<EchoFlowEndpoint, EchoFlowAccount | null>
 
 const EMPTY_ACCOUNTS: Accounts = { main: null, dedicated: null }
+
+// The gateway says why it refused; a bare "failed" leaves the user guessing.
+function withReason(message: string, caught: unknown): string {
+  if (!(caught instanceof ApiError) || !caught.message || /^API error \d+$/.test(caught.message)) return message
+  return `${message} — ${caught.message}`
+}
 
 function formatQuota(remainQuota?: number, unlimitedQuota?: boolean, unlimitedLabel = ''): string {
   if (unlimitedQuota) return unlimitedLabel
@@ -53,6 +60,8 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
   const [isDisconnecting, setIsDisconnecting] = useState(false)
   const [showCredentialEditor, setShowCredentialEditor] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [isCreatingToken, setIsCreatingToken] = useState(false)
 
   const account = accounts[selectedEndpoint]
   const currentCredentials = credentials[selectedEndpoint]
@@ -154,8 +163,8 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
     try {
       const { account: refreshedAccount } = await echoflowApi.refreshAccount(selectedEndpoint)
       setAccounts((current) => ({ ...current, [selectedEndpoint]: refreshedAccount }))
-    } catch {
-      setError(t('echoflowApiOfficialLogin.refreshFailed'))
+    } catch (caught) {
+      setError(withReason(t('echoflowApiOfficialLogin.refreshFailed'), caught))
       // The server drops a credential the site rejected, so re-read the list:
       // a now-dead account stops looking live and the sign-in button returns.
       await echoflowApi.getAccounts()
@@ -194,6 +203,28 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
     } finally {
       setIsDisconnecting(false)
     }
+  }
+
+  // The site console creates tokens with unlimited quota and no expiry, so a
+  // user who never opened the console still gets a usable key here.
+  const createToken = async () => {
+    if (isCreatingToken || !account) return
+    setIsCreatingToken(true)
+    setError(null)
+    setNotice(null)
+    try {
+      const { account: refreshed } = await echoflowApi.createToken(selectedEndpoint)
+      setAccounts((current) => ({ ...current, [selectedEndpoint]: refreshed }))
+      setNotice(t('echoflowApiOfficialLogin.tokenCreated'))
+    } catch (caught) {
+      setError(withReason(t('echoflowApiOfficialLogin.createTokenFailed'), caught))
+    } finally {
+      setIsCreatingToken(false)
+    }
+  }
+
+  const openConsole = () => {
+    void getDesktopHost().shell.open(`${ECHOFLOW_BASE_URLS[selectedEndpoint]}/console/token`).catch(() => {})
   }
 
   const accountSummary = account
@@ -254,6 +285,7 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
         onChange={(endpoint) => {
           setSelectedEndpoint(endpoint)
           setError(null)
+          setNotice(null)
         }}
         label={t('echoflowApiOfficialLogin.endpointSwitch')}
         as="tablist"
@@ -293,13 +325,18 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          {canSignIn && (
-            <div>
+          <div className="flex flex-wrap items-center gap-2">
+            {canSignIn && (
               <Button variant="primary" size="md" onClick={() => void signIn()} loading={isSigningIn}>
                 {t('echoflowApiOfficialLogin.signIn')}
               </Button>
-            </div>
-          )}
+            )}
+            {/* Reachable before sign-in too: this is where a new account is
+                registered, so the link cannot wait for an account to exist. */}
+            <Button variant="secondary" size="md" icon={<ExternalLink className="h-4 w-4" />} onClick={openConsole}>
+              {t('echoflowApiOfficialLogin.openConsole')}
+            </Button>
+          </div>
           <details>
             <summary className="w-fit cursor-pointer text-xs text-[var(--color-text-secondary)]">
               {t('echoflowApiOfficialLogin.manualBind')}
@@ -309,11 +346,39 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
         </div>
       )}
 
+      {/* Feedback sits between the action that produced it and the token list,
+          not at the bottom of the card where the failing button is off-screen. */}
+      {error && (
+        <p
+          role="alert"
+          className="rounded-[var(--radius-md)] bg-[var(--color-error-container)] px-3 py-2 text-[13px] text-[var(--color-on-error-container)]"
+        >
+          {error}
+        </p>
+      )}
+      {notice && (
+        <p className="rounded-[var(--radius-md)] bg-[var(--color-surface-container-high)] px-3 py-2 text-[13px] text-[var(--color-text-secondary)]">
+          {notice}
+        </p>
+      )}
+
       {account && (
         <div className="flex flex-col gap-2">
-          <div className="flex items-baseline gap-2">
-            <div className="text-sm font-medium text-[var(--color-text-primary)]">{t('echoflowApiOfficialLogin.callTokens')}</div>
-            <div className="text-xs text-[var(--color-text-tertiary)]">{t('echoflowApiOfficialLogin.callTokensHint')}</div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex min-w-0 items-baseline gap-2">
+              <div className="text-sm font-medium text-[var(--color-text-primary)]">{t('echoflowApiOfficialLogin.callTokens')}</div>
+              <div className="text-xs text-[var(--color-text-tertiary)]">{t('echoflowApiOfficialLogin.callTokensHint')}</div>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              {account.live !== false && (
+                <Button variant="secondary" size="sm" icon={<Plus className="h-4 w-4" />} onClick={() => void createToken()} loading={isCreatingToken}>
+                  {t('echoflowApiOfficialLogin.createToken')}
+                </Button>
+              )}
+              <Button variant="secondary" size="sm" icon={<ExternalLink className="h-4 w-4" />} onClick={openConsole}>
+                {t('echoflowApiOfficialLogin.openConsole')}
+              </Button>
+            </div>
           </div>
 
           {tokenOptions.length > 0 ? (
@@ -365,15 +430,6 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
             <p className="text-xs text-[var(--color-text-tertiary)]">{t('echoflowApiOfficialLogin.noTokens')}</p>
           )}
         </div>
-      )}
-
-      {error && (
-        <p
-          role="alert"
-          className="rounded-[var(--radius-md)] bg-[var(--color-error-container)] px-3 py-2 text-[13px] text-[var(--color-on-error-container)]"
-        >
-          {error}
-        </p>
       )}
     </div>
   )

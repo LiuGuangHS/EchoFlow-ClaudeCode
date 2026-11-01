@@ -24,7 +24,7 @@ import type { ProviderPreset } from '../../types/providerPreset'
 import { normalizeProviderBaseUrl, presetMatchesBaseUrl, selectableProviderPresets } from '../../config/providerPresets'
 import { ClaudeOfficialLogin } from '../../components/settings/ClaudeOfficialLogin'
 import { EchoFlowAPIOfficialLogin } from '../../components/settings/EchoFlowAPIOfficialLogin'
-import { echoflowApi, type EchoFlowTokenSource } from '../../api/echoflow'
+import { ECHOFLOW_BASE_URLS, echoflowApi, type EchoFlowTokenSource } from '../../api/echoflow'
 import { ChatGPTOfficialLogin } from '../../components/settings/ChatGPTOfficialLogin'
 import { GrokOfficialLogin } from '../../components/settings/GrokOfficialLogin'
 import { OfficialProviderModelSettings } from '../../components/settings/OfficialProviderModelSettings'
@@ -297,7 +297,6 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
           <div className="min-w-0 flex-1">
             <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t('settings.providers.echoflowAPIOfficialName')}</div>
             <div className="mt-0.5 text-xs text-[var(--color-text-tertiary)]">{t('settings.providers.echoflowAPIOfficialDesc')}</div>
-            <div className="mt-1 text-[11px] text-[var(--color-text-tertiary)]">{t('settings.providers.echoflowAPIOfficialDisclaimer')}</div>
           </div>
         </div>
         <div className="border-t border-[var(--color-border-separator)] px-4 pb-4 pt-3">
@@ -305,6 +304,10 @@ export function ProviderSettings({ browserMode = false }: { browserMode?: boolea
               onAddFromToken={openEchoFlowProviderModal}
               onBindingChange={setEchoFlowHasAccount}
             />
+            {/* Legal text reads last: it is a condition, not a step. */}
+            <p className="mt-3 border-t border-[var(--color-border-separator)] pt-2 text-[11px] leading-relaxed text-[var(--color-text-tertiary)]">
+              {t('settings.providers.echoflowAPIOfficialDisclaimer')}
+            </p>
         </div>
       </div>
       <DndContext
@@ -1113,7 +1116,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets, echoFlowDra
     ? availablePresets.find((p) => p.id === provider.presetId) ?? fallbackPreset
     : (echoFlowDraft && echoFlowPreset) ?? selectablePresets[0] ?? fallbackPreset
   const echoFlowBaseUrl = echoFlowDraft
-    ? (echoFlowDraft.endpoint === 'main' ? 'https://api.echoflowai.cc' : 'https://expapi.echoflowai.cc')
+    ? ECHOFLOW_BASE_URLS[echoFlowDraft.endpoint]
     : initialPreset.baseUrl
   const initialModels = stripModel1mMarkers(provider?.models ?? initialPreset.defaultModels)
   const initialImageGeneration = provider

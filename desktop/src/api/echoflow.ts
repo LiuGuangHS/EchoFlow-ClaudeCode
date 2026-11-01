@@ -67,6 +67,8 @@ export const echoflowApi = {
     api.post<EchoFlowTokenSelectionResponse>('/api/echoflow/select-token', { endpoint, tokenId, ...(providerId ? { providerId } : {}) }),
   getTokenKey: (endpoint: EchoFlowEndpoint, tokenId: string) =>
     api.post<{ token: { id: string; name: string; key: string } }>('/api/echoflow/token', { endpoint, tokenId }),
+  createToken: (endpoint: EchoFlowEndpoint, name?: string) =>
+    api.post<{ account: EchoFlowAccount }>('/api/echoflow/create-token', { endpoint, ...(name ? { name } : {}) }),
   createProviderFromToken: (input: EchoFlowProviderCreateInput) =>
     api.post<{ provider: SavedProvider }>('/api/echoflow/provider', input),
   testProviderFromToken: (input: EchoFlowProviderTestInput) =>

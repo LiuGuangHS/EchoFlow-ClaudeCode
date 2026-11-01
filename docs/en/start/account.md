@@ -54,11 +54,11 @@ The account record lives locally in `echoflow-account.json` (user ID and line on
 
 ## Pick a token and configure a channel
 
-With the account signed in, **Choose an API key and configure a channel** appears below it. The dropdown lists that account's call tokens, each showing its **name and a masked key preview**, along with quota state.
+With the account signed in, the card lists that account's call tokens, each showing its **name and a masked key preview**, along with quota state.
 
 Selecting a token opens the shared detail panel — model, capabilities, and advanced parameters all live there. **The channel only appears in the model channel list when you save.** Closing the panel without saving leaves nothing behind.
 
-If the account has no usable tokens, create one in the console first, then click **Refresh**.
+If the account has no usable tokens, click **Create token** above the list. The app creates one with the console's defaults — unlimited quota, no expiry — and lists it right away, so you can pick it without leaving the app. To change quota or expiry, or to check usage, click **Console** next to it.
 
 ## Tokens and API keys are different
 
@@ -79,13 +79,13 @@ If the account area looks empty after upgrading, click **Refresh** once. If it i
 
 ## Troubleshooting
 
-**The login window closed but no account appeared.** Click **Sign in to EchoFlow SiHub** again. A transient network fault or a local server restart can interrupt one verification and close the window early; retrying is enough.
+**The login window closed but no account appeared.** Click **Sign in to EchoFlow SiHub** again. A transient network fault or a local server restart can interrupt one verification and close the window early; retrying is enough. If it keeps failing, open **Settings → Diagnostics**: the gateway's own reason for refusing the sign-in is recorded on the `bootstrap-rejected` line.
 
 **Balance is missing after signing in.** Click **Refresh**. Balance may not have synced right after sign-in; the panel shows "never synced" until it does.
 
 **It says the sign-in has expired.** Click **Sign in to EchoFlow SiHub** to sign in again. If you use manual binding, generate a fresh system access token in the console and use **Update token**.
 
-**The dropdown has no tokens.** This account has no call tokens yet. The console normally provides one; if not, create one and click **Refresh**.
+**The token list is empty.** This account has no call tokens yet. Click **Create token** above the list; it appears there as soon as it is created, with no refresh needed.
 
 **I want to switch to a third-party provider.** EchoFlow SiHub and third-party providers coexist; switch between them in the model channel list at any time. See [Connect a model](./models.md).
 

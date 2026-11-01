@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto'
 import { z } from 'zod'
-import { EchoFlowApiError, EchoFlowApiService } from '../services/echoflowApiService.js'
+import { ECHOFLOW_BASE_URLS, EchoFlowApiError, EchoFlowApiService } from '../services/echoflowApiService.js'
 import { LegacyMigrationService } from '../services/legacyMigrationService.js'
 import { isLocalAccessAuthorized } from '../localAccessAuth.js'
 import { ProviderService, toPublicProvider } from '../services/providerService.js'
@@ -11,10 +11,6 @@ import { CreateProviderSchema, TestProviderSchema } from '../types/provider.js'
 const service = new EchoFlowApiService()
 const providerService = new ProviderService()
 const ECHOFLOW_PRESET_ID = 'echoflowai'
-const ECHOFLOW_BASE_URLS = {
-  main: 'https://api.echoflowai.cc',
-  dedicated: 'https://expapi.echoflowai.cc',
-}
 
 const BindAccountSchema = z.object({
   userId: z.string().trim().min(1),
@@ -52,6 +48,11 @@ const EchoFlowTokenSchema = z.object({
   tokenId: z.string().trim().min(1),
 })
 
+const CreateEchoFlowTokenSchema = z.object({
+  endpoint: z.enum(['main', 'dedicated']).default('main'),
+  name: z.string().trim().min(1).max(64).optional(),
+})
+
 const LegacyMigrationConfirmationSchema = z.object({
   confirmed: z.literal(true),
 })
@@ -59,12 +60,17 @@ const EchoFlowSiteCookiesSchema = z.object({
   cookie: z.string().min(1).max(16 * 1024).refine(value => !/[\r\n\0]/.test(value)),
   userId: z.string().trim().min(1).max(128).refine(value => !/[\r\n\0]/.test(value)),
 })
+const EchoFlowHeaderValue = z.string().trim().min(1).max(512).refine(value => !/[\r\n\0]/.test(value))
 const EchoFlowAccountCredentialSchema = z.discriminatedUnion('kind', [
   z.object({
     endpoint: z.enum(['main', 'dedicated']).default('main'),
     kind: z.literal('session'),
     cookie: EchoFlowSiteCookiesSchema.shape.cookie,
     userId: EchoFlowSiteCookiesSchema.shape.userId,
+    // The sign-in window's own client identity. The gateway binds the session
+    // to it, so the server has to replay it on every later call.
+    userAgent: EchoFlowHeaderValue.optional(),
+    acceptLanguage: EchoFlowHeaderValue.optional(),
   }),
   z.object({
     endpoint: z.literal('dedicated'),
@@ -106,7 +112,14 @@ export async function handleEchoFlowApi(
         account: await service.setCredential(
           input.endpoint,
           input.kind === 'session'
-            ? { kind: 'session', userId: input.userId, cookie: input.cookie }
+            ? {
+                kind: 'session',
+                userId: input.userId,
+                cookie: input.cookie,
+                ...(input.userAgent
+                  ? { browser: { userAgent: input.userAgent, ...(input.acceptLanguage ? { acceptLanguage: input.acceptLanguage } : {}) } }
+                  : {}),
+              }
             : { kind: 'bearer', userId: input.userId, accessToken: input.accessToken },
         ),
       })
@@ -167,6 +180,11 @@ export async function handleEchoFlowApi(
       return Response.json({ provider: toPublicProvider(provider) }, { status: 201 })
     }
 
+    if (action === 'create-token' && req.method === 'POST') {
+      const input = CreateEchoFlowTokenSchema.parse(await req.json())
+      return Response.json({ account: await service.createAccountToken(input.endpoint, input.name) })
+    }
+
     if (action === 'token' && req.method === 'POST') {
       const input = EchoFlowTokenSchema.parse(await req.json())
       const token = await service.selectAccountToken(input.endpoint, input.tokenId)
@@ -199,11 +217,12 @@ export async function handleEchoFlowApi(
       const input = SelectTokenSchema.parse(await req.json())
       const token = await service.selectAccountToken(input.endpoint, input.tokenId)
       if (!input.providerId) {
-        const keyPreview = token.key.length <= 8
-          ? token.key.startsWith('sk-') ? `sk-${'•'.repeat(Math.max(4, token.key.length - 3))}` : '••••••••'
-          : token.key.startsWith('sk-')
-            ? `sk-${token.key.slice(3, 6)}****${token.key.slice(-4)}`
-            : `${token.key.slice(0, 6)}****${token.key.slice(-4)}`
+        const key = token.key ?? ''
+        const keyPreview = key.length <= 8
+          ? key.startsWith('sk-') ? `sk-${'•'.repeat(Math.max(4, key.length - 3))}` : '••••••••'
+          : key.startsWith('sk-')
+            ? `sk-${key.slice(3, 6)}****${key.slice(-4)}`
+            : `${key.slice(0, 6)}****${key.slice(-4)}`
         return Response.json({
           token: {
             id: token.id,
@@ -233,7 +252,10 @@ export async function handleEchoFlowApi(
       return Response.json({ error: 'invalid_request' }, { status: 400 })
     }
     if (error instanceof EchoFlowApiError) {
-      return Response.json({ error: error.code }, { status: error.code === 'token_invalid' ? 400 : 502 })
+      return Response.json(
+        { error: error.code, ...(error.detail ? { detail: error.detail } : {}) },
+        { status: error.code === 'token_invalid' ? 400 : 502 },
+      )
     }
     return errorResponse(error)
   }

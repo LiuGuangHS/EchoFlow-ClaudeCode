@@ -131,7 +131,9 @@ describe('EchoFlow account API', () => {
       const headers = new Headers(init?.headers)
       const userId = headers.get('new-api-user')
       const managementToken = headers.get('authorization')
-      if (url.endsWith('/api/user/self')) {
+      // The account route belongs to the gateway: New API serves /api/user/self,
+      // the dedicated (sub2api) gateway serves /api/v1/auth/me.
+      if (url.endsWith('/api/user/self') || url.endsWith('/api/v1/auth/me')) {
         const isDedicated = userId === 'dedicated-user'
         return new Response(JSON.stringify({
           success: true,
@@ -386,10 +388,10 @@ describe('EchoFlow account API', () => {
       const url = String(input)
       const headers = new Headers(init?.headers)
       requests.push({ url, authorization: headers.get('authorization') })
-      if (url.endsWith('/api/user/self')) {
+      if (url.endsWith('/api/user/self') || url.endsWith('/api/v1/auth/me')) {
         return new Response(JSON.stringify({ success: true, data: { quota: 500_000, group: 'default', username: 'echo' } }), { headers: { 'Content-Type': 'application/json' } })
       }
-      if (url.endsWith('/api/token/?p=0&size=100')) {
+      if (url.endsWith('/api/token/?p=0&size=100') || url.endsWith('/api/v1/keys?page=1&page_size=100')) {
         return new Response(JSON.stringify({ success: true, data: [{ id: 'model-token', name: 'Model key', key: 'server-model-key' }] }), { headers: { 'Content-Type': 'application/json' } })
       }
       return new Response(JSON.stringify({ data: [{ id: 'echo-model', owned_by: 'echo' }] }), { headers: { 'Content-Type': 'application/json' } })
@@ -503,10 +505,10 @@ describe('EchoFlow account API', () => {
     globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input)
       const headers = new Headers(init?.headers)
-      if (url.endsWith('/api/user/self')) {
+      if (url.endsWith('/api/user/self') || url.endsWith('/api/v1/auth/me')) {
         return new Response(JSON.stringify({ success: true, data: { quota: 500_000, group: 'dedicated', username: 'dedicated-user' } }), { headers: { 'Content-Type': 'application/json' } })
       }
-      if (url.endsWith('/api/token/?p=0&size=100')) {
+      if (url.endsWith('/api/token/?p=0&size=100') || url.endsWith('/api/v1/keys?page=1&page_size=100')) {
         return new Response(JSON.stringify({ success: true, data: [{ id: 'responses-token', name: 'Responses key', key: 'server-responses-key' }] }), { headers: { 'Content-Type': 'application/json' } })
       }
       requests.push({ url, authorization: headers.get('authorization') })
@@ -587,10 +589,10 @@ describe('EchoFlow account API', () => {
       const url = String(input)
       const headers = new Headers(init?.headers)
       requests.push({ url, headers })
-      if (url.endsWith('/api/user/self')) {
+      if (url.endsWith('/api/user/self') || url.endsWith('/api/v1/auth/me')) {
         return new Response(JSON.stringify({ success: true, data: { quota: 500_000, group: 'default', username: 'echo' } }), { headers: { 'Content-Type': 'application/json' } })
       }
-      if (url.endsWith('/api/token/?p=0&size=100')) {
+      if (url.endsWith('/api/token/?p=0&size=100') || url.endsWith('/api/v1/keys?page=1&page_size=100')) {
         return new Response(JSON.stringify({ success: true, data: [{ id: 'test-token', name: 'Test key', key: 'server-test-key' }] }), { headers: { 'Content-Type': 'application/json' } })
       }
       return new Response(JSON.stringify({ type: 'message', model: 'test-model', content: [] }), { headers: { 'Content-Type': 'application/json' } })

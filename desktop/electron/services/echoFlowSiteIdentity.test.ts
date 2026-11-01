@@ -39,6 +39,35 @@ describe('resolveSiteIdentity', () => {
     )
   })
 
+  it('sends the sign-in console\'s own client headers so the gateway recognises the session', async () => {
+    // The gateway picks the tenant from X-Forwarded-Host and binds the session
+    // to the client that signed in; a bare cookie comes back as "not signed in".
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      success: true,
+      data: { id: 7, username: 'site-user' },
+    }), { status: 200 }))
+
+    await resolveSiteIdentity(
+      'session=abc',
+      fetchImpl as unknown as typeof fetch,
+      { userAgent: 'EchoFlowTest/1.0', acceptLanguage: 'zh-CN' },
+    )
+
+    const init = (fetchImpl.mock.calls[0] as unknown[])[1] as { headers: Record<string, string> }
+    expect(init.headers).toMatchObject({
+      Cookie: 'session=abc',
+      'X-Forwarded-Host': 'api.echoflowai.cc',
+      'Cache-Control': 'no-store',
+      'User-Agent': 'EchoFlowTest/1.0',
+      'Accept-Language': 'zh-CN',
+      Origin: 'https://api.echoflowai.cc',
+      Referer: 'https://api.echoflowai.cc/console',
+      'Sec-Fetch-Dest': 'empty',
+      'Sec-Fetch-Mode': 'cors',
+      'Sec-Fetch-Site': 'same-origin',
+    })
+  })
+
   it('returns null for unauthenticated, failed, or malformed responses', async () => {
     const unauthorized = vi.fn(async () => new Response(JSON.stringify({
       success: false,

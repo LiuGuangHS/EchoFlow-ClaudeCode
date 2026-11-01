@@ -57,23 +57,60 @@ export function parseSiteIdentity(value: unknown): EchoFlowLoginIdentity | null 
  * A failed read is deliberately indistinguishable from an unauthenticated one:
  * the login window keeps polling either way.
  */
+/** The client profile the sign-in window sends; the session is bound to it. */
+export type SiteClientProfile = {
+  userAgent?: string
+  acceptLanguage?: string
+}
+
 export async function resolveSiteIdentity(
   cookieHeader: string,
   fetchImpl: typeof fetch = (input, init) => globalThis.fetch(input, init),
+  browser?: SiteClientProfile,
 ): Promise<EchoFlowLoginIdentity | null> {
   if (!cookieHeader) return null
+
+  const url = new URL(ECHOFLOW_SELF_URL)
+  // The gateway picks the tenant from X-Forwarded-Host and binds the session to
+  // the client that signed in, so the probe carries the console page's own
+  // headers; a bare cookie comes back as "not signed in".
+  const headers: Record<string, string> = {
+    Accept: 'application/json, text/plain, */*',
+    Cookie: cookieHeader,
+    'X-Forwarded-Host': url.host,
+    'Cache-Control': 'no-store',
+  }
+  if (browser) {
+    if (browser.userAgent) headers['User-Agent'] = browser.userAgent
+    headers['Accept-Language'] = browser.acceptLanguage ?? 'zh-CN'
+    headers.Origin = url.origin
+    headers.Referer = `${url.origin}/console`
+    headers['Sec-Fetch-Dest'] = 'empty'
+    headers['Sec-Fetch-Mode'] = 'cors'
+    headers['Sec-Fetch-Site'] = 'same-origin'
+  }
 
   let response: Response
   try {
     response = await fetchImpl(ECHOFLOW_SELF_URL, {
       method: 'GET',
-      headers: { Accept: 'application/json', Cookie: cookieHeader },
+      headers,
       signal: AbortSignal.timeout(IDENTITY_TIMEOUT_MS),
     })
   } catch {
     return null
   }
-  if (!response.ok) return null
+  if (!response.ok) {
+    // Diagnostic only: status and the gateway's own message, never credentials.
+    const detail = await response.text().catch(() => '')
+    let message: string | undefined
+    try {
+      const parsed = JSON.parse(detail) as { message?: unknown }
+      if (typeof parsed.message === 'string') message = parsed.message.slice(0, 200)
+    } catch {}
+    console.info('[echoFlowLogin] identity-probe:', JSON.stringify({ status: response.status, message }))
+    return null
+  }
 
   let body: string
   try {

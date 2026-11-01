@@ -21,7 +21,7 @@ export type SiteCookie = {
  * the host decides what each endpoint accepts.
  */
 export type EchoFlowLoginCredential =
-  | { kind: 'session'; userId: string; username?: string; cookie: string }
+  | { kind: 'session'; userId: string; username?: string; cookie: string; userAgent?: string; acceptLanguage?: string }
   | { kind: 'bearer'; userId: string; username?: string; accessToken: string }
 
 export type EchoFlowLoginProfile = {
