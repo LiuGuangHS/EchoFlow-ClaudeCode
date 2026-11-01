@@ -43,9 +43,21 @@ export async function connectAcp(options = {}) {
   child.stderr.setEncoding('utf8')
   child.stderr.on('data', (chunk) => { stderr += chunk })
 
+  // A launcher that cannot be spawned emits 'error'; without a listener that
+  // event is thrown and takes the whole harness process down.
+  const spawnFailure = new Promise((_, reject) => {
+    child.once('error', (error) => reject(new Error(`failed to launch the ACP launcher: ${error.message}`)))
+  })
+  spawnFailure.catch(() => {})
+  const spawned = new Promise((resolve) => {
+    child.once('spawn', resolve)
+  })
+
   const exited = new Promise((resolve) => {
     child.once('close', (code, signal) => resolve({ code, signal }))
   })
+
+  await Promise.race([spawned, spawnFailure])
 
   const stream = ndJsonStream(Writable.toWeb(child.stdin), Readable.toWeb(child.stdout))
   const app = client({ name: 'echoflow-harness' })
@@ -55,13 +67,22 @@ export async function connectAcp(options = {}) {
   let active
   let closeResult
 
+  // A launcher that cannot be spawned must fail the connection, not the
+  // process: the first protocol call reports the spawn error.
+  const guard = promise => Promise.race([promise, spawnFailure])
+
   async function shutdown() {
     child.stdin.end()
     const settled = await Promise.race([exited, delay(CLOSE_TIMEOUT_MS).then(() => undefined)])
     if (settled === undefined) {
       child.kill('SIGTERM')
       const killed = await Promise.race([exited, delay(CLOSE_TIMEOUT_MS).then(() => undefined)])
-      return killed ?? { code: null, signal: 'SIGKILL', stderr }
+      if (killed !== undefined) return { ...killed, stderr }
+      // The launcher ignored SIGTERM; the report must match what the process
+      // actually reached, so the SIGKILL is really sent.
+      child.kill('SIGKILL')
+      const reaped = await Promise.race([exited, delay(CLOSE_TIMEOUT_MS).then(() => undefined)])
+      return reaped ?? { code: null, signal: 'SIGKILL', stderr }
     }
     return { ...settled, stderr }
   }
@@ -73,14 +94,14 @@ export async function connectAcp(options = {}) {
     },
 
     async initialize() {
-      return agent.request('initialize', {
+      return guard(agent.request('initialize', {
         protocolVersion: PROTOCOL_VERSION,
         clientCapabilities: {},
-      })
+      }))
     },
 
     async newSession(request) {
-      active = await agent.buildSession(request).start()
+      active = await guard(agent.buildSession(request).start())
       return {
         sessionId: active.sessionId,
         modes: active.modes,
