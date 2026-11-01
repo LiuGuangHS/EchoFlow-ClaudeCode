@@ -18,13 +18,14 @@ Usage:
 from __future__ import annotations
 
 import ast
+import ctypes
 import importlib.util
 import json
 import subprocess
 import sys
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -37,6 +38,28 @@ CURSOR_BADGE = RUNTIME_DIR / "win_cursor_badge.py"
 
 def _win_source() -> str:
     return WIN_HELPER.read_text(encoding="utf-8")
+
+
+def _win_helper_module():
+    """Import win_helper on a non-Windows host.
+
+    Its Windows-only dependencies are imported at module scope but only *called*
+    inside commands, so stub modules are enough to reach the pure helpers below.
+    """
+    stubs = {
+        "mss": SimpleNamespace(),
+        "pyautogui": SimpleNamespace(),
+        "PIL": SimpleNamespace(Image=SimpleNamespace()),
+    }
+    with patch.dict(sys.modules, stubs), \
+            patch.object(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE, create=True), \
+            patch.object(ctypes, "windll", MagicMock(), create=True), \
+            patch.object(ctypes, "WinDLL", MagicMock(), create=True):
+        spec = importlib.util.spec_from_file_location("win_helper_under_test", WIN_HELPER)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    return module
 
 
 class TestKeyMap(unittest.TestCase):
@@ -693,14 +716,18 @@ class TestPermissions(unittest.TestCase):
 
 
 class TestDesktopHostIdentity(unittest.TestCase):
+    """The packaged host must resolve to the bundle ID the desktop sends in
+    ECHOFLOW_COMPUTER_USE_HOST_BUNDLE_ID, or the agent's own window stops being
+    recognised as the host in window enumeration and the frontmost gate."""
+
     def test_packaged_exe_maps_to_the_host_identity_sent_by_desktop(self):
-        source = _win_source()
-        self.assertIn(
-            'DESKTOP_HOST_BUNDLE_ID = "com.claude-code-haha.desktop"',
-            source,
-        )
-        self.assertIn('stem.casefold() == "claude code haha"', source)
-        self.assertIn('"bundleId": _windows_bundle_id(exe_path)', source)
+        module = _win_helper_module()
+        exe = "C:/Program Files/EchoFlow Code/EchoFlow Code.exe"
+        self.assertEqual(module._windows_bundle_id(exe), "com.echoflow.code.desktop")
+
+    def test_other_executables_keep_their_own_identity(self):
+        module = _win_helper_module()
+        self.assertEqual(module._windows_bundle_id("C:/Windows/notepad.exe"), "notepad")
 
 
 class TestSourceIntegrity(unittest.TestCase):

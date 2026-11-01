@@ -36,7 +36,9 @@ import { NativeCommandError } from '../../vendor/computer-use-mcp/nativeError.js
 const REQUEST_TIMEOUT_MS = 20_000
 const READINESS_TIMEOUT_MS = 8_000
 const SHUTDOWN_GRACE_MS = 1_000
-export const CU_HELPER_PROTOCOL_VERSION = 'CCHahaComputerUseIPC-2'
+// Must equal `ComputerUseDaemonProtocol.version` in the Swift helper;
+// cuHelperProtocol.contract.test.ts holds the two together.
+export const CU_HELPER_PROTOCOL_VERSION = 'EchoFlowComputerUseIPC-2'
 const CONNECTION_SCOPED_COMMANDS = new Set([
   'ping',
   'check_permissions',
