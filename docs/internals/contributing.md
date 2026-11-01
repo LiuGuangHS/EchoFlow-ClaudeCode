@@ -164,6 +164,8 @@ bun run check:release-surface     # 发版面：品牌标记、版本/品牌漂�
 | Coverage gate | `artifacts/coverage/<timestamp>/coverage-report.md` 或 `.json`；修复 `changedLines.failures` / `failures`，`targetGaps` 是技术债提示 |
 | 构建、类型、lint、文档或 native | 修复对应日志指出的本次变更问题，重跑受影响检查 |
 
+共享诊断导出只保留有类型、有界的证据：退出码、HTTP 状态、耗时、计数、索引模式与状态等；消息正文、凭据、任意堆栈、路径和上游响应体一律省略或脱敏。新增一个可分享字段时，要同时补「保留该字段」和「脱敏/省略相邻敏感值」两类测试，并把它加入 `src/server/services/diagnosticsShare.ts` 的允许列表。
+
 只有最终 diff 的 `bun run verify` 报告通过，才能声明 PR-ready/full validation。不要通过降低 coverage baseline/threshold 或改写测试预期掩盖失败。
 
 ## Agent 工具链

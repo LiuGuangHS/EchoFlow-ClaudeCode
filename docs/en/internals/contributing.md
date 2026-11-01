@@ -138,6 +138,8 @@ When a check fails, consult the evidence for that failure:
 | Coverage gate | `artifacts/coverage/<timestamp>/coverage-report.md` or `.json`; address `changedLines.failures` / `failures`, while `targetGaps` signal technical debt |
 | Build, types, lint, docs, or native | Fix issues caused by the change identified in the relevant log and rerun affected checks |
 
+Shared diagnostic exports keep typed, bounded evidence only — exit codes, HTTP statuses, timings, counts, index mode and state — and omit or redact message bodies, credentials, arbitrary stacks, paths, and upstream response bodies. Every new shareable field ships with both a retention test and a redaction/omission test, and is added to the allowlist in `src/server/services/diagnosticsShare.ts`.
+
 Claim PR-ready/full validation only after `bun run verify` passes for the final diff. Do not lower coverage baselines/thresholds or rewrite test expectations to hide failures.
 
 ## Agent Toolset
