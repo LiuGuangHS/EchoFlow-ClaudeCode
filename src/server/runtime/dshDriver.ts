@@ -46,6 +46,8 @@ export type DshDriverOptions = {
   closeTimeoutMs?: number
   /** Budget for a session close, across interrupt and session/close together. */
   sessionCloseTimeoutMs?: number
+  /** Budget for opening a session, across session/new and the config options. */
+  sessionOpenTimeoutMs?: number
   /** Quiet period that ends a turn the engine started on its own. */
   engineTurnIdleMs?: number
   /** Events held for a consumer that stopped reading before the oldest are dropped. */
@@ -155,6 +157,22 @@ function settleWithin(promise: Promise<unknown>, timeoutMs: number): Promise<boo
   })
 }
 
+/** Fails a request the engine never answers, so the caller is not stuck. */
+async function withBudget<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs)
+        timer.unref?.()
+      }),
+    ])
+  } finally {
+    if (timer !== null) clearTimeout(timer)
+  }
+}
+
 /** Only what the agent declared in the handshake may be claimed as native. */
 function capabilitiesFromHandshake(
   handshake: { agentCapabilities?: Record<string, unknown> } | null,
@@ -234,6 +252,7 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
   const interruptTimeoutMs = options.interruptTimeoutMs ?? 5_000
   const closeTimeoutMs = options.closeTimeoutMs ?? 10_000
   const sessionCloseTimeoutMs = options.sessionCloseTimeoutMs ?? 2_000
+  const sessionOpenTimeoutMs = options.sessionOpenTimeoutMs ?? 15_000
   const engineTurnIdleMs = options.engineTurnIdleMs ?? 1_000
   const turnBufferLimit = options.turnBufferLimit ?? 2_000
 
@@ -271,7 +290,14 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
         // A destroyed pipe emits 'close' without 'end'. Closing, not erroring,
         // keeps a normal end's still-queued tail when 'close' follows it.
         child.stdout?.on('close', endInput)
-        child.stdout?.on('error', (error) => controller.error(error))
+        child.stdout?.on('error', (error) => {
+          try {
+            controller.error(error)
+          } catch {
+            // the stream already ended; erroring a closed controller throws
+            // here, and an uncaught throw in an event handler kills the server
+          }
+        })
       },
     })
     const stdin = new WritableStream<Uint8Array>({
@@ -724,21 +750,35 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
         }
         let builder = connection.agent.buildSession(cwd)
         for (const server of mcpServers ?? []) builder = builder.withMcpServer(toAcpMcpServer(server))
-        const active = await builder.start()
+        // An engine that never answers session/new would otherwise hang the
+        // caller — and the host's close — for good.
+        const active = await withBudget(
+          builder.start(),
+          sessionOpenTimeoutMs,
+          'the dsh runtime did not answer session/new in time',
+        )
         try {
           if (model !== undefined) {
-            await connection.agent.request(AGENT_METHODS.session_set_config_option, {
-              sessionId: active.sessionId,
-              configId: 'model',
-              value: JSON.stringify([model.provider, model.model]),
-            })
+            await withBudget(
+              connection.agent.request(AGENT_METHODS.session_set_config_option, {
+                sessionId: active.sessionId,
+                configId: 'model',
+                value: JSON.stringify([model.provider, model.model]),
+              }),
+              sessionOpenTimeoutMs,
+              'the dsh runtime did not answer the model option in time',
+            )
           }
           if (reasoningEffort !== undefined) {
-            await connection.agent.request(AGENT_METHODS.session_set_config_option, {
-              sessionId: active.sessionId,
-              configId: 'reasoning_effort',
-              value: reasoningEffort,
-            })
+            await withBudget(
+              connection.agent.request(AGENT_METHODS.session_set_config_option, {
+                sessionId: active.sessionId,
+                configId: 'reasoning_effort',
+                value: reasoningEffort,
+              }),
+              sessionOpenTimeoutMs,
+              'the dsh runtime did not answer the reasoning effort option in time',
+            )
           }
         } catch (error) {
           // A half-open session with the wrong model is worse than no session:

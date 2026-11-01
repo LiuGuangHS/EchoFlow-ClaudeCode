@@ -327,6 +327,22 @@ describe('dshDriver over a real ACP child process', () => {
     await connection.close()
   })
 
+  test('opening a session fails instead of hanging when the engine never answers session/new', async () => {
+    const driver = createDshDriver({ resolveCommand: command, sessionOpenTimeoutMs: 300 })
+    const connection = await driver.start({
+      installation,
+      runId: 'run-1',
+      cwd: process.cwd(),
+      env: { FIXTURE_STALL_SESSION_NEW: '1' },
+    })
+    const failure = await connection
+      .openSession({ sessionId: 'session-1', cwd: process.cwd() })
+      .catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(Error)
+    expect((failure as Error).message).toContain('session/new')
+    await connection.close()
+  })
+
   test('closing an already closed session does not send a second close', async () => {
     const { connection, readCalls } = await openWithCallLog()
     const session = await connection.openSession({ sessionId: 'session-1', cwd: process.cwd() })

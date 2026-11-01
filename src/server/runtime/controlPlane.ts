@@ -228,15 +228,14 @@ export function createRuntimeHost(options: RuntimeHostOptions = {}): RuntimeHost
     close() {
       if (closing !== null) return closing
       closing = (async () => {
-        await Promise.all([
-          ...[...connecting.values()].map((operation) => operation.catch(() => {})),
-          ...[...openingSessions.values()].map((operation) => operation.catch(() => {})),
-        ])
-        const open = [...connections.values()]
+        await Promise.all([...connecting.values()].map((operation) => operation.catch(() => {})))
+        const live = [...connections.values()]
         sessions.clear()
-        // The exit handler clears `connections`; snapshot first so a synchronous
-        // exit cannot shorten the loop.
-        await Promise.all(open.map(({ connection }) => connection.close()))
+        // The engines close first: a session open still in flight is only
+        // aborted by the connection it waits on, so waiting for it before the
+        // close would hang forever on an engine that never answers.
+        await Promise.all(live.map(({ connection }) => connection.close()))
+        await Promise.all([...openingSessions.values()].map((operation) => operation.catch(() => {})))
       })()
       return closing
     },

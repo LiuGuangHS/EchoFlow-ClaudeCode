@@ -279,6 +279,37 @@ describe('runtime control plane', () => {
     expect(() => host.getSession('session-1')).toThrow(UnknownRuntimeSessionError)
   })
 
+  test('close does not wait forever for a session open the engine never answers', async () => {
+    const base = createFakeDshShapedDriver()
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let connectionClosed = 0
+    const host = createRuntimeHost()
+    host.registerDriver({
+      ...base,
+      async start(input) {
+        const connection = await base.start(input)
+        return {
+          ...connection,
+          async openSession(request) {
+            await gate
+            return connection.openSession(request)
+          },
+          async close() {
+            connectionClosed += 1
+            release()
+            await connection.close()
+          },
+        }
+      },
+    })
+    await host.connect({ installation, cwd: '/tmp' })
+    void host.openSession({ installationId: 'inst-1', sessionId: 'session-1', cwd: '/tmp' }).catch(() => {})
+    const closing = host.close()
+    await expect(closing).resolves.toBeUndefined()
+    expect(connectionClosed).toBe(1)
+  })
+
   test('reopening the same product session id is a typed error', async () => {
     const { host } = await hostWithSession()
     await expect(host.openSession({ installationId: 'inst-1', sessionId: 'session-1', cwd: '/tmp' }))

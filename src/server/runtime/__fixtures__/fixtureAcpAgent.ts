@@ -17,6 +17,7 @@ const callsMarker = process.env.FIXTURE_CALLS_MARKER
 const rejectConfigIds = new Set((process.env.FIXTURE_REJECT_CONFIG_IDS ?? '').split(',').filter(Boolean))
 const ignoreClose = process.env.FIXTURE_IGNORE_CLOSE === '1'
 const writeAfterClose = process.env.FIXTURE_WRITE_AFTER_CLOSE === '1'
+const stallSessionNew = process.env.FIXTURE_STALL_SESSION_NEW === '1'
 const app = agent({ name: 'fixture-acp-agent' })
 
 /** Requests cross the process boundary, so the test reads them from a file. */
@@ -44,8 +45,9 @@ app.onRequest(AGENT_METHODS.initialize, () => ({
   ...(handshake.agentInfo === undefined ? {} : { agentInfo: handshake.agentInfo }),
 }))
 
-app.onRequest(AGENT_METHODS.session_new, (ctx) => {
+app.onRequest(AGENT_METHODS.session_new, async (ctx) => {
   record('session/new', ctx.params)
+  if (stallSessionNew) await new Promise<void>(() => {})
   sessionCounter += 1
   return { sessionId: `fixture-native-${sessionCounter}` }
 })
