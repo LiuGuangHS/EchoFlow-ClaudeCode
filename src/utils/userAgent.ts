@@ -17,7 +17,7 @@ export function getClaudeCodeUserAgent(): string {
  * guaranteed to exist when this module is evaluated outside those entry points
  * (tests, plain ts runners), so both are guarded rather than assumed.
  */
-export function getCcHahaVersion(): string {
+export function getEchoFlowVersion(): string {
   const fromEnv = process.env.APP_VERSION?.trim()
   if (fromEnv) return fromEnv
   return typeof MACRO !== 'undefined' && MACRO.VERSION ? MACRO.VERSION : 'dev'

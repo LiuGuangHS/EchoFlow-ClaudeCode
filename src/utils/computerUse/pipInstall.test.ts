@@ -79,7 +79,7 @@ describe('Windows virtual cursor Python process identity', () => {
     if (process.platform === 'win32') {
       expect(environment?.PYTHONIOENCODING).toBe('utf-8')
       expect(environment?.PYTHONUTF8).toBe('1')
-      expect(Number(environment?.CC_HAHA_COMPUTER_USE_INPUT_TAG)).toBeGreaterThan(0)
+      expect(Number(environment?.ECHOFLOW_COMPUTER_USE_INPUT_TAG)).toBeGreaterThan(0)
       expect(command.python.endsWith('Scripts\\python.exe')).toBe(true)
     } else {
       expect(environment).toBeUndefined()

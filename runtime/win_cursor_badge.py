@@ -599,7 +599,7 @@ class VirtualCursorOverlay:
 
     def create(self) -> None:
         hinst = kernel32.GetModuleHandleW(None)
-        class_name = "CcHahaVirtualCursorOverlay"
+        class_name = "EchoFlowVirtualCursorOverlay"
         wc = WNDCLASS()
         wc.lpfnWndProc = self._wndproc
         wc.hInstance = hinst

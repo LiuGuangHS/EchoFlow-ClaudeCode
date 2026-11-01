@@ -4,9 +4,9 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { ProviderService } from './providerService.js'
 import { drainTraceCaptureForTests } from './traceCaptureService.js'
-import { echoFlowOAuthService as hahaOAuthService } from './echoFlowOAuthService.js'
-import { echoFlowOpenAIOAuthService as hahaOpenAIOAuthService } from './echoFlowOpenAIOAuthService.js'
-import { echoFlowGrokOAuthService as hahaGrokOAuthService } from './echoFlowGrokOAuthService.js'
+import { echoFlowOAuthService } from './echoFlowOAuthService.js'
+import { echoFlowOpenAIOAuthService } from './echoFlowOpenAIOAuthService.js'
+import { echoFlowGrokOAuthService } from './echoFlowGrokOAuthService.js'
 import {
   decideAutoQuestionAnswers,
   type AutoQuestion,
@@ -42,7 +42,7 @@ describe('autoQuestionDecisionService', () => {
 
   afterEach(async () => {
     globalThis.fetch = originalFetch
-    hahaOpenAIOAuthService.dispose()
+    echoFlowOpenAIOAuthService.dispose()
     await drainTraceCaptureForTests()
     if (originalConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR
     else process.env.CLAUDE_CONFIG_DIR = originalConfigDir
@@ -229,7 +229,7 @@ describe('autoQuestionDecisionService', () => {
   })
 
   test('uses Claude Official OAuth Haiku when the session has no provider ID', async () => {
-    await hahaOAuthService.saveTokens({
+    await echoFlowOAuthService.saveTokens({
       accessToken: 'fake-claude-token', refreshToken: 'fake-refresh-token',
       expiresAt: Date.now() + 60 * 60_000, scopes: ['user:inference'], subscriptionType: 'pro',
     })
@@ -256,7 +256,7 @@ describe('autoQuestionDecisionService', () => {
   })
 
   test('uses ChatGPT Official OAuth through its Responses endpoint', async () => {
-    await hahaOpenAIOAuthService.saveTokens({
+    await echoFlowOpenAIOAuthService.saveTokens({
       accessToken: 'fake-openai-token', refreshToken: 'fake-refresh-token',
       expiresAt: Date.now() + 60 * 60_000, accountId: 'acct-auto-question', email: 'test@example.com',
     })
@@ -285,7 +285,7 @@ describe('autoQuestionDecisionService', () => {
   })
 
   test('uses Grok Official OAuth when no API key is saved', async () => {
-    await hahaGrokOAuthService.saveTokens({
+    await echoFlowGrokOAuthService.saveTokens({
       accessToken: 'fake-grok-token', refreshToken: 'fake-refresh-token',
       expiresAt: Date.now() + 60 * 60_000, email: null,
     })

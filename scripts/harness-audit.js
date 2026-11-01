@@ -484,8 +484,21 @@ const BRAND_RESIDUE_ALLOWED = new Set([
   // Migration sources must keep the historical directory name so existing user
   // data still resolves; the old name is the compatibility contract.
   'desktop/src/lib/persistenceMigrations.ts',
-  // This scanner holds the patterns themselves.
+  'src/server/services/legacyMigrationService.ts',
+  'src/server/services/persistentStorageMigrations.ts',
+  'src/server/services/sessionCollaborationHost.ts',
+  // Readers that must still recognise values an older install wrote.
+  'src/goals/goalState.ts',
+  'src/server/services/sessionService.ts',
+  'src/server/services/workflowService.ts',
+  'src/server/services/workflowTranscriptProjection.ts',
+  'src/services/api/client.ts',
+  'src/utils/openAIReasoningEnvelope.ts',
+  'src/utils/providerManagedEnvCompat.ts',
+  'src/utils/thinking.ts',
+  // These files hold the patterns themselves.
   'scripts/harness-audit.js',
+  'scripts/pr/release-surface-audit.ts',
 ]);
 
 function collectSourceFiles(rootDir, relativeDir, predicate, excludedDirs) {

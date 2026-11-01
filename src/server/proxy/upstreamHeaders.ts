@@ -12,7 +12,7 @@
  * ships with the app version and needs no migration or edit-form control.
  */
 
-import { getCcHahaVersion } from '../../utils/userAgent.js'
+import { getEchoFlowVersion } from '../../utils/userAgent.js'
 
 export const UPSTREAM_SESSION_ID_PLACEHOLDER = '$SESSION_ID'
 export const UPSTREAM_VERSION_PLACEHOLDER = '$VERSION'
@@ -79,7 +79,7 @@ export function resolveUpstreamHeaders(
 
     const value = rawValue
       .split(UPSTREAM_SESSION_ID_PLACEHOLDER).join(sessionId ?? '')
-      .split(UPSTREAM_VERSION_PLACEHOLDER).join(getCcHahaVersion())
+      .split(UPSTREAM_VERSION_PLACEHOLDER).join(getEchoFlowVersion())
       .trim()
     if (!value || /[\r\n]/.test(value)) continue
 

@@ -1,5 +1,7 @@
-import { join } from 'node:path'
+import { copyFile, mkdir, access } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
+import { getEchoFlowInternalDir } from '../../utils/echoFlowConfigRoot.js'
 import { sessionService } from './sessionService.js'
 import { SearchService } from './searchService.js'
 import { conversationService } from './conversationService.js'
@@ -34,9 +36,31 @@ export function configureSessionCollaborationHost(serverHost: string, serverPort
   return () => { disposed = true; removeGuard(); unsubscribe?.(); unsubscribe = undefined; current = undefined }
 }
 
+/**
+ * Sessions recorded before the config directory was renamed still sit under
+ * `cc-haha`. Copy that file forward once, leaving the original untouched, so
+ * upgrades keep their collaboration history and later writes use the current
+ * directory.
+ */
+async function adoptLegacyCollaborationState(configDir: string, path: string): Promise<void> {
+  const legacy = join(configDir, 'cc-haha', 'session-collaboration', 'state.json')
+  try {
+    await access(path)
+    return
+  } catch {}
+  try {
+    await mkdir(dirname(path), { recursive: true })
+    await copyFile(legacy, path)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error
+  }
+}
+
 export async function getSessionCollaborationService(): Promise<SessionCollaborationService> {
-  const path = join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'cc-haha', 'session-collaboration', 'state.json')
+  const configDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude')
+  const path = join(getEchoFlowInternalDir(configDir), 'session-collaboration', 'state.json')
   if (!current || current.path !== path) {
+    await adoptLegacyCollaborationState(configDir, path)
     const service = new SessionCollaborationService({
       statePath: path,
       sessions: {

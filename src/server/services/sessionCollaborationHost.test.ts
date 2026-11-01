@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test, spyOn, mock } from 'bun:test'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { SessionCollaborationService, type CollaborationMessage } from './sessionCollaborationService.js'
 import { handleSessionCollaborationEvent, configureSessionCollaborationHost, getSessionCollaborationService } from './sessionCollaborationHost.js'
 import { sessionService } from './sessionService.js'
@@ -64,6 +64,30 @@ test('streaming output does not broadcast collaboration refreshes until collabor
     sessionId: 'worker',
     message: { type: 'result', is_error: false, result: 'done', uuid: 'result-1' },
   })).toBe(true)
+})
+
+test('collaboration state written before the directory rename is carried forward', async () => {
+  const previous = process.env.CLAUDE_CONFIG_DIR
+  process.env.CLAUDE_CONFIG_DIR = directory
+  const legacy = join(directory, 'cc-haha', 'session-collaboration', 'state.json')
+  await mkdir(dirname(legacy), { recursive: true })
+  await writeFile(legacy, JSON.stringify({
+    revision: 7,
+    members: { worker: { sessionId: 'worker', rootSessionId: 'worker', parentSessionId: null, state: 'idle', stopped: false } },
+    messages: [],
+  }))
+  try {
+    const service = await getSessionCollaborationService()
+
+    expect((await service.status()).revision).toBe(7)
+    const adopted = join(directory, 'echoflow-code', 'session-collaboration', 'state.json')
+    expect(await readFile(adopted, 'utf8')).toContain('"worker"')
+    // The old file stays in place: it is still a migration source.
+    expect(await readFile(legacy, 'utf8')).toContain('"worker"')
+  } finally {
+    if (previous === undefined) delete process.env.CLAUDE_CONFIG_DIR
+    else process.env.CLAUDE_CONFIG_DIR = previous
+  }
 })
 
 test('host rejects unavailable source workspace explicitly instead of silently choosing another directory', async () => {

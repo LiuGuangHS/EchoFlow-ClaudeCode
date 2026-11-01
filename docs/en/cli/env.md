@@ -76,7 +76,7 @@ Desktop stores the provider index at:
 ~/.claude/echoflow-code/providers.json
 ```
 
-Provider-managed environment data is written to an isolated Haha configuration. You do not need to copy it into `~/.claude/settings.json`. When the CLI finds an active provider, it reuses its credentials, models, and protocol settings. Providers using `openai_chat` or `openai_responses` automatically use a loopback proxy.
+Provider-managed environment data is written to an isolated EchoFlow configuration. You do not need to copy it into `~/.claude/settings.json`. When the CLI finds an active provider, it reuses its credentials, models, and protocol settings. Providers using `openai_chat` or `openai_responses` automatically use a loopback proxy.
 
 See [Third-Party Models](../start/models.md) for the setup flow.
 
@@ -123,7 +123,7 @@ There is no reliable three-step rule such as “shell > `.env` > settings”:
 
 1. `bin/echoflow-code` first lets Bun load the repository `.env`.
 2. CLI initialization merges enabled user, project, local, command-line, and managed setting sources.
-3. An active Haha provider overrides provider-routing values from ordinary Claude settings so the two clients do not contaminate each other.
+3. An active EchoFlow provider overrides provider-routing values from ordinary Claude settings so the two clients do not contaminate each other.
 4. Runtime values injected by the Desktop host are protected from same-name fields in `settings.json`.
 5. Enterprise policy and `--setting-sources` can also change the effective result.
 

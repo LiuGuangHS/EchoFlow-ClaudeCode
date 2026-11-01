@@ -8,9 +8,9 @@ import { anthropicToOpenaiResponses } from '../proxy/transform/anthropicToOpenai
 import type { AnthropicRequest } from '../proxy/transform/types.js'
 import { openaiResponsesStreamToAnthropicResponse } from '../proxy/streaming/openaiResponsesStreamToAnthropicResponse.js'
 import type { ProviderAuthStrategy } from '../types/provider.js'
-import { echoFlowOpenAIOAuthService as hahaOpenAIOAuthService } from './echoFlowOpenAIOAuthService.js'
-import { echoFlowGrokOAuthService as hahaGrokOAuthService } from './echoFlowGrokOAuthService.js'
-import { echoFlowOAuthService as hahaOAuthService } from './echoFlowOAuthService.js'
+import { echoFlowOpenAIOAuthService } from './echoFlowOpenAIOAuthService.js'
+import { echoFlowGrokOAuthService } from './echoFlowGrokOAuthService.js'
+import { echoFlowOAuthService } from './echoFlowOAuthService.js'
 import { resolveClaudeOfficialRuntimeModel } from './claudeOfficialRuntime.js'
 import {
   getNetworkProxyFetchOptions,
@@ -208,7 +208,7 @@ async function askClaudeOfficial(
 ): Promise<string | null> {
   const model = await resolveClaudeOfficialRuntimeModel('haiku')
   if (!model || signal.aborted) return null
-  const token = await hahaOAuthService.ensureFreshAccessToken()
+  const token = await echoFlowOAuthService.ensureFreshAccessToken()
   if (!token || signal.aborted) return null
   const networkSettings = await loadNetworkSettings()
   if (signal.aborted) return null
@@ -308,7 +308,7 @@ async function askOpenAIOfficial(
   networkSettings: NetworkSettings,
   signal: AbortSignal,
 ): Promise<string | null> {
-  const tokens = await hahaOpenAIOAuthService.ensureFreshTokens()
+  const tokens = await echoFlowOpenAIOAuthService.ensureFreshTokens()
   if (!tokens?.accessToken || signal.aborted) return null
   const mappedModel = resolveOpenAICodexModel(model)
   const requestBody = anthropicToOpenaiResponses({
@@ -342,7 +342,7 @@ async function askGrokOfficial(
   networkSettings: NetworkSettings,
   signal: AbortSignal,
 ): Promise<string | null> {
-  const tokens = await hahaGrokOAuthService.ensureFreshTokens()
+  const tokens = await echoFlowGrokOAuthService.ensureFreshTokens()
   if (!tokens?.accessToken || signal.aborted) return null
   const requestBody = anthropicToOpenaiResponses({
     ...body,
