@@ -146,7 +146,7 @@ The default toolset is five plugins covering design, planning, review, and minim
 
 | Plugin | Purpose | Entry point |
 | --- | --- | --- |
-| `superpowers` | The main flow: clarify requirements → implementation plan → batched execution with review checkpoints | `/superpowers:brainstorm`, `/superpowers:write-plan`, `/superpowers:execute-plan`; review with `@code-reviewer` |
+| `superpowers` | The main flow: clarify requirements → implementation plan → batched execution with review checkpoints | Invoke through the Skill tool by real name: `superpowers:brainstorming` → `superpowers:writing-plans` → `superpowers:executing-plans`; review with `code-review:code-review` |
 | `ponytail` | The minimal-code ladder: ask whether the code is needed, then reuse, standard library, native features, and only then the least code that works | `/ponytail-review` on the current diff; `/ponytail-audit` across the repo |
 | `frontend-design` | Interface design quality for the desktop app and docs site, avoiding generic output | Triggered on demand for UI design work |
 | `typescript-lsp` | TypeScript/JavaScript go-to-definition, find-references, and diagnostics | Always on |
@@ -274,6 +274,16 @@ Entry points for mobile, native, provider/chat contracts, persistence, and cover
 Focused tests are the normal development loop. Run `bun run verify` locally when claiming PR-ready/full validation; hosted CI still executes every selected required lane.
 
 Executable JS/TS production changes must include matching tests. See the Feature Quality Contract above and `scripts/pr/change-policy.ts` for area boundaries; missing same-area tests block the change unless a maintainer applies `allow-missing-tests`. Coverage baseline/threshold changes are also blocked unless a maintainer applies `allow-coverage-baseline-change`.
+
+### What each lane actually runs
+
+- `bun run check:impact` selection is import-aware: a change routes to every surface that imports it, not only the directory it lives in. The report's `## Cross-surface impact` section names the importer that pulled in each extra check.
+- Provider, auth, proxy, or runtime changes may additionally select `bun run check:provider-contract`; desktop chat/WebSocket/session changes may additionally select `bun run check:chat-contract`. Both contracts are offline and do not replace their selected surface checks.
+- `bun run check:agent-flow` is the deterministic end-to-end agent lane: a real server and WebSocket drive session creation, runtime selection, streaming, tool permission allow/deny, tool failure, API error, interrupt, reconnect replay, and session recovery against the repository's mock SDK CLI. It needs no provider, credentials, or network, so every contributor can run it.
+- `bun run check:desktop-ui-smoke` drives the real desktop UI against that same mock runtime and answers the permission dialog by clicking the real button. It skips with a printed reason when `agent-browser` or the desktop dependencies are missing.
+- `agent-browser` is an implementation detail of that committed lane and of the maintainer-run `desktop/scripts/e2e-*-agent-browser.sh` scripts. It is **not** the tool for ad-hoc browser work: for manual verification, screenshots, and exploratory UI checks use the installed `playwright` plugin or the `browser` tools, and record which path you used in the handoff.
+- `bun run check:docs` runs `npm ci` internally; run it **sequentially** with checks that rely on root `node_modules`.
+- When `bun run verify` fails: read its latest Result Matrix and lane log, fix the concrete lane, rerun the narrow check, then rerun `verify`. `bun run check:coverage` gives PR-level coverage proof; `quality:providers` and live `quality:gate` require explicit maintainer authorization.
 
 ## Live Model Baseline
 

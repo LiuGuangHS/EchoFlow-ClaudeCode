@@ -172,7 +172,7 @@ bun run check:release-surface     # 发版面：品牌标记、版本/品牌漂�
 
 | 插件 | 用途 | 入口 |
 | --- | --- | --- |
-| `superpowers` | 需求澄清 → 实现计划 → 分批执行的主流程，带评审检查点 | `/superpowers:brainstorm`、`/superpowers:write-plan`、`/superpowers:execute-plan`；评审用 `@code-reviewer` |
+| `superpowers` | 需求澄清 → 实现计划 → 分批执行的主流程，带评审检查点 | 用 Skill 工具按真名调用：`superpowers:brainstorming` → `superpowers:writing-plans` → `superpowers:executing-plans`；评审用 `code-review:code-review` |
 | `ponytail` | 最小实现阶梯：先问需不需要写，再复用既有代码、标准库、原生能力，最后才写最少可用代码 | `/ponytail-review` 审查当前 diff；`/ponytail-audit` 审查整个仓库 |
 | `frontend-design` | 桌面端与文档站的界面设计质量，避免通用化观感 | 涉及 UI 设计时按需触发 |
 | `typescript-lsp` | TypeScript/JavaScript 的跳转定义、查找引用与错误检查 | 自动生效 |
@@ -306,6 +306,16 @@ bun run check:docs        # 独立安装、构建并检查 site/ React 文档站
 如果只改了很窄的文件，先跑对应的定向测试即可；只有在声明 PR-ready/full validation 时才需要本地再跑 `bun run verify`，托管 CI 仍会执行所有被选中的必需 lane。
 
 可执行 JS/TS 生产代码改动必须带对应测试文件；同区域划分见上文 Feature Quality Contract 和 `scripts/pr/change-policy.ts`，缺失时会触发阻断。只有维护者确认不适合自动化测试时，才能使用 `allow-missing-tests`。覆盖率 baseline/threshold 变更同样需要维护者确认并加 `allow-coverage-baseline-change`。
+
+### 各 lane 到底跑什么
+
+- `bun run check:impact` 的选择是 import-aware 的：一个改动会路由到所有 import 它的 surface，不只是它自己所在的目录。报告里的 `## Cross-surface impact` 段落会点名把某个额外检查拉进来的那个 importer。
+- provider / auth / proxy / runtime 改动可能额外选中 `bun run check:provider-contract`；desktop 的 chat / WebSocket / session 改动可能额外选中 `bun run check:chat-contract`。这两个 contract 是离线的，不能替代各自的 surface 检查。
+- `bun run check:agent-flow` 是无模型的端到端 agent lane：真实 server 与 WebSocket 走完会话创建、runtime 选择、流式、工具权限 allow/deny、工具失败、API 错误、中断、重连回放、会话恢复，用仓库自带的 mock SDK CLI。不需要 provider、凭据或网络，任何贡献者都能跑。
+- `bun run check:desktop-ui-smoke` 用同一个 mock runtime 驱动真实桌面 UI，并且回答权限对话框时点的是真按钮。缺 `agent-browser` 或 desktop 依赖时会跳过并打印原因。
+- `agent-browser` 只是上面这条已提交 lane 和维护者跑的 `desktop/scripts/e2e-*-agent-browser.sh` 的实现细节，**不是**临时浏览器验证的工具。手工验证、截图、探索式 UI 检查请用已安装的 `playwright` 插件或 `browser` 工具，并在交接里写清你走的是哪条路。
+- `bun run check:docs` 内部跑 `npm ci`，要和依赖 root `node_modules` 的检查**串行**执行。
+- `bun run verify` 失败时：看它最新的 Result Matrix 和 lane 日志，修具体那条 lane，重跑窄检查，再重跑 `verify`。`bun run check:coverage` 给出 PR 级覆盖率证明；`quality:providers` 和 live `quality:gate` 需要维护者显式授权。
 
 ## 真实模型 Baseline
 
