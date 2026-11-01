@@ -129,6 +129,7 @@ export class ElectronServerRuntime {
   private readonly localAccessToken = randomBytes(32).toString('base64url')
   private readonly petAccessToken = randomBytes(32).toString('base64url')
   private siteSessionBridgeToken = ''
+  private siteNetworkBridge: { url: string; token: string } = { url: '', token: '' }
   private sidecarEnvPromise: Promise<NodeJS.ProcessEnv> | null = null
   private systemProxyBridge: SystemProxyBridgeLike | null = null
   private server: ActiveServer | null = null
@@ -191,6 +192,14 @@ export class ElectronServerRuntime {
 
   getSiteSessionBridgeToken(): string {
     return this.siteSessionBridgeToken
+  }
+
+  /**
+   * The bridge stays up for the app's lifetime, so the server keeps the same
+   * address across restarts; only a signed-in site session is ever sent through it.
+   */
+  setSiteNetworkBridge(url: string, token: string): void {
+    this.siteNetworkBridge = { url, token }
   }
 
   getActiveServerUrl(): string | null {
@@ -427,6 +436,8 @@ export class ElectronServerRuntime {
       ...this.withLocalAccessToken(env),
       ECHOFLOW_PET_ACCESS_TOKEN: this.petAccessToken,
       ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN: this.siteSessionBridgeToken,
+      ECHOFLOW_SITE_NETWORK_BRIDGE_URL: this.siteNetworkBridge.url,
+      ECHOFLOW_SITE_NETWORK_BRIDGE_TOKEN: this.siteNetworkBridge.token,
     }
   }
 

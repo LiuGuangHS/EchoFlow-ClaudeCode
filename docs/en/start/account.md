@@ -1,89 +1,97 @@
 ---
-title: Bind an EchoFlow account
-nav_title: Official account
-description: Bind an EchoFlow account, manage call tokens, and pick or rotate the token behind a model channel.
+title: Sign in to EchoFlow SiHub
+nav_title: EchoFlow SiHub
+description: Sign in to EchoFlow SiHub recommended access with a browser, manage call tokens, and pick or rotate the token behind a model channel.
 order: 3
 ---
 
-# Bind an EchoFlow account
+# Sign in to EchoFlow SiHub
 
-EchoFlow Code can call the model service EchoFlow provides directly. Once an account is bound you don't apply for vendor keys yourself — pick a call token and a model channel is built for you.
+EchoFlow SiHub is EchoFlow's recommended access service. Once you sign in, you don't apply for vendor keys yourself — pick a call token and a model channel is built for you.
 
-Using a different provider instead? See [Connect a model](./models.md). This page covers the official account only.
+Using a different provider instead? See [Connect a model](./models.md). This page covers EchoFlow SiHub only.
+
+> Models and services are offered only where the laws and regulations of your region permit them. Check your local compliance requirements and availability before use.
 
 ## Before you start
 
 - An account registered at the [EchoFlow console](https://api.echoflowai.cc/console/personal), with credit on it
-- A **system access token** generated there (Security settings → System access token → Generate token)
 - The desktop app installed — see [Download and install](./install.md)
+
+You no longer need to generate a system access token first: the login window hands the site session you already have to the desktop app.
 
 ## Two lines: main site and dedicated line
 
-The official service has two entry points. A tab switcher at the top of the binding area selects between them:
+EchoFlow SiHub has two entry points. A tab switcher at the top of the account area selects between them:
 
 | Line | URL | When to pick it |
 |---|---|---|
 | **Main site** | `https://api.echoflowai.cc` | The default. Use this most of the time |
 | **Dedicated line** | `https://expapi.echoflowai.cc` | Try it when the main site is unstable or slow |
 
-**The two lines bind independently and their credentials never overwrite each other.** You can bind one account on the main site and a different one on the dedicated line, then build a channel for each. The dot on each tab shows its binding state: green means that line is bound.
+**The two lines sign in independently and their credentials never overwrite each other.** You can sign in with one account on the main site and a different one on the dedicated line, then build a channel for each. The dot on each tab shows its state: green means that line is signed in.
 
-## Bind the account
+## Sign in
 
-Find the official binding area under Settings → Model Settings (named "Providers" in older builds), pick a line tab, then:
+Find the EchoFlow SiHub area under Settings → Model Settings, pick a line tab, then click **Sign in to EchoFlow SiHub**. A browser window opens; complete the site sign-in there. The window closes itself on success and the account details fill the panel.
 
-1. Enter the **user ID** — copy it from your console profile page.
-2. Enter the **system access token** — paste the one you just generated. The field is masked; click the eye icon to reveal it.
-3. Click **Bind main-site account** or **Bind dedicated-line account**.
+Once signed in, the header shows that line's **user ID, username, balance, and last refresh time**.
 
-Once bound, the header shows that line's **user ID, username, balance, user group, and last refresh time**. The two most common failures are a mistyped user ID and an expired token; the UI reports both in place.
+A signed-in line offers three actions:
 
-A bound line offers three actions:
+- **Refresh** — pull the balance and token list again. When the credential has expired, the panel asks you to sign in again.
+- **Sign in to EchoFlow SiHub** — run the browser sign-in again after the credential expires or the app restarts.
+- **Disconnect** — clear the account on this line together with the locally stored sign-in state. **It affects only the selected line**; the other one is untouched.
 
-- **Update token** — paste a fresh system access token when the old one stops working.
-- **Refresh** — pull the balance and token list again.
-- **Disconnect** — clear the account on this line. **It affects only the selected line**; the other one is untouched.
+### Manual binding (advanced)
 
-Account information is stored locally in `echoflow-account.json` and is never uploaded.
+Where no login window is available (the browser build, for example, or a remote desktop), expand **Manual binding (advanced)** and enter the **user ID** and **system access token**:
+
+1. Copy the user ID from your console profile page.
+2. Generate the system access token under Security settings → System access token → Generate token. The field is masked; click the eye icon to reveal it.
+
+The account record lives locally in `echoflow-account.json` (user ID and line only) and is never uploaded; site credentials stay in memory and in the login window's own storage.
 
 ## Pick a token and configure a channel
 
-With the account bound, **Choose an API key and configure a channel** appears below it. The dropdown lists that account's call tokens, each showing its **name and a masked key preview**, along with quota state.
+With the account signed in, the card lists that account's call tokens, each showing its **name and a masked key preview**, along with quota state.
 
 Selecting a token opens the shared detail panel — model, capabilities, and advanced parameters all live there. **The channel only appears in the model channel list when you save.** Closing the panel without saving leaves nothing behind.
 
-If the account has no usable tokens, create one in the console first and click **Refresh**.
+If the account has no usable tokens, click **Create token** above the list. The app creates one with the console's defaults — unlimited quota, no expiry — and lists it right away, so you can pick it without leaving the app. To change quota or expiry, or to check usage, click **Console** next to it.
 
-## Tokens versus API keys
+## Tokens and API keys are different
 
-This is the part people mix up, so it is worth stating plainly:
+This is the easiest thing to mix up, so it gets its own section:
 
-- A **system access token** belongs to the account. It proves the account is yours. Detecting the account, reading the token list, and rotating tokens all use it.
-- A **call token (API key)** belongs to one channel. It is the credential actually sent on model calls.
+- **System access token** — belongs to the account and proves "this account is you". Manual binding, account checks, reading the token list, and rotating tokens all rely on it.
+- **Call token (API key)** — belongs to one channel; it is the credential actually sent with model calls.
 
-**The desktop app shows only a masked API key preview by default.** What you pick is a token ID; testing, creation, and updates are resolved server-side from the account and token ID, and are forced onto that token's endpoint. The configuration panel has an explicit visibility toggle; the full key is fetched separately by account endpoint and token ID only when you choose to reveal it. The token list still returns masked previews only.
-- Rotating a channel's token needs no pasted secret, only a different token ID.
-- A main-site token can only build main-site channels; it never leaks onto the dedicated line.
+**The desktop app shows only a masked API key preview by default.** You select a token ID; tests, creation, and updates are done server-side by "account + token ID" and are forced onto the endpoint that token belongs to. The settings page has an explicit reveal toggle; only when you reveal does it fetch the full key for that account endpoint and token ID. The token list itself still returns masked previews.
+- Rotating a channel's token needs no pasted secret — just a different token ID.
+- A main-site account's tokens can only build main-site channels; they never leak onto the dedicated line.
 
 ## Upgrading from an older version
 
-Older builds stored a single account. On upgrade it is migrated into the two slots automatically: the previous account lands on the **main site**, and the dedicated line is left empty.
+Older builds stored a single account. After upgrading, it is migrated into the main-site and dedicated-line slots automatically: the old account lands on the **main site**, and the dedicated line starts empty.
 
-If the account area looks empty after upgrading, click **Refresh** once. If it still does, the migration could not read the old file — just bind again. The legacy `qingyun-account.json` is only read during migration; new data always goes to `echoflow-account.json`.
+If the account area looks empty after upgrading, click **Refresh** once. If it is still empty, the migration did not read the old file — sign in or bind manually once. The old `qingyun-account.json` is read for migration only; all new data goes to `echoflow-account.json`.
 
 ## Troubleshooting
 
-**No balance after binding.** Click **Refresh**. A freshly bound account may not have synced yet, and the UI shows "not synced yet".
+**The login window closed but no account appeared.** Click **Sign in to EchoFlow SiHub** again. A transient network fault or a local server restart can interrupt one verification and close the window early; retrying is enough. If it keeps failing, open **Settings → Diagnostics**: the gateway's own reason for refusing the sign-in is recorded on the `bootstrap-rejected` line.
 
-**"Token invalid or expired."** Generate a new system access token in the console and use **Update token**.
+**Balance is missing after signing in.** Click **Refresh**. Balance may not have synced right after sign-in; the panel shows "never synced" until it does.
 
-**The dropdown has no tokens.** This account has no call tokens yet. The console usually provides one; create one if not, then click **Refresh**.
+**It says the sign-in has expired.** Click **Sign in to EchoFlow SiHub** to sign in again. If you use manual binding, generate a fresh system access token in the console and use **Update token**.
 
-**I want to use a third-party provider instead.** Official accounts and third-party providers coexist; switch between them in the model channel list at any time. See [Connect a model](./models.md).
+**The token list is empty.** This account has no call tokens yet. Click **Create token** above the list; it appears there as soon as it is created, with no refresh needed.
+
+**I want to switch to a third-party provider.** EchoFlow SiHub and third-party providers coexist; switch between them in the model channel list at any time. See [Connect a model](./models.md).
 
 ## Related
 
 - [Connect a model](./models.md) — third-party APIs and local models
-- [Run your first session](./first-session.md) — what to do once the account works
+- [Run your first session](./first-session.md) — the first thing after setting up an account
 - [Settings reference](../desktop/settings.md) — the other switches in Model Settings
-- [Won't install, won't open, won't connect](./troubleshooting.md) — order to check when binding fails
+- [Install, launch, and connection problems](./troubleshooting.md) — what to check when sign-in fails

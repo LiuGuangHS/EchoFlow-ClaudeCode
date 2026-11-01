@@ -8,6 +8,7 @@ import type { Locale } from '../../i18n/locale'
 export const PUBLIC_ACCESS_CONSENT_VERSION = 2
 
 export type DesktopHostKind = 'browser' | 'electron'
+export type EchoFlowLoginEndpoint = 'main' | 'dedicated'
 
 export type DesktopHostCapability =
   | 'appMode'
@@ -438,8 +439,8 @@ export type DesktopHost = {
   isDesktop: boolean
   capabilities: DesktopHostCapabilities
   echoFlow: {
-    openLogin(): Promise<'authenticated' | 'cancelled'>
-    signOut(): Promise<void>
+    openLogin(endpoint?: EchoFlowLoginEndpoint): Promise<'authenticated' | 'cancelled' | 'failed'>
+    signOut(endpoint?: EchoFlowLoginEndpoint): Promise<void>
   }
   runtimeDiscovery: {
     list(options?: { includeWsl?: boolean }): Promise<RuntimeDiscoveryResult>

@@ -74,8 +74,13 @@ Use the narrowest meaningful check while iterating; do not silently escalate a s
 | JSON/localStorage/app-config migration | `bun run check:persistence-upgrade` |
 | PR/push/merge/release readiness | `bun run verify` |
 
-- `bun run check:impact` prints the changed-area impact report and is the minimum handoff for the current diff. What each lane covers, the import-aware selection rules, the mock-runtime lanes, and the `bun run verify` failure loop all live in `docs/internals/contributing.md`.
-- `quality:providers` and live `quality:gate` require explicit maintainer authorization.
+- `bun run check:impact` prints the changed-area impact report and is part of the minimum handoff for the current diff. Selection is import-aware: a change is routed to every surface that imports it, not only to its own directory. The report's `## Cross-surface impact` section names the importer that pulled in each extra check.
+- Provider/auth/proxy/runtime changes may additionally select `bun run check:provider-contract`; desktop chat/WebSocket/session changes may additionally select `bun run check:chat-contract`. These contracts are offline and do not replace their selected surface checks.
+- `bun run check:agent-flow` is the deterministic end-to-end agent lane: real server and WebSocket through session creation, runtime selection, streaming, tool permission allow/deny, tool failure, API error, interrupt, reconnect replay, and session recovery, using the repository's mock SDK CLI. It needs no provider, credentials, or network, so every contributor can run it.
+- `bun run check:desktop-ui-smoke` drives the real desktop UI against that same mock runtime and answers the permission dialog by clicking the real button. It skips with a printed reason when `agent-browser` or desktop dependencies are missing.
+- `agent-browser` is an implementation detail of that committed lane and of the maintainer-run `desktop/scripts/e2e-*-agent-browser.sh` scripts. It is not the tool for ad-hoc browser work: for manual verification, screenshots, and exploratory UI checks use whatever browser automation the session actually has (a browser MCP, a browser plugin, or headless Chrome), and record which path you used in the handoff.
+- `bun run check:docs` runs `npm ci`; run it sequentially with checks that rely on root `node_modules`.
+- If `bun run verify` fails, inspect its latest Result Matrix and lane log, fix the concrete lane, rerun the narrow check, then rerun `verify`. `bun run check:coverage` gives PR-level coverage proof; `quality:providers` and live `quality:gate` require explicit maintainer authorization.
 
 ## Project Structure & Module Organization
 

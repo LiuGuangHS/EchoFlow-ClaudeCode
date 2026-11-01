@@ -56,6 +56,15 @@ describe('useTranslation', () => {
     }
   })
 
+  it('localizes the bind-account endpoint label in every registered locale', () => {
+    for (const locale of ['en', 'zh', 'zh-TW', 'jp', 'kr'] as const) {
+      const label = translate(locale, 'echoflowApiOfficialLogin.bindAccount', { endpoint: 'E2E' })
+      // Double braces survive interpolation and render a literal "{E2E}".
+      expect(label, `${locale} does not interpolate the endpoint`).toContain('E2E')
+      expect(label).not.toMatch(/[{}]/)
+    }
+  })
+
   it('localizes the counted activity summary in every registered locale', () => {
     for (const locale of ['en', 'zh', 'zh-TW', 'jp', 'kr'] as const) {
       const label = translate(locale, 'toolGroup.thoughtMany', { count: 5 })

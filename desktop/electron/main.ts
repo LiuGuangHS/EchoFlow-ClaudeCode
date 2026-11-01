@@ -1,9 +1,24 @@
 import { PublicAccessManager } from './services/publicAccess'
-import { EchoFlowLoginSession, ECHOFLOW_LOGIN_ORIGIN, ECHOFLOW_LOGIN_PARTITION, siteCookieHeader, type EchoFlowLoginIdentity, type EchoFlowLoginWindow, type SiteCookie } from './services/echoFlowLogin'
-import { createEchoFlowLoginIdentityReader } from './services/echoFlowLoginIdentity'
+import {
+  EchoFlowLoginSession,
+  ECHOFLOW_LOGIN_PROFILES,
+  readDedicatedCredential,
+  readPageIdentity,
+  siteCookieHeader,
+  type EchoFlowLoginCredential,
+  type EchoFlowLoginEndpoint,
+  type EchoFlowLoginVerification,
+  type EchoFlowLoginWindow,
+  type SiteCookie,
+} from './services/echoFlowLogin'
+import { resolveSiteIdentity, type EchoFlowLoginIdentity } from './services/echoFlowSiteIdentity'
+import { readStoredDedicatedCredential } from './services/echoFlowDedicatedRestore'
+import { readStoredSiteCredential } from './services/echoFlowSiteRestore'
+import { startSiteNetworkBridge, type SiteNetworkBridge } from './services/siteNetworkBridge'
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, screen, session, systemPreferences, WebContentsView } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import path from 'node:path'
+import { randomBytes } from 'node:crypto'
 import { ELECTRON_EVENT_CHANNELS, ELECTRON_INTERNAL_CHANNELS, ELECTRON_IPC_CHANNELS, type ElectronIpcChannel } from './ipc/channels'
 import {
   isElectronIpcChannel,
@@ -117,7 +132,7 @@ import {
 let mainWindow: BrowserWindow | null = null
 let serverRuntime: ElectronServerRuntime | null = null
 let echoFlowLoginSession: EchoFlowLoginSession | null = null
-let echoFlowSiteIdentity: EchoFlowLoginIdentity | null = null
+let siteNetworkBridge: SiteNetworkBridge | null = null
 let deepSeekHarnessRuntime: DeepSeekHarnessRuntime | null = null
 let deepSeekHarnessWindow: BrowserWindow | null = null
 let publicAccessManager: PublicAccessManager | null = null
@@ -284,45 +299,157 @@ function getServerRuntime() {
 }
 
 
-function echoFlowLoginCookies() {
-  return session.fromPartition(ECHOFLOW_LOGIN_PARTITION).cookies
+async function readEchoFlowSiteCookies(endpoint: EchoFlowLoginEndpoint): Promise<SiteCookie[]> {
+  const profile = ECHOFLOW_LOGIN_PROFILES[endpoint]
+  return await session.fromPartition(profile.partition).cookies.get({ url: profile.origin })
 }
 
-async function readEchoFlowSiteCookies(): Promise<SiteCookie[]> {
-  return await echoFlowLoginCookies().get({ url: ECHOFLOW_LOGIN_ORIGIN })
-}
-
-async function clearEchoFlowSiteCookies(): Promise<void> {
-  const cookies = await readEchoFlowSiteCookies()
-  await Promise.all(cookies.map(cookie => echoFlowLoginCookies().remove(
-    `${ECHOFLOW_LOGIN_ORIGIN}${cookie.path && cookie.path.startsWith('/') ? cookie.path : `/${cookie.path || ''}`}`,
+async function clearEchoFlowSiteCookies(endpoint: EchoFlowLoginEndpoint = 'main'): Promise<void> {
+  const profile = ECHOFLOW_LOGIN_PROFILES[endpoint]
+  const cookies = session.fromPartition(profile.partition).cookies
+  const existing = await cookies.get({ url: profile.origin })
+  await Promise.all(existing.map(cookie => cookies.remove(
+    `${profile.origin}${cookie.path && cookie.path.startsWith('/') ? cookie.path : `/${cookie.path || ''}`}`,
     cookie.name,
   )))
 }
 
-async function bootstrapEchoFlowSiteSession(cookies: readonly SiteCookie[], identity?: EchoFlowLoginIdentity): Promise<boolean> {
+async function clearEchoFlowSiteStorage(endpoint: EchoFlowLoginEndpoint = 'main'): Promise<void> {
+  // The dedicated gateway keeps its JWT in localStorage, and Electron persists
+  // that partition to disk. Without this, signing out and signing in again
+  // would hand back the old account with no input.
+  const profile = ECHOFLOW_LOGIN_PROFILES[endpoint]
+  await session.fromPartition(profile.partition).clearStorageData({ storages: ['localstorage'] })
+}
+
+async function readStoredEchoFlowAccountIdentity(
+  endpoint: EchoFlowLoginEndpoint,
+): Promise<EchoFlowLoginIdentity | null> {
+  try {
+    const serverUrl = await getServerRuntime().getServerUrl()
+    const response = await fetch(`${serverUrl}/api/echoflow`, { signal: AbortSignal.timeout(10_000) })
+    if (!response.ok) return null
+    const body = await response.json() as {
+      accounts?: Record<string, { userId?: unknown; username?: unknown } | null>
+    }
+    const account = body.accounts?.[endpoint]
+    if (!account || typeof account.userId !== 'string') return null
+    return {
+      userId: account.userId,
+      username: typeof account.username === 'string' ? account.username : '',
+    }
+  } catch {
+    return null
+  }
+}
+
+async function readEchoFlowLoginCredential(
+  endpoint: EchoFlowLoginEndpoint,
+  window: EchoFlowLoginWindow | null,
+): Promise<EchoFlowLoginCredential | null> {
+  if (endpoint === 'dedicated') {
+    // The gateway keeps its JWT in page storage. We never copy it into the
+    // account file; sign-out wipes that storage (clearEchoFlowSiteStorage) so
+    // the next login cannot replay it.
+    const credential = window
+      ? await readDedicatedCredential(window, ECHOFLOW_LOGIN_PROFILES.dedicated.origin)
+      : await readStoredDedicatedCredential(
+          ECHOFLOW_LOGIN_PROFILES.dedicated.partition,
+          ECHOFLOW_LOGIN_PROFILES.dedicated.origin,
+        ).catch(() => null)
+    console.info('[echoFlowLogin] credential-read:', JSON.stringify({ endpoint, present: Boolean(credential) }))
+    return credential
+  }
+  const profile = ECHOFLOW_LOGIN_PROFILES.main
+  // The gateway binds the session to the client that created it and refuses to
+  // recognise it from any other one, so every identity probe leaves through the
+  // sign-in window's own partition; the restore after a restart has no window
+  // to fall back on.
+  if (!window) {
+    // The gateway account call needs New-Api-User — the identity itself — so the
+    // restore reads the identity the sign-in stored and keeps the network out of
+    // it; the verification in bootstrapEchoFlowAccount confirms the pair.
+    const identity = await readStoredEchoFlowAccountIdentity(endpoint)
+    return await readStoredSiteCredential(profile.partition, profile.origin, app.getLocale(), identity)
+  }
+  const cookies = await readEchoFlowSiteCookies(endpoint)
   const cookie = siteCookieHeader(cookies)
-  const accountIdentity = identity ?? echoFlowSiteIdentity
-  if (!cookie || !accountIdentity) return false
+  if (!cookie) return null
+  const partitionFetch: typeof fetch = (input, init) =>
+    session.fromPartition(profile.partition).fetch(String(input), init)
+  let identity = await resolveSiteIdentity(cookie, partitionFetch, {
+    userAgent: session.fromPartition(profile.partition).getUserAgent(),
+    acceptLanguage: app.getLocale(),
+  })
+  if (!identity) identity = await readPageIdentity(window, profile.origin)
+  if (!identity) return null
+  return {
+    kind: 'session',
+    userId: identity.userId,
+    username: identity.username,
+    cookie,
+    userAgent: session.fromPartition(profile.partition).getUserAgent(),
+    acceptLanguage: app.getLocale(),
+  }
+}
+
+async function bootstrapEchoFlowAccount(
+  endpoint: EchoFlowLoginEndpoint,
+  credential: EchoFlowLoginCredential,
+): Promise<EchoFlowLoginVerification> {
+  // Each endpoint accepts exactly the credential its own page produces.
+  if (credential.kind === 'session' && endpoint !== 'main') return 'rejected'
+  if (credential.kind === 'bearer' && endpoint !== 'dedicated') return 'rejected'
   try {
     const runtime = getServerRuntime()
     const serverUrl = await runtime.getServerUrl()
     const bridgeToken = runtime.getSiteSessionBridgeToken()
-    if (!bridgeToken) return false
-    const response = await fetch(`${serverUrl}/api/echoflow/site-session`, {
+    console.info('[echoFlowLogin] credential-verify:', JSON.stringify({
+      endpoint,
+      kind: credential.kind,
+      serverUrl,
+      bridgeTokenPresent: Boolean(bridgeToken),
+    }))
+    // No server to ask yet: the credential is unverified, not rejected.
+    if (!bridgeToken) return 'unavailable'
+    const response = await fetch(`${serverUrl}/api/echoflow/account/credential`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'x-echoflow-site-session-bridge': bridgeToken,
       },
-      body: JSON.stringify({ cookie, userId: accountIdentity.userId }),
+      body: JSON.stringify(credential.kind === 'session'
+        ? {
+            endpoint,
+            kind: 'session',
+            cookie: credential.cookie,
+            userId: credential.userId,
+            ...(credential.userAgent ? { userAgent: credential.userAgent } : {}),
+            ...(credential.acceptLanguage ? { acceptLanguage: credential.acceptLanguage } : {}),
+          }
+        : { endpoint, kind: 'bearer', accessToken: credential.accessToken, userId: credential.userId }),
       signal: AbortSignal.timeout(15_000),
     })
-    if (!response.ok) return false
-    if (identity) echoFlowSiteIdentity = identity
-    return true
+    if (response.ok) {
+      console.info('[echoFlowLogin] credential-verified:', JSON.stringify({ endpoint, kind: credential.kind }))
+      return 'ok'
+    }
+    const body = await response.json().catch(() => null) as { error?: unknown; detail?: unknown } | null
+    console.warn('[echoFlowLogin] verification-response:', JSON.stringify({
+      endpoint,
+      kind: credential.kind,
+      status: response.status,
+      code: typeof body?.error === 'string' ? body.error : 'unreadable',
+      detail: typeof body?.detail === 'string' ? body.detail : undefined,
+    }))
+    // Only the site saying the credential is bad is a verdict; a bridge or
+    // upstream failure is the server not answering and keeps the window open.
+    if (response.status === 400) {
+      if (body?.error === 'token_invalid') return 'rejected'
+    }
+    return 'unavailable'
   } catch {
-    return false
+    return 'unavailable'
   }
 }
 
@@ -331,7 +458,7 @@ function getEchoFlowLoginSession(): EchoFlowLoginSession {
     createWindow(partition): EchoFlowLoginWindow {
       const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
       const loginWindow = new BrowserWindow({
-        title: 'EchoFlow 账号登录',
+        title: 'EchoFlow SiHub 账号登录',
         width: 520,
         height: 720,
         show: true,
@@ -348,34 +475,46 @@ function getEchoFlowLoginSession(): EchoFlowLoginSession {
         },
       })
 
-      const identityReader = createEchoFlowLoginIdentityReader(loginWindow.webContents.debugger as never)
-      loginWindow.webContents.once('destroyed', () => identityReader.dispose())
-      return Object.assign(loginWindow, {
-        webContents: Object.assign(loginWindow.webContents, { readIdentity: () => identityReader.read() }),
-      }) as unknown as EchoFlowLoginWindow
+      // Electron exposes BrowserWindow.webContents as a getter-only accessor.
+      // Assigning to it (for example with Object.assign) throws after the
+      // window has already been shown, leaving an orphan modal window that
+      // never loads. The session reads the account from the site's own
+      // session, so the window needs no extra fields.
+      return loginWindow as unknown as EchoFlowLoginWindow
     },
-    verifySession: bootstrapEchoFlowSiteSession,
-    readCookies: readEchoFlowSiteCookies,
+    profiles: ECHOFLOW_LOGIN_PROFILES,
+    readCredential: readEchoFlowLoginCredential,
+    verifySession: bootstrapEchoFlowAccount,
     clearCookies: clearEchoFlowSiteCookies,
+    clearStorage: clearEchoFlowSiteStorage,
   })
   return echoFlowLoginSession
 }
 
+const ECHOFLOW_LOGIN_ENDPOINTS: EchoFlowLoginEndpoint[] = ['main', 'dedicated']
+
 async function rehydrateEchoFlowSiteSession(): Promise<void> {
-  await getEchoFlowLoginSession().rehydrate()
+  const login = getEchoFlowLoginSession()
+  // Each line keeps its own partition and stored account, so one line failing
+  // to rehydrate must not stop the other from coming back.
+  await Promise.all(ECHOFLOW_LOGIN_ENDPOINTS.map(endpoint => login.rehydrate(endpoint)))
 }
 
-async function signOutEchoFlowSiteSession(): Promise<void> {
+async function signOutEchoFlowSiteSession(endpoint: EchoFlowLoginEndpoint = 'main'): Promise<void> {
   const runtime = getServerRuntime()
   const serverUrl = await runtime.getServerUrl()
-  const response = await fetch(`${serverUrl}/api/echoflow/site-session`, {
+  const response = await fetch(`${serverUrl}/api/echoflow/account`, {
     method: 'DELETE',
-    headers: { Authorization: `Bearer ${runtime.getLocalAccessToken()}` },
+    headers: {
+      Authorization: `Bearer ${runtime.getLocalAccessToken()}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ endpoint }),
     signal: AbortSignal.timeout(10_000),
   })
   if (!response.ok) throw new Error('Could not sign out of the EchoFlow account.')
-  await getEchoFlowLoginSession().clear()
-  echoFlowSiteIdentity = null
+  // Clearing only this partition leaves the other endpoint signed in.
+  await getEchoFlowLoginSession().clear(endpoint)
 }
 
 function getDeepSeekHarnessRuntime() {
@@ -757,8 +896,14 @@ function registerIpcHandlers() {
     if (getWorkspaceBrowserService().handleMessageFromView(event.sender, raw)) return
     void getPreviewService().sendMessageToRenderer(event.sender, raw, mainWindow?.webContents)
   })
-  registerHandler(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, async () => await getEchoFlowLoginSession().open())
-  registerHandler(ELECTRON_IPC_CHANNELS.echoFlowSignOut, async () => await signOutEchoFlowSiteSession())
+  registerHandler(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, async (_event, payload) => {
+    const requested = (payload as { endpoint?: unknown } | undefined)?.endpoint
+    return await getEchoFlowLoginSession().open(requested === 'dedicated' ? 'dedicated' : 'main')
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.echoFlowSignOut, async (_event, payload) => {
+    const requested = (payload as { endpoint?: unknown } | undefined)?.endpoint
+    await signOutEchoFlowSiteSession(requested === 'dedicated' ? 'dedicated' : 'main')
+  })
   registerHandler(ELECTRON_IPC_CHANNELS.publicAccessGetStatus, () => getPublicAccessManager().getStatus())
   registerHandler(ELECTRON_IPC_CHANNELS.publicAccessSaveCredential, (_event, payload) => getPublicAccessManager().saveCredential(payload as string))
   registerHandler(ELECTRON_IPC_CHANNELS.publicAccessDeleteCredential, () => getPublicAccessManager().deleteCredential())
@@ -1336,6 +1481,22 @@ app.whenReady().then(async () => {
       workspaceBrowserService?.refreshBounds()
     }
   })
+  // The site refuses a session used from any client but the one that created
+  // it, so session calls leave through Chromium instead of the server's fetch.
+  // It must start before the server sidecar so the child inherits the address.
+  try {
+    siteNetworkBridge = await startSiteNetworkBridge({
+      token: randomBytes(32).toString('base64url'),
+      allowedOrigins: [ECHOFLOW_LOGIN_PROFILES.main.origin, ECHOFLOW_LOGIN_PROFILES.dedicated.origin],
+      forward: (url, init) => {
+        const endpoint = new URL(url).origin === ECHOFLOW_LOGIN_PROFILES.dedicated.origin ? 'dedicated' : 'main'
+        return session.fromPartition(ECHOFLOW_LOGIN_PROFILES[endpoint].partition).fetch(url, init)
+      },
+    })
+    getServerRuntime().setSiteNetworkBridge(siteNetworkBridge.url, siteNetworkBridge.token)
+  } catch (error) {
+    console.error('[desktop] failed to start the site network bridge', error)
+  }
   await getServerRuntime().startServer().catch(error => {
     console.error('[desktop] failed to start Electron server sidecar', error)
   })

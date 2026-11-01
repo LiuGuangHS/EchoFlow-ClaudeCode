@@ -76,4 +76,4 @@ For the full payload fields, validation rules and validity window, see [Deep lin
 - [Settings reference](./settings.md) — where Config Generator sits in Settings
 - [Deep link protocol](./deep-link-protocol.md) — link format, payload fields and validation rules
 - [Connect a model service](../start/models.md) — API keys and official account login
-- [EchoFlow account](../start/account.md) — official account and call tokens
+- [EchoFlow SiHub](../start/account.md) — recommended access and call tokens

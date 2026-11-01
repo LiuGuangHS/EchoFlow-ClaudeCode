@@ -131,7 +131,9 @@ describe('EchoFlow account API', () => {
       const headers = new Headers(init?.headers)
       const userId = headers.get('new-api-user')
       const managementToken = headers.get('authorization')
-      if (url.endsWith('/api/user/self')) {
+      // The account route belongs to the gateway: New API serves /api/user/self,
+      // the dedicated (sub2api) gateway serves /api/v1/auth/me.
+      if (url.endsWith('/api/user/self') || url.endsWith('/api/v1/auth/me')) {
         const isDedicated = userId === 'dedicated-user'
         return new Response(JSON.stringify({
           success: true,
@@ -220,7 +222,7 @@ describe('EchoFlow account API', () => {
       expect(JSON.stringify(accounts)).not.toContain('legacy-management-')
 
       const stored = await readStoredJson<{ schemaVersion: number; accounts: Record<'main' | 'dedicated', { userId: string; managementToken: string; endpoint?: string } | null> }>('echoflow-account.json')
-      expect(stored.schemaVersion).toBe(2)
+      expect(stored.schemaVersion).toBe(3)
       expect(stored.accounts[endpoint]).toMatchObject({ userId: `legacy-${endpoint}`, managementToken: `legacy-management-${endpoint}`, endpoint })
       expect(stored.accounts[endpoint === 'main' ? 'dedicated' : 'main']).toBeNull()
     }
@@ -386,10 +388,10 @@ describe('EchoFlow account API', () => {
       const url = String(input)
       const headers = new Headers(init?.headers)
       requests.push({ url, authorization: headers.get('authorization') })
-      if (url.endsWith('/api/user/self')) {
+      if (url.endsWith('/api/user/self') || url.endsWith('/api/v1/auth/me')) {
         return new Response(JSON.stringify({ success: true, data: { quota: 500_000, group: 'default', username: 'echo' } }), { headers: { 'Content-Type': 'application/json' } })
       }
-      if (url.endsWith('/api/token/?p=0&size=100')) {
+      if (url.endsWith('/api/token/?p=0&size=100') || url.endsWith('/api/v1/keys?page=1&page_size=100')) {
         return new Response(JSON.stringify({ success: true, data: [{ id: 'model-token', name: 'Model key', key: 'server-model-key' }] }), { headers: { 'Content-Type': 'application/json' } })
       }
       return new Response(JSON.stringify({ data: [{ id: 'echo-model', owned_by: 'echo' }] }), { headers: { 'Content-Type': 'application/json' } })
@@ -503,10 +505,10 @@ describe('EchoFlow account API', () => {
     globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input)
       const headers = new Headers(init?.headers)
-      if (url.endsWith('/api/user/self')) {
+      if (url.endsWith('/api/user/self') || url.endsWith('/api/v1/auth/me')) {
         return new Response(JSON.stringify({ success: true, data: { quota: 500_000, group: 'dedicated', username: 'dedicated-user' } }), { headers: { 'Content-Type': 'application/json' } })
       }
-      if (url.endsWith('/api/token/?p=0&size=100')) {
+      if (url.endsWith('/api/token/?p=0&size=100') || url.endsWith('/api/v1/keys?page=1&page_size=100')) {
         return new Response(JSON.stringify({ success: true, data: [{ id: 'responses-token', name: 'Responses key', key: 'server-responses-key' }] }), { headers: { 'Content-Type': 'application/json' } })
       }
       requests.push({ url, authorization: headers.get('authorization') })
@@ -587,10 +589,10 @@ describe('EchoFlow account API', () => {
       const url = String(input)
       const headers = new Headers(init?.headers)
       requests.push({ url, headers })
-      if (url.endsWith('/api/user/self')) {
+      if (url.endsWith('/api/user/self') || url.endsWith('/api/v1/auth/me')) {
         return new Response(JSON.stringify({ success: true, data: { quota: 500_000, group: 'default', username: 'echo' } }), { headers: { 'Content-Type': 'application/json' } })
       }
-      if (url.endsWith('/api/token/?p=0&size=100')) {
+      if (url.endsWith('/api/token/?p=0&size=100') || url.endsWith('/api/v1/keys?page=1&page_size=100')) {
         return new Response(JSON.stringify({ success: true, data: [{ id: 'test-token', name: 'Test key', key: 'server-test-key' }] }), { headers: { 'Content-Type': 'application/json' } })
       }
       return new Response(JSON.stringify({ type: 'message', model: 'test-model', content: [] }), { headers: { 'Content-Type': 'application/json' } })
@@ -622,66 +624,126 @@ describe('EchoFlow account API', () => {
       globalThis.fetch = originalFetch
     }
   })
-})
 
-describe('EchoFlow site session API', () => {
-  test('accepts cookie bootstrap only from the Electron bridge and never returns the cookie', async () => {
+  test('sets a dedicated gateway bearer credential only through the Electron bridge', async () => {
     const originalFetch = globalThis.fetch
     const oldBridge = process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN
-    const oldLocal = process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
     process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN = 'electron-only-bridge-secret'
-    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'renderer-local-token'
-    globalThis.fetch = mock(async (_input: string | URL | Request, init?: RequestInit) => {
-      expect(new Headers(init?.headers).get('cookie')).toBe('session=private-site-cookie')
-      expect(new Headers(init?.headers).get('new-api-user')).toBe('106452')
-      return new Response(JSON.stringify({ success: true, data: { id: 106452, username: 'site-user', quota: 1_000_000 } }), { headers: { 'Content-Type': 'application/json' } })
+    globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
+      expect(String(input)).toBe('https://expapi.echoflowai.cc/api/v1/auth/me')
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer gateway-token')
+      return Response.json({ data: { id: 7, username: 'gateway-user' } })
     }) as typeof fetch
 
-    const makeSessionRequest = (method: 'GET' | 'POST' | 'DELETE', body?: Record<string, unknown>, headers?: Record<string, string>) => {
-      const req = new Request('http://localhost:3456/api/echoflow/site-session', {
-        method,
-        headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(headers ?? {}) },
-        body: body ? JSON.stringify(body) : undefined,
+    const makeBearerRequest = (headers: Record<string, string>) => {
+      const req = new Request('http://localhost:3456/api/echoflow/account/credential', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify({ endpoint: 'dedicated', kind: 'bearer', accessToken: 'gateway-token', userId: '7' }),
       })
       const url = new URL(req.url)
       return { req, url, segments: url.pathname.split('/').filter(Boolean) }
     }
 
     try {
-      const localTokenBootstrap = makeSessionRequest('POST', { cookie: 'session=private-site-cookie', userId: '106452' }, { Authorization: 'Bearer renderer-local-token' })
-      expect((await handleEchoFlowApi(localTokenBootstrap.req, localTokenBootstrap.url, localTokenBootstrap.segments)).status).toBe(403)
+      const unauthorized = makeBearerRequest({})
+      expect((await handleEchoFlowApi(unauthorized.req, unauthorized.url, unauthorized.segments)).status).toBe(403)
 
-      const remoteBootstrap = makeSessionRequest('POST', { cookie: 'session=private-site-cookie', userId: '106452' }, { 'x-echoflow-site-session-bridge': 'electron-only-bridge-secret' })
-      expect((await handleEchoFlowApi(remoteBootstrap.req, remoteBootstrap.url, remoteBootstrap.segments, { remoteBrowser: true })).status).toBe(403)
+      const authorized = makeBearerRequest({ 'x-echoflow-site-session-bridge': 'electron-only-bridge-secret' })
+      const response = await handleEchoFlowApi(authorized.req, authorized.url, authorized.segments)
+      const body = await response.json() as { account: Record<string, unknown> }
 
-      const bootstrap = makeSessionRequest('POST', { cookie: 'session=private-site-cookie', userId: '106452' }, { 'x-echoflow-site-session-bridge': 'electron-only-bridge-secret' })
-      const bootstrapResponse = await handleEchoFlowApi(bootstrap.req, bootstrap.url, bootstrap.segments)
-      const bootstrapBody = await bootstrapResponse.json() as { account: Record<string, unknown> }
-      expect(bootstrapResponse.status).toBe(200)
-      expect(bootstrapBody.account).toEqual({ userId: '106452', username: 'site-user', balance: 2, refreshedAt: expect.any(Number) })
-      expect(JSON.stringify(bootstrapBody)).not.toContain('private-site-cookie')
-
-      const status = makeSessionRequest('GET', undefined, { Authorization: 'Bearer renderer-local-token' })
-      const statusResponse = await handleEchoFlowApi(status.req, status.url, status.segments)
-      expect(await statusResponse.json()).toEqual({ account: bootstrapBody.account })
-
-      const signOut = makeSessionRequest('DELETE', undefined, { Authorization: 'Bearer renderer-local-token' })
-      expect((await handleEchoFlowApi(signOut.req, signOut.url, signOut.segments)).status).toBe(200)
-      expect((await handleEchoFlowApi(status.req, status.url, status.segments)).status).toBe(200)
-      expect(await (await handleEchoFlowApi(status.req, status.url, status.segments)).json()).toEqual({ account: null })
+      expect(response.status).toBe(200)
+      expect(body.account).toMatchObject({ userId: '7', username: 'gateway-user', endpoint: 'dedicated' })
+      expect(JSON.stringify(body)).not.toContain('gateway-token')
     } finally {
       globalThis.fetch = originalFetch
       if (oldBridge === undefined) delete process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN
       else process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN = oldBridge
-      if (oldLocal === undefined) delete process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
-      else process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = oldLocal
     }
   })
 
-  // The desktop bootstraps through the real router, not straight into the
-  // handler: routeApiRequest used to lose `context` on the way in and every
-  // site-session request answered 500 instead of reaching this handler.
-  test('bootstraps a site session through the router for the Electron bridge', async () => {
+  test('sets a main-site session credential only through the Electron bridge', async () => {
+    const originalFetch = globalThis.fetch
+    const oldBridge = process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN
+    process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN = 'electron-only-bridge-secret'
+    globalThis.fetch = mock(async (input: string | URL | Request) => {
+      expect(String(input)).toBe('https://api.echoflowai.cc/api/user/self')
+      return Response.json({ success: true, data: { id: 851842, username: 'zhijun2003', quota: 1_000_000 } })
+    }) as typeof fetch
+
+    const makeSessionRequest = (headers: Record<string, string>) => {
+      const req = new Request('http://localhost:3456/api/echoflow/account/credential', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify({ endpoint: 'main', kind: 'session', cookie: 'session=live', userId: '851842' }),
+      })
+      const url = new URL(req.url)
+      return { req, url, segments: url.pathname.split('/').filter(Boolean) }
+    }
+
+    try {
+      const unauthorized = makeSessionRequest({})
+      expect((await handleEchoFlowApi(unauthorized.req, unauthorized.url, unauthorized.segments)).status).toBe(403)
+
+      const authorized = makeSessionRequest({ 'x-echoflow-site-session-bridge': 'electron-only-bridge-secret' })
+      const response = await handleEchoFlowApi(authorized.req, authorized.url, authorized.segments)
+      const body = await response.json() as { account: Record<string, unknown> }
+
+      expect(response.status).toBe(200)
+      expect(body.account).toMatchObject({ userId: '851842', username: 'zhijun2003' })
+      expect(JSON.stringify(body)).not.toContain('session=live')
+    } finally {
+      globalThis.fetch = originalFetch
+      if (oldBridge === undefined) delete process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN
+      else process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN = oldBridge
+    }
+  })
+})
+
+describe('EchoFlow credential bridge', () => {
+  test('drops a credential the site rejects so the account stops looking live', async () => {
+    const originalFetch = globalThis.fetch
+    let rejected = false
+    globalThis.fetch = mock(async (input: string | URL | Request) => {
+      expect(String(input)).toBe('https://api.echoflowai.cc/api/user/self')
+      return Response.json(rejected
+        ? { success: false, message: 'invalid session' }
+        : { success: true, data: { id: 851842, username: 'zhijun2003', quota: 1_000_000 } })
+    }) as typeof fetch
+
+    try {
+      const service = new EchoFlowApiService()
+      await service.setCredential('main', { kind: 'session', userId: '851842', cookie: 'session=live' })
+      expect((await service.getAccounts()).main?.live).toBe(true)
+
+      rejected = true
+      await expect(service.refreshAccount('main')).rejects.toMatchObject({ code: 'token_invalid' })
+      // The UI offers sign-in again only when the account is not live, so a
+      // credential the site rejected must not stay in the memory map.
+      expect((await service.getAccounts()).main?.live).toBe(false)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  test('no longer serves a separate site-session route', async () => {
+    const url = new URL('http://localhost:3456/api/echoflow/site-session')
+    const response = await handleEchoFlowApi(
+      new Request(url),
+      url,
+      url.pathname.split('/').filter(Boolean),
+    )
+
+    expect(response.status).toBe(404)
+  })
+})
+
+describe('EchoFlow credential bridge through the router', () => {
+  // The desktop posts credentials through the real router, not straight into
+  // the handler: routeApiRequest used to lose `context` on the way in and every
+  // EchoFlow request answered 500 instead of reaching this handler.
+  test('sets the main-site session credential through the router', async () => {
     const originalFetch = globalThis.fetch
     const oldBridge = process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN
     process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN = 'electron-only-bridge-secret'
@@ -691,14 +753,14 @@ describe('EchoFlow site session API', () => {
     }), { headers: { 'Content-Type': 'application/json' } })) as typeof fetch
 
     try {
-      const url = new URL('http://localhost:3456/api/echoflow/site-session')
+      const url = new URL('http://localhost:3456/api/echoflow/account/credential')
       const req = new Request(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'x-echoflow-site-session-bridge': 'electron-only-bridge-secret',
         },
-        body: JSON.stringify({ cookie: 'session=private-site-cookie', userId: '106452' }),
+        body: JSON.stringify({ endpoint: 'main', kind: 'session', cookie: 'session=private-site-cookie', userId: '106452' }),
       })
       const response = await handleApiRequest(req, url)
       const body = await response.json() as { account: { userId: string } }
@@ -710,60 +772,6 @@ describe('EchoFlow site session API', () => {
       globalThis.fetch = originalFetch
       if (oldBridge === undefined) delete process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN
       else process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN = oldBridge
-    }
-  })
-
-  // refresh spends a real upstream request, and it is the one site-session
-  // route that neither the bridge token nor a remote browser may reach.
-  test('refreshes the account for a local client and refuses everyone else', async () => {
-    const originalFetch = globalThis.fetch
-    const oldBridge = process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN
-    const oldLocal = process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
-    process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN = 'electron-only-bridge-secret'
-    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'renderer-local-token'
-    globalThis.fetch = mock(async () => new Response(JSON.stringify({
-      success: true,
-      data: { id: 106452, username: 'site-user', quota: 2_000_000 },
-    }), { headers: { 'Content-Type': 'application/json' } })) as typeof fetch
-
-    const call = (method: 'POST' | 'GET', headers: Record<string, string>, remoteBrowser = false) => {
-      const url = new URL('http://localhost:3456/api/echoflow/site-session/refresh')
-      return handleEchoFlowApi(
-        new Request(url, { method, headers }),
-        url,
-        url.pathname.split('/').filter(Boolean),
-        { remoteBrowser },
-      )
-    }
-
-    try {
-      const bootstrapUrl = new URL('http://localhost:3456/api/echoflow/site-session')
-      await handleEchoFlowApi(
-        new Request(bootstrapUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-echoflow-site-session-bridge': 'electron-only-bridge-secret' },
-          body: JSON.stringify({ cookie: 'session=private-site-cookie', userId: '106452' }),
-        }),
-        bootstrapUrl,
-        bootstrapUrl.pathname.split('/').filter(Boolean),
-      )
-
-      // The bridge token alone is not enough — refresh is a renderer action.
-      expect((await call('POST', { 'x-echoflow-site-session-bridge': 'electron-only-bridge-secret' })).status).toBe(403)
-      expect((await call('POST', {}, true)).status).toBe(403)
-      expect((await call('POST', {})).status).toBe(403)
-
-      const refreshed = await call('POST', { Authorization: 'Bearer renderer-local-token' })
-      const body = await refreshed.json() as { account: { balance: number } }
-      expect(refreshed.status).toBe(200)
-      expect(body.account.balance).toBe(4)
-      expect(JSON.stringify(body)).not.toContain('private-site-cookie')
-    } finally {
-      globalThis.fetch = originalFetch
-      if (oldBridge === undefined) delete process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN
-      else process.env.ECHOFLOW_SITE_SESSION_BRIDGE_TOKEN = oldBridge
-      if (oldLocal === undefined) delete process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
-      else process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = oldLocal
     }
   })
 })

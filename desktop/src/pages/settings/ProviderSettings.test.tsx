@@ -2,7 +2,8 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import '@testing-library/jest-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { providersApi } from '../../api/providers'
-import { ProviderSettings } from './ProviderSettings'
+import { ProviderSettings, getInitialModel1mSupport } from './ProviderSettings'
+import { BUNDLED_PROVIDER_PRESETS } from '../../config/providerPresets'
 import { ApiError } from '../../api/client'
 import { useProviderStore } from '../../stores/providerStore'
 import { useSettingsStore } from '../../stores/settingsStore'
@@ -32,7 +33,8 @@ const {
   getTokenKeyMock: vi.fn(),
 }))
 
-vi.mock('../../api/echoflow', () => ({
+vi.mock('../../api/echoflow', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../api/echoflow')>()),
   echoflowApi: {
     createProviderFromToken: createProviderFromTokenMock,
     testProviderFromToken: testProviderFromTokenMock,
@@ -107,6 +109,13 @@ describe('EchoFlow provider setup', () => {
   afterEach(() => {
     cleanup()
     vi.restoreAllMocks()
+  })
+
+  it('states the legal-region limit on the EchoFlow SiHub card', async () => {
+    render(<ProviderSettings />)
+
+    expect(await screen.findByText(translate('en', 'settings.providers.echoflowAPIOfficialName'))).toBeInTheDocument()
+    expect(screen.getByText(translate('en', 'settings.providers.echoflowAPIOfficialDisclaimer'))).toBeInTheDocument()
   })
 
   it('opens the shared configuration modal without creating a provider', async () => {
@@ -392,8 +401,53 @@ describe('saved and legacy providers', () => {
     for (const provider of savedProviders) {
       expect(dialog.queryByRole('button', { name: provider.name })).not.toBeInTheDocument()
     }
-    expect(dialog.getByRole('button', { name: 'EchoFlow API' })).toBeInTheDocument()
+    // The chip is the preset's own name, so the copy rule owns the label.
+    expect(dialog.getByRole('button', { name: BUNDLED_PROVIDER_PRESETS.find((preset) => preset.id === 'echoflowai')!.name })).toBeInTheDocument()
     expect(dialog.getByRole('button', { name: 'Custom' })).toBeInTheDocument()
+  })
+
+  it('persists an explicit all-off 1M choice through the settings modal', async () => {
+    const provider: SavedProvider = {
+      id: 'echoflow-1m-provider',
+      presetId: 'echoflowai',
+      name: 'EchoFlow 1M test',
+      baseUrl: 'https://api.echoflowai.cc',
+      apiKey: 'fake-key',
+      apiFormat: 'anthropic',
+      models: {
+        main: 'claude-sonnet-5-5',
+        fable: 'claude-fable-5-1',
+        haiku: 'claude-haiku-5-5',
+        sonnet: 'claude-sonnet-5-5',
+        opus: 'claude-opus-5-5',
+      },
+    }
+    const listSpy = vi.spyOn(providersApi, 'list').mockResolvedValue({ providers: [provider], activeId: null })
+    const update = vi.spyOn(providersApi, 'update').mockImplementation(async (_id, input) => {
+      const updated = { ...provider, ...input } as SavedProvider
+      listSpy.mockResolvedValue({ providers: [updated], activeId: null })
+      return { provider: updated }
+    })
+    render(<ProviderSettings />)
+
+    fireEvent.click(within(await screen.findByTestId(`provider-${provider.id}`)).getByRole('button', { name: 'Edit' }))
+    const dialog = within(screen.getByRole('dialog'))
+    for (const checkbox of dialog.getAllByRole('checkbox', { name: /1M support:/ })) {
+      expect(checkbox).toBeChecked()
+      fireEvent.click(checkbox)
+    }
+    fireEvent.click(dialog.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(update).toHaveBeenCalledWith(provider.id, expect.objectContaining({
+      model1mSupport: { main: false, fable: false, haiku: false, sonnet: false, opus: false },
+    })))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+    fireEvent.click(within(await screen.findByTestId(`provider-${provider.id}`)).getByRole('button', { name: 'Edit' }))
+    const reopened = within(await screen.findByRole('dialog'))
+    for (const checkbox of reopened.getAllByRole('checkbox', { name: /1M support:/ })) {
+      expect(checkbox).not.toBeChecked()
+    }
   })
 
   it.each(savedProviders)('edits and saves an existing $presetId provider without losing its connection', async (provider) => {
@@ -519,5 +573,77 @@ describe('provider request compatibility', () => {
     const settings = vi.mocked(providersApi.updateSettings).mock.calls.at(-1)?.[0]
     expect(settings).not.toHaveProperty('requestCompatibility')
     expect(settings).toMatchObject({ env: { CUSTOM_ENV: 'keep', CLAUDE_CODE_PROVIDER_MAX_OUTPUT_TOKENS: '4096' } })
+  })
+})
+
+describe('1M checkbox defaults', () => {
+  // The box describes the model, not the slot: a model with a 1M window starts
+  // ticked and the user only has to clear the ones they do not want. Ticking a
+  // 200k model as 1M is what makes auto-compaction fail silently, so a model the
+  // provider reports as smaller stays unticked.
+  const oneMegPreset = BUNDLED_PROVIDER_PRESETS.find((preset) => preset.id === 'echoflowai')!
+  const withHaiku45 = {
+    ...oneMegPreset,
+    modelContextWindows: { ...oneMegPreset.modelContextWindows, 'claude-haiku-4-5': 200_000 },
+  }
+
+  it('starts every 1M-capable slot ticked, including the current haiku', () => {
+    expect(getInitialModel1mSupport({
+      main: 'claude-sonnet-5-5',
+      fable: 'claude-fable-5-1',
+      haiku: 'claude-haiku-5-5',
+      sonnet: 'claude-sonnet-5-5',
+      opus: 'claude-opus-5-5',
+    }, undefined, oneMegPreset)).toEqual({ main: true, fable: true, haiku: true, sonnet: true, opus: true })
+  })
+
+  it('leaves a model with a 200k window unticked whatever slot holds it', () => {
+    expect(getInitialModel1mSupport({
+      main: 'claude-sonnet-5-5',
+      haiku: 'claude-haiku-4-5',
+      sonnet: 'claude-sonnet-5-5',
+      opus: 'claude-opus-5-5',
+    }, undefined, withHaiku45)).toMatchObject({ haiku: false })
+  })
+
+  it('keeps a slot the user turned off', () => {
+    expect(getInitialModel1mSupport(
+      { main: 'claude-sonnet-5-5', haiku: 'claude-haiku-5-5', sonnet: 'claude-sonnet-5-5', opus: 'claude-opus-5-5' },
+      { model1mSupport: { main: true, fable: true, haiku: false, sonnet: false, opus: true } } as unknown as SavedProvider,
+      oneMegPreset,
+    )).toMatchObject({ sonnet: false, haiku: false })
+  })
+
+  it('does not tick fable when the slot has no model', () => {
+    expect(getInitialModel1mSupport({
+      main: 'claude-sonnet-5-5',
+      haiku: 'claude-haiku-5-5',
+      sonnet: 'claude-sonnet-5-5',
+      opus: 'claude-opus-5-5',
+    }, undefined, oneMegPreset)).toMatchObject({ fable: false })
+  })
+
+  it('does not preserve saved 1M support after switching to a known 200k model', () => {
+    expect(getInitialModel1mSupport({
+      main: 'claude-sonnet-5-5',
+      haiku: 'claude-haiku-4-5',
+      sonnet: 'claude-sonnet-5-5',
+      opus: 'claude-opus-5-5',
+    }, {
+      model1mSupport: { main: true, fable: false, haiku: true, sonnet: true, opus: true },
+    } as unknown as SavedProvider, withHaiku45)).toMatchObject({ haiku: false })
+  })
+
+  it('keeps an explicit all-off support map instead of dropping it', () => {
+    expect(getInitialModel1mSupport({
+      main: 'claude-sonnet-5-5',
+      haiku: 'claude-haiku-5-5',
+      sonnet: 'claude-sonnet-5-5',
+      opus: 'claude-opus-5-5',
+    }, {
+      model1mSupport: { main: false, fable: false, haiku: false, sonnet: false, opus: false },
+    } as unknown as SavedProvider, oneMegPreset)).toEqual({
+      main: false, fable: false, haiku: false, sonnet: false, opus: false,
+    })
   })
 })

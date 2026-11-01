@@ -7,6 +7,7 @@ import {
 } from './teamStore'
 import { registerAgentRunSession, useChatStore } from './chatStore'
 import { useTabStore } from './tabStore'
+import { ApiError } from '../api/client'
 import type { UIMessage } from '../types/chat'
 import type { TeamWorkbenchSnapshot } from '../types/team'
 
@@ -1385,6 +1386,43 @@ describe('teamStore workbench timeline', () => {
 
   afterEach(() => {
     useTeamStore.getState().clearTeam()
+  })
+
+  it('negative-caches a 404 discovery but still honors force', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-31T00:00:00.000Z'))
+    getWorkbenchForSessionMock.mockRejectedValueOnce(new ApiError(404, {}))
+    await useTeamStore.getState().fetchTeamForSession('no-team-session')
+    await useTeamStore.getState().fetchTeamForSession('no-team-session')
+    expect(getWorkbenchForSessionMock).toHaveBeenCalledTimes(1)
+    await useTeamStore.getState().fetchTeamForSession('no-team-session', { force: true })
+    expect(getWorkbenchForSessionMock).toHaveBeenCalledTimes(2)
+    vi.useRealTimers()
+  })
+
+  it('does not negative-cache transient failures', async () => {
+    getWorkbenchForSessionMock.mockRejectedValue(new ApiError(502, {}))
+    await useTeamStore.getState().fetchTeamForSession('error-session')
+    await useTeamStore.getState().fetchTeamForSession('error-session')
+    expect(getWorkbenchForSessionMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('discovers a newly created team after the negative TTL expires', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-31T00:00:00.000Z'))
+    getWorkbenchForSessionMock.mockRejectedValueOnce(new ApiError(404, {}))
+    await useTeamStore.getState().fetchTeamForSession('later-team')
+    vi.advanceTimersByTime(5_001)
+    getWorkbenchForSessionMock.mockResolvedValue({
+      sessionId: 'later-team',
+      teamName: 'team-workbench',
+      source: 'live',
+      snapshots: [workbench('1', 'pending')],
+    })
+    await useTeamStore.getState().fetchTeamForSession('later-team')
+    expect(getWorkbenchForSessionMock).toHaveBeenCalledTimes(2)
+    expect(useTeamStore.getState().workbenchesBySession['later-team']).toBeDefined()
+    vi.useRealTimers()
   })
 
   it('keeps each member model through the roster read instead of dropping it', async () => {

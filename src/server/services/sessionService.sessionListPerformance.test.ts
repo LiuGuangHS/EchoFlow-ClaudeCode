@@ -3,7 +3,9 @@ import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { SessionService } from './sessionService.js'
+import { diagnosticsService } from './diagnosticsService.js'
 import { openLocalIndexDatabase, type LocalIndexDatabase } from './localIndex/database.js'
+import { withHistoryReadBudget } from './boundedSessionHistory.js'
 import { createSessionIndex, type LocalIndexGateway } from './localIndex/sessionIndex.js'
 import { createSessionProjector } from './localIndex/sessionProjector.js'
 import type { LocalIndexStatus } from './localIndex/types.js'
@@ -103,6 +105,113 @@ describe('indexed session list empty-page performance', () => {
       }
     },
   )
+
+  it('bounds summary scans during file fallback', async () => {
+    const { gateway, ids } = await fixture()
+    const offStatus = { ...gateway.getPublicStatus(), state: 'off' as const }
+    gateway.getMode = () => 'off'
+    gateway.getPublicStatus = () => offStatus
+    const service = new SessionService(gateway)
+    const internals = service as unknown as {
+      scanSessionListSummary: (...args: unknown[]) => Promise<unknown>
+    }
+    let active = 0
+    let peak = 0
+    const original = internals.scanSessionListSummary.bind(service)
+    const scan = spyOn(internals, 'scanSessionListSummary').mockImplementation(async (...args) => {
+      active += 1
+      peak = Math.max(peak, active)
+      await new Promise(resolve => setTimeout(resolve, 5))
+      try { return await original(...args) } finally { active -= 1 }
+    })
+    try {
+      const result = await service.listSessions({ limit: 20 })
+      expect(result.sessions.map(session => session.id)).toEqual([...ids].reverse())
+      expect(peak).toBe(2)
+    } finally {
+      scan.mockRestore()
+    }
+  })
+
+  it('records aggregate evidence for a slow file fallback without session paths', async () => {
+    const { gateway, ids } = await fixture()
+    const offStatus = { ...gateway.getPublicStatus(), state: 'off' as const }
+    gateway.getMode = () => 'off'
+    gateway.getPublicStatus = () => offStatus
+    let clock = 1_000
+    const service = new SessionService(gateway, { now: () => (clock += 250) })
+    const record = spyOn(diagnosticsService, 'recordEvent').mockResolvedValue({ ok: true })
+    try {
+      await service.listSessions({ limit: 20 })
+
+      const events = record.mock.calls
+        .map(([event]) => event)
+        .filter((event) => event.type === 'session_list_fallback_slow')
+      expect(events).toHaveLength(1)
+      expect(events[0]?.details).toMatchObject({
+        indexMode: 'off',
+        indexState: 'off',
+        discovered: 6,
+        included: 6,
+      })
+      expect(events[0]?.details?.totalMs).toBeGreaterThanOrEqual(1_000)
+      const serialized = JSON.stringify(events[0])
+      expect(serialized).not.toContain(configDir)
+      expect(serialized).not.toContain(ids[0])
+    } finally {
+      record.mockRestore()
+    }
+  })
+
+  it('serves list summaries without taking the interactive page lane', async () => {
+    const { gateway, ids } = await fixture()
+    const offStatus = { ...gateway.getPublicStatus(), state: 'off' as const }
+    gateway.getMode = () => 'off'
+    gateway.getPublicStatus = () => offStatus
+    const service = new SessionService(gateway)
+    const releases: Array<() => void> = []
+    // 2 active + 8 queued fills the page lane; a 429 here used to drop every
+    // uncached summary from the list instead of surfacing the session.
+    const blockers = Array.from({ length: 10 }, () => withHistoryReadBudget(undefined, () => (
+      new Promise<void>((resolve) => { releases.push(resolve) })
+    ), 'page'))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(releases).toHaveLength(2)
+    await expect(withHistoryReadBudget(undefined, async () => 'ok', 'page'))
+      .rejects.toMatchObject({ code: 'HISTORY_BUSY' })
+    try {
+      const result = await service.listSessions({ limit: 20 })
+      expect(result.sessions.map((session) => session.id)).toEqual([...ids].reverse())
+    } finally {
+      while (releases.length > 0) {
+        releases.shift()!()
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      }
+      await Promise.allSettled(blockers)
+    }
+  })
+
+  it('rate-limits the slow fallback event across repeated slow reads', async () => {
+    const { gateway } = await fixture()
+    const offStatus = { ...gateway.getPublicStatus(), state: 'off' as const }
+    gateway.getMode = () => 'off'
+    gateway.getPublicStatus = () => offStatus
+    let clock = 1_000
+    const service = new SessionService(gateway, { now: () => (clock += 250) })
+    const record = spyOn(diagnosticsService, 'recordEvent').mockResolvedValue({ ok: true })
+    try {
+      await service.listSessions({ limit: 20 })
+      clock += 6_000
+      await service.listSessions({ limit: 20 })
+
+      const events = record.mock.calls
+        .map(([event]) => event)
+        .filter((event) => event.type === 'session_list_fallback_slow')
+      expect(events).toHaveLength(1)
+    } finally {
+      record.mockRestore()
+    }
+  })
 
   it('still falls back if an empty index page was returned during a read failure', async () => {
     const { gateway, ids } = await fixture()

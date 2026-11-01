@@ -96,7 +96,7 @@ bun run check:desktop-ui-smoke # real desktop UI + real permission dialog + mock
 
 Neither needs a provider, credentials, or the public network. `check:agent-flow` covers session creation, runtime selection, first-turn streaming, tool execution, permission allow/deny, tool failure, API error, interrupt, reconnect permission replay, and session recovery. `check:desktop-ui-smoke` clicks the real Allow button in a real browser; it needs `agent-browser` and installed desktop dependencies and skips with a printed reason when either is missing.
 
-`agent-browser` belongs to that committed lane (which runs headless on Linux CI) and to the maintainer-run `desktop/scripts/e2e-*-agent-browser.sh` scripts. For ad-hoc browser work (manual verification, screenshots, exploratory UI checks), use the installed `playwright` plugin or the `browser` tools instead; do not treat `agent-browser` as a general-purpose browser tool just because it appears in the repository.
+`agent-browser` belongs to that committed lane (which runs headless on Linux CI) and to the maintainer-run `desktop/scripts/e2e-*-agent-browser.sh` scripts. For ad-hoc browser work (manual verification, screenshots, exploratory UI checks), use whatever browser automation the session actually has (a browser MCP, a browser plugin, or headless Chrome) instead; do not treat `agent-browser` as a general-purpose browser tool just because it appears in the repository.
 
 Every quality-gate lane that boots the real server runs against a sandbox config dir (`scripts/quality-gate/sandbox.ts`) and fails if it wrote to the developer's real `~/.claude`.
 
@@ -137,6 +137,8 @@ When a check fails, consult the evidence for that failure:
 | Path-aware PR checks | Check same-area tests, CLI core, and coverage policy; maintainer overrides require an explicit decision |
 | Coverage gate | `artifacts/coverage/<timestamp>/coverage-report.md` or `.json`; address `changedLines.failures` / `failures`, while `targetGaps` signal technical debt |
 | Build, types, lint, docs, or native | Fix issues caused by the change identified in the relevant log and rerun affected checks |
+
+Shared diagnostic exports keep typed, bounded evidence only — exit codes, HTTP statuses, timings, counts, index mode and state — and omit or redact message bodies, credentials, arbitrary stacks, paths, and upstream response bodies. Every new shareable field ships with both a retention test and a redaction/omission test, and is added to the allowlist in `src/server/services/diagnosticsShare.ts`.
 
 Claim PR-ready/full validation only after `bun run verify` passes for the final diff. Do not lower coverage baselines/thresholds or rewrite test expectations to hide failures.
 

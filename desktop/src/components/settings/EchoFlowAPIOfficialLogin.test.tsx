@@ -4,6 +4,8 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { useProviderStore } from '../../stores/providerStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { translate } from '../../i18n'
+import type { EchoFlowAccount } from '../../api/echoflow'
+import { ApiError } from '../../api/client'
 
 // The component routes every label through t(). Deriving the expected strings from
 // translate() (and pinning a non-default locale) is what keeps these assertions
@@ -16,6 +18,14 @@ const bindLabel = (endpoint: 'main' | 'dedicated') =>
   translate('en', 'echoflowApiOfficialLogin.bindAccount', { endpoint: endpointTab(endpoint) })
 
 vi.mock('../../api/echoflow')
+const hostMocks = vi.hoisted(() => ({ openLogin: vi.fn(), signOut: vi.fn(), open: vi.fn(), echoFlowAccount: true }))
+vi.mock('@/lib/desktopHost', () => ({
+  getDesktopHost: () => ({
+    capabilities: { echoFlowAccount: hostMocks.echoFlowAccount },
+    echoFlow: hostMocks,
+    shell: { open: hostMocks.open },
+  }),
+}))
 let EchoFlowAPIOfficialLogin: typeof import('./EchoFlowAPIOfficialLogin').EchoFlowAPIOfficialLogin
 let echoflowApi: typeof import('../../api/echoflow').echoflowApi
 
@@ -35,7 +45,7 @@ const dedicatedAccount = {
   tokens: [{ id: 'shared-token-id', name: 'Dedicated key', keyPreview: 'sk-dedicated…5678' }],
 }
 
-function mockAccounts(main: typeof mainAccount | null = mainAccount, dedicated: typeof dedicatedAccount | null = dedicatedAccount) {
+function mockAccounts(main: EchoFlowAccount | null = mainAccount, dedicated: EchoFlowAccount | null = dedicatedAccount) {
   vi.mocked(echoflowApi.getAccounts).mockResolvedValue({
     account: main,
     accounts: { main, dedicated },
@@ -51,6 +61,7 @@ describe('EchoFlowAPIOfficialLogin', () => {
     echoflowApi.refreshAccount = vi.fn()
     echoflowApi.disconnectAccount = vi.fn()
     echoflowApi.getTokenKey = vi.fn()
+    echoflowApi.createToken = vi.fn()
   })
   beforeEach(() => {
     useSettingsStore.setState({ locale: 'en' })
@@ -60,7 +71,13 @@ describe('EchoFlowAPIOfficialLogin', () => {
     vi.mocked(echoflowApi.refreshAccount).mockReset()
     vi.mocked(echoflowApi.disconnectAccount).mockReset()
     vi.mocked(echoflowApi.getTokenKey).mockReset()
+    vi.mocked(echoflowApi.createToken).mockReset()
+    hostMocks.open.mockReset()
+    hostMocks.open.mockResolvedValue(undefined)
     vi.mocked(echoflowApi.getTokenKey).mockResolvedValue({ token: { id: 'shared-token-id', name: 'Main key', key: 'sk-main-secret' } })
+    hostMocks.openLogin.mockReset()
+    hostMocks.signOut.mockReset()
+    hostMocks.echoFlowAccount = true
     mockAccounts()
   })
 
@@ -90,6 +107,55 @@ describe('EchoFlowAPIOfficialLogin', () => {
     expect(screen.queryByText('专线 · Code')).not.toBeInTheDocument()
     expect(screen.queryByText('sk-mc****Dbj8')).not.toBeInTheDocument()
     expect(useProviderStore.getState().providers).toContainEqual(activeProvider)
+  })
+
+  it('signs in with the selected endpoint and refreshes that account', async () => {
+    mockAccounts(null, null)
+    hostMocks.openLogin.mockResolvedValue('authenticated')
+    vi.mocked(echoflowApi.refreshAccount).mockResolvedValue({ account: mainAccount })
+    render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: L('echoflowApiOfficialLogin.signIn') }))
+    await waitFor(() => expect(hostMocks.openLogin).toHaveBeenCalledWith('main'))
+    await waitFor(() => expect(echoflowApi.refreshAccount).toHaveBeenCalledWith('main'))
+
+    fireEvent.click(screen.getByRole('tab', { name: endpointTab('dedicated') }))
+    fireEvent.click(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.signIn') }))
+    await waitFor(() => expect(hostMocks.openLogin).toHaveBeenLastCalledWith('dedicated'))
+  })
+
+  it('keeps the manual token form available under the advanced section', async () => {
+    mockAccounts(null, null)
+    render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
+
+    expect(await screen.findByText(L('echoflowApiOfficialLogin.manualBind'))).toBeInTheDocument()
+    fireEvent.change(screen.getByPlaceholderText(L('echoflowApiOfficialLogin.userId')), { target: { value: 'manual-user' } })
+    fireEvent.change(screen.getByPlaceholderText(L('echoflowApiOfficialLogin.managementToken')), { target: { value: 'manual-token' } })
+    fireEvent.click(screen.getByRole('button', { name: bindLabel('main') }))
+
+    await waitFor(() => expect(echoflowApi.bindAccount).toHaveBeenCalledWith('main', 'manual-user', 'manual-token'))
+  })
+
+  it('asks for a new sign-in when the stored session is no longer live', async () => {
+    mockAccounts({ ...mainAccount, live: false }, null)
+    render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
+
+    expect(await screen.findByText(L('echoflowApiOfficialLogin.needsRelogin'))).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.signIn') })).toBeInTheDocument()
+  })
+
+  it('offers sign-in again when a refresh discovers the credential was rejected', async () => {
+    vi.mocked(echoflowApi.getAccounts)
+      .mockResolvedValueOnce({ account: mainAccount, accounts: { main: mainAccount, dedicated: null } })
+      .mockResolvedValue({ account: null, accounts: { main: { ...mainAccount, live: false }, dedicated: null } })
+    vi.mocked(echoflowApi.refreshAccount).mockRejectedValue(new Error('token_invalid'))
+
+    render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
+    await screen.findByText(userIdSummary('main-user'))
+    fireEvent.click(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.refresh') }))
+
+    expect(await screen.findByRole('button', { name: L('echoflowApiOfficialLogin.signIn') })).toBeInTheDocument()
+    expect(screen.getByText(L('echoflowApiOfficialLogin.refreshFailed'))).toBeInTheDocument()
   })
 
   it('shows one endpoint account at a time and keeps the account data isolated', async () => {
@@ -184,6 +250,22 @@ describe('EchoFlowAPIOfficialLogin', () => {
   })
 
   it('disconnects only the selected endpoint account', async () => {
+    hostMocks.signOut.mockResolvedValue(undefined)
+    render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
+
+    await screen.findByText(userIdSummary('main-user'))
+    fireEvent.click(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.unbind') }))
+
+    await waitFor(() => expect(hostMocks.signOut).toHaveBeenCalledWith('main'))
+    expect(screen.queryByText(userIdSummary('main-user'))).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: endpointTab('dedicated') }))
+    expect(screen.getByText(userIdSummary('dedicated-user'))).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Dedicated key.*sk-dedicated…5678/ })).toBeInTheDocument()
+  })
+
+  it('still disconnects in a browser host that cannot clear the sign-in cookies', async () => {
+    hostMocks.echoFlowAccount = false
     vi.mocked(echoflowApi.disconnectAccount).mockResolvedValue({ ok: true })
     render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
 
@@ -191,11 +273,8 @@ describe('EchoFlowAPIOfficialLogin', () => {
     fireEvent.click(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.unbind') }))
 
     await waitFor(() => expect(vi.mocked(echoflowApi.disconnectAccount)).toHaveBeenCalledWith('main'))
+    expect(hostMocks.signOut).not.toHaveBeenCalled()
     expect(screen.queryByText(userIdSummary('main-user'))).not.toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole('tab', { name: endpointTab('dedicated') }))
-    expect(screen.getByText(userIdSummary('dedicated-user'))).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Dedicated key.*sk-dedicated…5678/ })).toBeInTheDocument()
   })
 
   it('refreshes only the selected endpoint account', async () => {
@@ -255,5 +334,60 @@ describe('EchoFlowAPIOfficialLogin', () => {
     // no editor fields linger, and the bound account is still presented.
     expect(screen.queryByPlaceholderText(L('echoflowApiOfficialLogin.managementToken'))).not.toBeInTheDocument()
     expect(screen.getByText(userIdSummary('main-user'))).toBeInTheDocument()
+  })
+
+  it('creates a call token from the card and lists it without a reload', async () => {
+    vi.mocked(echoflowApi.createToken).mockResolvedValue({
+      account: {
+        ...mainAccount,
+        tokens: [...mainAccount.tokens, { id: 'new-token-id', name: 'echoflow-code', keyPreview: 'sk-new…dcba' }],
+      },
+    })
+    render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
+
+    expect(await screen.findByText(userIdSummary('main-user'))).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.createToken') }))
+
+    await waitFor(() => expect(vi.mocked(echoflowApi.createToken)).toHaveBeenCalledWith('main'))
+    // The invariant: the new key is in the same list the add-to-providers click
+    // reads from, so creating it is the whole job — no page reload, no console.
+    expect(await screen.findByRole('button', { name: /echoflow-code/ })).toBeInTheDocument()
+    expect(screen.getByText(L('echoflowApiOfficialLogin.tokenCreated'))).toBeInTheDocument()
+  })
+
+  it('reports a failed token creation next to the button that failed', async () => {
+    vi.mocked(echoflowApi.createToken).mockRejectedValue(new Error('token_invalid'))
+    render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
+
+    expect(await screen.findByText(userIdSummary('main-user'))).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.createToken') }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(L('echoflowApiOfficialLogin.createTokenFailed'))
+    expect(screen.getByText(userIdSummary('main-user'))).toBeInTheDocument()
+  })
+
+  it('carries the gateway reason into the failure line', async () => {
+    vi.mocked(echoflowApi.createToken).mockRejectedValue(
+      new ApiError(400, { error: 'token_invalid', detail: 'Session network fingerprint changed' }),
+    )
+    render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
+
+    expect(await screen.findByText(userIdSummary('main-user'))).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.createToken') }))
+
+    // The invariant: a refusal states why, so the user can act instead of guessing.
+    expect(await screen.findByRole('alert')).toHaveTextContent('Session network fingerprint changed')
+  })
+
+  it('opens the site console for the endpoint being viewed', async () => {
+    render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
+
+    expect(await screen.findByText(userIdSummary('main-user'))).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.openConsole') }))
+    expect(hostMocks.open).toHaveBeenLastCalledWith('https://api.echoflowai.cc/console/token')
+
+    fireEvent.click(screen.getByRole('tab', { name: endpointTab('dedicated') }))
+    fireEvent.click(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.openConsole') }))
+    expect(hostMocks.open).toHaveBeenLastCalledWith('https://expapi.echoflowai.cc/console/token')
   })
 })

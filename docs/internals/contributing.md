@@ -96,7 +96,7 @@ bun run check:desktop-ui-smoke # 真实桌面 UI + 真实权限对话框 + mock 
 
 两条通道都不需要 provider、凭据或公网。`check:agent-flow` 覆盖新建 Session → 选运行时 → 首轮流式 → 工具调用 → 权限批准/拒绝 → 工具失败 → API 错误 → 中断 → 断线重连权限重放 → 会话恢复。`check:desktop-ui-smoke` 在真实浏览器里点真实的 Allow 按钮，需要 `agent-browser` 与已安装的 desktop 依赖，缺失时会打印原因并跳过。
 
-`agent-browser` 只属于这条已提交的 lane（在 Linux CI 上以 headless 方式运行）以及维护者手动执行的 `desktop/scripts/e2e-*-agent-browser.sh`。临时的浏览器操作（手动验证、截图、探索性 UI 检查）请使用已安装的 `playwright` 插件或 `browser` 工具，不要因为仓库里出现 `agent-browser` 就把它当通用浏览器工具。
+`agent-browser` 只属于这条已提交的 lane（在 Linux CI 上以 headless 方式运行）以及维护者手动执行的 `desktop/scripts/e2e-*-agent-browser.sh`。临时的浏览器操作（手动验证、截图、探索性 UI 检查）请用当前会话实际可用的浏览器自动化手段（浏览器 MCP、浏览器插件或 headless Chrome），不要因为仓库里出现 `agent-browser` 就把它当通用浏览器工具。
 
 所有会启动真实 server 的 quality-gate lane 都跑在沙箱配置目录里（`scripts/quality-gate/sandbox.ts`），并在结束时校验没有写过开发者真实的 `~/.claude`；写了就判定 lane 失败。
 
@@ -163,6 +163,8 @@ bun run check:release-surface     # 发版面：品牌标记、版本/品牌漂�
 | Path-aware PR checks | 核对同区域测试、CLI core 和 coverage policy；维护者 override 需要明确决定 |
 | Coverage gate | `artifacts/coverage/<timestamp>/coverage-report.md` 或 `.json`；修复 `changedLines.failures` / `failures`，`targetGaps` 是技术债提示 |
 | 构建、类型、lint、文档或 native | 修复对应日志指出的本次变更问题，重跑受影响检查 |
+
+共享诊断导出只保留有类型、有界的证据：退出码、HTTP 状态、耗时、计数、索引模式与状态等；消息正文、凭据、任意堆栈、路径和上游响应体一律省略或脱敏。新增一个可分享字段时，要同时补「保留该字段」和「脱敏/省略相邻敏感值」两类测试，并把它加入 `src/server/services/diagnosticsShare.ts` 的允许列表。
 
 只有最终 diff 的 `bun run verify` 报告通过，才能声明 PR-ready/full validation。不要通过降低 coverage baseline/threshold 或改写测试预期掩盖失败。
 

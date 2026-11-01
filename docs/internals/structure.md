@@ -73,6 +73,7 @@ order: 3
 │   ├── win_helper.py               # Windows Computer Use helper
 │   └── requirements-win.txt
 ├── scripts/                        # 根项目质量门禁、发布与维护脚本
+│   └── agent-quality-gate/         # 记录编辑/验证/独立评审，作者自审收不了尾
 ├── tests/                          # 跨模块测试与测试资源
 ├── site/                           # React 文档站、内容索引与静态构建
 └── docs/                           # 中英文 Markdown 文档内容

@@ -9,10 +9,21 @@ import {
 } from './capabilities'
 
 describe('Electron IPC capabilities', () => {
-  it('allows only the main app to request EchoFlow sign-in with no payload', () => {
+  it('allows only the main app to request EchoFlow sign-in for a known endpoint', () => {
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, undefined)).toBe(true)
+    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, { endpoint: 'main' })).toBe(true)
+    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, { endpoint: 'dedicated' })).toBe(true)
+    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, { endpoint: 'other' })).toBe(false)
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, { cookie: 'secret' })).toBe(false)
     expect(isElectronIpcChannelAllowedForPetWindow(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen)).toBe(false)
+  })
+  it('scopes EchoFlow sign-out to one endpoint and never carries credentials', () => {
+    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.echoFlowSignOut, undefined)).toBe(true)
+    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.echoFlowSignOut, { endpoint: 'main' })).toBe(true)
+    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.echoFlowSignOut, { endpoint: 'dedicated' })).toBe(true)
+    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.echoFlowSignOut, { endpoint: 'other' })).toBe(false)
+    expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.echoFlowSignOut, { cookie: 'secret' })).toBe(false)
+    expect(isElectronIpcChannelAllowedForPetWindow(ELECTRON_IPC_CHANNELS.echoFlowSignOut)).toBe(false)
   })
   it('restricts public access credentials and consent to validated desktop IPC', () => {
     expect(validateElectronIpcPayload(ELECTRON_IPC_CHANNELS.publicAccessSaveCredential, 'fake-token')).toBe(true)

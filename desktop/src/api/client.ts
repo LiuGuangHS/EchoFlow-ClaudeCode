@@ -33,8 +33,11 @@ type RequestTiming = {
 }
 
 function getErrorMessage(status: number, body: unknown) {
-  if (body && typeof body === 'object' && 'message' in body && typeof body.message === 'string') {
-    return body.message
+  if (body && typeof body === 'object') {
+    // EchoFlow routes answer `{ error, detail }`; the detail is the upstream
+    // gateway's own words, which is the only part that explains the refusal.
+    if ('detail' in body && typeof body.detail === 'string' && body.detail.trim()) return body.detail
+    if ('message' in body && typeof body.message === 'string') return body.message
   }
 
   if (typeof body === 'string' && body.trim().length > 0) {

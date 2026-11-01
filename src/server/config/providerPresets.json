@@ -15,22 +15,27 @@
   },
   {
     "id": "echoflowai",
-    "name": "EchoFlow API",
+    "name": "EchoFlow SiHub",
     "baseUrl": "https://api.echoflowai.cc",
     "apiFormat": "anthropic",
     "defaultModels": {
-      "main": "claude-sonnet-4-6",
-      "haiku": "claude-haiku-4-5",
-      "sonnet": "claude-sonnet-4-6",
-      "opus": "claude-opus-4-7"
+      "main": "claude-sonnet-5-5",
+      "fable": "claude-fable-5-1",
+      "haiku": "claude-haiku-5-5",
+      "sonnet": "claude-sonnet-5-5",
+      "opus": "claude-opus-5-5"
     },
     "needsApiKey": true,
     "websiteUrl": "https://api.echoflowai.cc/",
     "apiKeyUrl": "https://api.echoflowai.cc/register",
-    "promoText": "一站式接入 500+ 模型，支持 Claude / OpenAI 协议，访问高速稳定。新用户注册赠送试用。",
+    "promoText": "推荐接入 500+ 模型，支持 Claude / OpenAI 协议，访问高速稳定。新用户注册赠送试用。",
     "featured": true,
     "authStrategy": "auth_token",
     "modelContextWindows": {
+      "claude-sonnet-5-5": 1000000,
+      "claude-fable-5-1": 1000000,
+      "claude-haiku-5-5": 1000000,
+      "claude-opus-5-5": 1000000,
       "claude-sonnet-4-6": 1000000,
       "claude-haiku-4-5": 200000,
       "claude-opus-4-7": 1000000
