@@ -1,7 +1,8 @@
 export const OPENAI_REASONING_ENVELOPE_PREFIX =
   'echoflow-code:openai-reasoning:v1:'
+// Persisted in resumed transcripts from older installs; do not rename.
 const LEGACY_OPENAI_REASONING_ENVELOPE_PREFIX =
-  'echoflow-code:openai-reasoning:v1:'
+  'cc-haha:openai-reasoning:v1:'
 
 export type OpenAIReasoningEnvelopeData = {
   id?: string
