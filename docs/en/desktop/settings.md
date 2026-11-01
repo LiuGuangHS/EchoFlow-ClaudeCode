@@ -1,13 +1,13 @@
 ---
 title: Settings guide
 nav_title: Settings
-description: All 17 settings tabs — what each one configures and when you'd need it.
+description: All 19 settings tabs — what each one configures and when you'd need it.
 order: 13
 ---
 
 # Settings guide
 
-Click **Settings** at the bottom of the sidebar. Seventeen tabs appear on the left in a fixed order. This page walks through them in that order; for your first session, connect a model in **Model Settings**, check permissions and language in **General**, then follow [Your first session](../start/first-session.md).
+Click **Settings** at the bottom of the sidebar. Nineteen tabs appear on the left in a fixed order. This page walks through them in that order; for your first session, connect a model in **Model Settings**, check permissions and language in **General**, then follow [Your first session](../start/first-session.md).
 
 ## Model Settings
 
@@ -42,16 +42,6 @@ General covers four areas: appearance and replies, how the agent works, network 
 - **Message sending:** defaults to Enter to send and Shift+Enter for a newline. If you write long prompts, choose `Ctrl/Cmd+Enter` to send.
 - **Default editor:** chooses which detected local editor appears as the default under a file's **Open with** menu.
 
-### Runtime management
-
-The **Runtime management** page checks the EchoFlow Agent bundled with the app, plus the Claude Code and Codex it can find on this computer through the usual command paths. Windows users can also check WSL distributions on request, or pick a Claude Code or Codex executable by hand. Checking only reads version information: it does not install or update third-party tools, and EchoFlow does not switch your sessions to them because of it.
-
-Each entry shows its source, version, location, and when it was last checked — a version and a "Found" label are the result of a probe, not a standing state. A local path can be shown in its folder, which opens the containing folder and never runs the program. **Found means it exists on this machine; it does not mean EchoFlow can run sessions or Team tasks with it.** The WSL check is user-triggered and reports the distribution and its in-Linux path; a Linux path belongs to another filesystem, so those entries are not offered to the native file manager. WSL installs are managed separately from a Windows install. The SDK is an internal development dependency of EchoFlow, so you do not install or manage it yourself.
-
-DeepSeek Harness keeps its own entry for starting, stopping, and updating. It is a standalone app today and does not accept EchoFlow sessions or Team tasks.
-
-The **EchoFlow Agent runtime** card chooses which executable starts new sessions: **EchoFlow Managed** uses the EchoFlow Agent shipped with the app, and **Claude Code on this computer** uses an executable you installed. That is a choice between two products, not two configurations of one. **Claude Code on this computer** is disabled when this machine has no usable install; choose **Choose a local Claude Code executable** to point at one manually, and the card then shows its full path so you can confirm you picked the right file. If that file is later uninstalled or renamed, the option returns to disabled and you must pick a new one. This setting does not affect sessions already running, and a session can switch separately.
-
 ### For more involved agent workflows
 
 | Setting | When to use it |
@@ -76,6 +66,28 @@ The **EchoFlow Agent runtime** card chooses which executable starts new sessions
 - **Data Storage Location** defaults to `~/.claude` (`%USERPROFILE%\\.claude` on Windows). Portable mode takes an absolute path outside the app installation folder. After an app restart, sessions, configuration, tasks, skills, and plugins are read from the new location. The two directories are not merged or migrated automatically. If `CLAUDE_CONFIG_DIR` is set at launch, remove that environment variable before switching locations in the UI.
 
 Product screenshots in this guide consistently use the **Pure White** theme so the interface can be compared without palette changes.
+
+## Runtime management
+
+The **Runtime management** page checks the EchoFlow Agent bundled with the app, plus the Claude Code and Codex it can find on this computer through the usual command paths. Windows users can also check WSL distributions on request, or pick a Claude Code or Codex executable by hand. Checking only reads version information: it does not install or update third-party tools, and EchoFlow does not switch your sessions to them because of it.
+
+Each entry shows its source, version, location, and when it was last checked — a version and a "Found" label are the result of a probe, not a standing state. A local path can be shown in its folder, which opens the containing folder and never runs the program. **Found means it exists on this machine; it does not mean EchoFlow can run sessions or Team tasks with it.** The WSL check is user-triggered and reports the distribution and its in-Linux path; a Linux path belongs to another filesystem, so those entries are not offered to the native file manager. WSL installs are managed separately from a Windows install. The SDK is an internal development dependency of EchoFlow, so you do not install or manage it yourself.
+
+DeepSeek Harness keeps its own entry for starting, stopping, and updating. It is a standalone app today and does not accept EchoFlow sessions or Team tasks.
+
+The **EchoFlow Agent runtime** card chooses which executable starts new sessions: **EchoFlow Managed** uses the EchoFlow Agent shipped with the app, and **Claude Code on this computer** uses an executable you installed. That is a choice between two products, not two configurations of one. **Claude Code on this computer** is disabled when this machine has no usable install; choose **Choose a local Claude Code executable** to point at one manually, and the card then shows its full path so you can confirm you picked the right file. If that file is later uninstalled or renamed, the option returns to disabled and you must pick a new one. This setting does not affect sessions already running, and a session can switch separately.
+
+## Voice input
+
+Adds a microphone button next to the composer so speech becomes text without a third-party dictation app. Audio is transcribed only on the machine running the EchoFlow Code service; it never goes to a cloud service.
+
+- **Enable voice input** — shows the dictation button next to the chat composer. The switch only shows the button; the model is downloaded separately.
+- **Recognition engine** — click **Download** on first use. The voice runtime, the speech model, and the voice-activity model download in turn and are verified when they finish. An interrupted download keeps what it already has; click **Resume** to continue from that point. The download source can be automatic, official (Hugging Face, npm), or a mirror (hf-mirror, npmmirror), and downloads use the Network proxy from **General**.
+- **Language** — automatic detection by default, or fixed to Mandarin, English, Japanese, Korean, or Cantonese. A fixed language makes short utterances more reliable.
+- **Microphone** — lists the input devices on this machine. Picking the wrong one usually shows up as silence.
+- **Transcription test** — record a few seconds and read the result through the same path dictation uses, to confirm the model, microphone, and permission all work.
+
+The model lives on this machine. Deleting it also deletes the runtime files, so you download again afterwards. On a platform without local speech recognition the page says so and never shows the dictation button.
 
 ## H5 Access
 
