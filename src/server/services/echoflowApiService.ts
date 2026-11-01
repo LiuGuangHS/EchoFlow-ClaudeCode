@@ -169,6 +169,13 @@ export class EchoFlowApiService {
           userId: trimmed.userId,
           credential: trimmed.kind,
           username: user.username || previous?.username,
+          // The saved keys are the only copies the gateway will ever hand out.
+          // The restore at startup re-runs this for the same user, so dropping
+          // them here would make every earlier token unusable on restart. The
+          // next refresh reconciles the list against the gateway.
+          ...(previous && previous.userId === trimmed.userId && previous.tokens
+            ? { tokens: previous.tokens }
+            : {}),
           endpoint,
         }
     accounts.accounts[endpoint] = stored
@@ -240,7 +247,17 @@ export class EchoFlowApiService {
       // credential kind.
       tokens: rememberCreatedToken(
         reattachStoredTokenKeys(
-          await this.listTokensWithCredential(endpoint),
+          await this.listTokensWithCredential(endpoint).catch((error) => {
+            // The create response is the only copy of that key; a list that
+            // fails right after must not take it down with it.
+            if (!created) throw error
+            console.warn('[echoflow-api] token-list-after-create-failed:', JSON.stringify({
+              endpoint,
+              code: error instanceof EchoFlowApiError ? error.code : 'unexpected',
+              status: error instanceof EchoFlowApiError ? error.status : undefined,
+            }))
+            return account.tokens ?? []
+          }),
           account.tokens,
           account.userId === credential.userId,
         ),
@@ -262,7 +279,13 @@ export class EchoFlowApiService {
    * must be selected when smart routing is disabled" — smart routing on.
    */
   async createAccountToken(endpoint: EchoFlowEndpoint = 'main', name = 'echoflow-code'): Promise<EchoFlowAccount> {
-    const credential = this.credentials.get(endpoint)
+    // A management-token account keeps its credential on disk, so creating a
+    // token must work right after a restart, before any refresh loads it.
+    let credential = this.credentials.get(endpoint)
+    if (!credential) {
+      const stored = (await this.readAccounts()).accounts[endpoint]
+      credential = stored ? storedCredential(stored) ?? undefined : undefined
+    }
     if (!credential) throw new EchoFlowApiError('token_invalid')
     const created = endpoint === 'dedicated'
       ? await this.createDedicatedKey(credential, endpoint, name)
@@ -383,7 +406,7 @@ export class EchoFlowApiService {
       }
     }
 
-    const data = await this.fetchManagementApi<{ success?: boolean; message?: string; data?: { quota?: number; group?: string; username?: string } }>(
+    const data = await this.fetchManagementApi<{ success?: boolean; message?: string; data?: { id?: number | string; user_id?: number | string; quota?: number; group?: string; username?: string } }>(
       '/api/user/self',
       credential,
       endpoint,
@@ -394,6 +417,22 @@ export class EchoFlowApiService {
     }
 
     const account = data.data ?? {}
+    // A restored cookie and the userId next to it must name the same user: a
+    // login window closed after signing into another account leaves the new
+    // cookie in the partition while the account file still holds the old id.
+    // The sign-in path reads this id too, so a gateway that omits it cannot
+    // have produced a session that should be trusted.
+    if (credential.kind === 'session') {
+      // The desktop identity parser accepts either field name, so the guard
+      // must read the same pair or a valid sign-in would be rejected here.
+      const reportedId = account.id ?? account.user_id
+      if (reportedId === undefined || reportedId === null) {
+        throw new EchoFlowApiError('token_invalid', undefined, 'the gateway did not report which account the session belongs to')
+      }
+      if (String(reportedId) !== credential.userId) {
+        throw new EchoFlowApiError('token_invalid', undefined, 'the sign-in belongs to another account')
+      }
+    }
     return {
       balance: typeof account.quota === 'number' ? account.quota / 500000 : 0,
       userGroup: account.group ?? 'default',

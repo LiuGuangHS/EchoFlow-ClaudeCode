@@ -84,6 +84,45 @@ describe('EchoFlowApiService credentials', () => {
     expect(account?.userId).toBe('851842')
   })
 
+  test('rejects a restored session whose cookie belongs to another user', async () => {
+    stubSite()
+    const service = new EchoFlowApiService()
+
+    const error = await service
+      .setCredential('main', { kind: 'session', userId: '999', cookie: 'session=other-user' })
+      .catch((thrown: unknown) => thrown)
+
+    expect(error).toMatchObject({ code: 'token_invalid' })
+    await expect(service.getAccount('main')).resolves.toBeNull()
+  })
+
+  test('rejects a session the gateway cannot attribute to an account', async () => {
+    globalThis.fetch = mock(async (input: string | URL | Request) => {
+      if (String(input).endsWith('/api/user/self')) {
+        return Response.json({ success: true, data: { quota: 500_000, group: 'default', username: 'no-id' } })
+      }
+      return Response.json({ success: true, data: { items: [] } })
+    }) as typeof fetch
+    const service = new EchoFlowApiService()
+
+    const error = await service
+      .setCredential('main', { kind: 'session', userId: '851842', cookie: 'session=live' })
+      .catch((thrown: unknown) => thrown)
+
+    expect(error).toMatchObject({ code: 'token_invalid' })
+  })
+
+  test('accepts the site user id under either field name', async () => {
+    globalThis.fetch = mock(async () => Response.json({
+      success: true,
+      data: { user_id: 851842, quota: 500_000, group: 'default', username: 'echo' },
+    })) as typeof fetch
+    const service = new EchoFlowApiService()
+
+    await expect(service.setCredential('main', { kind: 'session', userId: '851842', cookie: 'session=live' }))
+      .resolves.toMatchObject({ userId: '851842' })
+  })
+
   test('sends the tenant headers the site console sends with a session credential', async () => {
     const calls = stubSite()
     const service = new EchoFlowApiService()
@@ -708,7 +747,11 @@ describe('EchoFlowApiService token key lifecycle', () => {
       const url = String(input)
       const method = init?.method ?? 'GET'
       if (url.endsWith('/api/user/self')) {
-        return Response.json({ success: true, data: { quota: 500_000, group: 'default', username: 'echo' } })
+        const userId = new Headers(init?.headers).get('new-api-user')
+        return Response.json({
+          success: true,
+          data: { ...(userId ? { id: userId } : {}), quota: 500_000, group: 'default', username: 'echo' },
+        })
       }
       if (url.endsWith('/api/token/') && method === 'POST') {
         return Response.json({ success: true, data: created() })
@@ -759,6 +802,64 @@ describe('EchoFlowApiService token key lifecycle', () => {
     await service.setCredential('main', { ...credential, userId: '8' })
 
     await expect(service.selectAccountToken('main', '11')).rejects.toMatchObject({ code: 'token_invalid' })
+  })
+
+  test('keeps a stored key when the same site session is restored', async () => {
+    tokenGateway(() => [{ id: 11, name: 'echoflow-code' }], () => 'sk-live-key')
+    const service = new EchoFlowApiService()
+    await service.setCredential('main', credential)
+    await service.createAccountToken('main')
+
+    await service.setCredential('main', { kind: 'session', userId: '7', cookie: 'session=live' })
+
+    await expect(service.selectAccountToken('main', '11')).resolves.toMatchObject({ key: 'sk-live-key' })
+  })
+
+  test('drops the saved key when a different site user is restored', async () => {
+    tokenGateway(() => [{ id: 11, name: 'echoflow-code' }], () => 'sk-user-a')
+    const service = new EchoFlowApiService()
+    await service.setCredential('main', credential)
+    await service.createAccountToken('main')
+
+    await service.setCredential('main', { kind: 'session', userId: '8', cookie: 'session=other' })
+
+    await expect(service.selectAccountToken('main', '11')).rejects.toMatchObject({ code: 'token_invalid' })
+  })
+
+  test('creates a token from the stored management token after a restart', async () => {
+    tokenGateway(() => [{ id: 11, name: 'echoflow-code' }], () => 'sk-after-restart')
+    const before = new EchoFlowApiService()
+    await before.setCredential('main', credential)
+
+    const after = new EchoFlowApiService()
+
+    const account = await after.createAccountToken('main')
+
+    expect(account.tokens?.some((token) => token.name === 'echoflow-code')).toBe(true)
+    await expect(after.selectAccountToken('main', '11')).resolves.toMatchObject({ key: 'sk-after-restart' })
+  })
+
+  test('keeps the created key when the token list fails right after create', async () => {
+    let lists = 0
+    globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/api/user/self')) {
+        return Response.json({ success: true, data: { quota: 500_000, group: 'default', username: 'echo' } })
+      }
+      if (url.includes('/api/token/') && (init?.method ?? 'GET') === 'POST') {
+        return Response.json({ success: true, data: 'sk-one-shot' })
+      }
+      lists += 1
+      if (lists === 1) return Response.json({ success: true, data: { items: [] } })
+      return Response.json({ success: false, message: 'list unavailable' }, { status: 503 })
+    }) as typeof fetch
+    const service = new EchoFlowApiService()
+    await service.setCredential('main', credential)
+
+    const account = await service.createAccountToken('main')
+
+    expect(account.tokens?.some((token) => token.name === 'echoflow-code')).toBe(true)
+    await expect(service.selectAccountToken('main', 'created:echoflow-code')).resolves.toMatchObject({ key: 'sk-one-shot' })
   })
 
   test('reattaches a synthetic created token when its real id appears later', async () => {
