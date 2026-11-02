@@ -80,26 +80,46 @@ export function EchoFlowAPIOfficialLogin({ onAddFromToken, onBindingChange }: Pr
   )
 
   useEffect(() => {
-    void echoflowApi.getAccounts()
-      .then(({ account: legacyAccount, accounts: loadedAccounts }) => {
-        const nextAccounts = loadedAccounts ?? {
-          main: legacyAccount,
-          dedicated: null,
-        }
-        setAccounts(nextAccounts)
-        onBindingChange?.(Boolean(nextAccounts.main || nextAccounts.dedicated))
-        setCredentials((current) => ({
-          main: {
-            userId: nextAccounts.main?.userId ?? current.main.userId,
-            managementToken: current.main.managementToken,
-          },
-          dedicated: {
-            userId: nextAccounts.dedicated?.userId ?? current.dedicated.userId,
-            managementToken: current.dedicated.managementToken,
-          },
-        }))
+    let active = true
+    let loadSeq = 0
+    const load = () => {
+      // The restore refetch can overlap the initial read; only the newest read
+      // may write state or a late first response would undo the signed-in card.
+      const seq = ++loadSeq
+      return echoflowApi.getAccounts()
+        .then(({ account: legacyAccount, accounts: loadedAccounts }) => {
+          if (!active || seq !== loadSeq) return
+          const nextAccounts = loadedAccounts ?? {
+            main: legacyAccount,
+            dedicated: null,
+          }
+          setAccounts(nextAccounts)
+          onBindingChange?.(Boolean(nextAccounts.main || nextAccounts.dedicated))
+          setCredentials((current) => ({
+            main: {
+              userId: nextAccounts.main?.userId ?? current.main.userId,
+              managementToken: current.main.managementToken,
+            },
+            dedicated: {
+              userId: nextAccounts.dedicated?.userId ?? current.dedicated.userId,
+              managementToken: current.dedicated.managementToken,
+            },
+          }))
+        })
+        .catch(() => {
+          if (active && seq === loadSeq) setError(t('echoflowApiOfficialLogin.loadFailed'))
+        })
+    }
+    void load()
+    // The desktop restores the stored site session in the background; until
+    // that verification lands the account has no live credential, so the
+    // signed-in state only appears on a second read.
+    void getDesktopHost().echoFlow.whenAccountRestored()
+      .then((restored) => {
+        if (active && restored) void load()
       })
-      .catch(() => setError(t('echoflowApiOfficialLogin.loadFailed')))
+      .catch(() => {})
+    return () => { active = false }
   }, [onBindingChange])
 
   const updateCredentials = (patch: Partial<Credentials>) => {

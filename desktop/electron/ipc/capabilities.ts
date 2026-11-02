@@ -349,6 +349,9 @@ const localePreference: Validator = value =>
 export const ELECTRON_IPC_VALIDATORS = {
   [ELECTRON_IPC_CHANNELS.echoFlowLoginOpen]: echoFlowLoginEndpoint,
   [ELECTRON_IPC_CHANNELS.echoFlowSignOut]: echoFlowLoginEndpoint,
+  [ELECTRON_IPC_CHANNELS.echoFlowWhenRestored]: noPayload,
+  [ELECTRON_IPC_CHANNELS.configImportTake]: noPayload,
+  [ELECTRON_IPC_CHANNELS.configImportAck]: noPayload,
   [ELECTRON_IPC_CHANNELS.appGetVersion]: noPayload,
   [ELECTRON_IPC_CHANNELS.appGetLocalePreference]: noPayload,
   [ELECTRON_IPC_CHANNELS.appSetLocalePreference]: localePreference,

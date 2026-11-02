@@ -11,7 +11,7 @@ This file states **direction**. Procedures, examples, and case law live in `docs
 A rule belongs here only when all three hold:
 
 1. It changes a direction decision, not just the mechanics of a task.
-2. Violating it causes irreversible loss: fork identity, user data, release integrity, or a CI contract.
+2. Violating it causes irreversible loss: product identity, user data, release integrity, or a CI contract.
 3. It cannot be read out of the code or `scripts/pr/change-policy.ts`.
 
 Otherwise it belongs in `docs/` with a one-line pointer. Move the content — do not leave a shortened copy behind. A stale summary is worse than no summary, because it still reads as authoritative.
@@ -33,10 +33,10 @@ Keep this file under 24 KiB. Crossing that is the signal to move content out, no
 
 ## Agent Operating Rules
 - Work autonomously on clear, reversible tasks. Do not stop to ask whether to proceed with obvious next steps; ask only for destructive actions, missing authority, or genuinely branching product decisions.
-- Prefer the installed agent toolset over recreating planning, review, debugging, or design workflows. Superpowers ships **skills, not slash commands** — invoke them with the Skill tool by their real names. Verify a tool exists before you name it in a handoff; a tool that cannot be invoked is not evidence. No plugin replaces the gates in this file, and the contract stays tool-independent. The plugin list and their real entry names live in `docs/internals/contributing.md`; do not restate them here.
+- Prefer the currently installed agent tools; detailed workflows live in the contribution guide.
 - Identify the changed surface first. The canonical vocabulary is the `ChangeArea` union in `scripts/pr/change-policy.ts`: `desktop`, `server`, `adapters`, `docs`, `release`, `mobile`, `cli-core`, `harness`. The prose surfaces in this file map onto it: `native/` routes to `desktop`, `site/` to `docs`, `harness/` to `harness`, and `.github/workflows/**` selects the policy lane. Path-to-area routing lives in `scripts/pr/area-routing.json`; `pr-triage.yml` reads that file from the base revision, never from PR head. Do not invent a surface name that has no area and no check behind it.
-- `cli-core` covers `bin/` and the root `src/` runtime paths. Changes there are blocked until the PR carries the `allow-cli-core-change` label and a maintainer approves.
-- Treat root `src/` as the upstream-derived native Claude Code runtime: prefer not to modify it directly. Enhance behavior through configuration, dependency upgrades, and adapters/services in EchoFlow-owned surfaces (such as `desktop/`, `src/server/`, or existing orchestration boundaries) where practical. When a change to native `src/` is unavoidable, keep it minimal, isolated, covered by focused regression tests, and document the compatibility reason; the `cli-core` approval requirement still applies.
+- `cli-core` covers `bin/` and the root `src/` runtime paths.
+- Treat root `src/` as the native Claude Code runtime; prefer not to modify it directly when the behavior can be implemented through configuration, dependency upgrades, or EchoFlow-owned surfaces.
 - Check `git status --short` before editing. The worktree may already contain user changes; never revert, overwrite, restage, or reformat unrelated files.
 - Keep diffs small and owned. Stage or commit only files you intentionally changed for the current task.
 - Prefer existing utilities, stores, services, command patterns, and test harnesses over new abstractions. Do not add dependencies unless the task explicitly requires them.
@@ -46,7 +46,7 @@ Keep this file under 24 KiB. Crossing that is the signal to move content out, no
 
 ## Identity & Provider Policy
 - Public/release brand: `EchoFlow Code`; executable/docs: `echoflow-code`.
-- When touching inherited identifiers, convert `cc-haha` → `echoflow`, `Claude-Code-Haha` → `EchoFlow-Code`, and `CC_HAHA_*` → `ECHOFLOW_*`. Retain historical names only for explicit compatibility, attribution, migration fixtures, or supported variables.
+- When touching legacy product identifiers, convert `cc-haha` → `echoflow`, `Claude-Code-Haha` → `EchoFlow-Code`, and `CC_HAHA_*` → `ECHOFLOW_*`. Retain historical names only for explicit compatibility, attribution, migration fixtures, or supported variables.
 - Retain `Claude Code`, `Claude CLI`, `claude-code-*`, and `CLAUDE_CODE_*` terminology: those name the Claude Code runtime and its env contracts, and renaming them breaks the integration.
 - Calls to action and service links use EchoFlow surfaces, including `https://code.echoflow.cn/` and `https://api.echoflowai.cc/`.
 - `src/server/config/providerPresets.json` carries only official vendor APIs, official local integrations, official subscription/API integrations such as OpenCode Go, EchoFlow API, and custom. Judge a candidate preset by rule, not by an id list: reject anything a vendor marks deprecated, any URL carrying promotion or tracking parameters (`utm_`, `invite`, `referral`, `?code=`), third-party relay or sponsor/referral gateways, and promotional copy. The current reject list is enforced by `src/server/__tests__/provider-presets.test.ts` and `desktop/src/config/providerPresets.test.ts`; do not duplicate it here.
@@ -60,57 +60,19 @@ Keep this file under 24 KiB. Crossing that is the signal to move content out, no
 - Coding style: TypeScript with 2-space indentation, ESM imports, no semicolons; `PascalCase` components and descriptive file names such as `teamWatcher.ts` or `AgentTranscript.tsx`; `camelCase` functions, hooks, and stores.
 - For structured data, use structured parsers or existing helpers instead of ad hoc string manipulation. Add succinct comments only where they clarify non-obvious control flow or external constraints.
 
-## Verification Routing
-Use the narrowest meaningful check while iterating; do not silently escalate a small fix to a full gate.
+## Verification and quality ownership
 
-| Surface | Gate |
-| --- | --- |
-| Desktop UI/store/API | `bun run check:desktop` |
-| Server/API/provider/runtime/MCP/OAuth/WebSocket | `bun run check:server` |
-| IM adapters | `bun run check:adapters` |
-| Kotlin Android shell (mobile) | `bun run check:mobile` |
-| Electron/native/packaging/version | `bun run check:native` |
-| Docs/README/release notes/workflows | `bun run check:docs` |
-| JSON/localStorage/app-config migration | `bun run check:persistence-upgrade` |
-| PR/push/merge/release readiness | `bun run verify` |
+- Use the narrowest meaningful check while iterating. The surface-to-gate matrix, deterministic lane contracts, coverage rules, and failure diagnosis live in `docs/internals/contributing.md`; the English mirror is `docs/en/internals/contributing.md`.
+- `scripts/pr/change-policy.ts` owns path routing and required checks. `bun run check:impact` is the minimum changed-surface report and must be read before selecting checks; dependency-aware widening is reported in `## Cross-surface impact`.
+- Provider/auth/proxy/runtime and desktop chat/session changes may add offline contract checks. Required PR checks must not call real models, live providers, public network, repository secrets, or the developer's real home/config.
+- `bun run verify` is the full PR/push/release-readiness entrypoint. Do not claim that status without the required evidence; live provider and maintainer-only lanes require explicit authorization.
 
-- `bun run check:impact` prints the changed-area impact report and is part of the minimum handoff for the current diff. Selection is import-aware: a change is routed to every surface that imports it, not only to its own directory. The report's `## Cross-surface impact` section names the importer that pulled in each extra check.
-- Provider/auth/proxy/runtime changes may additionally select `bun run check:provider-contract`; desktop chat/WebSocket/session changes may additionally select `bun run check:chat-contract`. These contracts are offline and do not replace their selected surface checks.
-- `bun run check:agent-flow` is the deterministic end-to-end agent lane: real server and WebSocket through session creation, runtime selection, streaming, tool permission allow/deny, tool failure, API error, interrupt, reconnect replay, and session recovery, using the repository's mock SDK CLI. It needs no provider, credentials, or network, so every contributor can run it.
-- `bun run check:desktop-ui-smoke` drives the real desktop UI against that same mock runtime and answers the permission dialog by clicking the real button. It skips with a printed reason when `agent-browser` or desktop dependencies are missing.
-- `agent-browser` is an implementation detail of that committed lane and of the maintainer-run `desktop/scripts/e2e-*-agent-browser.sh` scripts. It is not the tool for ad-hoc browser work: for manual verification, screenshots, and exploratory UI checks use whatever browser automation the session actually has (a browser MCP, a browser plugin, or headless Chrome), and record which path you used in the handoff.
-- `bun run check:docs` runs `npm ci`; run it sequentially with checks that rely on root `node_modules`.
-- If `bun run verify` fails, inspect its latest Result Matrix and lane log, fix the concrete lane, rerun the narrow check, then rerun `verify`. `bun run check:coverage` gives PR-level coverage proof; `quality:providers` and live `quality:gate` require explicit maintainer authorization.
-
-## Project Structure & Module Organization
-
-Bun-based Coding Agent product with a CLI, local server, desktop app, IM adapters, docs, and release automation. `docs/internals/structure.md` carries the full directory map; this section keeps only what changes how you work.
-
-- `bin/echoflow-code` is the executable entrypoint. `src/` is the CLI/runtime surface (`entrypoints/`, the Ink TUI in `screens/` and `components/`, `commands/`, `services/`, `tools/`, `utils/`, `server/`).
-- `desktop/` is the desktop product: React UI in `desktop/src/`, Electron host code in `desktop/electron/`, build scripts in `desktop/scripts/`.
-- Desktop is Electron-first. `desktop/src-tauri/` is retained for icons, sidecar binaries, preview-agent resources, and compatibility assets. Do not treat `desktop/src-tauri/tauri.conf.json` as the release source of truth unless a task explicitly revives Tauri packaging.
-- `adapters/` holds IM adapter sidecars for Telegram, Feishu, WeChat, and DingTalk. `site/` is the React documentation site; `docs/` and `docs/en/` are its Chinese and English Markdown sources.
-- `mobile/` is the separate native Kotlin Android shell. Rules in `mobile/AGENTS.md`.
-- `native/` holds the Computer Use native helper (`native/cu-helper`, Swift). Its gates are `bun run check:swift`, `check:computer-use-live-smoke`, and `check:computer-use-signed-chain`.
-- `harness/` holds the dsh execution seam (own npm toolchain). Its gate is `bun run check:harness`; read `harness/README.md` first.
-- `.github/workflows/`, `scripts/pr/`, and `scripts/quality-gate/` define CI routing and quality policy. `scripts/harness-audit.js` audits this contract itself.
-- `release-notes/`, `scripts/release.ts`, and `.github/workflows/release-desktop.yml` define release behavior. Treat workflow changes as product changes because they alter what future agents and contributors can safely ship.
-- Required PR checks must be deterministic and work on an untrusted fork: no real models, public network, repository secrets, saved providers, or real user home/config. Server-booting lanes run in a sandbox config dir (`scripts/quality-gate/sandbox.ts`) and fail if they wrote to the developer's real `~/.claude`. Live model checks are separate maintainer evidence that require explicit authorization. `docs/internals/contributing.md` carries the full gate layering and the per-lane constraints.
-
-## Build, Test, and Development Commands
-Install root dependencies with `bun install`, plus `desktop/` or `adapters/` dependencies when you touch those surfaces. The command list and development loop live in `docs/internals/contributing.md`.
-
-## Test Design Direction
-Test design rules, case law, and the coverage caveats live in `docs/internals/contributing.md` — read them there rather than from a summary here. The one absolute that is not negotiable under time pressure: never retune an existing test's inputs or invert an expectation to keep it green.
-
-## Feature Quality Contract
-Every feature, bugfix, and behavior change ships with proof matching the changed surface. `docs/internals/contributing.md` carries the full contract, coverage policy, and lane-by-lane detail; `scripts/pr/change-policy.ts` is the machine-readable source of truth for which paths require same-area tests.
-
-- Name the changed behavior surface first.
-- Production code changes under `desktop/src`, `src/server`, `src/tools`, `src/utils`, or `adapters` must include a same-area test file in the same PR unless a maintainer explicitly approves `allow-missing-tests`. Which test kind each surface owes is lane-by-lane detail in `docs/internals/contributing.md`.
-- E2E is required when a feature crosses process boundaries, browser UI, WebSocket/session state, provider proxying, native sidecars, or release packaging. Use the narrowest meaningful lane first, then `quality:baseline` or `quality:release` for core Coding Agent paths.
-- Coverage is part of PR readiness, not an afterthought. Every changed executable production line must meet the changed-line gate in `scripts/quality-gate/coverage-thresholds.json` before push/PR readiness. Do not lower `coverage-baseline.json` or `coverage-thresholds.json` without maintainer approval via `allow-coverage-baseline-change`. Legacy areas below target are debt; new work must leave the touched area higher than it found it.
-- Do not claim "PR-ready", "push-ready", "mergeable", or "release-ready" without recorded evidence. The evidence list is the PR evidence contract in `.github/pull_request_template.md`; an ordinary local handoff records less and must not escalate to PR-level gates.
+## Quality and verification boundaries
+- `docs/internals/contributing.md` owns contribution procedures, test design, quality gates, coverage policy, and Agent flow case law; its English mirror is `docs/en/internals/contributing.md`.
+- `docs/internals/structure.md` owns the directory map and module responsibilities. Area-specific guidance stays next to the code in `desktop/AGENTS.md`, `adapters/AGENTS.md`, `src/AGENTS.md`, `mobile/AGENTS.md`, and `docs/AGENTS.md`.
+- `scripts/pr/change-policy.ts` owns path routing, same-area test requirements, labels, and blocking policy. Do not duplicate those predicates in reports or prose.
+- Required PR checks must be deterministic and safe on an untrusted fork: no real models, public network, repository secrets, saved providers, or real user home/config. The detailed lane contract and command list live in the contribution guide.
+- `bun run check:impact` is the minimum changed-surface report. `bun run verify` is the full PR/push/release-readiness entrypoint; do not claim that status without its required evidence.
 
 ## Persistent Storage Compatibility
 - Any change to local JSON, `localStorage`, or app config persistence formats must ship with a forward migration, an old-fixture regression test, and a persistence upgrade gate.
@@ -125,33 +87,28 @@ Every feature, bugfix, and behavior change ships with proof matching the changed
 - If a persistence shape cannot be upgraded in place, the implementation is blocked until the upgrade path is explicit and tested.
 
 ## Desktop & UX Expectations
-The desktop design system, control conventions, and the UI density/layout rules live in `desktop/AGENTS.md` and `desktop/src/components/AGENTS.md`; follow those rather than a summary here.
-- For visible UI changes, validate with an actual browser/desktop smoke path when feasible and include screenshots or a short visual-evidence note in the handoff. When the committed smoke lane is unavailable, say which browser path you actually used, or state that no visual evidence was produced — do not claim a smoke path that was skipped. User-visible desktop or cross-process behavior needs a real smoke path when unit tests cannot prove the workflow.
+The desktop design system, control conventions, and UI density/layout rules live in `desktop/AGENTS.md` and `desktop/src/components/AGENTS.md`; follow those rather than duplicating them here.
+- For visible UI changes, validate with an actual browser/desktop smoke path when feasible and include screenshots or a short visual-evidence note in the handoff. State when no visual evidence was produced.
 
-## Release Workflow
-- Desktop releases use plain `vX.Y.Z` tags matching `desktop/package.json`; `release-notes/vX.Y.Z.md`, `scripts/release.ts`, and `.github/workflows/release-desktop.yml` must agree. Tauri config is legacy.
-- `desktop/package.json` is the release-version source of truth. EchoFlow ships on its own version line, one small release at a time: increment the patch once per release, and never create a tag or release note to mirror another project's numbering.
-- Do not move tags manually or upload local artifacts. A published release mirrors the update channel to `code.echoflow.cn/update/` and writes `/download/manifest.json` before the site upload, so a failed sync fails the workflow; GitHub Releases stays the full publish source.
-- Do not announce a release before verifying the public assets, and report missing macOS signing/notarization secrets and unsigned Windows artifacts. The step-by-step runbook lives in `docs/internals/contributing.md` and `docs/_internal/release-windows.md`.
+## Release integrity
 
-## Independence & Reference Policy
-EchoFlow Code is standalone software. There is no upstream project this repository tracks, merges with, or versions against, and the old sync workflow is retired.
+- Desktop releases use plain `vX.Y.Z` tags matching `desktop/package.json`; release notes, `scripts/release.ts`, and `.github/workflows/release-desktop.yml` must agree. `desktop/package.json` is the release-version source of truth, and EchoFlow keeps its own version line.
+- Do not move tags, upload local artifacts, or announce a release before the release workflow and public assets are verified. Detailed release procedures live in `docs/_internal/release-windows.md` and its English mirror.
+- `bun run check:release-surface` is the standing content and identity gate; it checks release-note version/brand, unresolved conflicts, and legacy product names on public identity surfaces.
 
-- Never merge, cherry-pick, vendor, or copy code from another project into this tree. Other projects — including any former upstream — are reference and learning material only. Read them, take the idea, and reimplement it here with our own code, our own names, and our own tests.
-- When a fix is inspired by elsewhere, the commit must stand on our own proof: a failing test we wrote, a verified bug we reproduced, or a compatibility constraint. "It came from that project" is not a provenance this repository accepts.
-- Do not attribute EchoFlow's authorship, maintenance, contact, or product identity to another project or its author in README, docs, release notes, package metadata, diagnostics export, signing/privacy pages, updater links, or desktop About/profile defaults.
-- Third-party copyright and permission notices stay with the code they cover. Move them to `THIRD_PARTY_LICENSES.md` when a file needs to carry its own license separately; never delete a notice a license requires us to keep. This is a legal floor, not a branding preference.
-- `bun run check:release-surface` is the standing gate: it rejects foreign-authored release notes, version/brand drift, unresolved conflicts, and upstream identity markers on the public surfaces.
+## Product Identity & Licensing
+- Keep EchoFlow's authorship, maintenance, contact, and product identity consistent across README, docs, release notes, package metadata, diagnostics export, signing/privacy pages, updater links, and desktop About/profile defaults.
+- Third-party copyright and permission notices stay with the code they cover. Move them to `THIRD_PARTY_LICENSES.md` when a file needs to carry its own license separately; never delete a notice a license requires us to keep.
+- `bun run check:release-surface` is the standing gate: it rejects release-note version/brand drift, unresolved conflicts, and legacy product names on public identity surfaces.
 
-## Commit & Pull Request Guidelines
-- Use Conventional Commit prefixes (`feat:`, `fix:`, `docs:`), imperative subjects scoped to one change, and normal product branch prefixes such as `fix/xxx`, `feat/xxx`, or `docs/xxx`. Do not create `codex/`-prefixed branches in this repository.
-- When a decision needs context, record it in git-native trailers rather than prose: `Constraint:`, `Rejected:`, `Confidence:` (`low`/`medium`/`high`), `Scope-risk:` (`narrow`/`moderate`/`broad`), `Directive:`, and `Tested:` / `Not-tested:` for verification evidence and gaps.
-- PRs explain user-visible impact, link related issues, list verification steps, include screenshots for desktop/docs UI changes, and call out follow-up work or known gaps.
-- A PR description must include changed files, tests added or updated, coverage report path, E2E/live evidence or blocker, pass/fail/skip counts from the quality report when available, and remaining risk/rollback notes. A normal local agent handoff may be lighter: changed files, focused checks run, skipped full gates, and remaining risk/rollback notes.
+## Commit and PR boundaries
+
+- Use Conventional Commit prefixes and normal product branch prefixes such as `fix/xxx`, `feat/xxx`, or `docs/xxx`; do not create `codex/`-prefixed branches.
+- Record non-obvious decisions in git-native trailers. The PR evidence fields and local handoff format are owned by `.github/pull_request_template.md` and `docs/internals/contributing.md`.
 
 ## Deeper Guides
-- Contributor workflow, coverage policy, and test-design case law: `CONTRIBUTING.md` and `docs/internals/contributing.md`
-- Directory responsibilities: `docs/internals/structure.md`
-- Package scripts and path routing: `package.json` and `scripts/pr/change-policy.ts`
-- PR evidence contract: `.github/pull_request_template.md`
-- Desktop release and auto-update runbook: `docs/_internal/release-windows.md` (English: `docs/en/_internal/release-windows.md`)
+- When installing, testing, or preparing a contribution, read `CONTRIBUTING.md` and `docs/internals/contributing.md` for workflows, coverage policy, and test-design case law.
+- When locating a module or understanding ownership, read `docs/internals/structure.md` for directory responsibilities.
+- When selecting commands or determining which checks a change requires, consult `package.json` and `scripts/pr/change-policy.ts`.
+- When preparing a pull request, follow the evidence fields in `.github/pull_request_template.md`.
+- Before a desktop release or auto-update change, follow `docs/_internal/release-windows.md` (English: `docs/en/_internal/release-windows.md`).

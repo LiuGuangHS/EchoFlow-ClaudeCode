@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import '@testing-library/jest-dom'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useProviderStore } from '../../stores/providerStore'
@@ -18,7 +18,13 @@ const bindLabel = (endpoint: 'main' | 'dedicated') =>
   translate('en', 'echoflowApiOfficialLogin.bindAccount', { endpoint: endpointTab(endpoint) })
 
 vi.mock('../../api/echoflow')
-const hostMocks = vi.hoisted(() => ({ openLogin: vi.fn(), signOut: vi.fn(), open: vi.fn(), echoFlowAccount: true }))
+const hostMocks = vi.hoisted(() => ({
+  openLogin: vi.fn(),
+  signOut: vi.fn(),
+  whenAccountRestored: vi.fn(),
+  open: vi.fn(),
+  echoFlowAccount: true,
+}))
 vi.mock('@/lib/desktopHost', () => ({
   getDesktopHost: () => ({
     capabilities: { echoFlowAccount: hostMocks.echoFlowAccount },
@@ -77,6 +83,8 @@ describe('EchoFlowAPIOfficialLogin', () => {
     vi.mocked(echoflowApi.getTokenKey).mockResolvedValue({ token: { id: 'shared-token-id', name: 'Main key', key: 'sk-main-secret' } })
     hostMocks.openLogin.mockReset()
     hostMocks.signOut.mockReset()
+    hostMocks.whenAccountRestored.mockReset()
+    hostMocks.whenAccountRestored.mockResolvedValue(false)
     hostMocks.echoFlowAccount = true
     mockAccounts()
   })
@@ -142,6 +150,48 @@ describe('EchoFlowAPIOfficialLogin', () => {
 
     expect(await screen.findByText(L('echoflowApiOfficialLogin.needsRelogin'))).toBeInTheDocument()
     expect(screen.getByRole('button', { name: L('echoflowApiOfficialLogin.signIn') })).toBeInTheDocument()
+  })
+
+  // The desktop restores the stored session in the background after a restart,
+  // so the first read can land before the account has a live credential. The
+  // card has to read again once the restore settles, or a signed-in account
+  // keeps showing "sign in again" until the user reopens settings.
+  it('re-reads the accounts when the startup restore finishes', async () => {
+    let resolveRestore: (restored: boolean) => void = () => {}
+    hostMocks.whenAccountRestored.mockReturnValue(new Promise<boolean>((resolve) => { resolveRestore = resolve }))
+    const stored = { ...mainAccount, live: false }
+    vi.mocked(echoflowApi.getAccounts)
+      .mockResolvedValueOnce({ account: stored, accounts: { main: stored, dedicated: null } })
+      .mockResolvedValue({ account: mainAccount, accounts: { main: mainAccount, dedicated: null } })
+
+    render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
+    expect(await screen.findByText(L('echoflowApiOfficialLogin.needsRelogin'))).toBeInTheDocument()
+
+    resolveRestore(true)
+
+    await waitFor(() => expect(screen.queryByText(L('echoflowApiOfficialLogin.needsRelogin'))).not.toBeInTheDocument())
+    expect(screen.getByRole('button', { name: /Main key.*sk-main…1234/ })).toBeInTheDocument()
+  })
+
+  it('ignores an earlier accounts read that lands after the restore refetch', async () => {
+    let resolveFirst: (value: Awaited<ReturnType<typeof echoflowApi.getAccounts>>) => void = () => {}
+    const stored = { ...mainAccount, live: false }
+    vi.mocked(echoflowApi.getAccounts)
+      .mockReturnValueOnce(new Promise<Awaited<ReturnType<typeof echoflowApi.getAccounts>>>((resolve) => {
+        resolveFirst = resolve
+      }))
+      .mockResolvedValue({ account: mainAccount, accounts: { main: mainAccount, dedicated: null } })
+    hostMocks.whenAccountRestored.mockResolvedValue(true)
+
+    render(<EchoFlowAPIOfficialLogin onAddFromToken={vi.fn()} />)
+    expect(await screen.findByRole('button', { name: /Main key.*sk-main…1234/ })).toBeInTheDocument()
+
+    await act(async () => {
+      resolveFirst({ account: stored, accounts: { main: stored, dedicated: null } })
+    })
+
+    expect(screen.queryByText(L('echoflowApiOfficialLogin.needsRelogin'))).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Main key.*sk-main…1234/ })).toBeInTheDocument()
   })
 
   it('offers sign-in again when a refresh discovers the credential was rejected', async () => {

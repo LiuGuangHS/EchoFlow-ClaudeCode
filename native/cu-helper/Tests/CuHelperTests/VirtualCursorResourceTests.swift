@@ -130,7 +130,7 @@ private struct ResourceFixture {
             withIntermediateDirectories: true
         )
         let info: [String: Any] = [
-            "CFBundleIdentifier": "dev.cchaha.tests.cursor-resources.\(UUID().uuidString)",
+            "CFBundleIdentifier": "dev.echoflow.tests.cursor-resources.\(UUID().uuidString)",
             "CFBundleName": "Cursor Resource Fixture",
             "CFBundlePackageType": "APPL",
             "CFBundleExecutable": "fixture-helper",

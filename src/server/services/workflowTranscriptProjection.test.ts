@@ -28,7 +28,7 @@ test('large histories without workflows retain no bodies and subsequent polls re
 
 test('retains structured launch, persisted terminal and XML terminal evidence', async () => {
   const file = join(dir, 'session.jsonl')
-  const terminal = { type: 'cc-haha-task-notification', taskNotification: { taskId: 'task', status: 'completed' } }
+  const terminal = { type: 'echoflow-code-task-notification', taskNotification: { taskId: 'task', status: 'completed' } }
   const xml = { message: { content: [{ type: 'text', text: '<task-notification><task-id>task</task-id><status>completed</status></task-notification>' }] } }
   await writeFile(file, launch + JSON.stringify(terminal) + '\n' + JSON.stringify(xml) + '\n')
   expect((await readWorkflowTranscriptProjection(file)).messages).toEqual([JSON.parse(launch), terminal, xml])

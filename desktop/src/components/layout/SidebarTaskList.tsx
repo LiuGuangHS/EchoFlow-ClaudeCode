@@ -4,6 +4,7 @@ import type { TranslationKey } from '../../i18n'
 import type { SessionListItem } from '../../types/session'
 import { SessionAttentionMark } from './SessionAttentionMark'
 import { isWorktreeSession, type SidebarTaskGroup, type SidebarTaskGroupId } from './sidebarTaskGroups'
+import { isPlaceholderSessionTitle } from '../../lib/sessionTitle'
 
 /**
  * 显式的 key 表，不用模板字符串拼 —— `desktop/AGENTS.md` 点名过：只扫字面量的
@@ -140,7 +141,7 @@ function SidebarTaskRow({
   t: Translate
 }) {
   const isWorktree = isWorktreeSession(session)
-  const title = session.title || 'Untitled'
+  const title = session.title && !isPlaceholderSessionTitle(session.title) ? session.title : t('session.untitled')
 
   return (
     <button

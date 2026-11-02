@@ -12,7 +12,7 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 export type SiteReleaseAsset = {
@@ -36,6 +36,7 @@ export type GenerateSiteReleaseManifestOptions = {
   repo: string
   githubToken?: string | null
   api?: SiteReleaseApi
+  releaseNotesDir?: string
 }
 
 export type GenerateSiteReleaseManifestResult = {
@@ -48,6 +49,7 @@ type DownloadManifest = {
   tag: string
   assets: Record<string, string>
   extras: Record<string, string>
+  summary?: string
 }
 
 // latest.yml 是 Windows 更新通道的硬依赖，缺了就该红；其余平台 yml 尽量镜像，
@@ -158,6 +160,25 @@ function buildDownloadManifest(release: SiteReleaseInfo): DownloadManifest {
   }
 }
 
+function readReleaseSummary(tag: string, notesDir: string): string | undefined {
+  if (!/^v?[0-9A-Za-z][0-9A-Za-z._-]*$/.test(tag) || tag.includes('..')) return undefined
+  const path = join(notesDir, `${tag}.md`)
+  if (!existsSync(path)) return undefined
+
+  const [title, ...body] = readFileSync(path, 'utf8').replace(/\r\n/g, '\n').split('\n')
+  if (title !== `# EchoFlow Code ${tag}`) return undefined
+
+  const overview = body.join('\n').split(/^##\s/m, 1)[0]
+    .split(/\n\s*\n/)[0]
+    .trim()
+  if (!overview) return undefined
+  return overview
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/\*(.*?)\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\s+/g, ' ')
+}
+
 function createGhApi(repo: string, token: string | null): SiteReleaseApi {
   return {
     async fetchRelease(release) {
@@ -210,6 +231,8 @@ export async function generateSiteReleaseManifest(
   }
 
   const manifest = buildDownloadManifest(release)
+  manifest.summary = readReleaseSummary(release.tagName, options.releaseNotesDir ?? join(process.cwd(), 'release-notes'))
+  if (!manifest.summary) delete manifest.summary
 
   mkdirSync(join(options.outDir, 'update'), { recursive: true })
   mkdirSync(join(options.outDir, 'download'), { recursive: true })

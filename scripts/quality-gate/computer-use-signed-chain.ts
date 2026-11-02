@@ -3,6 +3,7 @@ import { copyFile, cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { createSandboxedTestEnvironment } from '../pr/test-environment'
+import { CU_HELPER_PROTOCOL_VERSION } from '../../src/utils/computerUse/cuHelperDaemon.js'
 
 const repoRoot = path.resolve(import.meta.dirname, '../..')
 
@@ -124,9 +125,7 @@ export function verifySignedChainReport(report: {
     && (!report.signing.teamIdentifier?.trim() || report.signing.teamIdentifier === 'not set' || result.packagedInstall !== true)) {
     throw new Error('Explicit identity mode requires a Team ID and successful production packaged-helper installation')
   }
-  // Legacy protocol literal is an external helper wire-format compatibility contract;
-  // keep it paired with computer-use-signed-chain.test.ts until the daemon migrates additively.
-  if (result.ping?.protocolVersion !== 'CCHahaComputerUseIPC-2') throw new Error('Production daemon handshake was not proven')
+  if (result.ping?.protocolVersion !== CU_HELPER_PROTOCOL_VERSION) throw new Error('Production daemon handshake was not proven')
   if (result.first?.isError || result.first?.content?.[0]?.text !== '1'
     || result.second?.isError || result.second?.content?.[0]?.text !== '2') {
     throw new Error('Compiled desktop worker did not preserve bindings across cells')

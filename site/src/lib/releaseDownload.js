@@ -5,17 +5,19 @@
  * manifest（/download/manifest.json）。manifest 里的文件名一律以发布资产清单为准，
  * 不能从 artifactName 模板推导 —— Linux 各格式的架构记号不一样。
  *
- * 多源：加速前缀优先、GitHub 直连兜底。探测不能用带 Range 的 CORS 请求：
- * GitHub 的直连主机不返回 Access-Control-* 头，预检直接失败，那条回退会变成死代码。
- * 这里用 no-cors 的 GET 探活（响应不可读，但能区分「连上了」和「连不上」）。
+ * 多源：并发探测支持 CORS 的加速源，GitHub 具体文件直连兜底。
+ * 这里只探测响应头，不代表完整文件下载测速或下载中断后的自动切换。
  */
 
 export const DOWNLOAD_MANIFEST_PATH = '/download/manifest.json'
 export const DOWNLOAD_PAGE_PATH = '/download'
 export const GITHUB_REPOSITORY = 'LiuGuangHS/EchoFlow-ClaudeCode'
 export const GITHUB_RELEASES_URL = `https://github.com/${GITHUB_REPOSITORY}/releases/latest`
-// 与 desktop/electron/services/updateFeed.ts 的 DEFAULT_PROXY_FEED_URL 同源，换镜像两处一起改。
-export const GITHUB_ACCELERATOR_PREFIX = 'https://gh-proxy.org/'
+// 下载页专用公共代理；桌面端自动更新仍维护自己的源列表。
+export const DOWNLOAD_PROXY_PREFIXES = [
+  'https://gh-proxy.org/',
+  'https://gh-proxy.com/',
+]
 
 const [GITHUB_OWNER, GITHUB_REPOSITORY_NAME] = GITHUB_REPOSITORY.split('/')
 const GITHUB_PAGES_ORIGIN = `https://${GITHUB_OWNER.toLowerCase()}.github.io/${GITHUB_REPOSITORY_NAME}`
@@ -86,14 +88,21 @@ function assetFileName(manifest, platform, arch) {
   return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 
-/** 加速前缀在前、GitHub 直连在后；任一层缺失就少一条，不编造。 */
+function directDownloadUrl(tag, fileName) {
+  return `https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/${fileName}`
+}
+
+function proxyDownloadUrls(directUrl) {
+  return DOWNLOAD_PROXY_PREFIXES.map((prefix) => `${prefix}${directUrl}`)
+}
+
+/** 返回待并发探测的代理；GitHub 直链由调用方作为最终兜底。 */
 export function buildDownloadCandidates(manifest, platform, arch) {
   const fileName = assetFileName(manifest, platform, arch)
   const tag = manifest?.tag
   if (!fileName || !tag) return []
 
-  const direct = `https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/${fileName}`
-  return [`${GITHUB_ACCELERATOR_PREFIX}${direct}`, direct]
+  return proxyDownloadUrls(directDownloadUrl(tag, fileName))
 }
 
 export function resolveDownloadTarget(manifest, platform, arch) {
@@ -101,10 +110,8 @@ export function resolveDownloadTarget(manifest, platform, arch) {
   const tag = manifest?.tag
   if (!fileName || !tag) return null
 
-  return {
-    fileName,
-    url: `https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/${fileName}`,
-  }
+  const directUrl = directDownloadUrl(tag, fileName)
+  return { fileName, url: proxyDownloadUrls(directUrl)[0] ?? directUrl, fallbackUrl: directUrl }
 }
 
 /** 页面上「其他格式」一栏：deb / rpm 这类不主推但有人要的包。 */
@@ -115,42 +122,51 @@ export function resolveExtraDownloads(manifest) {
 
   return Object.entries(extras)
     .filter(([, fileName]) => typeof fileName === 'string' && fileName.trim())
-    .map(([key, fileName]) => ({
-      fileName: fileName.trim(),
-      key,
-      url: `https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/${fileName.trim()}`,
-    }))
+    .map(([key, fileName]) => {
+      const directUrl = directDownloadUrl(tag, fileName.trim())
+      return {
+        fileName: fileName.trim(),
+        key,
+        candidates: proxyDownloadUrls(directUrl),
+        url: proxyDownloadUrls(directUrl)[0] ?? directUrl,
+        fallbackUrl: directUrl,
+      }
+    })
 }
 
-/**
- * 探活：no-cors 下响应不可读，但请求成功即说明主机可达（DNS 通、有响应）。
- * 被防火墙吞掉或主机不存在时 fetch 会 reject。
- */
+const PROBE_TIMEOUT_MS = 2500
+
 async function isReachable(url, fetchImpl) {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS)
   try {
-    await fetchImpl(url, { method: 'GET', mode: 'no-cors', cache: 'no-store' })
-    return true
+    const response = await fetchImpl(url, { method: 'HEAD', cache: 'no-store', signal: controller.signal })
+    const contentType = response.headers?.get?.('content-type') ?? ''
+    return response.ok && !/text\/html/i.test(contentType)
   } catch {
     return false
+  } finally {
+    clearTimeout(timeout)
   }
 }
 
-/**
- * 依次探活候选源，第一个可达的交给 location.assign 触发浏览器流式下载。
- * 全不可达返回 'fallback'，由调用方把用户送去 GitHub Releases 页面。
- */
+/** Probe proxies concurrently, then use the fastest valid one or the direct GitHub URL. */
 export async function startDirectDownload(candidates, options = {}) {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch
   const locationImpl = options.locationImpl ?? globalThis.location
-  if (!candidates?.length || !fetchImpl || !locationImpl) return 'fallback'
+  if (!fetchImpl || !locationImpl) return 'fallback'
 
-  for (const url of candidates) {
-    if (await isReachable(url, fetchImpl)) {
-      locationImpl.assign(url)
-      return 'started'
-    }
-  }
-  return 'fallback'
+  const reachable = await Promise.any(
+    (candidates ?? []).map(async (url) => {
+      if (await isReachable(url, fetchImpl)) return url
+      throw new Error('Download source is unreachable')
+    }),
+  ).catch(() => null)
+  const selectedUrl = reachable ?? options.fallbackUrl
+  if (!selectedUrl) return 'fallback'
+
+  locationImpl.assign(selectedUrl)
+  return 'started'
 }
 
 function isSafePathSegment(value) {

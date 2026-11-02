@@ -77,7 +77,7 @@ describe('callHelper platform routing', () => {
       callDaemon: ok,
       isOverlayShown: () => false,
       overlayShow: payload => { shown.push(payload) },
-      callFrontmost: async () => { frontmostProbes++; return { bundleId: 'dev.cchaha.host' } },
+      callFrontmost: async () => { frontmostProbes++; return { bundleId: 'dev.example.host' } },
     })
     await callHelper('click', { bundleId: 'com.apple.Notes' }, {
       platform: 'darwin',
@@ -85,7 +85,7 @@ describe('callHelper platform routing', () => {
       callDaemon: ok,
       isOverlayShown: () => true,
       overlayShow: payload => { shown.push(payload) },
-      callFrontmost: async () => { frontmostProbes++; return { bundleId: 'dev.cchaha.host' } },
+      callFrontmost: async () => { frontmostProbes++; return { bundleId: 'dev.example.host' } },
     })
     expect(shown).toEqual([
       { app: 'Safari' },

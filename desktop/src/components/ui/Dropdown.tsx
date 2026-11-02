@@ -233,8 +233,7 @@ export function Dropdown<T extends string>({
             // 17px — overlays are cards, not card innards. One value here
             // settles the corner for every Dropdown menu in the app.
             'absolute z-[var(--z-dropdown)] rounded-[var(--radius-xl)]',
-            'bg-[var(--color-surface-container-lowest)] border border-[var(--color-border)]',
-            'shadow-[var(--shadow-dropdown)] focus:outline-none',
+            'glass-panel focus:outline-none',
             maxHeight ? 'overflow-y-auto' : 'overflow-hidden',
             align === 'right' ? 'right-0' : 'left-0',
             placement === 'top' ? 'bottom-full mb-1 animate-overlay-in-bottom' : 'top-full mt-1 animate-overlay-in-top',

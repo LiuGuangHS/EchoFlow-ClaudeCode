@@ -11,7 +11,7 @@ final class DaemonOverlayTargetTests: XCTestCase {
     func testExplicitBackgroundPIDWinsRegardlessOfCandidateOrder() throws {
         let frontmostHost = AppTargetCandidate(
             pid: 900,
-            bundleIdentifier: "dev.cchaha.host",
+            bundleIdentifier: "dev.example.host",
             bundleURL: URL(fileURLWithPath: "/Applications/EchoFlow Code.app"),
             localizedName: "EchoFlow Code",
             executableName: "EchoFlow Code"
@@ -39,7 +39,7 @@ final class DaemonOverlayTargetTests: XCTestCase {
     func testOmittedTargetNeverFallsBackToFrontmost() throws {
         let host = AppTargetCandidate(
             pid: 900,
-            bundleIdentifier: "dev.cchaha.host",
+            bundleIdentifier: "dev.example.host",
             bundleURL: URL(fileURLWithPath: "/Applications/EchoFlow Code.app"),
             localizedName: "EchoFlow Code",
             executableName: "EchoFlow Code"

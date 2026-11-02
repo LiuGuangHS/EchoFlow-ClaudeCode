@@ -898,7 +898,7 @@ describe('ChatInput file mentions', () => {
       expect(getComposerElement()).toHaveAttribute('contenteditable', 'false')
       expect(getComposerElement()).toHaveAttribute(
         'data-placeholder',
-        'Answer the question above first — Claude is waiting on it.',
+        'Answer the question above first — EchoFlow is waiting on it.',
       )
     })
 
@@ -945,7 +945,7 @@ describe('ChatInput file mentions', () => {
       expect(getComposerElement()).toHaveAttribute('contenteditable', 'true')
       expect(getComposerElement()).toHaveAttribute(
         'data-placeholder',
-        'Ask Claude to edit, debug or explain...',
+        'Ask EchoFlow to edit, debug or explain...',
       )
     })
   })
@@ -2054,7 +2054,7 @@ describe('ChatInput file mentions', () => {
   })
 
   it.each(['@', '/', '/empty', '+'] as const)('hides withdrawn bundled capabilities in %s while keeping personal skills and other plugins', async (entry) => {
-    const withdrawnPackage = 'office-frontend-design@haha-connectors'
+    const withdrawnPackage = 'office-frontend-design@echoflow-connectors'
     mocks.listReferences.mockResolvedValue({
       plugins: [
         { kind: 'plugin', id: withdrawnPackage, name: 'office-frontend-design', displayName: 'Removed frontend plugin', description: 'Design', source: withdrawnPackage, modelText: 'Use removed plugin' },

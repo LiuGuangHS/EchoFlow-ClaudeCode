@@ -34,10 +34,6 @@ const tauriDialogMock = vi.hoisted(() => ({
 const tauriProcessMock = vi.hoisted(() => ({
   relaunch: vi.fn(),
 }))
-const echoFlowMigrationMock = vi.hoisted(() => ({
-  getStatus: vi.fn(),
-  run: vi.fn(),
-}))
 const providerStoreState = {
   providers: [] as SavedProvider[],
   providerOrder: [] as string[],
@@ -93,10 +89,6 @@ vi.mock('../api/providers', () => ({
     getSettings: MOCK_GET_SETTINGS,
     updateSettings: MOCK_UPDATE_SETTINGS,
   },
-}))
-
-vi.mock('../api/echoFlowMigration', () => ({
-  echoFlowMigrationApi: echoFlowMigrationMock,
 }))
 
 vi.mock('../lib/desktopNotifications', () => desktopNotificationsMock)
@@ -254,14 +246,6 @@ describe('Settings > General tab', () => {
     tauriDialogMock.open.mockResolvedValue('/Users/test/echoflow-code-data')
     tauriProcessMock.relaunch.mockReset()
     tauriProcessMock.relaunch.mockResolvedValue(undefined)
-    echoFlowMigrationMock.getStatus.mockReset()
-    echoFlowMigrationMock.getStatus.mockResolvedValue({
-      summary: { ready: 0, 'target-exists': 0, missing: 0, invalid: 0, failed: 0, migrated: 0, skipped: 0 },
-    })
-    echoFlowMigrationMock.run.mockReset()
-    echoFlowMigrationMock.run.mockResolvedValue({
-      summary: { ready: 0, 'target-exists': 0, missing: 0, invalid: 0, failed: 0, migrated: 0, skipped: 0 },
-    })
     delete (window as unknown as { __TAURI_INTERNALS__?: object }).__TAURI_INTERNALS__
     delete (window as unknown as { __TAURI__?: object }).__TAURI__
     installElectronDesktopHost()
@@ -301,8 +285,10 @@ describe('Settings > General tab', () => {
       workflowKeywordTriggerEnabled: true,
       agentTeamsEnabled: true,
       autoDreamEnabled: false,
+      autoQuestion: { enabled: false, timeoutMinutes: 5 },
       skipWebFetchPreflight: true,
       desktopNotificationsEnabled: true,
+      localRedaction: { enabled: false, personalInfo: false, customWords: [] },
       traceCapture: { enabled: true, storageDir: '/Users/test/.claude/echoflow-code/traces' },
       chatSendBehavior: 'enter',
       responseLanguage: '',
@@ -469,6 +455,38 @@ describe('Settings > General tab', () => {
       checkForUpdates: vi.fn().mockResolvedValue(null),
       installUpdate: vi.fn().mockResolvedValue(undefined),
       dismissPrompt: vi.fn(),
+    })
+  })
+
+  it('shows a local redaction save failure after the store rolls back', async () => {
+    const updateUser = vi.spyOn(settingsApi, 'updateUser').mockRejectedValue(new Error('settings unavailable'))
+    useSettingsStore.setState({ localRedaction: { enabled: true, personalInfo: false, customWords: [] } })
+
+    render(<Settings />)
+    expect(screen.queryByRole('switch', { name: 'Redact provider requests locally' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByText('Data & Storage'))
+
+    const toggle = screen.getByRole('switch', { name: 'Redact provider requests locally' })
+    await act(async () => {
+      fireEvent.click(toggle)
+    })
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('settings unavailable')
+    expect(toggle).not.toBeChecked()
+
+    await act(async () => {
+      useSettingsStore.setState({ localRedaction: { enabled: true, personalInfo: false, customWords: [] } })
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('switch', { name: 'Include personal information' }))
+    })
+    expect(await screen.findByRole('alert')).toHaveTextContent('settings unavailable')
+
+    expect(updateUser).toHaveBeenNthCalledWith(1, {
+      localRedaction: { enabled: false, personalInfo: false, customWords: [] },
+    })
+    expect(updateUser).toHaveBeenNthCalledWith(2, {
+      localRedaction: { enabled: true, personalInfo: true, customWords: [] },
     })
   })
 
@@ -645,7 +663,7 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
   it('shows WebFetch preflight toggle enabled by default', () => {
     render(<Settings />)
 
-    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByText('Network'))
 
     const toggle = screen.getByLabelText('Skip WebFetch domain preflight')
     expect(toggle).toBeChecked()
@@ -654,7 +672,7 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
   it('keeps the selected settings tab when returning to Settings', () => {
     const { unmount } = render(<Settings />)
 
-    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByText('Network'))
     expect(screen.getByLabelText('Skip WebFetch domain preflight')).toBeInTheDocument()
 
     unmount()
@@ -698,7 +716,7 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
     expect(activeItem.className).toContain('bg-[var(--color-surface-hover)]')
     expect(activeItem).toHaveAttribute('aria-current', 'page')
 
-    const rail = activeItem.parentElement?.parentElement
+    const rail = activeItem.closest('[data-testid="settings-navigation"]')
     expect(rail?.className).toContain('w-[195px]')
     expect(rail?.className).toContain('pl-3')
     expect(rail?.className).toContain('pr-1')
@@ -798,12 +816,8 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
 
     const notificationsHeading = screen.getByRole('heading', { name: 'System Notifications' })
     const uiZoomHeading = screen.getByRole('heading', { name: 'UI Zoom' })
-    const networkHeading = screen.getByRole('heading', { name: 'Network' })
-    const webFetchHeading = screen.getByRole('heading', { name: 'WebFetch Preflight' })
 
     expect((notificationsHeading.compareDocumentPosition(uiZoomHeading) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0).toBe(true)
-    expect((uiZoomHeading.compareDocumentPosition(networkHeading) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0).toBe(true)
-    expect((networkHeading.compareDocumentPosition(webFetchHeading) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0).toBe(true)
   })
 
   it('lets users choose Ctrl or Command Enter as the chat send shortcut', async () => {
@@ -821,7 +835,7 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
   it('saves provider network timeout and manual proxy from General settings', async () => {
     render(<Settings />)
 
-    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByText('Network'))
     expect(screen.getByRole('button', { name: /Direct connection/i })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('button', { name: /System proxy/i })).toBeInTheDocument()
 
@@ -863,7 +877,7 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
 
   it.each([14400, 43200, 2147483])('saves a long request timeout of %i seconds', async (seconds) => {
     render(<Settings />)
-    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByText('Network'))
     const timeoutInput = screen.getByLabelText('AI request timeout')
     fireEvent.change(timeoutInput, { target: { value: String(seconds) } })
     fireEvent.blur(timeoutInput)
@@ -882,7 +896,7 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
   it('validates typed provider network timeout and supports precise step controls', () => {
     render(<Settings />)
 
-    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByText('Network'))
     const timeoutInput = screen.getByLabelText('AI request timeout')
     const saveButton = screen.getAllByRole('button', { name: 'Save' })[0]!
 
@@ -913,7 +927,7 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
 
     try {
       render(<Settings />)
-      fireEvent.click(screen.getByText('General'))
+      fireEvent.click(screen.getByText('Data & Storage'))
 
       const input = screen.getByLabelText('Keep session history for')
       expect(input).toHaveValue(365)
@@ -971,7 +985,7 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
 
     try {
       render(<Settings />)
-      fireEvent.click(screen.getByText('General'))
+      fireEvent.click(screen.getByText('Data & Storage'))
 
       const input = screen.getByLabelText('Keep session history for')
       fireEvent.change(input, { target: { value: '0' } })
@@ -1005,7 +1019,7 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
 
     try {
       render(<Settings />)
-      fireEvent.click(screen.getByText('General'))
+      fireEvent.click(screen.getByText('Data & Storage'))
       fireEvent.change(screen.getByLabelText('Keep session history for'), {
         target: { value: '90' },
       })
@@ -1043,7 +1057,7 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
 
     try {
       render(<Settings />)
-      fireEvent.click(screen.getByText('General'))
+      fireEvent.click(screen.getByText('Data & Storage'))
       fireEvent.change(screen.getByLabelText('Keep session history for'), {
         target: { value: '90' },
       })
@@ -1084,7 +1098,7 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
 
     try {
       render(<Settings />)
-      fireEvent.click(screen.getByText('General'))
+      fireEvent.click(screen.getByText('Data & Storage'))
       fireEvent.change(screen.getByLabelText('Keep session history for'), {
         target: { value: '90' },
       })
@@ -1127,7 +1141,7 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
 
     try {
       render(<Settings />)
-      fireEvent.click(screen.getByText('General'))
+      fireEvent.click(screen.getByText('Data & Storage'))
       fireEvent.change(screen.getByLabelText('Keep session history for'), {
         target: { value: '90' },
       })
@@ -1164,7 +1178,7 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
     document.documentElement.setAttribute('data-touch-h5', 'true')
     try {
       render(<Settings />)
-      fireEvent.click(screen.getByText('General'))
+      fireEvent.click(screen.getByText('Data & Storage'))
 
       expect(
         screen.queryByRole('heading', { name: 'Session History' }),
@@ -1174,87 +1188,23 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
     }
   })
 
-  it('keeps data storage at the bottom of General settings', () => {
+  it('keeps data storage at the bottom of General settings without a manual legacy import control', () => {
     render(<Settings />)
 
-    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByText('Data & Storage'))
 
-    const webSearchHeading = screen.getByRole('heading', { name: 'WebSearch' })
     const storageHeading = screen.getByRole('heading', { name: 'Data Storage Location' })
 
-    expect((webSearchHeading.compareDocumentPosition(storageHeading) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0).toBe(true)
+    expect(storageHeading).toBeInTheDocument()
     expect(screen.getByText(/Windows, upgrades recover verified legacy app-adjacent data/)).toBeInTheDocument()
-  })
-
-  it('requires a check and confirmation before importing legacy data', async () => {
-    echoFlowMigrationMock.getStatus.mockResolvedValueOnce({
-      summary: { ready: 1, 'target-exists': 0, missing: 0, invalid: 0, failed: 0, migrated: 0, skipped: 0 },
-    })
-
-    render(<Settings />)
-
-    fireEvent.click(screen.getByText('General'))
-    expect(screen.queryByRole('button', { name: 'Import Legacy Data' })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Check Legacy Data' }))
-
-    await waitFor(() => {
-      expect(echoFlowMigrationMock.getStatus).toHaveBeenCalledTimes(1)
-      expect(screen.getByRole('button', { name: 'Import Legacy Data' })).toBeInTheDocument()
-    })
-    expect(echoFlowMigrationMock.run).not.toHaveBeenCalled()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Import Legacy Data' }))
-    expect(screen.getByText('Import legacy data?')).toBeInTheDocument()
-    expect(echoFlowMigrationMock.run).not.toHaveBeenCalled()
-
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Import Legacy Data' }))
-    await waitFor(() => expect(echoFlowMigrationMock.run).toHaveBeenCalledTimes(1))
-  })
-
-  it('shows an import failure inside the confirmation dialog', async () => {
-    echoFlowMigrationMock.getStatus.mockResolvedValueOnce({
-      summary: { ready: 1, 'target-exists': 0, missing: 0, invalid: 0, failed: 0, migrated: 0, skipped: 0 },
-    })
-    echoFlowMigrationMock.run.mockRejectedValueOnce(new Error('migration unavailable'))
-
-    render(<Settings />)
-
-    fireEvent.click(screen.getByText('General'))
-    fireEvent.click(screen.getByRole('button', { name: 'Check Legacy Data' }))
-    await screen.findByRole('button', { name: 'Import Legacy Data' })
-    fireEvent.click(screen.getByRole('button', { name: 'Import Legacy Data' }))
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Import Legacy Data' }))
-
-    await waitFor(() => {
-      expect(within(screen.getByRole('dialog')).getByRole('alert')).toHaveTextContent('migration unavailable')
-    })
-  })
-
-  it('removes import eligibility when a later legacy data check fails', async () => {
-    echoFlowMigrationMock.getStatus
-      .mockResolvedValueOnce({
-        summary: { ready: 1, 'target-exists': 0, missing: 0, invalid: 0, failed: 0, migrated: 0, skipped: 0 },
-      })
-      .mockRejectedValueOnce(new Error('status unavailable'))
-
-    render(<Settings />)
-
-    fireEvent.click(screen.getByText('General'))
-    fireEvent.click(screen.getByRole('button', { name: 'Check Legacy Data' }))
-    await screen.findByRole('button', { name: 'Import Legacy Data' })
-
-    fireEvent.click(screen.getByRole('button', { name: 'Check Legacy Data' }))
-
-    await waitFor(() => {
-      expect(screen.queryByRole('button', { name: 'Import Legacy Data' })).not.toBeInTheDocument()
-      expect(screen.getByRole('alert')).toHaveTextContent('status unavailable')
-    })
+    expect(screen.queryByRole('heading', { name: 'Import from older versions' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Check Legacy Data' })).not.toBeInTheDocument()
   })
 
   it('lets desktop users choose a custom data directory and relaunch immediately', async () => {
     render(<Settings />)
 
-    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByText('Data & Storage'))
     fireEvent.click(screen.getByRole('button', { name: 'Choose Folder' }))
 
     await waitFor(() => {
@@ -1284,7 +1234,7 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
 
     render(<Settings />)
 
-    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByText('Data & Storage'))
     fireEvent.click(screen.getByRole('button', { name: /Use system directory/ }))
 
     expect(screen.getByText(/Data in the custom directory is not deleted/)).toBeInTheDocument()
@@ -1300,7 +1250,7 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
   it('requires an explicit custom directory and exposes no third default-custom choice', async () => {
     render(<Settings />)
 
-    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByText('Data & Storage'))
     const input = screen.getByLabelText('Custom data directory')
 
     fireEvent.change(input, { target: { value: '' } })
@@ -1318,7 +1268,7 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
 
     render(<Settings />)
 
-    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByText('Data & Storage'))
     fireEvent.click(screen.getByRole('button', { name: 'Choose Folder' }))
 
     expect(await screen.findByText('Could not open the folder picker. Paste the folder path manually.')).toBeInTheDocument()
@@ -1336,7 +1286,7 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
 
     render(<Settings />)
 
-    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByText('Data & Storage'))
     expect(screen.getByText(/The current directory is controlled by the CLAUDE_CONFIG_DIR environment variable/)).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /Use system directory/ }))
@@ -1351,7 +1301,7 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
   it('keeps mode switch confirmation cancelable before restart starts', async () => {
     render(<Settings />)
 
-    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByText('Data & Storage'))
     fireEvent.change(screen.getByLabelText('Custom data directory'), { target: { value: '/Users/test/custom-data' } })
     fireEvent.click(screen.getByRole('button', { name: 'Use This Folder and Restart' }))
     expect(screen.getByText('Switch data storage location?')).toBeInTheDocument()
@@ -1369,7 +1319,7 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
 
     render(<Settings />)
 
-    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByText('Data & Storage'))
     fireEvent.change(screen.getByLabelText('Custom data directory'), { target: { value: '/Users/test/custom-data' } })
     fireEvent.click(screen.getByRole('button', { name: 'Use This Folder and Restart' }))
     fireEvent.click(screen.getByRole('button', { name: 'Save and Restart' }))
@@ -1383,7 +1333,7 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
 
     render(<Settings />)
 
-    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByText('Data & Storage'))
 
     expect(screen.getByText('The storage change has been saved. Restart the app for the new data directory to take effect.')).toBeInTheDocument()
   })
@@ -1474,7 +1424,7 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
   it('lets the user disable WebFetch preflight skipping', () => {
     render(<Settings />)
 
-    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByText('Network'))
 
     const toggle = screen.getByLabelText('Skip WebFetch domain preflight')
     fireEvent.click(toggle)
@@ -1485,7 +1435,7 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
   it('lets the user disable thinking mode for new sessions', () => {
     render(<Settings />)
 
-    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByText('Runtime management'))
 
     const toggle = screen.getByLabelText('Enable thinking mode')
     expect(toggle).toBeChecked()
@@ -1511,7 +1461,7 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
     })
 
     render(<Settings />)
-    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByText('Runtime management'))
 
     const trigger = screen.getByRole('button', { name: 'Default reasoning effort: Medium' })
     fireEvent.click(trigger)
@@ -1535,7 +1485,7 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
     try {
       render(<Settings />)
 
-      fireEvent.click(screen.getByText('General'))
+      fireEvent.click(screen.getByText('Agents'))
 
       const toggle = screen.getByRole('switch', { name: 'Enable Ultracode keyword trigger' })
       expect(toggle).toBeChecked()
@@ -1560,7 +1510,7 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
     const updateUser = vi.spyOn(settingsApi, 'updateUser').mockResolvedValue({ ok: true })
     try {
       render(<Settings />)
-      fireEvent.click(screen.getByText('General'))
+      fireEvent.click(screen.getByText('Agents'))
       const toggle = screen.getByRole('switch', { name: 'Enable Agent Teams' })
       expect(toggle).toBeChecked()
       expect(screen.getByText('Applies to new sessions. Restart the app to apply changes to existing sessions.')).toBeVisible()
@@ -1576,6 +1526,27 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
     }
   })
 
+  it('saves automatic question settings from Agents', async () => {
+    const updateUser = vi.spyOn(settingsApi, 'updateUser').mockResolvedValue({ ok: true })
+    try {
+      useSettingsStore.setState({ autoQuestion: { enabled: false, timeoutMinutes: 5 } })
+      render(<Settings />)
+      fireEvent.click(screen.getByText('Agents'))
+
+      const toggle = screen.getByRole('switch', { name: 'Answer questions automatically after a timeout' })
+      await act(async () => { fireEvent.click(toggle) })
+      expect(updateUser).toHaveBeenLastCalledWith({ autoQuestion: { enabled: true, timeoutMinutes: 5 } })
+      expect(screen.getByRole('combobox', { name: 'Wait before answering' })).toBeInTheDocument()
+
+      fireEvent.change(screen.getByRole('combobox', { name: 'Wait before answering' }), { target: { value: '10' } })
+      await waitFor(() => {
+        expect(updateUser).toHaveBeenLastCalledWith({ autoQuestion: { enabled: true, timeoutMinutes: 10 } })
+      })
+    } finally {
+      updateUser.mockRestore()
+    }
+  })
+
   it('disables Agent Teams while saving and reports failure after rolling back', async () => {
     let rejectSave!: (error: Error) => void
     const updateUser = vi.spyOn(settingsApi, 'updateUser').mockImplementation(() => new Promise((_, reject) => {
@@ -1583,7 +1554,7 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
     }))
     try {
       render(<Settings />)
-      fireEvent.click(screen.getByText('General'))
+      fireEvent.click(screen.getByText('Agents'))
       const toggle = screen.getByRole('switch', { name: 'Enable Agent Teams' })
       fireEvent.click(toggle)
       expect(toggle).toBeDisabled()
@@ -1602,10 +1573,23 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
     }
   })
 
-  it('lets the user choose a default permission mode for new sessions', async () => {
+  it('keeps runtime and agent automation settings out of General', () => {
     render(<Settings />)
 
     fireEvent.click(screen.getByText('General'))
+
+    expect(screen.queryByLabelText('Enable thinking mode')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Enable Ultracode keyword trigger')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Enable Agent Teams')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Answer questions automatically after a timeout')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Enable Auto-dream')).not.toBeInTheDocument()
+    expect(screen.queryByText('Output Style')).not.toBeInTheDocument()
+  })
+
+  it('lets the user choose a default permission mode for new sessions', async () => {
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('Runtime management'))
     await act(async () => {
       await Promise.resolve()
     })
@@ -1624,7 +1608,7 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
   it('confirms first use before saving Auto as the new-session default', async () => {
     render(<Settings />)
 
-    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByText('Runtime management'))
     await act(async () => {
       await Promise.resolve()
     })
@@ -1647,7 +1631,7 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
   it('keeps Auto-dream disabled by default and confirms before enabling it', async () => {
     render(<Settings />)
 
-    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByText('Agents'))
 
     const toggle = screen.getByLabelText('Enable Auto-dream')
     expect(toggle).not.toBeChecked()
@@ -1670,7 +1654,7 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
     useSettingsStore.setState({ autoDreamEnabled: true })
     render(<Settings />)
 
-    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByText('Agents'))
     await act(async () => {
       fireEvent.click(screen.getByLabelText('Enable Auto-dream'))
     })
@@ -1684,36 +1668,66 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
 
     fireEvent.click(screen.getByText('General'))
 
-    for (const label of [
-      'Enable thinking mode',
-      'Enable Auto-dream',
-      'Collect agent traces',
-      'Enable system notifications',
-      'Skip WebFetch domain preflight',
-    ]) {
-      const toggle = screen.getByLabelText(label)
-      const row = toggle.closest('label') as HTMLElement | null
-      expect(toggle).toHaveClass('settings-checkbox-input')
-      expect(toggle).not.toHaveClass('sr-only')
-      expect(row).not.toBeNull()
-      expect(row!).toHaveClass('relative')
-    }
+    const toggle = screen.getByLabelText('Enable system notifications')
+    const row = toggle.closest('label') as HTMLElement | null
+    expect(toggle).toHaveClass('settings-checkbox-input')
+    expect(toggle).not.toHaveClass('sr-only')
+    expect(row).not.toBeNull()
+    expect(row!).toHaveClass('relative')
   })
 
-  it('lets the user disable Agent Trace collection without leaving General settings', async () => {
+  it('keeps Runtime checkbox inputs anchored inside their visible rows', () => {
     render(<Settings />)
 
-    fireEvent.click(screen.getByText('General'))
-    expect(screen.getByLabelText('Collect agent traces')).toBeChecked()
+    fireEvent.click(screen.getByText('Runtime management'))
 
-    await act(async () => {
-      fireEvent.click(screen.getByLabelText('Collect agent traces'))
+    const toggle = screen.getByLabelText('Enable thinking mode')
+    const row = toggle.closest('label') as HTMLElement | null
+    expect(toggle).toHaveClass('settings-checkbox-input')
+    expect(toggle).not.toHaveClass('sr-only')
+    expect(row).not.toBeNull()
+    expect(row!).toHaveClass('relative')
+  })
+
+  it('keeps the Auto-dream switch named and inside its visible row', () => {
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('Agents'))
+
+    const toggle = screen.getByRole('switch', { name: 'Enable Auto-dream' })
+    const row = toggle.closest('label') as HTMLElement | null
+    expect(toggle).toHaveClass('sr-only')
+    expect(row).not.toBeNull()
+  })
+
+  it('keeps the Network preflight checkbox anchored inside its visible row', () => {
+    render(<Settings />)
+
+    fireEvent.click(screen.getByText('Network'))
+
+    const toggle = screen.getByLabelText('Skip WebFetch domain preflight')
+    const row = toggle.closest('label') as HTMLElement | null
+    expect(toggle).toHaveClass('settings-checkbox-input')
+    expect(toggle).not.toHaveClass('sr-only')
+    expect(row).not.toBeNull()
+    expect(row!).toHaveClass('relative')
+  })
+
+  it('reinitializes Network drafts from saved settings after leaving the tab', () => {
+    useSettingsStore.setState({
+      network: { aiRequestTimeoutMs: 120_000, proxy: { mode: 'manual', url: 'http://saved-proxy:8080' } },
     })
+    render(<Settings />)
 
-    expect(useSettingsStore.getState().setTraceCaptureEnabled).toHaveBeenCalledWith(false)
-    expect(screen.getByLabelText('Collect agent traces')).not.toBeChecked()
-    expect(screen.getByText('Agent trace')).toBeInTheDocument()
-    expect(screen.getByText('Message Sending')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Network'))
+    expect(screen.getByDisplayValue('http://saved-proxy:8080')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('Proxy URL'), { target: { value: 'http://10.0.0.1:1' } })
+    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByText('Network'))
+
+    expect(screen.getByDisplayValue('http://saved-proxy:8080')).toBeInTheDocument()
+    expect(screen.queryByDisplayValue('http://10.0.0.1:1')).not.toBeInTheDocument()
   })
 
   it('uses the shared dropdown for response language', () => {
@@ -2347,7 +2361,7 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
   it('saves WebSearch fallback provider settings', () => {
     render(<Settings />)
 
-    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByText('Network'))
 
     fireEvent.click(screen.getByRole('button', { name: 'Tavily' }))
     fireEvent.change(screen.getByLabelText('Tavily API key'), {
@@ -2367,7 +2381,7 @@ it('renders a managed DeepSeek Node row from its own status', async () => {
   it('links to WebSearch provider API key dashboards', () => {
     render(<Settings />)
 
-    fireEvent.click(screen.getByText('General'))
+    fireEvent.click(screen.getByText('Network'))
 
     expect(screen.getByRole('link', { name: 'Get Tavily API key' })).toHaveAttribute(
       'href',

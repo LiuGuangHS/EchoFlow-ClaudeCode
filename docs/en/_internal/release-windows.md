@@ -1,57 +1,85 @@
 ---
-title: Release and Windows packaging
-nav_title: Release and Windows packaging
-description: Maintainer workflow for version alignment, fork tags, and Windows NSIS installers.
+title: Release and Windows Packaging
+nav_title: Release and Windows Packaging
+description: Maintainer workflow for version alignment, packaging, signing, and desktop release verification.
 order: 11
 ---
 
-# Release and Windows packaging
+# Release and Windows Packaging
 
 This is a maintainer workflow. Finish merges on `main` and start from a clean worktree. Never commit `artifacts/`, `build-artifacts/`, `dist/`, `electron-dist/`, or `node_modules/`.
 
-## Align the release version
+## Version, release notes, and tag
 
-A product release version must match across:
+EchoFlow Code uses its own version line. A release must satisfy all of these conditions:
 
-- `desktop/package.json` `version`
-- `mobile/package.json` `version`
-- `mobile/app.json` `version`
-- `release-notes/vX.Y.Z.md`
-- the fork's `vX.Y.Z` tag
+- `desktop/package.json`, `mobile/package.json`, and `mobile/app.json` have the same version;
+- `release-notes/vX.Y.Z.md` exists and starts with `# EchoFlow Code vX.Y.Z`;
+- the release tag is `vX.Y.Z` and matches the `desktop/package.json` version;
+- root `package.json` `999.0.0-local` is for local development, not a product release.
 
-Root `package.json` `999.0.0-local` is a local development version, not a product release version.
+`desktop/package.json` is the version and artifact-naming baseline. `scripts/release.ts` reads the current version from it and, on a non-dry release, updates the three version files, creates a release commit, and creates an annotated tag. Confirm that release notes exist before running the real release command.
 
-Preview release metadata before creating a tag:
+The dry run reports the files it would update and whether release notes exist; it does not check remote Git tags:
 
 ```bash
 bun run scripts/release.ts X.Y.Z --dry
 ```
 
-Create `release-notes/vX.Y.Z.md` first if it is missing. Run the release script without `--dry` only after the version, notes, and verification evidence are ready; it creates the release commit and annotated tag.
-
-## Manage fork tags
-
-Audit local, `origin`, and `upstream` independently:
+The release script commits and creates a tag, so confirm the branch, worktree, and target version before running it:
 
 ```bash
-git tag --list 'v*' --sort=v:refname
-git ls-remote --tags origin 'v*'
-git ls-remote --tags upstream 'v*'
+bun run scripts/release.ts X.Y.Z
 ```
 
-Upstream tags can share names with fork tags. Do not modify upstream by default. Before deleting a tag, define the scope:
+After release creation, a maintainer explicitly pushes to `origin` and waits for the `Release Desktop` workflow. Do not move existing tags or upload local build artifacts.
 
-- **Local only**: `git tag -d vX.Y.Z`
-- **origin remote**: after explicit confirmation, `git push origin :refs/tags/vX.Y.Z`
-- **upstream**: do not touch by default
+## Release workflow gates
 
-Deleting a tag does not roll back commits or version files. Decide on version files, release notes, and tags together.
+The actual gates in `.github/workflows/release-desktop.yml` are:
+
+1. `release-contract` runs `check:release-surface`; on a tag push it checks the tag against the `desktop/package.json` version and checks the release-note file and title.
+2. `signing-preflight` checks macOS signing/notarization and Windows SignPath configuration, and reports whether this build is signed.
+3. `verify-governance` runs `check:policy`.
+4. `verify-runtime` runs `check:server`, `check:agent-flow`, and `check:adapters`.
+5. `verify-desktop` runs `check:desktop` and `check:persistence-upgrade`.
+6. `release-verify-gate` succeeds only when all three `verify-*` jobs succeed; the build matrix also completes package smoke on six platforms before publishing.
+
+Do not substitute a locally successful installer for the workflow result. GitHub Release is the source of truth for public release assets.
+
+## Signing and notarization
+
+macOS uses these GitHub Actions secrets:
+
+```text
+MACOS_CERTIFICATE
+MACOS_CERTIFICATE_PASSWORD
+APPLE_ID
+APPLE_APP_SPECIFIC_PASSWORD
+APPLE_TEAM_ID
+```
+
+`MACOS_CERTIFICATE` is the base64 content of a Developer ID Application `.p12`. The project does not ship a `.pkg`, so no Developer ID Installer certificate is needed. When macOS configuration is missing, the workflow marks artifacts unsigned and warns that Computer Use client attestation may be affected.
+
+Windows uses SignPath rather than the obsolete `WINDOWS_CERTIFICATE` / `WINDOWS_CERTIFICATE_PASSWORD` variables. The preflight reads:
+
+```text
+SIGNPATH_API_TOKEN                     # GitHub Actions secret
+SIGNPATH_ORGANIZATION_ID               # repository variable
+SIGNPATH_PROJECT_SLUG                  # repository variable
+SIGNPATH_TEST_SIGNING_POLICY_SLUG      # draft/manual test policy
+SIGNPATH_RELEASE_SIGNING_POLICY_SLUG   # tag/release policy
+SIGNPATH_APPLICATION_ARTIFACT_CONFIGURATION_SLUG
+SIGNPATH_INSTALLER_ARTIFACT_CONFIGURATION_SLUG
+```
+
+When all Windows signing settings are absent, the current workflow may produce unsigned artifacts according to its documented rule; a partial configuration is an error and a non-draft release refuses to continue. A manual workflow can explicitly select `skip_windows_signing`, but the release record must state that artifacts are unsigned. SmartScreen on an unsigned Windows artifact does not itself mean installation or updater failure.
 
 ## Package Windows x64
 
 ### Native Windows
 
-Use the project script from Windows PowerShell. It initializes MSVC, builds the Windows sidecar, packages NSIS, and runs package-smoke:
+Use the project script from Windows PowerShell. It prepares MSVC, builds the Windows sidecar, creates the NSIS installer, and runs package smoke:
 
 ```powershell
 cd desktop
@@ -62,7 +90,7 @@ It needs Bun/Bunx and Visual Studio 2022 Build Tools with the Desktop developmen
 
 ### WSL / Linux cross-package
 
-The PowerShell script requires native Windows; do not assume `powershell.exe` exists in WSL. Use Wine and the installed Electron-builder:
+The PowerShell script requires native Windows; do not assume `powershell.exe` exists in WSL. Use the Windows sidecar target, Wine, and the installed electron-builder:
 
 ```bash
 SIDECAR_TARGET_TRIPLE=x86_64-pc-windows-msvc bun run --cwd desktop prepare:ripgrep
@@ -74,16 +102,16 @@ CSC_IDENTITY_AUTO_DISCOVERY=false WINELOADER=wine64 \
   --project desktop --win nsis --x64 --publish never
 ```
 
-Run packaging in the foreground and retain its full output. The Windows x64 sidecar and `rg.exe` must exist; run `prepare:ripgrep` when they do not. Never substitute the Linux sidecar.
+`electron:build` only builds sidecars, the renderer, and Electron bundles; use `electron:package` or invoke electron-builder as above when an installer is required. The Windows x64 sidecar and `rg.exe` must exist; never substitute the Linux sidecar.
 
-The usual output is:
+Typical output includes:
 
 ```text
 desktop/build-artifacts/electron/EchoFlow-Code-X.Y.Z-win-x64.exe
 desktop/build-artifacts/electron/EchoFlow-Code-X.Y.Z-win-x64.exe.blockmap
 ```
 
-## Verify
+## Static package and real Windows verification
 
 First verify static package contents:
 
@@ -93,6 +121,39 @@ bun run test:package-smoke --platform windows --package-kind release \
 sha256sum desktop/build-artifacts/windows-x64-validation/EchoFlow-Code-X.Y.Z-win-x64.exe
 ```
 
-`package-smoke` proves package structure, not Windows installation or launch. A maintainer must install the NSIS `.exe` on real Windows and check the version, session creation, sidecar startup, Provider Settings, and that `latest.yml`, `.exe`, and `.exe.blockmap` use the same version. SmartScreen on an unsigned installer does not itself mean installation or updater failure.
+`package-smoke` proves package structure, not Windows installation or launch. A maintainer must install the NSIS `.exe` on real Windows and check:
+
+- the About version matches this release;
+- session creation, sidecar startup, and Provider Settings work;
+- `latest.yml`, `.exe`, and `.exe.blockmap` in the release assets use the same version;
+- manual-download guidance works after an update failure, and SmartScreen on an unsigned artifact is not mistaken for an updater failure.
 
 Do not mix stale `linux-unpacked`, macOS, or historical artifacts into the Windows verification directory: static checks can mistake them for update assets.
+
+## Auto-update and site sync
+
+The app uses `electron-updater` with the complete GitHub Release asset set. Matrix jobs first generate their `latest*.yml` files, then `scripts/release-update-metadata.ts` merges them into the standard names electron-updater expects. Do not let each matrix job publish the same metadata directly or the files will overwrite one another.
+
+Differential downloads are disabled by default. They are requested only on Windows or macOS when `ECHOFLOW_ENABLE_DIFFERENTIAL_DOWNLOAD=1` is explicitly set and the download source is the GitHub Release direct feed with its pinned contract fingerprint verified; `ECHOFLOW_DISABLE_DIFFERENTIAL_DOWNLOAD=1` forces them off. Custom update feeds, proxy feeds, and Linux always use full downloads.
+
+Rollout and enabling the default are currently blocked: offline tests confirm that `GenericDifferentialDownloader` accepts an incorrect `Content-Range` and a `206` without `Accept-Ranges: bytes` under `NodeHttpExecutor` when the final file SHA-512 matches. An online canary cannot compensate for this response-contract gap. Do not run a differential canary using the explicit switch until a maintainable response-validation/fallback layer and its offline gates are in place. Response validation/fallback, integration verification, and the real canary are not complete; the current tests do not constitute Electron transport acceptance or rollout approval.
+
+`updateRangeContract.test.ts` directly constructs `GenericDifferentialDownloader` and `NodeHttpExecutor`. Its redirect case asserts that the Node transport does not follow a 302; the multipart case only asserts rejection of an invalid `Content-Type`. It does not run the app's `downloadUpdate()` or use `ElectronHttpExecutor` with `electron.net.request` / the updater session, so it does not cover Electron net redirect behavior or a real multipart response. The installed implementation primarily branches on status, range-support headers, and multipart `Content-Type`; it does not validate that a `206` `Content-Range` matches the requested interval or require `Accept-Ranges: bytes`.
+
+The session `webRequest` API is not a sufficient validation boundary: Electron exposes response headers to `onHeadersReceived` but not the multipart body, so it cannot validate each part's range and byte count. Registering another listener for the same WebRequest event replaces the existing listener; there is no subscription handle that allows a temporary listener to be safely composed and removed independently. The repository currently has no `onHeadersReceived` listener, but temporarily taking exclusive ownership of the updater session would still create a fragile global constraint and would not prove compatibility with future or external session consumers.
+
+Task 4 remains BLOCKED. To unblock it, first establish a controlled boundary that can inspect the complete response body before the differential downloader consumes or writes it, and prove that a rejected real differential request triggers the existing full-package fallback. Then use the real Electron transport with a loopback HTTP server to verify GET/Range, 302, valid multipart, invalid responses, and fallback. A headers-only hook, Node transport test, or online canary cannot substitute for this evidence. No implementation has been added because that boundary is not established. The real Task 5 canary is NOT RUN; differential downloads remain disabled by default, and the explicit switch must not be used for a canary.
+
+Differential eligibility and canary evidence must come from the app's actual `downloadUpdate()` request; do not infer success from `HEAD`, standalone `curl`, download size, or a generic “downloaded” log. Record the source separately with method, request URL, release tag, client version, platform, arch, `Range`, HTTP status, `Content-Range`, `Content-Length`, `Accept-Ranges`, `Content-Type`, redirect chain, fallback result, installer SHA-512, and UTC timestamp. Isolate evidence by `release/platform-arch/source/run-id`, for example `update-canary-evidence/<release>/<platform>-<arch>/<source>/<run-id>/range.jsonl` and `summary.json`. Use a CI run/build ID or a maintainer UTC timestamp plus a unique suffix; never overwrite evidence and do not commit it. Missing actual updater GET/Range/response headers, `206`, or correct range details means BLOCKED/FAIL. Keep direct GitHub and proxy evidence separate; a proxy without its own verified contract may only record the full-package path.
+
+A full-package fallback exercise must record offline, interruption, failed-response evidence, and the subsequent full-package request/result. Verify that no false download-complete event is emitted, retry works, installation and restart succeed, and providers, sessions, Skills, Agents, memories, the custom data directory, and historical task state remain intact. Linux AppImage continues to use full-package updates in this first phase; no `.AppImage.blockmap` is required.
+
+At the end of a release, `site-release-sync` triggers `deploy-docs.yml --release <tag>` after the GitHub Release completes. `scripts/site-release-manifest.ts` copies update yml files byte-for-byte into `site/dist/update/` and creates `site/dist/download/manifest.json` from the release asset list; the sync runs before site upload and failure blocks the workflow.
+
+These invariants must not change:
+
+1. GitHub Release keeps the complete electron-builder asset set;
+2. mirrored yml files remain byte-for-byte identical to GitHub assets and are never re-serialized;
+3. `artifactName` stays `EchoFlow-Code-${version}-${os}-${arch}.${ext}` because the download manifest and installer checks depend on it.
+
+Every production release must be tested by upgrading from the previous stable version at least once: install the old version, push the tag and wait for the workflow, trigger the update from the old app, install and restart, then verify the version, providers, sessions, Skills, Agents, memories, custom data directory, and historical task state. On macOS focus on signing and launch policy; on Windows focus on `latest.yml`, the installer, and the blockmap; on Linux focus on AppImage auto-update.

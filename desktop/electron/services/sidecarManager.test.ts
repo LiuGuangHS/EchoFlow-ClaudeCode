@@ -653,7 +653,7 @@ describe('Electron sidecar manager', () => {
   })
 
   it('persists and prioritizes preferred server ports from the config dir', () => {
-    const configDir = mkdtempSync(path.join(tmpdir(), 'cchh-server-state-'))
+    const configDir = mkdtempSync(path.join(tmpdir(), 'echoflow-server-state-'))
     const env = { CLAUDE_CONFIG_DIR: configDir } as NodeJS.ProcessEnv
     try {
       // Nothing stored yet: no preferred ports.

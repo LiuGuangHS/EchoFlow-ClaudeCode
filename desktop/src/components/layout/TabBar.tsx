@@ -699,7 +699,7 @@ export function TabBar() {
         {tabs.map((tab, index) => {
           const displayTitle = tab.type === 'settings'
             ? t('settings.title')
-            : tab.type === 'market' || tab.type === 'connectors' ? t('sidebar.extensions') : (tab.title || t('tabs.untitled'))
+            : tab.type === 'market' || tab.type === 'connectors' ? t('sidebar.extensions') : (tab.title && !isPlaceholderSessionTitle(tab.title) ? tab.title : t('tabs.untitled'))
           return (
             <TabItem
               key={tab.sessionId}

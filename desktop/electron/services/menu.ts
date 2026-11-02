@@ -1,6 +1,7 @@
 import type { App, BrowserWindow, MenuItemConstructorOptions } from 'electron'
 import { ELECTRON_EVENT_CHANNELS } from '../ipc/channels'
 import { hideWindowSafely, toggleWindowFullScreen } from './windows'
+import { ECHOFLOW_PRODUCT_NAME } from '../../src/constants/brand'
 
 export type NativeMenuDestination = 'about' | 'settings'
 
@@ -142,7 +143,7 @@ export async function installApplicationMenu(
     return
   }
 
-  const template = buildApplicationMenuTemplate(app.name || 'EchoFlow Code', destination => {
+  const template = buildApplicationMenuTemplate(app.name || ECHOFLOW_PRODUCT_NAME, destination => {
     getMainWindow()?.webContents.send(ELECTRON_EVENT_CHANNELS.nativeMenuNavigate, destination)
   }, platform, {
     hide: () => {

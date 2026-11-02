@@ -20,14 +20,14 @@ import { captureLegacyPlanTasks, resolveProposedTeamPlan, snapshotTeamAgents, te
 let directory: string
 let context: ToolUseContext
 let saved: Record<string, string | undefined>
-const keys = ['CLAUDE_CONFIG_DIR', 'CC_HAHA_TEAM_REVIEW_REQUIRED', 'CC_HAHA_TEAM_LEADER_RUNTIME', 'CLAUDE_CODE_SUBAGENT_MODEL']
+const keys = ['CLAUDE_CONFIG_DIR', 'ECHOFLOW_TEAM_REVIEW_REQUIRED', 'ECHOFLOW_TEAM_LEADER_RUNTIME', 'CLAUDE_CODE_SUBAGENT_MODEL']
 
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), 'team-plan-tools-'))
   saved = Object.fromEntries(keys.map(key => [key, process.env[key]]))
   process.env.CLAUDE_CONFIG_DIR = directory
-  process.env.CC_HAHA_TEAM_REVIEW_REQUIRED = '1'
-  process.env.CC_HAHA_TEAM_LEADER_RUNTIME = JSON.stringify({ providerId: 'fake-provider', modelId: 'fake-model' })
+  process.env.ECHOFLOW_TEAM_REVIEW_REQUIRED = '1'
+  process.env.ECHOFLOW_TEAM_LEADER_RUNTIME = JSON.stringify({ providerId: 'fake-provider', modelId: 'fake-model' })
   delete process.env.CLAUDE_CODE_SUBAGENT_MODEL
   let state = { mainLoopModel: 'fake-model', inbox: { messages: [] } } as ReturnType<ToolUseContext['getAppState']>
   context = {
@@ -84,7 +84,7 @@ describe('whole-team planning tools', () => {
     const result = teamPlanToolResult({ teamName: 'review-team', state: 'running', members: [], tasks: [] } as never)
     expect(result.message).toContain('running')
     expect(result.message).not.toContain('No teammate has started')
-    delete process.env.CC_HAHA_TEAM_REVIEW_REQUIRED
+    delete process.env.ECHOFLOW_TEAM_REVIEW_REQUIRED
     expect(getPrompt()).not.toContain('Human review before execution')
   })
   test('legacy Agent spawns only stage members, then whole-plan submit waits for human review', async () => {
@@ -130,7 +130,7 @@ describe('whole-team planning tools', () => {
 
   test('a persisted desktop draft cannot fall through to an execution backend if the environment flag is absent', async () => {
     await TeamCreateTool.call({ team_name: 'review-team' }, context)
-    delete process.env.CC_HAHA_TEAM_REVIEW_REQUIRED
+    delete process.env.ECHOFLOW_TEAM_REVIEW_REQUIRED
     const staged = await spawnTeammate({ name: 'worker', team_name: 'review-team', prompt: 'Work' }, context)
     expect(staged.data.staged).toBe(true)
     expect((await readTeamFileAsync('review-team'))?.members).toHaveLength(1)

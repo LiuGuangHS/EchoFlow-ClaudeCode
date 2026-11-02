@@ -16,6 +16,7 @@ import {
 import { handleProxyRequest } from '../proxy/handler.js'
 import {
   getNetworkProxyFetchOptions,
+  isLocalRedactionEnabled,
   loadNetworkSettings,
   type NetworkSettings,
 } from './networkSettings.js'
@@ -197,6 +198,7 @@ export async function generateTitle(
     }
 
     if (resolvedProvider && isOpenAIOfficialProviderId(resolvedProvider.id)) {
+      if (await isLocalRedactionEnabled()) return null
       return await generateOpenAIOfficialTitle(
         trimmed,
         resolvedProvider.models.haiku || resolvedProvider.models.main,
@@ -206,6 +208,7 @@ export async function generateTitle(
     }
 
     if (!resolvedProvider?.baseUrl || !resolvedProvider?.apiKey) return null
+    if (await isLocalRedactionEnabled()) return null
 
     const model = resolvedProvider.models.haiku || resolvedProvider.models.main
     const url = `${normalizeAnthropicBaseUrl(resolvedProvider.baseUrl.replace(/\/+$/, ''))}/v1/messages`
@@ -253,6 +256,7 @@ async function generateOpenAIOfficialTitle(
   languagePreference?: TitleLanguagePreference | null,
   networkSettings?: NetworkSettings,
 ): Promise<string | null> {
+  if (await isLocalRedactionEnabled()) return null
   const tokens = await echoFlowOpenAIOAuthService.ensureFreshTokens()
   if (!tokens?.accessToken) return null
 

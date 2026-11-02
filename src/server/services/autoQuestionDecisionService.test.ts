@@ -4,9 +4,9 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { ProviderService } from './providerService.js'
 import { drainTraceCaptureForTests } from './traceCaptureService.js'
-import { echoFlowOAuthService as hahaOAuthService } from './echoFlowOAuthService.js'
-import { echoFlowOpenAIOAuthService as hahaOpenAIOAuthService } from './echoFlowOpenAIOAuthService.js'
-import { echoFlowGrokOAuthService as hahaGrokOAuthService } from './echoFlowGrokOAuthService.js'
+import { echoFlowOAuthService } from './echoFlowOAuthService.js'
+import { echoFlowOpenAIOAuthService } from './echoFlowOpenAIOAuthService.js'
+import { echoFlowGrokOAuthService } from './echoFlowGrokOAuthService.js'
 import {
   decideAutoQuestionAnswers,
   type AutoQuestion,
@@ -42,7 +42,7 @@ describe('autoQuestionDecisionService', () => {
 
   afterEach(async () => {
     globalThis.fetch = originalFetch
-    hahaOpenAIOAuthService.dispose()
+    echoFlowOpenAIOAuthService.dispose()
     await drainTraceCaptureForTests()
     if (originalConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR
     else process.env.CLAUDE_CONFIG_DIR = originalConfigDir
@@ -228,8 +228,61 @@ describe('autoQuestionDecisionService', () => {
     expect(calls[0]!.headers.get('x-opencode-session')).toBe('session-auto-question')
   })
 
+  test('fails closed for custom Anthropic helpers when local redaction is enabled', async () => {
+    await fs.writeFile(path.join(configDir, 'settings.json'), JSON.stringify({
+      localRedaction: { enabled: true, personalInfo: false, customWords: [] },
+    }))
+    const provider = await new ProviderService().addProvider({
+      presetId: 'custom', name: 'Direct Anthropic Fixture', apiKey: 'fake-key',
+      baseUrl: 'https://provider.example.test', apiFormat: 'anthropic',
+      models: { main: 'large-test', haiku: 'small-test', sonnet: 'large-test', opus: 'large-test' },
+    })
+    let calls = 0
+    globalThis.fetch = (async () => {
+      calls += 1
+      throw new Error('custom Anthropic helper must not bypass redaction')
+    }) as typeof fetch
+
+    expect(await decideAutoQuestionAnswers({
+      questions: [undecided], conversationText: 'secret conversation', providerId: provider.id,
+      signal: new AbortController().signal,
+    })).toBeNull()
+    expect(calls).toBe(0)
+  })
+
+  test('fails closed for official OAuth helpers when local redaction is enabled', async () => {
+    await fs.writeFile(path.join(configDir, 'settings.json'), JSON.stringify({
+      localRedaction: { enabled: true, personalInfo: false, customWords: [] },
+    }))
+    await echoFlowOAuthService.saveTokens({
+      accessToken: 'fake-claude-token', refreshToken: 'fake-refresh-token',
+      expiresAt: Date.now() + 60 * 60_000, scopes: ['user:inference'], subscriptionType: 'pro',
+    })
+    await echoFlowOpenAIOAuthService.saveTokens({
+      accessToken: 'fake-openai-token', refreshToken: 'fake-refresh-token',
+      expiresAt: Date.now() + 60 * 60_000, accountId: 'acct-auto-question', email: 'test@example.com',
+    })
+    await echoFlowGrokOAuthService.saveTokens({
+      accessToken: 'fake-grok-token', refreshToken: 'fake-refresh-token',
+      expiresAt: Date.now() + 60 * 60_000, email: null,
+    })
+    let calls = 0
+    globalThis.fetch = (async () => {
+      calls += 1
+      throw new Error('official helper must not bypass redaction')
+    }) as typeof fetch
+
+    for (const providerId of [null, 'openai-official', 'grok-official'] as const) {
+      expect(await decideAutoQuestionAnswers({
+        questions: [undecided], conversationText: 'secret conversation', providerId,
+        signal: new AbortController().signal,
+      })).toBeNull()
+    }
+    expect(calls).toBe(0)
+  })
+
   test('uses Claude Official OAuth Haiku when the session has no provider ID', async () => {
-    await hahaOAuthService.saveTokens({
+    await echoFlowOAuthService.saveTokens({
       accessToken: 'fake-claude-token', refreshToken: 'fake-refresh-token',
       expiresAt: Date.now() + 60 * 60_000, scopes: ['user:inference'], subscriptionType: 'pro',
     })
@@ -256,7 +309,7 @@ describe('autoQuestionDecisionService', () => {
   })
 
   test('uses ChatGPT Official OAuth through its Responses endpoint', async () => {
-    await hahaOpenAIOAuthService.saveTokens({
+    await echoFlowOpenAIOAuthService.saveTokens({
       accessToken: 'fake-openai-token', refreshToken: 'fake-refresh-token',
       expiresAt: Date.now() + 60 * 60_000, accountId: 'acct-auto-question', email: 'test@example.com',
     })
@@ -285,7 +338,7 @@ describe('autoQuestionDecisionService', () => {
   })
 
   test('uses Grok Official OAuth when no API key is saved', async () => {
-    await hahaGrokOAuthService.saveTokens({
+    await echoFlowGrokOAuthService.saveTokens({
       accessToken: 'fake-grok-token', refreshToken: 'fake-refresh-token',
       expiresAt: Date.now() + 60 * 60_000, email: null,
     })

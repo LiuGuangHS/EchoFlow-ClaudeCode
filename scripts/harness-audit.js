@@ -23,9 +23,9 @@ const CATEGORIES = [
 const RUBRIC_VERSION = '2026-05-19';
 
 // Repository contracts that every PR can affect without owning a dedicated
-// lane. Environment-dependent installs, project-local overrides, advisory
-// hygiene, and the deferred CC_HAHA_* compatibility migration stay visible in
-// the score but not blocking until their own changes land.
+// lane. Environment-dependent installs, project-local overrides, and advisory
+// hygiene stay visible in the score but not blocking until their own changes
+// land.
 const REQUIRED_CHECK_IDS = [
   'consumer-ci-workflow',
   'consumer-instructions',
@@ -470,7 +470,19 @@ const DOCS_TREE_EXCLUDED_FILES = new Set(['AGENTS.md']);
 // Fork-owned brand strings must not survive in shipped source. Tests, fixtures
 // and migration sources keep the historical name on purpose: they are the
 // compatibility contract for user data that already exists on disk.
-const BRAND_RESIDUE_PATTERNS = [/cc[-_]haha/i, /claude-code-haha/i];
+//
+// The patterns match the brand as a whole token. A bare substring match would
+// fire on ordinary identifiers such as `cachedMCChanged` or `onhcChhcChange`.
+const BRAND_RESIDUE_PATTERNS = [
+  /cc[-_]haha/i,
+  /claude-code-haha/i,
+  /\bcchh[-_]?\w/i,
+  /\bcchaha\b/i,
+  /(?<![a-z0-9])haha-(?!code)/i,
+  // The retired abbreviation encoded as bytes: 'CCHA' and 'CCHAHACU'.
+  /0x43434841\b/i,
+  /0x4343_4841_4841_4355\b/i,
+];
 const BRAND_SCAN_DIRS = ['src', 'desktop/src', 'desktop/electron', 'adapters', 'scripts'];
 const BRAND_SCAN_EXCLUDED_DIRS = new Set(['node_modules', 'target', 'dist', 'build', 'coverage']);
 const BRAND_SCAN_EXCLUDED_FILES = [
@@ -484,8 +496,21 @@ const BRAND_RESIDUE_ALLOWED = new Set([
   // Migration sources must keep the historical directory name so existing user
   // data still resolves; the old name is the compatibility contract.
   'desktop/src/lib/persistenceMigrations.ts',
-  // This scanner holds the patterns themselves.
+  'src/server/services/legacyMigrationService.ts',
+  'src/server/services/persistentStorageMigrations.ts',
+  'src/server/services/sessionCollaborationHost.ts',
+  // Readers that must still recognise values an older install wrote.
+  'src/goals/goalState.ts',
+  'src/server/services/sessionService.ts',
+  'src/server/services/workflowService.ts',
+  'src/server/services/workflowTranscriptProjection.ts',
+  'src/services/api/client.ts',
+  'src/utils/openAIReasoningEnvelope.ts',
+  'src/utils/providerManagedEnvCompat.ts',
+  'src/utils/thinking.ts',
+  // These files hold the patterns themselves.
   'scripts/harness-audit.js',
+  'scripts/pr/release-surface-audit.ts',
 ]);
 
 function collectSourceFiles(rootDir, relativeDir, predicate, excludedDirs) {

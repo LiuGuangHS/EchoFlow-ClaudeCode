@@ -1,13 +1,23 @@
 ---
 title: Settings guide
 nav_title: Settings
-description: All 19 settings tabs — what each one configures and when you'd need it.
+description: The settings page in five groups — what each tab configures and when you'd need it.
 order: 13
 ---
 
 # Settings guide
 
-Click **Settings** at the bottom of the sidebar. Nineteen tabs appear on the left in a fixed order. This page walks through them in that order; for your first session, connect a model in **Model Settings**, check permissions and language in **General**, then follow [Your first session](../start/first-session.md).
+Click **Settings** at the bottom of the sidebar. The left rail is arranged in five groups, each with a fixed order:
+
+| Group | Tabs |
+|---|---|
+| Models & Runtime | Model Settings, Runtime management |
+| Preferences | General, Network, Data & Storage, Voice Input, Pets |
+| Capabilities | Agents, Skills, Plugins, MCP, Memory, Computer Use |
+| Remote Access | H5 Access, IM Adapters |
+| Tools & Activity | Terminal, Token usage, Trace, Diagnostics |
+
+**About** sits on its own below the groups. This page walks through them in that order; for your first session, connect a model in **Model Settings**, check permissions and language in **General**, then follow [Your first session](../start/first-session.md).
 
 ## Model Settings
 
@@ -19,7 +29,7 @@ You'll come here once during setup and rarely again. Full steps in [Connecting a
 
 ## General
 
-General covers four areas: appearance and replies, how the agent works, network and notifications, and local data. Check the first two before your first session; adjust the others when you need them.
+General covers two areas: appearance and replies, and how the agent works. Check both before your first session; network and local data each have their own tab for when you need them.
 
 ![Settings → General: color themes, language, output style, default permissions (Chinese interface)](../../images/app/en/settings-general.webp)
 
@@ -50,22 +60,28 @@ General covers four areas: appearance and replies, how the agent works, network 
 | Agent Teams | On by default. Use it when a larger task needs several agents working together. New sessions pick it up; existing sessions do after an app restart. See [Subagents](./agents.md) first. |
 | Auto-answer questions | Off by default. After 1, 5, 10, or 30 minutes without an answer to an agent's multiple-choice question, it can choose a recommended option. If it cannot choose reliably, it keeps waiting. Use only when you want unattended work to continue. |
 | Auto-dream | Off by default. After enough sessions have accumulated, it can organize auto-memory in the background, using additional model calls and tokens. |
-| Agent Trace | On by default. New sessions write condensed request, response, and status events to a local traces directory. Use the **Trace** tab to investigate a failure; turning it off stops new records, while old ones remain readable. |
 
-### Network, web search, and notifications
+### Notifications
 
 - **System Notifications** are off by default. Enable them and grant OS permission when you need alerts for permission requests, completed replies, or scheduled tasks away from the app.
-- **Network** uses the system proxy by default. **Direct** bypasses system and inherited process proxies; **Manual** accepts an HTTP/HTTPS URL such as `http://user:password@127.0.0.1:7890`. Click **Save**. New requests use the new route; requests already in flight keep their old route. Model services, account sign-in, MCP, and agent tools use this setting. App updates have a separate proxy under **About**.
+
+Product screenshots in this guide consistently use the **Pure White** theme so the interface can be compared without palette changes.
+
+## Network
+
+Everything outbound goes through this tab: model services, account sign-in, MCP, and agent tools.
+
+- **Network** uses the system proxy by default. **Direct** bypasses system and inherited process proxies; **Manual** accepts an HTTP/HTTPS URL such as `http://user:password@127.0.0.1:7890`. Click **Save**. New requests use the new route; requests already in flight keep their old route. App updates have a separate proxy under **About**, unaffected by this setting.
 - **AI request timeout** defaults to 1800 seconds and accepts at least 30 seconds. Raise it only when the first model response or connection test really times out. For a local model that thinks for a long time, you can enter 14400 seconds (four hours).
 - **WebFetch preflight** skips the upstream domain check by default to avoid false failures with third-party providers or restricted networks. Turn this off only when you specifically want the upstream check.
 - **WebSearch** defaults to **Auto**: Claude models try native search first, then Tavily or Brave on failure or with non-Claude models. You can force Claude, Tavily, Brave, or Off. Tavily and Brave require your own API keys and a click on **Save**.
 
-### Local data: check the effect before changing it
+## Data & Storage
+
+Check the effect before changing anything here — both settings touch data you already have.
 
 - **Session retention** defaults to 365 days and accepts 0–3650 days. Reducing it immediately removes older records; setting 0 removes all existing records and stops recording session contents. The UI previews and confirms the change. This is not a backup system.
 - **Data Storage Location** defaults to `~/.claude` (`%USERPROFILE%\\.claude` on Windows). Portable mode takes an absolute path outside the app installation folder. After an app restart, sessions, configuration, tasks, skills, and plugins are read from the new location. The two directories are not merged or migrated automatically. If `CLAUDE_CONFIG_DIR` is set at launch, remove that environment variable before switching locations in the UI.
-
-Product screenshots in this guide consistently use the **Pure White** theme so the interface can be compared without palette changes.
 
 ## Runtime management
 
@@ -82,7 +98,7 @@ The **EchoFlow Agent runtime** card chooses which executable starts new sessions
 Adds a microphone button next to the composer so speech becomes text without a third-party dictation app. Audio is transcribed only on the machine running the EchoFlow Code service; it never goes to a cloud service.
 
 - **Enable voice input** — shows the dictation button next to the chat composer. The switch only shows the button; the model is downloaded separately.
-- **Recognition engine** — click **Download** on first use. The voice runtime, the speech model, and the voice-activity model download in turn and are verified when they finish. An interrupted download keeps what it already has; click **Resume** to continue from that point. The download source can be automatic, official (Hugging Face, npm), or a mirror (hf-mirror, npmmirror), and downloads use the Network proxy from **General**.
+- **Recognition engine** — click **Download** on first use. The voice runtime, the speech model, and the voice-activity model download in turn and are verified when they finish. An interrupted download keeps what it already has; click **Resume** to continue from that point. The download source can be automatic, official (Hugging Face, npm), or a mirror (hf-mirror, npmmirror), and downloads use the proxy from **Network**.
 - **Language** — automatic detection by default, or fixed to Mandarin, English, Japanese, Korean, or Cantonese. A fixed language makes short utterances more reliable.
 - **Microphone** — lists the input devices on this machine. Picking the wrong one usually shows up as silence.
 - **Transcription test** — record a few seconds and read the result through the same path dictation uses, to confirm the model, microphone, and permission all work.
@@ -158,7 +174,7 @@ A usage dashboard computed from the Claude Code session records on this machine.
 
 ## Trace
 
-Records the model request chain for each session — requests, responses, status events, timings — for debugging stalls, failures, and unexplained waits. The switch is in **Settings → General** and is on by default; new sessions produce new records.
+Records the model request chain for each session — requests, responses, status events, timings — for debugging stalls, failures, and unexplained waits. The switch sits at the top of this page and is on by default; new sessions produce new records.
 
 Once enabled, new sessions write condensed records to a local traces directory. Existing records stay readable after you turn it off; only new ones stop being written. The trace list supports search, filtering (all / LLM / tools / errors), opening a trace in its own window, and deleting a session's trace without touching its chat history.
 
@@ -177,12 +193,8 @@ Where to go when something breaks. Logs server and CLI startup, provider, and se
 Issue reports and exported bundles are redacted on a best-effort basis — chat contents, file contents, full environment variables, and API keys are omitted. Still give them a read before sharing, in case an internal hostname, username, or path slipped through.
 :::
 
-## Config Generator
-
-Package the providers you configured under Model settings into a link someone else can import in one click. It shares connection parameters and model mappings, **not API keys** — the recipient supplies their own. See [Config sharing](./config-sharing.md).
-
 ## About
 
 Version, changelog, GitHub repo, feedback link.
 
-**App Updates** checks GitHub Releases, downloads, and restarts to install. Updates use their own proxy setting, separate from **Settings → General** — if updates stall on a corporate network, configure the advanced update proxy here.
+**App Updates** checks GitHub Releases, downloads, and restarts to install. Updates use their own proxy setting, separate from **Settings → Network** — if updates stall on a corporate network, configure the advanced update proxy here. Differential downloads are off by default; they are attempted only when explicitly enabled on a verified feed. If differential downloading fails, the updater falls back to the full installer.

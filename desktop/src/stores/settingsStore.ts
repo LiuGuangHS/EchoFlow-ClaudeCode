@@ -42,6 +42,8 @@ import {
   normalizeAutoQuestionSettings,
   type AutoQuestionSettings,
 } from '../../../src/shared/autoQuestionSettings'
+import { normalizeLocalRedactionSettings, type LocalRedactionSettings } from '../../../src/shared/localRedactionSettings'
+import { ECHOFLOW_AGENT_NAME } from '../constants/brand'
 import {
   applyDocumentLocale,
   getInitialLocale,
@@ -69,6 +71,7 @@ type SettingsStore = {
   agentTeamsEnabled: boolean
   autoDreamEnabled: boolean
   autoQuestion: AutoQuestionSettings
+  localRedaction: LocalRedactionSettings
   autoModeOptInAccepted: boolean
   availableModels: ModelInfo[]
   activeProviderName: string | null
@@ -115,6 +118,7 @@ type SettingsStore = {
   setAgentTeamsEnabled: (enabled: boolean) => Promise<void>
   setAutoDreamEnabled: (enabled: boolean) => Promise<void>
   setAutoQuestion: (settings: AutoQuestionSettings) => Promise<void>
+  setLocalRedaction: (settings: LocalRedactionSettings) => Promise<void>
   acceptAutoModeOptIn: () => Promise<void>
   setLocale: (locale: Locale) => void
   setTheme: (theme: ThemeMode) => Promise<void>
@@ -165,6 +169,9 @@ const DEFAULT_DESKTOP_TERMINAL_SETTINGS: DesktopTerminalSettings = {
 let desktopTerminalSaveQueue: Promise<void> = Promise.resolve()
 let desktopTerminalSaveVersion = 0
 let lastPersistedDesktopTerminal = DEFAULT_DESKTOP_TERMINAL_SETTINGS
+let localRedactionSaveQueue: Promise<void> = Promise.resolve()
+let localRedactionSaveVersion = 0
+let lastPersistedLocalRedaction = normalizeLocalRedactionSettings(null)
 
 const DEFAULT_UPDATE_PROXY_SETTINGS: UpdateProxySettings = {
   mode: 'system',
@@ -187,7 +194,7 @@ const DEFAULT_OUTPUT_STYLE_OPTIONS: OutputStyleOption[] = [
   {
     value: DEFAULT_OUTPUT_STYLE,
     label: 'Default',
-    description: 'Claude completes coding tasks efficiently and provides concise responses',
+    description: `${ECHOFLOW_AGENT_NAME} completes coding tasks efficiently and provides concise responses`,
     source: 'built-in',
   },
 ]
@@ -210,6 +217,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   agentTeamsEnabled: true,
   autoDreamEnabled: false,
   autoQuestion: DEFAULT_AUTO_QUESTION_SETTINGS,
+  localRedaction: normalizeLocalRedactionSettings(null),
   autoModeOptInAccepted: false,
   availableModels: [],
   activeProviderName: null,
@@ -273,7 +281,9 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         loadTraceCaptureSettings(),
       ])
       const desktopTerminal = normalizeDesktopTerminalSettings(userSettings.desktopTerminal)
+      const localRedaction = normalizeLocalRedactionSettings(userSettings.localRedaction)
       lastPersistedDesktopTerminal = desktopTerminal
+      lastPersistedLocalRedaction = localRedaction
       // Nothing to do for the theme here: uiStore already applied it at
       // startup, and re-applying would re-persist and re-report it on every
       // provider switch.
@@ -289,6 +299,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         agentTeamsEnabled: userSettings.agentTeamsEnabled !== false,
         autoDreamEnabled: userSettings.autoDreamEnabled === true,
         autoQuestion: normalizeAutoQuestionSettings(userSettings.autoQuestion),
+        localRedaction,
         autoModeOptInAccepted: userSettings.skipAutoPermissionPrompt === true,
         chatSendBehavior: normalizeChatSendBehavior(userSettings.chatSendBehavior),
         outputStyle: normalizeOutputStyle(userSettings.outputStyle),
@@ -570,6 +581,28 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       set({ updateProxy: prev })
       throw error
     }
+  },
+
+  setLocalRedaction: async (settings) => {
+    const next = normalizeLocalRedactionSettings(settings)
+    const saveVersion = ++localRedactionSaveVersion
+    set({ localRedaction: next })
+    const save = localRedactionSaveQueue
+      .catch(() => undefined)
+      .then(async () => {
+        try {
+          await settingsApi.updateUser({ localRedaction: next })
+          lastPersistedLocalRedaction = next
+        } catch (error) {
+          if (saveVersion === localRedactionSaveVersion) {
+            set({ localRedaction: lastPersistedLocalRedaction })
+          }
+          throw error
+        }
+      })
+
+    localRedactionSaveQueue = save
+    await save
   },
 
   setNetwork: async (settings) => {

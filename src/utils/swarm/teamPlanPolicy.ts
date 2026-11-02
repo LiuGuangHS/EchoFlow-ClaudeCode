@@ -2,13 +2,13 @@ import type { TeamPlanRuntime } from '../../shared/teamPlan.js'
 
 /** Desktop controls this at process launch, never through a model tool argument. */
 export function isTeamReviewRequired(): boolean {
-  return process.env.CC_HAHA_TEAM_REVIEW_REQUIRED === '1'
+  return process.env.ECHOFLOW_TEAM_REVIEW_REQUIRED === '1'
 }
 
 export function getTeamLeaderRuntime(fallbackModel: string): TeamPlanRuntime {
   let value: unknown
   try {
-    value = JSON.parse(process.env.CC_HAHA_TEAM_LEADER_RUNTIME ?? 'null')
+    value = JSON.parse(process.env.ECHOFLOW_TEAM_LEADER_RUNTIME ?? 'null')
   } catch {
     throw new Error('The desktop team runtime is invalid. Reopen the session before planning a team.')
   }

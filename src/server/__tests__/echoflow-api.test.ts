@@ -228,25 +228,26 @@ describe('EchoFlow account API', () => {
     }
   })
 
-  test('migrates the legacy qingyun account file to the main EchoFlow account', async () => {
+  test('does not import or delete the retired qingyun account file', async () => {
     const internalDir = path.join(temporaryConfigDir, 'echoflow-code')
     const legacyPath = path.join(internalDir, 'qingyun-account.json')
     const currentPath = path.join(internalDir, 'echoflow-account.json')
-    await fs.mkdir(internalDir, { recursive: true })
-    await fs.writeFile(legacyPath, JSON.stringify({
+    const legacyContents = JSON.stringify({
       userId: 'legacy-user',
       managementToken: 'legacy-management-token',
       username: 'legacy-name',
-    }))
+    })
+    await fs.mkdir(internalDir, { recursive: true })
+    await fs.writeFile(legacyPath, legacyContents)
 
     const request = makeApiRequest('/api/echoflow', 'GET')
     const response = await handleEchoFlowApi(request.req, request.url, request.segments)
-    const body = await response.json() as { account: { userId: string; username: string; endpoint?: string } }
+    const body = await response.json() as { account: unknown }
 
     expect(response.status).toBe(200)
-    expect(body.account).toMatchObject({ userId: 'legacy-user', username: 'legacy-name', endpoint: 'main' })
-    expect(await fs.readFile(currentPath, 'utf8')).toContain('legacy-management-token')
-    await expect(fs.access(legacyPath)).rejects.toThrow()
+    expect(body.account).toBeNull()
+    expect(await fs.readFile(legacyPath, 'utf8')).toBe(legacyContents)
+    await expect(fs.access(currentPath)).rejects.toThrow()
   })
 
   test('select-token only returns metadata without providerId and rejects non-EchoFlow updates', async () => {
@@ -734,6 +735,18 @@ describe('EchoFlow credential bridge', () => {
       url,
       url.pathname.split('/').filter(Boolean),
     )
+
+    expect(response.status).toBe(404)
+  })
+
+  test.each(['GET', 'POST'] as const)('%s no longer exposes the manual legacy migration route', async (method) => {
+    const url = new URL('http://localhost:3456/api/echoflow/migration')
+    const req = new Request(url, {
+      method,
+      headers: method === 'POST' ? { 'Content-Type': 'application/json' } : undefined,
+      body: method === 'POST' ? JSON.stringify({ confirmed: true }) : undefined,
+    })
+    const response = await handleEchoFlowApi(req, url, url.pathname.split('/').filter(Boolean))
 
     expect(response.status).toBe(404)
   })

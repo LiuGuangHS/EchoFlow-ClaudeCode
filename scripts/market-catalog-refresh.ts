@@ -7,7 +7,7 @@
  *
  * Reads `src/server/services/market/catalog/curation.json` (the editorial
  * source) and re-reads what upstream owns for every entry. Upstream bases
- * follow `HAHA_MARKET_BASE_CLAWHUB` / `HAHA_MARKET_BASE_SKILLHUB`.
+ * follow `ECHOFLOW_MARKET_BASE_CLAWHUB` / `ECHOFLOW_MARKET_BASE_SKILLHUB`.
  *
  * This talks to the live registries, so it is a maintainer tool only: no test
  * or CI lane runs it, and it refuses to run when `CI` is set.

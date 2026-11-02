@@ -38,6 +38,7 @@ import { H5ConnectionView } from './H5ConnectionView'
 import { useMobileViewport } from '../../hooks/useMobileViewport'
 import type { Tab } from '../../stores/tabStore'
 import { getTraceLaunchRequest } from '../../lib/traceLaunch'
+import { isPlaceholderSessionTitle } from '../../lib/sessionTitle'
 import { openTraceDetail } from '../../lib/traceNavigation'
 import { TraceList } from '../../pages/TraceList'
 import { TraceSession } from '../../pages/TraceSession'
@@ -79,7 +80,8 @@ export function AppShell() {
   const sidebarResize = useSidebarResize(!isMobileShell)
   const activeTab = tabs.find((tab) => tab.sessionId === activeTabId)
   const isActiveChatTab = isChatTab(activeTab)
-  const mobileSessionTitle = activeSession?.title || activeTab?.title || t('session.untitled')
+  const mobileTitle = activeSession?.title || activeTab?.title
+  const mobileSessionTitle = mobileTitle && !isPlaceholderSessionTitle(mobileTitle) ? mobileTitle : t('session.untitled')
   const mobileSessionUpdated = (() => {
     if (!activeSession?.modifiedAt) return ''
     const diff = Date.now() - new Date(activeSession.modifiedAt).getTime()

@@ -10,6 +10,7 @@ import {
   buildDownloadCandidates,
   loadDownloadManifest,
   platformLabel,
+  resolveDownloadTarget,
   resolveExtraDownloads,
   resolveInitialPlatform,
   startDirectDownload,
@@ -49,6 +50,7 @@ const copy = {
     download: '下载安装包',
     downloading: '正在准备下载…',
     version: '最新版本',
+    releaseNotes: '本次更新',
     otherFormats: '其他格式',
     fallback: '下载没有开始？前往 GitHub Releases 手动选择。',
     updating: '已经装过？打开应用里的「设置 → 关于 → 检查更新」。',
@@ -64,6 +66,7 @@ const copy = {
     download: 'Download installer',
     downloading: 'Preparing download…',
     version: 'Latest version',
+    releaseNotes: 'Release notes',
     otherFormats: 'Other formats',
     fallback: 'Download did not start? Pick the file manually on GitHub Releases.',
     updating: 'Already installed? Use Settings → About → Check for updates in the app.',
@@ -111,15 +114,15 @@ export default function DownloadPage({ locale = 'en' }: { locale?: Locale }) {
   }, [])
 
   const candidates = manifest ? buildDownloadCandidates(manifest, selection.platform, selection.arch) : []
+  const target = manifest ? resolveDownloadTarget(manifest, selection.platform, selection.arch) : null
   const extras = manifest ? resolveExtraDownloads(manifest) : []
   const hasTarget = candidates.length > 0
 
-  async function handleDownload() {
+  async function handleDownload(candidatesToTry = candidates, fallbackUrl = target?.fallbackUrl) {
     if (busy) return
     setBusy(true)
     try {
-      const result = await startDirectDownload(candidates)
-      if (result === 'fallback') window.location.assign(GITHUB_RELEASES_URL)
+      await startDirectDownload(candidatesToTry, { fallbackUrl })
     } finally {
       setBusy(false)
     }
@@ -202,7 +205,7 @@ export default function DownloadPage({ locale = 'en' }: { locale?: Locale }) {
                 <button
                   type="button"
                   className="dl-action"
-                  onClick={handleDownload}
+                  onClick={() => handleDownload()}
                   disabled={busy || !hasTarget}
                   aria-busy={busy}
                 >
@@ -222,7 +225,15 @@ export default function DownloadPage({ locale = 'en' }: { locale?: Locale }) {
                     <ul>
                       {extras.map((extra: any) => (
                         <li key={extra.key}>
-                          <a href={extra.url} target="_blank" rel="noreferrer">{extra.fileName}</a>
+                          <a
+                            href={extra.url}
+                            onClick={(event) => {
+                              event.preventDefault()
+                              void handleDownload(extra.candidates, extra.fallbackUrl)
+                            }}
+                          >
+                            {extra.fileName}
+                          </a>
                         </li>
                       ))}
                     </ul>
@@ -230,6 +241,10 @@ export default function DownloadPage({ locale = 'en' }: { locale?: Locale }) {
                 ) : null}
               </section>
             )}
+
+            {!en && manifest?.summary ? (
+              <p className="dl-release-summary"><strong>{c.releaseNotes}:</strong> {manifest.summary}</p>
+            ) : null}
           </div>
         </div>
       </main>

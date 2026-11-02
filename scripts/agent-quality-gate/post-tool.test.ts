@@ -39,6 +39,21 @@ describe('isTestCommand', () => {
     expect(isTestCommand('git commit -m "fix: x"')).toBe(false)
   })
 
+  // The truncated run hides both the exit status and the failing lines. Crediting
+  // it is what let a session "verify" 45 times without anyone reading a result.
+  test('a verification piped into tail is not proof', () => {
+    expect(isTestCommand('bun test src/a.test.ts 2>&1 | tail -8')).toBe(false)
+  })
+
+  test('a verification piped into head is not proof', () => {
+    expect(isTestCommand('bun run check:server | head -40')).toBe(false)
+  })
+
+  // Truncation on a different segment must not discount a clean run beside it.
+  test('a truncating pipe on another segment does not hide a clean run', () => {
+    expect(isTestCommand('bun test 2>&1 | tail -8; bun run check:server')).toBe(true)
+  })
+
   test.each([
     ['ls -la'],
     ['git status'],

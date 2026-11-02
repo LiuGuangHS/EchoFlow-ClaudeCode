@@ -1,22 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import {
-  decodeConfigPayload,
-  generateDeepLinkUrl,
-  generateProviderDeepLinkUrl,
-  parseDeepLinkUrl,
-  validateConfigPayload,
-} from '../configShare'
+import { encodeConfigPayload, validateConfigPayload } from '../configShare'
 import { handleDeepLinkUrl } from '../deepLink'
 import type { ShareableConfig } from '../../types/configShare'
 
 const config: ShareableConfig = {
   version: 1,
-  source: 'admin@echoflow.cn',
+  source: 'team-admin',
   timestamp: Date.now(),
   config: {
     providers: [{
       presetId: 'deepseek',
-      name: 'DeepSeek (Shared)',
+      name: 'DeepSeek (Team)',
       baseUrl: 'https://api.deepseek.com',
       apiFormat: 'openai_chat',
       authStrategy: 'api_key',
@@ -25,25 +19,25 @@ const config: ShareableConfig = {
   },
 }
 
+function configLink(payload: unknown = config): string {
+  return `echoflowcode://config/import?v=1&data=${encodeConfigPayload(payload as ShareableConfig)}`
+}
+
 describe('configShare integration', () => {
-  it('generates a link that parses, validates, decodes, and reaches the import action', () => {
-    const link = generateDeepLinkUrl(config)
-    const parsed = parseDeepLinkUrl(link)
-    expect(parsed?.action).toBe('config/import')
-    expect(parsed?.params.get('v')).toBe('1')
-    const decoded = decodeConfigPayload(parsed!.params.get('data')!)
-    expect(validateConfigPayload(decoded).valid).toBe(true)
-    expect(handleDeepLinkUrl(link)).toEqual({ type: 'config/import', payload: config })
+  it('validates and routes an encoded config link to the import action', () => {
+    const link = configLink()
+    const action = handleDeepLinkUrl(link)
+    expect(action).toEqual({ type: 'config/import', payload: config })
+    if (action?.type !== 'config/import') return
+    expect(validateConfigPayload(action.payload).valid).toBe(true)
   })
 
   it('accepts the provider-oriented compatibility link', () => {
-    expect(handleDeepLinkUrl(generateProviderDeepLinkUrl(config))).toEqual({
-      type: 'config/import',
-      payload: config,
-    })
+    const link = configLink().replace('config/import', 'provider/add')
+    expect(handleDeepLinkUrl(link)).toEqual({ type: 'config/import', payload: config })
   })
 
-  it('accepts a NewAPI provider template with address and key placeholders', () => {
+  it('accepts a NewAPI provider link with its supplied API key', () => {
     const action = handleDeepLinkUrl('echoflowcode://provider/add?v=1&base_url=https%3A%2F%2Fapi.newapi.example%2Fv1&api_key=sk-test&model=deepseek-chat')
     expect(action?.type).toBe('config/import')
     if (action?.type !== 'config/import') return
@@ -58,7 +52,7 @@ describe('configShare integration', () => {
       config: { providers: [{ ...config.config.providers[0], imageGeneration: { model: 'image', apiKey: 'secret' } }] },
     }
     expect(validateConfigPayload(malicious).error).toBe('contains_secrets')
-    expect(handleDeepLinkUrl(generateDeepLinkUrl(malicious as ShareableConfig))).toBeNull()
+    expect(handleDeepLinkUrl(configLink(malicious))).toBeNull()
   })
 
   it('rejects expired templates and templates with no provider entries', () => {

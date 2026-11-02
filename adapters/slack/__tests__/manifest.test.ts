@@ -41,6 +41,7 @@ describe('buildSlackAppManifest', () => {
 
     expect(manifest.display_information.name).toBe('EchoFlow Code')
     expect(manifest.features.bot_user.display_name).toBe('EchoFlow Code')
+    expect(manifest.display_information.description).toContain('EchoFlow Code')
   })
 
   it('uses the caller-supplied app name in both places Slack shows it', () => {

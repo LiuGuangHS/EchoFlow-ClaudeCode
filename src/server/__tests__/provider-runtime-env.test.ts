@@ -37,6 +37,22 @@ describe('providerRuntimeEnv', () => {
     await fs.rm(tmpDir, { recursive: true, force: true })
   })
 
+  test('fails closed to proxy routing when local redaction settings are malformed', async () => {
+    await writeJson(path.join(tmpDir, 'echoflow-code', 'providers.json'), {
+      activeId: 'provider-native-anthropic',
+      providers: [{
+        id: 'provider-native-anthropic', presetId: 'custom', name: 'Native', apiKey: 'key',
+        baseUrl: 'https://provider.example.test', apiFormat: 'anthropic',
+        models: { main: 'model', haiku: 'model', sonnet: 'model', opus: 'model' },
+        supportsNestedToolResultMedia: true,
+      }],
+    })
+    await fs.writeFile(path.join(tmpDir, 'settings.json'), '{invalid json', 'utf-8')
+
+    expect(activeProviderNeedsProxy(tmpDir)).toBe(true)
+    expect(readActiveProviderManagedEnv(tmpDir)?.ANTHROPIC_BASE_URL).toContain('/proxy')
+  })
+
   test('routes Anthropic providers without nested tool media through the proxy', async () => {
     await writeJson(path.join(tmpDir, 'echoflow-code', 'providers.json'), {
       activeId: 'provider-media-compat',
@@ -69,6 +85,30 @@ describe('providerRuntimeEnv', () => {
     })
 
     expect(activeProviderNeedsProxy(tmpDir)).toBe(false)
+  })
+
+  test('fails closed through the proxy when local redaction is enabled for official OAuth providers', async () => {
+    await writeJson(path.join(tmpDir, 'settings.json'), {
+      localRedaction: { enabled: true, personalInfo: false, customWords: [] },
+    })
+
+    for (const activeId of ['openai-official', 'grok-official'] as const) {
+      await writeJson(path.join(tmpDir, 'echoflow-code', 'providers.json'), {
+        activeId,
+        providers: [],
+      })
+
+      const env = readActiveProviderManagedEnv(tmpDir, { serverPort: 4567 })
+      expect(env).toMatchObject({
+        ANTHROPIC_BASE_URL: 'http://127.0.0.1:4567/proxy',
+        ANTHROPIC_API_KEY: 'proxy-managed',
+      })
+      expect(env?.ECHOFLOW_OPENAI_OAUTH_PROVIDER).toBeUndefined()
+      expect(env?.OPENAI_CODEX_OAUTH_FILE).toBeUndefined()
+      expect(env?.ECHOFLOW_GROK_OAUTH_PROVIDER).toBeUndefined()
+      expect(env?.GROK_OAUTH_FILE).toBeUndefined()
+      expect(activeProviderNeedsProxy(tmpDir)).toBe(true)
+    }
   })
 
   test('normalizes and preserves Grok Official as the active runtime provider', async () => {

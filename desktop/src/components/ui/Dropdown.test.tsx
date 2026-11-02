@@ -178,6 +178,8 @@ describe('Dropdown', () => {
     render(<Dropdown items={ITEMS} value="sonnet" onChange={() => {}} trigger={<button type="button">Model</button>} label="Model" />)
     open()
 
-    expect(screen.getByRole('listbox').className).toContain('z-[var(--z-dropdown)]')
+    const listbox = screen.getByRole('listbox')
+    expect(listbox.className).toContain('z-[var(--z-dropdown)]')
+    expect(listbox).toHaveClass('glass-panel')
   })
 })

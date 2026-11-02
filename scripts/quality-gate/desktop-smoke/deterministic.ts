@@ -196,7 +196,6 @@ export async function executeDeterministicDesktopSmoke(
     seedProviders: false,
     envOverrides: {
       CLAUDE_CLI_PATH: resolve(rootDir, MOCK_CLI),
-      CC_HAHA_DISABLE_TERMINAL_SHELL_ENV: '1',
       MOCK_SDK_TEAM_WORKER_AUDIT: join(workRoot, 'team-worker-audit.jsonl'),
       ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV: '1',
     },

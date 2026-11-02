@@ -193,7 +193,7 @@ it('exposes every mentionable plugin even without a connected connector', () => 
 })
 
  it('keeps withdrawn installed packages out of the secondary connector list', () => {
-  const hidden = { ...connectedConnector, id: 'frontend-design', pluginId: 'office-frontend-design@haha-connectors' } as ConnectorDto
+  const hidden = { ...connectedConnector, id: 'frontend-design', pluginId: 'office-frontend-design@echoflow-connectors' } as ConnectorDto
   const sections = buildCapabilitySections(buildInput({ connectors: [hidden, connectedConnector] }))
   const more = sections.flatMap(section => section.items).find(item => item.key === 'more')!
   const connectors = more.children!.find(item => item.key === 'connectors')!

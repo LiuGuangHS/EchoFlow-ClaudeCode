@@ -51,7 +51,7 @@ import type { WorkspaceBrowserMenuOptions } from '../src/lib/desktopHost/types'
 import { acquireSingleInstanceLock } from './services/singleInstance'
 import { installTray, shouldInstallTray, type TrayController } from './services/tray'
 import { ElectronUpdaterService, updaterSessionProxyConfig } from './services/updater'
-import { resolveUpdateFeedConfig } from './services/updateFeed'
+import { resolveDifferentialDownloadRequest, resolveDownloadFeedUrls, resolveUpdateFeedConfig } from './services/updateFeed'
 import { createUpdateSmokeUpdaterFromEnv } from './services/updateSmoke'
 import { ElectronTerminalService, type TerminalSpawnInput } from './services/terminal'
 import { ElectronPreviewService, type PreviewBounds } from './services/preview'
@@ -106,6 +106,7 @@ import {
   writeLocalePreference,
 } from './services/localePreference'
 import type { Locale } from '../src/i18n/locale'
+import { ECHOFLOW_SIHUB_NAME } from '../src/constants/brand'
 import {
   createCustomPetCatalogLoader,
   createCustomPetFromAtlas,
@@ -146,7 +147,8 @@ let isQuitting = false
 let quitCleanupStarted = false
 let quitCleanupFinished = false
 let trayController: TrayController | null = null
-let deepLinkHandler: DeepLinkHandler | null = null
+// Wakes the renderer, which pulls the pending import itself; see DeepLinkHandler.
+const deepLinkHandler = new DeepLinkHandler(() => mainWindow?.webContents.send(ELECTRON_EVENT_CHANNELS.deepLink))
 
 // Must run before anything logs: a Finder/Dock launch inherits unreadable
 // stdio, and an unguarded write failure there surfaces as a crash dialog.
@@ -286,7 +288,7 @@ function getServerRuntime() {
     onServerUnavailable: () => { void publicAccessManager?.serverUnavailable() },
     onServerReady: () => {
       void publicAccessManager?.serverChanged()
-      void rehydrateEchoFlowSiteSession()
+      echoFlowRestore = rehydrateEchoFlowSiteSession()
     },
     desktopRoot: unpackedRoot(),
     appRoot: appRoot(),
@@ -458,7 +460,7 @@ function getEchoFlowLoginSession(): EchoFlowLoginSession {
     createWindow(partition): EchoFlowLoginWindow {
       const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
       const loginWindow = new BrowserWindow({
-        title: 'EchoFlow SiHub 账号登录',
+        title: `${ECHOFLOW_SIHUB_NAME} 账号登录`,
         width: 520,
         height: 720,
         show: true,
@@ -493,11 +495,18 @@ function getEchoFlowLoginSession(): EchoFlowLoginSession {
 
 const ECHOFLOW_LOGIN_ENDPOINTS: EchoFlowLoginEndpoint[] = ['main', 'dedicated']
 
-async function rehydrateEchoFlowSiteSession(): Promise<void> {
+// The renderer reads the account list as soon as it mounts, which can be before
+// the restore has put the credential back into the server. Exposing the promise
+// lets the account card re-read the list once that answer exists instead of
+// showing a restored account as signed out.
+let echoFlowRestore: Promise<boolean> = Promise.resolve(false)
+
+async function rehydrateEchoFlowSiteSession(): Promise<boolean> {
   const login = getEchoFlowLoginSession()
   // Each line keeps its own partition and stored account, so one line failing
   // to rehydrate must not stop the other from coming back.
-  await Promise.all(ECHOFLOW_LOGIN_ENDPOINTS.map(endpoint => login.rehydrate(endpoint)))
+  const restored = await Promise.all(ECHOFLOW_LOGIN_ENDPOINTS.map(endpoint => login.rehydrate(endpoint)))
+  return restored.some(Boolean)
 }
 
 async function signOutEchoFlowSiteSession(endpoint: EchoFlowLoginEndpoint = 'main'): Promise<void> {
@@ -644,10 +653,19 @@ function getUpdaterService() {
       ? { feedUrls: [] }
       : (() => {
           const feedConfig = resolveUpdateFeedConfig(process.env)
+          const differentialDownload = resolveDifferentialDownloadRequest(
+            process.env,
+            feedConfig,
+            process.platform,
+            feedConfig.differentialDownloadFeedUrls[0],
+          )
           return {
             metadataFeedUrl: feedConfig.metadataUrl,
             metadataFallbackUrls: feedConfig.metadataFallbackUrls,
-            downloadFeedUrls: feedConfig.downloadFeedUrls,
+            downloadFeedUrls: resolveDownloadFeedUrls(feedConfig, differentialDownload),
+            differentialDownload,
+            differentialDownloadFeedUrls: feedConfig.differentialDownloadFeedUrls,
+            differentialDownloadContracts: feedConfig.differentialDownloadContracts,
           }
         })()),
   })
@@ -903,6 +921,13 @@ function registerIpcHandlers() {
   registerHandler(ELECTRON_IPC_CHANNELS.echoFlowSignOut, async (_event, payload) => {
     const requested = (payload as { endpoint?: unknown } | undefined)?.endpoint
     await signOutEchoFlowSiteSession(requested === 'dedicated' ? 'dedicated' : 'main')
+  })
+  registerHandler(ELECTRON_IPC_CHANNELS.echoFlowWhenRestored, () => echoFlowRestore)
+  // Only the main window shows the import dialog; trace windows mount the same App.
+  registerHandler(ELECTRON_IPC_CHANNELS.configImportTake, event =>
+    BrowserWindow.fromWebContents(event.sender) === mainWindow ? deepLinkHandler.take() : null)
+  registerHandler(ELECTRON_IPC_CHANNELS.configImportAck, event => {
+    if (BrowserWindow.fromWebContents(event.sender) === mainWindow) deepLinkHandler.ack()
   })
   registerHandler(ELECTRON_IPC_CHANNELS.publicAccessGetStatus, () => getPublicAccessManager().getStatus())
   registerHandler(ELECTRON_IPC_CHANNELS.publicAccessSaveCredential, (_event, payload) => getPublicAccessManager().saveCredential(payload as string))
@@ -1418,18 +1443,7 @@ async function createMainWindow() {
   writeWindowSmokeSnapshot(mainWindow, 'after-final-show')
 }
 
-if (!acquireSingleInstanceLock(app, () => mainWindow, url => {
-  if (deepLinkHandler) {
-    deepLinkHandler.handle(url)
-  } else {
-    deepLinkHandler = new DeepLinkHandler({
-      sendToRenderer: (_channel, data) => {
-        mainWindow?.webContents.send(ELECTRON_EVENT_CHANNELS.deepLink, data)
-      },
-    })
-    deepLinkHandler.setPending(url)
-  }
-})) {
+if (!acquireSingleInstanceLock(app, () => mainWindow, url => deepLinkHandler.handle(url))) {
   process.exit(0)
 }
 
@@ -1445,29 +1459,13 @@ if (process.defaultApp) {
 // Handle deep link on macOS (open-url event)
 app.on('open-url', (event, url) => {
   event.preventDefault()
-  if (deepLinkHandler) {
-    deepLinkHandler.handle(url)
-  } else {
-    // Main window not ready yet, store for later
-    deepLinkHandler = new DeepLinkHandler({
-      sendToRenderer: (_channel, data) => {
-        mainWindow?.webContents.send(ELECTRON_EVENT_CHANNELS.deepLink, data)
-      },
-    })
-    deepLinkHandler.setPending(url)
-  }
+  deepLinkHandler.handle(url)
+  showMainWindow(mainWindow, app)
 })
 
 // Handle deep link on Windows/Linux (command line args)
 const deepLinkUrl = extractDeepLinkFromArgs(process.argv)
-if (deepLinkUrl) {
-  deepLinkHandler = new DeepLinkHandler({
-    sendToRenderer: (_channel, data) => {
-      mainWindow?.webContents.send(ELECTRON_EVENT_CHANNELS.deepLink, data)
-    },
-  })
-  deepLinkHandler.setPending(deepLinkUrl)
-}
+if (deepLinkUrl) deepLinkHandler.handle(deepLinkUrl)
 
 registerIpcHandlers()
 
@@ -1517,22 +1515,6 @@ app.whenReady().then(async () => {
     })
   }
   await createMainWindow()
-
-  // Initialize deep link handler after main window is ready
-  if (!deepLinkHandler) {
-    deepLinkHandler = new DeepLinkHandler({
-      sendToRenderer: (_channel, data) => {
-        mainWindow?.webContents.send(ELECTRON_EVENT_CHANNELS.deepLink, data)
-      },
-    })
-  } else {
-    // Update send function with the real window
-    deepLinkHandler.updateSender((_channel, data) => {
-      mainWindow?.webContents.send(ELECTRON_EVENT_CHANNELS.deepLink, data)
-    })
-    // Flush any pending deep link
-    deepLinkHandler.flushPending()
-  }
 
   scheduleNotificationSmoke({
     env: process.env,

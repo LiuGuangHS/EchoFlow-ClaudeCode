@@ -5,6 +5,7 @@ import { getDesktopHost } from '@/lib/desktopHost'
 import type { DeepSeekHarnessStatus, RuntimeDiscoveryResult, RuntimeInstallation } from '@/lib/desktopHost/types'
 import { useTranslation } from '@/i18n'
 import { isDesktopRuntime } from '@/lib/desktopRuntime'
+import { RuntimeBehaviorSettings } from './RuntimeBehaviorSettings'
 
 type ClaudeCodeRuntimeId = 'bundled' | 'installed'
 
@@ -22,6 +23,7 @@ export function RuntimeSettings() {
   return (
     <div className="w-full min-w-0">
       <SettingsPageHeader title={t('settings.runtime.title')} description={t('settings.runtime.description')} />
+      <RuntimeBehaviorSettings />
       <RuntimeDiscoveryCard />
       <ClaudeCodeRuntimeCard />
       <DeepSeekHarnessCard />

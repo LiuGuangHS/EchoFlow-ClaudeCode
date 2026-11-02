@@ -12,6 +12,7 @@ import { sessionsApi } from '../api/sessions'
 import { tracesApi } from '../api/traces'
 import { useSessionStore } from '../stores/sessionStore'
 import { useTranslation } from '../i18n'
+import { isPlaceholderSessionTitle } from '@/lib/sessionTitle'
 import type { MessageEntry } from '../types/session'
 import type { TraceSession as TraceSessionData } from '../types/trace'
 import { getDesktopHost } from '../lib/desktopHost'
@@ -58,7 +59,10 @@ export function TraceSession({
   pollIntervalMs?: number
 }) {
   const t = useTranslation()
-  const sessionTitle = useSessionStore((s) => s.sessions.find((session) => session.id === sessionId)?.title)
+  const storedSessionTitle = useSessionStore((s) => s.sessions.find((session) => session.id === sessionId)?.title)
+  const sessionTitle = storedSessionTitle && !isPlaceholderSessionTitle(storedSessionTitle)
+    ? storedSessionTitle
+    : undefined
   const [state, setState] = useState<LoadState>({ status: 'loading' })
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [refreshNonce, setRefreshNonce] = useState(0)
@@ -277,7 +281,10 @@ export function TraceSession({
   }
 
   const { trace, messages } = state
-  const resolvedTitle = sessionTitle ?? trace.session?.title ?? t('session.untitled')
+  const titleCandidate = sessionTitle ?? trace.session?.title
+  const resolvedTitle = titleCandidate && !isPlaceholderSessionTitle(titleCandidate)
+    ? titleCandidate
+    : t('session.untitled')
   if (!viewModel) {
     return <TraceEmpty />
   }

@@ -35,7 +35,7 @@ final class DaemonProtocolTests: XCTestCase {
 
     func testProtocolMismatchAndExpiredDeadlineFailClosed() {
         XCTAssertThrowsError(try ComputerUseDaemonProtocol.validate(
-            request(version: "CCHahaComputerUseIPC-1"),
+            request(version: "EchoFlowComputerUseIPC-1"),
             nowUnixMilliseconds: 1_000
         )) { error in
             XCTAssertEqual((error as? CUError)?.code, "protocol_mismatch")

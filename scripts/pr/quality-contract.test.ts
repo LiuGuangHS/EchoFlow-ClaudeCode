@@ -21,16 +21,21 @@ describe('feature quality contract', () => {
     expect(agents).toContain('Otherwise it belongs in `docs/` with a one-line pointer')
     expect(agents).toContain('under 24 KiB')
     expect(agents).toContain('Check `git status --short` before editing')
-    expect(agents).toContain('Production code changes under `desktop/src`, `src/server`, `src/tools`, `src/utils`, or `adapters`')
     expect(agents).toContain('`bun run check:impact`')
     expect(agents).toContain('`bun run verify`')
-    expect(agents).toContain('`bun run check:persistence-upgrade`')
     expect(agents).toContain('`bun run audit:harness`')
     expect(agents).toContain('`.claude/` stays local-only')
     expect(agents).toContain('`~/.claude/settings.json` is user-owned shared state')
     expect(agents).toContain('Official vendor APIs and official OAuth integrations, including Grok Official')
     expect(agents).toContain('rejected by default')
     expect(agents).toContain('Never apply blanket `--ours` or `--theirs`')
+    expect(agents).toContain('`docs/internals/contributing.md` owns contribution procedures, test design, quality gates, coverage policy, and Agent flow case law')
+    expect(agents).toContain('`docs/internals/structure.md` owns the directory map and module responsibilities')
+    expect(agents).toContain('`docs/_internal/release-windows.md` and its English mirror')
+    expect(agents).not.toContain('## Build, Test, and Development Commands')
+    expect(agents).not.toContain('## Project Structure & Module Organization')
+    expect(agents).not.toContain('## Test Design Direction')
+    expect(agents).not.toContain('## Desktop & UX Expectations')
     // A resolved gap must not survive as prose. The contract once stated that
     // `mobile/` had no area and no route; both now exist, and nothing tied the
     // claim to the code, so the stale sentence outlived the fix.

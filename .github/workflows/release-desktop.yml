@@ -37,6 +37,9 @@ concurrency:
 jobs:
   release-contract:
     runs-on: ubuntu-latest
+    outputs:
+      release_sha: ${{ steps.resolve.outputs.release_sha }}
+      release_tag: ${{ steps.resolve.outputs.release_tag }}
     timeout-minutes: 5
     steps:
       - name: Checkout
@@ -125,7 +128,7 @@ jobs:
           fi
           # Drafts may remain unsigned while SignPath onboarding is being tested. A tag
           # release also ships unsigned when SignPath is not configured at all, which is
-          # this fork's state today; a partially configured pipeline is a real
+          # the current EchoFlow release configuration; a partially configured pipeline is a real
           # misconfiguration and still refuses to publish.
           win_missing=()
           [ -n "$SIGNPATH_API_TOKEN" ] || win_missing+=("SIGNPATH_API_TOKEN secret")
@@ -506,6 +509,11 @@ jobs:
           bun run build
           bun run build:electron
 
+      - name: Rebuild node-pty for the Linux glibc floor
+        if: matrix.smoke_platform == 'linux'
+        working-directory: desktop
+        run: bash ./scripts/rebuild-node-pty-linux.sh
+
       - name: Build signed macOS Electron release artifacts
         if: matrix.smoke_platform == 'macos' && needs.signing-preflight.outputs.macos_signed == 'true'
         working-directory: desktop
@@ -860,14 +868,14 @@ jobs:
         if: matrix.smoke_platform == 'windows' && needs.signing-preflight.outputs.windows_signed == 'true'
         run: bun run scripts/refresh-windows-update-metadata.ts --installer "${{ steps.stage-signpath-installer.outputs.installer_path }}" --metadata desktop/build-artifacts/electron/latest.yml
 
+      - name: Verify packaged app structure
+        run: bun run test:package-smoke --platform ${{ matrix.smoke_platform }} --arch ${{ matrix.arch }} --package-kind release --artifacts-dir desktop/build-artifacts/electron ${{ matrix.smoke_platform == 'linux' && '--max-linux-glibc 2.28' || '' }}
+
       - name: Verify Windows installer execution
         if: matrix.smoke_platform == 'windows' && matrix.arch == 'x64'
         timeout-minutes: 10
         working-directory: desktop
         run: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/windows-installer-smoke.ps1 -ArtifactsDir ./build-artifacts/electron -Arch x64
-
-      - name: Verify packaged app structure
-        run: bun run test:package-smoke --platform ${{ matrix.smoke_platform }} --arch ${{ matrix.arch }} --package-kind release --artifacts-dir desktop/build-artifacts/electron
 
       - name: Verify macOS launch policy
         if: matrix.smoke_platform == 'macos' && needs.signing-preflight.outputs.macos_signed == 'true' && (github.event_name != 'workflow_dispatch' || inputs.notarize_macos == true)

@@ -90,5 +90,4 @@ There is one more guard on the import side: **a provider with the same name and 
 ## Related
 
 - [Config sharing](./config-sharing.md) — how to generate and import a link
-- [Settings reference](./settings.md) — where the Config Generator entry lives
 - [Connect a model service](../start/models.md) — configuring providers and API keys

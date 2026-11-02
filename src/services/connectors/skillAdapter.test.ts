@@ -8,7 +8,7 @@ import type { ConnectorDefinition, SkillBundleRecipe } from './types.js'
 
 const bytes = Buffer.from('---\nname: fixture\ndescription: Fixture skill\n---\nRead references before use.\n')
 const recipe: SkillBundleRecipe = { id: 'fixture', version: '1.0.0', repository: 'example/skills', commit: 'a'.repeat(40), license: 'MIT', files: [{ source: 'skills/fixture/SKILL.md', target: 'skills/fixture/SKILL.md', integrity: `sha256-${createHash('sha256').update(bytes).digest('hex')}` }] }
-const definition: ConnectorDefinition = { id: 'fixture', version: '1.0.0', pluginId: 'office-fixture@haha-connectors', packageName: 'fixture', homepage: 'https://example.com', credentialMode: 'isolated', transport: 'skills', collection: 'tools', platforms: ['darwin-arm64'] }
+const definition: ConnectorDefinition = { id: 'fixture', version: '1.0.0', pluginId: 'office-fixture@echoflow-connectors', packageName: 'fixture', homepage: 'https://example.com', credentialMode: 'isolated', transport: 'skills', collection: 'tools', platforms: ['darwin-arm64'] }
 const roots: string[] = []
 async function root() { const path = await mkdtemp(join(tmpdir(), 'skill bundle 中文 ')); roots.push(path); return path }
 afterEach(async () => { await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true }))) })

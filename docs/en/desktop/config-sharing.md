@@ -1,25 +1,23 @@
 ---
 title: Config sharing
 nav_title: Config sharing
-description: Package your model provider setup into a shareable link — no API keys included.
+description: Open and import provider configuration links from trusted sources.
 order: 14
 ---
 
 # Config sharing
 
-The config generator packages the providers you set up under Model settings into a single link that someone else can import in one click. Use it to standardize model services across a team, to rebuild an environment on a new machine, or to get a colleague started.
+EchoFlow Code desktop can open `echoflowcode://` configuration import links from trusted sources. An administrator or service provider creates and distributes the link; the app no longer includes a link generator. Before importing, the app shows a confirmation dialog and skips providers with the same name and base URL rather than overwriting local configuration.
 
-**What it shares is connection parameters and model mappings. It does not include API keys.** That is the thing to understand first — whoever receives the link still has to supply their own key, so nobody is importing a working credential.
+**Config templates share provider connection parameters and model mappings, not API keys.** The compatible `provider/add` format can carry an API key separately; only open links received through trusted channels.
 
 There is one more guard on import: **a provider with the same name and the same base URL is skipped**, so your existing local configuration is never overwritten.
 
-## Generating a link
+## Opening and importing
 
-Go to **Settings → Config Generator**.
+The recipient needs the EchoFlow Code desktop app installed and should verify the source, provider names, and endpoints before confirming. Regular config templates leave API keys blank; a `provider/add` link can provide a key for the new provider.
 
-1. Select the providers you want to share. You can pick more than one.
-2. Enter a **source label** (optional). It appears in the recipient's import preview to show who the config came from — it is **not a verified identity**.
-3. Generate the link.
+The link creator supplies an optional source label. It appears in the recipient's import preview but is **not a verified identity**. The label is unsigned and cannot prove who created the link.
 
 A link looks like this:
 
@@ -34,7 +32,7 @@ echoflowcode://config/import?v=1&data=eJw...（URL-safe compressed data）
 Opening the link on another machine raises a confirmation window listing the providers inside. After confirming:
 
 - Those providers are **added** to that machine's configuration;
-- **API keys are left blank** and have to be filled in locally;
+- Regular config templates leave **API keys blank**; a compatible `provider/add` link may include a key for the new provider;
 - If a provider with the same name and base URL already exists, **it is skipped** and the local config is left alone.
 
 Import is therefore a safe, additive operation. It will not clobber a working setup.
@@ -57,23 +55,22 @@ Machines with badly drifted clocks can fail validation too — if two systems di
 
 ## What is actually inside
 
-What travels is connection parameters and model mappings — **no API keys, access tokens, or machine identifiers**. That is a deliberate boundary, not an accident of the current format.
+Regular config templates carry connection parameters and model mappings, not API keys, access tokens, or machine identifiers. The compatible `provider/add` format is separate and can carry an API key for the new provider.
 
 For the full payload fields, validation rules and validity window, see [Deep link protocol](./deep-link-protocol.md).
 
 ## Common questions
 
-**It imported but does not work.** API keys are never shared, so imported providers arrive with an empty key. Add your own under Model settings.
+**It imported but does not work.** Regular config templates leave API keys empty; add your own under Model settings. A compatible `provider/add` link can carry a key.
 
 **One provider did not come through.** You already have a provider with the same name and base URL, so the import skipped it on purpose. To replace it, remove the existing entry first and import again.
 
 **The link will not open, or says it expired.** Links are valid for 30 days — have the sender generate a fresh one. Also check that the two machines do not have obviously different system clocks.
 
-**Can I share several providers at once?** Yes. Select multiple entries when generating; the link carries a `providers` array.
+**Can one link contain several providers?** Yes. The `providers` array can contain multiple entries.
 
 ## Related
 
-- [Settings reference](./settings.md) — where Config Generator sits in Settings
 - [Deep link protocol](./deep-link-protocol.md) — link format, payload fields and validation rules
 - [Connect a model service](../start/models.md) — API keys and official account login
 - [EchoFlow SiHub](../start/account.md) — recommended access and call tokens

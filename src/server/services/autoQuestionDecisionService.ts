@@ -8,12 +8,13 @@ import { anthropicToOpenaiResponses } from '../proxy/transform/anthropicToOpenai
 import type { AnthropicRequest } from '../proxy/transform/types.js'
 import { openaiResponsesStreamToAnthropicResponse } from '../proxy/streaming/openaiResponsesStreamToAnthropicResponse.js'
 import type { ProviderAuthStrategy } from '../types/provider.js'
-import { echoFlowOpenAIOAuthService as hahaOpenAIOAuthService } from './echoFlowOpenAIOAuthService.js'
-import { echoFlowGrokOAuthService as hahaGrokOAuthService } from './echoFlowGrokOAuthService.js'
-import { echoFlowOAuthService as hahaOAuthService } from './echoFlowOAuthService.js'
+import { echoFlowOpenAIOAuthService } from './echoFlowOpenAIOAuthService.js'
+import { echoFlowGrokOAuthService } from './echoFlowGrokOAuthService.js'
+import { echoFlowOAuthService } from './echoFlowOAuthService.js'
 import { resolveClaudeOfficialRuntimeModel } from './claudeOfficialRuntime.js'
 import {
   getNetworkProxyFetchOptions,
+  isLocalRedactionEnabled,
   loadNetworkSettings,
   type NetworkSettings,
 } from './networkSettings.js'
@@ -165,6 +166,7 @@ async function askSmallModel({
   signal,
 }: AutoQuestionDecisionInput): Promise<string | null> {
   if (providerId === null) {
+    if (await isLocalRedactionEnabled()) return null
     return askClaudeOfficial(questions, conversationText, signal)
   }
   const provider = await new ProviderService().getProvider(providerId)
@@ -183,12 +185,15 @@ async function askSmallModel({
   const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(MODEL_TIMEOUT_MS)])
 
   if (isOpenAIOfficialProviderId(provider.id)) {
+    if (await isLocalRedactionEnabled()) return null
     return askOpenAIOfficial(body, model, networkSettings, requestSignal)
   }
   if (isGrokOfficialProviderId(provider.id)) {
+    if (await isLocalRedactionEnabled()) return null
     return askGrokOfficial(body, model, networkSettings, requestSignal)
   }
   if (!provider.baseUrl) return null
+  if (await isLocalRedactionEnabled()) return null
 
   if (providerNeedsProxy(resolveProviderApiFormat(provider), provider.supportsNestedToolResultMedia)) {
     return askThroughProxy(provider.id, sessionId, body, requestSignal)
@@ -206,9 +211,10 @@ async function askClaudeOfficial(
   conversationText: string,
   signal: AbortSignal,
 ): Promise<string | null> {
+  if (await isLocalRedactionEnabled()) return null
   const model = await resolveClaudeOfficialRuntimeModel('haiku')
   if (!model || signal.aborted) return null
-  const token = await hahaOAuthService.ensureFreshAccessToken()
+  const token = await echoFlowOAuthService.ensureFreshAccessToken()
   if (!token || signal.aborted) return null
   const networkSettings = await loadNetworkSettings()
   if (signal.aborted) return null
@@ -308,7 +314,8 @@ async function askOpenAIOfficial(
   networkSettings: NetworkSettings,
   signal: AbortSignal,
 ): Promise<string | null> {
-  const tokens = await hahaOpenAIOAuthService.ensureFreshTokens()
+  if (await isLocalRedactionEnabled()) return null
+  const tokens = await echoFlowOpenAIOAuthService.ensureFreshTokens()
   if (!tokens?.accessToken || signal.aborted) return null
   const mappedModel = resolveOpenAICodexModel(model)
   const requestBody = anthropicToOpenaiResponses({
@@ -342,7 +349,8 @@ async function askGrokOfficial(
   networkSettings: NetworkSettings,
   signal: AbortSignal,
 ): Promise<string | null> {
-  const tokens = await hahaGrokOAuthService.ensureFreshTokens()
+  if (await isLocalRedactionEnabled()) return null
+  const tokens = await echoFlowGrokOAuthService.ensureFreshTokens()
   if (!tokens?.accessToken || signal.aborted) return null
   const requestBody = anthropicToOpenaiResponses({
     ...body,

@@ -189,6 +189,7 @@ fn determine_startup_portable_dir() -> Option<PathBuf> {
             || dir.join("skills").is_dir()
             || dir.join("plugins").is_dir()
             || dir.join("cowork_plugins").is_dir()
+            || dir.join("echoflow-code").is_dir()
             || dir.join("echoflow").is_dir()
     }
 

@@ -53,6 +53,7 @@ export const browserHost: DesktopHost = {
   echoFlow: {
     async openLogin() { return unsupported('EchoFlow site account login') },
     async signOut() { return unsupported('EchoFlow site account login') },
+    async whenAccountRestored() { return false },
   },
   runtimeDiscovery: {
     async list() { return unsupported('Runtime discovery') },
@@ -89,6 +90,15 @@ export const browserHost: DesktopHost = {
       return readBrowserLanguages()
     },
     async onLocaleChanged() {
+      return noopUnlisten
+    },
+  },
+  configImport: {
+    async take() {
+      return null
+    },
+    async ack() {},
+    async onPending() {
       return noopUnlisten
     },
   },

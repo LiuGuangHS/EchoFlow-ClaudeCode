@@ -156,6 +156,7 @@ export type UserSettings = {
   agentTeamsEnabled?: boolean
   autoDreamEnabled?: boolean
   autoQuestion?: import('../../../src/shared/autoQuestionSettings').AutoQuestionSettings
+  localRedaction?: import('../../../src/shared/localRedactionSettings').LocalRedactionSettings
   skipAutoPermissionPrompt?: boolean
   permissionMode?: PermissionMode
   theme?: ThemeMode

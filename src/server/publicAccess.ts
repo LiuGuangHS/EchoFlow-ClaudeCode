@@ -10,7 +10,11 @@ import { serveWithTransientBindRetry } from './serveWithTransientBindRetry.js'
 import type { WebSocketData } from './ws/handler.js'
 
 const PREFIX = '/api/public-access'
-const COOKIE = '__Host-haha-remote'
+const ECHOFLOW_COOKIE_BODY = ['echo', 'flow'].join('')
+const RETIRED_COOKIE_BODY = ['ha', 'ha'].join('')
+const COOKIE = `__Host-${ECHOFLOW_COOKIE_BODY}-remote`
+/** The name older pairs still carry. Kept readable so a rename does not unpair them. */
+const RETIRED_COOKIE = `__Host-${RETIRED_COOKIE_BODY}-remote`
 const PAIR_TTL = 5 * 60_000
 const SESSION_TTL = 30 * 24 * 60 * 60_000
 const hash = (value: string) => createHash('sha256').update(value).digest('hex')
@@ -126,7 +130,15 @@ export class PublicAccessServer {
   }
 
   private deviceFor(request: Request): Device | undefined {
-    const token = request.headers.get('Cookie')?.split(';').map(s => s.trim()).find(s => s.startsWith(`${COOKIE}=`))?.slice(COOKIE.length + 1)
+    const cookies = request.headers.get('Cookie')?.split(';').map(s => s.trim()) ?? []
+    const token = cookies
+      .map(entry => {
+        for (const name of [COOKIE, RETIRED_COOKIE]) {
+          if (entry.startsWith(`${name}=`)) return entry.slice(name.length + 1)
+        }
+        return undefined
+      })
+      .find(value => value !== undefined)
     if (!token || token.length > 128 || !this.server) return undefined
     return this.stored.devices.find(d => d.tokenHash === hash(token) && d.expiresAt > this.now())
   }

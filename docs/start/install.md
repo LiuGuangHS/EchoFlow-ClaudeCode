@@ -9,7 +9,7 @@ order: 1
 
 装完就能用，不需要另外安装 Node.js、Python 或 Claude Code——CLI 内核和文件搜索用的 ripgrep 都已经打进安装包里了。
 
-产品名称统一为 **EchoFlow Code**。现有安装包、已安装的应用和系统进程可能仍显示旧名称 `Claude Code Haha` 或 `cc-haha`；下面的文件名和命令按实际发布包保留。
+产品名称统一为 **EchoFlow Code**。更早版本安装的应用和系统进程可能仍显示旧名称 `Claude Code Haha` 或 `cc-haha`。
 
 ## 挑对安装包
 

@@ -39,6 +39,13 @@ describe('Telegram entrypoint session routing', () => {
     return apiCalls.filter((call) => call.payload.chat_id === chatId && call.payload.text).map((call) => call.payload.text)
   }
 
+  function setPairingCode(code: string): void {
+    writeFileSync(join(directory, 'adapters.json'), JSON.stringify({
+      telegram: { allowedUsers: [7], defaultWorkDir: project, allowedProjectRoots: [directory] },
+      pairing: { code, expiresAt: Date.now() + 60_000, createdAt: Date.now() },
+    }))
+  }
+
   async function text(chatId: number, value: string, options: { userId?: number; messageId?: number; photo?: boolean } = {}): Promise<void> {
     const messageId = options.messageId ?? nextId++
     const message = {
@@ -221,6 +228,18 @@ describe('Telegram entrypoint session routing', () => {
       sendMessage.mockRestore()
       sendStop.mockRestore()
     }
+  })
+
+  it('uses EchoFlow copy for rejected and successful pairing attempts', async () => {
+    const chatId = 710
+    await text(chatId, 'WRONG1', { userId: 99 })
+    expect(texts(chatId).at(-1)).toContain('EchoFlow Code 桌面端')
+    expect(texts(chatId).at(-1)).not.toContain('Claude')
+
+    setPairingCode('ABC234')
+    await text(chatId, 'ABC234', { userId: 98 })
+    expect(texts(chatId).at(-1)).toContain('发送消息即可与 EchoFlow 对话')
+    expect(texts(chatId).at(-1)).not.toContain('Claude')
   })
 
   it('runs registered history commands after authorization and deduplication', async () => {

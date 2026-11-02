@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import { applyUpstreamHeaders, resolveUpstreamHeaders } from './upstreamHeaders.js'
 
 const OPENCODE_GO_HEADERS = {
-  'User-Agent': 'cc-haha/$VERSION',
+  'User-Agent': 'echoflow-code/$VERSION',
   'x-opencode-session': '$SESSION_ID',
 }
 
@@ -11,7 +11,7 @@ describe('resolveUpstreamHeaders', () => {
   test('substitutes the session id and version placeholders', () => {
     const headers = resolveUpstreamHeaders(OPENCODE_GO_HEADERS, { sessionId: 'session-abc' })
     expect(headers['x-opencode-session']).toBe('session-abc')
-    expect(headers['User-Agent']).toMatch(/^cc-haha\//)
+    expect(headers['User-Agent']).toMatch(/^echoflow-code\//)
   })
 
   test('omits a session header when the request carries no session id', () => {
@@ -21,14 +21,14 @@ describe('resolveUpstreamHeaders', () => {
       const headers = resolveUpstreamHeaders(OPENCODE_GO_HEADERS, { sessionId })
       expect(headers['x-opencode-session']).toBeUndefined()
       // A header that does not reference the session still goes out.
-      expect(headers['User-Agent']).toMatch(/^cc-haha\//)
+      expect(headers['User-Agent']).toMatch(/^echoflow-code\//)
     }
   })
 
   test('defaults to an empty context rather than requiring one', () => {
     const headers = resolveUpstreamHeaders(OPENCODE_GO_HEADERS)
     expect(headers['x-opencode-session']).toBeUndefined()
-    expect(headers['User-Agent']).toMatch(/^cc-haha\//)
+    expect(headers['User-Agent']).toMatch(/^echoflow-code\//)
   })
 
   test('returns an empty map when no template is declared', () => {
@@ -89,10 +89,10 @@ describe('applyUpstreamHeaders', () => {
       'x-keep': 'kept',
     }
 
-    applyUpstreamHeaders(headers, { 'User-Agent': 'cc-haha/1', 'x-session-id': 'preset' })
+    applyUpstreamHeaders(headers, { 'User-Agent': 'echoflow-code/1', 'x-session-id': 'preset' })
 
-    expect(headers).toEqual({ 'x-keep': 'kept', 'User-Agent': 'cc-haha/1', 'x-session-id': 'preset' })
-    expect(new Headers(headers).get('user-agent')).toBe('cc-haha/1')
+    expect(headers).toEqual({ 'x-keep': 'kept', 'User-Agent': 'echoflow-code/1', 'x-session-id': 'preset' })
+    expect(new Headers(headers).get('user-agent')).toBe('echoflow-code/1')
     expect(new Headers(headers).get('x-session-id')).toBe('preset')
   })
 
@@ -113,7 +113,7 @@ describe('applyUpstreamHeaders', () => {
     try {
       process.env.APP_VERSION = '1.2.3'
       const headers = resolveUpstreamHeaders(OPENCODE_GO_HEADERS, { sessionId: 's' })
-      expect(headers['User-Agent']).toBe('cc-haha/1.2.3')
+      expect(headers['User-Agent']).toBe('echoflow-code/1.2.3')
     } finally {
       if (original === undefined) delete process.env.APP_VERSION
       else process.env.APP_VERSION = original

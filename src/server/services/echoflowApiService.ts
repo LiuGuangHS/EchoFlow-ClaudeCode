@@ -172,9 +172,15 @@ export class EchoFlowApiService {
           // The saved keys are the only copies the gateway will ever hand out.
           // The restore at startup re-runs this for the same user, so dropping
           // them here would make every earlier token unusable on restart. The
-          // next refresh reconciles the list against the gateway.
-          ...(previous && previous.userId === trimmed.userId && previous.tokens
-            ? { tokens: previous.tokens }
+          // balance is the last known one for the same reason: the next
+          // refresh reconciles both against the gateway.
+          ...(previous && previous.userId === trimmed.userId
+            ? {
+                balance: previous.balance,
+                userGroup: previous.userGroup,
+                tokens: previous.tokens,
+                refreshedAt: previous.refreshedAt,
+              }
             : {}),
           endpoint,
         }
@@ -519,10 +525,6 @@ export class EchoFlowApiService {
     return path.join(getEchoFlowInternalDir(getEchoFlowConfigDir()), 'echoflow-account.json')
   }
 
-  private getLegacyAccountPath(): string {
-    return path.join(getEchoFlowInternalDir(getEchoFlowConfigDir()), 'qingyun-account.json')
-  }
-
   private async readAccounts(): Promise<StoredEchoFlowAccounts> {
     try {
       const parsed = JSON.parse(await fs.readFile(this.getAccountPath(), 'utf-8')) as unknown
@@ -553,25 +555,7 @@ export class EchoFlowApiService {
       if (errnoCode(error) !== 'ENOENT') throw error
     }
 
-    try {
-      const parsed = JSON.parse(await fs.readFile(this.getLegacyAccountPath(), 'utf-8')) as unknown
-      if (!isStoredAccount(parsed)) return { ...EMPTY_ACCOUNTS, accounts: { ...EMPTY_ACCOUNTS.accounts } }
-      const migrated: StoredEchoFlowAccounts = {
-        schemaVersion: 3,
-        accounts: {
-          main: { ...parsed, credential: parsed.credential ?? 'token', endpoint: 'main' },
-          dedicated: null,
-        },
-      }
-      await this.writeAccounts(migrated)
-      await fs.unlink(this.getLegacyAccountPath()).catch((error) => {
-        if (errnoCode(error) !== 'ENOENT') throw error
-      })
-      return migrated
-    } catch (error) {
-      if (errnoCode(error) === 'ENOENT') return { ...EMPTY_ACCOUNTS, accounts: { ...EMPTY_ACCOUNTS.accounts } }
-      throw error
-    }
+    return { ...EMPTY_ACCOUNTS, accounts: { ...EMPTY_ACCOUNTS.accounts } }
   }
 
   private async backupAccountsFile(): Promise<void> {

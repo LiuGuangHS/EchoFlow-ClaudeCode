@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
 import {
-  GITHUB_ACCELERATOR_PREFIX,
+  DOWNLOAD_PROXY_PREFIXES,
   buildDownloadCandidates,
   downloadPagePath,
   loadDownloadManifest,
@@ -104,11 +104,18 @@ describe('resolveInitialPlatform', () => {
 })
 
 describe('buildDownloadCandidates', () => {
-  test('puts the accelerator first and GitHub direct second', () => {
+  test('keeps only proxy prefixes whose responses are readable cross-origin', () => {
+    assert.deepEqual(DOWNLOAD_PROXY_PREFIXES, [
+      'https://gh-proxy.org/',
+      'https://gh-proxy.com/',
+    ])
+  })
+
+  test('builds proxy candidates and leaves GitHub as an explicit fallback', () => {
     const candidates = buildDownloadCandidates(MANIFEST, 'win', 'x64')
-    assert.equal(candidates.length, 2)
-    assert.equal(candidates[0], `${GITHUB_ACCELERATOR_PREFIX}${DIRECT_BASE}EchoFlow-Code-0.7.1-win-x64.exe`)
-    assert.equal(candidates[1], `${DIRECT_BASE}EchoFlow-Code-0.7.1-win-x64.exe`)
+    assert.deepEqual(candidates, DOWNLOAD_PROXY_PREFIXES.map((prefix) => (
+      `${prefix}${DIRECT_BASE}EchoFlow-Code-0.7.1-win-x64.exe`
+    )))
   })
 
   test('returns nothing when the platform/arch key is missing', () => {
@@ -121,10 +128,11 @@ describe('buildDownloadCandidates', () => {
 })
 
 describe('resolveDownloadTarget', () => {
-  test('returns the direct URL and file name for a known platform', () => {
+  test('returns a proxy URL and a direct URL fallback for a known platform', () => {
     assert.deepEqual(resolveDownloadTarget(MANIFEST, 'mac', 'arm64'), {
       fileName: 'EchoFlow-Code-0.7.1-mac-arm64.dmg',
-      url: `${DIRECT_BASE}EchoFlow-Code-0.7.1-mac-arm64.dmg`,
+      url: `${DOWNLOAD_PROXY_PREFIXES[0]}${DIRECT_BASE}EchoFlow-Code-0.7.1-mac-arm64.dmg`,
+      fallbackUrl: `${DIRECT_BASE}EchoFlow-Code-0.7.1-mac-arm64.dmg`,
     })
   })
 
@@ -134,11 +142,15 @@ describe('resolveDownloadTarget', () => {
 })
 
 describe('resolveExtraDownloads', () => {
-  test('lists deb/rpm style extras with direct URLs', () => {
+  test('lists deb/rpm style extras with proxy URLs and direct fallbacks', () => {
     assert.deepEqual(resolveExtraDownloads(MANIFEST), [{
       fileName: 'EchoFlow-Code-0.7.1-linux-amd64.deb',
       key: 'linux-x86_64.deb',
-      url: `${DIRECT_BASE}EchoFlow-Code-0.7.1-linux-amd64.deb`,
+      url: `${DOWNLOAD_PROXY_PREFIXES[0]}${DIRECT_BASE}EchoFlow-Code-0.7.1-linux-amd64.deb`,
+      fallbackUrl: `${DIRECT_BASE}EchoFlow-Code-0.7.1-linux-amd64.deb`,
+      candidates: DOWNLOAD_PROXY_PREFIXES.map((prefix) => (
+        `${prefix}${DIRECT_BASE}EchoFlow-Code-0.7.1-linux-amd64.deb`
+      )),
     }])
   })
 
@@ -148,43 +160,67 @@ describe('resolveExtraDownloads', () => {
 })
 
 describe('startDirectDownload', () => {
-  test('assigns the first reachable candidate', async () => {
+  test('assigns the first proxy that returns a valid response', async () => {
     const assigned = []
-    const result = await startDirectDownload(['https://a.test/x', 'https://b.test/x'], {
-      fetchImpl: async () => ({ ok: true }),
+    const result = await startDirectDownload(['https://a.test/x'], {
+      fetchImpl: async () => ({ ok: true, status: 200 }),
       locationImpl: { assign: (url) => assigned.push(url) },
+      fallbackUrl: 'https://github.test/x',
     })
 
     assert.equal(result, 'started')
     assert.deepEqual(assigned, ['https://a.test/x'])
   })
 
-  test('falls through to the second candidate when the first rejects', async () => {
+  test('prefers the fastest valid proxy', async () => {
+    const assigned = []
+    const calls = []
+    const result = await startDirectDownload(['https://slow.test/x', 'https://fast.test/x'], {
+      fetchImpl: async (url) => {
+        calls.push(url)
+        await new Promise((resolve) => setTimeout(resolve, url.includes('slow') ? 20 : 1))
+        return { ok: true, status: 200 }
+      },
+      locationImpl: { assign: (url) => assigned.push(url) },
+      fallbackUrl: 'https://github.test/x',
+    })
+
+    assert.equal(result, 'started')
+    assert.deepEqual(calls.sort(), ['https://fast.test/x', 'https://slow.test/x'])
+    assert.deepEqual(assigned, ['https://fast.test/x'])
+  })
+
+  test('uses the GitHub file URL when every proxy is unreachable', async () => {
     const assigned = []
     const calls = []
     const result = await startDirectDownload(['https://a.test/x', 'https://b.test/x'], {
       fetchImpl: async (url) => {
         calls.push(url)
-        if (url === 'https://a.test/x') throw new TypeError('network error')
-        return { ok: true }
+        throw new TypeError('network error')
       },
       locationImpl: { assign: (url) => assigned.push(url) },
+      fallbackUrl: 'https://github.test/x',
     })
 
     assert.equal(result, 'started')
-    assert.deepEqual(calls, ['https://a.test/x', 'https://b.test/x'])
-    assert.deepEqual(assigned, ['https://b.test/x'])
+    assert.deepEqual(calls.sort(), ['https://a.test/x', 'https://b.test/x'])
+    assert.deepEqual(assigned, ['https://github.test/x'])
   })
 
-  test('reports fallback when every candidate is unreachable', async () => {
+  test('does not treat an HTML error response as a working proxy', async () => {
     const assigned = []
     const result = await startDirectDownload(['https://a.test/x'], {
-      fetchImpl: async () => { throw new TypeError('network error') },
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        headers: { get: () => 'text/html; charset=utf-8' },
+      }),
       locationImpl: { assign: (url) => assigned.push(url) },
+      fallbackUrl: 'https://github.test/x',
     })
 
-    assert.equal(result, 'fallback')
-    assert.deepEqual(assigned, [])
+    assert.equal(result, 'started')
+    assert.deepEqual(assigned, ['https://github.test/x'])
   })
 })
 

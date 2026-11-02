@@ -11,7 +11,7 @@ function printHelp(): void {
     [
       'Usage: echoflow-code [options] [prompt]',
       '',
-      'Local recovery mode for this leaked source tree.',
+      'Local recovery mode for EchoFlow Code.',
       '',
       'Options:',
       '  -h, --help                    Show help',

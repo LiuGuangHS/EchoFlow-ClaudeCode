@@ -235,6 +235,8 @@ describe('ImChatRuntime authorization', () => {
 
     expect(bridge.sent).toHaveLength(0)
     expect(notices[0]).toContain('未授权')
+    expect(notices[0]).toContain('EchoFlow Code')
+    expect(notices[0]).not.toContain('Claude')
   })
 
   it('pairs on a valid code and then forwards the next message', async () => {
@@ -246,6 +248,9 @@ describe('ImChatRuntime authorization', () => {
 
     await inbound(runtime, 'ABC234')
     expect(notices[0]).toContain('配对成功')
+    // The copy names our product; the fork's old name must not come back.
+    expect(notices[0]).toContain('EchoFlow')
+    expect(notices[0]).not.toContain('Claude')
 
     await inbound(runtime, 'hello there')
     expect(bridge.sent.map((item) => item.content)).toEqual(['hello there'])

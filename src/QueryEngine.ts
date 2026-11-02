@@ -253,11 +253,11 @@ export class QueryEngine {
     } = this.config
 
     setCwd(cwd)
-    const selectedWorkerAgent = process.env.CC_HAHA_TEAM_WORKER === '1'
+    const selectedWorkerAgent = process.env.ECHOFLOW_TEAM_WORKER === '1'
       ? agents.find(agent => agent.agentType === (getMainThreadAgentType() ?? getAppState().agent))
       : undefined
-    const workerAgent = selectedWorkerAgent ? { ...selectedWorkerAgent, agentType: process.env.CC_HAHA_TEAM_WORKER_PRESET_TYPE || selectedWorkerAgent.agentType, source: (process.env.CC_HAHA_TEAM_WORKER_PRESET_SOURCE || selectedWorkerAgent.source) as AgentDefinition['source'] } : undefined
-    if (process.env.CC_HAHA_TEAM_WORKER === '1' && !workerAgent) throw new Error('Approved team worker preset is unavailable')
+    const workerAgent = selectedWorkerAgent ? { ...selectedWorkerAgent, agentType: process.env.ECHOFLOW_TEAM_WORKER_PRESET_TYPE || selectedWorkerAgent.agentType, source: (process.env.ECHOFLOW_TEAM_WORKER_PRESET_SOURCE || selectedWorkerAgent.source) as AgentDefinition['source'] } : undefined
+    if (process.env.ECHOFLOW_TEAM_WORKER === '1' && !workerAgent) throw new Error('Approved team worker preset is unavailable')
     let workerPreset = workerPresetSessions.get(getAppState)
     if (workerAgent && !workerPreset) {
       workerPreset = { activated: false }
@@ -341,7 +341,7 @@ export class QueryEngine {
       ),
     }
 
-    if (workerAgent && process.env.CC_HAHA_TEAM_WORKER_OMIT_CLAUDE_MD === '1') delete userContext.claudeMd
+    if (workerAgent && process.env.ECHOFLOW_TEAM_WORKER_OMIT_CLAUDE_MD === '1') delete userContext.claudeMd
 
     // When an SDK caller provides a custom system prompt AND has set
     // CLAUDE_COWORK_MEMORY_PATH_OVERRIDE, inject the memory-mechanics prompt.

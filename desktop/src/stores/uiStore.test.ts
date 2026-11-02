@@ -405,6 +405,20 @@ describe('uiStore settings tab persistence', () => {
     expect(recreated.useUIStore.getState().activeSettingsTab).toBe('pets')
   })
 
+  it('restores every persisted Settings tab id an older build could have written', async () => {
+    for (const tab of ['providers', 'general', 'runtime', 'voice', 'h5Access', 'adapters', 'terminal', 'mcp', 'agents', 'skills', 'memory', 'plugins', 'pets', 'computerUse', 'activity', 'trace', 'diagnostics', 'about']) {
+      window.localStorage.setItem('echoflow-code-active-settings-tab', tab)
+      vi.resetModules()
+      const { useUIStore } = await import('./uiStore')
+      expect(useUIStore.getState().activeSettingsTab).toBe(tab)
+    }
+
+    window.localStorage.setItem('echoflow-code-active-settings-tab', 'unknown-tab')
+    vi.resetModules()
+    const { useUIStore } = await import('./uiStore')
+    expect(useUIStore.getState().activeSettingsTab).toBe('providers')
+  })
+
   it('ignores an invalid persisted Settings tab', async () => {
     window.localStorage.setItem('echoflow-code-active-settings-tab', 'not-a-settings-tab')
 

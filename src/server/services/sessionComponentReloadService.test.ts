@@ -9,7 +9,7 @@ const hasSession = spyOn(conversationService, 'hasSession').mockReturnValue(true
 const requestControl = spyOn(conversationService, 'requestControl')
 
 test.each(['feishu', 'dingtalk', 'wecom', 'remotion', 'supabase'])('requires the %s connector plugin and skill in the chat, not only on disk', async id => {
-  const requirement = { pluginId: `office-${id}@haha-connectors`, skillName: `office-${id}:office-${id}` }
+  const requirement = { pluginId: `office-${id}@echoflow-connectors`, skillName: `office-${id}:office-${id}` }
   for (const response of [
     { plugins: [], commands: [{ name: requirement.skillName }] },
     { plugins: [{ source: requirement.pluginId }], commands: [] },

@@ -43,10 +43,12 @@ function getStoredSidebarWidth(): number {
   return SIDEBAR_DEFAULT_WIDTH
 }
 
-const SETTINGS_TABS = [
+export const SETTINGS_TABS = [
   'providers',
   'activity',
   'general',
+  'network',
+  'data',
   'runtime',
   'voice',
   'h5Access',
@@ -232,26 +234,7 @@ export type Toast = {
   duration?: number
 }
 
-export type SettingsTab =
-  | 'providers'
-  | 'activity'
-  | 'general'
-  | 'runtime'
-  | 'voice'
-  | 'h5Access'
-  | 'adapters'
-  | 'terminal'
-  | 'mcp'
-  | 'agents'
-  | 'skills'
-  | 'memory'
-  | 'plugins'
-  | 'pets'
-  | 'computerUse'
-  | 'trace'
-  | 'diagnostics'
-  | 'about'
-  | 'configGenerator'
+export type SettingsTab = typeof SETTINGS_TABS[number]
 
 type ActiveView = 'code' | 'scheduled' | 'terminal' | 'history' | 'settings'
 

@@ -72,7 +72,9 @@ describe('release desktop workflow', () => {
         expect(workflow).toContain(electronBuilderCli)
       }
       expect(workflow).toContain('smoke_platform')
-      expect(workflow).toContain('bun run test:package-smoke --platform ${{ matrix.smoke_platform }} --arch ${{ matrix.arch }} --package-kind release --artifacts-dir desktop/build-artifacts/electron')
+      expect(workflow).toContain('Rebuild node-pty for the Linux glibc floor')
+      expect(workflow).toContain('bash ./scripts/rebuild-node-pty-linux.sh')
+      expect(workflow).toContain('bun run test:package-smoke --platform ${{ matrix.smoke_platform }} --arch ${{ matrix.arch }} --package-kind release --artifacts-dir desktop/build-artifacts/electron ${{ matrix.smoke_platform == \'linux\' && \'--max-linux-glibc 2.28\' || \'\' }}')
       expect(workflow).not.toContain('tauri-apps/tauri-action@v0')
     }
   })
@@ -142,6 +144,26 @@ describe('release desktop workflow', () => {
       expect(workflow.indexOf('Prepare bundled ripgrep')).toBeLessThan(
         workflow.indexOf('Build sidecars'),
       )
+    }
+  })
+
+  test('Linux desktop builds package node-pty compiled for the glibc floor package-smoke enforces', () => {
+    for (const workflowPath of [
+      '.github/workflows/build-desktop-dev.yml',
+      '.github/workflows/release-desktop.yml',
+    ]) {
+      const workflow = readFileSync(workflowPath, 'utf8')
+      const rebuildStep = extractStep(workflow, 'Rebuild node-pty for the Linux glibc floor')
+
+      expect(rebuildStep, workflowPath).toContain("if: matrix.smoke_platform == 'linux'")
+      expect(rebuildStep, workflowPath).toContain('working-directory: desktop')
+      expect(rebuildStep, workflowPath).toContain('bash ./scripts/rebuild-node-pty-linux.sh')
+      expect(workflow.indexOf('Build renderer and Electron bundles'), workflowPath)
+        .toBeLessThan(workflow.indexOf('Rebuild node-pty for the Linux glibc floor'))
+      expect(workflow.indexOf('Rebuild node-pty for the Linux glibc floor'), workflowPath)
+        .toBeLessThan(workflow.indexOf(electronBuilderCli))
+      expect(extractStep(workflow, 'Verify packaged app structure'), workflowPath)
+        .toContain("${{ matrix.smoke_platform == 'linux' && '--max-linux-glibc 2.28' || '' }}")
     }
   })
 
@@ -461,7 +483,13 @@ describe('release desktop workflow', () => {
     expect(workflow).not.toContain('WINDOWS_CERTIFICATE_PASSWORD')
     expect(workflow.indexOf('Restore and verify signed Windows application executables')).toBeLessThan(workflow.indexOf('Package NSIS installer from signed Windows application'))
     expect(workflow.indexOf('Restore and verify signed Windows installer')).toBeLessThan(workflow.indexOf('Refresh signed Windows blockmap and update metadata'))
-    expect(workflow.indexOf('Refresh signed Windows blockmap and update metadata')).toBeLessThan(workflow.indexOf('Verify Windows installer execution'))
+    expect(workflow).toContain('Verify packaged app structure')
+    const refreshIndex = workflow.indexOf('Refresh signed Windows blockmap and update metadata')
+    const packageSmokeIndex = workflow.indexOf('Verify packaged app structure', refreshIndex)
+    const installerSmokeIndex = workflow.indexOf('Verify Windows installer execution', packageSmokeIndex)
+    expect(refreshIndex).toBeGreaterThanOrEqual(0)
+    expect(packageSmokeIndex).toBeGreaterThan(refreshIndex)
+    expect(installerSmokeIndex).toBeGreaterThan(packageSmokeIndex)
   })
 
   test('release workflow avoids same-name updater metadata uploads from matrix builds', () => {

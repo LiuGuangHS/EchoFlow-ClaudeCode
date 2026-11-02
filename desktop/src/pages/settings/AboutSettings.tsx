@@ -14,6 +14,7 @@ import { BrandSeal } from '../../components/composite/BrandSeal'
 import { Modal } from '@/components/ui/Modal'
 import { isValidHttpProxyUrl } from '../settings/shared'
 import type { UpdateErrorCode } from '../../stores/updateStore'
+import { ECHOFLOW_PRODUCT_NAME } from '../../constants/brand'
 
 const UPDATE_ERROR_KEYS = {
   network: 'update.error.network',
@@ -171,7 +172,7 @@ export function AboutSettings() {
     <div className="w-full min-w-0 max-w-2xl mx-auto flex flex-col items-center py-6">
       {/* Logo + App Name + Version */}
       <BrandSeal size="xl" className="mb-4" />
-      <h1 className="text-xl font-bold text-[var(--color-text-primary)]" style={{ fontFamily: 'var(--font-headline)' }}>EchoFlow Code</h1>
+      <h1 className="text-xl font-bold text-[var(--color-text-primary)]" style={{ fontFamily: 'var(--font-headline)' }}>{ECHOFLOW_PRODUCT_NAME}</h1>
       {version && (
         <div className="mt-1 flex items-center gap-2 text-xs text-[var(--color-text-tertiary)]">
           <span>{t('settings.about.version')} {version}</span>
@@ -470,11 +471,10 @@ export function AboutSettings() {
       >
         <div className="flex flex-col items-center gap-3 pb-2">
           <img
-            src={publicAssetPath('icons/wechat-group-qr.png')}
+            src={publicAssetPath('icons/echoflowai-community-qr.webp')}
             alt={t('settings.about.communityQrAlt')}
             width={240}
-            height={240}
-            className="rounded-[var(--radius-md)]"
+            className="h-auto max-w-[240px] rounded-[var(--radius-md)]"
           />
           <p className="text-center text-xs text-[var(--color-text-tertiary)]">{t('settings.about.communityHint')}</p>
         </div>

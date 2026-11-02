@@ -6,6 +6,7 @@
  */
 
 import * as path from 'node:path'
+import { ECHOFLOW_PRODUCT_NAME } from '../common/brand.js'
 import {
   normalizeMessageContent,
   type proto,
@@ -44,6 +45,7 @@ import {
   type WhatsAppSocket,
 } from './session.js'
 import { WhatsAppMediaService } from './media.js'
+import { buildWhatsAppPairingNotice } from './pairing-notice.js'
 import {
   buildWhatsAppThinkingPreview,
   formatWhatsAppOutboundText,
@@ -144,7 +146,7 @@ async function sendWhatsAppText(jid: string, text: string): Promise<void> {
 }
 
 async function sendHelp(jid: string): Promise<void> {
-  await sendWhatsAppText(jid, `Claude Code WhatsApp 已就绪。\n\n${formatImHelp()}`)
+  await sendWhatsAppText(jid, `${ECHOFLOW_PRODUCT_NAME} WhatsApp 已就绪。\n\n${formatImHelp()}`)
 }
 
 async function handlePermissionDecision(chatId: string, decision: PermissionDecision): Promise<void> {
@@ -443,12 +445,7 @@ async function routeUserMessage(
     const success = attachments.length === 0
       ? tryPair(text.trim(), { userId, displayName }, 'whatsapp')
       : false
-    await sendWhatsAppText(
-      chatId,
-      success
-        ? '配对成功！现在可以开始聊天了。\n\n发送消息即可与 Claude 对话。'
-        : '未授权。请在 Claude Code 桌面端生成配对码后发送给我。',
-    )
+    await sendWhatsAppText(chatId, buildWhatsAppPairingNotice(success))
     return
   }
 

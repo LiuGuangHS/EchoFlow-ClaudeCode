@@ -4,6 +4,7 @@ import {
   sendDesktopNotification,
   type ElectronNotificationConstructor,
 } from './notifications'
+import { ECHOFLOW_PRODUCT_NAME } from '../../src/constants/brand'
 
 const DEFAULT_DELAY_MS = 2500
 const MAX_DELAY_MS = 60_000
@@ -98,7 +99,7 @@ export function scheduleNotificationSmoke({
   const sessionId = env.ECHOFLOW_ELECTRON_NOTIFICATION_SMOKE_SESSION_ID?.trim()
   if (!sessionId) return false
 
-  const title = env.ECHOFLOW_ELECTRON_NOTIFICATION_SMOKE_TITLE?.trim() || 'EchoFlow Code notification smoke'
+  const title = env.ECHOFLOW_ELECTRON_NOTIFICATION_SMOKE_TITLE?.trim() || `${ECHOFLOW_PRODUCT_NAME} notification smoke`
   const body = env.ECHOFLOW_ELECTRON_NOTIFICATION_SMOKE_BODY?.trim() || 'Click to return to the target session.'
   const delayMs = parseNotificationSmokeDelay(env.ECHOFLOW_ELECTRON_NOTIFICATION_SMOKE_DELAY_MS)
   const triggerSyntheticAction = shouldTriggerSyntheticAction(env.ECHOFLOW_ELECTRON_NOTIFICATION_SMOKE_TRIGGER_ACTION)

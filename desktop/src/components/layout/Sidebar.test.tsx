@@ -63,6 +63,7 @@ vi.mock('../../i18n', () => ({
       'sidebar.settings': 'Settings',
       'sidebar.searchPlaceholder': 'Search sessions',
       'sidebar.noSessions': 'No sessions',
+      'session.untitled': '未命名会话',
       'sidebar.noMatching': 'No matching sessions',
       'sidebar.sessionListFailed': 'Session list failed',
       'sidebar.refreshSessions': 'Refresh sessions',
@@ -687,6 +688,22 @@ describe('Sidebar', () => {
     expect(screen.getByRole('button', { name: /Beta only/ })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Expand display' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Collapse display' })).not.toBeInTheDocument()
+  })
+
+  // The server writes the literal English placeholder into a new session's
+  // title; the sidebar used to print it as-is, so a Chinese UI showed
+  // "Untitled Session" until the first message gave the session a name.
+  it('labels a session the server left unnamed with the localized placeholder', () => {
+    useSessionStore.setState({
+      sessions: [
+        makeSession('session-untitled', 'Untitled Session', '/workspace/alpha', '2026-05-15T10:00:00.000Z'),
+      ],
+    })
+
+    render(<Sidebar />)
+
+    expect(screen.getByRole('button', { name: /未命名会话/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Untitled Session/ })).not.toBeInTheDocument()
   })
 
   it('does not show a fold control after a short project is auto-expanded for history', () => {

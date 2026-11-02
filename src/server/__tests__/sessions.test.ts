@@ -2372,7 +2372,7 @@ describe('SessionService', () => {
       { ...makeUserEntry('start two background commands', userId), parentUuid: null },
       { ...makeAssistantEntry('dispatched', userId), uuid: dispatchedId },
       {
-        type: 'cc-haha-task-notification',
+        type: 'echoflow-code-task-notification',
         isMeta: true,
         taskNotification: {
           taskId: 'alpha',
