@@ -94,4 +94,4 @@
 
 ## 参考原型
 
-`/Users/nanmi/Downloads/design_handoff_echoflow_redesign/` 下的 `CC Haha.dc.html` 是高保真交互原型，README.md 是像素级规格。原型用浏览器直接打开可交互。
+设计交接目录中的原型 HTML 是高保真交互原型，README.md 是像素级规格。原型可在浏览器中直接打开体验。

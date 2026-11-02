@@ -1803,8 +1803,8 @@ describe('same-app sequence', () => {
   const steps = [{ tool: 'press_key', key: 's x 1 period 3 5 Return' }, { tool: 'click', x: 12, y: 24 }]
   test.each([
     'com.google.Chrome',
-    'com.claude-code-haha.desktop',
-    'dev.cchaha.cu-helper',
+    'com.echoflow.code.desktop',
+    'dev.echoflow.cu-helper',
     'com.test.host',
   ])('global consent also covers sequences targeting %s', async bundleId => {
     const { engine, calls } = makeEngine({

@@ -125,7 +125,7 @@ jobs:
           fi
           # Drafts may remain unsigned while SignPath onboarding is being tested. A tag
           # release also ships unsigned when SignPath is not configured at all, which is
-          # this fork's state today; a partially configured pipeline is a real
+          # the current EchoFlow release configuration; a partially configured pipeline is a real
           # misconfiguration and still refuses to publish.
           win_missing=()
           [ -n "$SIGNPATH_API_TOKEN" ] || win_missing+=("SIGNPATH_API_TOKEN secret")

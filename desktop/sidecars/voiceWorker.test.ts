@@ -44,7 +44,7 @@ function post(port: number, body: Uint8Array, headers: Record<string, string>) {
 
 describe.skipIf(process.platform === 'win32')('compiled desktop voice worker routing', () => {
   it('boots the real merged entrypoint as a voice worker, loads the runtime by absolute path and serves the private socket', async () => {
-    const directory = await realpath(await mkdtemp(path.join(tmpdir(), 'cc-haha-sidecar-voice-worker-')))
+    const directory = await realpath(await mkdtemp(path.join(tmpdir(), 'echoflow-sidecar-voice-worker-')))
     const executable = path.join(directory, 'claude-sidecar-voice-fixture')
     const env: NodeJS.ProcessEnv = {
       PATH: process.env.PATH,
