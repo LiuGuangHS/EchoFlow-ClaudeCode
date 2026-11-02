@@ -3,8 +3,29 @@ name: Release Desktop
 on:
   push:
     tags: ['v*.*.*']
+  workflow_call:
+    inputs:
+      official_release:
+        required: false
+        default: false
+        type: boolean
+      release_tag:
+        required: false
+        type: string
+      release_sha:
+        required: false
+        type: string
+      draft:
+        required: false
+        default: true
+        type: boolean
   workflow_dispatch:
     inputs:
+      release_tag:
+        description: 'Release tag to publish (vX.Y.Z)'
+        required: false
+        default: ''
+        type: string
       draft:
         description: 'Create as draft release'
         required: false
@@ -17,11 +38,6 @@ on:
         type: boolean
       skip_windows_signing:
         description: 'Build unsigned Windows artifacts while SignPath onboarding is pending'
-        required: false
-        default: false
-        type: boolean
-      publish_draft_release:
-        description: 'Publish manual draft artifacts to GitHub Releases'
         required: false
         default: false
         type: boolean
@@ -38,11 +54,46 @@ jobs:
   release-contract:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      release_sha: ${{ steps.resolve.outputs.release_sha }}
+      release_tag: ${{ steps.resolve.outputs.release_tag }}
     steps:
+      - name: Validate official release authorization
+        if: github.event_name == 'workflow_call'
+        shell: bash
+        env:
+          OFFICIAL_RELEASE: ${{ inputs.official_release == true }}
+          DRAFT_RELEASE: ${{ inputs.draft == true }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          expected_workflow_ref="${GITHUB_REPOSITORY}/.github/workflows/release-please.yml@refs/heads/main"
+          if [[ "${OFFICIAL_RELEASE}" != "true" || "${DRAFT_RELEASE}" != "false" || "${{ github.workflow_ref }}" != "${expected_workflow_ref}" || "${{ inputs.official_release == true }}" != "true" ]]; then
+            echo "::error::Only the trusted Release Please workflow may request official publication."
+            exit 1
+          fi
+          if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ || ! "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Official publication requires a valid release_tag and full release_sha."
+            exit 1
+          fi
+
+      - name: Validate release tag input
+        if: github.event_name != 'push' && inputs.release_tag != ''
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid release tag: ${RELEASE_TAG}"
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@v5
         with:
           persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ inputs.release_sha || github.sha }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -62,6 +113,43 @@ jobs:
             echo "::error::Tag ${GITHUB_REF_NAME} does not match app version ${EXPECTED_TAG}"
             exit 1
           fi
+
+      - name: Verify release tag matches packaged version
+        if: github.event_name != 'push' && inputs.release_tag != ''
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          VERSION=$(node -p "require('./desktop/package.json').version")
+          EXPECTED_TAG="v${VERSION}"
+          if [ "${RELEASE_TAG}" != "$EXPECTED_TAG" ]; then
+            echo "::error::Release tag must match the packaged version: ${RELEASE_TAG} != ${EXPECTED_TAG}"
+            exit 1
+          fi
+
+      - name: Resolve and verify peeled release commit
+        id: resolve
+        if: github.event_name != 'workflow_dispatch' || inputs.release_tag != ''
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+          EXPECTED_SHA: ${{ inputs.release_sha || github.sha }}
+        run: |
+          peeled_sha=$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")
+          if [[ "${peeled_sha}" != "${EXPECTED_SHA}" ]]; then
+            echo "::error::Release tag does not peel to the requested immutable commit."
+            exit 1
+          fi
+          echo "release_sha=${peeled_sha}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify immutable checkout
+        if: github.event_name != 'workflow_dispatch' || inputs.release_tag != ''
+        env:
+          EXPECTED_SHA: ${{ inputs.release_sha || github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "${EXPECTED_SHA}"
+          git rev-parse "${{ inputs.release_tag || github.ref_name }}^{commit}"
 
       - name: Verify release notes exist
         shell: bash
@@ -161,6 +249,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
+          ref: ${{ inputs.release_sha || github.sha }}
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -187,6 +276,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
+          ref: ${{ inputs.release_sha || github.sha }}
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -239,6 +329,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
+          ref: ${{ inputs.release_sha || github.sha }}
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -368,6 +459,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.release_sha || github.sha }}
 
       - name: Read version
         id: version
@@ -383,6 +476,18 @@ jobs:
           EXPECTED_TAG="v${{ steps.version.outputs.value }}"
           if [ "${GITHUB_REF_NAME}" != "$EXPECTED_TAG" ]; then
             echo "::error::Tag ${GITHUB_REF_NAME} does not match app version ${EXPECTED_TAG}"
+            exit 1
+          fi
+
+      - name: Validate release tag matches version
+        if: github.event_name != 'push' && inputs.release_tag != ''
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          EXPECTED_TAG="v${{ steps.version.outputs.value }}"
+          if [ "${RELEASE_TAG}" != "$EXPECTED_TAG" ]; then
+            echo "::error::Release tag must match the packaged version: ${RELEASE_TAG} != ${EXPECTED_TAG}"
             exit 1
           fi
 
@@ -994,7 +1099,7 @@ jobs:
           if-no-files-found: error
 
   publish-release:
-    if: github.event_name == 'push' || inputs.draft == false || inputs.publish_draft_release == true
+    if: (github.event_name == 'workflow_call' && inputs.official_release == true) || (github.event_name == 'workflow_dispatch' && inputs.draft == true)
     outputs:
       version: ${{ steps.version.outputs.value }}
     needs:
@@ -1005,6 +1110,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.release_sha || github.sha }}
 
       - name: Read version
         id: version
@@ -1020,6 +1127,18 @@ jobs:
           EXPECTED_TAG="v${{ steps.version.outputs.value }}"
           if [ "${GITHUB_REF_NAME}" != "$EXPECTED_TAG" ]; then
             echo "::error::Tag ${GITHUB_REF_NAME} does not match app version ${EXPECTED_TAG}"
+            exit 1
+          fi
+
+      - name: Validate release tag matches version
+        if: github.event_name != 'push' && inputs.release_tag != ''
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          EXPECTED_TAG="v${{ steps.version.outputs.value }}"
+          if [ "${RELEASE_TAG}" != "$EXPECTED_TAG" ]; then
+            echo "::error::Release tag must match the packaged version: ${RELEASE_TAG} != ${EXPECTED_TAG}"
             exit 1
           fi
 
@@ -1047,6 +1166,45 @@ jobs:
             echo "::error::Refusing to overwrite published release v${{ steps.version.outputs.value }} with manual draft artifacts."
             exit 1
           fi
+
+      - name: Verify existing release record
+        if: github.event_name != 'workflow_dispatch' || inputs.release_tag != ''
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+          OFFICIAL_RELEASE: ${{ inputs.official_release }}
+        run: |
+          error_file="${RUNNER_TEMP}/release-view-error.txt"
+          set +e
+          release_json=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" 2>"$error_file")
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            if [ "$OFFICIAL_RELEASE" = "true" ]; then
+              cat "$error_file" >&2
+              echo "::error::Trusted release publication requires an existing draft release."
+              exit 1
+            fi
+            if grep -q 'HTTP 404' "$error_file"; then
+              exit 0
+            fi
+            cat "$error_file" >&2
+            exit "$status"
+          fi
+          release_id=$(jq -r '.id' <<<"$release_json")
+          is_draft=$(jq -r '.draft' <<<"$release_json")
+          if [ -z "$release_id" ] || [ "$release_id" = "null" ]; then
+            echo "::error::Release record did not contain a release ID."
+            exit 1
+          fi
+          if [ "$OFFICIAL_RELEASE" = "true" ] && [ "$is_draft" != "true" ]; then
+            echo "::error::Trusted release publication requires the existing release to remain draft."
+            exit 1
+          fi
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+          echo "is_draft=$is_draft" >> "$GITHUB_OUTPUT"
 
       - name: Load release notes
         id: release_notes
@@ -1142,7 +1300,62 @@ jobs:
             exit 1
           fi
 
+      - name: Publish existing GitHub release by ID
+        if: steps.release.outputs.release_id != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+          RELEASE_NAME: EchoFlow Code v${{ steps.version.outputs.value }}
+          RELEASE_BODY: ${{ steps.release_notes.outputs.body }}
+        run: |
+          release_json=$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}")
+          current_id=$(jq -r '.id' <<<"${release_json}")
+          current_tag=$(jq -r '.tag_name' <<<"${release_json}")
+          is_draft=$(jq -r '.draft' <<<"${release_json}")
+          if [ "${current_id}" != "${RELEASE_ID}" ] || [ "${current_tag}" != "${RELEASE_TAG}" ] || [ "${is_draft}" != "true" ]; then
+            echo "::error::Verified release identity or draft state changed before upload."
+            exit 1
+          fi
+
+          gh api \
+            --method PATCH \
+            "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+            -f "name=${RELEASE_NAME}" \
+            -f "body=${RELEASE_BODY}" \
+            -F draft=true \
+            -F prerelease=false >/dev/null
+
+          shopt -s nullglob
+          files=(
+            artifacts/release-assets/*.dmg
+            artifacts/release-assets/*.zip
+            artifacts/release-assets/*.exe
+            artifacts/release-assets/*.AppImage
+            artifacts/release-assets/*.deb
+            artifacts/release-assets/*.rpm
+            artifacts/release-assets/*.blockmap
+            artifacts/update-metadata-standard/*.yml
+            desktop/scripts/install-macos-unsigned.sh
+          )
+          for file in "${files[@]}"; do
+            asset_name=$(basename "$file")
+            assets=$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?per_page=100")
+            asset_id=$(jq -r --arg name "${asset_name}" '.[] | select(.name == $name) | .id' <<<"${assets}")
+            if [ -n "${asset_id}" ]; then
+              gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" >/dev/null
+            fi
+            gh api \
+              --hostname uploads.github.com \
+              --method POST \
+              -H 'Content-Type: application/octet-stream' \
+              --input "$file" \
+              "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?name=${asset_name}" >/dev/null
+          done
+
       - name: Publish complete GitHub release
+        if: steps.release.outputs.release_id == ''
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.version.outputs.value }}
@@ -1162,11 +1375,50 @@ jobs:
             artifacts/update-metadata-standard/*.yml
             desktop/scripts/install-macos-unsigned.sh
 
-      - name: Publish GitHub release after complete upload
-        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.draft == false)
+      - name: Verify release record after upload
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release edit "v${{ steps.version.outputs.value }}" --draft=false --repo "${{ github.repository }}"
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
+          OFFICIAL_RELEASE: ${{ inputs.official_release }}
+        run: |
+          if [ -n "${RELEASE_ID}" ]; then
+            release_json=$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}")
+            current_id=$(jq -r '.id' <<<"${release_json}")
+            is_draft=$(jq -r '.draft' <<<"${release_json}")
+            if [ "${current_id}" != "${RELEASE_ID}" ]; then
+              echo "::error::Release ID changed while uploading assets."
+              exit 1
+            fi
+            if [ "${OFFICIAL_RELEASE}" = "true" ] && [ "${is_draft}" != "true" ]; then
+              echo "::error::Release was published before the official undraft step."
+              exit 1
+            fi
+          fi
+
+      - name: Publish GitHub release after complete upload
+        if: github.event_name == 'workflow_call' && inputs.official_release == true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
+        run: |
+          if [ -z "${RELEASE_ID}" ]; then
+            echo "::error::Trusted release publication requires a verified release ID."
+            exit 1
+          fi
+
+          undrafted_id=$(
+            gh api \
+              --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+              -F draft=false \
+              --jq 'select(.draft == false) | .id'
+          )
+
+          if [ "${undrafted_id}" != "${RELEASE_ID}" ]; then
+            echo "::error::The verified release ID was not undrafted."
+            exit 1
+          fi
 
       - name: Keep workflow-dispatch release as draft
         if: github.event_name == 'workflow_dispatch' && inputs.draft == true
@@ -1180,7 +1432,7 @@ jobs:
   # The condition matches the undraft step: draft releases never trigger a sync.
   site-release-sync:
     needs: publish-release
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.draft == false)
+    if: github.event_name == 'workflow_call' && inputs.official_release == true
     permissions:
       contents: read
       pages: write
