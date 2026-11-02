@@ -38,7 +38,9 @@ product / desktop / server features
   connection's; `sessionOpenTimeoutMs` (default 15000) bounds the whole open —
   `session/new` and the config options share one budget — so an engine that
   never answers `session/new` fails the open instead of hanging the caller
-  and the host's close. A session the engine opens after that budget expired is
+  and the host's close. Once that budget is gone no further request is sent,
+  and the failure names the budget instead of the option that happened to be
+  in flight. A session the engine opens after that budget expired is
   closed instead of left half-open.
 - `createEventStamper()`, `projectSessionUpdate()`, `dshBaselineCapabilities()` —
   the pieces another driver reuses.

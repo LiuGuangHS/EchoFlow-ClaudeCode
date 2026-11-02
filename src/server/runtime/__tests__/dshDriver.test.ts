@@ -367,6 +367,53 @@ describe('dshDriver over a real ACP child process', () => {
     await connection.close()
   })
 
+  test('an exhausted open budget sends no further request and says the budget ran out', async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), 'echoflow-budget-'))
+    sandboxes.push(sandbox)
+    const callsPath = join(sandbox, 'calls.ndjson')
+    // The injected clock jumps past the budget while the model option is in
+    // flight, so the reasoning-effort option that follows finds none left.
+    let clock = 1_000
+    const driver = createDshDriver({
+      resolveCommand: command,
+      sessionOpenTimeoutMs: 300,
+      now: () => clock,
+    })
+    const connection = await driver.start({
+      installation,
+      runId: 'run-1',
+      cwd: process.cwd(),
+      env: { FIXTURE_CALLS_MARKER: callsPath, FIXTURE_LATE_CONFIG_MS: '250' },
+    })
+    const opening = connection
+      .openSession({
+        sessionId: 'session-1',
+        cwd: process.cwd(),
+        model: { provider: 'anthropic', model: 'claude-opus-5' },
+        reasoningEffort: 'high',
+      })
+      .catch((error: unknown) => error)
+    // The model option reaches the engine after 250 ms; once it is there, the
+    // budget is gone for everything that follows.
+    const skip = setInterval(() => {
+      const seen = existsSync(callsPath)
+        ? readFileSync(callsPath, 'utf8').includes('session/set_config_option')
+        : false
+      if (seen) clock = 1_500
+    }, 10)
+    const failure = await opening
+    clearInterval(skip)
+    expect(failure).toBeInstanceOf(Error)
+    // The budget is gone, not this one option that ran late.
+    expect((failure as Error).message).toContain('budget')
+    // And the reasoning-effort option was never even asked for.
+    const calls = existsSync(callsPath)
+      ? readFileSync(callsPath, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
+      : []
+    expect(calls.filter(call => call.method === 'session/set_config_option')).toHaveLength(1)
+    await connection.close()
+  })
+
   test('a session the engine opens after the budget is closed instead of left half-open', async () => {
     const sandbox = mkdtempSync(join(tmpdir(), 'echoflow-late-'))
     sandboxes.push(sandbox)

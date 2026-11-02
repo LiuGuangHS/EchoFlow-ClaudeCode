@@ -760,9 +760,18 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
         let builder = connection.agent.buildSession(cwd)
         for (const server of mcpServers ?? []) builder = builder.withMcpServer(toAcpMcpServer(server))
         // One budget covers the whole open: session/new and the config options
-        // share it, so a slow engine cannot stretch the open past it.
-        const deadline = Date.now() + sessionOpenTimeoutMs
-        const remaining = () => Math.max(0, deadline - Date.now())
+        // share it, so a slow engine cannot stretch the open past it. The
+        // injected clock measures it, so the deadline can be placed exactly.
+        const deadline = now() + sessionOpenTimeoutMs
+        const remaining = () => deadline - now()
+        // A budget that is already gone must not buy another request: the
+        // answer would arrive after the open was supposed to be over, and the
+        // failure would blame one option instead of the budget that ran out.
+        const budgetLeft = (option: string) => {
+          const left = remaining()
+          if (left <= 0) throw new Error(`the dsh runtime did not open the session within the ${sessionOpenTimeoutMs} ms open budget (while setting ${option})`)
+          return left
+        }
         // An engine that never answers session/new would otherwise hang the
         // caller — and the host's close — for good. A late answer still means
         // the engine opened a session, so it is closed instead of left behind.
@@ -771,8 +780,8 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
         try {
           active = await withBudget(
             started,
-            remaining(),
-            'the dsh runtime did not answer session/new in time',
+            budgetLeft('the session'),
+            `the dsh runtime did not answer session/new within the ${sessionOpenTimeoutMs} ms open budget`,
           )
         } catch (error) {
           void started.then((late) => closeLateSession(late), () => {})
@@ -780,25 +789,29 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
         }
         try {
           if (model !== undefined) {
+            // The budget is taken before the request is issued: a request sent
+            // after the budget ran out would answer too late to be waited for.
+            const budget = budgetLeft('the model option')
             await withBudget(
               connection.agent.request(AGENT_METHODS.session_set_config_option, {
                 sessionId: active.sessionId,
                 configId: 'model',
                 value: JSON.stringify([model.provider, model.model]),
               }),
-              remaining(),
-              'the dsh runtime did not answer the model option in time',
+              budget,
+              `the dsh runtime did not answer the model option within the ${sessionOpenTimeoutMs} ms open budget`,
             )
           }
           if (reasoningEffort !== undefined) {
+            const budget = budgetLeft('the reasoning effort option')
             await withBudget(
               connection.agent.request(AGENT_METHODS.session_set_config_option, {
                 sessionId: active.sessionId,
                 configId: 'reasoning_effort',
                 value: reasoningEffort,
               }),
-              remaining(),
-              'the dsh runtime did not answer the reasoning effort option in time',
+              budget,
+              `the dsh runtime did not answer the reasoning effort option within the ${sessionOpenTimeoutMs} ms open budget`,
             )
           }
         } catch (error) {
