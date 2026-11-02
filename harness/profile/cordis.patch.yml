@@ -87,3 +87,21 @@
 
     - id: session-stats
       name: '@deepseek-ai/dsh-session-stats'
+
+    - id: echoflow-host-webserver
+      name: '@deepseek-ai/dsh-host-webserver'
+      config:
+        host: 127.0.0.1
+        port: 0
+
+    - id: echoflow-client-connection
+      name: '@deepseek-ai/dsh-client-connection'
+
+    - id: echoflow-file-upload
+      name: '@deepseek-ai/dsh-client-file-upload'
+
+    - id: echoflow-workspace
+      name: '@deepseek-ai/dsh-workspace'
+
+    - id: echoflow-session-controller
+      name: '@deepseek-ai/dsh-api-session-controller'
