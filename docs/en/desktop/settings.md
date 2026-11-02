@@ -197,4 +197,4 @@ Issue reports and exported bundles are redacted on a best-effort basis — chat 
 
 Version, changelog, GitHub repo, feedback link.
 
-**App Updates** checks GitHub Releases, downloads, and restarts to install. Updates use their own proxy setting, separate from **Settings → Network** — if updates stall on a corporate network, configure the advanced update proxy here. Differential downloads are off by default; they are attempted only when explicitly enabled on a verified feed, and a failure retries the full installer with differential downloading disabled.
+**App Updates** checks GitHub Releases, downloads, and restarts to install. Updates use their own proxy setting, separate from **Settings → Network** — if updates stall on a corporate network, configure the advanced update proxy here. Differential downloads are off by default; they are attempted only when explicitly enabled on a verified feed. If differential downloading fails, the updater falls back to the full installer.

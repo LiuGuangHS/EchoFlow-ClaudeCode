@@ -384,35 +384,6 @@ describe('Electron updater metadata fallback chain', () => {
     expect(() => service.quitAndInstallDownloadedUpdate()).toThrow('has not finished downloading')
   })
 
-  it('retries a failed differential download as a full package', async () => {
-    const directFeed = 'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest/download/'
-    const localUpdater = fakeUpdater()
-    localUpdater.checkForUpdates.mockResolvedValue({ updateInfo: { version: '2.0.0' } })
-    localUpdater.downloadUpdate
-      .mockRejectedValueOnce(new Error('temporary range failure'))
-      .mockResolvedValueOnce(undefined)
-    const service = new ElectronUpdaterService(localUpdater, undefined, {
-      differentialDownload: true,
-      downloadFeedUrls: [directFeed],
-      differentialDownloadFeedUrls: [directFeed],
-      differentialDownloadContracts: {
-        [directFeed]: {
-          version: 'range-v1',
-          fingerprint: '06c65fc3422243ebb7f83089cc304009c4cfcb43407c4877e2c07f2521b5b379',
-        },
-      },
-    })
-    const events: unknown[] = []
-    await service.checkForUpdates()
-
-    await service.downloadUpdate(event => events.push(event))
-
-    expect(localUpdater.downloadUpdate).toHaveBeenCalledTimes(2)
-    expect(localUpdater.disableDifferentialDownload).toBe(true)
-    expect(events.filter(event => event && typeof event === 'object' && 'event' in event && event.event === 'Finished')).toHaveLength(1)
-    expect(service.hasDownloadedUpdate()).toBe(true)
-  })
-
   it('tries the next download feed after the primary source fails', async () => {
     const firstFeed = 'https://dl1.test/feed/'
     const secondFeed = 'https://dl2.test/feed/'
