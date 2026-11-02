@@ -103,4 +103,31 @@ describe('DifferentialHttpExecutor', () => {
     expect(wrapDifferentialHttpExecutor(updater)).toBe(false)
     expect(updater.httpExecutor).toBeInstanceOf(DifferentialHttpExecutor)
   })
+
+  it('delegates complete-package downloads to the original executor', async () => {
+    const fixtureValue = fixture()
+    const destination = '/tmp/update.exe'
+    fixtureValue.base.download.mockResolvedValue(destination)
+    const executor = new DifferentialHttpExecutor(fixtureValue.base)
+
+    await expect((executor as any).download('https://example.test/update.exe', destination, { cancellationToken: {} }))
+      .resolves.toBe(destination)
+    expect(fixtureValue.base.download).toHaveBeenCalledWith(
+      'https://example.test/update.exe',
+      destination,
+      { cancellationToken: {} },
+    )
+  })
+
+  it('delegates metadata buffer downloads to the original executor', async () => {
+    const fixtureValue = fixture()
+    const options = { cancellationToken: {} }
+    const buffer = Buffer.from('blockmap')
+    fixtureValue.base.downloadToBuffer.mockResolvedValue(buffer)
+    const executor = new DifferentialHttpExecutor(fixtureValue.base)
+
+    await expect(executor.downloadToBuffer(new URL('https://example.test/blockmap'), options as any))
+      .resolves.toBe(buffer)
+    expect(fixtureValue.base.downloadToBuffer).toHaveBeenCalledWith(expect.any(URL), options)
+  })
 })
