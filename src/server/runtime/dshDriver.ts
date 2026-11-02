@@ -775,12 +775,15 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
         // An engine that never answers session/new would otherwise hang the
         // caller — and the host's close — for good. A late answer still means
         // the engine opened a session, so it is closed instead of left behind.
+        // The budget is taken before the request is built, so a spent budget
+        // sends nothing at all.
+        const sessionBudget = budgetLeft('the session')
         const started = builder.start()
         let active: ActiveSession
         try {
           active = await withBudget(
             started,
-            budgetLeft('the session'),
+            sessionBudget,
             `the dsh runtime did not answer session/new within the ${sessionOpenTimeoutMs} ms open budget`,
           )
         } catch (error) {

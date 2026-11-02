@@ -367,25 +367,20 @@ describe('dshDriver over a real ACP child process', () => {
     await connection.close()
   })
 
-  test('an exhausted open budget sends no further request and says the budget ran out', async () => {
+  test('a config option that runs out of time names the open budget', async () => {
     const sandbox = mkdtempSync(join(tmpdir(), 'echoflow-budget-'))
     sandboxes.push(sandbox)
     const callsPath = join(sandbox, 'calls.ndjson')
-    // The injected clock jumps past the budget while the model option is in
-    // flight, so the reasoning-effort option that follows finds none left.
-    let clock = 1_000
-    const driver = createDshDriver({
-      resolveCommand: command,
-      sessionOpenTimeoutMs: 300,
-      now: () => clock,
-    })
+    const driver = createDshDriver({ resolveCommand: command, sessionOpenTimeoutMs: 300 })
     const connection = await driver.start({
       installation,
       runId: 'run-1',
       cwd: process.cwd(),
-      env: { FIXTURE_CALLS_MARKER: callsPath, FIXTURE_LATE_CONFIG_MS: '250' },
+      // The model option cannot be answered inside the budget, so the open
+      // fails on it rather than on the option that was never reached.
+      env: { FIXTURE_CALLS_MARKER: callsPath, FIXTURE_LATE_CONFIG_MS: '350' },
     })
-    const opening = connection
+    const failure = await connection
       .openSession({
         sessionId: 'session-1',
         cwd: process.cwd(),
@@ -393,24 +388,84 @@ describe('dshDriver over a real ACP child process', () => {
         reasoningEffort: 'high',
       })
       .catch((error: unknown) => error)
-    // The model option reaches the engine after 250 ms; once it is there, the
-    // budget is gone for everything that follows.
-    const skip = setInterval(() => {
-      const seen = existsSync(callsPath)
-        ? readFileSync(callsPath, 'utf8').includes('session/set_config_option')
-        : false
-      if (seen) clock = 1_500
-    }, 10)
-    const failure = await opening
-    clearInterval(skip)
     expect(failure).toBeInstanceOf(Error)
-    // The budget is gone, not this one option that ran late.
+    // The whole open budget ran out, not just this one option.
     expect((failure as Error).message).toContain('budget')
     // And the reasoning-effort option was never even asked for.
     const calls = existsSync(callsPath)
       ? readFileSync(callsPath, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
       : []
     expect(calls.filter(call => call.method === 'session/set_config_option')).toHaveLength(1)
+    await connection.close()
+  })
+
+  test('a spent open budget sends no further config option', async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), 'echoflow-spent-'))
+    sandboxes.push(sandbox)
+    const callsPath = join(sandbox, 'calls.ndjson')
+    // The clock moves a fixed step per reading, so the deadline falls between
+    // the two config options without any timing race: the session and the
+    // model option still fit, the reasoning-effort option does not.
+    let clock = 0
+    const driver = createDshDriver({
+      resolveCommand: command,
+      sessionOpenTimeoutMs: 250,
+      now: () => {
+        clock += 100
+        return clock
+      },
+    })
+    const connection = await driver.start({
+      installation,
+      runId: 'run-1',
+      cwd: process.cwd(),
+      env: { FIXTURE_CALLS_MARKER: callsPath },
+    })
+    const failure = await connection
+      .openSession({
+        sessionId: 'session-1',
+        cwd: process.cwd(),
+        model: { provider: 'anthropic', model: 'claude-opus-5' },
+        reasoningEffort: 'high',
+      })
+      .catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(Error)
+    expect((failure as Error).message).toContain('budget')
+    const calls = existsSync(callsPath)
+      ? readFileSync(callsPath, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
+      : []
+    // The model option was asked for; the reasoning-effort option that would
+    // have followed it found no budget and was never sent.
+    expect(calls.filter(call => call.method === 'session/set_config_option')).toHaveLength(1)
+    await connection.close()
+  })
+
+  test('an open with no budget left sends no request at all', async () => {    const sandbox = mkdtempSync(join(tmpdir(), 'echoflow-nobudget-'))
+    sandboxes.push(sandbox)
+    const callsPath = join(sandbox, 'calls.ndjson')
+    const driver = createDshDriver({ resolveCommand: command, sessionOpenTimeoutMs: 0 })
+    const connection = await driver.start({
+      installation,
+      runId: 'run-1',
+      cwd: process.cwd(),
+      env: { FIXTURE_CALLS_MARKER: callsPath },
+    })
+    const failure = await connection
+      .openSession({
+        sessionId: 'session-1',
+        cwd: process.cwd(),
+        model: { provider: 'anthropic', model: 'claude-opus-5' },
+      })
+      .catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(Error)
+    expect((failure as Error).message).toContain('budget')
+    // Give the engine time to answer, so a request that was sent would show up.
+    await new Promise(resolve => setTimeout(resolve, 300))
+    // Not even session/new: a spent budget buys no request.
+    const calls = existsSync(callsPath)
+      ? readFileSync(callsPath, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
+      : []
+    expect(calls).toHaveLength(0)
     await connection.close()
   })
 
