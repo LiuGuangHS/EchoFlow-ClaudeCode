@@ -38,6 +38,10 @@ export function createElectronDevEnv(env: NodeJS.ProcessEnv = process.env) {
   }
 }
 
+export function resolveElectronAppArgs(desktopRoot: string) {
+  return [desktopRoot]
+}
+
 export function resolveElectronExecutable(desktopRoot: string, platform = process.platform) {
   const candidates = platform === 'win32'
     ? [path.join(desktopRoot, 'node_modules', 'electron', 'dist', 'electron.exe')]
@@ -101,7 +105,7 @@ async function main() {
 
   await waitForRenderer(rendererUrl)
 
-  const electron = spawn(resolveElectronExecutable(desktopRoot), ['./electron-dist/main.cjs'], {
+  const electron = spawn(resolveElectronExecutable(desktopRoot), resolveElectronAppArgs(desktopRoot), {
     cwd: desktopRoot,
     env: childEnv,
     stdio: 'inherit',

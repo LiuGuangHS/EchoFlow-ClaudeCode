@@ -125,7 +125,7 @@ PR 描述里请贴出你实际运行的命令和 summary。`quality:pr` / `quali
 
 发版验证已经搬到 CI 里了，本地不需要再跑全量。日常流程：
 
-1. **开发时**：只跑改动面最窄的测试（`bun run check:impact` 会告诉你该跑什么）。
+1. **开发迭代**：先跑本次行为的定向测试；不要仅凭目录名启动完整 surface gate。检查最终 diff、需要 PR-ready 证据时，再运行 `bun run check:impact`，并按报告选择检查。
 2. **打 tag 前**（可选）：手动触发 GitHub Actions 里的 `Quality Check` workflow，确认代码库是绿的。
 3. **打 tag**：`release-desktop.yml` 自动跑内容门禁 + 并行验证 + 6 平台构建，全过了才发。
 
@@ -153,7 +153,7 @@ bun run check:release-surface     # 发版面：品牌标记、版本/品牌漂�
 
 任务的完成标准是实现目标行为、运行当前 diff 必需的验证，并修复由本次改动造成的失败。任务范围内的本地编辑、隔离 fixture 检查和相关失败修复无需逐步请求批准；提交、推送、发布、仓库设置及真实模型额度仍遵循根 `AGENTS.md` 的授权边界。
 
-`bun run check:impact` 用于确定检查范围；普通任务运行选中的检查，需要 PR-ready/full validation 时直接使用 `bun run verify`，不必先单独重复执行其全部 lane。修复期间先重跑受影响的窄检查，交付时补齐最终 diff 的所需证据。没有后续改动或未解决风险时，不要反复运行已经通过的检查。无关的现有失败或环境阻塞应准确报告，而不是为了让结果变绿擅自扩大修改范围。
+`bun run check:impact` 用于确定最终 diff 的检查范围；普通任务先运行行为对应的定向测试，准备 PR-ready/full validation 时按需运行 impact 选中的检查，或直接使用 `bun run verify`，不必先单独重复执行其全部 lane。必须先读取 impact 结果，再启动它选中的检查；不得与 impact 分析并行抢跑。`check:native` 包含 sidecar 构建、打包和 package smoke，成本较高，仅在报告选中且交付证据需要时运行。检查失败或输出不完整时，先查看已有日志和进程；只有出现新的诊断依据时才重跑同一检查。修复期间先重跑受影响的窄检查，交付时补齐最终 diff 的所需证据。没有后续改动或未解决风险时，不要反复运行已经通过的检查。无关的现有失败或环境阻塞应准确报告，而不是为了让结果变绿擅自扩大修改范围。
 
 需要诊断失败时，按失败类型查阅相应证据：
 
