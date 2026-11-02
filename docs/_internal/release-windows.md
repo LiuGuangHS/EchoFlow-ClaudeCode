@@ -136,7 +136,7 @@ sha256sum desktop/build-artifacts/windows-x64-validation/EchoFlow-Code-X.Y.Z-win
 
 差分下载默认关闭。只有在 Windows 或 macOS 上显式设置 `ECHOFLOW_ENABLE_DIFFERENTIAL_DOWNLOAD=1`，且下载源是通过固定合同指纹校验的 GitHub Release 直连源时才会请求启用；`ECHOFLOW_DISABLE_DIFFERENTIAL_DOWNLOAD=1` 可强制关闭。自定义更新源、代理源和 Linux 始终使用完整下载。
 
-当前不能放量或把默认值改为开启：离线测试已确认 `GenericDifferentialDownloader` 在 `NodeHttpExecutor` 下接受错误的 `Content-Range`，也接受缺少 `Accept-Ranges: bytes` 的 `206`，只要最终文件 SHA-512 匹配。这个响应合同缺口不能由线上 canary 抵消；修复并通过新的离线门禁前，不得以显式开关做差分 canary。响应校验/fallback 层、集成验证和真实 canary 尚未完成，不能将现有测试当作 Electron transport 验收，也不能把放量记为完成。
+当前不能放量或把默认值改为开启：离线测试已确认 `GenericDifferentialDownloader` 在 `NodeHttpExecutor` 下接受错误的 `Content-Range`，也接受缺少 `Accept-Ranges: bytes` 的 `206`，只要最终文件 SHA-512 匹配。`electron-updater` 只有在差分 downloader 抛错时才会进入其内置完整包回退；被依赖接受的异常响应不会触发这条回退。这个响应合同缺口不能由线上 canary 抵消；修复并通过新的离线门禁前，不得以显式开关做差分 canary。响应校验/fallback 层、集成验证和真实 canary 尚未完成，不能将现有测试当作 Electron transport 验收，也不能把放量记为完成。
 
 当前 `updateRangeContract.test.ts` 直接构造 `GenericDifferentialDownloader` 和 `NodeHttpExecutor`。其中 redirect 用例断言 Node transport 不跟随 302；multipart 用例只断言错误的 `Content-Type` 会被拒绝。它没有执行应用的 `downloadUpdate()`，也没有经过 `ElectronHttpExecutor` 的 `electron.net.request` / updater session，因此不覆盖 Electron net 的重定向行为或真实 multipart 响应。依赖实现显示差分下载器主要按状态码、范围支持标头和 multipart Content-Type 分流；它不校验 `206` 的 `Content-Range` 与请求区间相符，也不强制 `Accept-Ranges: bytes`。
 

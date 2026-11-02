@@ -157,7 +157,7 @@ export function lanesForMode(mode: QualityGateMode, baselineTargets: BaselineTar
     {
       id: 'release-surface',
       title: 'Release surface audit',
-      description: 'Reject foreign-authored release notes, release-note version/brand drift, unresolved merge conflicts, and upstream branding on the public-identity surfaces before a release ships.',
+      description: 'Reject release-note version/brand drift, unresolved merge conflicts, and legacy product names on public identity surfaces before a release ships.',
       kind: 'command',
       command: ['bun', 'run', 'check:release-surface'],
       requiredForModes: ['release'],

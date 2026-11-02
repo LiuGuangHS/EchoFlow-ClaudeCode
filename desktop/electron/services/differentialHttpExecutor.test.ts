@@ -1,0 +1,87 @@
+import { EventEmitter } from 'node:events'
+import { PassThrough } from 'node:stream'
+import { describe, expect, it, vi } from 'vitest'
+import { DifferentialHttpExecutor } from './differentialHttpExecutor'
+
+type FakeResponse = PassThrough & {
+  statusCode: number
+  headers: Record<string, string | string[]>
+}
+
+function response(statusCode: number, headers: Record<string, string | string[]>): FakeResponse {
+  const stream = new PassThrough() as FakeResponse
+  stream.statusCode = statusCode
+  stream.headers = headers
+  return stream
+}
+
+function fixture() {
+  const request = new EventEmitter() as EventEmitter & { end: ReturnType<typeof vi.fn> }
+  request.end = vi.fn()
+  let responseHandler: ((response: FakeResponse) => void) | null = null
+  const base = {
+    createRequest: vi.fn((_options: unknown, handler: (response: FakeResponse) => void) => {
+      responseHandler = handler
+      return request
+    }),
+    addErrorAndTimeoutHandlers: vi.fn(),
+    download: vi.fn(),
+    downloadToBuffer: vi.fn(),
+  }
+  return { base, request, emitResponse: (value: FakeResponse) => responseHandler?.(value) }
+}
+
+function observe(executor: DifferentialHttpExecutor, options: { range?: string }) {
+  return new Promise<void>((resolve, reject) => {
+    const request = executor.createRequest({ headers: options.range ? { range: options.range } : {} }, response => {
+      response.once('error', reject)
+      response.once('end', resolve)
+      response.resume()
+    })
+    executor.addErrorAndTimeoutHandlers(request, reject)
+    request.end()
+  })
+}
+
+describe('DifferentialHttpExecutor', () => {
+  it('passes a valid single-range response through', async () => {
+    const fixtureValue = fixture()
+    const executor = new DifferentialHttpExecutor(fixtureValue.base)
+    const observed = observe(executor, { range: 'bytes=32-63' })
+
+    fixtureValue.emitResponse(response(206, {
+      'accept-ranges': 'bytes',
+      'content-range': 'bytes 32-63/96',
+      'content-length': '32',
+    }))
+
+    await expect(observed).resolves.toBeUndefined()
+  })
+
+  it('rejects a single-range response with a mismatched Content-Range', async () => {
+    const fixtureValue = fixture()
+    const executor = new DifferentialHttpExecutor(fixtureValue.base)
+    const observed = observe(executor, { range: 'bytes=32-63' })
+
+    fixtureValue.emitResponse(response(206, {
+      'accept-ranges': 'bytes',
+      'content-range': 'bytes 0-31/96',
+      'content-length': '32',
+    }))
+
+    await expect(observed).rejects.toThrow('Content-Range')
+  })
+
+  it('rejects multipart ranges so the updater can use the full-package fallback', async () => {
+    const fixtureValue = fixture()
+    const executor = new DifferentialHttpExecutor(fixtureValue.base)
+    const observed = observe(executor, { range: 'bytes=0-31,64-95' })
+
+    fixtureValue.emitResponse(response(206, {
+      'accept-ranges': 'bytes',
+      'content-type': 'multipart/byteranges; boundary=range-boundary',
+    }))
+
+    await expect(observed).rejects.toThrow('multiple ranges')
+  })
+})

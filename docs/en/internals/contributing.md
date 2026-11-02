@@ -46,7 +46,7 @@ When the repository is hosted in WSL, run desktop development and verification c
 | Tier | Trigger | What runs | Constraint |
 | --- | --- | --- | --- |
 | Local | manual | Narrow tests and commands selected by `check:impact` | fast feedback |
-| PR (required) | `pull_request` | Deterministic lanes selected by impact, including `check:agent-flow` | no model, provider, or secret; works on forks |
+| PR (required) | `pull_request` | Deterministic lanes selected by impact, including `check:agent-flow` | no model, provider, or secret; safe for external contributions |
 | Full sweep | Maintainer-triggered `workflow_dispatch` | Every deterministic lane, module-graph health, and `check:desktop-ui-smoke` | still no model or secret |
 | Release | tag triggers `release-desktop.yml` | Content gate, three verification jobs, and six-platform build | live checks require maintainer authorization |
 

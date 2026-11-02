@@ -71,7 +71,7 @@ Keep this file under 24 KiB. Crossing that is the signal to move content out, no
 - `docs/internals/contributing.md` owns contribution procedures, test design, quality gates, coverage policy, and Agent flow case law; its English mirror is `docs/en/internals/contributing.md`.
 - `docs/internals/structure.md` owns the directory map and module responsibilities. Area-specific guidance stays next to the code in `desktop/AGENTS.md`, `adapters/AGENTS.md`, `src/AGENTS.md`, `mobile/AGENTS.md`, and `docs/AGENTS.md`.
 - `scripts/pr/change-policy.ts` owns path routing, same-area test requirements, labels, and blocking policy. Do not duplicate those predicates in reports or prose.
-- Required PR checks must be deterministic and safe on an untrusted fork: no real models, public network, repository secrets, saved providers, or real user home/config. The detailed lane contract and command list live in the contribution guide.
+- Required PR checks must be deterministic and safe on external contributions: no real models, public network, repository secrets, saved providers, or real user home/config. The detailed lane contract and command list live in the contribution guide.
 - `bun run check:impact` is the minimum changed-surface report. `bun run verify` is the full PR/push/release-readiness entrypoint; do not claim that status without its required evidence.
 
 ## Persistent Storage Compatibility
@@ -85,10 +85,6 @@ Keep this file under 24 KiB. Crossing that is the signal to move content out, no
 - Doctor and repair flows must never mutate chat transcripts, model/provider config, Skills, MCP config, plugin state, IM bindings, adapter sessions, OAuth tokens, or team/session records unless a future task explicitly adds a reviewed, backup-first manual repair flow.
 - Protected files include `~/.claude/projects/**/*.jsonl`, `~/.claude/settings.json`, project `.claude/settings.json`, providers/settings/OAuth files under the resolved EchoFlow config root or legacy `~/.claude/echoflow-code/`, `~/.claude/adapters.json`, `~/.claude/adapter-sessions.json`, `~/.claude/skills`, project `.claude/skills`, `.mcp.json`, managed MCP config, `~/.claude/plugins/**`, and `~/.claude/teams/**`. Diagnose these paths only with redaction by default.
 - If a persistence shape cannot be upgraded in place, the implementation is blocked until the upgrade path is explicit and tested.
-
-## Desktop & UX Expectations
-The desktop design system, control conventions, and UI density/layout rules live in `desktop/AGENTS.md` and `desktop/src/components/AGENTS.md`; follow those rather than duplicating them here.
-- For visible UI changes, validate with an actual browser/desktop smoke path when feasible and include screenshots or a short visual-evidence note in the handoff. State when no visual evidence was produced.
 
 ## Release integrity
 

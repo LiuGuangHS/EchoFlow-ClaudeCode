@@ -46,23 +46,21 @@ describe('feature quality contract', () => {
     const agents = readFileSync('AGENTS.md', 'utf8')
     const contributing = readFileSync('docs/internals/contributing.md', 'utf8')
     const englishContributing = readFileSync('docs/en/internals/contributing.md', 'utf8')
+    const internalIndex = readFileSync('docs/_internal/README.md', 'utf8')
 
-    // AGENTS.md delegates the upstream-sync procedure and the regression case
-    // law to docs/. A pointer that no longer resolves is worse than no pointer,
-    // and re-inlining the procedure silently re-inflates the contract.
     expect(agents).toContain('docs/internals/contributing.md')
     expect(agents).not.toContain('### Manual Sync Workflow')
     expect(agents).not.toContain('### Automated Release Tracking')
+    expect(agents).not.toContain('upstream-derived')
+    expect(agents).not.toContain('former upstream')
+    expect(agents).not.toContain('upstream project this repository')
+    expect(agents).not.toContain('upstream identity markers')
 
-    // The upstream sync procedure is retired, but the two disciplines that
-    // survive it — per-hunk conflict adjudication and the public-identity
-    // audit — are still load-bearing and must stay documented.
     expect(contributing).toContain('冲突逐 hunk 裁决')
     expect(englishContributing).toContain('Adjudicate conflicts hunk by hunk')
-    // The retired scripts must not reappear as instructions.
-    expect(contributing).not.toContain('bun run upstream:audit')
-    expect(contributing).not.toContain('bun run upstream:sync')
-    expect(englishContributing).not.toContain('bun run upstream:audit')
+    expect(contributing).not.toContain('archive/upstream-sync-agent-handoff.md')
+    expect(englishContributing).not.toContain('archive/upstream-sync-agent-handoff.md')
+    expect(internalIndex).not.toContain('upstream-sync-agent-handoff.md')
 
     // The agent toolset is documented in docs/ and pointed at from AGENTS.md.
     // ECC is no longer the toolset, and re-inlining its commands would put a

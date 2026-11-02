@@ -46,7 +46,7 @@ bun run docs:dev                                # 文档站预览
 | 层级 | 触发 | 运行内容 | 约束 |
 | --- | --- | --- | --- |
 | 本地迭代 | 手动 | 最窄的相关测试和 `check:impact` 选中的命令 | 快速反馈 |
-| PR（必过） | `pull_request` | impact 选中的确定性 lane，含 `check:agent-flow` | 无模型、无 provider、无 secret，fork 可运行 |
+| PR（必过） | `pull_request` | impact 选中的确定性 lane，含 `check:agent-flow` | 无模型、无 provider、无 secret，外部贡献可运行 |
 | 全量 | 维护者手动触发 `workflow_dispatch` | 全部确定性 lane、模块图健康度和 `check:desktop-ui-smoke` | 仍无模型、无 secret |
 | Release | tag 自动触发 `release-desktop.yml` | 内容门禁、三组验证 job、六平台构建 | live 检查只在获授权的维护者流程运行 |
 
