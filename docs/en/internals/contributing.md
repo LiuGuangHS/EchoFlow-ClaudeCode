@@ -84,7 +84,7 @@ bun run check:desktop-ui-smoke
 
 `check:agent-flow` uses the real server, real WebSocket, and mock CLI to cover session creation, runtime selection, first-turn streaming, tool calls, permission allow/deny, tool failure, API error, interrupt, reconnect permission replay, and session recovery. `check:desktop-ui-smoke` clicks the real permission button in the real desktop UI; it prints a reason when `agent-browser` or desktop dependencies are missing.
 
-Neither lane needs a provider, credentials, or the public network. For temporary browser checks, screenshots, and exploratory UI verification, use browser automation available in the current session rather than treating repository `agent-browser` scripts as a general-purpose browser tool.
+Neither lane needs a provider, credentials, or the public network. `agent-browser` belongs to this committed lane (run headlessly in Linux CI) and maintainer-run `desktop/scripts/e2e-*-agent-browser.sh` scripts. For temporary browser checks, screenshots, and exploratory UI verification, use browser automation available in the current session rather than treating repository `agent-browser` scripts as a general-purpose browser tool.
 
 ## AI Coding Agent Fix Loop
 
@@ -94,7 +94,7 @@ Neither lane needs a provider, credentials, or the public network. For temporary
 4. Fix failures caused by this change; report unrelated failures or environment blockers instead of expanding scope.
 5. Claim PR-ready or full validation only after `bun run verify` passes for the final diff.
 
-For a failed lane, read the Summary / Result Matrix in `artifacts/quality-runs/<timestamp>/report.md` and its `logs/<lane>.log`. For coverage failures, read `artifacts/coverage/<timestamp>/coverage-report.md` or `.json`; do not lower baselines, thresholds, or test expectations to hide failures.
+For a failed lane, read the Summary / Result Matrix in `artifacts/quality-runs/<timestamp>/report.md` and its `logs/<lane>.log`. For coverage failures, read `artifacts/coverage/<timestamp>/coverage-report.md` or `.json`; do not lower baselines, thresholds, or test expectations to hide failures. Use `bun run check:impact` to determine the check scope for the final diff; read the impact result before starting selected checks and never launch them in parallel with impact analysis. `check:native` includes sidecar builds, packaging, and package smoke, so run it only when selected and needed for delivery evidence. If a check fails or its output is incomplete, inspect existing logs and processes first; rerun the same check only when new diagnostic evidence justifies it. Do not repeat passing checks without subsequent edits or unresolved risks. Report unrelated existing failures or environment blockers instead of expanding the change merely to make everything green.
 
 Adjudicate conflicts hunk by hunk; never apply blanket `--ours` or `--theirs`. Before release, run `bun run check:release-surface` to audit public identity.
 

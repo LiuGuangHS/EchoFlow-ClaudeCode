@@ -51,6 +51,7 @@ import type { WorkspaceBrowserMenuOptions } from '../src/lib/desktopHost/types'
 import { acquireSingleInstanceLock } from './services/singleInstance'
 import { installTray, shouldInstallTray, type TrayController } from './services/tray'
 import { ElectronUpdaterService, updaterSessionProxyConfig } from './services/updater'
+import { wrapDifferentialHttpExecutor } from './services/differentialHttpExecutor'
 import { resolveDifferentialDownloadRequest, resolveDownloadFeedUrls, resolveUpdateFeedConfig } from './services/updateFeed'
 import { createUpdateSmokeUpdaterFromEnv } from './services/updateSmoke'
 import { ElectronTerminalService, type TerminalSpawnInput } from './services/terminal'
@@ -659,6 +660,9 @@ function getUpdaterService() {
             process.platform,
             feedConfig.differentialDownloadFeedUrls[0],
           )
+          if (differentialDownload) {
+            wrapDifferentialHttpExecutor(autoUpdater as typeof autoUpdater & { httpExecutor?: unknown })
+          }
           return {
             metadataFeedUrl: feedConfig.metadataUrl,
             metadataFallbackUrls: feedConfig.metadataFallbackUrls,

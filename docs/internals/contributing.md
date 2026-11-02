@@ -84,7 +84,58 @@ bun run check:desktop-ui-smoke
 
 `check:agent-flow` 使用真实 server、真实 WebSocket 和 mock CLI，覆盖 Session 创建、运行时选择、首轮流式、工具调用、权限批准/拒绝、工具失败、API 错误、中断、重连权限重放和会话恢复。`check:desktop-ui-smoke` 在真实桌面 UI 中点击真实权限按钮；缺少 `agent-browser` 或桌面依赖时会打印原因。
 
-这两条 lane 不需要 provider、凭据或公网。临时浏览器检查、截图和探索性 UI 验证使用当前会话实际可用的浏览器自动化，不要把仓库里的 `agent-browser` 当成通用工具。
+这两条 lane 不需要 provider、凭据或公网。`agent-browser` 只属于这条已提交的 lane（在 Linux CI 上以 headless 方式运行）以及维护者手动执行的 `desktop/scripts/e2e-*-agent-browser.sh`。临时浏览器检查、截图和探索性 UI 验证使用当前会话实际可用的浏览器自动化手段（浏览器 MCP、浏览器插件或 headless Chrome），不要把仓库里的 `agent-browser` 当成通用工具。
+
+所有会启动真实 server 的 quality-gate lane 都跑在沙箱配置目录里（`scripts/quality-gate/sandbox.ts`），并在结束时校验没有写过开发者真实的 `~/.claude`；写了就判定 lane 失败。
+
+开发时运行 impact report 选中的窄命令即可。需要声明 PR-ready 或完整验证时，直接使用统一入口，无需先单独执行其全部 lane：
+
+```bash
+bun run verify
+```
+
+`bun run verify` 等价于 `bun run quality:pr`，会按改动范围执行被选中的 policy、desktop、server、adapter、native、provider contract、chat contract、persistence、docs 和 coverage lane。它不调用真实大模型。小范围外部贡献者不需要在本机运行无关模块；GitHub CI 会再次执行精确的 path-aware gate。
+
+主质量报告会内嵌当前测试范围、结果矩阵、覆盖率摘要，并链接完整 coverage/JUnit/log artifact：
+
+```text
+artifacts/quality-runs/<timestamp>/report.md
+artifacts/quality-runs/<timestamp>/report.json
+artifacts/quality-runs/<timestamp>/junit.xml
+artifacts/quality-runs/<timestamp>/logs/*.log
+artifacts/coverage/<timestamp>/coverage-report.md
+artifacts/coverage/<timestamp>/coverage-report.json
+```
+
+PR 描述里请贴出你实际运行的命令和 summary。`quality:pr` / `quality:verify` 仍然保留给习惯显式质量命名的用户，但推荐文档和 AI prompt 都使用 `bun run verify`。
+
+### 轻量验证（维护者日常发版）
+
+发版验证已经搬到 CI 里了，本地不需要再跑全量。日常流程：
+
+1. **开发迭代**：先跑本次行为的定向测试；不要仅凭目录名启动完整 surface gate。检查最终 diff、需要 PR-ready 证据时，再运行 `bun run check:impact`，并按报告选择检查。
+2. **打 tag 前**（可选）：手动触发 GitHub Actions 里的 `Quality Check` workflow，确认代码库是绿的。
+3. **打 tag**：`release-desktop.yml` 自动跑内容门禁 + 并行验证 + 6 平台构建，全过了才发。
+
+如果确实要在本地跑一遍（比如网络不方便），用下面这组命令，覆盖面和 CI 验证一致：
+
+```bash
+bun run check:policy              # policy、dead-imports、module-graph、contract 字节预算
+bun run check:server              # src/ 全量
+bun run check:desktop             # lint + vitest + vite build
+bun run check:provider-contract   # provider/proxy/auth 契约
+bun run check:chat-contract       # desktop transport、store、首回合
+bun run check:persistence-upgrade # 持久化迁移与旧 fixture
+bun run check:agent-flow          # 无模型的 agent 端到端 8 场景
+bun run check:adapters            # IM sidecar
+bun run check:release-surface     # 发版面：品牌标记、版本/品牌漂移、冲突残留
+```
+
+`check:native`（完整 sidecar 构建 + 打包 + package smoke）最慢，仅在触碰 `native/`、`desktop/electron` 打包配置或发版脚本时跑。真正的 Release workflow 会在 6 个平台上重新构建，本机不必重复。
+
+跑 `check:server` 时它与动态端口测试不可与其他 server lane 并发，串行执行。
+
+覆盖率门禁按本次改动的源码区域运行 root、desktop、adapters 对应套件，并执行 baseline ratchet、报告目标差距和检查变更行覆盖率；未改动区域不重复跑。没有可识别的源码区域变更，或覆盖率策略及依赖清单变化时会运行全部区域。当前 baseline 记录在 `scripts/quality-gate/coverage-baseline.json`，CI 会优先对比 base branch 的 baseline，改动区域的覆盖率不得低于允许窗口。`coverage-baseline.json` 或 `coverage-thresholds.json` 变更必须由维护者加 `allow-coverage-baseline-change` 后才能合并。Quarantine 只用于维护者的 baseline/release 追踪，不得隐藏确定性的 provider/chat 契约测试；当前普通 PR gate 不依赖 quarantine 才能通过。
 
 ## AI Coding Agent 修复循环
 
@@ -94,7 +145,7 @@ bun run check:desktop-ui-smoke
 4. 只修复本次改动造成的失败；无关的既有失败或环境阻塞要如实报告，不要擅自扩大范围。
 5. 只有最终 diff 的 `bun run verify` 通过，才能声明 PR-ready 或 full validation。
 
-诊断 lane 失败时，先看 `artifacts/quality-runs/<timestamp>/report.md` 的 Summary / Result Matrix 和对应 `logs/<lane>.log`。coverage 失败看 `artifacts/coverage/<timestamp>/coverage-report.md` 或 `.json`，不要降低 baseline、threshold 或改写测试预期来掩盖失败。
+诊断 lane 失败时，先看 `artifacts/quality-runs/<timestamp>/report.md` 的 Summary / Result Matrix 和对应 `logs/<lane>.log`。coverage 失败看 `artifacts/coverage/<timestamp>/coverage-report.md` 或 `.json`，不要降低 baseline、threshold 或改写测试预期来掩盖失败。`bun run check:impact` 用于确定最终 diff 的检查范围；必须先读取 impact 结果，再启动它选中的检查，不得与 impact 分析并行抢跑。`check:native` 包含 sidecar 构建、打包和 package smoke，成本较高，仅在报告选中且交付证据需要时运行。检查失败或输出不完整时，先查看已有日志和进程；只有出现新的诊断依据时才重跑同一检查。没有后续改动或未解决风险时，不要反复运行已经通过的检查。无关的现有失败或环境阻塞应准确报告，而不是为了让结果变绿擅自扩大修改范围。
 
 合并时必须对冲突逐 hunk 裁决，不能整体套用 `--ours` 或 `--theirs`；发布前还要运行 `bun run check:release-surface` 审计公开身份。
 

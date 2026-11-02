@@ -1,0 +1,29 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/v17.6.0/schemas/config.json",
+  "packages": {
+    "desktop": {
+      "release-type": "node",
+      "include-component-in-tag": false,
+      "include-v-in-tag": true,
+      "skip-changelog": true,
+      "versioning": "always-bump-patch",
+      "extra-files": [
+        {
+          "type": "json",
+          "path": "/mobile/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "/mobile/app.json",
+          "jsonpath": "$.version"
+        }
+      ]
+    }
+  },
+  "bump-patch-for-minor-pre-major": true,
+  "bump-minor-pre-major": false,
+  "skip-changelog": true,
+  "draft": true,
+  "force-tag-creation": true
+}

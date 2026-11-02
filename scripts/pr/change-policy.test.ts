@@ -184,6 +184,16 @@ describe('evaluateChangePolicy', () => {
     expect(result.checks.desktopNative).toBe(true)
   })
 
+  test('routes desktop launcher scripts to native without selecting the desktop UI lane', () => {
+    const result = evaluateChangePolicy([
+      'desktop/scripts/electron-dev.ts',
+      'desktop/scripts/dev-launcher.test.ts',
+    ])
+
+    expect(result.checks.desktop).toBe(false)
+    expect(result.checks.desktopNative).toBe(true)
+  })
+
   test.each([
     'native/cu-helper/Sources/cu-helper/VirtualCursor.swift',
     'native/cu-helper/Tests/CuHelperTests/VirtualCursorResourceTests.swift',

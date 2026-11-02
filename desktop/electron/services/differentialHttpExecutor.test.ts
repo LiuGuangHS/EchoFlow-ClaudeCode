@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
 import { describe, expect, it, vi } from 'vitest'
-import { DifferentialHttpExecutor } from './differentialHttpExecutor'
+import { DifferentialHttpExecutor, wrapDifferentialHttpExecutor } from './differentialHttpExecutor'
 
 type FakeResponse = PassThrough & {
   statusCode: number
@@ -24,11 +24,21 @@ function fixture() {
       responseHandler = handler
       return request
     }),
-    addErrorAndTimeoutHandlers: vi.fn(),
+    addErrorAndTimeoutHandlers: vi.fn((value: EventEmitter, reject: (error: Error) => void) => {
+      value.once('error', reject)
+    }),
     download: vi.fn(),
     downloadToBuffer: vi.fn(),
   }
-  return { base, request, emitResponse: (value: FakeResponse) => responseHandler?.(value) }
+  return {
+    base,
+    request,
+    emitResponse: (value: FakeResponse) => {
+      responseHandler?.(value)
+      if (value.listenerCount('error') === 0) value.on('error', () => {})
+      value.end()
+    },
+  }
 }
 
 function observe(executor: DifferentialHttpExecutor, options: { range?: string }) {
@@ -83,5 +93,14 @@ describe('DifferentialHttpExecutor', () => {
     }))
 
     await expect(observed).rejects.toThrow('multiple ranges')
+  })
+
+  it('wraps an updater executor once and preserves the delegate for non-range requests', () => {
+    const fixtureValue = fixture()
+    const updater = { httpExecutor: fixtureValue.base as never }
+
+    expect(wrapDifferentialHttpExecutor(updater)).toBe(true)
+    expect(wrapDifferentialHttpExecutor(updater)).toBe(false)
+    expect(updater.httpExecutor).toBeInstanceOf(DifferentialHttpExecutor)
   })
 })

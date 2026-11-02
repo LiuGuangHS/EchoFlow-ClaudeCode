@@ -527,9 +527,8 @@ describe('release desktop workflow', () => {
     const workflow = readReleaseWorkflow()
     const publishJob = extractJob(workflow, 'publish-release')
 
-    expect(workflow).toContain('publish_draft_release:')
-    expect(workflow).toContain("description: 'Publish manual draft artifacts to GitHub Releases'")
-    expect(publishJob).toContain("if: github.event_name == 'push' || inputs.draft == false || inputs.publish_draft_release == true")
+    expect(workflow).not.toContain('publish_draft_release:')
+    expect(publishJob).toContain("if: (github.event_name == 'workflow_call' && inputs.official_release == true) || (github.event_name == 'workflow_dispatch' && inputs.draft == true)")
     expect(publishJob).toContain('Refuse to overwrite an existing published release')
     expect(publishJob).toContain("if: github.event_name == 'workflow_dispatch' && inputs.draft == true")
     expect(publishJob).toContain('Refusing to overwrite published release v${{ steps.version.outputs.value }} with manual draft artifacts')
@@ -561,8 +560,10 @@ describe('release desktop workflow', () => {
     expect(publishJob).toContain('desktop/scripts/install-macos-unsigned.sh')
     expect(publishJob).toContain('draft: true')
     expect(publishJob).toContain('Publish GitHub release after complete upload')
-    expect(publishJob).toContain("if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.draft == false)")
-    expect(publishJob).toContain('gh release edit "v${{ steps.version.outputs.value }}" --draft=false --repo "${{ github.repository }}"')
+    expect(publishJob).toContain("if: github.event_name == 'workflow_call' && inputs.official_release == true")
+    expect(publishJob).toContain('--method PATCH')
+    expect(publishJob).toContain('releases/${RELEASE_ID}')
+    expect(publishJob).toContain('undrafted_id')
     expect(publishJob).toContain('Keep workflow-dispatch release as draft')
     expect(publishJob).toContain("if: github.event_name == 'workflow_dispatch' && inputs.draft == true")
     expect(publishJob).toContain('release remains draft')
@@ -579,7 +580,7 @@ describe('release desktop workflow', () => {
     expect(publishJob).toContain('draft: true')
     expect(publishJob).toContain('fail_on_unmatched_files: true')
     expect(publishJob).toContain('Publish GitHub release after complete upload')
-    expect(publishJob).toContain('--draft=false')
+    expect(publishJob).toContain('-F draft=false')
     expect(publishJob.indexOf('Publish complete GitHub release')).toBeLessThan(publishJob.indexOf('Publish GitHub release after complete upload'))
     expect(publishJob.indexOf('Validate standard update metadata set')).toBeLessThan(publishJob.indexOf('Publish complete GitHub release'))
   })
@@ -588,8 +589,7 @@ describe('release desktop workflow', () => {
     const workflow = readReleaseWorkflow()
     const publishJob = extractJob(workflow, 'publish-release')
     const syncJob = extractJob(workflow, 'site-release-sync')
-    const undraftCondition = "if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.draft == false)"
-
+    const undraftCondition = "if: github.event_name == 'workflow_call' && inputs.official_release == true"
     expect(publishJob).toContain('outputs:')
     expect(publishJob).toContain('version: ${{ steps.version.outputs.value }}')
     expect(syncJob).toBeTruthy()
@@ -597,6 +597,7 @@ describe('release desktop workflow', () => {
     // 同步挂在 undraft 条件上：draft 发布绝不触发站点同步。
     expect(syncJob).toContain(undraftCondition)
     expect(publishJob).toContain(undraftCondition)
+    expect(publishJob).toContain("if: github.event_name == 'workflow_dispatch' && inputs.draft == true")
     expect(syncJob).toContain('uses: ./.github/workflows/deploy-docs.yml')
     expect(syncJob).toContain('release_tag: ${{ needs.publish-release.outputs.version }}')
     // workflow_call 的 token 是调用方与被调方的交集：发布工作流本身不给 pages 权限，
@@ -938,5 +939,158 @@ describe('release desktop workflow', () => {
     expect(compiledSidecarSmoke).toContain("'中文 安装目录'")
     expect(compiledSidecarSmoke).toContain("'中文 用户目录'")
     expect(compiledSidecarSmoke).toContain('copyFile(builtExecutable, executable)')
+  })
+
+  test('official release dispatch requires an explicit release tag', () => {
+    const workflow = readReleaseWorkflow()
+
+    // Release Please dispatches the publisher by tag, because a tag push made
+    // with GITHUB_TOKEN does not start a workflow run. The input stays
+    // optional so a maintainer draft run can omit it.
+    expect(workflow).toContain('release_tag:')
+    expect(workflow).toContain("description: 'Release tag to publish (vX.Y.Z)'")
+    expect(workflow).toContain("default: ''")
+  })
+
+  test('official release dispatch checks out the requested tag', () => {
+    const workflow = readReleaseWorkflow()
+    const contractJob = extractJob(workflow, 'release-contract')
+    const buildJob = extractJob(workflow, 'build')
+
+    expect(contractJob).toContain('ref: ${{ inputs.release_sha || github.sha }}')
+    expect(buildJob).toContain('ref: ${{ inputs.release_sha || github.sha }}')
+  })
+
+  test('official release dispatch requires the tag to match the packaged version', () => {
+    const workflow = readReleaseWorkflow()
+    const contractJob = extractJob(workflow, 'release-contract')
+    const buildJob = extractJob(workflow, 'build')
+
+    // A tag that does not match the packaged version must fail the run
+    // instead of publishing assets under the wrong version.
+    expect(contractJob).toContain('Release tag must match')
+    expect(buildJob).toContain('Release tag must match')
+  })
+
+  test('official release dispatch rejects a malformed release tag', () => {
+    const workflow = readReleaseWorkflow()
+    const contractJob = extractJob(workflow, 'release-contract')
+
+    expect(contractJob).toContain('Invalid release tag')
+    expect(contractJob).toMatch(/v\\d\+\\\.\\d\+\\\.\\d\+|v\[0-9\]/)
+  })
+
+  test('only a trusted reusable call or tag push can publish and sync; manual dispatch stays draft', () => {
+    const workflow = readReleaseWorkflow()
+    const publishJob = extractJob(workflow, 'publish-release')
+    const syncJob = extractJob(workflow, 'site-release-sync')
+
+    expect(publishJob).toContain("(github.event_name == 'workflow_call' && inputs.official_release == true) || (github.event_name == 'workflow_dispatch' && inputs.draft == true)")
+    expect(syncJob).toContain("github.event_name == 'workflow_call' && inputs.official_release == true")
+    expect(workflow).toContain("default: true")
+    expect(publishJob).not.toContain("github.event_name == 'workflow_dispatch' && inputs.draft == false")
+  })
+
+  test('manual draft publisher remains isolated from trusted release publication', () => {
+    const workflow = readReleaseWorkflow()
+    const publishJob = extractJob(workflow, 'publish-release')
+
+    expect(publishJob).toContain("if: github.event_name == 'workflow_dispatch' && inputs.draft == true")
+    expect(publishJob).not.toContain("github.event_name == 'workflow_dispatch' && inputs.draft == false")
+  })
+
+  test('official release uses a reusable workflow call from the trusted automatic Release Please run', () => {
+    const workflow = readReleaseWorkflow()
+    const parsed = parse(workflow)
+    const contractJob = extractJob(workflow, 'release-contract')
+
+    expect(parsed.on.workflow_call.inputs).toMatchObject({
+      official_release: { required: false, type: 'boolean', default: false },
+      release_tag: { required: false, type: 'string' },
+      release_sha: { required: false, type: 'string' },
+      draft: { required: false, type: 'boolean', default: true },
+    })
+    expect(contractJob).toContain("github.event_name == 'push'")
+    expect(contractJob).toContain('github.workflow_ref')
+    expect(contractJob).toContain('.github/workflows/release-please.yml@refs/heads/main')
+    expect(contractJob).toContain('inputs.official_release == true')
+    expect(contractJob).toContain('inputs.release_sha')
+    expect(workflow).toContain('release-please.yml')
+  })
+
+  test('all release jobs use immutable release SHA and verify peeled tag commit', () => {
+    const workflow = readReleaseWorkflow()
+
+    for (const jobName of [
+      'release-contract',
+      'verify-governance',
+      'verify-runtime',
+      'verify-desktop',
+      'build',
+      'publish-release',
+    ]) {
+      const job = extractJob(workflow, jobName)
+      expect(job, jobName).toContain('ref: ${{ inputs.release_sha || github.sha }}')
+    }
+    expect(extractJob(workflow, 'release-contract')).toContain('^{commit}')
+    expect(extractJob(workflow, 'release-contract')).toContain("if: github.event_name != 'workflow_dispatch' || inputs.release_tag != ''")
+  })
+
+  test('official publisher pins the existing draft release and isolates sync recovery', () => {
+    const workflow = readReleaseWorkflow()
+    const publishJob = extractJob(workflow, 'publish-release')
+    const syncJob = extractJob(workflow, 'site-release-sync')
+
+    expect(publishJob).toContain('release ID')
+    expect(publishJob).toContain('isDraft')
+    expect(publishJob).toContain('Verify release record after upload')
+    expect(publishJob).toContain('RELEASE_ID')
+    expect(publishJob).toContain("if: github.event_name != 'workflow_dispatch' || inputs.release_tag != ''")
+    expect(syncJob).not.toContain('softprops/action-gh-release')
+    expect(syncJob).not.toContain('gh release edit')
+  })
+
+  test('official reusable calls must explicitly request a non-draft release', () => {
+    const workflow = readReleaseWorkflow()
+    const contractStep = extractStep(workflow, 'Validate official release authorization')
+
+    expect(contractStep).toContain('DRAFT_RELEASE: ${{ inputs.draft == true }}')
+    expect(contractStep).toContain('DRAFT_RELEASE')
+    expect(contractStep).toContain('!= "false"')
+  })
+
+  test('existing draft assets are uploaded through the verified release ID', () => {
+    const workflow = readReleaseWorkflow()
+    const publishJob = extractJob(workflow, 'publish-release')
+
+    expect(publishJob).toContain('Publish existing GitHub release by ID')
+    expect(publishJob).toContain("if: steps.release.outputs.release_id != ''")
+    expect(publishJob).toContain('releases/${RELEASE_ID}/assets?name=')
+    expect(publishJob).toContain('--hostname uploads.github.com')
+    expect(publishJob).toContain('DELETE')
+    expect(publishJob).toContain('softprops/action-gh-release@v2')
+    expect(publishJob).toContain("if: steps.release.outputs.release_id == ''")
+  })
+
+  test('Release Please caller uses an immutable action and preserves the permissions chain', () => {
+    const workflow = readFileSync('.github/workflows/release-please.yml', 'utf8')
+    const parsed = parse(workflow)
+    const publishJob = extractJob(workflow, 'publish-release')
+    const actionPin = workflow.match(/uses: googleapis\/release-please-action@([0-9a-f]{40})/)
+
+    expect(actionPin?.[1]).toBe('5c625bfb5d1ff62eadeeb3772007f7f66fdcf071')
+    expect(parsed.jobs['publish-release'].permissions).toEqual({
+      actions: 'read',
+      contents: 'write',
+      pages: 'write',
+      'id-token': 'write',
+    })
+    expect(publishJob).toContain('draft: false')
+    expect(workflow).toContain("if: needs.release-please.outputs.release_created == 'true'")
+    expect(workflow).toContain("release_created: ${{ steps.release.outputs['desktop--release_created'] }}")
+    expect(workflow).toContain("release_sha: ${{ steps.release.outputs['desktop--sha'] }}")
+    expect(workflow).toContain("tag_name: ${{ steps.release.outputs['desktop--tag_name'] }}")
+    expect(workflow).toContain('EXPECTED_SHA: ${{ needs.release-please.outputs.release_sha }}')
+    expect(workflow).toContain('refs/tags/${RELEASE_TAG}^{commit}')
   })
 })
