@@ -1690,6 +1690,16 @@ button, input, textarea, select, a, [role="button"] {
   }
 }
 
+/* User-configured transparency and high-contrast modes need a solid surface,
+   not a translucent panel with its blur intentionally disabled. */
+@media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+  .glass-panel {
+    background: var(--color-surface-dialog);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
 .glass-panel:focus-within {
   box-shadow: var(--shadow-focus-ring), var(--shadow-dropdown);
 }

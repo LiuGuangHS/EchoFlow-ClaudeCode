@@ -37,6 +37,7 @@ import {
 import { restoreStoredSessionBinding, SESSION_RECONNECT_NOTICE, type SessionRestoreResult } from '../common/session-recovery.js'
 import { isAllowedUser, tryPair } from '../common/pairing.js'
 import { extractInboundPayload } from './extract-payload.js'
+import { buildFeishuPairingNotice } from './pairing-notice.js'
 import { FeishuMediaService } from './media.js'
 import { AttachmentStore } from '../common/attachment/attachment-store.js'
 import { checkAttachmentLimit } from '../common/attachment/attachment-limits.js'
@@ -945,11 +946,7 @@ async function handleMessage(data: any): Promise<void> {
       const pairText = extractInboundPayload(content, msgType).text.trim() || null
       if (pairText) {
         const success = tryPair(pairText.trim(), { userId: senderOpenId, displayName: 'Feishu User' }, 'feishu')
-        if (success) {
-          await sendText(chatId, '✅ 配对成功！现在可以开始聊天了。\n\n发送消息即可与 Claude 对话。')
-        } else {
-          await sendText(chatId, '🔒 未授权。请在 Claude Code 桌面端生成配对码后发送给我。')
-        }
+        await sendText(chatId, buildFeishuPairingNotice(success))
       }
       return
     }

@@ -29,6 +29,7 @@ import {
   substituteUserConfigVariables,
 } from './plugins/pluginOptionsStorage.js'
 import { getPluginDataDir } from './plugins/pluginDirectories.js'
+import { getCurrentWorktreeSession } from './worktree.js'
 import {
   getSessionId,
   getProjectRoot,
@@ -896,6 +897,10 @@ async function execCommandHook(
   const envVars: NodeJS.ProcessEnv = {
     ...subprocessEnv(),
     CLAUDE_PROJECT_DIR: toHookPath(projectDir),
+  }
+  const activeWorktree = getCurrentWorktreeSession()
+  if (activeWorktree) {
+    envVars.AGENT_QUALITY_GATE_PROJECT_DIR = toHookPath(activeWorktree.worktreePath)
   }
 
   // Plugin and skill hooks both set CLAUDE_PLUGIN_ROOT (skills use the same

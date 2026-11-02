@@ -4,7 +4,7 @@
 
 规则优先级：根 `AGENTS.md` < `desktop/AGENTS.md` < 本文件。冲突时以本文件为准。
 
-配套文档：[`desktop/docs/component-library-plan.md`](../../docs/component-library-plan.md) 记录审计证据与后续计划。
+全局视觉方向见仓库根目录 [`DESIGN.md`](../../../DESIGN.md)。组件库迁移记录见 [`desktop/docs/component-library-plan.md`](../../docs/component-library-plan.md)，其中包含历史审计快照，不是当前视觉规范。
 
 ---
 
@@ -93,7 +93,7 @@ className="bg-[var(--color-surface)] text-[var(--color-text-primary)]"
 className="bg-[#FAF9F5] text-[#1B1C1A]"
 ```
 
-三个主题（`white` 默认 / `light` / `dark`）靠 `<html data-theme>` 切换，**不跟随操作系统**。新增 token 必须在三个主题块里都定义，`globals.test.ts` 会检查。
+六个主题（`white` / `paper` / `warm-classic` / `celadon` / `dark` / `ink-blue`）靠 `<html data-theme>` 切换；系统外观只决定 light/dark 配对，**不直接决定具体主题**。新增源 token 必须覆盖六个主题，语义映射定义一次；`globals.test.ts` 会检查。
 
 `tokenUsage.test.ts` 扫描全部源码，断言每个 `var(--token)` 都能解析 —— 拼错的 token 不会报错，只会静默渲染成透明背景或 `currentColor` 边框。
 

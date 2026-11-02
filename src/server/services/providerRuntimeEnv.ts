@@ -1,6 +1,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 
+import { normalizeLocalRedactionSettings } from '../../shared/localRedactionSettings.js'
 import {
   getClaudeCodeModelCapabilities,
   type ModelReasoningProviderKind,
@@ -11,10 +12,7 @@ import {
 } from '../../shared/modelApiFormats.js'
 import { MODEL_CONTEXT_WINDOWS_ENV_KEY } from '../../utils/model/modelContextWindows.js'
 import { PROVIDER_MAX_OUTPUT_TOKENS_ENV_KEY } from '../../utils/managedEnvConstants.js'
-import {
-  ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
-  LEGACY_ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
-} from '../../utils/thinking.js'
+import { ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY } from '../../utils/thinking.js'
 import {
   IMAGE_GENERATION_API_KEY_ENV_KEY,
   IMAGE_GENERATION_BASE_URL_ENV_KEY,
@@ -43,12 +41,14 @@ import { getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 import {
   OPENAI_CODEX_OAUTH_FILE_ENV_KEY,
   OPENAI_OAUTH_PROVIDER_ENV_KEY,
+  OPENAI_OFFICIAL_PROVIDER,
   buildOpenAIOfficialRuntimeEnv,
   isOpenAIOfficialProviderId,
 } from './openaiOfficialProvider.js'
 import {
   GROK_OAUTH_FILE_ENV_KEY,
   GROK_OAUTH_PROVIDER_ENV_KEY,
+  GROK_OFFICIAL_PROVIDER,
   buildGrokOfficialRuntimeEnv,
   isGrokOfficialProviderId,
 } from './grokOfficialProvider.js'
@@ -84,7 +84,6 @@ export const MANAGED_PROVIDER_ENV_KEYS = [
   ATTRIBUTION_HEADER_ENV_KEY,
   MODEL_CONTEXT_WINDOWS_ENV_KEY,
   ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
-  LEGACY_ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
   PROVIDER_MAX_OUTPUT_TOKENS_ENV_KEY,
   OPENAI_OAUTH_PROVIDER_ENV_KEY,
   OPENAI_CODEX_OAUTH_FILE_ENV_KEY,
@@ -509,12 +508,29 @@ export function providerNeedsProxy(
 
 export function buildProviderManagedEnv(
   provider: SavedProvider,
-  options?: { proxyPath?: string; serverPort?: number },
+  options?: { proxyPath?: string; serverPort?: number; forceProxy?: boolean },
 ): Record<string, string> {
+  const proxyPath = options?.proxyPath ?? '/proxy'
+  const serverPort = options?.serverPort ?? 3456
+  const forceProxy = options?.forceProxy === true
   if (isOpenAIOfficialProviderId(provider.id) && provider.runtimeKind === 'openai_oauth') {
+    if (forceProxy) {
+      return {
+        ANTHROPIC_BASE_URL: `http://127.0.0.1:${serverPort}${proxyPath}`,
+        ANTHROPIC_API_KEY: 'proxy-managed',
+        ANTHROPIC_MODEL: provider.models.main,
+      }
+    }
     return buildOpenAIOfficialRuntimeEnv(provider.models)
   }
   if (isGrokOfficialProviderId(provider.id) && provider.runtimeKind === 'grok_oauth') {
+    if (forceProxy) {
+      return {
+        ANTHROPIC_BASE_URL: `http://127.0.0.1:${serverPort}${proxyPath}`,
+        ANTHROPIC_API_KEY: 'proxy-managed',
+        ANTHROPIC_MODEL: provider.models.main,
+      }
+    }
     return buildGrokOfficialRuntimeEnv(provider.models)
   }
 
@@ -524,9 +540,7 @@ export function buildProviderManagedEnv(
   // so images/documents are lifted out of tool_result before forwarding. A
   // preset with per-model rules resolves to an OpenAI format here, which also
   // forces the proxy — the only place those rules are applied.
-  const needsProxy = providerNeedsProxy(apiFormat, provider.supportsNestedToolResultMedia)
-  const proxyPath = options?.proxyPath ?? '/proxy'
-  const serverPort = options?.serverPort ?? 3456
+  const needsProxy = forceProxy || providerNeedsProxy(apiFormat, provider.supportsNestedToolResultMedia)
   const baseUrl = needsProxy
     ? `http://127.0.0.1:${serverPort}${proxyPath}`
     : provider.baseUrl
@@ -576,18 +590,42 @@ export function buildProviderManagedEnv(
 
 export function readActiveProviderManagedEnv(
   configDir: string,
-  options?: { serverPort?: number },
+  options?: { serverPort?: number; forceProxy?: boolean },
 ): Record<string, string> | null {
   try {
+    const settingsPath = path.join(configDir, 'settings.json')
+    let forceProxy = options?.forceProxy ?? false
+    if (options?.forceProxy === undefined && fs.existsSync(settingsPath)) {
+      try {
+        const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'))
+        forceProxy = normalizeLocalRedactionSettings(settings.localRedaction).enabled
+      } catch {
+        forceProxy = true
+      }
+    }
     const raw = fs.readFileSync(path.join(getEchoFlowInternalDir(configDir), 'providers.json'), 'utf-8')
     const index = normalizeProvidersIndex(JSON.parse(raw))
     if (!index?.activeId) return null
 
     if (isOpenAIOfficialProviderId(index.activeId)) {
-      return buildOpenAIOfficialRuntimeEnv(index.officialProviderModels[OPENAI_OFFICIAL_PROVIDER_ID])
+      const models = index.officialProviderModels[OPENAI_OFFICIAL_PROVIDER_ID] ?? OPENAI_OFFICIAL_PROVIDER.models
+      if (forceProxy) {
+        return buildProviderManagedEnv({ ...OPENAI_OFFICIAL_PROVIDER, models }, {
+          serverPort: options?.serverPort,
+          forceProxy: true,
+        })
+      }
+      return buildOpenAIOfficialRuntimeEnv(models)
     }
     if (isGrokOfficialProviderId(index.activeId)) {
-      return buildGrokOfficialRuntimeEnv(index.officialProviderModels[GROK_OFFICIAL_PROVIDER_ID])
+      const models = index.officialProviderModels[GROK_OFFICIAL_PROVIDER_ID] ?? GROK_OFFICIAL_PROVIDER.models
+      if (forceProxy) {
+        return buildProviderManagedEnv({ ...GROK_OFFICIAL_PROVIDER, models }, {
+          serverPort: options?.serverPort,
+          forceProxy: true,
+        })
+      }
+      return buildGrokOfficialRuntimeEnv(models)
     }
 
     const provider = index.providers.find((entry) => entry.id === index.activeId)
@@ -595,6 +633,7 @@ export function readActiveProviderManagedEnv(
 
     return buildProviderManagedEnv(provider, {
       serverPort: options?.serverPort,
+      forceProxy,
     })
   } catch {
     return null
@@ -603,6 +642,15 @@ export function readActiveProviderManagedEnv(
 
 export function activeProviderNeedsProxy(configDir: string): boolean {
   try {
+    const settingsPath = path.join(configDir, 'settings.json')
+    if (fs.existsSync(settingsPath)) {
+      try {
+        const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'))
+        if (normalizeLocalRedactionSettings(settings.localRedaction).enabled) return true
+      } catch {
+        return true
+      }
+    }
     const raw = fs.readFileSync(path.join(getEchoFlowInternalDir(configDir), 'providers.json'), 'utf-8')
     const index = normalizeProvidersIndex(JSON.parse(raw))
     if (

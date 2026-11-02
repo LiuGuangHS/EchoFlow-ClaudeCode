@@ -24,7 +24,7 @@ test('skill bundles use fixed commits, unique safe file mappings and complete up
       expect(file.target).not.toMatch(/(?:^|\/)(?:hooks|\.app\.json|\.mcp\.json)(?:\/|$)/)
     }
     const def = SKILL_CONNECTORS.find(item => item.id === recipe.id)!
-    expect(def).toMatchObject({ collection: 'tools', transport: 'skills', region: 'global', version: recipe.version, pluginId: `office-${recipe.id}@haha-connectors` })
+    expect(def).toMatchObject({ collection: 'tools', transport: 'skills', region: 'global', version: recipe.version, pluginId: `office-${recipe.id}@echoflow-connectors` })
     expect(def.setupFields).toBeUndefined()
     expect(def.requirements).toBeTruthy()
     const icon = readFileSync(new URL(`../../../desktop/public/connectors/${recipe.id}.svg`, import.meta.url), 'utf8')

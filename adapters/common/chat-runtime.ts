@@ -17,6 +17,7 @@
  */
 
 import * as path from 'node:path'
+import { ECHOFLOW_PRODUCT_NAME } from './brand.js'
 import { enqueue } from './chat-queue.js'
 import {
   getConfiguredWorkDir,
@@ -228,8 +229,8 @@ export class ImChatRuntime {
       await this.port.sendNotice(
         chatId,
         paired
-          ? '配对成功！现在可以开始聊天了。\n\n发送消息即可与 Claude 对话，发送 /help 查看可用命令。'
-          : '未授权。请在 Claude Code 桌面端生成配对码后发送给我。',
+          ? '配对成功！现在可以开始聊天了。\n\n发送消息即可与 EchoFlow 对话，发送 /help 查看可用命令。'
+          : `未授权。请在 ${ECHOFLOW_PRODUCT_NAME} 桌面端生成配对码后发送给我。`,
       )
       return
     }

@@ -1,13 +1,24 @@
 import { createHash } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { gunzipSync, gzipSync } from 'node:zlib'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { describe, expect, test } from 'bun:test'
 import { parse } from 'yaml'
 import { refreshWindowsUpdateMetadata } from './refresh-windows-update-metadata'
 
 function tempDir() {
   return mkdtempSync(join(tmpdir(), 'echoflow-code-signed-windows-metadata-'))
+}
+
+function writeBlockmap(installerPath: string, name = 'blockMapData') {
+  const installer = readFileSync(installerPath)
+  const checksum = createHash('sha256').update(installer).digest('hex')
+  writeFileSync(`${installerPath}.blockmap`, gzipSync(JSON.stringify({
+    version: '2',
+    files: [{ name, offset: 0, checksums: [checksum], sizes: [installer.length] }],
+  })))
 }
 
 describe('signed Windows update metadata refresh', () => {
@@ -18,6 +29,7 @@ describe('signed Windows update metadata refresh', () => {
     const metadataPath = join(dir, 'latest.yml')
     const installer = Buffer.from('signed installer bytes')
     writeFileSync(installerPath, installer)
+    writeBlockmap(installerPath, installerName)
     writeFileSync(metadataPath, `
 version: 0.5.5
 files:
@@ -55,11 +67,26 @@ releaseDate: '2026-08-23T00:00:00.000Z'
     expect(metadata.releaseDate).toBe('2026-08-23T00:00:00.000Z')
   })
 
+  test('rejects metadata containing multiple files even when one matches', async () => {
+    const dir = tempDir()
+    const installerName = 'EchoFlow-Code-0.5.5-win-x64.exe'
+    const installerPath = join(dir, installerName)
+    const metadataPath = join(dir, 'latest.yml')
+    writeFileSync(installerPath, 'signed')
+    writeBlockmap(installerPath, installerName)
+    const metadata = `version: 0.5.5\nfiles:\n  - url: ${installerName}\n  - url: another.exe\npath: ${installerName}\n`
+    writeFileSync(metadataPath, metadata)
+
+    await expect(refreshWindowsUpdateMetadata({ installerPath, metadataPath })).rejects.toThrow('exactly one update file')
+    expect(readFileSync(metadataPath, 'utf8')).toBe(metadata)
+  })
+
   test('rejects metadata that does not point at the signed installer', async () => {
     const dir = tempDir()
     const installerPath = join(dir, 'EchoFlow-Code-0.5.5-win-arm64.exe')
     const metadataPath = join(dir, 'latest.yml')
     writeFileSync(installerPath, 'signed')
+    writeBlockmap(installerPath, basename(installerPath))
     writeFileSync(metadataPath, `
 version: 0.5.5
 files:
@@ -71,5 +98,42 @@ sha512: old
 
     await expect(refreshWindowsUpdateMetadata({ installerPath, metadataPath }))
       .rejects.toThrow('Expected exactly one update file')
+  })
+
+  test('rejects missing or malformed blockmaps without changing metadata', async () => {
+    for (const blockmap of [null, Buffer.from('not gzip')]) {
+      const dir = tempDir()
+      const installerName = 'EchoFlow-Code-0.5.5-win-x64.exe'
+      const installerPath = join(dir, installerName)
+      const metadataPath = join(dir, 'latest.yml')
+      const metadata = `version: 0.5.5\nfiles:\n  - url: ${installerName}\npath: ${installerName}\n`
+      writeFileSync(installerPath, 'signed installer')
+      writeFileSync(metadataPath, metadata)
+      if (blockmap) writeFileSync(`${installerPath}.blockmap`, blockmap)
+
+      await expect(refreshWindowsUpdateMetadata({ installerPath, metadataPath })).rejects.toThrow()
+      expect(readFileSync(metadataPath, 'utf8')).toBe(metadata)
+    }
+  })
+
+  test('rejects blockmaps not describing the final installer without changing metadata', async () => {
+    for (const mismatch of ['wrong-name', 'wrong-size']) {
+      const dir = tempDir()
+      const installerName = 'EchoFlow-Code-0.5.5-win-x64.exe'
+      const installerPath = join(dir, installerName)
+      const metadataPath = join(dir, 'latest.yml')
+      const metadata = `version: 0.5.5\nfiles:\n  - url: ${installerName}\npath: ${installerName}\n`
+      writeFileSync(installerPath, 'signed installer')
+      writeBlockmap(installerPath, mismatch === 'wrong-name' ? 'another-installer.exe' : installerName)
+      if (mismatch === 'wrong-size') {
+        const blockmap = JSON.parse(gunzipSync(readFileSync(`${installerPath}.blockmap`)).toString())
+        blockmap.files[0].sizes[0] += 1
+        writeFileSync(`${installerPath}.blockmap`, gzipSync(JSON.stringify(blockmap)))
+      }
+      writeFileSync(metadataPath, metadata)
+
+      await expect(refreshWindowsUpdateMetadata({ installerPath, metadataPath })).rejects.toThrow()
+      expect(readFileSync(metadataPath, 'utf8')).toBe(metadata)
+    }
   })
 })

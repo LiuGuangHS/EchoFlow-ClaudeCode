@@ -9,7 +9,7 @@ order: 1
 
 Install and go. You don't need Node.js, Python, or Claude Code — the CLI engine and the ripgrep binary used for file search are both bundled inside the installer.
 
-The product is now called **EchoFlow Code**. Existing packages, installed apps, and system processes may still use the legacy names `Claude Code Haha` or `cc-haha`; filenames and commands below match those published packages.
+The product is now called **EchoFlow Code**. Apps installed by earlier versions, and their system processes, may still show the legacy names `Claude Code Haha` or `cc-haha`.
 
 ## Pick the right package
 

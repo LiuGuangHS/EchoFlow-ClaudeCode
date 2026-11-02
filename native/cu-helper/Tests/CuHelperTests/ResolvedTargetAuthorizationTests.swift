@@ -91,7 +91,7 @@ final class ResolvedTargetAuthorizationTests: XCTestCase {
             "com.apple.Music",
             "com.amazon.Kindle",
             "com.echoflow.code.desktop",
-            "dev.cchaha.cu-helper",
+            "dev.echoflow.cu-helper",
             "com.example.custom-host",
             "com.example.new-app",
         ]

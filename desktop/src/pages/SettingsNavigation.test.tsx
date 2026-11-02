@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import '@testing-library/jest-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -16,7 +16,7 @@ vi.mock('../api/traces', () => ({
 
 import { DesktopSettings as Settings } from './Settings'
 import { useSettingsStore } from '../stores/settingsStore'
-import { useUIStore } from '../stores/uiStore'
+import { type SettingsTab, SETTINGS_TABS, useUIStore } from '../stores/uiStore'
 
 /**
  * The rail is a scroll container taller than its viewport, and Settings
@@ -73,6 +73,30 @@ describe('Settings section navigation', () => {
 
     expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' })
     expect(useUIStore.getState().activeSettingsTab).toBe('diagnostics')
+  })
+
+  it('lists every settings tab exactly once, grouped', () => {
+    useUIStore.setState({ activeSettingsTab: 'network' })
+    render(<Settings />)
+    const nav = screen.getByTestId('settings-navigation')
+    const buttons = within(nav).getAllByRole('button')
+    expect(buttons).toHaveLength(SETTINGS_TABS.length)
+    expect(buttons.map((button) => button.getAttribute('data-settings-tab')).sort()).toEqual([...SETTINGS_TABS].sort())
+    const groups = within(nav).getAllByRole('group')
+    expect(groups).toHaveLength(5)
+    expect(groups.map((group) => within(group).getAllByRole('button').map((button) => button.getAttribute('data-settings-tab')))).toEqual([
+      ['providers', 'runtime'],
+      ['general', 'network', 'data', 'voice', 'pets'],
+      ['agents', 'skills', 'plugins', 'mcp', 'memory', 'computerUse'],
+      ['h5Access', 'adapters'],
+      ['terminal', 'activity', 'trace', 'diagnostics'],
+    ])
+    expect(within(nav).getByRole('group', { name: 'Models & Runtime' })).toHaveTextContent('Runtime management')
+    expect(within(nav).getByRole('button', { name: 'Network' })).toHaveAttribute('data-settings-tab', 'network')
+    expect(within(nav).getByRole('button', { name: 'Data & Storage' })).toHaveAttribute('data-settings-tab', 'data')
+    const about = within(nav).getByRole('button', { name: 'About' })
+    expect(about).toHaveAttribute('data-settings-tab', 'about')
+    expect(groups.some((group) => within(group).queryByRole('button', { name: 'About' }) !== null)).toBe(false)
   })
 
   it('keeps the rail on paper so the Settings tab meets its own content', () => {

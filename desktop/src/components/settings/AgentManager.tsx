@@ -49,6 +49,7 @@ import { Modal } from '@/components/ui/Modal'
 import { SearchField } from '@/components/ui/SearchField'
 import { SelectField } from '@/components/ui/SelectField'
 import { SettingsPageHeader } from '@/components/settings/SettingsSection'
+import { AgentAutomationSettings } from './AgentAutomationSettings'
 import { ModelSelector } from '@/components/controls/ModelSelector'
 
 const AGENT_COLORS: Record<string, string> = {
@@ -211,6 +212,8 @@ export function AgentManager() {
               </Button>
             )}
           />
+
+          <AgentAutomationSettings />
 
           {isLoading && allAgents.length === 0 ? (
             <LoadingState label={t('common.loading')} labelHidden size="md" />

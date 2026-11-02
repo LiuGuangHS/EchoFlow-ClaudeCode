@@ -75,13 +75,23 @@ export type IconButtonProps =
   }
 
 const SIZE_CLASSES: Record<IconButtonSize, string> = {
-  '2xs': 'h-5 w-5 rounded-[var(--radius-sm)]',
-  xs: 'h-6 w-6 rounded-[var(--radius-sm)]',
-  sm: 'h-7 w-7 rounded-[var(--radius-md)]',
-  md: 'h-8 w-8 rounded-[var(--radius-md)]',
-  lg: 'h-9 w-9 rounded-[var(--radius-lg)]',
-  xl: 'h-10 w-10 rounded-[var(--radius-lg)]',
-  '2xl': 'h-11 w-11 rounded-[var(--radius-lg)]',
+  '2xs': 'h-5 w-5',
+  xs: 'h-6 w-6',
+  sm: 'h-7 w-7',
+  md: 'h-8 w-8',
+  lg: 'h-9 w-9',
+  xl: 'h-10 w-10',
+  '2xl': 'h-11 w-11',
+}
+
+const SIZE_RADII: Record<IconButtonSize, string> = {
+  '2xs': 'rounded-[var(--radius-sm)]',
+  xs: 'rounded-[var(--radius-sm)]',
+  sm: 'rounded-[var(--radius-md)]',
+  md: 'rounded-[var(--radius-md)]',
+  lg: 'rounded-[var(--radius-lg)]',
+  xl: 'rounded-[var(--radius-lg)]',
+  '2xl': 'rounded-[var(--radius-lg)]',
 }
 
 const ICON_PX: Record<IconButtonSize, number> = {
@@ -273,6 +283,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
         BASE_CLASSES,
         DISABLED_OPACITY[disabledStyle],
         SIZE_CLASSES[size],
+        shape === 'circle' ? 'rounded-full' : SIZE_RADII[size],
         // `solid` supplies both fill and foreground, so the tone's resting text
         // color and hover fill are skipped rather than left to compete.
         solid ? SOLID_CLASSES[tone] : (SURFACE_REST_TEXT[surface] ?? REST_TEXT)[tone],
@@ -290,7 +301,6 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
         ),
         filled && !pressed && !solid && FILLED_CLASSES[tone],
         bordered && !filled && 'border border-[var(--color-border)]',
-        shape === 'circle' && 'rounded-full',
         className,
       )}
       {...props}

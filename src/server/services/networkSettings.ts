@@ -1,6 +1,7 @@
 import { SettingsService } from './settingsService.js'
 import { ManagedSettingsService } from './managedSettingsService.js'
 import { getProxyFetchOptions, getProxyUrl } from '../../utils/proxy.js'
+import { normalizeLocalRedactionSettings } from '../../shared/localRedactionSettings.js'
 
 export type NetworkProxyMode = 'direct' | 'system' | 'manual'
 
@@ -219,4 +220,9 @@ export async function loadNetworkSettings(): Promise<NetworkSettings> {
     network: { ...userNetwork, ...managedNetwork },
   }
   return normalizeNetworkSettings(settings)
+}
+
+export async function isLocalRedactionEnabled(): Promise<boolean> {
+  const userSettings = await new SettingsService().getUserSettings()
+  return normalizeLocalRedactionSettings(userSettings.localRedaction).enabled
 }

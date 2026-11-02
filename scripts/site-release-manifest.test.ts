@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -75,9 +75,39 @@ function withReleaseAssets(names: string[]): SiteReleaseInfo {
   return { tagName: 'v0.7.2', assets: names.map((name, index) => ({ name, id: index + 1 })) }
 }
 
+function writeReleaseNotes(root: string, tag: string, content: string) {
+  const notesDir = join(root, 'release-notes')
+  mkdirSync(notesDir, { recursive: true })
+  writeFileSync(join(notesDir, `${tag}.md`), content)
+  return notesDir
+}
+
 describe('site release manifest', () => {
+  test('omits the summary when notes are missing or their title does not match the release tag', async () => {
+    const missingOutDir = tempDir()
+    const missing = await generateSiteReleaseManifest({
+      release: 'latest',
+      outDir: missingOutDir,
+      repo: 'LiuGuangHS/EchoFlow-ClaudeCode',
+      api: fixtureApi(),
+      releaseNotesDir: join(missingOutDir, 'missing-release-notes'),
+    })
+    expect(JSON.parse(readFileSync(missing.manifestPath, 'utf8')).summary).toBeUndefined()
+
+    const outDir = tempDir()
+    const releaseNotesDir = writeReleaseNotes(outDir, 'v0.7.2', '# EchoFlow Code v0.7.3\n\n错误版本摘要。\n')
+    const mismatched = await generateSiteReleaseManifest({
+      release: 'latest',
+      outDir,
+      repo: 'LiuGuangHS/EchoFlow-ClaudeCode',
+      api: fixtureApi(),
+      releaseNotesDir,
+    })
+    expect(JSON.parse(readFileSync(mismatched.manifestPath, 'utf8')).summary).toBeUndefined()
+  })
   test('mirrors channel files byte-for-byte and writes the download manifest from the release inventory', async () => {
     const outDir = tempDir()
+    const releaseNotesDir = writeReleaseNotes(outDir, 'v0.7.2', '# EchoFlow Code v0.7.2\n\n**版本摘要**：下载体验优化。\n')
     const api = fixtureApi()
 
     const result = await generateSiteReleaseManifest({
@@ -85,6 +115,7 @@ describe('site release manifest', () => {
       outDir,
       repo: 'LiuGuangHS/EchoFlow-ClaudeCode',
       api,
+      releaseNotesDir,
     })
 
     expect(result.updateFiles).toEqual([
@@ -101,6 +132,7 @@ describe('site release manifest', () => {
     expect(manifest).toEqual({
       version: '0.7.2',
       tag: 'v0.7.2',
+      summary: '版本摘要：下载体验优化。',
       assets: {
         'win-x64': 'EchoFlow-Code-0.7.2-win-x64.exe',
         'win-arm64': 'EchoFlow-Code-0.7.2-win-arm64.exe',

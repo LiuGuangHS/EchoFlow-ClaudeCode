@@ -1,8 +1,8 @@
 /**
  * Provider types — preset-based provider configuration.
  *
- * Providers are stored in <EchoFlow AppData>/echoflow/providers.json as a lightweight index.
- * The active provider's env vars are written to <EchoFlow AppData>/echoflow/settings.json.
+ * Providers are stored in <EchoFlow AppData>/echoflow-code/providers.json as a lightweight index.
+ * The active provider's env vars are written to <EchoFlow AppData>/echoflow-code/settings.json.
  */
 
 import { z } from 'zod'

@@ -171,7 +171,7 @@ describe('plan mode permission UI', () => {
       />,
     )
 
-    fireEvent.change(screen.getByPlaceholderText('Tell Claude what to change'), {
+    fireEvent.change(screen.getByPlaceholderText('Tell EchoFlow what to change'), {
       target: { value: 'Add a rollback step before implementation.' },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Keep planning' }))

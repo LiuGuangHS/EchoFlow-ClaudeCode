@@ -813,7 +813,7 @@ SM_CYVIRTUALSCREEN = 79
 try:
     _INPUT_TAG = int(os.environ["ECHOFLOW_COMPUTER_USE_INPUT_TAG"]) & 0xFFFFFFFF
 except (KeyError, TypeError, ValueError):
-    _INPUT_TAG = int.from_bytes(os.urandom(4), "little") or 0x43434841
+    _INPUT_TAG = int.from_bytes(os.urandom(4), "little") or 0x45434846
 
 _LRESULT = ctypes.c_ssize_t
 _HOOKPROC = ctypes.WINFUNCTYPE(

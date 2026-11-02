@@ -92,6 +92,7 @@ export function createElectronHost(bridge: ElectronHostBridge): DesktopHost {
     echoFlow: {
       openLogin: (endpoint = 'main') => invoke(ELECTRON_IPC_CHANNELS.echoFlowLoginOpen, { endpoint }),
       signOut: (endpoint = 'main') => invoke(ELECTRON_IPC_CHANNELS.echoFlowSignOut, { endpoint }),
+      whenAccountRestored: () => invoke(ELECTRON_IPC_CHANNELS.echoFlowWhenRestored),
     },
     runtimeDiscovery: {
       list: options => invoke(ELECTRON_IPC_CHANNELS.runtimeDiscoveryGet, options),
@@ -110,6 +111,11 @@ export function createElectronHost(bridge: ElectronHostBridge): DesktopHost {
       setLocalePreference: locale => invoke(ELECTRON_IPC_CHANNELS.appSetLocalePreference, locale),
       getPreferredSystemLanguages: () => invoke(ELECTRON_IPC_CHANNELS.appGetPreferredSystemLanguages),
       onLocaleChanged: handler => subscribe(ELECTRON_EVENT_CHANNELS.appLocaleChanged, handler),
+    },
+    configImport: {
+      take: () => invoke(ELECTRON_IPC_CHANNELS.configImportTake),
+      ack: () => invoke(ELECTRON_IPC_CHANNELS.configImportAck),
+      onPending: handler => subscribe(ELECTRON_EVENT_CHANNELS.deepLink, () => handler()),
     },
     commands: {
       invoke: (command, args) => invoke(ELECTRON_IPC_CHANNELS.commandInvoke, { command, args }),

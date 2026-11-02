@@ -74,6 +74,24 @@ describe('public transport boundary', () => {
     expect(await (await f.remote('/api/providers/auth-status', undefined, cookie)).json()).toEqual({ hasAuth: false, source: 'none' })
   })
 
+  test('issues the current brand cookie and still accepts the one older pairs hold', async () => {
+    const f = fixture()
+    const code = await (await f.control('pairing')).json()
+    const pending = await (await f.remote('/api/public-access/pair', { secret: code.secret, name: 'Phone' })).json()
+    await f.control('approve', { id: pending.id })
+    const claimed = await f.remote('/api/public-access/claim', pending)
+    const cookie = claimed.headers.get('set-cookie')!
+
+    const currentName = `__Host-${['echo', 'flow'].join('')}-remote`
+    const retiredName = `__Host-${['ha', 'ha'].join('')}-remote`
+    expect(cookie.startsWith(`${currentName}=`)).toBe(true)
+    expect(cookie).not.toContain(retiredName)
+
+    // A device paired before the rename still carries the old cookie name.
+    const legacyCookie = cookie.replace(`${currentName}=`, `${retiredName}=`)
+    expect((await f.remote('/api/sessions', undefined, legacyCookie)).status).toBe(200)
+  })
+
   test('expired and rejected pairings cannot become a device', async () => {
     const f = fixture()
     const code = await (await f.control('pairing')).json()

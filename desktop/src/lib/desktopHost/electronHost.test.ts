@@ -5,6 +5,25 @@ import { createElectronHost } from './electronHost'
 import { PUBLIC_ACCESS_CONSENT_VERSION, type WorkspaceBrowserMenuOptions } from './types'
 
 describe('electron desktop host', () => {
+  it('pulls pending config imports and subscribes for later deep links', async () => {
+    const invoke = vi.fn().mockResolvedValue({ config: { version: 1 } })
+    const handlers = new Map<string, (payload: unknown) => void>()
+    const subscribe = vi.fn(async (channel: string, handler: (payload: unknown) => void) => {
+      handlers.set(channel, handler)
+      return () => handlers.delete(channel)
+    })
+    const host = createElectronHost({ invoke, subscribe })
+    const onPending = vi.fn()
+
+    await expect(host.configImport.take()).resolves.toEqual({ config: { version: 1 } })
+    expect(invoke).toHaveBeenCalledWith(ELECTRON_IPC_CHANNELS.configImportTake, undefined)
+    const unlisten = await host.configImport.onPending(onPending)
+    handlers.get(ELECTRON_EVENT_CHANNELS.deepLink)?.(undefined)
+    expect(onPending).toHaveBeenCalledOnce()
+    await host.configImport.ack()
+    expect(invoke).toHaveBeenLastCalledWith(ELECTRON_IPC_CHANNELS.configImportAck, undefined)
+    unlisten()
+  })
   it('opens site sign-in for the requested endpoint without sending credentials through renderer IPC', async () => {
     const invoke = vi.fn().mockResolvedValue('authenticated')
     const host = createElectronHost({ invoke, subscribe: vi.fn() })
@@ -32,6 +51,17 @@ describe('electron desktop host', () => {
     invoke.mockClear()
     await host.echoFlow.signOut('dedicated')
     expect(invoke).toHaveBeenCalledWith(ELECTRON_IPC_CHANNELS.echoFlowSignOut, { endpoint: 'dedicated' })
+  })
+  it('asks the host when the startup restore has settled without reading any credential', async () => {
+    let settle: (restored: boolean) => void = () => {}
+    const invoke = vi.fn().mockReturnValue(new Promise<boolean>((resolve) => { settle = resolve }))
+    const host = createElectronHost({ invoke, subscribe: vi.fn() })
+
+    const restored = host.echoFlow.whenAccountRestored()
+    expect(invoke).toHaveBeenCalledWith(ELECTRON_IPC_CHANNELS.echoFlowWhenRestored, undefined)
+
+    settle(true)
+    await expect(restored).resolves.toBe(true)
   })
   it('routes Claude Code runtime settings through narrow runtime IPC boundaries', async () => {
     const status = { defaultRuntimeId: 'bundled' as const, hasInstalledRuntime: false }

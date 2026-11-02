@@ -470,7 +470,19 @@ const DOCS_TREE_EXCLUDED_FILES = new Set(['AGENTS.md']);
 // Fork-owned brand strings must not survive in shipped source. Tests, fixtures
 // and migration sources keep the historical name on purpose: they are the
 // compatibility contract for user data that already exists on disk.
-const BRAND_RESIDUE_PATTERNS = [/cc[-_]haha/i, /claude-code-haha/i];
+//
+// The patterns match the brand as a whole token. A bare substring match would
+// fire on ordinary identifiers such as `cachedMCChanged` or `onhcChhcChange`.
+const BRAND_RESIDUE_PATTERNS = [
+  /cc[-_]haha/i,
+  /claude-code-haha/i,
+  /\bcchh[-_]?\w/i,
+  /\bcchaha\b/i,
+  /(?<![a-z0-9])haha-(?!code)/i,
+  // The retired abbreviation encoded as bytes: 'CCHA' and 'CCHAHACU'.
+  /0x43434841\b/i,
+  /0x4343_4841_4841_4355\b/i,
+];
 const BRAND_SCAN_DIRS = ['src', 'desktop/src', 'desktop/electron', 'adapters', 'scripts'];
 const BRAND_SCAN_EXCLUDED_DIRS = new Set(['node_modules', 'target', 'dist', 'build', 'coverage']);
 const BRAND_SCAN_EXCLUDED_FILES = [

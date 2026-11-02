@@ -21,6 +21,7 @@ import ast
 import ctypes
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import time
@@ -615,6 +616,15 @@ class TestCursorBadge(unittest.TestCase):
         self.assertIn(env_name, overlay)
         self.assertIn(env_name, helper)
         self.assertIn("dwExtraInfo", overlay)
+
+    def test_input_tag_fallback_carries_no_retired_brand_fingerprint(self):
+        """The shared fallback tag must not spell an old product name."""
+        helper = _win_source()
+        match = re.search(r'os\.urandom\(4\), "little"\) or (0x[0-9a-fA-F]+)', helper)
+        self.assertIsNotNone(match, "win_helper.py no longer defines an input tag fallback")
+        fallback = int(match.group(1), 16)
+        spelling = fallback.to_bytes(4, "little").decode("ascii")
+        self.assertNotRegex(spelling, r"ccha")
 
     def test_overlay_visibility_is_bound_to_the_controlled_window(self):
         """Never strand the AI pointer over an unrelated covering app."""

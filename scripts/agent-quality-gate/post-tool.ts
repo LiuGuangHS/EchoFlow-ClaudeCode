@@ -24,6 +24,13 @@ const VERIFICATION_PREFIXES = [
 // would let a task end without a single test having run.
 const NOT_VERIFICATION = ['bun run check:impact']
 
+// A verification piped into a truncating command loses the exit status and the
+// failing lines, so nothing in what the model saw proves the run. Refusing it
+// here is what makes "don't hide the evidence behind | tail" a machine rule
+// rather than a request. `git log | head` is unaffected: it is not a
+// verification command in the first place.
+const TRUNCATING_PIPE = /\|\s*(?:tail|head)\b/
+
 /**
  * A command that opens a heredoc cannot be classified. The body is arbitrary
  * text and can contain a line that reads exactly like a verification run, so
@@ -135,6 +142,7 @@ export function isTestCommand(command: string): boolean {
   if (segments.some(segment => segment.length === 0)) return false
   return segments.some(
     segment =>
+      !TRUNCATING_PIPE.test(segment) &&
       VERIFICATION_PREFIXES.some(prefix => matchesPrefix(segment, prefix)) &&
       !NOT_VERIFICATION.some(prefix => matchesPrefix(segment, prefix)),
   )

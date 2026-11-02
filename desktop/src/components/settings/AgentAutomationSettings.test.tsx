@@ -4,12 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { settingsApi } from '@/api/settings'
 import { useOpenTargetStore } from '@/stores/openTargetStore'
 import { useSettingsStore } from '@/stores/settingsStore'
-import { GeneralSettings } from './GeneralSettings'
+import { AgentAutomationSettings } from './AgentAutomationSettings'
 
-describe('General settings automatic answers', () => {
+describe('Agent automation automatic answers', () => {
   beforeEach(() => {
     useSettingsStore.setState({
       locale: 'zh',
+      workflowKeywordTriggerEnabled: true,
+      agentTeamsEnabled: true,
+      autoDreamEnabled: false,
       autoQuestion: { enabled: false, timeoutMinutes: 5 },
       fetchOutputStyles: async () => {},
       fetchAppMode: async () => {},
@@ -26,7 +29,7 @@ describe('General settings automatic answers', () => {
   })
 
   it('starts disabled and saves the enabled wait duration', async () => {
-    render(<GeneralSettings />)
+    render(<AgentAutomationSettings />)
 
     const toggle = screen.getByRole('switch', { name: '等待超时后自动选择答案' })
     expect(toggle).not.toBeChecked()

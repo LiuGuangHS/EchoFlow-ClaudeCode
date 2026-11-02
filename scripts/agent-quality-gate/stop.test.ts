@@ -103,6 +103,19 @@ describe('handleSubagentStop', () => {
     await handleSubagentStop({ agent_type: 'Explore' }, dir)
     expect((await readState('', dir)).lastReviewSeq).toBeNull()
   })
+
+  // A fork inherits the author's context; the relay-only subagents are forks.
+  test('a fork is the author with a second hat, not a reviewer', async () => {
+    await recordEdit('s1', 'src/a.ts', dir)
+    await handleSubagentStop({ session_id: 's1', agent_type: 'fork' }, dir)
+    expect((await readState('s1', dir)).lastReviewSeq).toBeNull()
+  })
+
+  test('an unnamed subagent is not evidence of independence', async () => {
+    await recordEdit('s1', 'src/a.ts', dir)
+    await handleSubagentStop({ session_id: 's1' }, dir)
+    expect((await readState('s1', dir)).lastReviewSeq).toBeNull()
+  })
 })
 
 describe('runCli', () => {

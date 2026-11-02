@@ -513,13 +513,13 @@ describe('VoiceInputSettings download source', () => {
     expect(hint()).toHaveTextContent('(current: Direct connection)')
   })
 
-  it('opens the General tab, where the network proxy lives', async () => {
+  it('opens the Network tab, where the network proxy lives', async () => {
     useUIStore.setState({ activeSettingsTab: 'voice' })
     await renderPage(makeCatalog(UNPREPARED))
 
     fireEvent.click(screen.getByRole('button', { name: 'Change proxy' }))
 
-    expect(useUIStore.getState().activeSettingsTab).toBe('general')
+    expect(useUIStore.getState().activeSettingsTab).toBe('network')
   })
 })
 

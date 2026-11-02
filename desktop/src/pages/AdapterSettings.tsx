@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAdapterStore } from '../stores/adapterStore'
 import { useTranslation } from '../i18n'
 import { Input } from '@/components/ui/Input'
+import { Checkbox } from '@/components/ui/Checkbox'
 import { Button } from '@/components/ui/Button'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { DirectoryPicker } from '@/components/composite/DirectoryPicker'
@@ -1164,18 +1165,13 @@ export function AdapterSettings() {
               />
               <p className="text-xs text-[var(--color-text-tertiary)]">{t('settings.adapters.allowedUsersHint')}</p>
             </div>
-            <label className="flex items-center gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={fsStreamingCard}
-                onChange={(e) => setFsStreamingCard(e.target.checked)}
-                className="w-4 h-4 rounded border-[var(--color-border)] accent-[var(--color-brand)]"
-              />
-              <div>
-                <span className="text-sm text-[var(--color-text-primary)]">{t('settings.adapters.streamingCard')}</span>
-                <p className="text-xs text-[var(--color-text-tertiary)]">{t('settings.adapters.streamingCardDesc')}</p>
-              </div>
-            </label>
+            <Checkbox
+              label={t('settings.adapters.streamingCard')}
+              description={t('settings.adapters.streamingCardDesc')}
+              checked={fsStreamingCard}
+              onChange={(e) => setFsStreamingCard(e.target.checked)}
+              containerClassName="items-center gap-3"
+            />
           </div>
         )}
 

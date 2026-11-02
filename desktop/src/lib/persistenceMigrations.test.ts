@@ -14,13 +14,13 @@ describe('desktop persistence migrations', () => {
 
   test('upgrades a frozen schema-4 install with reading defaults without changing zoom or theme', () => {
     localStorage.setItem(DESKTOP_PERSISTENCE_VERSION_KEY, '4')
-    localStorage.setItem('cc-haha-app-zoom', '1.25')
-    localStorage.setItem('cc-haha-theme', 'ink-blue')
+    localStorage.setItem('echoflow-code-app-zoom', '1.25')
+    localStorage.setItem('echoflow-code-theme', 'ink-blue')
     localStorage.setItem('unrelated-user-key', 'keep')
     runDesktopPersistenceMigrations()
     expect(JSON.parse(localStorage.getItem(CHAT_APPEARANCE_STORAGE_KEY)!)).toEqual({ version: 1, ...DEFAULT_CHAT_APPEARANCE })
-    expect(localStorage.getItem('cc-haha-app-zoom')).toBe('1.25')
-    expect(localStorage.getItem('cc-haha-theme')).toBe('ink-blue')
+    expect(localStorage.getItem('echoflow-code-app-zoom')).toBe('1.25')
+    expect(localStorage.getItem('echoflow-code-theme')).toBe('ink-blue')
     expect(localStorage.getItem('unrelated-user-key')).toBe('keep')
     expect(runDesktopPersistenceMigrations().migratedKeys).not.toContain(CHAT_APPEARANCE_STORAGE_KEY)
   })
@@ -35,40 +35,34 @@ describe('desktop persistence migrations', () => {
     expect(localStorage.getItem(CHAT_APPEARANCE_STORAGE_KEY)).toBe(future)
   })
 
-  test('copies allowlisted legacy localStorage keys without overwriting or deleting sources', () => {
-    // These historical names are migration fixtures, not active write keys.
-    window.localStorage.setItem('cc-haha-open-tabs', '{"openTabs":[{"sessionId":"session-1","title":"Legacy tab"}]}')
-    window.localStorage.setItem('cc-haha-session-runtime', '{"session-1":{"providerId":null,"modelId":"claude"}}')
-    window.localStorage.setItem('cc-haha-theme', 'white')
-    window.localStorage.setItem('cc-haha-locale', 'en')
-    window.localStorage.setItem('cc-haha-ui-zoom', '1.25')
-    window.localStorage.setItem('cc-haha-dismissed-update-version', '0.3.2')
-    window.localStorage.setItem('cc-haha-voice-input-device', 'usb-1')
+  test('does not copy cc-haha localStorage aliases and keeps the echoflow-code zoom alias', () => {
+    const oldAliases = {
+      'cc-haha-open-tabs': '{"openTabs":[{"sessionId":"session-1","title":"Legacy tab"}]}',
+      'cc-haha-session-runtime': '{"session-1":{"providerId":null,"modelId":"claude"}}',
+      'cc-haha-theme': 'white',
+      'cc-haha-locale': 'en',
+      'cc-haha-app-zoom': '1.25',
+      'cc-haha-ui-zoom': '1.25',
+      'cc-haha-dismissed-update-version': '0.3.2',
+      'cc-haha-voice-input-device': 'usb-1',
+      'cc-haha.workspace': JSON.stringify({ version: 1, sessions: {} }),
+    }
+    for (const [key, value] of Object.entries(oldAliases)) window.localStorage.setItem(key, value)
+    window.localStorage.setItem('echoflow-code-ui-zoom', '1.25')
 
     const report = runDesktopPersistenceMigrations()
 
-    expect(report.migratedKeys).toEqual(expect.arrayContaining([
-      'echoflow-code-open-tabs',
-      'echoflow-code-session-runtime',
-      'echoflow-code-theme',
-      'echoflow-code-locale',
-      'echoflow-code-app-zoom',
-      'echoflow-code-dismissed-update-version',
-      'echoflow-code-voice-input-device',
-    ]))
-    expect(JSON.parse(window.localStorage.getItem('echoflow-code-open-tabs') || '{}')).toEqual({
-      openTabs: [{ sessionId: 'session-1', title: 'Legacy tab', type: 'session' }],
-      activeTabId: 'session-1',
-    })
-    expect(window.localStorage.getItem('echoflow-code-session-runtime')).toBe('{"session-1":{"providerId":null,"modelId":"claude"}}')
-    expect(window.localStorage.getItem('echoflow-code-theme')).toBe('white')
+    expect(report.migratedKeys).toContain('echoflow-code-app-zoom')
     expect(window.localStorage.getItem('echoflow-code-app-zoom')).toBe('1.25')
-    expect(window.localStorage.getItem('echoflow-code-dismissed-update-version')).toBe('0.3.2')
-    expect(window.localStorage.getItem('echoflow-code-voice-input-device')).toBe('usb-1')
-    expect(window.localStorage.getItem('cc-haha-open-tabs')).toBe('{"openTabs":[{"sessionId":"session-1","title":"Legacy tab"}]}')
-    expect(window.localStorage.getItem('cc-haha-dismissed-update-version')).toBe('0.3.2')
-    expect(window.localStorage.getItem('cc-haha-voice-input-device')).toBe('usb-1')
-    expect(window.localStorage.getItem('cc-haha-ui-zoom')).toBe('1.25')
+    expect(window.localStorage.getItem('echoflow-code-ui-zoom')).toBe('1.25')
+    expect(window.localStorage.getItem('echoflow-code-open-tabs')).toBeNull()
+    expect(window.localStorage.getItem('echoflow-code-session-runtime')).toBeNull()
+    expect(window.localStorage.getItem('echoflow-code-theme')).toBeNull()
+    expect(window.localStorage.getItem('echoflow-code-locale')).toBeNull()
+    expect(window.localStorage.getItem('echoflow-code-dismissed-update-version')).toBeNull()
+    expect(window.localStorage.getItem('echoflow-code-voice-input-device')).toBeNull()
+    expect(window.localStorage.getItem('echoflow-code.workspace')).toBeNull()
+    for (const [key, value] of Object.entries(oldAliases)) expect(window.localStorage.getItem(key)).toBe(value)
   })
 
   test('migrates legacy open-tab arrays into the current tab persistence shape', () => {
@@ -333,19 +327,19 @@ describe('desktop persistence migrations', () => {
     ]))
   })
   test('keeps a schema-1 install usable: no workspace key means nothing to migrate', () => {
-    window.localStorage.setItem('cc-haha-open-tabs', JSON.stringify({
+    window.localStorage.setItem('echoflow-code-open-tabs', JSON.stringify({
       openTabs: [{ sessionId: 'session-1', title: 'Chat', type: 'session' }],
       activeTabId: 'session-1',
     }))
-    window.localStorage.setItem('cc-haha-theme', 'ink-blue')
+    window.localStorage.setItem('echoflow-code-theme', 'ink-blue')
 
     const report = runDesktopPersistenceMigrations()
 
     expect(report.migratedKeys).not.toContain('echoflow-code.workspace')
     expect(window.localStorage.getItem('echoflow-code.workspace')).toBeNull()
     // The schema-1 keys a v0.6.2 install carries must survive untouched.
-    expect(window.localStorage.getItem('cc-haha-theme')).toBe('ink-blue')
-    expect(JSON.parse(window.localStorage.getItem('cc-haha-open-tabs')!).openTabs).toHaveLength(1)
+    expect(window.localStorage.getItem('echoflow-code-theme')).toBe('ink-blue')
+    expect(JSON.parse(window.localStorage.getItem('echoflow-code-open-tabs')!).openTabs).toHaveLength(1)
     expect(window.localStorage.getItem(DESKTOP_PERSISTENCE_VERSION_KEY)).toBe(String(CURRENT_DESKTOP_PERSISTENCE_SCHEMA_VERSION))
   })
 
@@ -354,7 +348,7 @@ describe('desktop persistence migrations', () => {
       version: WORKSPACE_STORAGE_VERSION + 1,
       sessions: { s1: { tabs: [{ kind: 'file', id: 'f1', path: 'a.ts' }] } },
     })
-    window.localStorage.setItem('cc-haha.workspace', future)
+    window.localStorage.setItem('echoflow-code.workspace', future)
 
     const report = runDesktopPersistenceMigrations()
 
@@ -362,12 +356,12 @@ describe('desktop persistence migrations', () => {
     // mean a single downgrade launch permanently discards the workspace the
     // newer build is still using.
     expect(report.migratedKeys).not.toContain('echoflow-code.workspace')
-    expect(window.localStorage.getItem('cc-haha.workspace')).toBe(future)
+    expect(window.localStorage.getItem('echoflow-code.workspace')).toBe(future)
   })
 
   test('upgrades workspace v1 without losing the Files launcher, turns, or unknown metadata', () => {
     window.localStorage.setItem(DESKTOP_PERSISTENCE_VERSION_KEY, '2')
-    window.localStorage.setItem('cc-haha.workspace', JSON.stringify({
+    window.localStorage.setItem('echoflow-code.workspace', JSON.stringify({
       version: 1,
       futureMetadata: { keep: true },
       sessions: {
@@ -408,7 +402,7 @@ describe('desktop persistence migrations', () => {
   })
 
   test('strips tab entries that name a host resource the previous run owned', () => {
-    window.localStorage.setItem('cc-haha.workspace', JSON.stringify({
+    window.localStorage.setItem('echoflow-code.workspace', JSON.stringify({
       version: 1,
       sideWidth: 860,
       bottomHeight: 420,

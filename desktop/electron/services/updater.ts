@@ -1,6 +1,7 @@
 import type { DesktopUpdateDownloadEvent } from '../../src/lib/desktopHost/types'
 import { existsSync } from 'node:fs'
 import { clearAppManagedPortableEnv } from './appMode'
+import { isVerifiedDifferentialDownloadFeed, type UpdateFeedConfig } from './updateFeed'
 
 export type ElectronUpdateFileInfo = {
   url: string
@@ -67,6 +68,10 @@ export type ElectronUpdaterRuntimeOptions = {
   metadataFeedUrl?: string | null
   metadataFallbackUrls?: Array<string | null | undefined>
   downloadFeedUrls?: Array<string | null | undefined>
+  differentialDownload?: boolean
+  differentialDownloadFeedUrls?: string[]
+  differentialDownloadContracts?: UpdateFeedConfig['differentialDownloadContracts']
+  differentialDownloadContract?: UpdateFeedConfig['differentialDownloadContracts'][string]
 }
 
 export type UpdaterSessionProxyConfig = {
@@ -223,9 +228,16 @@ export class ElectronUpdaterService {
       feedUrl: runtimeOptions.feedUrl,
     })
     this.updater.autoDownload = false
-    // Differential download issues many small sequential range requests and is
-    // RTT-bound against the GitHub CDN, so it downloads far below line speed.
-    this.updater.disableDifferentialDownload = true
+    const differentialFeedUrls = runtimeOptions.differentialDownloadFeedUrls ?? []
+    const differentialDownloadContracts = runtimeOptions.differentialDownloadContracts ?? {}
+    const verifiedFeed = this.downloadFeedUrls.find(feedUrl =>
+      differentialFeedUrls.includes(feedUrl)
+      && isVerifiedDifferentialDownloadFeed(feedUrl, {
+        differentialDownloadFeedUrls: differentialFeedUrls,
+        differentialDownloadContracts,
+      }),
+    )
+    this.updater.disableDifferentialDownload = !(runtimeOptions.differentialDownload === true && !!verifiedFeed)
     this.updater.logger = null
   }
 

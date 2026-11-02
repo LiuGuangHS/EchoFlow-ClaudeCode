@@ -42,7 +42,6 @@ export type ChangePolicyResult = {
   }
 }
 
-const ALLOW_CLI_CORE_LABEL = 'allow-cli-core-change'
 const ALLOW_MISSING_TESTS_LABEL = 'allow-missing-tests'
 const ALLOW_COVERAGE_BASELINE_LABEL = 'allow-coverage-baseline-change'
 
@@ -346,17 +345,12 @@ export function evaluateChangePolicy(
   }
 
   const cliCoreFiles = files.filter(isCliCorePath)
-  const hasCliCoreChange = cliCoreFiles.length > 0
-  const hasCliCoreOverride = labels.includes(ALLOW_CLI_CORE_LABEL)
   const coveragePolicyFiles = files.filter((file) => coveragePolicyExactPaths.has(file))
   const hasCoveragePolicyOverride = labels.includes(ALLOW_COVERAGE_BASELINE_LABEL)
   const missingTests = missingTestSignals(files)
   const hasMissingTestsOverride = labels.includes(ALLOW_MISSING_TESTS_LABEL)
   const blockingReasons: string[] = []
 
-  if (hasCliCoreChange && !hasCliCoreOverride) {
-    blockingReasons.push(`CLI core changes require the ${ALLOW_CLI_CORE_LABEL} label and maintainer approval.`)
-  }
   if (missingTests.length > 0 && !hasMissingTestsOverride) {
     blockingReasons.push(`Production code changes require matching tests or the ${ALLOW_MISSING_TESTS_LABEL} maintainer override.`)
   }

@@ -1,12 +1,14 @@
 # 配置分享 / Config Sharing
 
-配置生成器用于分发可导入的 Provider 模板。它只分享用户选择的 Provider 连接参数，不分享 API Key、访问令牌、本机 ID 或应用设置。导入时 API Key 留空；同名且服务地址相同的 Provider 会跳过，不覆盖本机配置。
+EchoFlow Code 桌面端支持从可信来源打开 `echoflowcode://` 配置导入链接。链接由外部管理员或服务提供方生成；应用不再内置链接生成器。导入前会显示确认窗口，同名且服务地址相同的 Provider 会跳过，不覆盖本机配置。
 
-## 生成与导入
+配置模板分享 Provider 连接参数和模型映射，不携带 API Key。兼容的 `provider/add` 链接可以单独携带 API Key；只打开可信来源发送的链接。
 
-在 **设置 → 配置生成器** 中选择 Provider，可填写一个来源标识，然后生成链接。来源标识由链接创建者填写，仅用于导入预览，不代表经过认证的管理员身份。
+## 打开与导入
 
-接收者打开链接后会看到导入确认窗口。确认后新增 Provider；接收者需要自行填写 API Key。只导入来自可信来源的链接，因为模板包含服务商名称、地址和模型映射。
+接收者需安装 EchoFlow Code 桌面应用，并通过可信渠道收到链接。打开链接后核对来源、Provider 名称和服务地址，再确认导入。普通配置模板导入后需自行填写 API Key；带有 `provider/add` API Key 的链接会将该密钥用于新 Provider。
+
+链接创建者可填写来源标识用于预览，但该值没有签名，不能证明创建者身份。完整格式和校验规则见[深链接协议](../../docs/desktop/deep-link-protocol.md)。
 
 ## 深链接格式
 
@@ -43,10 +45,10 @@ echoflowcode://config/import?v=1&data=<url-safe-deflate-base64>
 
 ## EchoFlow 链接示例
 
-下面展示真实格式；`data` 部分由实际 Provider 数据压缩生成，每条链接都不同：
+下面展示链接格式；`data` 部分是压缩后的 URL-safe payload：
 
 ```text
 echoflowcode://config/import?v=1&data=eJw...（URL-safe 压缩数据）
 ```
 
-可用 `generateDeepLinkUrl(config)` 生成完整链接，导入端由桌面协议处理器解码、验证，并显示确认弹窗。
+导入端由桌面协议处理器解码、验证，并显示确认弹窗。完整字段与验证规则见[深链接协议](../../docs/desktop/deep-link-protocol.md)。

@@ -84,6 +84,18 @@ afterEach(() => {
 })
 
 describe('AdapterSettings IM setup entry', () => {
+  it('uses the shared checkbox contract for the Feishu streaming-card setting', () => {
+    renderAdapterSettings({ feishu: { appId: 'cli_test', appSecret: 'secret', streamingCard: false } })
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Feishu' }))
+
+    const checkbox = screen.getByRole('checkbox', { name: 'Streaming Card Mode' })
+    expect(checkbox).toHaveClass('focus-visible:ring-2')
+    const descriptionId = checkbox.getAttribute('aria-describedby')
+    expect(descriptionId).toBeTruthy()
+    expect(document.getElementById(descriptionId!)).toHaveTextContent('Real-time card updates for better experience')
+  })
+
   it('shows Telegram first by default and links to the unified documentation URL', () => {
     renderAdapterSettings({})
 

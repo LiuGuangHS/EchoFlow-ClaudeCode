@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test, spyOn, mock } from 'bun:test'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { SessionCollaborationService, type CollaborationMessage } from './sessionCollaborationService.js'
@@ -66,7 +66,7 @@ test('streaming output does not broadcast collaboration refreshes until collabor
   })).toBe(true)
 })
 
-test('collaboration state written before the directory rename is carried forward', async () => {
+test('does not read collaboration state from the legacy directory', async () => {
   const previous = process.env.CLAUDE_CONFIG_DIR
   process.env.CLAUDE_CONFIG_DIR = directory
   const legacy = join(directory, 'cc-haha', 'session-collaboration', 'state.json')
@@ -79,12 +79,81 @@ test('collaboration state written before the directory rename is carried forward
   try {
     const service = await getSessionCollaborationService()
 
-    expect((await service.status()).revision).toBe(7)
-    const adopted = join(directory, 'echoflow-code', 'session-collaboration', 'state.json')
-    expect(await readFile(adopted, 'utf8')).toContain('"worker"')
-    // The old file stays in place: it is still a migration source.
+    expect((await service.status()).revision).toBe(0)
     expect(await readFile(legacy, 'utf8')).toContain('"worker"')
+    expect(await stat(join(directory, 'echoflow-code', 'session-collaboration', 'state.json')).catch(() => null)).toBeNull()
   } finally {
+    if (previous === undefined) delete process.env.CLAUDE_CONFIG_DIR
+    else process.env.CLAUDE_CONFIG_DIR = previous
+  }
+})
+
+test('concurrent first callers open the collaboration service once', async () => {
+  const previous = process.env.CLAUDE_CONFIG_DIR
+  process.env.CLAUDE_CONFIG_DIR = directory
+  // The getter runs one recover per service it opens, so the count is how many
+  // service instances the concurrent callers created. Two would each hold their
+  // own copy of the store and overwrite the other's writes on every mutate.
+  const recover = spyOn(SessionCollaborationService.prototype, 'recover')
+  try {
+    const [first, second] = await Promise.all([getSessionCollaborationService(), getSessionCollaborationService()])
+
+    expect(recover).toHaveBeenCalledTimes(1)
+    expect(second).toBe(first)
+  } finally {
+    recover.mockRestore()
+    if (previous === undefined) delete process.env.CLAUDE_CONFIG_DIR
+    else process.env.CLAUDE_CONFIG_DIR = previous
+  }
+})
+
+test('does not read corrupt collaboration state from the legacy directory', async () => {
+  const previous = process.env.CLAUDE_CONFIG_DIR
+  process.env.CLAUDE_CONFIG_DIR = directory
+  const legacy = join(directory, 'cc-haha', 'session-collaboration', 'state.json')
+  await mkdir(dirname(legacy), { recursive: true })
+  await writeFile(legacy, '{ not json')
+  try {
+    const service = await getSessionCollaborationService()
+
+    expect((await service.status()).revision).toBe(0)
+    expect(await stat(join(directory, 'echoflow-code', 'session-collaboration', 'state.json')).catch(() => null)).toBeNull()
+  } finally {
+    if (previous === undefined) delete process.env.CLAUDE_CONFIG_DIR
+    else process.env.CLAUDE_CONFIG_DIR = previous
+  }
+})
+
+test('does not read unsupported collaboration state from the legacy directory', async () => {
+  const previous = process.env.CLAUDE_CONFIG_DIR
+  process.env.CLAUDE_CONFIG_DIR = directory
+  const legacy = join(directory, 'cc-haha', 'session-collaboration', 'state.json')
+  await mkdir(dirname(legacy), { recursive: true })
+  // Valid JSON, unsupported records: copying it would make every later start
+  // fail to parse the adopted file.
+  await writeFile(legacy, JSON.stringify({ version: 2, members: {}, messages: [] }))
+  try {
+    const service = await getSessionCollaborationService()
+
+    expect((await service.status()).revision).toBe(0)
+    expect(await stat(join(directory, 'echoflow-code', 'session-collaboration', 'state.json')).catch(() => null)).toBeNull()
+  } finally {
+    if (previous === undefined) delete process.env.CLAUDE_CONFIG_DIR
+    else process.env.CLAUDE_CONFIG_DIR = previous
+  }
+})
+
+test('a config directory that cannot be written still yields a usable service', async () => {
+  if (process.getuid?.() === 0) return
+  const previous = process.env.CLAUDE_CONFIG_DIR
+  process.env.CLAUDE_CONFIG_DIR = directory
+  await chmod(directory, 0o500)
+  try {
+    const service = await getSessionCollaborationService()
+
+    expect((await service.status()).revision).toBe(0)
+  } finally {
+    await chmod(directory, 0o700)
     if (previous === undefined) delete process.env.CLAUDE_CONFIG_DIR
     else process.env.CLAUDE_CONFIG_DIR = previous
   }

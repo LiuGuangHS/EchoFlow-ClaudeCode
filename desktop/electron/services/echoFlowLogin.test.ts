@@ -287,6 +287,29 @@ describe('EchoFlow site login session', () => {
     expect(window.closedCount).toBe(1)
   })
 
+  it('clears a persisted credential when startup verification rejects it', async () => {
+    const { login, verifySession, clearCookies, clearStorage } = makeLogin({
+      persisted: true,
+      verifySession: async () => 'rejected',
+    })
+
+    await expect(login.rehydrate('main')).resolves.toBe(false)
+    expect(verifySession).toHaveBeenCalledOnce()
+    expect(clearCookies).toHaveBeenCalledWith('main')
+    expect(clearStorage).toHaveBeenCalledWith('main')
+  })
+
+  it('keeps a persisted credential when startup verification is unavailable', async () => {
+    const { login, clearCookies, clearStorage } = makeLogin({
+      persisted: true,
+      verifySession: async () => 'unavailable',
+    })
+
+    await expect(login.rehydrate('main')).resolves.toBe(false)
+    expect(clearCookies).not.toHaveBeenCalled()
+    expect(clearStorage).not.toHaveBeenCalled()
+  })
+
   it('fails after three rejected session bootstraps instead of waiting for the login timeout', async () => {
     const { login, window, createWindow, verifySession, clearCookies, clearStorage, credential } = makeLogin({
       verifySession: async () => 'rejected',

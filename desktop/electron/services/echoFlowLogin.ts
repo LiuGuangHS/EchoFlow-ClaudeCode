@@ -336,7 +336,16 @@ export class EchoFlowLoginSession {
   private async tryRestoreSession(endpoint: EchoFlowLoginEndpoint): Promise<boolean> {
     const credential = await this.deps.readCredential(endpoint, null)
     if (!credential) return false
-    if (await this.deps.verifySession(endpoint, credential) !== 'ok') return false
+    const verdict = await this.deps.verifySession(endpoint, credential)
+    if (verdict !== 'ok') {
+      if (verdict === 'rejected') {
+        await Promise.all([
+          this.deps.clearCookies?.(endpoint),
+          this.deps.clearStorage?.(endpoint),
+        ]).catch(() => {})
+      }
+      return false
+    }
     this.verified.add(endpoint)
     return true
   }

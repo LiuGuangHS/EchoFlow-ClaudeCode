@@ -89,6 +89,5 @@ echoflowcode://config/import?v=1&data=<url-safe-deflate-base64>
 
 ## 相关
 
-- [配置分享](./config-sharing.md) — 怎么生成和导入一条链接
-- [设置速查](./settings.md) — 「配置生成器」入口在哪
+- [配置分享](./config-sharing.md) — 导入内容与安全边界
 - [连接模型服务](../start/models.md) — Provider 与 API Key 怎么配

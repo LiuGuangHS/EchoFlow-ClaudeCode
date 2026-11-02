@@ -32,7 +32,7 @@ afterEach(async () => {
 })
 
 function fixture() {
-  const otherId = 'office-unrelated@haha-connectors'
+  const otherId = 'office-unrelated@echoflow-connectors'
   const options: Record<string, optionStorage.PluginOptionValues> = { [otherId]: { apiKey: 'unrelated-fixture-key' } }
   const calls: Call[] = []
   const dependencies: RemoteConnectorDependencies = {
@@ -169,6 +169,6 @@ describe('SSE transport authentication matrix (synthetic fixtures)', () => {
     { type: 'none' },
   ] satisfies RemoteConnectorRecipe['auth'][]) {
     const id = `sse-${auth.type}${auth.type === 'api-key' ? `-${auth.in}` : ''}`
-    runtimeContract({ id, pluginId: `office-${id}@haha-connectors`, version: '1.0.0', endpoint: 'https://fixture.example/sse?format=0', transport: 'sse', auth })
+    runtimeContract({ id, pluginId: `office-${id}@echoflow-connectors`, version: '1.0.0', endpoint: 'https://fixture.example/sse?format=0', transport: 'sse', auth })
   }
 })

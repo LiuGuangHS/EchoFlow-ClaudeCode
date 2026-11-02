@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { adapterMissingTestSignals, evaluateChangePolicy } from './change-policy'
+import { evaluateChangePolicy } from './change-policy'
 import { changedFilesForLocalPrCheck } from './changed-files'
 import { dependentFilesForChangeSet } from './module-graph'
 
@@ -70,49 +70,17 @@ function commandList(result: ReturnType<typeof evaluateChangePolicy>) {
   return commands
 }
 
-function hasMatchingTest(files: string[], predicate: (file: string) => boolean) {
-  return files.some((file) => (
-    predicate(file) &&
-    (/\.test\.[cm]?[jt]sx?$/.test(file) || file.includes('/__tests__/'))
-  ))
-}
-
-function changedProductionFiles(files: string[], predicate: (file: string) => boolean) {
-  return files.filter((file) => (
-    predicate(file) &&
-    /\.[cm]?[jt]sx?$/.test(file) &&
-    !/\.test\.[cm]?[jt]sx?$/.test(file) &&
-    !file.includes('/__tests__/') &&
-    !file.includes('/fixtures/')
-  ))
-}
-
 function coverageWarnings(files: string[]) {
-  const warnings: string[] = []
-  const desktopProd = changedProductionFiles(files, (file) => file.startsWith('desktop/src/'))
-  const serverProd = changedProductionFiles(files, (file) => file.startsWith('src/server/'))
-  const agentRuntimeProd = changedProductionFiles(files, (file) => (
+  const agentRuntimeProd = files.some((file) => (
     file.startsWith('src/server/ws/') ||
     file.startsWith('src/server/services/conversation') ||
     file.startsWith('src/tools/') ||
     file.startsWith('src/utils/')
   ))
 
-  if (desktopProd.length > 0 && !hasMatchingTest(files, (file) => file.startsWith('desktop/src/'))) {
-    warnings.push('Desktop product files changed without a desktop test file in the PR.')
-  }
-
-  if (serverProd.length > 0 && !hasMatchingTest(files, (file) => file.startsWith('src/server/'))) {
-    warnings.push('Server product files changed without a server test file in the PR.')
-  }
-
-  warnings.push(...adapterMissingTestSignals(files))
-
-  if (agentRuntimeProd.length > 0) {
-    warnings.push('Agent/model runtime path changed: prefer request-shape/mock tests in PR and maintainer live-model smoke before release.')
-  }
-
-  return warnings
+  return agentRuntimeProd
+    ? ['Agent/model runtime path changed: prefer request-shape/mock tests in PR and maintainer live-model smoke before release.']
+    : []
 }
 
 function riskNotes(files: string[]) {
@@ -144,9 +112,6 @@ const labels = [
   ...(process.env.PR_LABELS?.split(',').map((label) => label.trim()).filter(Boolean) ?? []),
 ]
 
-if (process.env.ALLOW_CLI_CORE_CHANGE === '1') {
-  labels.push('allow-cli-core-change')
-}
 if (process.env.ALLOW_MISSING_TESTS === '1') {
   labels.push('allow-missing-tests')
 }

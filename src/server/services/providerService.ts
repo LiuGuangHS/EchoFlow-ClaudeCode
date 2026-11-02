@@ -7,7 +7,7 @@
  */
 
 import * as fs from 'fs/promises'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import * as path from 'path'
 import { ApiError } from '../middleware/errorHandler.js'
 import { buildOpenaiEndpoint } from '../proxy/openaiEndpoint.js'
@@ -35,6 +35,7 @@ import {
   CLAUDE_OFFICIAL_DEFAULT_MODELS,
 } from './claudeOfficialRuntime.js'
 import { SettingsService } from './settingsService.js'
+import { normalizeLocalRedactionSettings } from '../../shared/localRedactionSettings.js'
 import { echoFlowGrokOAuthService } from './echoFlowGrokOAuthService.js'
 import {
   CURRENT_PROVIDER_INDEX_SCHEMA_VERSION,
@@ -221,19 +222,7 @@ export class ProviderService {
   }
 
   private getEchoFlowDir(): string {
-    const configDir = this.getConfigDir()
-    const currentDir = getEchoFlowInternalDir(configDir)
-    const legacyDir = path.join(configDir, 'echoflow')
-    // Keep an intermediate EchoFlow store usable when it has not yet been
-    // replaced by the canonical echoflow-code index.
-    if (
-      legacyDir !== currentDir &&
-      existsSync(path.join(legacyDir, 'providers.json')) &&
-      !existsSync(path.join(currentDir, 'providers.json'))
-    ) {
-      return legacyDir
-    }
-    return currentDir
+    return getEchoFlowInternalDir(this.getConfigDir())
   }
 
   private getIndexPath(): string {
@@ -564,9 +553,21 @@ export class ProviderService {
     provider: SavedProvider,
     options?: { proxyPath?: string },
   ): Record<string, string> {
+    const settingsPath = path.join(getEchoFlowConfigDir(), 'settings.json')
+    let forceProxy = false
+    if (existsSync(settingsPath)) {
+      try {
+        const rawSettings = JSON.parse(readFileSync(settingsPath, 'utf-8')) as Record<string, unknown>
+        forceProxy = normalizeLocalRedactionSettings(rawSettings.localRedaction).enabled
+      } catch {
+        // An unreadable settings file must not downgrade to a plaintext direct connection.
+        forceProxy = true
+      }
+    }
     return buildProviderManagedEnv(provider, {
       proxyPath: options?.proxyPath,
       serverPort: ProviderService.serverPort,
+      forceProxy,
     })
   }
 
@@ -591,7 +592,10 @@ export class ProviderService {
           ...settings,
           env: {
             ...cleanedEnv,
-            ...this.buildManagedEnv(provider),
+            ...buildProviderManagedEnv(provider, {
+              serverPort: ProviderService.serverPort,
+              forceProxy: normalizeLocalRedactionSettings(settings.localRedaction).enabled,
+            }),
           },
         },
         result: undefined,

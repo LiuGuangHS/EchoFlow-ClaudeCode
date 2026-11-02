@@ -1,6 +1,6 @@
 # 「纸 · 墨 · 印」重设计规范
 
-本文是桌面端整体视觉重构的执行标准。配套阅读 [`desktop/src/components/AGENTS.md`](../src/components/AGENTS.md)（组件与 token 硬约束，冲突时以那份为准）。
+本文是「纸·墨·印」重设计时的历史交接稿，不是当前桌面端整体视觉规范。当前视觉方向以仓库根目录 [`DESIGN.md`](../../DESIGN.md) 为准；组件、token、无障碍和测试的可执行约束以 [`desktop/src/components/AGENTS.md`](../src/components/AGENTS.md) 及 `desktop/src/theme/globals.css` 为准。下文保留当时的设计意图与决策背景，其中具体数值和实现清单可能已过期，不应用作新工作的现行规格。
 
 ## 唯一边界：只换皮，不动功能
 

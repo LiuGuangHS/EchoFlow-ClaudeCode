@@ -531,9 +531,9 @@ describe('runQualityGate', () => {
           '"Areas: cli-core"',
           '"Labels: none"',
           '"Blocked: yes"',
+          '""',
           '"Blocking reasons:"',
           '"- CLI core changes require maintainer approval."',
-          '""',
           '"## Required local checks"',
           '"- bun run check:server"',
         ].join(' ')],
@@ -677,7 +677,6 @@ describe('renderMarkdownReport', () => {
       impact: {
         changedFiles: 3,
         areas: ['desktop', 'server'],
-        labels: ['allow-cli-core-change'],
         blocked: false,
         requiredChecks: ['`bun run check:desktop`', '`bun run check:coverage`'],
         testCoverageSignals: ['No obvious missing-test signal from changed paths.'],

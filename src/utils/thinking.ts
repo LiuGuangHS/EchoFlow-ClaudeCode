@@ -14,8 +14,6 @@ export type ThinkingConfig =
   | { type: 'disabled' }
 
 export const ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY = 'ECHOFLOW_SEND_DISABLED_THINKING'
-// Still set in user settings.json from older installs; do not rename.
-export const LEGACY_ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY = 'CC_HAHA_SEND_DISABLED_THINKING'
 
 /**
  * Build-time gate (feature) + runtime gate (GrowthBook). The build flag
@@ -232,8 +230,5 @@ export function shouldEnableThinkingByDefault(): boolean {
 }
 
 export function shouldSendExplicitDisabledThinking(): boolean {
-  return (
-    isEnvTruthy(process.env[ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY]) ||
-    isEnvTruthy(process.env[LEGACY_ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY])
-  )
+  return isEnvTruthy(process.env[ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY])
 }

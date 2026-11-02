@@ -69,14 +69,12 @@ import {
   type NetworkSettings,
 } from './networkSettings.js'
 import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
+import { assertDirectTransportAllowed } from '../../services/localRedactionGuard.js'
 import { readTraceCaptureSettings } from './traceCaptureService.js'
 import { logError } from '../../utils/log.js'
 import { normalizeAutoQuestionSettings } from '../../shared/autoQuestionSettings.js'
 import { decideAutoQuestionAnswers, type AutoQuestion } from './autoQuestionDecisionService.js'
-import {
-  ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
-  LEGACY_ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
-} from '../../utils/thinking.js'
+import { ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY } from '../../utils/thinking.js'
 import {
   createImageMetadataText,
   maybeResizeAndDownsampleImageBuffer,
@@ -369,6 +367,7 @@ export class ConversationStartupError extends Error {
       | 'CLI_SESSION_CONFLICT'
       | 'CLI_START_FAILED'
       | 'CLI_SPAWN_FAILED'
+      | 'LOCAL_REDACTION_REQUIRED'
       | 'SESSION_DELETED',
     readonly retryable = false,
   ) {
@@ -693,6 +692,17 @@ export class ConversationService {
         `Working directory does not exist or is not a directory: ${launchWorkDir}`,
         'WORKDIR_INVALID',
       )
+    }
+
+    if (options?.providerId === null) {
+      try {
+        await assertDirectTransportAllowed()
+      } catch (error) {
+        throw new ConversationStartupError(
+          error instanceof Error ? error.message : 'Local redaction is enabled; direct OAuth transport is unavailable',
+          'LOCAL_REDACTION_REQUIRED',
+        )
+      }
     }
 
     const args = this.buildSessionCliArgs(
@@ -1982,7 +1992,6 @@ export class ConversationService {
       'ANTHROPIC_DEFAULT_OPUS_MODEL',
       'ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES',
       ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
-      LEGACY_ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
       'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS',
       'CLAUDE_CODE_AUTO_COMPACT_WINDOW',
       'CLAUDE_CODE_ATTRIBUTION_HEADER',
@@ -2346,7 +2355,6 @@ export class ConversationService {
         'ANTHROPIC_DEFAULT_OPUS_MODEL',
         'ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES',
         ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
-        LEGACY_ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
         'CLAUDE_CODE_AUTO_COMPACT_WINDOW',
         'CLAUDE_CODE_ATTRIBUTION_HEADER',
         'CLAUDE_CODE_MODEL_CONTEXT_WINDOWS',

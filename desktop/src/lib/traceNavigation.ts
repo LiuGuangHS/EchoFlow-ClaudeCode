@@ -14,12 +14,6 @@ export function openTraceList(): void {
   useTabStore.getState().openTab(SETTINGS_TAB_ID, t('sidebar.settings'), 'settings')
 }
 
-/** The capture switches themselves live one section over, under General. */
-export function openTraceCaptureSettings(): void {
-  useUIStore.getState().setPendingSettingsTab('general')
-  useTabStore.getState().openTab(SETTINGS_TAB_ID, t('sidebar.settings'), 'settings')
-}
-
 /** Drill into one session's trace. The tab is titled with the session it traces. */
 export function openTraceDetail(sessionId: string, title: string): string {
   return useTabStore.getState().openTraceTab(sessionId, title)

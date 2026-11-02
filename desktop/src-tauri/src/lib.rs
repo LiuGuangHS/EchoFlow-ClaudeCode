@@ -39,22 +39,22 @@ mod macos_notifications {
     const ERROR_BUFFER_LEN: usize = 1024;
 
     unsafe extern "C" {
-        fn cchh_notification_authorization_status(
+        fn eflow_notification_authorization_status(
             error_buffer: *mut c_char,
             error_buffer_len: usize,
         ) -> c_int;
-        fn cchh_request_notification_authorization(
+        fn eflow_request_notification_authorization(
             error_buffer: *mut c_char,
             error_buffer_len: usize,
         ) -> bool;
-        fn cchh_send_user_notification(
+        fn eflow_send_user_notification(
             title: *const c_char,
             body: *const c_char,
             target: *const c_char,
             error_buffer: *mut c_char,
             error_buffer_len: usize,
         ) -> bool;
-        fn cchh_set_notification_response_callback(callback: Option<extern "C" fn(*const c_char)>);
+        fn eflow_set_notification_response_callback(callback: Option<extern "C" fn(*const c_char)>);
     }
 
     #[derive(Clone, Serialize)]
@@ -92,7 +92,7 @@ mod macos_notifications {
     pub fn permission_state() -> Result<String, String> {
         let mut error_buffer = new_error_buffer();
         let status = unsafe {
-            cchh_notification_authorization_status(error_buffer.as_mut_ptr(), ERROR_BUFFER_LEN)
+            eflow_notification_authorization_status(error_buffer.as_mut_ptr(), ERROR_BUFFER_LEN)
         };
 
         if status < 0 {
@@ -106,7 +106,7 @@ mod macos_notifications {
     pub fn request_permission() -> Result<String, String> {
         let mut error_buffer = new_error_buffer();
         let granted = unsafe {
-            cchh_request_notification_authorization(error_buffer.as_mut_ptr(), ERROR_BUFFER_LEN)
+            eflow_request_notification_authorization(error_buffer.as_mut_ptr(), ERROR_BUFFER_LEN)
         };
 
         if granted {
@@ -150,7 +150,7 @@ mod macos_notifications {
         if let Ok(mut guard) = handle.lock() {
             *guard = Some(app);
         }
-        unsafe { cchh_set_notification_response_callback(Some(handle_notification_response)) };
+        unsafe { eflow_set_notification_response_callback(Some(handle_notification_response)) };
     }
 
     pub fn send_notification(
@@ -171,7 +171,7 @@ mod macos_notifications {
 
         let mut error_buffer = new_error_buffer();
         let sent = unsafe {
-            cchh_send_user_notification(
+            eflow_send_user_notification(
                 title.as_ptr(),
                 body.as_ref()
                     .map_or(std::ptr::null(), |value| value.as_ptr()),
@@ -314,6 +314,7 @@ fn dir_has_portable_data(dir: &Path) -> bool {
         || dir.join("skills").is_dir()
         || dir.join("plugins").is_dir()
         || dir.join("cowork_plugins").is_dir()
+        || dir.join("echoflow-code").is_dir()
         || dir.join("echoflow").is_dir()
 }
 
@@ -2411,7 +2412,7 @@ mod tests {
     #[test]
     fn terminal_bash_path_normalizer_rejects_missing_files() {
         let missing =
-            std::env::temp_dir().join(format!("cchh-missing-bash-{}", std::process::id()));
+            std::env::temp_dir().join(format!("eflow-missing-bash-{}", std::process::id()));
 
         let error = normalize_terminal_bash_path(Some(missing.to_string_lossy().to_string()))
             .expect_err("missing path should be rejected");
@@ -2421,7 +2422,7 @@ mod tests {
 
     #[test]
     fn terminal_bash_path_normalizer_accepts_existing_files() {
-        let path = std::env::temp_dir().join(format!("cchh-bash-path-test-{}", std::process::id()));
+        let path = std::env::temp_dir().join(format!("eflow-bash-path-test-{}", std::process::id()));
         fs::write(&path, "").expect("write bash path fixture");
 
         assert_eq!(
@@ -2476,7 +2477,7 @@ mod tests {
     fn terminal_cwd_defaults_to_portable_config_dir_when_present() {
         let original = std::env::var_os("CLAUDE_CONFIG_DIR");
         let dir = std::env::temp_dir().join(format!(
-            "cchh-terminal-portable-cwd-{}",
+            "eflow-terminal-portable-cwd-{}",
             std::process::id()
         ));
         fs::create_dir_all(&dir).expect("create portable config dir");
@@ -2497,7 +2498,7 @@ mod tests {
     #[test]
     fn portable_data_detection_includes_cli_state_dirs() {
         let root = std::env::temp_dir().join(format!(
-            "cchh-portable-data-detect-{}",
+            "eflow-portable-data-detect-{}",
             std::process::id()
         ));
         let skills = root.join("skills");
@@ -2724,7 +2725,7 @@ mod tests {
 
     #[test]
     fn h5_dist_dir_prefers_tauri_parent_resource_mapping() {
-        let root = std::env::temp_dir().join(format!("cchh-h5-dist-test-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("eflow-h5-dist-test-{}", std::process::id()));
         let resource_dir = root.join("Contents").join("Resources");
         let app_root = root.join("Contents").join("MacOS");
         let mapped_dist = resource_dir.join("_up_").join("dist");

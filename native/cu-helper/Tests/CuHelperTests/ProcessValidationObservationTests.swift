@@ -8,7 +8,7 @@ final class ProcessValidationObservationTests: XCTestCase {
         let expected = try XCTUnwrap(ProvenProcessTarget(
             pid: .max,
             identity: AXTreeProcessIdentity(
-                bundleID: "dev.cchaha.tests.missing",
+                bundleID: "dev.echoflow.tests.missing",
                 executablePath: "/missing/process",
                 launchTime: 100
             )

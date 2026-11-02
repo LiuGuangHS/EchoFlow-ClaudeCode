@@ -1,7 +1,6 @@
 import { H5Settings } from './settings/H5Settings'
 import { getDesktopHost } from '@/lib/desktopHost'
 import { useEffect, useRef } from 'react'
-import { useTranslation } from '../i18n'
 import { SettingsPageHeader } from '@/components/settings/SettingsSection'
 import { AdapterSettings } from './AdapterSettings'
 import { useSkillStore } from '../stores/skillStore'
@@ -22,11 +21,23 @@ import { useUIStore } from '../stores/uiStore'
 import { AgentManager } from '../components/settings/AgentManager'
 import { H5AccessSettings } from './settings/H5AccessSettings'
 import { GeneralSettings } from './settings/GeneralSettings'
+import { NetworkSettings } from './settings/NetworkSettings'
+import { DataSettings } from './settings/DataSettings'
 import { RuntimeSettings } from './settings/RuntimeSettings'
 import { VoiceInputSettings } from './settings/VoiceInputSettings'
 import { AboutSettings } from './settings/AboutSettings'
 import { ProviderSettings } from './settings/ProviderSettings'
-import { ConfigGeneratorPage } from './settings/ConfigGeneratorPage'
+import { useTranslation, type TranslationKey } from '../i18n'
+import type { SettingsTab } from '../stores/uiStore'
+
+const SETTINGS_NAV = [
+  { group: 'settings.navGroup.models', tabs: [{ id: 'providers', icon: 'dns', label: 'settings.tab.providers' }, { id: 'runtime', icon: 'memory', label: 'settings.tab.runtime' }] },
+  { group: 'settings.navGroup.preferences', tabs: [{ id: 'general', icon: 'tune', label: 'settings.tab.general' }, { id: 'network', icon: 'lan', label: 'settings.tab.network' }, { id: 'data', icon: 'database', label: 'settings.tab.data' }, { id: 'voice', icon: 'mic', label: 'settings.tab.voice' }, { id: 'pets', icon: 'pets', label: 'settings.tab.pets' }] },
+  { group: 'settings.navGroup.capabilities', tabs: [{ id: 'agents', icon: 'smart_toy', label: 'settings.tab.agents' }, { id: 'skills', icon: 'auto_awesome', label: 'settings.tab.skills' }, { id: 'plugins', icon: 'extension', label: 'settings.tab.plugins' }, { id: 'mcp', icon: 'hub', label: 'settings.tab.mcp' }, { id: 'memory', icon: 'history_edu', label: 'settings.tab.memory' }, { id: 'computerUse', icon: 'mouse', label: 'settings.tab.computerUse' }] },
+  { group: 'settings.navGroup.access', tabs: [{ id: 'h5Access', icon: 'qr_code_2', label: 'settings.tab.h5Access' }, { id: 'adapters', icon: 'chat', label: 'settings.tab.adapters' }] },
+  { group: 'settings.navGroup.tools', tabs: [{ id: 'terminal', icon: 'terminal', label: 'settings.tab.terminal' }, { id: 'activity', icon: 'monitoring', label: 'settings.tab.activity' }, { id: 'trace', icon: 'account_tree', label: 'settings.tab.trace' }, { id: 'diagnostics', icon: 'monitor_heart', label: 'settings.tab.diagnostics' }] },
+  { group: null, tabs: [{ id: 'about', icon: 'info', label: 'settings.tab.about' }] },
+] as const satisfies ReadonlyArray<{ group: TranslationKey | null; tabs: ReadonlyArray<{ id: SettingsTab; icon: string; label: TranslationKey }> }>
 
 export function Settings() {
   return getDesktopHost().isDesktop ? <DesktopSettings /> : <H5Settings />
@@ -52,27 +63,22 @@ export function DesktopSettings() {
           className="w-[195px] flex-shrink-0 flex flex-col overflow-y-auto border-r border-[var(--color-border)] bg-[var(--color-surface)] py-4 pl-3 pr-1"
         >
           <div className="flex-1 flex flex-col gap-0.5">
-            <TabButton icon="dns" label={t('settings.tab.providers')} active={activeTab === 'providers'} onClick={() => setActiveTab('providers')} />
-            <TabButton icon="tune" label={t('settings.tab.general')} active={activeTab === 'general'} onClick={() => setActiveTab('general')} />
-            <TabButton icon="memory" label={t('settings.tab.runtime')} active={activeTab === 'runtime'} onClick={() => setActiveTab('runtime')} />
-            <TabButton icon="mic" label={t('settings.tab.voice')} active={activeTab === 'voice'} onClick={() => setActiveTab('voice')} />
-            <TabButton icon="qr_code_2" label={t('settings.tab.h5Access')} active={activeTab === 'h5Access'} onClick={() => setActiveTab('h5Access')} />
-            <TabButton icon="chat" label={t('settings.tab.adapters')} active={activeTab === 'adapters'} onClick={() => setActiveTab('adapters')} />
-            <TabButton icon="terminal" label={t('settings.tab.terminal')} active={activeTab === 'terminal'} onClick={() => setActiveTab('terminal')} />
-            <TabButton icon="dns" label={t('settings.tab.mcp')} active={activeTab === 'mcp'} onClick={() => setActiveTab('mcp')} />
-            <TabButton icon="smart_toy" label={t('settings.tab.agents')} active={activeTab === 'agents'} onClick={() => setActiveTab('agents')} />
-            <TabButton icon="auto_awesome" label={t('settings.tab.skills')} active={activeTab === 'skills'} onClick={() => setActiveTab('skills')} />
-            <TabButton icon="history_edu" label={t('settings.tab.memory')} active={activeTab === 'memory'} onClick={() => setActiveTab('memory')} />
-            <TabButton icon="extension" label={t('settings.tab.plugins')} active={activeTab === 'plugins'} onClick={() => setActiveTab('plugins')} />
-            <TabButton icon="pets" label={t('settings.tab.pets')} active={activeTab === 'pets'} onClick={() => setActiveTab('pets')} />
-            <TabButton icon="mouse" label={t('settings.tab.computerUse')} active={activeTab === 'computerUse'} onClick={() => setActiveTab('computerUse')} />
-            <TabButton icon="monitoring" label={t('settings.tab.activity')} active={activeTab === 'activity'} onClick={() => setActiveTab('activity')} />
-            <TabButton icon="account_tree" label={t('settings.tab.trace')} active={activeTab === 'trace'} onClick={() => setActiveTab('trace')} />
-            <TabButton icon="monitor_heart" label={t('settings.tab.diagnostics')} active={activeTab === 'diagnostics'} onClick={() => setActiveTab('diagnostics')} />
-            <TabButton icon="admin_panel_settings" label={t('settings.tab.configGenerator')} active={activeTab === 'configGenerator'} onClick={() => setActiveTab('configGenerator')} />
+            {SETTINGS_NAV.filter((group) => group.group !== null).map(({ group, tabs }, index) => {
+              const headingId = `settings-nav-group-${index}`
+              return (
+                <div key={group} role="group" aria-labelledby={headingId}>
+                  <h3 id={headingId} className={`px-3 ${index === 0 ? '' : 'pt-3'} pb-1 text-[11.5px] font-medium text-[var(--color-text-tertiary)]`}>{t(group!)}</h3>
+                  {tabs.map((tab) => (
+                    <TabButton key={tab.id} icon={tab.icon} label={t(tab.label)} active={activeTab === tab.id} onClick={() => setActiveTab(tab.id)} tabId={tab.id} />
+                  ))}
+                </div>
+              )
+            })}
           </div>
           <div className="mt-2 border-t border-[var(--color-border-separator)] pt-2">
-            <TabButton icon="info" label={t('settings.tab.about')} active={activeTab === 'about'} onClick={() => setActiveTab('about')} />
+            {SETTINGS_NAV[SETTINGS_NAV.length - 1]!.tabs.map((tab) => (
+              <TabButton key={tab.id} icon={tab.icon} label={t(tab.label)} active={activeTab === tab.id} onClick={() => setActiveTab(tab.id)} tabId={tab.id} />
+            ))}
           </div>
         </div>
 
@@ -80,6 +86,8 @@ export function DesktopSettings() {
           {activeTab === 'providers' && <ProviderSettings />}
           {activeTab === 'activity' && <ActivitySettings />}
           {activeTab === 'general' && <GeneralSettings />}
+          {activeTab === 'network' && <NetworkSettings />}
+          {activeTab === 'data' && <DataSettings />}
           {activeTab === 'runtime' && <RuntimeSettings />}
           {activeTab === 'voice' && <VoiceInputSettings />}
           {activeTab === 'h5Access' && <H5AccessSettings />}
@@ -95,14 +103,13 @@ export function DesktopSettings() {
           {activeTab === 'trace' && <TraceList />}
           {activeTab === 'diagnostics' && <DiagnosticsSettings />}
           {activeTab === 'about' && <AboutSettings />}
-          {activeTab === 'configGenerator' && <ConfigGeneratorPage />}
         </div>
       </div>
     </div>
   )
 }
 
-function TabButton({ icon, label, active, onClick }: { icon: string; label: string; active: boolean; onClick: () => void }) {
+function TabButton({ icon, label, active, onClick, tabId }: { icon: string; label: string; active: boolean; onClick: () => void; tabId?: SettingsTab }) {
   const ref = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
@@ -114,6 +121,7 @@ function TabButton({ icon, label, active, onClick }: { icon: string; label: stri
     <button
       ref={ref}
       onClick={onClick}
+      data-settings-tab={tabId}
       aria-current={active ? 'page' : undefined}
       className={`w-full flex items-center gap-2.5 rounded-[var(--radius-md)] py-2 pl-3 pr-2 text-[13.5px] text-left transition-[background-color,color] duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)] ${
         active

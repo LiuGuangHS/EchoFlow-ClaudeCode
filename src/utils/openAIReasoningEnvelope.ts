@@ -1,9 +1,5 @@
 export const OPENAI_REASONING_ENVELOPE_PREFIX =
   'echoflow-code:openai-reasoning:v1:'
-// Persisted in resumed transcripts from older installs; do not rename.
-const LEGACY_OPENAI_REASONING_ENVELOPE_PREFIX =
-  'cc-haha:openai-reasoning:v1:'
-
 export type OpenAIReasoningEnvelopeData = {
   id?: string
   summary: Array<{ type: string; text: string }>
@@ -12,12 +8,10 @@ export type OpenAIReasoningEnvelopeData = {
 export function parseOpenAIReasoningEnvelope(
   data: string,
 ): OpenAIReasoningEnvelopeData | null {
-  const prefix = [OPENAI_REASONING_ENVELOPE_PREFIX, LEGACY_OPENAI_REASONING_ENVELOPE_PREFIX]
-    .find((candidate) => data.startsWith(candidate))
-  if (!prefix) return null
+  if (!data.startsWith(OPENAI_REASONING_ENVELOPE_PREFIX)) return null
 
   try {
-    const value = JSON.parse(data.slice(prefix.length)) as unknown
+    const value = JSON.parse(data.slice(OPENAI_REASONING_ENVELOPE_PREFIX.length)) as unknown
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null
 
     const envelope = value as Record<string, unknown>

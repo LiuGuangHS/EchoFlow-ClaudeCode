@@ -234,7 +234,7 @@ describe('persistent storage upgrade migrations', () => {
     expect(current.providers[0]?.toolSearchEnabled).toBe(true)
   })
 
-  test('imports legacy root providers config into echoflow-code storage without deleting the source', async () => {
+  test('does not import legacy root providers config into echoflow-code storage', async () => {
     await fs.writeFile(
       path.join(tempDir, 'providers.json'),
       JSON.stringify({
@@ -245,14 +245,8 @@ describe('persistent storage upgrade migrations', () => {
           name: 'Legacy Root Provider',
           baseUrl: 'https://legacy.example.test',
           apiKey: 'legacy-token',
-          models: [
-            { id: 'legacy-haiku', name: 'Legacy Haiku' },
-            { id: 'legacy-sonnet', name: 'Legacy Sonnet' },
-          ],
+          models: [{ id: 'legacy-sonnet', name: 'Legacy Sonnet' }],
           isActive: true,
-          createdAt: 1,
-          updatedAt: 2,
-          notes: 'keep note',
         }],
       }, null, 2),
       'utf-8',
@@ -261,52 +255,14 @@ describe('persistent storage upgrade migrations', () => {
     const report = await ensurePersistentStorageUpgraded()
 
     expect(report.failures).toEqual([])
-    expect(report.migratedEntries).toContain('providers.json -> echoflow-code/providers.json')
-    expect(report.migratedEntries).toContain('providers.json -> echoflow-code/settings.json')
+    expect(report.migratedEntries).not.toContain('providers.json -> echoflow-code/providers.json')
+    expect(report.migratedEntries).not.toContain('providers.json -> echoflow-code/settings.json')
     expect(JSON.parse(await fs.readFile(path.join(tempDir, 'providers.json'), 'utf-8'))).toMatchObject({
       version: 1,
       activeModel: 'legacy-sonnet',
     })
-
-    const migrated = JSON.parse(await fs.readFile(path.join(tempDir, 'echoflow-code', 'providers.json'), 'utf-8')) as {
-      activeId?: string | null
-      providerOrder?: string[]
-      providers?: Array<{
-        id?: string
-        presetId?: string
-        apiFormat?: string
-        models?: Record<string, string>
-        notes?: string
-      }>
-    }
-    expect(migrated.activeId).toBe('legacy-provider')
-    expect(migrated.providerOrder).toEqual(['legacy-provider', 'claude-official', 'openai-official', 'grok-official'])
-    expect(migrated.providers?.[0]).toMatchObject({
-      id: 'legacy-provider',
-      presetId: 'custom',
-      apiFormat: 'anthropic',
-      notes: 'keep note',
-      models: {
-        main: 'legacy-sonnet',
-        haiku: 'legacy-sonnet',
-        sonnet: 'legacy-sonnet',
-        opus: 'legacy-sonnet',
-      },
-    })
-
-    const managedSettings = JSON.parse(await fs.readFile(path.join(tempDir, 'echoflow-code', 'settings.json'), 'utf-8')) as {
-      env?: Record<string, string>
-    }
-    expect(managedSettings.env).toMatchObject({
-      ANTHROPIC_BASE_URL: 'https://legacy.example.test',
-      ANTHROPIC_AUTH_TOKEN: 'legacy-token',
-      ANTHROPIC_MODEL: 'legacy-sonnet',
-    })
-
-    const service = new ProviderService()
-    const { providers, activeId } = await service.listProviders()
-    expect(activeId).toBe('legacy-provider')
-    expect(providers[0]?.models.main).toBe('legacy-sonnet')
+    await expect(fs.access(path.join(tempDir, 'echoflow-code', 'providers.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(fs.access(path.join(tempDir, 'echoflow-code', 'settings.json'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   test('does not overwrite current echoflow-code provider storage with a legacy root config', async () => {
@@ -428,7 +384,7 @@ describe('persistent storage upgrade migrations', () => {
     expect(backups.length).toBe(1)
   })
   test('upgrades v4 providers to automatic defaults with a backup and preserves unknown fields', async () => {
-    const dir = path.join(tempDir, 'echoflow')
+    const dir = path.join(tempDir, 'echoflow-code')
     const file = path.join(dir, 'providers.json')
     await fs.mkdir(dir, { recursive: true })
     const fixture = {
@@ -471,7 +427,7 @@ describe('persistent storage upgrade migrations', () => {
   })
 
   test('preserves valid OAuth model mappings and unknown future entries while dropping malformed known entries', async () => {
-    const dir = path.join(tempDir, 'cc-haha')
+    const dir = path.join(tempDir, 'echoflow-code')
     const file = path.join(dir, 'providers.json')
     await fs.mkdir(dir, { recursive: true })
     await fs.writeFile(file, JSON.stringify({

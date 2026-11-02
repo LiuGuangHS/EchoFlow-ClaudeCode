@@ -3,6 +3,7 @@ import type { KeyboardEvent } from 'react'
 import { ExternalLink, RefreshCw, Trash2, Workflow } from 'lucide-react'
 import { tracesApi } from '../api/traces'
 import { useTranslation } from '../i18n'
+import { isPlaceholderSessionTitle } from '@/lib/sessionTitle'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { IconButton } from '@/components/ui/IconButton'
@@ -10,10 +11,13 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { ErrorState } from '@/components/ui/ErrorState'
 import { SearchField } from '@/components/ui/SearchField'
+import { Switch } from '@/components/ui/Switch'
 import { formatDurationMs, formatTokenCount } from '../lib/trace/formatters'
 import { getDesktopHost } from '../lib/desktopHost'
+import { useSettingsStore } from '../stores/settingsStore'
+import { useUIStore } from '../stores/uiStore'
 import { buildTraceWindowUrl } from '../lib/traceLaunch'
-import { openTraceCaptureSettings, openTraceDetail } from '../lib/traceNavigation'
+import { openTraceDetail } from '../lib/traceNavigation'
 import type { TraceSessionList, TraceSessionListItem } from '../types/trace'
 
 type TraceListState =
@@ -37,6 +41,9 @@ export function TraceList() {
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null)
   const activeRequest = useRef<AbortController | null>(null)
   const host = getDesktopHost()
+  const traceCapture = useSettingsStore((s) => s.traceCapture)
+  const setTraceCaptureEnabled = useSettingsStore((s) => s.setTraceCaptureEnabled)
+  const addToast = useUIStore((s) => s.addToast)
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -90,6 +97,17 @@ export function TraceList() {
       }
     }
   }, [query, t])
+
+  const toggleTraceCapture = async (enabled: boolean) => {
+    try {
+      await setTraceCaptureEnabled(enabled)
+      await load({ silent: true })
+    } catch {
+      // The store already rolled the flag back; say why instead of leaving the
+      // toggle looking like it took.
+      addToast({ type: 'error', message: t('trace.list.captureSaveFailed') })
+    }
+  }
 
   useEffect(() => {
     void load()
@@ -173,9 +191,13 @@ export function TraceList() {
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              <Button size="base" variant="secondary" onClick={openTraceCaptureSettings}>
-                {t('trace.list.settings')}
-              </Button>
+              <Switch
+                size="sm"
+                checked={traceCapture.enabled}
+                onChange={(enabled) => void toggleTraceCapture(enabled)}
+                label={t('settings.general.traceEnabled')}
+                description={traceCapture.enabled ? t('settings.general.traceHintOn') : t('settings.general.traceHintOff')}
+              />
               <Button size="base" variant="secondary" onClick={() => void load()}>
                 <RefreshCw className="h-3.5 w-3.5" strokeWidth={2} aria-hidden="true" />
                 {t('trace.refresh')}
@@ -469,7 +491,8 @@ function TraceListSkeleton({ label }: { label: string }) {
 }
 
 function getTraceTitle(trace: TraceSessionListItem, t: ReturnType<typeof useTranslation>): string {
-  return trace.session?.title || t('session.untitled')
+  const title = trace.session?.title
+  return title && !isPlaceholderSessionTitle(title) ? title : t('session.untitled')
 }
 
 /** `claude-sonnet-4-5-20250929` -> `sonnet-4-5`; non-Claude ids pass through. */

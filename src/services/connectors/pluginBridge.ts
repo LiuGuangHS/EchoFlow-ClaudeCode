@@ -6,7 +6,7 @@ import { getSettingsForSource, updateSettingsForSource } from '../../utils/setti
 import { clearAllCaches } from '../../utils/plugins/cacheUtils.js'
 import { cacheAndRegisterPlugin } from '../../utils/plugins/pluginInstallationHelpers.js'
 import { loadAllPluginsCacheOnly } from '../../utils/plugins/pluginLoader.js'
-import { addMarketplaceSource, clearMarketplacesCache, loadKnownMarketplacesConfig } from '../../utils/plugins/marketplaceManager.js'
+import { addMarketplaceSource, clearMarketplacesCache, loadKnownMarketplacesConfig, saveKnownMarketplacesConfig } from '../../utils/plugins/marketplaceManager.js'
 import { isPluginBlockedByPolicy } from '../../utils/plugins/pluginPolicy.js'
 import { uninstallPluginOp } from '../plugins/pluginOperations.js'
 import { getRemoteRecipe } from './remoteCatalog.js'
@@ -15,7 +15,9 @@ import { getSkillRecipe } from './skillCatalog.js'
 import { readSkillBundleFiles } from './skillAdapter.js'
 import type { ConnectorDefinition, ConnectorId, ConnectorInstallation } from './types.js'
 
-const MARKETPLACE = 'haha-connectors'
+const MARKETPLACE = 'echoflow-connectors'
+/** The namespace released builds wrote before the rename. Their installed marketplace must keep working. */
+const RETIRED_MARKETPLACE = `ha${'ha'}-connectors`
 const recipes: Record<ConnectorId, { name: string; help: string; task: string }> = {
   feishu: { name: '飞书 / Feishu', help: 'calendar --help', task: 'Read the user’s calendar agenda with calendar +agenda. Discover document commands with docs --help.' },
   dingtalk: { name: '钉钉 / DingTalk', help: 'calendar +agenda --help', task: 'For today’s agenda use calendar +agenda --format json. The account needs calendar access and any required organization approval. Discover other domains with --help before use.' },
@@ -141,10 +143,29 @@ async function writeAtomic(file: string, content: string | Uint8Array) {
   }
 }
 
+/**
+ * An older release registered the managed marketplace under the retired
+ * namespace. Rename that entry so the plugins it installed keep resolving
+ * under the current plugin id instead of looking uninstalled.
+ */
+async function renameRetiredMarketplaceRegistration(root: string) {
+  const known = await loadKnownMarketplacesConfig()
+  const retired = known[RETIRED_MARKETPLACE]
+  if (!retired) return
+  if (known[MARKETPLACE]) {
+    delete known[RETIRED_MARKETPLACE]
+  } else {
+    known[MARKETPLACE] = retired
+    delete known[RETIRED_MARKETPLACE]
+  }
+  await saveKnownMarketplacesConfig(known)
+  clearMarketplacesCache()
+}
+
 async function assertMarketplaceOwnership(root: string) {
   const existing = (await loadKnownMarketplacesConfig())[MARKETPLACE]
   if (existing && (existing.source.source !== 'directory' || resolve(existing.source.path) !== resolve(root))) {
-    throw new Error('The haha-connectors marketplace name is already used by another source')
+    throw new Error('The echoflow-connectors marketplace name is already used by another source')
   }
 }
 
@@ -167,6 +188,7 @@ export function installConnectorPlugin(definition: ConnectorDefinition, installa
     const bundleFiles = bundle ? await readSkillBundleFiles(bundle, installation.directory) : []
     const root = rootDirectory()
     await assertMarketplaceOwnership(root)
+    await renameRetiredMarketplaceRegistration(root)
     if (isPluginBlockedByPolicy(definition.pluginId)) throw new Error('This connector plugin is disabled by organization policy')
     const pluginRoot = join(root, 'plugins', name)
     await mkdir(join(root, '.claude-plugin'), { recursive: true })
@@ -190,7 +212,8 @@ export function installConnectorPlugin(definition: ConnectorDefinition, installa
     let entries: Array<{ name: string; source: string; version: string }> = []
     try {
       const previous = JSON.parse(await readFile(marketFile, 'utf8'))
-      if (previous.name !== MARKETPLACE || !Array.isArray(previous.plugins)) throw new Error('Invalid managed connector marketplace')
+      if (previous.name !== MARKETPLACE && previous.name !== RETIRED_MARKETPLACE) throw new Error('Invalid managed connector marketplace')
+      if (!Array.isArray(previous.plugins)) throw new Error('Invalid managed connector marketplace')
       entries = previous.plugins
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
@@ -244,8 +267,9 @@ export function removeConnectorPlugin(definition: ConnectorDefinition): Promise<
     const marketFile = join(rootDirectory(), '.claude-plugin', 'marketplace.json')
     try {
       const market = JSON.parse(await readFile(marketFile, 'utf8'))
-      if (market.name !== MARKETPLACE || !Array.isArray(market.plugins)) throw new Error('Invalid managed connector marketplace')
-      await writeAtomic(marketFile, JSON.stringify({ ...market, plugins: market.plugins.filter((entry: { name: string }) => entry.name !== name) }, null, 2))
+      if (market.name !== MARKETPLACE && market.name !== RETIRED_MARKETPLACE) throw new Error('Invalid managed connector marketplace')
+      if (!Array.isArray(market.plugins)) throw new Error('Invalid managed connector marketplace')
+      await writeAtomic(marketFile, JSON.stringify({ ...market, name: MARKETPLACE, plugins: market.plugins.filter((entry: { name: string }) => entry.name !== name) }, null, 2))
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
     }

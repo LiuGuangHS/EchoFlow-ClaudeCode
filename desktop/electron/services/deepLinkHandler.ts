@@ -1,58 +1,34 @@
 import { handleDeepLinkUrl } from '../../src/lib/deepLink'
-import { ELECTRON_EVENT_CHANNELS } from '../ipc/channels'
-import type { ShareableConfig } from '../../src/types/configShare'
+import type { DesktopConfigImport } from '../../src/lib/desktopHost/types'
 
-interface DeepLinkHandlerOptions {
-  sendToRenderer: (channel: string, data: any) => void
-}
-
-export interface DeepLinkPayload {
-  type: 'config-import'
-  data: ShareableConfig
-  apiKey?: string
-}
-
+/**
+ * Holds the latest import link until the main window's renderer takes it.
+ *
+ * The link can arrive before the window exists (cold start from argv or
+ * `open-url`) or before React has mounted, so pushing it at arrival time would
+ * lose it. The renderer pulls on mount and again on every `notify`.
+ */
 export class DeepLinkHandler {
-  private sendToRenderer: (channel: string, data: any) => void
-  private pendingUrl: string | null = null
+  private pending: DesktopConfigImport | null = null
 
-  constructor(options: DeepLinkHandlerOptions) {
-    this.sendToRenderer = options.sendToRenderer
-  }
+  constructor(private readonly notify: () => void) {}
 
   handle(url: string): void {
-    console.log('[DeepLink] Processing deep link')
-
     const action = handleDeepLinkUrl(url)
-    if (!action) {
-      console.warn('[DeepLink] Invalid or expired link')
-      return
-    }
-
-    if (action.type === 'config/import') {
-      this.sendToRenderer(ELECTRON_EVENT_CHANNELS.deepLink, {
-        type: 'config-import',
-        data: action.payload,
-        ...(action.apiKey ? { apiKey: action.apiKey } : {}),
-      })
-    } else {
-      console.warn('[DeepLink] Unknown action:', action.type)
-    }
+    this.pending = action?.type === 'config/import'
+      ? { config: action.payload, ...(action.apiKey ? { apiKey: action.apiKey } : {}) }
+      : { invalid: true }
+    // Never log the URL: the provider/add form can carry an API key.
+    if ('invalid' in this.pending) console.warn('[DeepLink] Invalid, expired, or unknown link')
+    this.notify()
   }
 
-  setPending(url: string): void {
-    this.pendingUrl = url
+  take(): DesktopConfigImport | null {
+    return this.pending
   }
 
-  updateSender(sender: (channel: string, data: any) => void): void {
-    this.sendToRenderer = sender
-  }
-
-  flushPending(): void {
-    if (this.pendingUrl) {
-      this.handle(this.pendingUrl)
-      this.pendingUrl = null
-    }
+  ack(): void {
+    this.pending = null
   }
 }
 

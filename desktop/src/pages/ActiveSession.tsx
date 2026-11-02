@@ -4,6 +4,7 @@ import type { RefObject } from 'react'
 import { ArrowLeft, GitFork, Target, MessageCircleQuestion } from 'lucide-react'
 import { IconButton } from '@/components/ui/IconButton'
 import { openSideChat } from '@/lib/workspace/openSideChat'
+import { isPlaceholderSessionTitle } from '@/lib/sessionTitle'
 import {
   SCHEDULED_TAB_ID,
   SETTINGS_TAB_ID,
@@ -565,7 +566,9 @@ export function ActiveSession({ sessionId, active = true }: { sessionId?: string
       ? sessionState.historyError || t('session.historyLoadFailed')
       : null
   const visibleMessageCount = messages.length > 0 ? messages.length : session?.messageCount ?? 0
-  const headerTitle = session?.title || t('session.untitled')
+  const headerTitle = session?.title && !isPlaceholderSessionTitle(session.title)
+    ? session.title
+    : t('session.untitled')
   const currentGitInfo = sessionGitInfo?.sessionId === activeTabId ? sessionGitInfo.info : null
   const worktree = currentGitInfo?.worktree?.enabled ? currentGitInfo.worktree : null
   const worktreePath = worktree?.path || worktree?.plannedPath || null

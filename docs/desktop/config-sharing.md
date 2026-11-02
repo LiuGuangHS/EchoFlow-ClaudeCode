@@ -1,27 +1,23 @@
 ---
 title: 配置分享
 nav_title: 配置分享
-description: 用配置生成器把模型服务配置打包成一条链接分享出去，不含 API Key。
+description: 从可信来源打开并导入 Provider 配置链接。
 order: 14
 ---
 
 # 配置分享
 
-配置生成器把你在「模型配置」里配好的 Provider 打包成一条链接，发给别人一键导入。团队里统一模型服务、换机器重装、给同事起新环境，都用它。
+外部服务或管理员可以按[深链接协议](./deep-link-protocol.md)生成导入链接。接收者打开链接后，EchoFlow Code 会显示确认窗口并新增 Provider。
 
-**它分享的是连接参数和模型映射，不包括 API Key。** 这是理解整件事的前提——拿到链接的人仍然要自己填密钥，导不进来一份能直接用的凭据。
+**配置模板分享 Provider 连接参数和模型映射，不含 API Key。** 兼容的 `provider/add` 链接可以单独携带 API Key，因此只打开可信来源发送的链接。
 
 导入还有一条保护：**已有同名且服务地址相同的 Provider 会直接跳过**，不会覆盖你本机已有的配置。
 
-## 生成一条链接
+## 打开与导入
 
-入口在「设置 → 配置生成器」。
+接收者需安装 EchoFlow Code 桌面应用，并通过可信渠道收到链接。打开链接后核对来源、Provider 名称和服务地址，再确认导入。普通配置模板导入后需自行填写 API Key；带有 `provider/add` API Key 的链接会将该密钥用于新 Provider。来源标识由链接创建者填写，仅用于导入预览，**不代表经过认证的身份**。链接格式和校验规则见[深链接协议](./deep-link-protocol.md)。
 
-1. 勾选要分享的 Provider，可以多选。
-2. 填一个**来源标识**（可选）。它只出现在对方的导入预览里，用来说明这份配置是谁给的，**不代表经过认证的身份**。
-3. 点生成，拿到链接。
-
-链接长这样：
+深链接格式：
 
 ```text
 echoflowcode://config/import?v=1&data=eJw...（URL-safe 压缩数据）
@@ -29,12 +25,12 @@ echoflowcode://config/import?v=1&data=eJw...（URL-safe 压缩数据）
 
 `echoflowcode` 是桌面应用注册的协议，`config/import` 表示导入一个配置包，`data` 是压缩后的内容——**不是**能在地址栏里读出来的明文 JSON，也不是 AionUI 那份 `{aionuiConfig}` payload。
 
-## 别人怎么导入
+## 导入行为
 
 对方在自己机器上打开这条链接，桌面端会弹出确认窗口，列出里面有哪些 Provider。确认之后：
 
 - 这些 Provider 会**新增**到他的配置里；
-- **API Key 一律留空**，需要他自己填；
+- 普通配置模板的 **API Key 留空**，需要接收者自己填写；
 - 如果他已经有同名且同服务地址的 Provider，**这条会被跳过**，本机配置不动。
 
 所以导入是安全的增量操作，不会把别人机器上正在用的配置冲掉。
@@ -57,23 +53,22 @@ echoflowcode://config/import?v=1&data=eJw...（URL-safe 压缩数据）
 
 ## 里面到底装了什么
 
-里面是 Provider 的连接参数和模型映射——**没有 API Key、访问令牌或本机标识**，这是设计上的边界，不是当前恰好没带。
+普通配置模板包含 Provider 连接参数和模型映射，不含 API Key、访问令牌或本机标识。兼容的 `provider/add` 格式另行处理，可为新增 Provider 携带 API Key。
 
 payload 的完整字段、验证规则和有效期见[深链接协议](./deep-link-protocol.md)。
 
 ## 常见问题
 
-**导入之后为什么用不了。** API Key 不会被分享，导入进来的 Provider 密钥是空的。去「模型配置」里补上自己的 Key。
+**导入之后为什么用不了。** 普通配置模板不包含 API Key，导入后需在「模型配置」里填写自己的 Key。
 
 **为什么有一个 Provider 没导进来。** 你本机已经有同名且服务地址相同的配置了，导入会跳过它，这是有意的保护。想覆盖就先手动删掉原来那条再导入。
 
 **链接打不开 / 提示已过期。** 链接 30 天有效。让它重新生成一条。另外确认两台机器的系统时间没有明显偏差。
 
-**能不能一次分享多个 Provider。** 可以，生成时多选即可，一条链接里就是一个 `providers` 数组。
+**链接能包含多个 Provider 吗？** 可以，一条链接中的 `providers` 数组可包含多个 Provider。
 
 ## 相关
 
-- [设置速查](./settings.md) — 「配置生成器」在设置里的位置
 - [深链接协议](./deep-link-protocol.md) — 链接格式、payload 字段与验证规则
 - [连接模型服务](../start/models.md) — API Key、官方账号登录怎么配
 - [EchoFlow SiHub](../start/account.md) — 推荐接入与调用令牌

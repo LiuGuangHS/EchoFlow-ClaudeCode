@@ -8,6 +8,7 @@
 | --- | --- |
 | `decoupling-plan.md` | 脱钩与重写的现行重构计划（原根目录 `DECOUPLING_PLAN.md`） |
 | `release-windows.md` | 桌面端发布与自动更新 runbook |
+| `quality-baseline.md` | 真实 provider、模型 baseline 与 release quality gate |
 | `computer-use-native-manual-qa.md` | macOS/Windows Computer Use 真机验收步骤 |
 | `computer-use-codex-impl-blueprint.md` | Codex 原生 Computer Use 兼容契约与实现边界 |
 

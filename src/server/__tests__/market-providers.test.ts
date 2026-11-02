@@ -53,11 +53,11 @@ beforeEach(() => {
   setClawhubOwnerHints([])
 
   originalEchoFlowDisableProvidersEnv = process.env.ECHOFLOW_MARKET_DISABLE_PROVIDERS
-  originalDisableProvidersEnv = process.env.HAHA_MARKET_DISABLE_PROVIDERS
+  originalDisableProvidersEnv = process.env.ECHOFLOW_MARKET_DISABLE_PROVIDERS
   delete process.env.ECHOFLOW_MARKET_DISABLE_PROVIDERS
-  delete process.env.HAHA_MARKET_DISABLE_PROVIDERS
+  delete process.env.ECHOFLOW_MARKET_DISABLE_PROVIDERS
   delete process.env.ECHOFLOW_MARKET_BASE_CLAWHUB
-  delete process.env.HAHA_MARKET_BASE_CLAWHUB
+  delete process.env.ECHOFLOW_MARKET_BASE_CLAWHUB
 })
 
 afterEach(() => {
@@ -71,12 +71,12 @@ afterEach(() => {
     process.env.ECHOFLOW_MARKET_DISABLE_PROVIDERS = originalEchoFlowDisableProvidersEnv
   }
   if (originalDisableProvidersEnv === undefined) {
-    delete process.env.HAHA_MARKET_DISABLE_PROVIDERS
+    delete process.env.ECHOFLOW_MARKET_DISABLE_PROVIDERS
   } else {
-    process.env.HAHA_MARKET_DISABLE_PROVIDERS = originalDisableProvidersEnv
+    process.env.ECHOFLOW_MARKET_DISABLE_PROVIDERS = originalDisableProvidersEnv
   }
   delete process.env.ECHOFLOW_MARKET_BASE_CLAWHUB
-  delete process.env.HAHA_MARKET_BASE_CLAWHUB
+  delete process.env.ECHOFLOW_MARKET_BASE_CLAWHUB
 })
 
 describe('clawhubProvider', () => {
@@ -222,7 +222,7 @@ describe('clawhubProvider', () => {
   })
 
   it('prefers EchoFlow market overrides while retaining legacy environment variables', () => {
-    process.env.HAHA_MARKET_BASE_CLAWHUB = 'https://legacy.example'
+    process.env.ECHOFLOW_MARKET_BASE_CLAWHUB = 'https://legacy.example'
     expect(getProviderBase('clawhub')).toBe('https://legacy.example')
 
     process.env.ECHOFLOW_MARKET_BASE_CLAWHUB = 'https://echoflow.example'
