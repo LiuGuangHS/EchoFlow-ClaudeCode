@@ -327,6 +327,175 @@ describe('dshDriver over a real ACP child process', () => {
     await connection.close()
   })
 
+  test('opening a session fails instead of hanging when the engine never answers session/new', async () => {
+    const driver = createDshDriver({ resolveCommand: command, sessionOpenTimeoutMs: 300 })
+    const connection = await driver.start({
+      installation,
+      runId: 'run-1',
+      cwd: process.cwd(),
+      env: { FIXTURE_STALL_SESSION_NEW: '1' },
+    })
+    const failure = await connection
+      .openSession({ sessionId: 'session-1', cwd: process.cwd() })
+      .catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(Error)
+    expect((failure as Error).message).toContain('session/new')
+    await connection.close()
+  })
+
+  test('one budget covers the whole open, not each request in it', async () => {
+    const driver = createDshDriver({ resolveCommand: command, sessionOpenTimeoutMs: 400 })
+    const connection = await driver.start({
+      installation,
+      runId: 'run-1',
+      cwd: process.cwd(),
+      env: { FIXTURE_LATE_CONFIG_MS: '300' },
+    })
+    const started = Date.now()
+    const failure = await connection
+      .openSession({
+        sessionId: 'session-1',
+        cwd: process.cwd(),
+        model: { provider: 'anthropic', model: 'claude-opus-5' },
+        reasoningEffort: 'high',
+      })
+      .catch((error: unknown) => error)
+    // The model option eats most of the budget; the reasoning-effort option
+    // that follows must not get another full one.
+    expect(failure).toBeInstanceOf(Error)
+    expect(Date.now() - started).toBeLessThan(900)
+    await connection.close()
+  })
+
+  test('a config option that runs out of time names the open budget', async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), 'echoflow-budget-'))
+    sandboxes.push(sandbox)
+    const callsPath = join(sandbox, 'calls.ndjson')
+    const driver = createDshDriver({ resolveCommand: command, sessionOpenTimeoutMs: 200 })
+    const connection = await driver.start({
+      installation,
+      runId: 'run-1',
+      cwd: process.cwd(),
+      // The model option is answered long after the budget, so the open fails
+      // on it rather than on the option that was never reached.
+      env: { FIXTURE_CALLS_MARKER: callsPath, FIXTURE_LATE_CONFIG_MS: '1500' },
+    })
+    const failure = await connection
+      .openSession({
+        sessionId: 'session-1',
+        cwd: process.cwd(),
+        model: { provider: 'anthropic', model: 'claude-opus-5' },
+        reasoningEffort: 'high',
+      })
+      .catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(Error)
+    // The whole open budget ran out, not just this one option.
+    expect((failure as Error).message).toContain('budget')
+    // Closing waits for the engine to exit, so its call log is complete.
+    await connection.close()
+    const calls = existsSync(callsPath)
+      ? readFileSync(callsPath, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
+      : []
+    // And the reasoning-effort option was never even asked for.
+    expect(calls.filter(call => call.method === 'session/set_config_option')).toHaveLength(1)
+  })
+
+  test('a spent open budget sends no further config option', async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), 'echoflow-spent-'))
+    sandboxes.push(sandbox)
+    const callsPath = join(sandbox, 'calls.ndjson')
+    // The clock moves a fixed step per reading, so the deadline falls between
+    // the two config options without any timing race. The exact reading that
+    // crosses the deadline does not matter: what matters is that the second
+    // config option was never sent.
+    let clock = 0
+    const driver = createDshDriver({
+      resolveCommand: command,
+      sessionOpenTimeoutMs: 250,
+      now: () => {
+        clock += 100
+        return clock
+      },
+    })
+    const connection = await driver.start({
+      installation,
+      runId: 'run-1',
+      cwd: process.cwd(),
+      env: { FIXTURE_CALLS_MARKER: callsPath },
+    })
+    const failure = await connection
+      .openSession({
+        sessionId: 'session-1',
+        cwd: process.cwd(),
+        model: { provider: 'anthropic', model: 'claude-opus-5' },
+        reasoningEffort: 'high',
+      })
+      .catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(Error)
+    expect((failure as Error).message).toContain('budget')
+    // Closing waits for the engine to exit, so its call log is complete.
+    await connection.close()
+    const calls = existsSync(callsPath)
+      ? readFileSync(callsPath, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
+      : []
+    // At most one config option was sent: the reasoning-effort option that
+    // would have followed it found no budget and was never sent.
+    expect(calls.filter(call => call.method === 'session/set_config_option').length).toBeLessThanOrEqual(1)
+  })
+
+  test('an open with no budget left sends no request at all', async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), 'echoflow-nobudget-'))
+    sandboxes.push(sandbox)
+    const callsPath = join(sandbox, 'calls.ndjson')
+    const driver = createDshDriver({ resolveCommand: command, sessionOpenTimeoutMs: 0 })
+    const connection = await driver.start({
+      installation,
+      runId: 'run-1',
+      cwd: process.cwd(),
+      env: { FIXTURE_CALLS_MARKER: callsPath },
+    })
+    const failure = await connection
+      .openSession({
+        sessionId: 'session-1',
+        cwd: process.cwd(),
+        model: { provider: 'anthropic', model: 'claude-opus-5' },
+      })
+      .catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(Error)
+    expect((failure as Error).message).toContain('budget')
+    // Closing waits for the engine to exit, so a request that was sent would
+    // have been written to the log by now.
+    await connection.close()
+    // Not even session/new: a spent budget buys no request.
+    const calls = existsSync(callsPath)
+      ? readFileSync(callsPath, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
+      : []
+    expect(calls).toHaveLength(0)
+  })
+
+  test('a session the engine opens after the budget is closed instead of left half-open', async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), 'echoflow-late-'))
+    sandboxes.push(sandbox)
+    const callsPath = join(sandbox, 'calls.ndjson')
+    const driver = createDshDriver({ resolveCommand: command, sessionOpenTimeoutMs: 200 })
+    const connection = await driver.start({
+      installation,
+      runId: 'run-1',
+      cwd: process.cwd(),
+      env: { FIXTURE_CALLS_MARKER: callsPath, FIXTURE_LATE_SESSION_NEW_MS: '600' },
+    })
+    const failure = await connection
+      .openSession({ sessionId: 'session-1', cwd: process.cwd() })
+      .catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(Error)
+    // The engine answers late: the session it created must be closed, or the
+    // engine keeps a session nobody owns.
+    await waitUntil(() =>
+      existsSync(callsPath)
+      && readFileSync(callsPath, 'utf8').includes('session/close'))
+    await connection.close()
+  })
+
   test('closing an already closed session does not send a second close', async () => {
     const { connection, readCalls } = await openWithCallLog()
     const session = await connection.openSession({ sessionId: 'session-1', cwd: process.cwd() })

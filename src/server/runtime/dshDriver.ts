@@ -46,6 +46,8 @@ export type DshDriverOptions = {
   closeTimeoutMs?: number
   /** Budget for a session close, across interrupt and session/close together. */
   sessionCloseTimeoutMs?: number
+  /** Budget for opening a session, across session/new and the config options. */
+  sessionOpenTimeoutMs?: number
   /** Quiet period that ends a turn the engine started on its own. */
   engineTurnIdleMs?: number
   /** Events held for a consumer that stopped reading before the oldest are dropped. */
@@ -155,6 +157,22 @@ function settleWithin(promise: Promise<unknown>, timeoutMs: number): Promise<boo
   })
 }
 
+/** Fails a request the engine never answers, so the caller is not stuck. */
+async function withBudget<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs)
+        timer.unref?.()
+      }),
+    ])
+  } finally {
+    if (timer !== null) clearTimeout(timer)
+  }
+}
+
 /** Only what the agent declared in the handshake may be claimed as native. */
 function capabilitiesFromHandshake(
   handshake: { agentCapabilities?: Record<string, unknown> } | null,
@@ -234,6 +252,7 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
   const interruptTimeoutMs = options.interruptTimeoutMs ?? 5_000
   const closeTimeoutMs = options.closeTimeoutMs ?? 10_000
   const sessionCloseTimeoutMs = options.sessionCloseTimeoutMs ?? 2_000
+  const sessionOpenTimeoutMs = options.sessionOpenTimeoutMs ?? 15_000
   const engineTurnIdleMs = options.engineTurnIdleMs ?? 1_000
   const turnBufferLimit = options.turnBufferLimit ?? 2_000
 
@@ -271,7 +290,14 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
         // A destroyed pipe emits 'close' without 'end'. Closing, not erroring,
         // keeps a normal end's still-queued tail when 'close' follows it.
         child.stdout?.on('close', endInput)
-        child.stdout?.on('error', (error) => controller.error(error))
+        child.stdout?.on('error', (error) => {
+          try {
+            controller.error(error)
+          } catch {
+            // the stream already ended; erroring a closed controller throws
+            // here, and an uncaught throw in an event handler kills the server
+          }
+        })
       },
     })
     const stdin = new WritableStream<Uint8Array>({
@@ -328,6 +354,15 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
     })
 
     const connection = app.connect(ndJsonStream(stdin, stdout))
+
+    /** Closes a session the engine opened after the client gave up on it. */
+    function closeLateSession(late: ActiveSession): void {
+      void settleWithin(
+        connection.agent.request(AGENT_METHODS.session_close, { sessionId: late.sessionId }),
+        sessionCloseTimeoutMs,
+      )
+      late.dispose()
+    }
 
     let handshakeTimer: ReturnType<typeof setTimeout> | null = null
     const handshakeTimeout = new Promise<never>((_, reject) => {
@@ -724,21 +759,63 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
         }
         let builder = connection.agent.buildSession(cwd)
         for (const server of mcpServers ?? []) builder = builder.withMcpServer(toAcpMcpServer(server))
-        const active = await builder.start()
+        // One budget covers the whole open: session/new and the config options
+        // share it, so a slow engine cannot stretch the open past it. The
+        // injected clock measures it, so the deadline can be placed exactly.
+        const deadline = now() + sessionOpenTimeoutMs
+        const remaining = () => deadline - now()
+        // A budget that is already gone must not buy another request: the
+        // answer would arrive after the open was supposed to be over, and the
+        // failure would blame one option instead of the budget that ran out.
+        const budgetLeft = (option: string) => {
+          const left = remaining()
+          if (left <= 0) throw new Error(`the dsh runtime did not open the session within the ${sessionOpenTimeoutMs} ms open budget (while setting ${option})`)
+          return left
+        }
+        // An engine that never answers session/new would otherwise hang the
+        // caller — and the host's close — for good. A late answer still means
+        // the engine opened a session, so it is closed instead of left behind.
+        // The budget is taken before the request is built, so a spent budget
+        // sends nothing at all.
+        const sessionBudget = budgetLeft('the session')
+        const started = builder.start()
+        let active: ActiveSession
+        try {
+          active = await withBudget(
+            started,
+            sessionBudget,
+            `the dsh runtime did not answer session/new within the ${sessionOpenTimeoutMs} ms open budget`,
+          )
+        } catch (error) {
+          void started.then((late) => closeLateSession(late), () => {})
+          throw error
+        }
         try {
           if (model !== undefined) {
-            await connection.agent.request(AGENT_METHODS.session_set_config_option, {
-              sessionId: active.sessionId,
-              configId: 'model',
-              value: JSON.stringify([model.provider, model.model]),
-            })
+            // The budget is taken before the request is issued: a request sent
+            // after the budget ran out would answer too late to be waited for.
+            const budget = budgetLeft('the model option')
+            await withBudget(
+              connection.agent.request(AGENT_METHODS.session_set_config_option, {
+                sessionId: active.sessionId,
+                configId: 'model',
+                value: JSON.stringify([model.provider, model.model]),
+              }),
+              budget,
+              `the dsh runtime did not answer the model option within the ${sessionOpenTimeoutMs} ms open budget`,
+            )
           }
           if (reasoningEffort !== undefined) {
-            await connection.agent.request(AGENT_METHODS.session_set_config_option, {
-              sessionId: active.sessionId,
-              configId: 'reasoning_effort',
-              value: reasoningEffort,
-            })
+            const budget = budgetLeft('the reasoning effort option')
+            await withBudget(
+              connection.agent.request(AGENT_METHODS.session_set_config_option, {
+                sessionId: active.sessionId,
+                configId: 'reasoning_effort',
+                value: reasoningEffort,
+              }),
+              budget,
+              `the dsh runtime did not answer the reasoning effort option within the ${sessionOpenTimeoutMs} ms open budget`,
+            )
           }
         } catch (error) {
           // A half-open session with the wrong model is worse than no session:

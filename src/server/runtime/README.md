@@ -22,7 +22,7 @@ product / desktop / server features
 | Approval bridge | The engine's permission request gets a product-side `requestId`; the UI answers by that id; an approval arriving with no live turn is answered `cancelled` so the engine never waits forever. | `dshDriver.ts` |
 | Turn lifecycle | One active turn per session; a second `send()` throws `RuntimeBusyError` (no implicit queue, so `prompt.queue` is `unsupported`). `interrupt()` returns `cancelled` only after the engine confirms it; if the engine ignores the cancel it returns `cancelling` and the turn stays active. If the engine dies mid-stream the turn closes as `turn.completed(reason: 'error')`, and the next `send()` does not throw. A consumer that abandons the stream cancels its own turn — and only its own. A consumer that stalls keeps at most `turnBufferLimit` events (2000); older ones are dropped behind one warning diagnostic. | `dshDriver.ts` |
 | Engine-initiated turns | One session-level pump reads the update cursor for the session's whole life, so updates the engine emits between user turns reach `onEngineTurn` instead of the next `send()`. ACP has no end-of-turn for them, so such a turn closes after a quiet period (`engineTurnIdleMs`, 1 s) or as soon as the user sends. One listener at a time per session — a second registration throws — and a listener that throws or rejects becomes a `runtime.engine_listener_failed` diagnostic without stopping the pump. | `dshDriver.ts` |
-| Session routing | `RuntimeHost` owns the installation → connection → product-session maps, rejects unknown ids with typed errors, and forgets a dead connection's sessions. Reconnecting an installation closes the connection it replaces, and a replaced connection's late exit cannot clear its successor. Concurrent connects and opens are serialized per installation and per session id. `close()` waits for the connects and session opens still in flight, so no connection or session outlives it; a session that finishes opening after its connection was replaced is closed instead of registered. Using a closed host throws `RuntimeHostClosedError`. | `controlPlane.ts` |
+| Session routing | `RuntimeHost` owns the installation → connection → product-session maps, rejects unknown ids with typed errors, and forgets a dead connection's sessions. Reconnecting an installation closes the connection it replaces, and a replaced connection's late exit cannot clear its successor. Concurrent connects and opens are serialized per installation and per session id. `close()` closes the engines first and then waits for the connects and session opens still in flight, so no connection or session outlives it and an engine that never answers `session/new` cannot hold the close; a session that finishes opening after its connection was replaced is closed instead of registered. Using a closed host throws `RuntimeHostClosedError`. | `controlPlane.ts` |
 | Config catalog | `config.changed` carries the engine's whole option table: select values with their candidates (flat or grouped) and booleans as real booleans. The model wire value is `JSON.stringify([provider, model])`, the shape dsh's own catalog publishes. | `acpProjection.ts` |
 | Startup diagnostics | A launcher that dies during the handshake rejects with `RuntimeStartupError` carrying the process's stderr, before the startup timeout. A handshake answering a different ACP protocol version is rejected the same way. | `dshDriver.ts` |
 
@@ -32,9 +32,16 @@ product / desktop / server features
   `openSession`, `getSession`, `capabilitiesOf`, `requireCapability`, `send`,
   `respondApproval`, `interrupt`, `closeSession`, `onConnectionExit`, `close`.
 - `createDshDriver()` — the dsh driver; `resolveCommand`, `spawn`, `now`,
-  `newApprovalId`, `interruptTimeoutMs`, `closeTimeoutMs`, `sessionCloseTimeoutMs`
-  are injectable. `sessionCloseTimeoutMs` (default 2000) bounds a single
-  session's close; `closeTimeoutMs` (default 10000) bounds the connection's.
+  `newApprovalId`, `interruptTimeoutMs`, `closeTimeoutMs`, `sessionCloseTimeoutMs`,
+  `sessionOpenTimeoutMs` are injectable. `sessionCloseTimeoutMs` (default 2000)
+  bounds a single session's close; `closeTimeoutMs` (default 10000) bounds the
+  connection's; `sessionOpenTimeoutMs` (default 15000) bounds the whole open —
+  `session/new` and the config options share one budget — so an engine that
+  never answers `session/new` fails the open instead of hanging the caller
+  and the host's close. Once that budget is gone no further request is sent,
+  and the failure names the budget instead of the option that happened to be
+  in flight. A session the engine opens after that budget expired is
+  closed instead of left half-open.
 - `createEventStamper()`, `projectSessionUpdate()`, `dshBaselineCapabilities()` —
   the pieces another driver reuses.
 
