@@ -35,9 +35,11 @@ product / desktop / server features
   `newApprovalId`, `interruptTimeoutMs`, `closeTimeoutMs`, `sessionCloseTimeoutMs`,
   `sessionOpenTimeoutMs` are injectable. `sessionCloseTimeoutMs` (default 2000)
   bounds a single session's close; `closeTimeoutMs` (default 10000) bounds the
-  connection's; `sessionOpenTimeoutMs` (default 15000) bounds opening a session,
-  so an engine that never answers `session/new` fails the open instead of
-  hanging the caller and the host's close.
+  connection's; `sessionOpenTimeoutMs` (default 15000) bounds the whole open —
+  `session/new` and the config options share one budget — so an engine that
+  never answers `session/new` fails the open instead of hanging the caller
+  and the host's close. A session the engine opens after that budget expired is
+  closed instead of left half-open.
 - `createEventStamper()`, `projectSessionUpdate()`, `dshBaselineCapabilities()` —
   the pieces another driver reuses.
 

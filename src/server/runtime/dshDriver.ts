@@ -355,6 +355,15 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
 
     const connection = app.connect(ndJsonStream(stdin, stdout))
 
+    /** Closes a session the engine opened after the client gave up on it. */
+    function closeLateSession(late: ActiveSession): void {
+      void settleWithin(
+        connection.agent.request(AGENT_METHODS.session_close, { sessionId: late.sessionId }),
+        sessionCloseTimeoutMs,
+      )
+      late.dispose()
+    }
+
     let handshakeTimer: ReturnType<typeof setTimeout> | null = null
     const handshakeTimeout = new Promise<never>((_, reject) => {
       handshakeTimer = setTimeout(
@@ -750,13 +759,25 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
         }
         let builder = connection.agent.buildSession(cwd)
         for (const server of mcpServers ?? []) builder = builder.withMcpServer(toAcpMcpServer(server))
+        // One budget covers the whole open: session/new and the config options
+        // share it, so a slow engine cannot stretch the open past it.
+        const deadline = Date.now() + sessionOpenTimeoutMs
+        const remaining = () => Math.max(0, deadline - Date.now())
         // An engine that never answers session/new would otherwise hang the
-        // caller — and the host's close — for good.
-        const active = await withBudget(
-          builder.start(),
-          sessionOpenTimeoutMs,
-          'the dsh runtime did not answer session/new in time',
-        )
+        // caller — and the host's close — for good. A late answer still means
+        // the engine opened a session, so it is closed instead of left behind.
+        const started = builder.start()
+        let active: ActiveSession
+        try {
+          active = await withBudget(
+            started,
+            remaining(),
+            'the dsh runtime did not answer session/new in time',
+          )
+        } catch (error) {
+          void started.then((late) => closeLateSession(late), () => {})
+          throw error
+        }
         try {
           if (model !== undefined) {
             await withBudget(
@@ -765,7 +786,7 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
                 configId: 'model',
                 value: JSON.stringify([model.provider, model.model]),
               }),
-              sessionOpenTimeoutMs,
+              remaining(),
               'the dsh runtime did not answer the model option in time',
             )
           }
@@ -776,7 +797,7 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
                 configId: 'reasoning_effort',
                 value: reasoningEffort,
               }),
-              sessionOpenTimeoutMs,
+              remaining(),
               'the dsh runtime did not answer the reasoning effort option in time',
             )
           }

@@ -18,6 +18,10 @@ const rejectConfigIds = new Set((process.env.FIXTURE_REJECT_CONFIG_IDS ?? '').sp
 const ignoreClose = process.env.FIXTURE_IGNORE_CLOSE === '1'
 const writeAfterClose = process.env.FIXTURE_WRITE_AFTER_CLOSE === '1'
 const stallSessionNew = process.env.FIXTURE_STALL_SESSION_NEW === '1'
+/** Answers session/new only after this many ms, so the client's budget expires first. */
+const lateSessionNewMs = Number(process.env.FIXTURE_LATE_SESSION_NEW_MS ?? '0')
+/** Answers session/set_config_option only after this many ms. */
+const lateConfigMs = Number(process.env.FIXTURE_LATE_CONFIG_MS ?? '0')
 const app = agent({ name: 'fixture-acp-agent' })
 
 /** Requests cross the process boundary, so the test reads them from a file. */
@@ -48,13 +52,15 @@ app.onRequest(AGENT_METHODS.initialize, () => ({
 app.onRequest(AGENT_METHODS.session_new, async (ctx) => {
   record('session/new', ctx.params)
   if (stallSessionNew) await new Promise<void>(() => {})
+  if (lateSessionNewMs > 0) await new Promise<void>(resolve => setTimeout(resolve, lateSessionNewMs))
   sessionCounter += 1
   return { sessionId: `fixture-native-${sessionCounter}` }
 })
 
-app.onRequest(AGENT_METHODS.session_set_config_option, (ctx) => {
+app.onRequest(AGENT_METHODS.session_set_config_option, async (ctx) => {
   record('session/set_config_option', ctx.params)
   if (rejectConfigIds.has(ctx.params.configId)) throw new Error(`unsupported config: ${ctx.params.configId}`)
+  if (lateConfigMs > 0) await new Promise<void>(resolve => setTimeout(resolve, lateConfigMs))
   return { configOptions: [] }
 })
 
