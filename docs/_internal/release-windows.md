@@ -32,7 +32,13 @@ bun run scripts/release.ts X.Y.Z --dry
 bun run scripts/release.ts X.Y.Z
 ```
 
-发布后由维护者明确推送到 `origin`，并等待 `Release Desktop` workflow 完成；不要移动已有 tag 或上传本地构建产物。
+手动运行 `scripts/release.ts` 并推送 tag 只会触发 `Release Desktop` 的构建与验证 job，不会发布：`publish-release` 仅在 Release Please 的官方 `workflow_call`（`official_release: true`）或手动 draft 的 `workflow_dispatch` 下运行。不要移动已有 tag 或上传本地构建产物。
+
+## 正式发布入口：Release Please
+
+正式发布由 `.github/workflows/release-please.yml` 在 `main` 收到推送后驱动：它按 `release-please-config.json` 和 `.release-please-manifest.json`（记录上一个已发布版本）生成 release PR，并同步 `desktop/package.json`、`mobile/package.json` 和 `mobile/app.json` 的版本。合并 release PR 后会创建 tag 和 draft Release；`resolve-release` 校验 tag 指向的提交后，以 `official_release: true`、`draft: false` 调用 `release-desktop.yml`。门禁和六平台构建全部通过后，该 workflow 上传完整资产并取消 draft。
+
+`release-notes/vX.Y.Z.md` 必须在合并 release PR 之前已存在于 `main`，否则 `release-contract` 会失败。
 
 ## Release workflow 门禁
 
@@ -142,7 +148,7 @@ sha256sum desktop/build-artifacts/windows-x64-validation/EchoFlow-Code-X.Y.Z-win
 
 当前不能把 session `webRequest` 钩子当作上述校验层：Electron 只向 `onHeadersReceived` 暴露响应头，不暴露 multipart body，因而无法验证每个 part 的区间和字节数；WebRequest 同一事件再次注册会替换已有 listener，也没有可安全叠加后再单独移除的订阅句柄。现有代码尚无 `onHeadersReceived` listener，但临时占用 updater session 仍会建立脆弱的全局独占约束，不能证明不影响未来或外部 session 使用者。
 
-Task 4 继续 BLOCKED。要解除阻塞，需先有一个能在 downloader 消费/写入前检查完整响应 body 的受控边界，并证明它驱动真实差分请求失败后会走完整包 fallback；随后以真实 Electron transport 和 loopback HTTP server 验证 GET/Range、302、合法 multipart、坏响应及 fallback。不能用只看 headers 的钩子、Node transport 测试或线上 canary 代替该证据。该边界尚未找到，当前没有新增实现；真实 Task 5 canary 为 NOT RUN，差分保持默认关闭且不允许用显式开关做 canary。
+Task 4 仍未完成发布验收，但应用级 `DifferentialHttpExecutor` 已建立受控边界：在 verified feed 的差分请求交给 downloader 前校验单 Range 的状态码、`Accept-Ranges`、`Content-Range`、`Content-Length` 和 body 字节数；multiple Range 直接拒绝并让现有流程回落完整包。离线 wrapper contract 已通过，完整包和 blockmap 下载仍委托原始 Electron executor。剩余阻塞是用真实 Electron transport 和 loopback HTTP server 证明 GET/Range、302、合法 multipart、坏响应会触发完整包 fallback，并完成真实设备验收。不能用只看 headers 的钩子、Node transport 测试或线上 canary 代替该证据。真实 Task 5 canary 为 NOT RUN，差分保持默认关闭且不允许用显式开关做 canary。
 
 差分资格或 canary 证据必须来自应用实际的 `downloadUpdate()` 请求，不能用 `HEAD`、独立 `curl`、下载大小或普通“downloaded”日志推断。按 source 分开保存 method、请求 URL、release tag、客户端版本、platform、arch、`Range`、HTTP status、`Content-Range`、`Content-Length`、`Accept-Ranges`、`Content-Type`、重定向链、fallback 结果、installer SHA-512 和 UTC 时间戳。证据目录按 `release/platform-arch/source/run-id` 隔离，例如 `update-canary-evidence/<release>/<platform>-<arch>/<source>/<run-id>/range.jsonl` 与 `summary.json`；使用 CI run/build id 或维护者 UTC 时间戳加唯一后缀，禁止覆盖且不入库。缺少实际 updater GET/Range/响应头、206 或正确区间信息时标记 BLOCKED/FAIL。direct GitHub 与 proxy 的证据分开；未经单独 contract 验证的 proxy 只能记录完整包路径。
 
