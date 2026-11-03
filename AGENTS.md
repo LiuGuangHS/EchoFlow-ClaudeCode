@@ -1,110 +1,106 @@
-# Repository Agent Contract
+# 仓库 Agent 契约
 
-This file is the authoritative operating contract for AI coding agents and human contributors in this repository. Any shorter summary of it defers here where the two diverge.
+本文是本仓库对 AI 编码 Agent 和人类贡献者的权威操作契约。任何更短的摘要都服从本文；如果二者冲突，以本文为准。
 
-Treat it as executable guidance: inspect the real code, make narrow changes, verify the affected behavior, and leave a handoff another maintainer can trust.
+把它当作可执行指南：检查真实代码，进行窄范围改动，验证受影响行为，并留下其他维护者可以信任的交接记录。
 
-## How This Contract Is Maintained
+## 契约如何维护
 
-This file states **direction**. Procedures, examples, and case law live in `docs/`; this section is what keeps that split from drifting.
+本文只描述方向。流程、示例和案例规则放在 `docs/`；本文负责防止这些内容漂移。
 
-A rule belongs here only when all three hold:
+只有同时满足以下三点时，规则才属于本文：
 
-1. It changes a direction decision, not just the mechanics of a task.
-2. Violating it causes irreversible loss: product identity, user data, release integrity, or a CI contract.
-3. It cannot be read out of the code or `scripts/pr/change-policy.ts`.
+1. 它改变方向决策，而不仅是任务执行细节。
+2. 违反它会造成不可逆损失：产品身份、用户数据、发布完整性或 CI 契约。
+3. 它不能从代码或 `scripts/pr/change-policy.ts` 中直接读出。
 
-Otherwise it belongs in `docs/` with a one-line pointer. Move the content — do not leave a shortened copy behind. A stale summary is worse than no summary, because it still reads as authoritative.
+否则应放在 `docs/`，并在这里保留一行指针。应移动内容，而不是留下缩短版；过时的摘要比没有摘要更糟，因为它仍然看起来像权威规则。
 
-Update this file in the **same change** that makes one of its statements untrue:
+以下事项发生变化时，必须在同一改动中更新本文：
 
-- A top-level directory, quality gate, or package script is added, removed, or renamed.
-- A `ChangeArea` is added or changed in `scripts/pr/change-policy.ts` or `scripts/pr/area-routing.json`.
-- A release, or migration workflow changes.
-- A file referenced from here is moved or renamed.
+- 顶层目录、质量门禁或 package script 被新增、删除或重命名。
+- `scripts/pr/change-policy.ts` 或 `scripts/pr/area-routing.json` 中的 `ChangeArea` 被新增或修改。
+- 发布或迁移工作流发生变化。
+- 本文引用的文件被移动或重命名。
 
-Keep this file under 24 KiB. Crossing that is the signal to move content out, not to trim prose. The hard limit is 28 KiB and is enforced by `scripts/pr/quality-contract.test.ts`.
+本文应保持在 24 KiB 以下。超过该大小说明应把内容移到其他位置，而不是继续压缩措辞。硬上限为 28 KiB，由 `scripts/pr/quality-contract.test.ts` 强制检查。
 
-## Language Policy
-- Repository-level agent instructions and operational rules are written in English.
-- Respond to the user in Chinese by default.
-- Keep commands, paths, identifiers, code symbols, and raw errors unchanged.
-- Nested guidance next to affected code follows this policy, with one documented exception: `desktop/src/components/AGENTS.md` is the authoritative component index and is maintained in Chinese. Read it as guidance, not as documentation, and do not restate its component list elsewhere.
+## 语言规范
 
-## Agent Operating Rules
-- Work autonomously on clear, reversible tasks. Do not stop to ask whether to proceed with obvious next steps; ask only for destructive actions, missing authority, or genuinely branching product decisions.
-- Prefer the currently installed agent tools; detailed workflows live in the contribution guide.
-- Identify the changed surface first. The canonical vocabulary is the `ChangeArea` union in `scripts/pr/change-policy.ts`: `desktop`, `server`, `adapters`, `docs`, `release`, `mobile`, `cli-core`, `harness`. The prose surfaces in this file map onto it: `native/` routes to `desktop`, `site/` to `docs`, `harness/` to `harness`, and `.github/workflows/**` selects the policy lane. Path-to-area routing lives in `scripts/pr/area-routing.json`; `pr-triage.yml` reads that file from the base revision, never from PR head. Do not invent a surface name that has no area and no check behind it.
-- `cli-core` covers `bin/` and the root `src/` runtime paths.
-- Treat root `src/` as the native Claude Code runtime; prefer not to modify it directly when the behavior can be implemented through configuration, dependency upgrades, or EchoFlow-owned surfaces.
-- Check `git status --short` before editing. The worktree may already contain user changes; never revert, overwrite, restage, or reformat unrelated files.
-- Keep diffs small and owned. Stage or commit only files you intentionally changed for the current task.
-- Prefer existing utilities, stores, services, command patterns, and test harnesses over new abstractions. Do not add dependencies unless the task explicitly requires them.
-- For cleanup/refactor/deslop work, write the cleanup plan first, lock existing behavior with regression tests when it is not already protected, then make one smell-focused pass at a time.
-- Never commit generated output: `artifacts/`, coverage reports, `node_modules/`, build directories, or Rust `target/` trees.
-- `.claude/` stays local-only. It must never be a CI dependency or a committed source of truth. Run `bun run audit:harness` when changing agent guidance, quality policy, CI, or the agent toolset.
+- 仓库级 Agent 说明和操作规则使用中文。
+- 默认使用中文回复用户。
+- 命令、路径、标识符、代码符号和原始错误文本保持不变。
+- 受影响代码旁的嵌套指南遵循本规则；唯一已记录的例外是 `desktop/src/components/AGENTS.md`，它是权威组件索引并使用中文维护。应把它当作指南阅读，不要在其他地方重复组件列表。
 
-## Identity & Provider Policy
-- Public/release brand: `EchoFlow Code`; executable/docs: `echoflow-code`.
-- When touching legacy product identifiers, convert `cc-haha` → `echoflow`, `Claude-Code-Haha` → `EchoFlow-Code`, and `CC_HAHA_*` → `ECHOFLOW_*`. Retain historical names only for explicit compatibility, attribution, migration fixtures, or supported variables.
-- Retain `Claude Code`, `Claude CLI`, `claude-code-*`, and `CLAUDE_CODE_*` terminology: those name the Claude Code runtime and its env contracts, and renaming them breaks the integration.
-- Calls to action and service links use EchoFlow surfaces, including `https://code.echoflow.cn/` and `https://api.echoflowai.cc/`.
-- `src/server/config/providerPresets.json` carries only official vendor APIs, official local integrations, official subscription/API integrations such as OpenCode Go, EchoFlow API, and custom. Judge a candidate preset by rule, not by an id list: reject anything a vendor marks deprecated, any URL carrying promotion or tracking parameters (`utm_`, `invite`, `referral`, `?code=`), third-party relay or sponsor/referral gateways, and promotional copy. The current reject list is enforced by `src/server/__tests__/provider-presets.test.ts` and `desktop/src/config/providerPresets.test.ts`; do not duplicate it here.
-- Official vendor APIs and official OAuth integrations, including Grok Official, may be adopted from the vendor's own documentation; private gateways use custom. A new provider or preset is rejected by default until it passes the rule above.
+## Agent 工作规则
 
-## Engineering Behavior Guardrails
-- Define the smallest behavior change and proof before editing. Keep changes surgical, use existing utilities, avoid dependencies and speculative abstractions, and remove only obsolescence created by the change. `ponytail` enforces this ladder; run `/ponytail-review` when a diff outgrows its proof.
-- Every changed line must trace to the request, a failing test, a verified bug, or a compatibility constraint. Stop and simplify if the diff grows beyond that proof.
-- Never apply blanket `--ours` or `--theirs`. Resolve per hunk: a conflict is two decisions at once, and picking a side wholesale keeps the wrong half of one of them.
-- Run the narrowest relevant test while iterating. Run `bun run verify` only when full validation is requested or before claiming a change is PR-ready or push-ready.
-- Coding style: TypeScript with 2-space indentation, ESM imports, no semicolons; `PascalCase` components and descriptive file names such as `teamWatcher.ts` or `AgentTranscript.tsx`; `camelCase` functions, hooks, and stores.
-- For structured data, use structured parsers or existing helpers instead of ad hoc string manipulation. Add succinct comments only where they clarify non-obvious control flow or external constraints.
+- 对目标明确且可逆的任务自主工作。不要为明显的下一步停下来询问；只有破坏性操作、缺少授权或确实存在分叉的产品决策才询问。
+- 优先使用当前已安装的 Agent 工具；详细流程位于贡献指南。
+- 先识别改动面。规范词汇以 `scripts/pr/change-policy.ts` 中的 `ChangeArea` 联合类型为准：`desktop`、`server`、`adapters`、`docs`、`release`、`mobile`、`cli-core`、`harness`。本文中的文字表面映射为：`native/` 路由到 `desktop`，`site/` 路由到 `docs`，`harness/` 路由到 `harness`，`.github/workflows/**` 选择 policy lane。路径到 area 的路由位于 `scripts/pr/area-routing.json`；`pr-triage.yml` 从 base revision 读取它，而不是从 PR head 读取。不要发明没有 area 和检查支持的 surface 名称。
+- `cli-core` 覆盖 `bin/` 和根目录 `src/` runtime 路径。
+- 将根目录 `src/` 视为原生 Claude Code runtime；如果可以通过配置、依赖升级或 EchoFlow 自有 surface 实现行为，优先不要直接修改它。
+- 编辑前检查 `git status --short`。工作树可能已有用户改动；绝不回退、覆盖、重新暂存或重新格式化无关文件。
+- 保持 diff 小且边界明确。只暂存或提交本次任务有意修改的文件。
+- 优先使用已有的 utility、store、service、命令模式和测试 harness。除非任务明确要求，否则不要添加依赖。
+- 对清理、重构或去除冗余任务，先写清理计划；如果现有行为没有测试保护，先用回归测试锁定它，然后一次只做一轮针对性清理。
+- 绝不提交生成产物：`artifacts/`、coverage 报告、`node_modules/`、构建目录或 Rust `target/` 目录。
+- `.claude/` 仅供本地使用，绝不能成为 CI 依赖或已提交的事实来源。修改 Agent 指南、质量策略、CI 或 Agent 工具集时运行 `bun run audit:harness`。
 
-## Verification and quality ownership
+## 产品身份与 Provider 策略
 
-- Use the narrowest meaningful check while iterating. The surface-to-gate matrix, deterministic lane contracts, coverage rules, and failure diagnosis live in `docs/internals/contributing.md`; the English mirror is `docs/en/internals/contributing.md`.
-- `scripts/pr/change-policy.ts` owns path routing and required checks. `bun run check:impact` is the minimum changed-surface report and must be read before selecting checks; dependency-aware widening is reported in `## Cross-surface impact`.
-- Provider/auth/proxy/runtime and desktop chat/session changes may add offline contract checks. Required PR checks must not call real models, live providers, public network, repository secrets, or the developer's real home/config.
-- `bun run verify` is the full PR/push/release-readiness entrypoint. Do not claim that status without the required evidence; live provider and maintainer-only lanes require explicit authorization.
+- 公开/发布品牌：`EchoFlow Code`；可执行文件和文档使用：`echoflow-code`。
+- 接触旧产品标识时，将 `cc-haha` → `echoflow`、`Claude-Code-Haha` → `EchoFlow-Code`、`CC_HAHA_*` → `ECHOFLOW_*`。只有在明确兼容、署名、迁移 fixture 或受支持变量的场景保留历史名称。
+- 保留 `Claude Code`、`Claude CLI`、`claude-code-*` 和 `CLAUDE_CODE_*` 术语：它们指 Claude Code runtime 及其环境契约，重命名会破坏集成。
+- 行动号召和服务链接使用 EchoFlow surface，包括 `https://code.echoflow.cn/` 和 `https://api.echoflowai.cc/`。
+- `src/server/config/providerPresets.json` 只包含官方 vendor API、官方本地集成、官方订阅/API 集成（例如 OpenCode Go、EchoFlow API）和 custom。按规则判断候选 preset，而不是按 id 列表判断：拒绝 vendor 标记为 deprecated 的内容，拒绝包含推广或跟踪参数（`utm_`、`invite`、`referral`、`?code=`）的 URL，拒绝第三方 relay 或赞助/推荐网关，以及推广性文案。当前拒绝列表由 `src/server/__tests__/provider-presets.test.ts` 和 `desktop/src/config/providerPresets.test.ts` 强制执行；不要在本文重复它。
+- 官方 vendor API 和官方 OAuth 集成（包括 Grok Official）可以依据 vendor 自己的文档采用；私有网关使用 custom。新的 provider 或 preset 默认拒绝，直到通过上述规则。
 
-## Quality and verification boundaries
-- `docs/internals/contributing.md` owns contribution procedures, test design, quality gates, coverage policy, and Agent flow case law; its English mirror is `docs/en/internals/contributing.md`.
-- `docs/internals/structure.md` owns the directory map and module responsibilities. Area-specific guidance stays next to the code in `desktop/AGENTS.md`, `adapters/AGENTS.md`, `src/AGENTS.md`, `mobile/AGENTS.md`, and `docs/AGENTS.md`.
-- `scripts/pr/change-policy.ts` owns path routing, same-area test requirements, labels, and blocking policy. Do not duplicate those predicates in reports or prose.
-- Required PR checks must be deterministic and safe on external contributions: no real models, public network, repository secrets, saved providers, or real user home/config. The detailed lane contract and command list live in the contribution guide.
-- `bun run check:impact` is the minimum changed-surface report. `bun run verify` is the full PR/push/release-readiness entrypoint; do not claim that status without its required evidence.
+## 工程行为约束
 
-## Persistent Storage Compatibility
-- Any change to local JSON, `localStorage`, or app config persistence formats must ship with a forward migration, an old-fixture regression test, and a persistence upgrade gate.
-- Run `bun run check:persistence-upgrade` for storage-shape changes. The change is blocked until migration tests, old fixtures, backup behavior, and unknown-field preservation pass.
-- `~/.claude/settings.json` is user-owned shared state: preserve unknown fields on read/write, merge additively, and never write a repo-owned global `schemaVersion` into it.
-- Desktop Doctor and any automatic repair path must be deny-by-default. One-click repair may only mutate allowlisted, regenerable desktop UI state such as `echoflow-code-*` `localStorage` keys or native window state.
-- `echoflow-code-*` `localStorage` keys and the `echoflow-code` internal directory are active persistence contracts. The resolved config root comes from `CLAUDE_CONFIG_DIR` or the platform data directory; `~/.claude/echoflow-code/**` remains a supported legacy migration source. Do not rename any of these surfaces without a migration task, forward/backward compatibility tests, and explicit user-data preservation.
-- Preserve EchoFlow migration sources by default unless the user explicitly says the migration window is closed.
-- Windows AppUserModelID must stay equal to `desktop/package.json` `build.appId`; it controls toast attribution and taskbar identity. Branding changes must update Electron identity tests.
-- Doctor and repair flows must never mutate chat transcripts, model/provider config, Skills, MCP config, plugin state, IM bindings, adapter sessions, OAuth tokens, or team/session records unless a future task explicitly adds a reviewed, backup-first manual repair flow.
-- Protected files include `~/.claude/projects/**/*.jsonl`, `~/.claude/settings.json`, project `.claude/settings.json`, providers/settings/OAuth files under the resolved EchoFlow config root or legacy `~/.claude/echoflow-code/`, `~/.claude/adapters.json`, `~/.claude/adapter-sessions.json`, `~/.claude/skills`, project `.claude/skills`, `.mcp.json`, managed MCP config, `~/.claude/plugins/**`, and `~/.claude/teams/**`. Diagnose these paths only with redaction by default.
-- If a persistence shape cannot be upgraded in place, the implementation is blocked until the upgrade path is explicit and tested.
+- 在编辑前定义最小行为变化和证明方式。保持改动手术式精确，使用已有 utility，避免依赖和推测性抽象，只删除本次改动造成的过时内容。`ponytail` 强制执行这套阶梯；如果 diff 超出证明范围，运行 `/ponytail-review`。
+- 每一行改动都必须能追溯到用户请求、失败测试、已验证 bug 或兼容性约束。如果 diff 超出这些证据，停止并简化。
+- 绝不整体使用 `--ours` 或 `--theirs`。按 hunk 逐个解决：冲突同时包含两个决策，整体选择一侧会保留其中错误的部分。
+- 迭代时运行最窄的相关测试。只有用户要求完整验证，或准备声明完整验证/可推送状态时，才运行 `bun run verify`。
+- 编码风格：TypeScript 使用 2 空格缩进、ESM import、不使用分号；组件使用 `PascalCase`，文件名使用描述性命名，例如 `teamWatcher.ts` 或 `AgentTranscript.tsx`；函数、hook 和 store 使用 `camelCase`。
+- 对结构化数据使用结构化 parser 或已有 helper，不要使用临时字符串处理。只在说明非显然控制流或外部约束时添加简洁注释。
 
-## Release integrity
+## 验证与质量归属
 
-- Desktop releases use plain `vX.Y.Z` tags matching `desktop/package.json`; release notes, `scripts/release.ts`, and `.github/workflows/release-desktop.yml` must agree. `desktop/package.json` is the release-version source of truth, and EchoFlow keeps its own version line.
-- Do not move tags, upload local artifacts, or announce a release before the release workflow and public assets are verified. Detailed release procedures live in `docs/_internal/release-windows.md` and its English mirror.
-- `bun run check:release-surface` is the standing content and identity gate; it checks release-note version/brand, unresolved conflicts, and legacy product names on public identity surfaces.
+- 迭代时使用最窄且有意义的检查。`docs/internals/contributing.md` 负责贡献流程、测试设计、质量门禁、coverage 策略和 Agent flow 案例规则；英文镜像位于 `docs/en/internals/contributing.md`。
+- `docs/internals/structure.md` 负责目录地图和模块职责。各区域指南放在代码旁的 `desktop/AGENTS.md`、`adapters/AGENTS.md`、`src/AGENTS.md`、`mobile/AGENTS.md` 和 `docs/AGENTS.md`。
+- `scripts/pr/change-policy.ts` 负责路径路由、同区域测试要求、label、阻断策略和必需检查，不要在报告或文案中重复这些判定。`bun run check:impact` 是最低限度的改动面报告；选择检查前必须先阅读它的结果，依赖感知的扩大范围会在 `## Cross-surface impact` 中报告。
+- 必需检查必须确定且对外部贡献安全：不得调用真实模型、live provider、公网、仓库 secrets、已保存 provider 或开发者真实 home/config。Provider/auth/proxy/runtime 以及桌面 chat/session 改动可能增加离线契约检查。
+- `bun run verify` 是完整验证、推送和发布就绪检查的入口。没有必需证据时不要声称该状态；live provider 和仅限维护者的 lane 需要明确授权。
 
-## Product Identity & Licensing
-- Keep EchoFlow's authorship, maintenance, contact, and product identity consistent across README, docs, release notes, package metadata, diagnostics export, signing/privacy pages, updater links, and desktop About/profile defaults.
-- Third-party copyright and permission notices stay with the code they cover. Move them to `THIRD_PARTY_LICENSES.md` when a file needs to carry its own license separately; never delete a notice a license requires us to keep.
-- `bun run check:release-surface` is the standing gate: it rejects release-note version/brand drift, unresolved conflicts, and legacy product names on public identity surfaces.
+## 持久化存储兼容性
 
-## Commit and PR boundaries
+- 修改本地 JSON、`localStorage` 或应用配置持久化格式时，必须同时提供前向迁移、旧 fixture 回归测试和持久化升级门禁。
+- 对存储结构变化运行 `bun run check:persistence-upgrade`。迁移测试、旧 fixture、备份行为和未知字段保留全部通过后，改动才可继续。
+- `~/.claude/settings.json` 是用户拥有的共享状态：读写时保留未知字段，采用增量合并，绝不向其中写入仓库拥有的全局 `schemaVersion`。
+- Desktop Doctor 和任何自动修复路径必须默认拒绝。单击修复只能修改允许列表中的、可重新生成的桌面 UI 状态，例如 `echoflow-code-*` `localStorage` key 或 native window state。
+- `echoflow-code-*` `localStorage` key 和 `echoflow-code` 内部目录是活跃的持久化契约。解析后的 config root 来自 `CLAUDE_CONFIG_DIR` 或平台数据目录；`~/.claude/echoflow-code/**` 仍是受支持的旧迁移来源。没有迁移任务、前后兼容测试和明确的用户数据保留保证，不得重命名这些 surface。
+- 默认保留 EchoFlow 迁移来源，除非用户明确说明迁移窗口已关闭。
+- Windows AppUserModelID 必须等于 `desktop/package.json` 的 `build.appId`；它控制 toast 归属和任务栏身份。品牌改动必须更新 Electron 身份测试。
+- Doctor 和修复流程绝不能修改 chat transcript、model/provider 配置、Skills、MCP 配置、plugin 状态、IM 绑定、adapter session、OAuth token 或 team/session 记录，除非未来任务明确增加经过评审且先备份的手动修复流程。
+- 受保护文件包括 `~/.claude/projects/**/*.jsonl`、`~/.claude/settings.json`、解析后的 EchoFlow config root 或旧路径 `~/.claude/echoflow-code/` 下的 provider/settings/OAuth 文件、`~/.claude/adapters.json`、`~/.claude/adapter-sessions.json`、`~/.claude/skills`、项目 `.claude/skills`、`.mcp.json`、托管 MCP 配置、`~/.claude/plugins/**` 和 `~/.claude/teams/**`。默认只做脱敏诊断。
+- 如果持久化结构不能原地升级，必须先明确并测试升级路径，否则阻塞实现。
 
-- Use Conventional Commit prefixes and normal product branch prefixes such as `fix/xxx`, `feat/xxx`, or `docs/xxx`; do not create `codex/`-prefixed branches.
-- Record non-obvious decisions in git-native trailers. The PR evidence fields and local handoff format are owned by `.github/pull_request_template.md` and `docs/internals/contributing.md`.
+## 发布完整性
 
-## Deeper Guides
-- When installing, testing, or preparing a contribution, read `CONTRIBUTING.md` and `docs/internals/contributing.md` for workflows, coverage policy, and test-design case law.
-- When locating a module or understanding ownership, read `docs/internals/structure.md` for directory responsibilities.
-- When selecting commands or determining which checks a change requires, consult `package.json` and `scripts/pr/change-policy.ts`.
-- When preparing a pull request, follow the evidence fields in `.github/pull_request_template.md`.
-- Before a desktop release or auto-update change, follow `docs/_internal/release-windows.md` (English: `docs/en/_internal/release-windows.md`).
+- 桌面发布使用与 `desktop/package.json` 匹配的纯 `vX.Y.Z` tag；release notes、`scripts/release.ts` 和 `.github/workflows/release-desktop.yml` 必须一致。`desktop/package.json` 是发布版本事实来源，EchoFlow 保留自己的版本线。
+- 在发布工作流和公开资源得到验证前，不要移动 tag、上传本地产物或宣布发布。详细发布流程位于 `docs/_internal/release-windows.md` 及其英文镜像。
+- `bun run check:release-surface` 是固定的内容和身份门禁；它检查发布说明版本/品牌、未解决冲突和公开身份 surface 上的旧产品名。
+
+## 产品身份与许可
+
+- 在 README、文档、release notes、package metadata、诊断导出、签名/隐私页、更新链接和桌面 About/profile 默认值中保持 EchoFlow 的署名、维护者、联系方式和产品身份一致。
+- 第三方版权和许可声明必须保留在它们覆盖的代码旁。若文件需要单独携带许可，将它们移动到 `THIRD_PARTY_LICENSES.md`；绝不删除许可证要求保留的声明。
+## 提交边界
+
+- 使用 Conventional Commit 前缀和正常的产品分支前缀，例如 `fix/xxx`、`feat/xxx` 或 `docs/xxx`；不要创建 `codex/` 前缀的分支。
+- 将非显然决策记录在 git-native trailer 和本地交接记录中。
+
+## 深入指南
+
+- 安装、测试或准备贡献时，从 `CONTRIBUTING.md` 开始；其余文档归属见“质量与验证边界”和“发布完整性”。
+- 选择命令或判断改动需要哪些检查时，参考 `package.json` 和 `scripts/pr/change-policy.ts`。

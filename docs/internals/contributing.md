@@ -1,13 +1,13 @@
 ---
 title: 参与贡献与质量门禁
 nav_title: 参与贡献
-description: 本地安装、影响面检查、质量门禁、测试要求与 PR 提交流程。
+description: 本地安装、影响面检查、质量门禁、测试要求与发布流程。
 order: 14
 ---
 
 # 参与贡献与质量门禁
 
-这份文档说明贡献代码前如何安装、开发、测试和运行质量门禁。目标是让维护者和贡献者在提交 PR 前都能回答：这次改动有没有破坏核心 Coding Agent 工作流？
+这份文档说明如何安装、开发、测试和运行质量门禁。目标是让每次改动都能回答：这次改动有没有破坏核心 Coding Agent 工作流？
 
 ## 环境准备
 
@@ -46,15 +46,15 @@ bun run docs:dev                                # 文档站预览
 | 层级 | 触发 | 运行内容 | 约束 |
 | --- | --- | --- | --- |
 | 本地迭代 | 手动 | 最窄的相关测试和 `check:impact` 选中的命令 | 快速反馈 |
-| PR（必过） | `pull_request` | impact 选中的确定性 lane，含 `check:agent-flow` | 无模型、无 provider、无 secret，外部贡献可运行 |
+| PR（必需） | `pull_request` | 按影响面选中的确定性 lane，含 `check:agent-flow` | 无模型、无 secret，对外部贡献安全 |
 | 全量 | 维护者手动触发 `workflow_dispatch` | 全部确定性 lane、模块图健康度和 `check:desktop-ui-smoke` | 仍无模型、无 secret |
 | Release | tag 自动触发 `release-desktop.yml` | 内容门禁、三组验证 job、六平台构建 | live 检查只在获授权的维护者流程运行 |
 
-Release workflow 的 `release-contract` 先检查发布面、tag、`desktop/package.json` 版本和 release notes 标题；`verify-governance`、`verify-runtime`、`verify-desktop` 并行验证，`release-verify-gate` 汇总结果。构建或验证失败都不会发布。
+发布工作流的 `release-contract` 先检查发布面、tag、`desktop/package.json` 版本和发布说明标题；`verify-governance`、`verify-runtime`、`verify-desktop` 并行验证，`release-verify-gate` 汇总结果。构建或验证失败都不会发布。
 
-每个启动真实 server 的质量 lane 都使用沙箱配置目录，并在结束时检查没有写入开发者真实的 `~/.claude`。维护者的 live baseline、签名、打包和真实升级验收是内部 runbook，不是普通 PR 的必需步骤。
+维护者的 live baseline、签名、打包和真实升级验收属于内部 runbook。
 
-## 普通 PR 的影响面检查
+## 影响面检查
 
 先让仓库按改动路径和 import 图列出需要运行的检查：
 
@@ -88,7 +88,7 @@ bun run check:desktop-ui-smoke
 
 所有会启动真实 server 的 quality-gate lane 都跑在沙箱配置目录里（`scripts/quality-gate/sandbox.ts`），并在结束时校验没有写过开发者真实的 `~/.claude`；写了就判定 lane 失败。
 
-开发时运行 impact report 选中的窄命令即可。需要声明 PR-ready 或完整验证时，直接使用统一入口，无需先单独执行其全部 lane：
+开发时运行 impact report 选中的窄命令即可。需要完整验证时，直接使用统一入口，无需先单独执行其全部 lane：
 
 ```bash
 bun run verify
@@ -107,13 +107,13 @@ artifacts/coverage/<timestamp>/coverage-report.md
 artifacts/coverage/<timestamp>/coverage-report.json
 ```
 
-PR 描述里请贴出你实际运行的命令和 summary。`quality:pr` / `quality:verify` 仍然保留给习惯显式质量命名的用户，但推荐文档和 AI prompt 都使用 `bun run verify`。
+交付记录里请贴出你实际运行的命令和 summary。`quality:pr` / `quality:verify` 仍然保留为兼容入口，但推荐文档和 AI prompt 都使用 `bun run verify`。
 
 ### 轻量验证（维护者日常发版）
 
 发版验证已经搬到 CI 里了，本地不需要再跑全量。日常流程：
 
-1. **开发迭代**：先跑本次行为的定向测试；不要仅凭目录名启动完整 surface gate。检查最终 diff、需要 PR-ready 证据时，再运行 `bun run check:impact`，并按报告选择检查。
+1. **开发迭代**：先跑本次行为的定向测试；不要仅凭目录名启动完整 surface gate。检查最终 diff、需要完整验证证据时，再运行 `bun run check:impact`，并按报告选择检查。
 2. **打 tag 前**（可选）：手动触发 GitHub Actions 里的 `Quality Check` workflow，确认代码库是绿的。
 3. **打 tag**：`release-desktop.yml` 自动跑内容门禁 + 并行验证 + 6 平台构建，全过了才发。
 
@@ -143,7 +143,7 @@ bun run check:release-surface     # 发版面：品牌标记、版本/品牌漂�
 2. 先写能复现行为的测试，观察它因预期缺陷失败，再做最小修复。
 3. 修复期间重跑受影响的窄检查；最后一次编辑后重新运行最终所需检查。
 4. 只修复本次改动造成的失败；无关的既有失败或环境阻塞要如实报告，不要擅自扩大范围。
-5. 只有最终 diff 的 `bun run verify` 通过，才能声明 PR-ready 或 full validation。
+5. 只有最终 diff 的 `bun run verify` 通过，才能声明 full validation。
 
 诊断 lane 失败时，先看 `artifacts/quality-runs/<timestamp>/report.md` 的 Summary / Result Matrix 和对应 `logs/<lane>.log`。coverage 失败看 `artifacts/coverage/<timestamp>/coverage-report.md` 或 `.json`，不要降低 baseline、threshold 或改写测试预期来掩盖失败。`bun run check:impact` 用于确定最终 diff 的检查范围；必须先读取 impact 结果，再启动它选中的检查，不得与 impact 分析并行抢跑。`check:native` 包含 sidecar 构建、打包和 package smoke，成本较高，仅在报告选中且交付证据需要时运行。检查失败或输出不完整时，先查看已有日志和进程；只有出现新的诊断依据时才重跑同一检查。没有后续改动或未解决风险时，不要反复运行已经通过的检查。无关的现有失败或环境阻塞应准确报告，而不是为了让结果变绿擅自扩大修改范围。
 
@@ -153,7 +153,7 @@ bun run check:release-surface     # 发版面：品牌标记、版本/品牌漂�
 
 已安装的 workflow skill 和代码导航工具可辅助设计、计划、评审与最小实现，但不能替代 `check:impact`、surface check、`check:policy` 或 `verify`。使用仓库当前的 skill registry，不要假设不存在的命令或 Agent 名称。
 
-Agent 分级以能证明任务为准：局部且可逆的改动用单 Agent；跨 surface 不确定时用独立探索或专项评审；只有高风险或架构级工作才拆分探索、实现和对抗性复核。不要默认所有 sub-agent 都用最高模型档位，也不要让并行 Agent 在同一工作树中修改相互冲突的内容。
+Agent 分级以能证明任务为准：局部且可逆的改动用单个 Agent；跨 surface 不确定时用独立探索或专项评审；只有高风险或架构级工作才拆分探索、实现和对抗性复核。不要默认所有子 Agent 都用最高模型档位，也不要让并行 Agent 在同一工作树中修改相互冲突的内容。
 
 ## 回归测试设计
 
@@ -176,7 +176,7 @@ Agent 分级以能证明任务为准：局部且可逆的改动用单 Agent；�
 - 纯逻辑写单元测试；server/API/provider/runtime 写 API 或 request-shape 测试；桌面 UI/store/API 写 Vitest 或 Testing Library；跨 UI、WebSocket、provider proxy、native sidecar 和发布打包的流程补 E2E 或 smoke。
 - agent loop、工具调用、provider 路由、模型选择、文件编辑、权限、会话恢复和桌面聊天改动必须有 mock/fixture 测试。live smoke 或 baseline 只在确定性检查通过且维护者明确授权后运行。
 - 新增或变更的可执行生产代码行必须满足 `coverage-thresholds.json` 的 changed-line coverage 门槛。修改 coverage baseline/threshold 需要维护者授权和 `allow-coverage-baseline-change`。
-- PR 描述必须记录 changed files、tests added or updated、coverage evidence、E2E/live evidence 或 blocker，以及 known risk / rollback。
+- 交付记录应记录 changed files、tests added or updated、coverage evidence、E2E/live evidence 或 blocker，以及 known risk / rollback。
 
 ## 本机 Push 前提醒
 
@@ -186,23 +186,15 @@ push 不再自动运行本地质量门禁，需要时手动运行：
 bun run quality:push
 ```
 
-它复用 PR gate 的 impact、policy 和路径检查，默认跳过耗时 coverage。`bun run hooks:install` 只安装非阻塞提醒，不会卡住 push。
-
-## PR CI 合并门禁
-
-`.github/workflows/pr-quality.yml` 在 PR 更新时运行。`scope-plan` 生成稳定的影响面计划，`policy-enforcement` 独立执行 policy，产品 job 按路径选择 desktop、server、adapter、native、provider contract、chat contract、persistence、docs 和 coverage lane。最终的 `pr-quality-gate` 要求选中的 job 成功、未选中的明确 skipped，不能把 cancelled 或缺失结果误判为通过。
+它复用 impact、policy 和路径检查，默认跳过耗时 coverage。`bun run hooks:install` 只安装非阻塞提醒，不会卡住 push。
 
 `bun run audit:harness` 的 required contract 失败会非零退出；兼容窗口内的历史命名等其他 rubric 发现只报告、不阻断。仓库设置、ruleset、secret 和 required-check 变更必须经过明确授权。
 
-## 统一验证入口与 PR 证据
+## 交付证据
 
-```bash
-bun run verify
-```
+`bun run verify` 的范围见上文“无模型的端到端 Agent 门禁”。只有维护者授权的 live provider / baseline 不属于普通贡献者必跑项。
 
-`bun run verify` 等价于 `bun run quality:pr`，按当前 diff 运行选中的 policy、surface、contract、persistence、docs 和 coverage lane，不调用真实模型。只有维护者授权的 live provider / baseline 不属于普通贡献者必跑项。
-
-PR 描述请写：
+交付记录请写：
 
 - 用户影响和 changed surface；
 - changed files、tests added or updated；
@@ -212,6 +204,6 @@ PR 描述请写：
 
 ## 维护者验证与发布
 
-真实模型 baseline、provider 配置、签名和真实升级验收属于维护者流程，不是普通贡献者或公开 PR 的要求。需要执行这些流程时，维护者应查阅 `docs/_internal/release-windows.md` 及其他 `_internal/` runbook；不要在公开贡献指南中记录本机 provider、凭据或真实升级步骤。
+真实模型 baseline、provider 配置、签名和真实升级验收属于维护者流程，不是日常改动的要求。需要执行这些流程时，维护者应查阅 `docs/_internal/release-windows.md` 及其他 `_internal/` runbook；不要在公开贡献指南中记录本机 provider、凭据或真实升级步骤。
 
 公开发布契约仅要求版本号、Git tag 与 `release-notes/vX.Y.Z.md` 一致，并通过 `bun run check:release-surface`。

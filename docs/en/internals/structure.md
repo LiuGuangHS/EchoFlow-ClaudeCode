@@ -91,7 +91,7 @@ The repository contains the CLI/TUI, local Server, Electron desktop app, IM adap
 | `docs/superpowers/` | Local plans, gitignored | No; never link from a public page |
 | `site/src/generated/` | Generated docs index and content | No, gitignored |
 
-Renaming a public page requires updating both `LEGACY_ROUTES` and `legacyRoutes` in `scripts/prepare-static-output.mjs`. When a process draft lands, fold the facts that still matter into `docs/internals/`, then archive it under `docs/_internal/archive/`; public pages must not link to `_internal/`, `archive/`, or `docs/superpowers/`.
+Renaming public pages, archiving process drafts, and the link restrictions for public pages are covered in `docs/AGENTS.md`.
 
 ## Runtime boundaries
 

@@ -1,24 +1,12 @@
-# Mobile Instructions
+# 移动端说明
 
-These rules apply to `mobile/` changes in addition to the root instructions.
+这些规则适用于 `mobile/` 下的改动，并叠加根目录规则。
 
-`mobile/` is a self-contained Kotlin Android app. It connects to an EchoFlow
-server, verifies the H5 token, and renders the existing H5 UI in Android
-WebView. Keep business features in the H5 app; add native code for device
-integration and mobile-specific presentation. Prefer Android platform APIs.
+`mobile/` 是自包含的 Kotlin Android 应用。它连接 EchoFlow server，验证 H5 token，并在 Android WebView 中渲染现有 H5 UI。业务功能保留在 H5 应用中；native 代码只用于设备集成和移动端特有的展示。优先使用 Android 平台 API。
 
-- Run `cd mobile && bun run check`; from the repository root the same gate is
-  `bun run check:mobile`. This checks mobile metadata and Android integration
-  contracts. Build with `cd mobile && bun run android` when JDK 25 and the
-  Android SDK are available.
-- Keep credentials encrypted with Android Keystore AES-GCM. Never log secrets.
-  The H5 handoff currently uses its documented `h5Token` query parameter.
-- Plain HTTP supports trusted LAN use. Keep cleartext support aligned between
-  `app.json` and the Android manifest; do not present HTTP as safe on untrusted
-  networks.
-- `mobile/package.json` and `mobile/app.json` both carry the version, and the
-  mobile release workflow checks they match. Bump both.
-- JDK 25 LTS, Android Gradle Plugin 9.4.0, and Gradle 9.8.0 are the pinned
-  Android build toolchain. Keep these versions compatible when upgrading them.
-- WebView remains the compatibility layer for chat, tools, and sessions. Add
-  mobile-specific flows incrementally and preserve H5 navigation and file input.
+- 运行 `cd mobile && bun run check`；从仓库根目录运行同一门禁使用 `bun run check:mobile`。该检查验证移动端元数据和 Android 集成契约。在具备 JDK 25 和 Android SDK 时，使用 `cd mobile && bun run android` 构建。
+- 使用 Android Keystore AES-GCM 加密凭据。绝不记录 secrets。
+- 明文 HTTP 支持可信 LAN 使用。保持 `app.json` 与 Android manifest 中的明文支持一致；不要把 HTTP 描述成在不可信网络上安全。
+- `mobile/package.json` 和 `mobile/app.json` 都记录版本，移动端发布工作流会检查二者一致。升级版本时必须同时修改。
+- JDK 25 LTS、Android Gradle Plugin 9.4.0 和 Gradle 9.8.0 是固定的 Android 构建工具链。升级时保持这些版本兼容。
+- WebView 仍是聊天、工具和 session 的兼容层。逐步增加移动端特有流程，并保留 H5 导航和文件输入能力。
