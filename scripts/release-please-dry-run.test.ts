@@ -140,16 +140,17 @@ class FakeScm {
   async addIssueLabels() {}
 }
 
+const BASELINE_VERSION = '0.7.2'
+
+// Release state is pinned to the baseline so the proof does not fail after each release.
 function readRepoFiles(): Map<string, string> {
   const files = new Map<string, string>()
-  for (const path of [
-    'release-please-config.json',
-    '.release-please-manifest.json',
-    'desktop/package.json',
-    'mobile/package.json',
-    'mobile/app.json',
-  ]) {
-    files.set(path, readFileSync(path, 'utf8'))
+  files.set('release-please-config.json', readFileSync('release-please-config.json', 'utf8'))
+  files.set('.release-please-manifest.json', JSON.stringify({ desktop: BASELINE_VERSION }))
+  for (const path of ['desktop/package.json', 'mobile/package.json', 'mobile/app.json']) {
+    const parsed = JSON.parse(readFileSync(path, 'utf8'))
+    parsed.version = BASELINE_VERSION
+    files.set(path, JSON.stringify(parsed, null, 2))
   }
   return files
 }
@@ -231,7 +232,7 @@ describe('release please offline dry run', () => {
       if (!scm.files.has(update.path)) {
         continue
       }
-      const content = update.updater.updateContent(readFileSync(update.path, 'utf8'))
+      const content = update.updater.updateContent(scm.files.get(update.path) as string)
       const parsed = JSON.parse(content)
       if (update.path === '.release-please-manifest.json') {
         expect(parsed.desktop).toBe('0.7.3')

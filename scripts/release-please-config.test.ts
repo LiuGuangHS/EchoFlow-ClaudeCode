@@ -36,7 +36,9 @@ describe('release please configuration', () => {
   })
 
   test('bases the next release on the last published tag', () => {
-    expect(manifest).toEqual({ desktop: '0.7.2' })
+    // The manifest records the last published version, so its value moves with every release.
+    expect(Object.keys(manifest)).toEqual(['desktop'])
+    expect(manifest.desktop).toMatch(/^\d+\.\d+\.\d+$/)
   })
 
   test('bumps the patch for features and breaking changes below 1.0.0', () => {
@@ -49,7 +51,7 @@ describe('release please configuration', () => {
   })
 
   test('keeps the three version fields on the same product version', () => {
-    expect(desktopPkg.version).toBe('0.7.3')
+    expect(desktopPkg.version).toMatch(/^\d+\.\d+\.\d+$/)
     expect(mobilePkg.version).toBe(desktopPkg.version)
     expect(mobileApp.version).toBe(desktopPkg.version)
   })
