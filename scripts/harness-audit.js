@@ -185,7 +185,7 @@ function readText(rootDir, relativePath) {
 
 function countFiles(rootDir, relativeDir, extension) {
   const dirPath = path.join(rootDir, relativeDir);
-  if (!fs.existsSync(dirPath)) {
+  if (!fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) {
     return 0;
   }
 
