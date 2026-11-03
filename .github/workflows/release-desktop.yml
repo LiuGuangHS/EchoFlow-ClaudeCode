@@ -1183,20 +1183,20 @@ jobs:
         run: |
           error_file="${RUNNER_TEMP}/release-view-error.txt"
           set +e
-          release_json=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" 2>"$error_file")
+          # releases/tags/<tag> never returns draft releases, so look the release up in the list.
+          release_json=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq '[.[] | select(.tag_name == env.RELEASE_TAG)] | .[0] // empty' 2>"$error_file")
           status=$?
           set -e
           if [ "$status" -ne 0 ]; then
+            cat "$error_file" >&2
+            exit "$status"
+          fi
+          if [ -z "$release_json" ]; then
             if [ "$OFFICIAL_RELEASE" = "true" ]; then
-              cat "$error_file" >&2
               echo "::error::Trusted release publication requires an existing draft release."
               exit 1
             fi
-            if grep -q 'HTTP 404' "$error_file"; then
-              exit 0
-            fi
-            cat "$error_file" >&2
-            exit "$status"
+            exit 0
           fi
           release_id=$(jq -r '.id' <<<"$release_json")
           is_draft=$(jq -r '.draft' <<<"$release_json")
