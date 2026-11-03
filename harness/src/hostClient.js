@@ -4,6 +4,7 @@ import { apply as applyRegistry } from '@deepseek-ai/dsh-typert-registry/client'
 import { apply as applyGateway } from '@deepseek-ai/dsh-api-gateway/client'
 import sessionRemote from '@deepseek-ai/dsh-api-session-controller/remote'
 import { Context } from '@deepseek-ai/cordis'
+import { createHostSessions } from './hostSessions.js'
 
 function cookieValue(setCookie) {
   return setCookie?.split(';', 1)[0] ?? ''
@@ -64,10 +65,15 @@ export async function connectDshHost({ origin, token }) {
     await context.fiber.dispose()
     throw error
   }
+  const sessions = createHostSessions(context.remote)
   return {
     context,
     connection: context.connection,
     remote: context.remote,
-    close: async () => context.fiber.dispose(),
+    sessions,
+    close: async () => {
+      sessions.dispose()
+      await context.fiber.dispose()
+    },
   }
 }
