@@ -1,13 +1,13 @@
 ---
 title: EchoFlow Code 是什么
 nav_title: 这是什么
-description: 跑在你自己电脑上的 AI 编程工作台：模型自己接，改动你审阅。
+description: EchoFlow Code 是 Claude Code 的本地优先桌面客户端，支持 macOS、Windows、Linux：模型自己接，改动逐文件审阅，权限可在手机或 IM 里批准。
 order: 0
 ---
 
 # EchoFlow Code 是什么
 
-它是一个装在你电脑上的应用。你把一个项目文件夹交给它，用大白话说出你想要什么，它去读代码、改文件、跑命令——每一处改动都摆在你眼前，等你点头才算数。
+EchoFlow Code 是基于 Claude Code 的本地优先 AI 编程桌面客户端，支持 macOS、Windows 和 Linux。你选择项目文件夹和模型，用自然语言提出目标，Agent 读取代码、编辑文件、运行命令；桌面端把权限请求、工具调用和逐文件 Diff 审阅放进同一个工作台。它还提供 Agent Teams、Dynamic Workflow，以及需要电脑保持运行的手机与 IM 接力。
 
 ![真实项目中的发布说明会话：工具调用、回复与完整会话列表](../images/app/zh-CN/session-main.webp)
 
@@ -15,12 +15,14 @@ order: 0
 
 ## 和 Claude Code CLI 是什么关系
 
-Claude Code 是 Anthropic 出的命令行编程 Agent，跑在终端里。EchoFlow Code 的内核就是从 Claude Code 源码修复而来的一份 CLI（仓库里叫 `echoflow-code`），桌面端是包在它外面的图形界面。
+Claude Code 是 Anthropic 的命令行编程 Agent。EchoFlow Code 提供桌面图形界面，并随安装包提供名为 `echoflow-code` 的 CLI。仓库的第三方声明记录了根目录 `src/` 运行时源自 Anthropic npm registry 于 2026 年 3 月 31 日泄露的 Claude Code 源码；这些部分的权利仍属于原权利人，不由 EchoFlow 的许可授予。
+
+**源码公开不等于开源。** EchoFlow 原创部分保留所有权利；第三方部分另受其声明约束，分发仍需法律审查。使用、修改或分发前，请阅读[许可与来源说明](./faq.md)。
 
 对你来说，这意味着两件事：
 
 - **不用先装 Claude Code。** CLI 内核已经打进安装包，装完应用就能用，不需要 Node.js、npm 或任何全局命令。
-- **终端里能干的，这里都能干。** 权限审批、子 Agent、Skills、MCP、记忆，都是同一套东西，只是从滚动的终端输出变成了看得懂的界面。
+- **用界面管理 Agent 工作。** 权限审批、子 Agent、Skills、MCP 和记忆都有对应的桌面操作入口，不必只靠滚动的终端输出跟踪任务。
 
 想直接用终端的人也没被落下，源码里的 CLI 一直在，见 [命令行](../cli/index.md)。
 
@@ -38,11 +40,11 @@ Claude Code 是 Anthropic 出的命令行编程 Agent，跑在终端里。EchoFl
 
 ## 三条底线
 
-**本地优先。** 会话、设置、记忆、技能都存在你自己的机器上（默认在 `~/.claude` 下）。没有账号体系，没有云端同步，不上传你的代码。唯一的对外流量是你自己配的模型服务。
+**本地优先，而非完全离线。** 会话、设置、记忆、技能主要保存在本机，项目不运营接收会话内容的云端后端。但提示词、所选代码上下文和工具结果会发给你选择的模型服务；MCP、IM、中继、更新及上游运行时也可能联网。使用账号登录时仍涉及对应服务的认证，详见[隐私与联网说明](./privacy.md)。
 
-**模型自选。** 不绑定任何一家。Claude、ChatGPT、Grok 的官方账号可以直接登录；DeepSeek、Kimi、智谱 GLM 这些第三方 API 有现成预设；LM Studio、Ollama 跑的本地模型也接得上，一分钱不花。
+**模型自选。** 支持 Claude、ChatGPT、Grok 官方账号登录，DeepSeek、Kimi、智谱 GLM 等 API 预设，以及 LM Studio、Ollama 本地模型；也可选择 EchoFlow SiHub 账号接入。可用模型与费用取决于服务商、账号和硬件，本地模型能否执行任务还取决于工具调用能力与接口兼容性，见[连接模型服务](./models.md)。
 
-**改动你说了算。** 默认是「询问权限」模式：写文件、跑命令之前都会停下来问你一句。你可以放宽到自动接受编辑，也可以收紧到只让它做规划不许碰文件——五档权限，随时切换。
+**按权限模式执行，改动可审阅。** 默认「询问权限」会在 CLI 请求时确认编辑和高风险命令；自动接受编辑等模式会减少询问，不代表每次写入都要你点头。要调整模式，请等当前轮结束或先停止，再按[会话与权限说明](../desktop/sessions.md)操作。
 
 ## 从这里开始
 
@@ -55,4 +57,4 @@ Claude Code 是 Anthropic 出的命令行编程 Agent，跑在终端里。EchoFl
 
 想带着具体目标练习，接着看[实战案例](../cases/index.md)：从读懂陌生项目到修 Bug、预览页面、定时审查和手机接力。
 
-中途卡住了，去 [装不上 / 打不开 / 连不上](./troubleshooting.md) 按症状找。
+安装、模型费用、离线使用、许可和平台支持的常见疑问，见[常见问题 FAQ](./faq.md)。中途卡住了，去 [装不上 / 打不开 / 连不上](./troubleshooting.md) 按症状找。

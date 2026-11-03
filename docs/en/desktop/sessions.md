@@ -1,7 +1,7 @@
 ---
 title: Sessions, permissions, and review
 nav_title: Sessions
-description: A session from first question to reviewed diff, and which button to press when Claude asks.
+description: The EchoFlow Code session screen: a session from first question to reviewed diff, the five permission modes, what to press when Claude asks, and how to undo a turn.
 order: 1
 ---
 

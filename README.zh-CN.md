@@ -1,4 +1,4 @@
-# EchoFlow Code
+# EchoFlow Code：Claude Code 的本地优先桌面客户端
 
 <p align="center">
   <picture>
@@ -9,53 +9,86 @@
 
 <div align="center">
 
-[![GitHub Stars](https://img.shields.io/github/stars/LiuGuangHS/EchoFlow-ClaudeCode?style=social)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/stargazers)
-[![GitHub Forks](https://img.shields.io/github/forks/LiuGuangHS/EchoFlow-ClaudeCode?style=social)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/network/members)
-[![GitHub Issues](https://img.shields.io/github/issues/LiuGuangHS/EchoFlow-ClaudeCode)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/issues)
-[![GitHub Pull Requests](https://img.shields.io/github/issues-pr/LiuGuangHS/EchoFlow-ClaudeCode)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/pulls)
-[![License](https://img.shields.io/badge/License-MIT-blue)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/LICENSE)
-[![English](https://img.shields.io/badge/English-Available-green)](README.md)
-[![Docs](https://img.shields.io/badge/文档站点-Visit-FF7A00)](https://code.echoflow.cn)
+[![最新版本](https://img.shields.io/github/v/release/LiuGuangHS/EchoFlow-ClaudeCode?label=release&color=FF7A00)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest)
+[![支持平台](https://img.shields.io/badge/平台-macOS_%7C_Windows_%7C_Linux-555555)](https://code.echoflow.cn/download)
+[![许可](https://img.shields.io/badge/许可-源码公开_·_保留所有权利-FF7A00)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/LICENSE)
+[![文档站点](https://img.shields.io/badge/文档站点-code.echoflow.cn-FF7A00)](https://code.echoflow.cn)
+[![English](https://img.shields.io/badge/English-README-green)](README.md)
 
 [English](README.md) · **简体中文**
 
 </div>
 
-EchoFlow Code 是一个**本地优先的 Claude Code 与模型服务商桌面工作台**：运行编程会话、逐项审阅 Diff、编排 Agent Teams 与 Dynamic Workflow，并掌控每一次工具调用和模型连接。
+**EchoFlow Code 是 Claude Code 的本地优先桌面客户端（图形界面），支持 macOS、Windows 和 Linux。** 它让编程 Agent 变得看得见、管得住：Agent Teams 在可视化画布上并行协作，可逐文件审阅改动并撤销受支持的操作，权限审批可在手机或聊天软件里完成，模型由你自己选。
 
-<p align="center">
-  <a href="https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest"><strong>下载桌面端</strong></a> · <a href="docs/start/first-session.md"><strong>5 分钟跑通</strong></a> · <a href="https://code.echoflow.cn">查看文档</a> · <a href="https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/discussions">反馈与讨论</a>
-</p>
+[**下载桌面端**](https://code.echoflow.cn/download) · [**开始第一条会话**](https://code.echoflow.cn/start/first-session) · [查看文档](https://code.echoflow.cn) · [反馈与讨论](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/discussions)
 
-| 每次改动可审阅 | 复杂任务可编排 | 环境由你掌控 |
-| --- | --- | --- |
-| 工具调用、工作区 Diff 和撤销都保持可见。 | SubAgent、Agent Teams 与 Dynamic Workflow 让并行工作可追踪。 | 使用官方 OAuth、厂商 API、本地模型或自定义兼容端点。 |
+## 一眼看懂
+
+| | |
+| --- | --- |
+| **它是什么** | Claude Code 的桌面图形界面，带 Agent Teams 工作台、Dynamic Workflow 编排、逐文件 Diff 审阅、Computer Use，以及手机和聊天软件审批 |
+| **支持平台** | macOS、Windows、Linux 桌面端；另有用于远程接力的 Android 客户端 |
+| **模型** | Claude、ChatGPT、Grok 官方账号登录；厂商 API（有 DeepSeek、Kimi、智谱 GLM 预设）；通过 LM Studio 或 Ollama 使用本地模型；兼容的自定义端点 |
+| **数据** | 本地优先。会话、设置和记忆保存在你的电脑上，项目本身不运营接收会话内容的云端后端 |
+| **价格** | 可免费下载。模型调用费用由你选择的服务商收取；本地模型的成本取决于模型及运行环境 |
+| **许可** | 源码公开、保留所有权利（仅限原创部分），不是开源。见[许可](#许可) |
+| **界面语言** | 简体中文、繁体中文、英语、日语、韩语 |
+| **官网与文档** | https://code.echoflow.cn |
+| **下载** | https://code.echoflow.cn/download 或 [GitHub Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases) |
+
+## 特别之处
+
+### 多 Agent 协作，看得见
+
+**Agent Teams 工作台**把团队成员、共享任务列表、通信流和依赖泳道放在同一块画布上。被未完成前置任务卡住的任务会标成阻塞状态，每位成员可以使用各自的模型和运行时，并支持人工复核。**Dynamic Workflow** 让 Agent 当场编写编排脚本，并发或流水线调度多个子代理，提供阶段视图、中断与断点续跑。详见 [Agent Teams](https://code.echoflow.cn/desktop/agent-teams) 和 [Dynamic Workflow](https://code.echoflow.cn/desktop/dynamic-workflow)。
+
+### 每处改动都能审阅、能撤销
+
+权限请求、工具调用和工作区 Diff 始终可见。点开任一改动文件就是带语法高亮的 Diff，可以留行级评论，整轮可撤销，还能在内置浏览器里预览刚改完的页面。五档权限模式，从“询问权限”到“跳过权限”。详见[工作区](https://code.echoflow.cn/desktop/workspace)。
+
+### 不抢你鼠标的 Computer Use（macOS）
+
+macOS 14.4 及以上版本里，原生运行组件通过独立的虚拟光标在后台操作其他应用，你的真实鼠标和键盘仍归你使用（少数操作可能改变应用焦点）。Windows 的兼容执行器会移动真实鼠标，Linux 暂无执行器。启用前需要在应用内确认，并完成系统授权。详见 [Computer Use](https://code.echoflow.cn/desktop/computer-use)。
+
+### 在手机或聊天软件里批准权限
+
+扫码就能在手机浏览器（H5）里继续同一条会话，也可以使用 Android 客户端，或者通过 Telegram、飞书、微信、钉钉、WhatsApp、企业微信、QQ、Slack 对话并审批操作。任务在你的电脑上执行，所以桌面端需要保持运行。详见[手机 H5 与 IM 接力](https://code.echoflow.cn/desktop/remote)和 [IM 接入](https://code.echoflow.cn/im)。
+
+### 模型自己选
+
+可以用 Claude、ChatGPT、Grok 官方账号登录，使用 DeepSeek、Kimi、智谱 GLM 等厂商 API 预设，通过 LM Studio 或 Ollama 运行本地模型，或者连接兼容的自定义端点。凭据、模型选择和权限都由你掌控。完整的 Agent 工作流需要模型支持工具调用。详见[连接模型服务](https://code.echoflow.cn/start/models)。
+
+## 更多桌面端功能
+
+- **多会话工作区**：标签页、项目切换、终端入口、会话历史、归档，以及等待你处理的会话高亮。
+- **全局搜索**：按 Cmd+K 搜索所有会话并跳转到匹配处。
+- **分支与 Worktree 启动**：选择仓库分支，并决定用当前工作树还是隔离的 Worktree。
+- **项目级指令**：支持读取项目里的 `AGENTS.md`。
+- **MCP 图形化管理**：界面化增删改 MCP Server，支持 STDIO、Streamable HTTP、SSE，以及项目私有、共享、全局三种作用域。
+- **技能市场**：发现、预览、安装 ClawHub 和 SkillHub 的第三方技能，来源和安全状态摆在明处。
+- **可视化 SubAgent 管理**：创建并调校子代理，可选模型、工具与权限模式。
+- **定时任务与用量统计**：在独立会话里执行计划任务，并查看本机 Token 使用趋势。
+- **模型请求追踪**：本地记录每轮模型请求的状态与耗时，方便定位卡死或失败的调用。
+- **图片生成与语音输入**：在聊天里生成和编辑图片，也可以在输入框里语音听写。
+- **配置分享**：从可信的 `echoflowcode://` 链接导入服务商配置。
+- **主题与宠物**：六套配色主题，可跟随系统深浅色；还有可选的桌面宠物，用动作告诉你任务进度。
 
 ## 桌面端预览
 
-<p align="center">
-  <a href="https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases"><img src="https://img.shields.io/badge/下载桌面端-macOS_%7C_Windows_%7C_Linux-FF7A00?style=for-the-badge" alt="下载桌面端"></a>
-  <a href="docs/start/install.md"><img src="https://img.shields.io/badge/安装指南-Guide-gray?style=for-the-badge" alt="安装指南"></a>
-</p>
+| ![EchoFlow Code 会话界面：Claude Code 工作时的工具调用与阶段进度](docs/images/app/zh-CN/session-main.webp) | ![EchoFlow Code 工作区：单个改动文件的语法高亮 Diff](docs/images/app/zh-CN/workspace-diff.webp) | ![EchoFlow Code 内置浏览器预览 Agent 刚改完的页面](docs/images/app/zh-CN/workspace-preview.webp) |
+| --- | --- | --- |
+| **跟着任务一步步往前**<br>工具调用与阶段进度都留在眼前 | **改了什么，逐行看清楚**<br>放大的高亮 Diff，文字和代码更清楚 | **改完当场验证**<br>内置浏览器打开真实本地页面 |
 
-<table>
-  <tr>
-    <td align="center" width="33.33%"><img src="docs/images/app/zh-CN/session-new.webp" alt="第一次任务前的空会话"><br><b>从清爽的空会话开始</b><br><sub>项目和权限都在首屏</sub></td>
-    <td align="center" width="33.33%"><img src="docs/images/app/zh-CN/session-main.webp" alt="打开活动面板的真实执行中任务"><br><b>跟着任务一步步往前</b><br><sub>工具调用与阶段进度都留在眼前</sub></td>
-    <td align="center" width="33.33%"><img src="docs/images/app/zh-CN/workspace-diff.webp" alt="工作区 Diff 评审"><br><b>改了什么，逐行看清楚</b><br><sub>放大的高亮 Diff，文字和代码更清楚</sub></td>
-  </tr>
-  <tr>
-    <td align="center" width="33.33%"><img src="docs/images/app/zh-CN/workspace-preview.webp" alt="内置浏览器预览刚改完的页面"><br><b>改完当场验证</b><br><sub>内置浏览器打开真实本地页面</sub></td>
-    <td align="center" width="33.33%"><img src="docs/images/app/zh-CN/model-picker.webp" alt="显示服务商、预设和本地端点的模型选择器"><br><b>每条会话自选模型</b><br><sub>自己的服务商、预设和本地端点都在一个列表里</sub></td>
-    <td align="center" width="33.33%"><img src="docs/images/app/zh-CN/skill-market.webp" alt="技能市场"><br><b>缺什么手艺装什么</b><br><sub>来源和安全状态摆在明处</sub></td>
-  </tr>
-</table>
+| ![EchoFlow Code 的 Computer Use 设置界面与系统权限状态](docs/images/app/zh-CN/settings-computer-use.webp) | ![EchoFlow Code 模型选择器：服务商、预设和本地端点](docs/images/app/zh-CN/model-picker.webp) | ![EchoFlow Code 的 IM 接入设置：Telegram、飞书、微信等平台](docs/images/app/zh-CN/settings-im.webp) |
+| --- | --- | --- |
+| **操作其他应用**<br>Computer Use 与清晰的权限状态 | **每条会话自选模型**<br>服务商、预设和本地端点都在一个列表里 | **在聊天软件里审批**<br>把 IM 平台接到桌面端 |
 
 ## 安装桌面端
 
-1. 前往 [Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases) 下载 macOS、Windows 或 Linux 安装包。
+1. 前往[下载页](https://code.echoflow.cn/download)或 [Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases) 下载 macOS、Windows 或 Linux 安装包。
 2. 首次启动后，在桌面端设置里配置模型服务商、API Key 和默认模型。
-3. 正式 macOS Release 需要经过签名和公证；draft 或 unsigned 临时包可能需要手动放行。Windows 未签名安装包可能出现 SmartScreen 提示，点“更多信息”后选择“仍要运行”。详见[安装指南](docs/start/install.md)。
+3. 正式 macOS Release 需要经过签名和公证；draft 或 unsigned 临时包可能需要手动放行。Windows 未签名安装包可能出现 SmartScreen 提示，点“更多信息”后选择“仍要运行”。详见[安装指南](https://code.echoflow.cn/start/install)。
 
 ## 从源码启动 CLI
 
@@ -65,53 +98,58 @@ cp .env.example .env
 ./bin/echoflow-code
 ```
 
-更多配置见[环境变量](docs/cli/env.md)和[命令行安装与启动](docs/cli/index.md)。
+更多配置见[环境变量](https://code.echoflow.cn/cli/env)和[命令行安装与启动](https://code.echoflow.cn/cli)。
 
-## EchoFlow 的特别强化
+## 常见问题
 
-EchoFlow Code 的目标不是再包一层聊天框，而是把 Coding Agent 变成看得见、审得了、能恢复的工作台。
+### EchoFlow Code 免费吗？
 
-- **多 Agent 协作可视化**：Agent Teams 工作台集中展示成员、共享任务、通信流、依赖泳道和已完成会话历史；Dynamic Workflow 可并发或流水线编排，并显示阶段进度、中断与恢复。
-- **每一步都可审阅**：权限请求、工具调用、工作区 Diff、内置浏览器预览、模型 Trace、诊断和撤销路径都在界面中，不把 Agent 执行藏在一条回复后面。
-- **模型与权限由你掌控**：可连接 Claude、ChatGPT、Grok 官方登录、厂商 API、LM Studio、Ollama 和兼容的自定义端点；Provider 凭据、模型选择和权限模式都由你决定。
-- **不止一台桌面端**：通过 H5、Android 和 IM 接力同一个会话，同时仍以桌面端作为项目上下文与高风险审批的主界面。
-- **出问题有证据可查**：本地活动记录、诊断导出、兼容升级和受控修复路径帮助定位启动、Provider 或会话故障，同时避免暴露密钥。
+可以免费下载。应用不包含模型服务：订阅和调用费用由你选择的服务商收取，通过 LM Studio 或 Ollama 运行的本地模型的成本取决于模型及运行环境。原创部分的源码公开可查，但 EchoFlow Code 不是开源项目（见[许可](#许可)）。
 
-## 桌面端亮点
+### 需要先安装 Claude Code 吗？
 
-- **多会话与全局搜索**：标签页、项目切换、终端入口、会话历史和跨会话全文搜索集中管理。
-- **分支 / Worktree 启动**：新会话可以选择仓库分支，并决定用当前工作树还是隔离 Worktree。
-- **改动逐个文件审阅**：右侧工作区列出本轮改动，点开就是带语法高亮的 Diff，整轮可撤销。
-- **内置浏览器预览**：Agent 刚改完的页面直接在应用内渲染，登录态和 Cookie 真实可用。
-- **五档权限模式**：从「询问权限」到「跳过权限」，危险命令、工具调用和 AI 反问都在桌面端审批。
-- **模型自选**：Claude / ChatGPT / Grok 官方账号可直接登录；DeepSeek、Kimi、智谱 GLM 等第三方 API 有现成预设；LM Studio、Ollama 的本地模型也接得上。
-- **图片生成**：聊天中直接生成和编辑图片——ChatGPT / Grok 授权登录即可使用，也支持接入任意 OpenAI 兼容的 Images API。
-- **MCP 图形化管理**：界面化增删改 MCP Server，支持 STDIO / Streamable HTTP / SSE 三种传输方式与项目私有、共享、全局三种作用域。
-- **六套配色主题**：纯白、纸墨、经典暖色、青瓷、墨夜、墨夜蓝，可跟随系统深浅色自动切换。
-- **技能市场**：发现、预览、安装 ClawHub / SkillHub 的第三方技能，来源和安全状态摆在明处。
-- **会话活动面板**：集中查看任务进度、后台任务、SubAgent 与来源。
-- **可视化 SubAgent 管理**：图形界面创建和调校子代理，选择模型、工具与权限模式。
-- **Agent Teams 协作工作台**：桌面端可视化多 Agent 协作团队——成员、任务、通信流和依赖泳道一目了然。
-- **动态 Workflow 编排**：模型当场编写并运行编排脚本，并发或流水线调度多个子代理，支持阶段视图、中断与断点续跑。
-- **模型请求追踪**：本地记录每轮模型请求的状态与耗时，可搜索筛选，快速定位卡死或失败调用。
-- **Computer Use**：让 Agent 在授权后截图、点击、输入并控制桌面应用。macOS 上由原生运行时在后台完成，不会接管你真实的鼠标键盘。
-- **桌面宠物**：搭搭、弧弧、补补、回回随任务状态换动作，也能自己做一只（默认关闭）。
-- **H5 远程访问**：扫码用手机浏览器接入当前会话，锁屏切后台都不打断正在跑的任务。
-- **IM 接入**：通过 Telegram / 飞书 / 微信 / 钉钉 / WhatsApp / 企业微信 / QQ / Slack 远程对话、切换项目和审批权限。
-- **定时任务与用量统计**：创建计划任务在独立会话执行，并查看本机 Token 使用趋势。
+不需要。CLI 内核已经打进桌面端安装包，不需要 Node.js、npm 或任何全局命令。终端版本也可以从本仓库获得，见[命令行指南](https://code.echoflow.cn/cli)。
 
----
+### 支持哪些操作系统？
+
+支持 macOS、Windows 和 Linux，提供 Intel / AMD 与 ARM 版本，请在[下载页](https://code.echoflow.cn/download)选择对应安装包。后台 Computer Use 仅限 macOS。
+
+### 能用 DeepSeek、Kimi、智谱 GLM 驱动 Claude Code 吗？
+
+可以。EchoFlow Code 内置 DeepSeek、Kimi、智谱 GLM 的预设，也能连接 LM Studio、Ollama 或任意兼容的自定义端点。可用模型取决于你的账号和服务商，Agent 工作流需要模型支持工具调用。详见[连接模型服务](https://code.echoflow.cn/start/models)。
+
+### 我的代码和会话数据会离开电脑吗？
+
+会话、设置、记忆、技能和日志保存在本机，主要位于 `~/.claude`。项目本身不运营接收会话内容的云端后端。应用并非完全离线：提示词、附件、所选代码上下文和工具结果会发送给你选择的模型服务商；启用的集成及其他配置的服务也可能接收相关数据。详见[隐私与联网说明](https://code.echoflow.cn/start/privacy)。
+
+### Computer Use 会抢我的鼠标吗？
+
+macOS 14.4 及以上版本不会，原生运行组件使用独立的虚拟光标。Windows 的兼容执行器会移动真实鼠标，Linux 暂无执行器。详见 [Computer Use](https://code.echoflow.cn/desktop/computer-use)。
+
+### 能在手机上批准权限吗？
+
+可以。使用 H5 访问（扫码）、Android 客户端，或者受支持的聊天平台。任务在你的电脑上执行，所以桌面端需要保持运行。详见[手机 H5 与 IM 接力](https://code.echoflow.cn/desktop/remote)。
+
+### 它和终端里的 Claude Code CLI 是什么关系？
+
+桌面端是包在本仓库 `echoflow-code` CLI 内核外面的图形界面。权限审批、子 Agent、Skills、MCP 和记忆在界面里的用法与终端一致，桌面端额外提供 Diff 审阅、Agent Teams 工作台、会话历史和远程审批。
+
+### 可以修改或再分发 EchoFlow Code 吗？
+
+没有书面授权不可以。源码公开仅供查看和审阅，但保留所有权利：复制、修改、再分发、转授权和商用都需要另行签订书面协议。见[许可](#许可)。
 
 ## 更多文档
 
-完整文档站：<https://code.echoflow.cn>
+完整文档站：<https://code.echoflow.cn>。面向 AI 助手的机器可读索引见 [llms.txt](https://code.echoflow.cn/llms.txt)。
 
 | 分区 | 文档 |
 |------|------|
-| 开始使用 | [下载与安装](docs/start/install.md) · [连接模型服务](docs/start/models.md) · [跑通第一条会话](docs/start/first-session.md) · [故障排查](docs/start/troubleshooting.md) |
-| 桌面端功能 | [功能总览](docs/desktop/index.md) · [Agent Teams](docs/desktop/agent-teams.md) · [Dynamic Workflow](docs/desktop/dynamic-workflow.md) · [Computer Use](docs/desktop/computer-use.md) · [桌面宠物](docs/desktop/pets.md) · [手机 H5 与 IM 接力](docs/desktop/remote.md) |
-| 命令行 | [安装与启动](docs/cli/index.md) · [命令参考](docs/cli/reference.md) · [环境变量](docs/cli/env.md) |
-| 深入原理 | [桌面端架构](docs/internals/desktop.md) · [多 Agent 系统](docs/internals/agent.md) · [Skills 系统](docs/internals/skills.md) · [本地 Server 与 API](docs/internals/server.md) · [参与贡献与质量门禁](docs/internals/contributing.md) |
+| 开始使用 | [下载与安装](https://code.echoflow.cn/start/install) · [连接模型服务](https://code.echoflow.cn/start/models) · [跑通第一条会话](https://code.echoflow.cn/start/first-session) · [故障排查](https://code.echoflow.cn/start/troubleshooting) · [隐私与联网](https://code.echoflow.cn/start/privacy) |
+| 桌面端功能 | [功能总览](https://code.echoflow.cn/desktop) · [Agent Teams](https://code.echoflow.cn/desktop/agent-teams) · [Dynamic Workflow](https://code.echoflow.cn/desktop/dynamic-workflow) · [Computer Use](https://code.echoflow.cn/desktop/computer-use) · [技能与技能市场](https://code.echoflow.cn/desktop/skills) · [定时任务](https://code.echoflow.cn/desktop/schedule) · [手机 H5 与 IM 接力](https://code.echoflow.cn/desktop/remote) |
+| 实战案例 | [修复 Bug](https://code.echoflow.cn/cases/fix-bug) · [读懂陌生项目](https://code.echoflow.cn/cases/explore-project) · [用手机接力会话](https://code.echoflow.cn/cases/phone-handoff) · [全部案例](https://code.echoflow.cn/cases) |
+| IM 接入 | [总览](https://code.echoflow.cn/im) · [Telegram](https://code.echoflow.cn/im/telegram) · [飞书](https://code.echoflow.cn/im/feishu) · [微信](https://code.echoflow.cn/im/wechat) · [钉钉](https://code.echoflow.cn/im/dingtalk) |
+| 命令行 | [安装与启动](https://code.echoflow.cn/cli) · [命令参考](https://code.echoflow.cn/cli/reference) · [环境变量](https://code.echoflow.cn/cli/env) |
+| 深入原理 | [桌面端架构](https://code.echoflow.cn/internals/desktop) · [多 Agent 系统](https://code.echoflow.cn/internals/agent) · [Skills 系统](https://code.echoflow.cn/internals/skills) · [本地 Server 与 API](https://code.echoflow.cn/internals/server) · [参与贡献与质量门禁](https://code.echoflow.cn/internals/contributing) |
 
 ## 反馈与讨论
 
@@ -129,6 +167,10 @@ EchoFlow Code 的目标不是再包一层聊天框，而是把 Coding Agent 变�
 | CLI 解析 | Commander.js |
 | API | Anthropic SDK |
 | 协议 | MCP, LSP |
+
+## 许可
+
+EchoFlow Code 是**源码公开（source-available），不是开源项目。** 本仓库原创部分的源码公开，仅供查看和审阅，但保留所有权利：复制、修改、再分发、转授权和商用都需要另行签订书面协议（见 [LICENSE](LICENSE)）。部分代码派生自第三方来源，不在该许可的覆盖范围内，见 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)。Claude 和 Claude Code 是 Anthropic, PBC 的商标，EchoFlow Code 与 Anthropic 没有关联，也未获其背书。
 
 ## 致谢
 

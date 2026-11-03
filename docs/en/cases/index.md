@@ -1,7 +1,7 @@
 ---
 title: Practical guides: from goal to verification
 nav_title: Guide overview
-description: Five real tasks to practice with EchoFlow Code, from understanding a project to scheduled work and phone access.
+description: Five real tasks to do with EchoFlow Code: understand a project, fix a bug, ship a feature, run a daily review, continue on your phone, each with a copyable prompt and a way to verify.
 order: 0
 ---
 

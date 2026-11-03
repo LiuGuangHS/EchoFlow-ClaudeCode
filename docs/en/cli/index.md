@@ -1,7 +1,7 @@
 ---
 title: Install and Run
 nav_title: Install and Run
-description: Run the CLI from source - install dependencies, configure a provider, launch from any directory.
+description: Run the EchoFlow Code CLI (echoflow-code) from source: install dependencies with Bun, configure a provider, and launch from any directory.
 order: 0
 ---
 

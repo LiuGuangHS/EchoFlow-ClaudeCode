@@ -1,13 +1,13 @@
 ---
 title: What EchoFlow Code is
 nav_title: What it is
-description: An AI coding workbench that runs on your own machine. You pick the model; you approve every change.
+description: EchoFlow Code is a local-first desktop client for Claude Code (macOS, Windows, Linux). Pick your model, review every change, approve permissions from your phone.
 order: 0
 ---
 
 # What EchoFlow Code is
 
-It's an app on your computer. You hand it a project folder, describe what you want in plain language, and it goes off to read the code, edit files, and run commands — with every change laid out in front of you, waiting for your approval.
+EchoFlow Code is a local-first AI coding desktop client based on Claude Code, available for macOS, Windows, and Linux. Choose a project folder and model, then describe a goal in natural language. The agent reads code, edits files, and runs commands, while the desktop workbench brings permission requests, tool calls, and file-by-file diff review together. It also provides Agent Teams, Dynamic Workflow, and phone or messaging relay that requires your computer to stay running.
 
 ![A release-notes conversation in the real project, with tool calls and the session list (Chinese interface)](../../images/app/en/session-main.webp)
 
@@ -15,12 +15,14 @@ That's a real session. Projects and history on the left, the conversation in the
 
 ## How this relates to the Claude Code CLI
 
-Claude Code is Anthropic's command-line coding agent. The engine inside EchoFlow Code is a CLI built from repaired Claude Code sources (it's called `echoflow-code` in this repo), and the desktop app is the graphical shell wrapped around it.
+Claude Code is Anthropic's command-line coding agent. EchoFlow Code provides a graphical desktop interface and bundles a CLI named `echoflow-code`. The repository's third-party notice records that the root `src/` runtime derives from Claude Code source leaked from the Anthropic npm registry on March 31, 2026. Rights to those portions remain with their original owners and are not granted by EchoFlow's license.
+
+**Public source does not mean open source.** All rights to EchoFlow's original work are reserved; third-party portions carry separate notices, and distribution still requires legal review. Read the [license and provenance explanation](./faq.md) before using, modifying, or distributing it.
 
 Two practical consequences:
 
 - **You don't install Claude Code first.** The CLI engine ships inside the installer. No Node.js, no npm, no global commands.
-- **Nothing is missing.** Permission prompts, subagents, Skills, MCP, memory — it's the same machinery, just shown as an interface instead of scrolling terminal output.
+- **Manage agent work visually.** Permission prompts, subagents, Skills, MCP, and memory have desktop controls, so you do not have to follow the task only through scrolling terminal output.
 
 If you'd rather stay in the terminal, the CLI is still there: see [Command line](../cli/index.md).
 
@@ -38,11 +40,11 @@ If you'd rather stay in the terminal, the CLI is still there: see [Command line]
 
 ## Three commitments
 
-**Local first.** Sessions, settings, memory, and skills live on your machine (under `~/.claude` by default). No accounts, no cloud sync, no uploading your code. The only outbound traffic goes to the model service you configured yourself.
+**Local first, not fully offline.** Sessions, settings, memory, and skills are primarily stored on your machine. The project does not operate a cloud backend that receives session content. However, prompts, selected code context, and tool results go to your chosen model service; MCP, messaging, relays, updates, and the upstream runtime can also use the network. Account sign-in still authenticates with the relevant service. See [Privacy and network access](./privacy.md).
 
-**Your choice of model.** Nothing is locked to one vendor. Sign in with a Claude, ChatGPT, or Grok account; use a built-in preset for DeepSeek, Kimi, or Zhipu GLM; or point it at a local model running in LM Studio or Ollama and pay nothing at all.
+**Your choice of model.** Use official Claude, ChatGPT, or Grok sign-in, API presets for DeepSeek, Kimi, or Zhipu GLM, or local models via LM Studio and Ollama. EchoFlow SiHub account access is another option. Availability and costs depend on the provider, account, and hardware; local task execution also depends on tool calling and API compatibility. See [Connect a model](./models.md).
 
-**You approve the changes.** The default is "Ask permissions" — it stops and asks before writing a file or running a risky command. Loosen it to auto-accept edits, or tighten it so it can only plan and never touch a file. Five levels, switchable any time.
+**Permission-controlled execution, reviewable changes.** The default "Ask permissions" mode confirms edits and higher-risk commands when the CLI requests it. Modes such as auto-accept edits reduce prompts; not every write requires a click. To change modes, wait for the current turn to finish or stop it first. See [Sessions and permissions](../desktop/sessions.md).
 
 ## Start here
 
@@ -55,4 +57,4 @@ Work through these in order; about twenty minutes gets you to a working first se
 
 For a goal you can practice end to end, continue with the [practical guides](../cases/index.md): explore an unfamiliar project, fix a bug, preview a page, schedule a review, and continue on your phone.
 
-Stuck along the way? [Won't install, won't open, won't connect](./troubleshooting.md) is organized by symptom.
+For installation, model costs, offline use, licensing, and platform support, see the [FAQ](./faq.md). Stuck along the way? [Won't install, won't open, won't connect](./troubleshooting.md) is organized by symptom.

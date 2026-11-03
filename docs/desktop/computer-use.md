@@ -1,7 +1,7 @@
 ---
 title: Computer Use
 nav_title: Computer Use
-description: 让 Claude 读屏幕、点鼠标、敲键盘，替你操作别的应用。
+description: EchoFlow Code 的 Computer Use：让 Claude 截屏、点击、输入，操作其他桌面应用；macOS 14.4 及以上后台运行、不占用真实鼠标键盘，Windows 使用兼容执行器，Linux 暂不支持。
 order: 8
 ---
 

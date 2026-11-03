@@ -1,7 +1,7 @@
 ---
 title: Download and install
 nav_title: Install
-description: Installers for macOS, Windows, and Linux, plus what to do when the OS blocks them.
+description: Download the EchoFlow Code desktop app for macOS, Windows and Linux. No separate Node.js or Claude Code install needed, plus what to do when the OS blocks the installer.
 order: 1
 ---
 

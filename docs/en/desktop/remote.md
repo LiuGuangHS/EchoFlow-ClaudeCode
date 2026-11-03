@@ -1,7 +1,7 @@
 ---
 title: Phone (H5) and IM
 nav_title: Phone and IM
-description: Continue a session in your phone's browser, or chat from WeChat, Feishu, or Telegram.
+description: Continue an EchoFlow Code session on your phone and approve permissions via H5 (QR code) or chat apps such as WeChat, Feishu and Telegram. The desktop app must keep running.
 order: 11
 ---
 

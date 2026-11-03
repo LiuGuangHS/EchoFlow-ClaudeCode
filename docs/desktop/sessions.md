@@ -1,7 +1,7 @@
 ---
 title: 会话、权限与审阅
 nav_title: 会话与权限
-description: 一条会话从提问到审阅改动的全过程，以及权限弹窗该怎么点。
+description: EchoFlow Code 的会话界面：一条会话从提问到审阅改动的全过程，五档权限模式与权限弹窗怎么点，以及如何撤销一轮改动。
 order: 1
 ---
 

@@ -1,7 +1,7 @@
 ---
 title: 手机 H5 与 IM 接力
 nav_title: 手机与 IM
-description: 扫码在手机上继续同一条会话，或者从微信、飞书直接对话。
+description: 在手机上继续 EchoFlow Code 的同一条会话并批准权限：扫码打开 H5，或通过微信、飞书、Telegram、钉钉、WhatsApp 等聊天软件远程对话，桌面端需保持运行。
 order: 11
 ---
 

@@ -2,6 +2,8 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 
 import { generateDocsManifest, paths } from './generate-docs-manifest.mjs'
+import { landingMeta } from '../src/content/landingMeta.js'
+import { llmsIndex, markdownPath, renderStaticDoc } from './static-docs.mjs'
 
 const distDir = path.join(paths.siteDir, 'dist')
 const expectedCustomDomain = 'code.echoflow.cn'
@@ -129,7 +131,7 @@ function escapeHtml(value) {
  * 不执行 JS 的爬虫看到的就不再是 78 个一模一样的页面。
  */
 function shellForRoute(shell, meta) {
-  if (!meta) return shell
+  if (!meta) return shell.replace('</head>', '<meta name="robots" content="noindex,follow"></head>')
 
   const origin = `https://${expectedCustomDomain}`
   const isEnglish = meta.path === '/en' || meta.path.startsWith('/en/')
@@ -142,7 +144,21 @@ function shellForRoute(shell, meta) {
     alternate
       ? `<link rel="alternate" hreflang="${isEnglish ? 'zh-Hans' : 'en'}" href="${escapeHtml(alternate)}">`
       : '',
-    `<meta property="og:url" content="${escapeHtml(canonical)}">`
+    `<link rel="alternate" hreflang="x-default" href="${escapeHtml(isEnglish && alternate ? alternate : canonical)}">`,
+    `<meta property="og:url" content="${escapeHtml(canonical)}">`,
+    `<meta name="twitter:title" content="${escapeHtml(meta.title)}">`,
+    `<meta name="twitter:description" content="${escapeHtml(meta.description)}">`,
+    meta.markdown ? `<link rel="alternate" type="text/markdown" href="${origin}${escapeHtml(meta.markdown)}">` : '',
+    `<script id="page-schema" type="application/ld+json">${JSON.stringify({
+      '@context': 'https://schema.org',
+      '@type': meta.markdown ? 'TechArticle' : 'WebPage',
+      headline: meta.title,
+      description: meta.description,
+      url: canonical,
+      inLanguage: isEnglish ? 'en' : 'zh-CN',
+      isPartOf: { '@type': 'WebSite', name: 'EchoFlow Code', url: origin },
+      ...(meta.markdown ? { mainEntityOfPage: canonical } : {})
+    }).replace(/</g, '\\u003c')}</script>`
   ].filter(Boolean).join('\n    ')
 
   return shell
@@ -161,13 +177,11 @@ function shellForRoute(shell, meta) {
       `<meta property="og:description" content="${escapeHtml(meta.description)}">`
     )
     .replace('</head>', `  ${head}\n  </head>`)
+    .replace('<div id="root"></div>', `<div id="root">${meta.body || ''}</div>`)
 }
 
 async function createRouteEntry(route, shell, meta) {
   const relativeRoute = route.replace(/^\/+|\/+$/g, '')
-  if (!relativeRoute) {
-    return
-  }
 
   const routeDirectory = path.join(distDir, ...relativeRoute.split('/'))
   await fs.mkdir(routeDirectory, { recursive: true })
@@ -235,16 +249,21 @@ async function main() {
       alternate: alternateFor(record, records),
       description: record.description,
       path: record.path,
-      title: `${record.title} · EchoFlow Code`
+      title: `${record.title} · EchoFlow Code`,
+      markdown: markdownPath(record),
+      body: renderStaticDoc(record, records)
     })
   }
 
-  await createRouteEntry('/en', shell, {
-    alternate: '/',
-    description: 'EchoFlow Code — a local-first desktop client for Claude Code.',
-    path: '/en',
-    title: 'EchoFlow Code — a local-first desktop client for Claude Code'
-  })
+  for (const locale of ['zh', 'en']) {
+    const prefix = locale === 'en' ? '/en' : ''
+    await createRouteEntry(prefix || '/', shell, {
+      ...landingMeta[locale],
+      alternate: locale === 'en' ? '/' : '/en',
+      path: prefix || '/',
+      body: `<main><h1>${escapeHtml(landingMeta[locale].title)}</h1><p>${escapeHtml(landingMeta[locale].description)}</p><a href="${prefix}/start">${locale === 'en' ? 'Documentation' : '使用文档'}</a> · <a href="${prefix}/download">${locale === 'en' ? 'Download' : '下载'}</a></main>`
+    })
+  }
 
   // 下载页是产品动作页，不进 docs 路由树（无 frontmatter、不进侧边栏），
   // 但要有自己的骨架和 canonical，否则直接访问 /download 会落到 SPA 的 404。
@@ -267,8 +286,17 @@ async function main() {
     await createRouteEntry(`/en${legacy}`, shell, null)
   }
 
+  const origin = `https://${expectedCustomDomain}`
+  const llmsIntro = await fs.readFile(path.join(paths.docsDir, 'public/llms.txt'), 'utf8')
+  for (const record of records) {
+    const target = path.join(distDir, markdownPath(record))
+    await fs.mkdir(path.dirname(target), { recursive: true })
+    await fs.writeFile(target, `<!-- Canonical: ${origin}${record.path} -->\n${record.body}`)
+  }
+  await fs.writeFile(path.join(distDir, 'llms.txt'), `${llmsIntro}\n${llmsIndex(records, origin)}\n`)
+  await fs.writeFile(path.join(distDir, 'llms-full.txt'), `${llmsIntro}\n${records.map((record) => `\n---\nSource: ${origin}${record.path}\nMarkdown: ${origin}${markdownPath(record)}\n\n${record.body}`).join('\n')}`)
   await writeSitemap(records)
-  await fs.writeFile(path.join(distDir, '404.html'), shell)
+  await fs.writeFile(path.join(distDir, '404.html'), shellForRoute(shell, null))
   console.log(`Prepared static output for ${records.length} documentation routes and ${legacyRoutes.length * 2} redirects.`)
 }
 

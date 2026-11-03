@@ -9,6 +9,7 @@ import { downloadPagePath } from '@/lib/releaseDownload'
 import { setPageMeta } from '@/lib/meta'
 import { guideScreenshots } from './guideContent'
 import { landingContent } from './landingContent'
+import { landingMeta } from '@/content/landingMeta'
 import type { LandingLocale, TaskCategory } from './landingContent'
 import AmbientScene from './AmbientScene'
 import poster from './assets/wandor-poster.webp'
@@ -220,7 +221,7 @@ export default function HomePage({ locale = 'en' }: { locale?: LandingLocale }) 
   const [preview, setPreview] = useState<Preview | null>(null)
   const [enlargedImage, setEnlargedImage] = useState<EnlargedImage | null>(null)
   useEffect(() => {
-    setPageMeta({ alternate: locale === 'en' ? '/' : '/en', canonical: locale === 'en' ? '/en' : '/', description: landingContent[locale].hero.description, lang: locale === 'en' ? 'en' : 'zh-CN', title: locale === 'en' ? 'EchoFlow Code — Less busywork. More room for life.' : 'EchoFlow Code — 把琐碎交给 AI，把时间留给生活。' })
+    setPageMeta({ alternate: locale === 'en' ? '/' : '/en', canonical: locale === 'en' ? '/en' : '/', description: landingMeta[locale].description, lang: locale === 'en' ? 'en' : 'zh-CN', title: landingMeta[locale].title })
   }, [locale])
   return <div className="wander-page font-sans"><a className="u-skip" href="#main">{locale === 'en' ? 'Skip to content' : '跳到正文'}</a><main id="main" tabIndex={-1}><Hero locale={locale} paused={paused} setPaused={setPaused} onPreview={setPreview} /><Discover locale={locale} onEnlarge={setEnlargedImage} /><Journey locale={locale} /><Possibilities locale={locale} onPreview={setPreview} /><Faq locale={locale} /></main><Closing locale={locale} />{preview && <TaskPreview task={preview} locale={locale} onClose={() => setPreview(null)} />}{enlargedImage && <ImageViewer image={enlargedImage} locale={locale} onClose={() => setEnlargedImage(null)} />}</div>
 }

@@ -1,7 +1,7 @@
 ---
 title: 实战案例：从目标到验收
 nav_title: 案例总览
-description: 用五个真实任务练习 EchoFlow Code，从读项目、改代码到定时任务与手机接力。
+description: 用 EchoFlow Code 完成五个真实任务：读懂陌生项目、修复 Bug、交付功能并预览页面、每日代码审查、手机接力，每篇都有可复制的提示词和验收方法。
 order: 0
 ---
 

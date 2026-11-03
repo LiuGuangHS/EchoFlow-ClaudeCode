@@ -1,7 +1,7 @@
 ---
 title: 定时任务
 nav_title: 定时任务
-description: 让 Claude 按计划自动跑，比如每天早上审一遍昨天的提交。
+description: EchoFlow Code 的定时任务：把提示词存下来按计划自动运行，比如每天早上审查昨天的提交，每次在独立会话里执行并留下记录。
 order: 9
 ---
 

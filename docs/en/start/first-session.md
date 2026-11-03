@@ -1,7 +1,7 @@
 ---
 title: Run your first session
 nav_title: First session
-description: Pick a folder, set permissions, state a goal, watch it edit files, review the diff.
+description: Run your first Claude Code session in EchoFlow Code: pick a project folder, set permissions, state a goal, watch it edit files, and review the diff.
 order: 4
 ---
 

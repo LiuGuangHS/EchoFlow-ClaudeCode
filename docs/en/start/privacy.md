@@ -7,7 +7,7 @@ order: 7
 
 # Privacy and network access
 
-EchoFlow Code is a local-first, open-source development tool. The project itself does not operate a cloud backend that receives session content. The application is not fully offline: when you choose a model provider, MCP server, messaging integration, or update feature, relevant data is sent to the third-party service you selected or configured.
+EchoFlow Code is a local-first development tool whose original source is publicly viewable, so you can verify these claims. The project itself does not operate a cloud backend that receives session content. The application is not fully offline: when you choose a model provider, MCP server, messaging integration, or update feature, relevant data is sent to the third-party service you selected or configured.
 
 ## Data stored locally
 

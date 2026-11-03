@@ -1,6 +1,7 @@
 ---
 title: Android Mobile Client
 nav_title: Mobile
+description: The EchoFlow Code Android client: scan to connect to a running desktop app, follow sessions on your phone, keep chatting and approve tool permissions.
 order: 0
 ---
 

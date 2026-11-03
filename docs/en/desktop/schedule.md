@@ -1,7 +1,7 @@
 ---
 title: Scheduled tasks
 nav_title: Scheduled tasks
-description: Run a saved prompt on a schedule — a code review every morning, for example.
+description: Scheduled tasks in EchoFlow Code: save a prompt and run it on a schedule, such as a code review every morning, each run in its own session with a log.
 order: 9
 ---
 

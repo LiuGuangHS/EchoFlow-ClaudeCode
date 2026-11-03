@@ -1,7 +1,7 @@
 ---
 title: Computer Use
 nav_title: Computer Use
-description: Let Claude read your screen, move the mouse, and type into other apps.
+description: Computer Use in EchoFlow Code lets Claude screenshot, click and type in other apps. On macOS 14.4+ it works in the background without taking your mouse; Linux is not supported.
 order: 8
 ---
 

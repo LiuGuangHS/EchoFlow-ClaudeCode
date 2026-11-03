@@ -1,7 +1,7 @@
 ---
 title: 跑通第一条会话
 nav_title: 第一条会话
-description: 选目录、定权限、说目标、看它改文件、逐行审阅——一轮完整流程。
+description: 用 EchoFlow Code 跑通第一条 Claude Code 会话：选项目目录、定权限模式、说出目标、看它改文件、逐行审阅 Diff。
 order: 4
 ---
 

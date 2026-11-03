@@ -1,7 +1,7 @@
 ---
 title: 下载与安装
 nav_title: 下载与安装
-description: macOS、Windows、Linux 三个平台的安装包，以及系统拦截时的处理办法。
+description: 下载 EchoFlow Code 桌面端：macOS、Windows、Linux 安装包，无需另装 Node.js 或 Claude Code，以及系统拦截安装时的处理办法。
 order: 1
 ---
 

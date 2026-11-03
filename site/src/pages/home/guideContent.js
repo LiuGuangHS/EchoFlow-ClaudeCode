@@ -7,7 +7,7 @@ import workspaceEn from '../../../../docs/images/app/en/workspace-diff.webp'
 
 export const guideContent = {
   zh: {
-    eyebrow: 'EchoFlow Code / 开源使用指南',
+    eyebrow: 'EchoFlow Code / 使用指南',
     title: '让第一件事真正做成。', titleLines: ['让第一件事', '真正做成。'],
     intro: '给它一个目标，Agent 在代码与应用之间完成任务；你审阅每一步。macOS 的 Computer Use 不占用真实鼠标和键盘。',
     mobileIntro: '一句话交代任务，Agent 帮你写代码、操作应用；过程和改动随时可审阅。macOS 上的 Computer Use 不占用真实鼠标和键盘。',
@@ -43,10 +43,10 @@ export const guideContent = {
     settings: [['先能用', '服务商 · 模型 · 默认权限', '连上模型，决定 Agent 每一步能做什么。'], ['用得顺', '主题 · 语言 · 输出风格 · 快捷键', '让界面和回答适合你的习惯。'], ['连得稳', '代理 · 超时 · WebSearch · WebFetch', '排查请求慢、搜索不可用和网络限制。'], ['扩展工作流', 'Skills · Agents · MCP · 定时任务 · Computer Use', '让一次性的任务变成可复用的能力，在 macOS 上还能操控其他应用。']],
     settingsLink: '逐项查看设置说明', settingsCaption: '真实界面 / Computer Use：macOS 原生控制，不占用真实鼠标。',
     closingTitle: '从一个小任务开始。', closingBody: '先拿一个可以回退的项目练手。等你完成第一次交付，再把案例换成自己的工作。',
-    footer: '开源、本地优先的 AI 编程工作台。文档随产品持续更新。'
+    footer: '本地优先的 AI 编程工作台，原创部分源码公开。文档随产品持续更新。'
   },
   en: {
-    eyebrow: 'EchoFlow Code / OPEN GUIDE', title: 'Make the first task real.', titleLines: ['Make the', 'first task real.'],
+    eyebrow: 'EchoFlow Code / USER GUIDE', title: 'Make the first task real.', titleLines: ['Make the', 'first task real.'],
     intro: 'Give it a goal. The agent works across code and apps while you review every step. On macOS, Computer Use leaves your physical mouse and keyboard free.',
     mobileIntro: 'Give it a task. The agent works across code and apps while you review every change. On macOS, Computer Use leaves your physical mouse and keyboard free.',
     primary: 'Start from zero', secondary: 'Explore real examples', note: 'Download to first session · about 20 minutes',
@@ -71,7 +71,7 @@ export const guideContent = {
     settings: [['Get connected', 'Providers · models · permissions', 'Connect a model and decide what the agent can do.'], ['Make it yours', 'Theme · language · output style · shortcuts', 'Tune the interface and replies to your habits.'], ['Stay connected', 'Proxy · timeout · WebSearch · WebFetch', 'Diagnose slow requests and search or network restrictions.'], ['Extend the flow', 'Skills · Agents · MCP · schedules · Computer Use', 'Turn one-off work into reusable capabilities and control other apps on macOS.']],
     settingsLink: 'Explore every setting', settingsCaption: 'Real UI / Computer Use: native macOS control without taking over the physical mouse.',
     closingTitle: 'Start with a small task.', closingBody: 'Practice on a project you can roll back. After the first delivery, adapt the cases to your own work.',
-    footer: 'An open-source, local-first AI coding workbench. This guide evolves with the product.'
+    footer: 'A local-first AI coding workbench whose original source is publicly viewable. This guide evolves with the product.'
   }
 }
 

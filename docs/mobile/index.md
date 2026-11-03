@@ -1,6 +1,7 @@
 ---
 title: 移动端 Android 客户端
 nav_title: 移动端
+description: EchoFlow Code 的 Android 客户端：扫码连接已在运行的桌面端，在手机上查看会话、继续对话并审批工具权限。
 order: 0
 ---
 
