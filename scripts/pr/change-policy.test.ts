@@ -5,13 +5,13 @@ import { join } from 'node:path'
 import { evaluateChangePolicy } from './change-policy'
 
 describe('evaluateChangePolicy', () => {
-  test('does not block CLI core changes for maintainer approval', () => {
+  test('blocks production changes without matching test overrides', () => {
     const result = evaluateChangePolicy([
       'src/commands/help.ts',
       'desktop/src/pages/Settings.tsx',
     ])
 
-    expect(result.blocked).toBe(false)
+    expect(result.blocked).toBe(true)
     expect(result.areas).toContain('cli-core')
     expect(result.areas).toContain('desktop')
     expect(result.areaLabels).toContain('area:cli-core')
@@ -19,12 +19,12 @@ describe('evaluateChangePolicy', () => {
     expect(result.cliCoreFiles).toEqual(['src/commands/help.ts'])
   })
 
-  test('keeps selecting runtime checks for CLI core changes without labels', () => {
+  test('blocks root runtime changes without matching test overrides', () => {
     const result = evaluateChangePolicy(
       ['src/tools/WebSearchTool/backend.ts'],
     )
 
-    expect(result.blocked).toBe(false)
+    expect(result.blocked).toBe(true)
     expect(result.areas).toEqual(['cli-core'])
     expect(result.checks.server).toBe(true)
   })
@@ -347,11 +347,11 @@ describe('evaluateChangePolicy', () => {
     }
   })
 
-  test('routes cli-core across the whole root runtime except server without blocking', () => {
+  test('routes cli-core across the whole root runtime and blocks missing tests', () => {
     const runtime = evaluateChangePolicy(['src/services/example.ts'])
     expect(runtime.areas).toEqual(['cli-core'])
     expect(runtime.cliCoreFiles).toEqual(['src/services/example.ts'])
-    expect(runtime.blocked).toBe(false)
+    expect(runtime.blocked).toBe(true)
 
     const server = evaluateChangePolicy(['src/server/example.ts'])
     expect(server.areas).toEqual(['server'])

@@ -53,9 +53,6 @@ concurrency:
 jobs:
   release-contract:
     runs-on: ubuntu-latest
-    outputs:
-      release_sha: ${{ steps.resolve.outputs.release_sha }}
-      release_tag: ${{ steps.resolve.outputs.release_tag }}
     timeout-minutes: 5
     outputs:
       release_sha: ${{ steps.resolve.outputs.release_sha }}

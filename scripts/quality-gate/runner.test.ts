@@ -677,6 +677,7 @@ describe('renderMarkdownReport', () => {
       impact: {
         changedFiles: 3,
         areas: ['desktop', 'server'],
+        labels: [],
         blocked: false,
         requiredChecks: ['`bun run check:desktop`', '`bun run check:coverage`'],
         testCoverageSignals: ['No obvious missing-test signal from changed paths.'],

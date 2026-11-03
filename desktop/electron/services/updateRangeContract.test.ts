@@ -51,7 +51,7 @@ function serve(reply: Reply) {
 async function download(reply: Reply, options: { multipleRanges?: boolean } = {}) {
   const tempDir = mkdtempSync(join(tmpdir(), 'echoflow-update-range-'))
   const oldChunks = [Buffer.alloc(blockSize, 1), Buffer.alloc(blockSize, 2), Buffer.alloc(blockSize, 3)]
-  const newChunks = [oldChunks[0], Buffer.alloc(blockSize, 4), oldChunks[2]]
+  const newChunks = [oldChunks[0]!, Buffer.alloc(blockSize, 4), oldChunks[2]!]
   const oldPath = join(tempDir, 'old.bin')
   const newPath = join(tempDir, 'new.bin')
   const oldFile = Buffer.concat(oldChunks)
@@ -171,7 +171,7 @@ describe('electron-updater differential Range contract', () => {
 
   it('rejects an invalid multipart content type from a proxy-like feed', async () => {
     const oldChunks = [0, 1, 2, 3, 4].map(value => Buffer.alloc(blockSize, value + 1))
-    const newChunks = [oldChunks[0], Buffer.alloc(blockSize, 6), oldChunks[2], Buffer.alloc(blockSize, 8), oldChunks[4]]
+    const newChunks = [oldChunks[0]!, Buffer.alloc(blockSize, 6), oldChunks[2]!, Buffer.alloc(blockSize, 8), oldChunks[4]!]
     const tempDir = mkdtempSync(join(tmpdir(), 'echoflow-update-multipart-'))
     const oldPath = join(tempDir, 'old.bin')
     const newPath = join(tempDir, 'new.bin')

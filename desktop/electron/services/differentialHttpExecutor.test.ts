@@ -33,9 +33,10 @@ function fixture() {
   return {
     base,
     request,
-    emitResponse: (value: FakeResponse) => {
+    emitResponse: (value: FakeResponse, body = Buffer.alloc(0)) => {
       responseHandler?.(value)
       if (value.listenerCount('error') === 0) value.on('error', () => {})
+      if (body.length > 0) value.write(body)
       value.end()
     },
   }
@@ -63,7 +64,7 @@ describe('DifferentialHttpExecutor', () => {
       'accept-ranges': 'bytes',
       'content-range': 'bytes 32-63/96',
       'content-length': '32',
-    }))
+    }), Buffer.alloc(32))
 
     await expect(observed).resolves.toBeUndefined()
   })
@@ -80,6 +81,46 @@ describe('DifferentialHttpExecutor', () => {
     }))
 
     await expect(observed).rejects.toThrow('Content-Range')
+  })
+
+  it.each([
+    ['a 200 response', 200, { 'content-length': '32' }, '206'],
+    ['a response without Accept-Ranges', 206, { 'content-range': 'bytes 32-63/96', 'content-length': '32' }, 'Accept-Ranges'],
+    ['a response with the wrong Content-Length', 206, { 'accept-ranges': 'bytes', 'content-range': 'bytes 32-63/96', 'content-length': '31' }, 'Content-Length'],
+  ])('rejects %s', async (_name, statusCode, headers, message) => {
+    const fixtureValue = fixture()
+    const executor = new DifferentialHttpExecutor(fixtureValue.base)
+    const observed = observe(executor, { range: 'bytes=32-63' })
+
+    fixtureValue.emitResponse(response(statusCode, headers))
+
+    await expect(observed).rejects.toThrow(message)
+  })
+
+  it('rejects a single-range body whose bytes do not match Content-Length', async () => {
+    const fixtureValue = fixture()
+    const executor = new DifferentialHttpExecutor(fixtureValue.base)
+    const observed = observe(executor, { range: 'bytes=32-63' })
+
+    fixtureValue.emitResponse(response(206, {
+      'accept-ranges': 'bytes',
+      'content-range': 'bytes 32-63/96',
+      'content-length': '32',
+    }), Buffer.alloc(31))
+
+    await expect(observed).rejects.toThrow('body length')
+  })
+
+  it('passes non-range responses to the original callback unchanged', async () => {
+    const fixtureValue = fixture()
+    const executor = new DifferentialHttpExecutor(fixtureValue.base)
+    const observed = observe(executor, {})
+    const received = response(200, { 'content-length': '4' })
+
+    fixtureValue.emitResponse(received)
+
+    await expect(observed).resolves.toBeUndefined()
+    expect(fixtureValue.base.createRequest).toHaveBeenCalledTimes(1)
   })
 
   it('rejects multipart ranges so the updater can use the full-package fallback', async () => {
