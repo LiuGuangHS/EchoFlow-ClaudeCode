@@ -145,7 +145,10 @@ const BASELINE_VERSION = '0.7.2'
 // Release state is pinned to the baseline so the proof does not fail after each release.
 function readRepoFiles(): Map<string, string> {
   const files = new Map<string, string>()
-  files.set('release-please-config.json', readFileSync('release-please-config.json', 'utf8'))
+  const config = JSON.parse(readFileSync('release-please-config.json', 'utf8'))
+  // A one-off release-as pins the next version; this proof covers the standing policy.
+  delete config.packages.desktop['release-as']
+  files.set('release-please-config.json', JSON.stringify(config))
   files.set('.release-please-manifest.json', JSON.stringify({ desktop: BASELINE_VERSION }))
   for (const path of ['desktop/package.json', 'mobile/package.json', 'mobile/app.json']) {
     const parsed = JSON.parse(readFileSync(path, 'utf8'))

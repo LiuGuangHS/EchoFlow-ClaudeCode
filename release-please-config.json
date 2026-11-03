@@ -7,6 +7,7 @@
       "include-v-in-tag": true,
       "skip-changelog": true,
       "versioning": "always-bump-patch",
+      "release-as": "0.7.4",
       "extra-files": [
         {
           "type": "json",
