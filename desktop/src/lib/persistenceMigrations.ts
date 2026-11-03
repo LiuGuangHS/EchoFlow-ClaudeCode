@@ -26,16 +26,8 @@ const FOLLOW_SYSTEM_THEME_STORAGE_KEY = 'echoflow-code-follow-system-theme'
 const LIGHT_THEME_STORAGE_KEY = 'echoflow-code-light-theme'
 const DARK_THEME_STORAGE_KEY = 'echoflow-code-dark-theme'
 const LOCALE_STORAGE_KEY = 'echoflow-code-locale'
-// Historical cc-haha keys remain read-only migration sources so upgrades preserve user data.
 const LEGACY_STORAGE_RULES = [
-  { targetKey: TAB_STORAGE_KEY, sourceKeys: ['cc-haha-open-tabs'] },
-  { targetKey: SESSION_RUNTIME_STORAGE_KEY, sourceKeys: ['cc-haha-session-runtime'] },
-  { targetKey: THEME_STORAGE_KEY, sourceKeys: ['cc-haha-theme'] },
-  { targetKey: LOCALE_STORAGE_KEY, sourceKeys: ['cc-haha-locale'] },
-  { targetKey: APP_ZOOM_STORAGE_KEY, sourceKeys: ['cc-haha-app-zoom', 'cc-haha-ui-zoom', 'echoflow-code-ui-zoom'] },
-  { targetKey: 'echoflow-code-dismissed-update-version', sourceKeys: ['cc-haha-dismissed-update-version'] },
-  { targetKey: 'echoflow-code-voice-input-device', sourceKeys: ['cc-haha-voice-input-device'] },
-  { targetKey: WORKSPACE_STORAGE_KEY, sourceKeys: ['cc-haha.workspace'] },
+  { targetKey: APP_ZOOM_STORAGE_KEY, sourceKeys: ['echoflow-code-ui-zoom'] },
 ] as const
 const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max']
 const PERSISTED_SPECIAL_TAB_TYPES = ['settings', 'scheduled', 'market', 'connectors', 'traces'] as const
@@ -76,16 +68,6 @@ function writeJson(storage: StorageLike, key: string, value: unknown): void {
   storage.setItem(key, JSON.stringify(value))
 }
 
-function canCopyLegacyWorkspace(raw: string): boolean {
-  try {
-    const parsed = JSON.parse(raw)
-    if (!isRecord(parsed) || parsed.version === undefined) return true
-    return parsed.version === 1 || parsed.version === WORKSPACE_STORAGE_VERSION
-  } catch {
-    return true
-  }
-}
-
 function copyLegacyStorage(storage: StorageLike, report: DesktopMigrationReport): void {
   for (const rule of LEGACY_STORAGE_RULES) {
     if (storage.getItem(rule.targetKey) !== null) continue
@@ -93,7 +75,6 @@ function copyLegacyStorage(storage: StorageLike, report: DesktopMigrationReport)
     if (!sourceKey) continue
     const value = storage.getItem(sourceKey)
     if (value === null) continue
-    if (rule.targetKey === WORKSPACE_STORAGE_KEY && !canCopyLegacyWorkspace(value)) continue
     storage.setItem(rule.targetKey, value)
     report.migratedKeys.push(rule.targetKey)
   }

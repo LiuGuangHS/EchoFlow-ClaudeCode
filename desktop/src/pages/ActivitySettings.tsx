@@ -11,6 +11,7 @@ import { Modal } from '@/components/ui/Modal'
 import { type Locale, useTranslation } from '../i18n'
 import { useSettingsStore } from '../stores/settingsStore'
 import { publicAssetPath } from '../lib/publicAsset'
+import { ECHOFLOW_PRODUCT_NAME } from '../constants/brand'
 
 type HeatmapDay = {
   date: string
@@ -71,8 +72,8 @@ const DATE_LOCALES: Record<Locale, string> = {
   kr: 'ko-KR',
 }
 const DEFAULT_PROFILE: DesktopProfilePreferences = {
-  displayName: 'EchoFlow Code',
-  subtitle: 'EchoFlow Code',
+  displayName: ECHOFLOW_PRODUCT_NAME,
+  subtitle: ECHOFLOW_PRODUCT_NAME,
   avatarFile: null,
   avatarUpdatedAt: null,
 }

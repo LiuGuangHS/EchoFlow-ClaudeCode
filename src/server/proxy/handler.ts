@@ -46,8 +46,13 @@ import {
 import { resolveModelReasoningProfile } from '../../shared/modelReasoning.js'
 import { resolveModelApiFormat } from '../../shared/modelApiFormats.js'
 import { applyUpstreamHeaders, resolveUpstreamHeaders } from './upstreamHeaders.js'
+import { SettingsService } from '../services/settingsService.js'
+import { normalizeLocalRedactionSettings } from '../../shared/localRedactionSettings.js'
+import { redactJson, restoreText } from './redaction.js'
+import { randomBytes } from 'node:crypto'
 
 const providerService = new ProviderService()
+const settingsService = new SettingsService()
 
 type ProxyFetchOptions = ReturnType<typeof getProxyFetchOptions>
 // `decompress` is a Bun fetch option absent from the DOM RequestInit type.
@@ -123,6 +128,39 @@ async function fetchUpstreamWithTimeout(
   } finally {
     timeout.clear()
   }
+}
+
+// Every restore target is JSON text (a JSON body or an SSE `data:` payload), so
+// a restored value has to be escaped as a JSON string or it breaks the payload.
+const escapeJsonString = (value: string) => JSON.stringify(value).slice(1, -1)
+
+function restoreJson<T>(value: T, values: Map<string, string>): T {
+  if (!values.size) return value
+  return JSON.parse(restoreText(JSON.stringify(value), values, escapeJsonString)) as T
+}
+
+function restoreStream(stream: ReadableStream<Uint8Array>, values: Map<string, string>): ReadableStream<Uint8Array> {
+  const decoder = new TextDecoder()
+  const encoder = new TextEncoder()
+  const keep = Math.max(40, ...[...values.keys()].map(token => token.length))
+  let pending = ''
+  return stream.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      const text = pending + decoder.decode(chunk, { stream: true })
+      let split = Math.max(0, text.length - keep)
+      // Never emit half a placeholder: a partly cut token can never be restored.
+      const cut = text.slice(0, split)
+      if (cut.lastIndexOf('{{') > cut.lastIndexOf('}}')) split = cut.lastIndexOf('{{')
+      // Never split a surrogate pair across chunks.
+      if (split > 0 && split < text.length && /[\uD800-\uDBFF]/.test(text[split - 1]) && /[\uDC00-\uDFFF]/.test(text[split])) split -= 1
+      controller.enqueue(encoder.encode(restoreText(text.slice(0, split), values, escapeJsonString)))
+      pending = text.slice(split)
+    },
+    flush(controller) {
+      pending += decoder.decode()
+      controller.enqueue(encoder.encode(restoreText(pending, values, escapeJsonString)))
+    },
+  }))
 }
 
 export function withStreamIdleTimeout(
@@ -230,6 +268,20 @@ export async function handleProxyRequest(req: Request, url: URL): Promise<Respon
     model: normalizeModelStringForAPI(body.model),
   }
 
+  let userSettings: Record<string, unknown>
+  try {
+    userSettings = await settingsService.getUserSettings()
+  } catch {
+    return Response.json({ type: 'error', error: { type: 'api_error', message: 'Local redaction settings could not be loaded' } }, { status: 503 })
+  }
+  const localRedaction = normalizeLocalRedactionSettings(userSettings.localRedaction)
+  let redactionValues = new Map<string, string>()
+  if (localRedaction.enabled) {
+    const redacted = redactJson(body, localRedaction, randomBytes(32).toString('hex'))
+    body = JSON.parse(redacted.text) as AnthropicRequest
+    redactionValues = redacted.values
+  }
+
   const isStream = body.stream === true
   const baseUrl = config.baseUrl.replace(/\/+$/, '')
   const networkSettings = await loadNetworkSettings()
@@ -260,7 +312,7 @@ export async function handleProxyRequest(req: Request, url: URL): Promise<Respon
       // applies without a per-model override: an OpenAI-format provider whose
       // model routes to anthropic still reaches the proxy, and its upstream is a
       // native Messages endpoint that accepts nested media unchanged.
-      if (modelApiFormat === undefined && config.supportsNestedToolResultMedia) {
+      if (!localRedaction.enabled && modelApiFormat === undefined && config.supportsNestedToolResultMedia) {
         return Response.json(
           {
             type: 'error',
@@ -279,12 +331,12 @@ export async function handleProxyRequest(req: Request, url: URL): Promise<Respon
         resolvedApiFormat: apiFormat,
         supportsNestedToolResultMedia: config.supportsNestedToolResultMedia,
       })
-      return await handleAnthropicCompatible(body, baseUrl, config.apiKey, config.authStrategy, req.headers, isStream, networkSettings, traceContext, upstreamHeaders, hoistNestedMedia)
+      return await handleAnthropicCompatible(body, baseUrl, config.apiKey, config.authStrategy, req.headers, isStream, networkSettings, traceContext, upstreamHeaders, hoistNestedMedia, redactionValues)
     }
     if (apiFormat === 'openai_chat') {
-      return await handleOpenaiChat(body, baseUrl, config.apiKey, isStream, networkSettings, traceContext, requestOptions, upstreamHeaders)
+      return await handleOpenaiChat(body, baseUrl, config.apiKey, isStream, networkSettings, traceContext, requestOptions, upstreamHeaders, redactionValues)
     }
-    return await handleOpenaiResponses(body, baseUrl, config.apiKey, isStream, networkSettings, traceContext, promptCacheKey, requestOptions, upstreamHeaders)
+    return await handleOpenaiResponses(body, baseUrl, config.apiKey, isStream, networkSettings, traceContext, promptCacheKey, requestOptions, upstreamHeaders, redactionValues)
   } catch (err) {
     if (traceContext && !wasTraceErrorRecorded(err) && !recordedTraceErrorContexts.has(traceContext)) {
       void recordProxyTrace({
@@ -473,6 +525,7 @@ async function handleAnthropicCompatible(
   traceContext: ProxyTraceContext | null,
   upstreamHeaders: Record<string, string> = {},
   hoistNestedMedia = true,
+  redactionValues = new Map<string, string>(),
 ): Promise<Response> {
   // The media hoist is a compatibility rewrite for endpoints that drop media
   // nested in tool_result. A native Messages endpoint accepts it unchanged, so it
@@ -503,6 +556,14 @@ async function handleAnthropicCompatible(
   // would otherwise never reach a gateway that requires it. The resolver drops
   // anything that would shadow the request framing or its credential.
   applyUpstreamHeaders(headers, upstreamHeaders)
+  if (redactionValues.size) {
+    // The inbound accept-encoding is copied above; a second case-variant key
+    // would be folded into `gzip, …, identity` by fetch instead of replacing it.
+    for (const name of Object.keys(headers)) {
+      if (name.toLowerCase() === 'accept-encoding') delete headers[name]
+    }
+    headers['accept-encoding'] = 'identity'
+  }
 
   const traceHeaders = Object.fromEntries(
     Object.entries(headers).map(([name, value]) => {
@@ -577,6 +638,11 @@ async function handleAnthropicCompatible(
   }
 
   try {
+    if (redactionValues.size && upstream.headers.has('content-encoding') && upstream.headers.get('content-encoding')?.toLowerCase() !== 'identity') {
+      recordTraceError(new Error('Compressed upstream response cannot be restored for local redaction'))
+      return Response.json({ type: 'error', error: { type: 'api_error', message: 'Upstream returned a compressed response while local redaction is enabled' } }, { status: 502 })
+    }
+
     if (!upstream.ok) {
       // Pass the upstream error body and headers through unchanged so the SDK
       // keeps error classification (authentication_error, rate_limit_error, …),
@@ -599,9 +665,15 @@ async function handleAnthropicCompatible(
           responseHeaders: upstream.headers,
         })
       }
-      return new Response(errBody, {
+      const errorHeaders = stripHopByHopHeaders(upstream.headers)
+      const errorBody = redactionValues.size ? new TextEncoder().encode(restoreText(new TextDecoder().decode(errBody), redactionValues, escapeJsonString)) : errBody
+      if (redactionValues.size) {
+        errorHeaders.delete('content-encoding')
+        errorHeaders.delete('content-length')
+      }
+      return new Response(errorBody, {
         status: upstream.status,
-        headers: stripHopByHopHeaders(upstream.headers),
+        headers: errorHeaders,
       })
     }
 
@@ -651,7 +723,7 @@ async function handleAnthropicCompatible(
             })
           }, upstream.headers.get('content-encoding') ?? undefined)
         : anthropicStream
-      return new Response(tracedStream, {
+      return new Response(redactionValues.size ? restoreStream(tracedStream, redactionValues) : tracedStream, {
         status: 200,
         headers: responseHeaders,
       })
@@ -675,9 +747,16 @@ async function handleAnthropicCompatible(
         responseHeaders: upstream.headers,
       })
     }
-    return new Response(responseBody, {
+    const responseHeaders = stripHopByHopHeaders(upstream.headers)
+    const clientBody = redactionValues.size ? new TextEncoder().encode(restoreText(new TextDecoder().decode(responseBody), redactionValues, escapeJsonString)) : responseBody
+    if (redactionValues.size) {
+      responseHeaders.delete('content-encoding')
+      responseHeaders.delete('content-length')
+      responseHeaders.delete('etag')
+    }
+    return new Response(clientBody, {
       status: upstream.status,
-      headers: stripHopByHopHeaders(upstream.headers),
+      headers: responseHeaders,
     })
   } catch (err) {
     // A body read failure closes the pending trace with the original call id
@@ -698,6 +777,7 @@ async function handleOpenaiChat(
   traceContext: ProxyTraceContext | null,
   requestOptions: RequestCompatibilityOptions = {},
   upstreamHeaders: Record<string, string> = {},
+  redactionValues = new Map<string, string>(),
 ): Promise<Response> {
   const knownDeepSeekHost = shouldUseDeepSeekReasoningCompat(baseUrl)
   const reasoningProfile = resolveModelReasoningProfile(body.model, 'openai_chat')
@@ -790,7 +870,7 @@ async function handleOpenaiChat(
       })
     }
     return Response.json(
-      errorBody,
+      restoreJson(errorBody, redactionValues),
       { status: policyError ? 403 : upstream.status },
     )
   }
@@ -838,7 +918,7 @@ async function handleOpenaiChat(
           })
         })
       : anthropicStream
-    return new Response(tracedStream, {
+    return new Response(redactionValues.size ? restoreStream(tracedStream, redactionValues) : tracedStream, {
       status: 200,
       headers: {
         'Content-Type': 'text/event-stream',
@@ -870,7 +950,7 @@ async function handleOpenaiChat(
       responseHeaders: upstream.headers,
     })
   }
-  return Response.json(anthropicResponse, { status: policyError ? 403 : 200 })
+  return Response.json(restoreJson(anthropicResponse, redactionValues), { status: policyError ? 403 : 200 })
 }
 
 function shouldUseDeepSeekReasoningCompat(baseUrl: string): boolean {
@@ -913,6 +993,7 @@ async function handleOpenaiResponses(
   promptCacheKey?: string,
   requestOptions: RequestCompatibilityOptions = {},
   upstreamHeaders: Record<string, string> = {},
+  redactionValues = new Map<string, string>(),
 ): Promise<Response> {
   const transformed = anthropicToOpenaiResponses(body, { ...requestOptions, cacheKey: promptCacheKey })
   if (traceContext) {
@@ -998,7 +1079,7 @@ async function handleOpenaiResponses(
       })
     }
     return Response.json(
-      errorBody,
+      restoreJson(errorBody, redactionValues),
       { status: policyError ? 403 : upstream.status },
     )
   }
@@ -1046,7 +1127,7 @@ async function handleOpenaiResponses(
           })
         })
       : anthropicStream
-    return new Response(tracedStream, {
+    return new Response(redactionValues.size ? restoreStream(tracedStream, redactionValues) : tracedStream, {
       status: 200,
       headers: {
         'Content-Type': 'text/event-stream',
@@ -1078,7 +1159,7 @@ async function handleOpenaiResponses(
       responseHeaders: upstream.headers,
     })
   }
-  return Response.json(anthropicResponse, { status: policyError ? 403 : 200 })
+  return Response.json(restoreJson(anthropicResponse, redactionValues), { status: policyError ? 403 : 200 })
 }
 
 function buildProxyTraceContext(

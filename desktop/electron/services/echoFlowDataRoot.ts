@@ -1,7 +1,8 @@
 import os from 'node:os'
 import path from 'node:path'
+import { ECHOFLOW_PRODUCT_NAME } from '../../src/constants/brand'
 
-export const ECHOFLOW_APP_NAME = 'EchoFlow Code'
+export const ECHOFLOW_APP_NAME = ECHOFLOW_PRODUCT_NAME
 export const ECHOFLOW_DEFAULT_CONFIG_ENV = 'ECHOFLOW_CODE_DEFAULT_CONFIG_DIR'
 
 export function defaultEchoFlowDataRoot(

@@ -391,7 +391,7 @@ type RegistrationBeginPayload = {
 
 /** Pre-filled on Feishu's confirmation page; the user can still edit both. */
 const FEISHU_REGISTRATION_APP_NAME = 'EchoFlow Code'
-const FEISHU_REGISTRATION_APP_DESC = '把飞书私聊接到本机的 Claude Code 会话。'
+const FEISHU_REGISTRATION_APP_DESC = '把飞书私聊接到本机的 EchoFlow Code 会话。'
 
 const DINGTALK_REGISTRATION_BASE_URL =
   process.env.DINGTALK_REGISTRATION_BASE_URL?.trim() || 'https://oapi.dingtalk.com'

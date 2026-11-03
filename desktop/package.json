@@ -15,7 +15,9 @@
     "productName": "EchoFlow Code",
     "protocols": {
       "name": "EchoFlow Code URL",
-      "schemes": ["echoflowcode"]
+      "schemes": [
+        "echoflowcode"
+      ]
     },
     "asar": true,
     "asarUnpack": [
@@ -194,5 +196,8 @@
     "vite": "^8.0.10",
     "vitest": "^3.0.4",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
-  }
+  },
+  "trustedDependencies": [
+    "node-pty"
+  ]
 }

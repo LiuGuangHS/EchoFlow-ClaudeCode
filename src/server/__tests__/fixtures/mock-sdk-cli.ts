@@ -383,7 +383,7 @@ function sendInit() {
 
 function auditTeamWorker(phase: 'boot' | 'release') {
   const path = process.env.MOCK_SDK_TEAM_WORKER_AUDIT
-  if (!path || process.env.CC_HAHA_TEAM_WORKER !== '1') return
+  if (!path || process.env.ECHOFLOW_TEAM_WORKER !== '1') return
   void appendFile(path, JSON.stringify({ phase, sessionId, model: getArg('--model'), baseUrl: process.env.ANTHROPIC_BASE_URL }) + '\n')
 }
 

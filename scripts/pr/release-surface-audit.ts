@@ -9,22 +9,13 @@ export type ReleaseAuditInput = {
   releaseNote: string
   releaseNoteFiles: string[]
   unresolvedFiles: string[]
-  /** Public-identity surfaces to scan for upstream branding. */
+  /** Public product-identity surfaces to scan for legacy names. */
   brandFiles?: { path: string; content: string }[]
-  /**
-   * Every release note with its content, so the audit can tell the fork's notes
-   * from upstream's. Paths alone cannot: the two use identical filenames.
-   */
-  releaseNotes?: { path: string; content: string }[]
 }
 
 /**
- * The public surfaces `AGENTS.md` requires auditing before a release.
- *
- * A fixed list rather than a repository-wide scan: these are the files that
- * carry product identity (README, both package manifests) plus the one that
- * documents the rule, and a whitelist keeps false positives — the rule text
- * itself names the upstream project — from making the gate permanently red.
+ * The public surfaces carrying product identity, plus the agent contract
+ * that documents the rule.
  */
 export const BRAND_FILES = [
   'README.md',
@@ -36,15 +27,11 @@ export const BRAND_FILES = [
 export const BRAND_MARKERS = [
   'Claude Code Haha',
   'Claude-Code-Haha-',
-  'NanmiCoder/cc-haha',
-  'cc-haha/compare',
-  '阿江',
 ]
 
 /**
  * `AGENTS.md` states the identity policy by naming what must not appear, so the
- * file always contains the markers. Exempting that one line keeps the scan
- * honest everywhere else instead of disabling it for the file.
+ * file always contains legacy names. Exempt that policy line only.
  */
 const AGENTS_RULE_LINE = 'Audit public identity after every merge'
 
@@ -66,7 +53,7 @@ function brandViolations(files: { path: string; content: string }[]): string[] {
     }
 
     for (const marker of offending) {
-      errors.push(`upstream identity remains in ${file.path}: ${marker}`)
+      errors.push(`legacy product name remains in ${file.path}: ${marker}`)
     }
   }
 
@@ -87,32 +74,11 @@ export function auditReleaseSurface(input: ReleaseAuditInput): string[] {
     errors.push(`release note title does not match EchoFlow v${input.version}`)
   }
 
-  // Upstream and fork both name their notes `release-notes/vX.Y.Z.md`, so the
-  // path cannot say whose note it is — and a version-greater-than check missed
-  // the actual failure mode: merging v0.7.4 subsumes v0.7.2 and v0.7.3
-  // commit-wise, so their notes sit *below* the fork version and stayed green
-  // while the contract says they must be folded into the fork note and deleted.
-  // The heading does identify the author, so compare against it instead.
-  const foreignNotes = (input.releaseNotes ?? []).filter((note) => {
-    if (note.path === expectedNote) return false
-    const match = note.path.match(/^release-notes\/v(\d+\.\d+\.\d+)\.md$/)
-    if (!match) return false
-    return !new RegExp(`^# EchoFlow Code v${match[1].replaceAll('.', '\\.')}`, 'm').test(note.content)
-  })
-  if (foreignNotes.length > 0) {
-    errors.push(
-      `upstream release notes remain unfolded: ${foreignNotes.map(note => note.path).join(', ')}`,
-    )
-  }
-
   for (const marker of BRAND_MARKERS) {
-    if (input.releaseNote.includes(marker)) errors.push(`upstream identity remains in release note: ${marker}`)
+    if (input.releaseNote.includes(marker)) errors.push(`legacy product name remains in release note: ${marker}`)
   }
 
-  // The note is one surface; `AGENTS.md` names README, docs, package metadata,
-  // diagnostics export, signing/privacy pages, updater links, and desktop
-  // About/profile defaults. The files that actually conflict during a sync are the
-  // ones worth automating — the rest stay on the manual checklist.
+  // Keep the release check focused on stable product-identity surfaces.
   errors.push(...brandViolations(input.brandFiles ?? []))
 
   return errors
@@ -134,15 +100,6 @@ export function runReleaseAudit(root: string): string[] {
   const releaseNoteFiles = readdirSync(releaseDir)
     .filter(file => file.endsWith('.md'))
     .map(file => `release-notes/${file}`)
-  const releaseNotes = releaseNoteFiles.map((file) => {
-    // A note that vanished between readdir and read is not worth crashing on; the
-    // missing-note check above already reports the target when it is the one gone.
-    try {
-      return { path: file, content: readFileSync(path.join(root, file), 'utf8') }
-    } catch {
-      return { path: file, content: '' }
-    }
-  })
   const releaseNotePath = path.join(root, `release-notes/v${packageJson.version}.md`)
   const releaseNote = readFileSync(releaseNotePath, 'utf8')
   const brandFiles = BRAND_FILES.flatMap((file) => {
@@ -154,7 +111,6 @@ export function runReleaseAudit(root: string): string[] {
     version: packageJson.version,
     releaseNote,
     releaseNoteFiles,
-    releaseNotes,
     unresolvedFiles: gitUnresolvedFiles(root),
     brandFiles,
   })

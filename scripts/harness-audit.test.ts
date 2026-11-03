@@ -151,4 +151,27 @@ describe('repository harness audit', () => {
       rmSync(rootDir, { recursive: true, force: true })
     }
   })
+
+  test('the brand residue scan catches every spelling of the retired brand', () => {
+    const rootDir = fixture({ consumer: true })
+    try {
+      mkdirSync(join(rootDir, 'src'), { recursive: true })
+      const residue = [
+        `const COOKIE = '__Host-${['ha', 'ha'].join('')}-remote'`,
+        'const marker = 0x43434841',
+        'const tag = "cchh-server-state"',
+        'const bundle = "dev.cchaha.cu-helper"',
+      ]
+      for (const [index, line] of residue.entries()) {
+        writeFileSync(join(rootDir, 'src', `residue-${index}.ts`), `${line}\n`)
+      }
+
+      const report = buildReport('repo', { rootDir })
+      const check = report.checks.find((entry) => entry.id === 'brand-residue-scan')
+
+      expect(check?.pass).toBe(false)
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true })
+    }
+  })
 })

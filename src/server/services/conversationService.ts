@@ -69,14 +69,12 @@ import {
   type NetworkSettings,
 } from './networkSettings.js'
 import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
+import { assertDirectTransportAllowed } from '../../services/localRedactionGuard.js'
 import { readTraceCaptureSettings } from './traceCaptureService.js'
 import { logError } from '../../utils/log.js'
 import { normalizeAutoQuestionSettings } from '../../shared/autoQuestionSettings.js'
 import { decideAutoQuestionAnswers, type AutoQuestion } from './autoQuestionDecisionService.js'
-import {
-  ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
-  LEGACY_ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
-} from '../../utils/thinking.js'
+import { ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY } from '../../utils/thinking.js'
 import {
   createImageMetadataText,
   maybeResizeAndDownsampleImageBuffer,
@@ -369,6 +367,7 @@ export class ConversationStartupError extends Error {
       | 'CLI_SESSION_CONFLICT'
       | 'CLI_START_FAILED'
       | 'CLI_SPAWN_FAILED'
+      | 'LOCAL_REDACTION_REQUIRED'
       | 'SESSION_DELETED',
     readonly retryable = false,
   ) {
@@ -695,6 +694,17 @@ export class ConversationService {
       )
     }
 
+    if (options?.providerId === null) {
+      try {
+        await assertDirectTransportAllowed()
+      } catch (error) {
+        throw new ConversationStartupError(
+          error instanceof Error ? error.message : 'Local redaction is enabled; direct OAuth transport is unavailable',
+          'LOCAL_REDACTION_REQUIRED',
+        )
+      }
+    }
+
     const args = this.buildSessionCliArgs(
       sessionId,
       sdkUrl,
@@ -735,15 +745,15 @@ export class ConversationService {
       delete childEnv.CLAUDE_CODE_SUBAGENT_MODEL
       delete childEnv.CLAUDE_CODE_EFFORT_LEVEL
       delete childEnv.CLAUDE_CODE_RESUME_INTERRUPTED_TURN
-      childEnv.CC_HAHA_TEAM_WORKER = '1'
-      childEnv.CC_HAHA_TEAM_WORKER_PRESET_TYPE = typeof options.teamWorker.agentDefinition?.agentType === 'string' ? options.teamWorker.agentDefinition.agentType : options.teamWorker.name
-      childEnv.CC_HAHA_TEAM_WORKER_PRESET_SOURCE = typeof options.teamWorker.agentDefinition?.source === 'string' ? options.teamWorker.agentDefinition.source : 'flagSettings'
-      childEnv.CC_HAHA_TEAM_WORKER_OMIT_CLAUDE_MD = options.teamWorker.agentDefinition?.omitClaudeMd === true ? '1' : '0'
+      childEnv.ECHOFLOW_TEAM_WORKER = '1'
+      childEnv.ECHOFLOW_TEAM_WORKER_PRESET_TYPE = typeof options.teamWorker.agentDefinition?.agentType === 'string' ? options.teamWorker.agentDefinition.agentType : options.teamWorker.name
+      childEnv.ECHOFLOW_TEAM_WORKER_PRESET_SOURCE = typeof options.teamWorker.agentDefinition?.source === 'string' ? options.teamWorker.agentDefinition.source : 'flagSettings'
+      childEnv.ECHOFLOW_TEAM_WORKER_OMIT_CLAUDE_MD = options.teamWorker.agentDefinition?.omitClaudeMd === true ? '1' : '0'
       childEnv.ECHOFLOW_TRANSCRIPT_ENTRYPOINT = 'claude-desktop-team-worker'
     }
     if (side) {
       delete childEnv.CLAUDE_CODE_RESUME_INTERRUPTED_TURN
-      delete childEnv.CC_HAHA_TRACE_API_CALLS
+      delete childEnv.ECHOFLOW_TRACE_API_CALLS
       delete childEnv.CLAUDE_CODE_DIAGNOSTICS_FILE
     }
     if (side?.closed) throw new ConversationStartupError('This temporary side chat has expired. Open a new side chat.', 'SESSION_DELETED')
@@ -1982,7 +1992,6 @@ export class ConversationService {
       'ANTHROPIC_DEFAULT_OPUS_MODEL',
       'ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES',
       ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
-      LEGACY_ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
       'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS',
       'CLAUDE_CODE_AUTO_COMPACT_WINDOW',
       'CLAUDE_CODE_ATTRIBUTION_HEADER',
@@ -2083,10 +2092,9 @@ export class ConversationService {
       ...cleanEnv,
       CLAUDE_CODE_ENABLE_TASKS: '1',
       // Resolve the same preference shown in General before launching the CLI.
-      CC_HAHA_AGENT_TEAMS_ENABLED: agentTeamsEnabled ? '1' : '0',
-      CC_HAHA_TEAM_REVIEW_REQUIRED: sdkUrl ? '1' : cleanEnv.CC_HAHA_TEAM_REVIEW_REQUIRED || '0',
-      CC_HAHA_TEAM_LEADER_RUNTIME: JSON.stringify({ providerId: options?.providerId ?? 'claude-official', modelId: options?.model || explicitProviderEnv?.ANTHROPIC_MODEL || cleanEnv.ANTHROPIC_MODEL || 'default', ...(options?.effort ? { effortLevel: options.effort } : {}) }),
       ECHOFLOW_AGENT_TEAMS_ENABLED: agentTeamsEnabled ? '1' : '0',
+      ECHOFLOW_TEAM_REVIEW_REQUIRED: sdkUrl ? '1' : cleanEnv.ECHOFLOW_TEAM_REVIEW_REQUIRED || '0',
+      ECHOFLOW_TEAM_LEADER_RUNTIME: JSON.stringify({ providerId: options?.providerId ?? 'claude-official', modelId: options?.model || explicitProviderEnv?.ANTHROPIC_MODEL || cleanEnv.ANTHROPIC_MODEL || 'default', ...(options?.effort ? { effortLevel: options.effort } : {}) }),
       CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1',
       // Desktop must fail stuck provider streams instead of leaving the UI running forever.
       CLAUDE_ENABLE_STREAM_WATCHDOG: cleanEnv.CLAUDE_ENABLE_STREAM_WATCHDOG || '1',
@@ -2217,7 +2225,7 @@ export class ConversationService {
   /**
    * 官方模式下构造 CLI 子进程的 auth env:
    * - CLAUDE_CODE_ENTRYPOINT=claude-desktop 让 CLI 忽略外部残留 ANTHROPIC_* env
-   * - 如果 haha 自管的 oauth.json 里有可用 token,注入 CLAUDE_CODE_OAUTH_TOKEN
+   * - 如果 EchoFlow 自管的 oauth.json 里有可用 token,注入 CLAUDE_CODE_OAUTH_TOKEN
    *   让 CLI 直接拿 env 里的 token,不碰 Keychain,绕开 macOS ACL 静默拒绝
    *   (这是 DMG 安装 .app 后 403 "Request not allowed" 的唯一根治方案)
    */
@@ -2347,7 +2355,6 @@ export class ConversationService {
         'ANTHROPIC_DEFAULT_OPUS_MODEL',
         'ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES',
         ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
-        LEGACY_ECHOFLOW_SEND_DISABLED_THINKING_ENV_KEY,
         'CLAUDE_CODE_AUTO_COMPACT_WINDOW',
         'CLAUDE_CODE_ATTRIBUTION_HEADER',
         'CLAUDE_CODE_MODEL_CONTEXT_WINDOWS',

@@ -953,6 +953,25 @@ describe('TabBar', () => {
     expect(screen.queryByText('设置')).not.toBeInTheDocument()
   })
 
+  // Same upstream placeholder as the sidebar: the tab must not surface the
+  // server's English literal when the UI has a localized label for it.
+  it('labels an unnamed session tab with the localized placeholder', async () => {
+    const { TabBar } = await import('./TabBar')
+    const { useTabStore } = await import('../../stores/tabStore')
+
+    useTabStore.setState({
+      tabs: [{ sessionId: 'fresh-session', title: 'Untitled Session', type: 'session', status: 'idle' }],
+      activeTabId: 'fresh-session',
+    })
+
+    await act(async () => {
+      render(<TabBar />)
+    })
+
+    expect(screen.getByText('Untitled')).toBeInTheDocument()
+    expect(screen.queryByText('Untitled Session')).not.toBeInTheDocument()
+  })
+
   it('matches only the settings tab to the settings rail width', async () => {
     const { TabBar } = await import('./TabBar')
     const { SETTINGS_TAB_ID, useTabStore } = await import('../../stores/tabStore')
@@ -1545,7 +1564,7 @@ describe('TabBar', () => {
 
     useTabStore.setState({
       tabs: [
-        { sessionId: 'tab-1', title: 'Untitled Session', type: 'session', status: 'idle' },
+        { sessionId: 'tab-1', title: 'Draft session', type: 'session', status: 'idle' },
       ],
       activeTabId: 'tab-1',
     })
@@ -1561,7 +1580,7 @@ describe('TabBar', () => {
     expect(screen.getByTestId('tab-bar')).toHaveAttribute('data-desktop-drag-region')
     expect(screen.getByTestId('tab-bar-scroll-region')).toHaveAttribute('data-desktop-drag-region')
     expect(screen.getByTestId('tab-bar-drag-gutter')).toHaveAttribute('data-desktop-drag-region')
-    const tab = screen.getByText('Untitled Session').closest('.tab-bar-interactive')
+    const tab = screen.getByText('Draft session').closest('.tab-bar-interactive')
     expect(tab).toBeInTheDocument()
     expect(tab).not.toHaveAttribute('data-desktop-drag-region')
   })
@@ -1573,7 +1592,7 @@ describe('TabBar', () => {
 
     useTabStore.setState({
       tabs: [
-        { sessionId: 'tab-1', title: 'Untitled Session', type: 'session', status: 'idle' },
+        { sessionId: 'tab-1', title: 'Draft session', type: 'session', status: 'idle' },
       ],
       activeTabId: 'tab-1',
     })
@@ -1588,7 +1607,7 @@ describe('TabBar', () => {
 
     const tabBar = screen.getByTestId('tab-bar')
     const scrollRegion = screen.getByTestId('tab-bar-scroll-region')
-    const tab = screen.getByText('Untitled Session').closest('.tab-bar-interactive')
+    const tab = screen.getByText('Draft session').closest('.tab-bar-interactive')
 
     // 52px, from the handoff. The strip and the drag gutter are siblings, so a
     // mismatch leaves the shorter one with a dead strip of titlebar that the
@@ -2165,7 +2184,7 @@ describe('TabBar', () => {
 
     useTabStore.setState({
       tabs: [
-        { sessionId: 'tab-1', title: 'Untitled Session', type: 'session', status: 'idle' },
+        { sessionId: 'tab-1', title: 'Draft session', type: 'session', status: 'idle' },
       ],
       activeTabId: 'tab-1',
     })
@@ -2178,7 +2197,7 @@ describe('TabBar', () => {
       render(<TabBar />)
     })
 
-    fireEvent.mouseDown(screen.getByText('Untitled Session'))
+    fireEvent.mouseDown(screen.getByText('Draft session'))
 
     expect(startDraggingMock).not.toHaveBeenCalled()
   })
@@ -2470,7 +2489,7 @@ describe('TabBar', () => {
       render(<TabBar />)
     })
 
-    fireEvent.click(screen.getByLabelText('Close New Session'))
+    fireEvent.click(screen.getByLabelText('Close Untitled'))
 
     expect(sessionsApiMock.delete).not.toHaveBeenCalled()
   })
@@ -2511,7 +2530,7 @@ describe('TabBar', () => {
       render(<TabBar />)
     })
 
-    fireEvent.click(screen.getByLabelText('Close New Session'))
+    fireEvent.click(screen.getByLabelText('Close Untitled'))
 
     await waitFor(() => {
       expect(sessionsApiMock.delete).toHaveBeenCalledWith(sessionId)

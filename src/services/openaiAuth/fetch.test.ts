@@ -24,10 +24,13 @@ describe('buildOpenAICodexFetch', () => {
   let originalTokenFile: string | undefined
   let originalReasoningEffort: string | undefined
   let originalCompression: string | undefined
+  let originalConfigDir: string | undefined
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'openai-codex-fetch-'))
     originalTokenFile = process.env.OPENAI_CODEX_OAUTH_FILE
+    originalConfigDir = process.env.CLAUDE_CONFIG_DIR
+    process.env.CLAUDE_CONFIG_DIR = tmpDir
     originalCompression = process.env.ECHOFLOW_OPENAI_REQUEST_COMPRESSION
     delete process.env.ECHOFLOW_OPENAI_REQUEST_COMPRESSION
     originalReasoningEffort = process.env[OPENAI_CODEX_REASONING_EFFORT_ENV_KEY]
@@ -55,6 +58,8 @@ describe('buildOpenAICodexFetch', () => {
     } else {
       process.env.OPENAI_CODEX_OAUTH_FILE = originalTokenFile
     }
+    if (originalConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR
+    else process.env.CLAUDE_CONFIG_DIR = originalConfigDir
     if (originalReasoningEffort === undefined) {
       delete process.env[OPENAI_CODEX_REASONING_EFFORT_ENV_KEY]
     } else {
@@ -935,5 +940,43 @@ describe('buildOpenAICodexFetch', () => {
       'gpt-5.6-sol': { effort: 'xhigh' },
     })
     expect(process.env[OPENAI_CODEX_REASONING_EFFORT_ENV_KEY]).toBe('high')
+  })
+
+  test('fails closed before direct OAuth dispatch when local redaction is enabled, malformed, or unreadable', async () => {
+    const calls: string[] = []
+    const fetchOverride: typeof fetch = async input => {
+      calls.push(String(input))
+      return Response.json({ id: 'unexpected', object: 'response', status: 'completed', output: [] })
+    }
+    const request = { method: 'POST', body: JSON.stringify({ model: 'gpt-6-astra', max_tokens: 16, messages: [{ role: 'user', content: 'secret' }] }) }
+    const settingsPath = path.join(tmpDir, 'settings.json')
+    const blockedSettings = [
+      { localRedaction: { enabled: true, personalInfo: false, customWords: [] } },
+      { localRedaction: { enabled: 'yes' } },
+    ]
+    for (const settings of blockedSettings) {
+      await fs.writeFile(settingsPath, JSON.stringify(settings), 'utf8')
+      await expect(buildOpenAICodexFetch(fetchOverride, 'test')('https://api.anthropic.com/v1/messages', request)).rejects.toThrow(/Local redaction/)
+    }
+    await fs.writeFile(settingsPath, '{invalid json', 'utf8')
+    await expect(buildOpenAICodexFetch(fetchOverride, 'test')('https://api.anthropic.com/v1/messages', request)).rejects.toThrow(/Local redaction/)
+    await fs.rm(settingsPath)
+    await fs.mkdir(settingsPath)
+    await expect(buildOpenAICodexFetch(fetchOverride, 'test')('https://api.anthropic.com/v1/messages', request)).rejects.toThrow(/Local redaction/)
+    expect(calls).toHaveLength(0)
+  })
+
+  test('preserves direct OAuth dispatch when local redaction is explicitly disabled', async () => {
+    await fs.writeFile(path.join(tmpDir, 'settings.json'), JSON.stringify({ localRedaction: { enabled: false, personalInfo: false, customWords: [] } }), 'utf8')
+    let calls = 0
+    const fetch = buildOpenAICodexFetch(async () => {
+      calls++
+      return Response.json({ id: 'resp_disabled', object: 'response', status: 'completed', output: [] })
+    }, 'test')
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST', body: JSON.stringify({ model: 'gpt-6-astra', messages: [{ role: 'user', content: 'ok' }] }),
+    })
+    expect(response.status).toBe(200)
+    expect(calls).toBe(1)
   })
 })

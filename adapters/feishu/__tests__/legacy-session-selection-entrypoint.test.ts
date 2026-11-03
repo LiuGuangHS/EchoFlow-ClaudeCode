@@ -41,6 +41,13 @@ function entries() {
   }]
 }
 
+function setPairingCode(code: string): void {
+  const configPath = path.join(temporaryRoot, '.claude', 'adapters.json')
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'))
+  config.pairing = { code, expiresAt: Date.now() + 60_000, createdAt: Date.now() }
+  fs.writeFileSync(configPath, JSON.stringify(config))
+}
+
 beforeAll(async () => {
   temporaryRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'legacy-im-import-')))
   server = Bun.serve<{ sessionId: string }>({
@@ -159,9 +166,9 @@ function adapterFor(platform: Platform) {
   return { feishu, dingtalk, wechat, whatsapp }[platform]
 }
 
-async function send(platform: Platform, text: string, options: { unauthorized?: boolean; attachment?: boolean } = {}) {
-  const userId = options.unauthorized ? 'outsider' : 'fixture-user'
-  const chatId = options.unauthorized && platform === 'wechat' ? 'outsider' : chatFor(platform)
+async function send(platform: Platform, text: string, options: { unauthorized?: boolean; attachment?: boolean; userId?: string } = {}) {
+  const userId = options.userId ?? (options.unauthorized ? 'outsider' : 'fixture-user')
+  const chatId = platform === 'wechat' && (options.unauthorized || options.userId) ? userId : chatFor(platform)
   sequence++
   if (platform === 'feishu') {
     await feishu.handleMessage({
@@ -318,6 +325,25 @@ for (const platform of platforms) {
         expect(await adapter.createSessionForChat(chatId, temporaryRoot)).toBe(true)
       }
       expect(await adapter.sessionSelectionController.handleInput(chatId, '1')).toBe(false)
+    })
+
+    it('uses EchoFlow copy for rejected and successful pairing attempts', async () => {
+      setPairingCode('ABC234')
+      const rejectedUser = `pairing-rejected-${platform}`
+      const beforeRejected = notices.length
+      await send(platform, 'WRONG1', { userId: rejectedUser })
+      expect(notices).toHaveLength(beforeRejected + 1)
+      expect(notices.at(-1)).toContain('未授权')
+      expect(notices.at(-1)).toContain('EchoFlow Code 桌面端')
+      expect(notices.at(-1)).not.toContain('Claude')
+
+      setPairingCode('ABC234')
+      const beforePaired = notices.length
+      await send(platform, 'ABC234', { userId: `pairing-success-${platform}` })
+      expect(notices).toHaveLength(beforePaired + 1)
+      expect(notices.at(-1)).toContain('配对成功')
+      expect(notices.at(-1)).toContain('发送消息即可与 EchoFlow 对话')
+      expect(notices.at(-1)).not.toContain('Claude')
     })
 
     it('rejects unpaired users and leaves attachment text on the normal send path', async () => {

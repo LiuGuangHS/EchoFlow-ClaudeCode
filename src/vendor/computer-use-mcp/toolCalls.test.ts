@@ -1006,7 +1006,7 @@ describe('handleToolCall — gates', () => {
   test.each([
     ['com.google.Chrome', 'Google Chrome'],
     ['com.echoflow.code.desktop', 'EchoFlow Code'],
-    ['dev.cchaha.cu-helper', 'Computer Use Helper'],
+    ['dev.echoflow.cu-helper', 'Computer Use Helper'],
     ['com.test.host', 'Custom Host'],
     ['com.googlecode.iterm2', 'iTerm2'],
     ['com.microsoft.VSCode', 'Visual Studio Code'],
@@ -1803,8 +1803,8 @@ describe('same-app sequence', () => {
   const steps = [{ tool: 'press_key', key: 's x 1 period 3 5 Return' }, { tool: 'click', x: 12, y: 24 }]
   test.each([
     'com.google.Chrome',
-    'com.claude-code-haha.desktop',
-    'dev.cchaha.cu-helper',
+    'com.echoflow.code.desktop',
+    'dev.echoflow.cu-helper',
     'com.test.host',
   ])('global consent also covers sequences targeting %s', async bundleId => {
     const { engine, calls } = makeEngine({

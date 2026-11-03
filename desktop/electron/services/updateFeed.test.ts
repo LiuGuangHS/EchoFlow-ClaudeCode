@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { dedupeUpdateFeedUrls, normalizeUpdateFeedBaseUrl, resolveUpdateFeedConfig, resolveUpdateFeedUrls } from './updateFeed'
+import {
+  dedupeUpdateFeedUrls,
+  isVerifiedDifferentialDownloadFeed,
+  normalizeUpdateFeedBaseUrl,
+  resolveDifferentialDownloadRequest,
+  resolveDownloadFeedUrls,
+  resolveUpdateFeedConfig,
+  resolveUpdateFeedUrls,
+} from './updateFeed'
 
 const DIRECT_FEED = 'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest/download/'
 const DEFAULT_PROXY_FEED = `https://gh-proxy.org/${DIRECT_FEED}`
@@ -24,6 +32,43 @@ describe('update feed resolution', () => {
     ])
   })
 
+  it('only verifies the canonical direct GitHub feed for differential downloads', () => {
+    const config = resolveUpdateFeedConfig({})
+
+    expect(config.differentialDownloadFeedUrls).toEqual([DIRECT_FEED])
+    expect(isVerifiedDifferentialDownloadFeed(DIRECT_FEED, config)).toBe(true)
+    expect(isVerifiedDifferentialDownloadFeed(`${DIRECT_FEED}?mirror=1`, config)).toBe(false)
+    expect(isVerifiedDifferentialDownloadFeed(DEFAULT_PROXY_FEED, config)).toBe(false)
+    expect(isVerifiedDifferentialDownloadFeed('https://updates.example.com/releases/', config)).toBe(false)
+  })
+
+  it('resolves fail-closed differential download requests', () => {
+    const config = resolveUpdateFeedConfig({})
+
+    expect(resolveDifferentialDownloadRequest({}, config)).toBe(false)
+    expect(resolveDifferentialDownloadRequest({ ECHOFLOW_ENABLE_DIFFERENTIAL_DOWNLOAD: '1' }, config)).toBe(false)
+    expect(resolveDifferentialDownloadRequest({ ECHOFLOW_ENABLE_DIFFERENTIAL_DOWNLOAD: '0' }, config)).toBe(false)
+    expect(resolveDifferentialDownloadRequest({ ECHOFLOW_DISABLE_DIFFERENTIAL_DOWNLOAD: '1', ECHOFLOW_ENABLE_DIFFERENTIAL_DOWNLOAD: '1' }, config)).toBe(false)
+    expect(resolveDifferentialDownloadRequest({ ECHOFLOW_ENABLE_DIFFERENTIAL_DOWNLOAD: 'true' }, config)).toBe(false)
+    expect(resolveDifferentialDownloadRequest({ ECHOFLOW_ENABLE_DIFFERENTIAL_DOWNLOAD: 'yes' }, config)).toBe(false)
+    expect(resolveDifferentialDownloadRequest({ ECHOFLOW_ENABLE_DIFFERENTIAL_DOWNLOAD: '1' }, config, 'linux')).toBe(false)
+  })
+
+  it('requires an exact verified feed when resolving a differential request', () => {
+    const config = resolveUpdateFeedConfig({})
+
+    expect(resolveDifferentialDownloadRequest({ ECHOFLOW_ENABLE_DIFFERENTIAL_DOWNLOAD: '1' }, config, 'win32', DIRECT_FEED)).toBe(true)
+    expect(resolveDifferentialDownloadRequest({ ECHOFLOW_ENABLE_DIFFERENTIAL_DOWNLOAD: '1' }, config, 'darwin', DEFAULT_PROXY_FEED)).toBe(false)
+    expect(resolveDifferentialDownloadRequest({ ECHOFLOW_ENABLE_DIFFERENTIAL_DOWNLOAD: '1' }, config, 'darwin', 'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest/download/?x=1')).toBe(false)
+  })
+
+  it('limits download feeds to verified sources when differential download is requested', () => {
+    const config = resolveUpdateFeedConfig({})
+
+    expect(resolveDownloadFeedUrls(config, true)).toEqual([DIRECT_FEED])
+    expect(resolveDownloadFeedUrls(config, false)).toEqual([DEFAULT_PROXY_FEED, DIRECT_FEED])
+  })
+
   it('uses an explicit update feed URL as a single source without fallbacks', () => {
     expect(resolveUpdateFeedConfig({
       ECHOFLOW_UPDATE_FEED_URL: ' https://updates.example.com/releases ',
@@ -31,6 +76,8 @@ describe('update feed resolution', () => {
       metadataUrl: 'https://updates.example.com/releases/',
       metadataFallbackUrls: [],
       downloadFeedUrls: ['https://updates.example.com/releases/'],
+      differentialDownloadFeedUrls: [],
+      differentialDownloadContracts: {},
     })
     expect(resolveUpdateFeedUrls({
       ECHOFLOW_UPDATE_FEED_URL: ' https://updates.example.com/releases ',
@@ -50,6 +97,8 @@ describe('update feed resolution', () => {
       metadataUrl: SELF_UPDATE_METADATA,
       metadataFallbackUrls: [DIRECT_FEED],
       downloadFeedUrls: [`https://proxy.example.com/${DIRECT_FEED}`, DIRECT_FEED],
+      differentialDownloadFeedUrls: [DIRECT_FEED],
+      differentialDownloadContracts: { [DIRECT_FEED]: { version: 'range-v1', fingerprint: '06c65fc3422243ebb7f83089cc304009c4cfcb43407c4877e2c07f2521b5b379' } },
     })
     expect(resolveUpdateFeedUrls({
       ECHOFLOW_UPDATE_GITHUB_PROXY_BASE: 'https://proxy.example.com',
@@ -61,6 +110,8 @@ describe('update feed resolution', () => {
       metadataUrl: SELF_UPDATE_METADATA,
       metadataFallbackUrls: [DIRECT_FEED],
       downloadFeedUrls: [DEFAULT_PROXY_FEED, DIRECT_FEED],
+      differentialDownloadFeedUrls: [DIRECT_FEED],
+      differentialDownloadContracts: { [DIRECT_FEED]: { version: 'range-v1', fingerprint: '06c65fc3422243ebb7f83089cc304009c4cfcb43407c4877e2c07f2521b5b379' } },
     })
     expect(resolveUpdateFeedUrls({})).toEqual([SELF_UPDATE_METADATA, DIRECT_FEED, DEFAULT_PROXY_FEED])
   })

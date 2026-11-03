@@ -39,7 +39,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-mkdir -p "${ARTIFACT_DIR}" "${CONFIG_DIR}/echoflow" "${PROJECT_A}" "${PROJECT_B}"
+mkdir -p "${ARTIFACT_DIR}" "${CONFIG_DIR}/echoflow-code" "${PROJECT_A}" "${PROJECT_B}"
 printf 'parallel provider A fixture\n' > "${PROJECT_A}/README.md"
 printf 'parallel provider B fixture\n' > "${PROJECT_B}/README.md"
 
@@ -49,8 +49,8 @@ import { join } from 'node:path'
 
 const configDir = process.env.CONFIG_DIR
 const upstream = `http://127.0.0.1:${process.env.UPSTREAM_PORT}`
-mkdirSync(join(configDir, 'echoflow'), { recursive: true })
-writeFileSync(join(configDir, 'echoflow', 'providers.json'), JSON.stringify({
+mkdirSync(join(configDir, 'echoflow-code'), { recursive: true })
+writeFileSync(join(configDir, 'echoflow-code', 'providers.json'), JSON.stringify({
   schemaVersion: 1,
   activeId: 'parallel-provider-a',
   providers: [

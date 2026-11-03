@@ -23,7 +23,7 @@ export const SKILL_CONNECTORS: ConnectorDefinition[] = details.map(item => {
     id: item.id, displayName: item.name, description: item.description, category: item.category,
     capabilities: [item.description], example: item.example, requirements: item.requirements,
     collection: 'tools', region: 'global', transport: 'skills', credentialMode: 'isolated',
-    pluginId: `office-${item.id}@haha-connectors`, packageName: item.name, version: recipe.version,
+    pluginId: `office-${item.id}@echoflow-connectors`, packageName: item.name, version: recipe.version,
     homepage: `https://github.com/${recipe.repository}/tree/${recipe.commit}`,
     platforms: ['darwin-arm64', 'darwin-x64', 'win32-x64', 'win32-arm64'],
   }

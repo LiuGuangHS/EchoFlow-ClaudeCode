@@ -1,6 +1,9 @@
 export const ELECTRON_IPC_CHANNELS = {
   echoFlowLoginOpen: 'desktop:echoflow:login-open',
   echoFlowSignOut: 'desktop:echoflow:sign-out',
+  echoFlowWhenRestored: 'desktop:echoflow:when-restored',
+  configImportTake: 'desktop:config-import:take',
+  configImportAck: 'desktop:config-import:ack',
   publicAccessGetStatus: 'desktop:public-access:get-status',
   publicAccessSaveCredential: 'desktop:public-access:save-credential',
   publicAccessDeleteCredential: 'desktop:public-access:delete-credential',

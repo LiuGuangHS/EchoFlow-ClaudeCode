@@ -73,7 +73,6 @@ order: 3
 │   ├── win_helper.py               # Windows Computer Use helper
 │   └── requirements-win.txt
 ├── scripts/                        # 根项目质量门禁、发布与维护脚本
-│   └── agent-quality-gate/         # 记录编辑/验证/独立评审，作者自审收不了尾
 ├── tests/                          # 跨模块测试与测试资源
 ├── site/                           # React 文档站、内容索引与静态构建
 └── docs/                           # 中英文 Markdown 文档内容
@@ -92,7 +91,7 @@ order: 3
 | `docs/superpowers/` | 本地计划，gitignore | 否，禁止从公开页链接 |
 | `site/src/generated/` | 文档站生成的索引与内容 | 否，gitignore |
 
-公开页改名要同时更新 `LEGACY_ROUTES` 和 `scripts/prepare-static-output.mjs` 的 `legacyRoutes`。过程稿完成后，先把仍然有效的事实提炼到 `docs/internals/`，再归档到 `docs/_internal/archive/`；不要从公开页链接 `_internal/`、`archive/` 或 `docs/superpowers/`。
+公开页改名、过程稿归档和公开页的链接限制见 `docs/AGENTS.md`。
 
 ## 运行边界
 

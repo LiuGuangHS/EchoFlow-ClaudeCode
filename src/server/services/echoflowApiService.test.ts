@@ -96,6 +96,39 @@ describe('EchoFlowApiService credentials', () => {
     await expect(service.getAccount('main')).resolves.toBeNull()
   })
 
+  test('keeps the last known balance when the same site session is restored', async () => {
+    stubSite(1_000_000)
+    const first = new EchoFlowApiService()
+    await first.setCredential('main', { kind: 'session', userId: '851842', cookie: 'session=live' })
+    await first.refreshAccount('main')
+
+    // A restart holds no credential until the restore replays it; the record
+    // it walks past still owns the balance the UI showed before the restart.
+    await new EchoFlowApiService()
+      .setCredential('main', { kind: 'session', userId: '851842', cookie: 'session=live' })
+
+    await expect(new EchoFlowApiService().getAccount('main')).resolves.toMatchObject({ balance: 2 })
+  })
+
+  test('drops the saved balance when a different site user is restored', async () => {
+    stubSite(1_000_000)
+    const first = new EchoFlowApiService()
+    await first.setCredential('main', { kind: 'session', userId: '851842', cookie: 'session=live' })
+    await first.refreshAccount('main')
+
+    globalThis.fetch = mock(async (input: string | URL | Request) => {
+      if (String(input).endsWith('/api/user/self')) {
+        return Response.json({ success: true, data: { id: 8, username: 'other', quota: 500_000, group: 'default' } })
+      }
+      return Response.json({ success: true, data: { items: [] } })
+    }) as typeof fetch
+    await new EchoFlowApiService()
+      .setCredential('main', { kind: 'session', userId: '8', cookie: 'session=other-user' })
+
+    const account = await new EchoFlowApiService().getAccount('main')
+    expect(account?.balance).toBeUndefined()
+  })
+
   test('rejects a session the gateway cannot attribute to an account', async () => {
     globalThis.fetch = mock(async (input: string | URL | Request) => {
       if (String(input).endsWith('/api/user/self')) {

@@ -113,7 +113,6 @@ describe('installPrePushHook', () => {
         sourcePath,
         liveProviderModels: ['codingplan:main:codingplan-main'],
         liveMode: 'baseline',
-        allowCliCoreChange: true,
         allowCoverageBaselineChange: true,
       })
 
@@ -122,7 +121,6 @@ describe('installPrePushHook', () => {
       expect(runGit(tempDir, ['config', '--local', '--get', 'quality.prePushLive'])).toBe('true')
       expect(runGit(tempDir, ['config', '--local', '--get', 'quality.prePushProviderModels'])).toBe('codingplan:main:codingplan-main')
       expect(runGit(tempDir, ['config', '--local', '--get', 'quality.prePushLiveMode'])).toBe('baseline')
-      expect(runGit(tempDir, ['config', '--local', '--get', 'quality.allowCliCoreChange'])).toBe('true')
       expect(runGit(tempDir, ['config', '--local', '--get', 'quality.allowCoverageBaselineChange'])).toBe('true')
     } finally {
       try {

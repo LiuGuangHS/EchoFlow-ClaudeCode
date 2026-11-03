@@ -6,6 +6,7 @@
  */
 
 import { Bot, InlineKeyboard, type Context } from 'grammy'
+import { ECHOFLOW_PRODUCT_NAME } from '../common/brand.js'
 import * as path from 'node:path'
 import { WsBridge, type ServerMessage } from '../common/ws-bridge.js'
 import { MessageDedup } from '../common/message-dedup.js'
@@ -550,9 +551,9 @@ async function routeUserMessage(
     const displayName = [ctx.from.first_name, ctx.from.last_name].filter(Boolean).join(' ')
     const success = tryPair(text.trim(), { userId, displayName }, 'telegram')
     if (success) {
-      await ctx.reply('✅ 配对成功！现在可以开始聊天了。\n\n发送消息即可与 Claude 对话。')
+      await ctx.reply('✅ 配对成功！现在可以开始聊天了。\n\n发送消息即可与 EchoFlow 对话。')
     } else {
-      await ctx.reply('🔒 未授权。请在 Claude Code 桌面端生成配对码后发送给我。')
+      await ctx.reply(`🔒 未授权。请在 ${ECHOFLOW_PRODUCT_NAME} 桌面端生成配对码后发送给我。`)
     }
     return
   }

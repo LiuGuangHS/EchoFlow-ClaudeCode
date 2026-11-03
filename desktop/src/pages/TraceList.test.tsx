@@ -5,12 +5,14 @@ import { TraceList } from './TraceList'
 import { tracesApi } from '../api/traces'
 import { SETTINGS_TAB_ID, useTabStore } from '../stores/tabStore'
 import { useSettingsStore } from '../stores/settingsStore'
+import { useUIStore } from '../stores/uiStore'
 import type { TraceSessionList } from '../types/trace'
 
 vi.mock('../api/traces', () => ({
   tracesApi: {
     list: vi.fn(),
     deleteSession: vi.fn(),
+    updateSettings: vi.fn(),
   },
 }))
 
@@ -95,6 +97,11 @@ describe('TraceList', () => {
     hostState.hasTraceHost = true
     vi.mocked(tracesApi.list).mockResolvedValue(traceList)
     vi.mocked(tracesApi.deleteSession).mockResolvedValue({ sessionId: 'session-trace-list', deleted: true })
+    vi.mocked(tracesApi.updateSettings).mockResolvedValue(traceList.settings)
+    useSettingsStore.setState({
+      traceCapture: { enabled: true, storageDir: '/tmp/echoflow-code/traces' },
+    })
+    useUIStore.setState({ toasts: [] })
   })
 
   afterEach(() => {
@@ -102,6 +109,45 @@ describe('TraceList', () => {
     vi.clearAllMocks()
     useTabStore.setState({ tabs: [], activeTabId: null })
     useSettingsStore.setState({ locale: 'en' })
+  })
+
+  it('turns trace capture off from the list header and refreshes the badge', async () => {
+    vi.mocked(tracesApi.updateSettings).mockResolvedValue({ ...traceList.settings, enabled: false })
+    vi.mocked(tracesApi.list)
+      .mockResolvedValueOnce(traceList)
+      .mockResolvedValueOnce({ ...traceList, settings: { ...traceList.settings, enabled: false } })
+
+    render(<TraceList />)
+    await screen.findByText('Collecting')
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('switch', { name: 'Collect agent traces' }))
+    })
+
+    await waitFor(() => {
+      expect(useSettingsStore.getState().traceCapture.enabled).toBe(false)
+    })
+    await screen.findByText('Paused')
+  })
+
+  it('keeps the capture switch on when the save fails and says so', async () => {
+    vi.mocked(tracesApi.updateSettings).mockRejectedValue(new Error('server refused'))
+    vi.mocked(tracesApi.list).mockResolvedValue(traceList)
+
+    render(<TraceList />)
+    await screen.findByText('Collecting')
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('switch', { name: 'Collect agent traces' }))
+    })
+
+    await waitFor(() => {
+      expect(useUIStore.getState().toasts.at(-1)).toMatchObject({
+        type: 'error',
+        message: "Couldn't save the trace capture setting",
+      })
+    })
+    expect(useSettingsStore.getState().traceCapture.enabled).toBe(true)
   })
 
   it('keeps one poll in flight and aborts it when the settings page closes', async () => {
@@ -171,6 +217,21 @@ describe('TraceList', () => {
     // whole point — see the minutes case below.
     expect(within(row).getByText('4.71s')).toBeInTheDocument()
     expect(within(row).getByText('1.5k')).toBeInTheDocument()
+  })
+
+  it('localizes a trace whose session title is still the placeholder', async () => {
+    vi.mocked(tracesApi.list).mockResolvedValue({
+      ...traceList,
+      traces: [{
+        ...traceList.traces[0]!,
+        session: { ...traceList.traces[0]!.session, title: 'New Session' },
+      }],
+    })
+
+    render(<TraceList />)
+
+    const row = await findTraceRow(/Untitled Session/)
+    expect(within(row).queryByText('New Session')).not.toBeInTheDocument()
   })
 
   // Regression: the list had a private formatDuration that stopped at seconds, so a
@@ -267,15 +328,6 @@ describe('TraceList', () => {
     })
     expect(tracesApi.list).toHaveBeenNthCalledWith(2, { limit: 50, offset: 0, query: '' }, expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(useTabStore.getState().activeTabId).toBeNull()
-  })
-
-  it('opens General settings from the trace settings button', async () => {
-    render(<TraceList />)
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Trace settings' }))
-
-    expect(useTabStore.getState().activeTabId).toBe(SETTINGS_TAB_ID)
-    expect(useTabStore.getState().tabs.find((tab) => tab.sessionId === SETTINGS_TAB_ID)?.type).toBe('settings')
   })
 
   it('announces a failed load and retries from inside the error', async () => {

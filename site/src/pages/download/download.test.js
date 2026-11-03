@@ -16,18 +16,18 @@ describe('download page theme contract', () => {
     assert.match(pageSource, /className="u-skip"/)
   })
 
-  test('prioritizes downloads on narrow screens and keeps the release summary version-bound', () => {
-    assert.match(styleSource, /\.dl-picker,\s*\.dl-empty\s*\{\s*order: 0;/)
-    assert.match(styleSource, /\.dl-release-summary\s*\{[^}]*order: 1;/s)
-    assert.match(styleSource, /\.dl-content__intro\s*\{\s*order: 2;/)
-    assert.match(styleSource, /@media \(max-width: 900px\)[\s\S]*?\.dl-release-summary\s*\{\s*grid-column: 1;/)
+  test('places the download picker beside the introduction on desktop and stacks it first on narrow screens', () => {
+    assert.match(styleSource, /grid-template-columns: minmax\(0, 0\.9fr\) minmax\(0, 1\.1fr\)/)
+    assert.match(styleSource, /\.dl-page__head\s*\{[^}]*grid-column: 1;[^}]*grid-row: 1;/s)
+    assert.match(styleSource, /\.dl-picker,\s*\.dl-empty\s*\{[^}]*grid-column: 2;[^}]*grid-row: 1 \/ span 2;/s)
+    assert.match(styleSource, /@media \(max-width: 900px\)[\s\S]*?\.dl-picker,\s*\.dl-empty\s*\{\s*grid-column: 1;\s*grid-row: 2;/)
+    assert.match(styleSource, /\.dl-content__intro\s*\{[^}]*grid-row: 3;/s)
     assert.match(pageSource, /!en && manifest\?\.summary/)
     assert.match(pageSource, /className="dl-release-summary"/)
   })
 
   test('tightens the first-screen spacing while retaining shared breakpoints and theme tokens', () => {
     assert.match(styleSource, /padding: clamp\(44px, 5vw, 72px\).*56px;/)
-    assert.match(styleSource, /margin-bottom: clamp\(32px, 4vw, 56px\)/)
     assert.match(styleSource, /@media \(max-width: 1180px\)/)
     assert.match(styleSource, /@media \(max-width: 900px\)/)
     assert.match(styleSource, /@media \(max-width: 620px\)/)

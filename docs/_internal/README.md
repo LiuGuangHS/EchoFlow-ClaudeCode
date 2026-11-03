@@ -8,6 +8,7 @@
 | --- | --- |
 | `decoupling-plan.md` | 脱钩与重写的现行重构计划（原根目录 `DECOUPLING_PLAN.md`） |
 | `release-windows.md` | 桌面端发布与自动更新 runbook |
+| `quality-baseline.md` | 真实 provider、模型 baseline 与 release quality gate |
 | `computer-use-native-manual-qa.md` | macOS/Windows Computer Use 真机验收步骤 |
 | `computer-use-codex-impl-blueprint.md` | Codex 原生 Computer Use 兼容契约与实现边界 |
 
@@ -17,7 +18,6 @@
 | --- | --- |
 | `archive/ui-clone/` | 早期桌面端 PRD、UI 规格和服务端架构；已被当前实现取代 |
 | `archive/computer-use-*.md` | 已完成的 Computer Use 重设计、评审、CEF 分析、Swift 方案和交接材料 |
-| `archive/upstream-sync-agent-handoff.md` | 上游同步流程已整体退役 |
 
 ## 生命周期
 

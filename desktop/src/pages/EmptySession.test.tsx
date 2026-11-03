@@ -371,7 +371,7 @@ describe('EmptySession', () => {
   })
 
   it.each(['@', '/', '/empty', '+'] as const)('hides withdrawn bundled capabilities in %s while keeping personal skills and other plugins', async (entry) => {
-    const withdrawnPackage = 'office-frontend-design@haha-connectors'
+    const withdrawnPackage = 'office-frontend-design@echoflow-connectors'
     mocks.listReferences.mockResolvedValue({
       plugins: [
         { kind: 'plugin', id: withdrawnPackage, name: 'office-frontend-design', displayName: 'Removed frontend plugin', description: 'Design', source: withdrawnPackage, modelText: 'Use removed plugin' },

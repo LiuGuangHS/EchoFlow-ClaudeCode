@@ -24,6 +24,7 @@ import { isAllowedUser, tryPair } from '../common/pairing.js'
 import { AttachmentStore } from '../common/attachment/attachment-store.js'
 import { checkAttachmentLimit } from '../common/attachment/attachment-limits.js'
 import { WechatTypingController } from './typing.js'
+import { buildWechatPairingNotice } from './pairing-notice.js'
 import {
   extractWechatText,
   getWechatConfig,
@@ -473,12 +474,7 @@ async function routeUserMessage(message: WechatMessage): Promise<void> {
     const success = text
       ? tryPair(text, { userId: chatId, displayName: 'WeChat User' }, 'wechat')
       : false
-    await sendText(
-      chatId,
-      success
-        ? '配对成功！现在可以开始聊天了。\n\n发送消息即可与 Claude 对话。发送 /help 查看可用命令。'
-        : '未授权。请先在 Claude Code 桌面端完成微信扫码绑定，再生成 IM 配对码后发送给我。',
-    )
+    await sendText(chatId, buildWechatPairingNotice(success))
     return
   }
 

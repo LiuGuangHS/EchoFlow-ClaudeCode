@@ -14,7 +14,7 @@ const withdrawnPluginNames = new Set([
 
 export function isComposerPluginVisible(pluginId: string): boolean {
   const [name, marketplace, ...rest] = pluginId.split('@')
-  return marketplace !== 'haha-connectors' || rest.length > 0 || !withdrawnPluginNames.has(name!)
+  return marketplace !== 'echoflow-connectors' || rest.length > 0 || !withdrawnPluginNames.has(name!)
 }
 
 export function isComposerReferenceVisible(reference: ComposerReferenceCandidate): boolean {

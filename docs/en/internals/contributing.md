@@ -1,114 +1,102 @@
 ---
 title: Contributing and Quality Gates
 nav_title: Contributing
-description: Local setup, impact checks, quality gates, testing requirements, and the PR workflow.
+description: Local setup, impact checks, quality gates, testing requirements, and the release workflow.
 order: 14
 ---
 
 # Contributing and Quality Gates
 
-This guide explains how to install, develop, test, and run the local quality gates before opening a PR. The goal is to help maintainers and contributors answer one question before review: did this change break the core Coding Agent workflow?
+This guide explains how to install, develop, test, and run quality gates. The goal is that every change can answer one question: did it break the core Coding Agent workflow?
 
 ## Setup
 
-Install root dependencies with Bun:
+The repository root uses Bun:
 
 ```bash
 bun install
 ```
 
-If your change touches `desktop/`, also install desktop dependencies:
+When a change touches `desktop/` or `adapters/`, install the corresponding dependencies:
 
 ```bash
-cd desktop
-bun install
-```
-
-If your change touches `adapters/`, or if you run `check:adapters` / `check:native`, install adapter dependencies:
-
-```bash
-cd adapters
-bun install
+cd desktop && bun install
+cd adapters && bun install
 ```
 
 Do not commit local artifacts such as `artifacts/quality-runs/`, `node_modules/`, or `desktop/node_modules/`.
 
-### Common development commands
+Common development entry points:
 
 ```bash
-bun run start                                   # or ./bin/echoflow-code: run the CLI locally
-SERVER_PORT=3456 bun run src/server/index.ts    # local API/WebSocket server used by desktop/
-cd desktop && bun run electron:dev              # default path: full Electron app, sidecars, hot reload
-cd desktop && bun run electron:build            # build and package the desktop app (not `bun run build`)
+bun run start                                   # run the CLI locally
+SERVER_PORT=3456 bun run src/server/index.ts    # API/WebSocket server used by desktop/
+cd desktop && bun run electron:dev              # full Electron app, sidecars, and hot reload
+cd desktop && bun run electron:build            # build sidecars, renderer, and Electron bundle; no installer
+cd desktop && bun run electron:package           # create a local installer with electron-builder (--publish never)
 cd desktop && bun run test                      # desktop Vitest suites
-cd desktop && bun run check:electron            # type-check the Electron host and rebuild bundles
-cd desktop && bun run build                     # type-check and produce a production build (frontend only)
-cd adapters && bun run test                     # all adapter tests; test:<platform> for one platform
-bun run docs:dev                                # docs preview; bun run docs:build to build
+cd adapters && bun run test                     # adapter tests
+bun run docs:dev                                # docs site preview
 ```
 
-Run desktop development and verification commands inside WSL when the repository is hosted there:
+When the repository lives in WSL, run development and verification commands inside WSL. The Vite-only `bun run dev` in `desktop` is for isolated frontend debugging; for user-visible desktop changes, start the full Electron app and exercise the affected flow. The native Windows x64 packaging entry point is `cd desktop && bun run build:windows-x64`.
 
-```bash
-wsl.exe -d Ubuntu -- bash -lc 'cd /home/<user>/WorkSpace/EchoFlow-Code/desktop && bun run electron:dev'
-```
-
-Do not use the Vite-only `cd desktop && bun run dev` browser preview as the product test path; reserve it for explicitly isolated frontend work. For user-visible desktop changes, launch the full Electron app and exercise the affected workflow.
-
-For Windows x64 packaging use `cd desktop && bun run build:windows-x64`; it requires Bun/Bunx and Visual Studio 2022 Build Tools with the Desktop development with C++ workload.
-
-## Gate Tiers
+## Four Gate Tiers
 
 | Tier | Trigger | What runs | Constraint |
 | --- | --- | --- | --- |
-| Local | manual | The narrowest relevant tests, then whatever `bun run check:impact` selects | seconds |
-| PR (required) | `pull_request` | The deterministic lanes the impact report selects, including `check:agent-flow` | no model, no provider, no secret, runs on an untrusted fork |
-| Full sweep | Maintainer-triggered (`workflow_dispatch`) | Every deterministic lane with no path selection, plus module-graph health and `check:desktop-ui-smoke` | still no model, no secret |
-| Release | Tagging triggers `release-desktop.yml` automatically; the maintainer may also run `bun run quality:release` manually | CI runs a content gate plus parallel verification (see below); `quality:release` adds native/packaging smoke and maintainer-authorized live provider baselines | live models only in `quality:release`, only with explicit authorization |
+| Local iteration | manual | The narrowest relevant tests and the commands selected by `check:impact` | fast feedback |
+| PR (required) | `pull_request` | Deterministic lanes selected by impact, including `check:agent-flow` | no model, no secret; safe for external contributions |
+| Full sweep | maintainer-triggered `workflow_dispatch` | Every deterministic lane, module-graph health, and `check:desktop-ui-smoke` | still no model, no secret |
+| Release | tag triggers `release-desktop.yml` | Content gate, three verification jobs, and six-platform builds | live checks run only in authorized maintainer flows |
 
-`release-desktop.yml` now runs two gates:
+In the release workflow, `release-contract` first checks the release surface, the tag, the `desktop/package.json` version, and the release-note title. `verify-governance`, `verify-runtime`, and `verify-desktop` run in parallel, and `release-verify-gate` summarizes their results. A failed build or verification job prevents publishing.
 
-1. **Content gate** (`release-contract` job, ~30 seconds): verifies the tag matches `desktop/package.json`, `release-notes/vX.Y.Z.md` exists with the right title, and `check:release-surface` passes. If any of these fail, the build never starts.
-2. **Parallel verification** (`release-verification` job, runs alongside the 6-platform build): `check:policy` / `check:server` / `check:desktop` / `check:agent-flow` / `check:adapters` / `check:persistence-upgrade`. If the build finishes but verification fails, nothing is published.
+Maintainer live baselines, signing, packaging, and real upgrade verification belong to the internal runbooks.
 
-Pre-release checks no longer need a 20-minute local sweep — CI runs them during the build. The full sweep (`nightly-quality.yml`) is deliberately not scheduled: spending ~90 minutes of CI is a decision, not a default, and `pr-quality-workflow.test.ts` fails if a `schedule:` is added back.
+## Impact Checks
 
-The split follows from what each tier can prove. A per-PR gate only ever covers what the diff reaches, so it is structurally blind to checks no recent PR selected and to failures that only appear when the whole suite runs together — the full sweep closes both, when the maintainer asks for it. Live model quota is spent only at release time, so every contributor can pass the required gate with no provider at all.
-
-## Path-Aware PR Checks
-
-First ask the repository which deterministic checks match the changed paths:
+Let the repository list the checks required by the changed paths and the import graph:
 
 ```bash
 bun run check:impact
 ```
 
-Selection is **import-aware**. Besides the changed paths themselves, the router adds every surface that imports a changed file (`scripts/pr/module-graph.ts`). This closes holes that prefix-only routing could not see: editing `src/shared/modelReasoning.ts` now selects `check:desktop` because `desktop/src/lib/runtimeSelection.ts` imports it, and editing `desktop/src/lib/browserSafePort.ts` now selects `check:native` because `desktop/electron/services/sidecarManager.ts` imports it while `desktop/tsconfig.json` does not compile `desktop/electron/`. The report's `## Cross-surface impact` section names the importer behind each extra check.
+`scripts/pr/change-policy.ts` is the single owner of path routing, areas, same-area test requirements, labels, and blocking rules. `scripts/pr/module-graph.ts` only widens check selection: the report's `## Cross-surface impact` names the importer that triggered an extra check, and it never widens areas, labels, or missing-test blocking. If the dependency graph cannot be built, every surface check is selected and the reason is printed.
 
-The graph only widens *check selection*. Areas, labels, and every blocking rule stay scoped to the actual diff, so editing a hub file never demands tests for files you did not touch. If the graph cannot be built, the run selects every surface and says so rather than silently reverting to prefix routing.
+The most common entry points:
+
+```bash
+bun run check:server
+bun run check:desktop
+bun run check:adapters
+bun run check:docs
+```
+
+Entry points for mobile, native, provider/chat contracts, persistence, and coverage are defined by the `check:*` scripts in `package.json`; this guide does not keep a second routing table.
 
 ## Deterministic Agent Gate (no model required)
 
 ```bash
-bun run check:agent-flow       # real server + real WebSocket + mock CLI
-bun run check:desktop-ui-smoke # real desktop UI + real permission dialog + mock CLI
+bun run check:agent-flow
+bun run check:desktop-ui-smoke
 ```
 
-Neither needs a provider, credentials, or the public network. `check:agent-flow` covers session creation, runtime selection, first-turn streaming, tool execution, permission allow/deny, tool failure, API error, interrupt, reconnect permission replay, and session recovery. `check:desktop-ui-smoke` clicks the real Allow button in a real browser; it needs `agent-browser` and installed desktop dependencies and skips with a printed reason when either is missing.
+`check:agent-flow` uses a real server, a real WebSocket, and a mock CLI to cover session creation, runtime selection, first-turn streaming, tool calls, permission allow/deny, tool failure, API error, interrupt, reconnect permission replay, and session recovery. `check:desktop-ui-smoke` clicks the real permission button in the real desktop UI; when `agent-browser` or desktop dependencies are missing, it prints the reason.
 
-`agent-browser` belongs to that committed lane (which runs headless on Linux CI) and to the maintainer-run `desktop/scripts/e2e-*-agent-browser.sh` scripts. For ad-hoc browser work (manual verification, screenshots, exploratory UI checks), use whatever browser automation the session actually has (a browser MCP, a browser plugin, or headless Chrome) instead; do not treat `agent-browser` as a general-purpose browser tool just because it appears in the repository.
+Neither lane needs a provider, credentials, or the public network. `agent-browser` belongs only to this committed lane (run headlessly on Linux CI) and to the maintainer-run `desktop/scripts/e2e-*-agent-browser.sh` scripts. For ad-hoc browser checks, screenshots, and exploratory UI verification, use whatever browser automation the current session actually has (a browser MCP, a browser plugin, or headless Chrome); do not treat the repository's `agent-browser` as a general-purpose tool.
 
-Every quality-gate lane that boots the real server runs against a sandbox config dir (`scripts/quality-gate/sandbox.ts`) and fails if it wrote to the developer's real `~/.claude`.
+Every quality-gate lane that starts a real server runs in a sandbox config directory (`scripts/quality-gate/sandbox.ts`) and checks at the end that the developer's real `~/.claude` was not written; a write fails the lane.
 
-Run the selected focused commands while developing. For PR-ready or full validation, use the unified entrypoint directly without first running all of its lanes separately:
+During development, run the narrow commands selected by the impact report. When you need full validation, use the unified entry point directly; there is no need to run all of its lanes separately first:
 
 ```bash
 bun run verify
 ```
 
-`bun run verify` is equivalent to `bun run quality:pr`. It runs the selected policy, desktop, server, adapter, native, provider contract, chat contract, persistence, docs, and coverage lanes, without calling real models. Small external contributions do not need to run unrelated modules locally; GitHub CI runs the exact path-aware gate again.
+`bun run verify` is equivalent to `bun run quality:pr`. It runs the selected policy, desktop, server, adapter, native, provider contract, chat contract, persistence, docs, and coverage lanes for the changed scope, and it does not call a real model. Contributors with a small change do not need to run unrelated modules locally; GitHub CI runs the exact path-aware gate again.
 
-The main quality report embeds the current test scope, result matrix, coverage summary, and links to the full coverage/JUnit/log artifacts:
+The main quality report embeds the current test scope, a result matrix, and a coverage summary, and links the full coverage, JUnit, and log artifacts:
 
 ```text
 artifacts/quality-runs/<timestamp>/report.md
@@ -119,377 +107,103 @@ artifacts/coverage/<timestamp>/coverage-report.md
 artifacts/coverage/<timestamp>/coverage-report.json
 ```
 
-Include the commands you ran and the report summary in your PR description. `quality:pr` / `quality:verify` remain available for contributors who prefer explicit quality command names, but docs and AI prompts should prefer `bun run verify`.
+Paste the commands you actually ran and their summaries into the handoff. `quality:pr` and `quality:verify` remain as compatibility entry points, but documentation and AI prompts should use `bun run verify`.
 
-The coverage gate runs root, desktop, and adapter suites for the source areas changed in the diff, then enforces the baseline ratchet, reports target gaps, and checks changed-line coverage. Unchanged areas are skipped. If no source area can be selected, or the coverage policy or dependency manifests changed, it runs every area. The current baseline lives in `scripts/quality-gate/coverage-baseline.json`, and CI compares the affected suites against the base branch baseline when available. Changed areas must not lower coverage beyond the allowed window. Changes to `coverage-baseline.json` or `coverage-thresholds.json` require the maintainer-only `allow-coverage-baseline-change` label. Quarantine is reserved for maintainer baseline/release tracking and must never hide deterministic provider/chat contract tests; the normal PR gate does not depend on quarantine to pass.
+### Lightweight verification (maintainer routine releases)
+
+Release verification now lives in CI, so a full local run is no longer needed. The routine flow:
+
+1. **Development iteration**: run the targeted tests for the behavior you changed; do not start a full surface gate just because of a directory name. When you need to check the final diff or collect full-validation evidence, run `bun run check:impact` and select checks from its report.
+2. **Before tagging** (optional): manually trigger the `Quality Check` workflow in GitHub Actions to confirm the codebase is green.
+3. **Tag**: `release-desktop.yml` runs the content gate, the parallel verification jobs, and the six-platform builds automatically, and publishes only if all of them pass.
+
+If you really need to run everything locally (for example, with an inconvenient network), use this set of commands, which covers the same ground as the CI verification:
+
+```bash
+bun run check:policy              # policy, dead-imports, module-graph, contract byte budget
+bun run check:server              # all of src/
+bun run check:desktop             # lint + vitest + vite build
+bun run check:provider-contract   # provider/proxy/auth contracts
+bun run check:chat-contract       # desktop transport, store, first turn
+bun run check:persistence-upgrade # persistence migrations and legacy fixtures
+bun run check:agent-flow          # model-free agent end-to-end, 8 scenarios
+bun run check:adapters            # IM sidecars
+bun run check:release-surface     # release surface: brand markers, version/brand drift, leftover conflicts
+```
+
+`check:native` (full sidecar build + packaging + package smoke) is the slowest; run it only when you touch `native/`, `desktop/electron` packaging configuration, or release scripts. The real Release workflow rebuilds on six platforms, so there is no need to repeat that locally.
+
+`check:server` includes dynamic-port tests and must not run concurrently with other server lanes; run them serially.
+
+The coverage gate runs the root, desktop, and adapters suites that match the changed source areas, then applies the baseline ratchet, reports the gap to the targets, and checks changed-line coverage; unchanged areas are not rerun. When no source area can be identified, or when the coverage policy or the dependency manifests change, every area runs. The current baseline is recorded in `scripts/quality-gate/coverage-baseline.json`; CI prefers the base branch's baseline, and coverage of the changed areas must not fall below the allowed window. A change to `coverage-baseline.json` or `coverage-thresholds.json` can merge only after a maintainer adds `allow-coverage-baseline-change`. Quarantine is only for maintainer baseline/release tracking and must not hide deterministic provider/chat contract tests; the regular PR gate does not rely on quarantine to pass.
 
 ## AI Coding Agent Fix Loop
 
-Completion means implementing the intended behavior, running the checks required for the current diff, and fixing failures caused by the change. Scoped local edits, isolated fixture checks, and related repairs do not need approval at each step. Commits, pushes, releases, repository settings, and live-model quota still follow the root `AGENTS.md` authorization boundaries.
+1. Run `bun run check:impact` first to determine the check scope of the current diff.
+2. Write a test that reproduces the behavior, watch it fail for the expected reason, then make the smallest fix.
+3. During repair, rerun the narrow checks that are affected; after the last edit, rerun every required check.
+4. Fix only the failures this change caused; report unrelated existing failures or environment blockers honestly instead of expanding scope.
+5. Claim full validation only after `bun run verify` passes for the final diff.
 
-Use `bun run check:impact` to determine the check scope. Run the selected checks for ordinary tasks; use `bun run verify` directly for PR-ready/full validation without first running all of its lanes separately. During repairs, rerun affected focused checks, then complete the evidence needed for the final diff. Do not repeat passing checks without subsequent edits or unresolved risks. Report unrelated existing failures or environment blockers instead of expanding the change merely to make everything green.
+When diagnosing a failed lane, first read the Summary / Result Matrix in `artifacts/quality-runs/<timestamp>/report.md` and the matching `logs/<lane>.log`. For coverage failures, read `artifacts/coverage/<timestamp>/coverage-report.md` or `.json`; do not lower baselines, thresholds, or test expectations to hide a failure. `bun run check:impact` determines the check scope of the final diff: read its result before starting the checks it selects, and never launch them in parallel with the impact analysis. `check:native` includes sidecar builds, packaging, and package smoke, so it is expensive; run it only when the report selects it and delivery evidence needs it. When a check fails or its output is incomplete, look at the existing logs and processes first; rerun the same check only when there is new diagnostic evidence. Do not keep rerunning checks that already passed when there are no further edits or unresolved risks. Report unrelated existing failures or environment blockers accurately instead of widening the change just to turn the result green.
 
-When a check fails, consult the evidence for that failure:
-
-| Failure | Evidence and action |
-| --- | --- |
-| Failed lane | Summary / Result Matrix in `artifacts/quality-runs/<timestamp>/report.md` and `logs/<lane>.log` |
-| Path-aware PR checks | Check same-area tests, CLI core, and coverage policy; maintainer overrides require an explicit decision |
-| Coverage gate | `artifacts/coverage/<timestamp>/coverage-report.md` or `.json`; address `changedLines.failures` / `failures`, while `targetGaps` signal technical debt |
-| Build, types, lint, docs, or native | Fix issues caused by the change identified in the relevant log and rerun affected checks |
-
-Shared diagnostic exports keep typed, bounded evidence only — exit codes, HTTP statuses, timings, counts, index mode and state — and omit or redact message bodies, credentials, arbitrary stacks, paths, and upstream response bodies. Every new shareable field ships with both a retention test and a redaction/omission test, and is added to the allowlist in `src/server/services/diagnosticsShare.ts`.
-
-Claim PR-ready/full validation only after `bun run verify` passes for the final diff. Do not lower coverage baselines/thresholds or rewrite test expectations to hide failures.
+Resolve merge conflicts hunk by hunk; never apply blanket `--ours` or `--theirs`. Before release, also run `bun run check:release-surface` to audit the public identity.
 
 ## Agent Toolset
 
-The default toolset is five plugins covering design, planning, review, and minimal implementation. They accelerate the workflow but **do not replace the gates**: `bun run check:impact`, the surface checks, `bun run check:policy`, and `bun run verify` remain the only authority. Where a plugin disagrees with this repository, `AGENTS.md` wins on direction and policy, and this document wins on procedure.
+Installed workflow skills and code-navigation tools can help with design, planning, review, and minimal implementation, but they do not replace `check:impact`, surface checks, `check:policy`, or `verify`. Use the repository's current skill registry; do not assume commands or agent names that do not exist.
 
-| Plugin | Purpose | Entry point |
-| --- | --- | --- |
-| `superpowers` | The main flow: clarify requirements → implementation plan → batched execution with review checkpoints | Invoke through the Skill tool by real name: `superpowers:brainstorming` → `superpowers:writing-plans` → `superpowers:executing-plans`; review with `code-review:code-review` |
-| `ponytail` | The minimal-code ladder: ask whether the code is needed, then reuse, standard library, native features, and only then the least code that works | `/ponytail-review` on the current diff; `/ponytail-audit` across the repo |
-| `frontend-design` | Interface design quality for the desktop app and docs site, avoiding generic output | Triggered on demand for UI design work |
-| `typescript-lsp` | TypeScript/JavaScript go-to-definition, find-references, and diagnostics | Always on |
-| `claude-model-router-hook` | Routes model tiers by task class and constrains the model a spawned sub-agent uses | Always on; configured via `.claude/model-router.json` |
-
-`superpowers`, `typescript-lsp`, and `frontend-design` come from the official Claude Code marketplace; the other two need their own marketplace added first:
-
-```bash
-/plugin marketplace add tzachbon/claude-model-router-hook
-/plugin install claude-model-router-hook@claude-model-router-hook
-/plugin marketplace add DietrichGebert/ponytail
-/plugin install ponytail@ponytail
-```
-
-The mapping from task class (mechanical, implementation, debugging, architecture, cross-system) to model tier is defined and maintained by `claude-model-router-hook` itself — do **not** copy that table into repository docs, and do not rewrite the plugin's classification. Set the Agent tool's `model` to match the task class instead of defaulting every sub-agent to the top tier.
-
-`ponytail` is how the "smallest change" bullet under Engineering Behavior Guardrails is enforced: when a diff outgrows its own proof, run `/ponytail-review` to find what can be deleted. Its `ultra` level challenges requirements themselves, while fork identity, provider policy, persistence compatibility, and the release flow are non-negotiable in `AGENTS.md` — do not use any level to challenge those.
+Tier agents by what the task needs to be proven: a single agent for a local, reversible change; independent exploration or a focused review when it is unclear which surfaces are affected; separate exploration, implementation, and adversarial review only for high-risk or architecture-level work. Do not default every sub-agent to the highest model tier, and do not let parallel agents modify conflicting content in the same working tree.
 
 ## Regression Test Design
 
-A same-area test file is the gate's minimum signal; tests also need to prove behavior:
+A same-area test file is only the gate's minimum signal; the test must also prove behavior:
 
-- **Drive state transitions.** When testing a transition, produce the state through `handleServerMessage`, real store actions, or user events instead of directly assigning the expected result with `setState`. Direct state setup is still appropriate for fixture initialization.
-- **Assert behavioral invariants.** Check which session or model the displayed data belongs to, rather than copying today's screen text. Test inputs and expectations must follow the intended behavior contract; do not change them to hide failures.
-- **Cover both dropping and keeping.** Test what a deduplication, merging, or filtering rule should discard and retain. Message deduplication in particular must reject replays and preserve legitimate repeats; forward upstream identities such as `uuid` / `toolUseId` instead of guessing identity from text.
-- **Test the connections across boundaries.** Separate green server, store, and component tests do not prove that messages drive the UI. Exercise risky connections through real entry points and do not mock the module under test.
+- **Drive state transitions.** Produce state through `handleServerMessage`, real store actions, or user events; do not write with `setState` a result that a transition should have produced. Setting state directly is fine when initializing a fixture.
+- **Assert behavioral invariants.** Assert which session's or model's data the user should see instead of copying the current screen text, and never change existing test inputs or expectations just to get past the gate.
+- **Cover both dropping and keeping.** A replay must be dropped and a genuine repeat must be kept; pass through upstream identities such as `uuid` and `toolUseId` rather than guessing identity from text.
+- **Test the connections across boundaries.** Server, store, and component tests each passing does not mean a message actually drives the UI; test the connection through the real entry point and do not mock the module under test.
+- **Decide first whether it is flaky or defective.** Reproduce a suspected pre-existing flaky test on a clean `main` worktree; before changing how a test waits, confirm that the assertion measures behavior rather than machine speed.
+- **Build external-service doubles from real responses.** Before writing a double for a gateway, OAuth, or token API, capture one real request and response (redacted) and model from it. The SiHub token flow once had 695 offline tests pass while every real call failed because of an undocumented `New-Api-User` header and group field. Until the real path has been exercised, report "offline tests pass, live not verified", never "fixed".
 
-Coverage reports have limits: `desktop/vitest.config.ts` collects only `src/**`, excluding the Electron main process. The repository's current Bun coverage baseline has zero branch records, and `coverage.ts` displays `0/0` as 100%; that does not prove all branches were exercised. Inspect current configuration and reports instead of using historical coverage figures as evidence for a new change.
-
-### Regression case law
-
-The directions above are the rules; these are regressions that actually shipped. The concrete evidence is kept so you can judge whether the problem in front of you is the same kind.
-
-- **Drive the transition; never hand-write the state it produces.** Component tests in `desktop/src` call `setState` 744 times and a real store action 3 times. State you assigned is self-consistent by construction and cannot expose "transition A did not update B" — which is where these bugs live. Use `handleServerMessage`, store actions, and real user events.
-- **Assert the invariant, not today's output.** `2262973a4` shipped `expect(getByText('deepseek-reasoner'))` at a moment when the screen showed another model's number: it wrote the bug in as a passing assertion, and the next fix had to invert that exact line. Ask what must be true after this step, not what it prints now.
-- **Cover both directions of any rule that drops or merges something.** The replay guard was tested for "a replay must be discarded" and never for "a genuine repeat must be kept", so it shipped dropping real replies.
-- **Test the join, not each end.** Server, store, and component each had a test for `runtime_config_applied`; nothing crossed them, and deleting the term that joins them (`ChatInput.tsx` `refreshNonce`) left 314 tests green.
-- **Never retune an existing test's inputs to keep it green.** `128f75ab5` changed five tests' props (`messageCount={0}` → `{1}`) instead of accepting that they described states a real session cannot reach. If a test only passes after you edit its inputs, the test was describing the implementation.
-
-### Coverage References
-
-External reference points:
-
-- [Google Testing Blog](https://testing.googleblog.com/2020/08/code-coverage-best-practices.html): 60% acceptable, 75% commendable, 90% exemplary; 90% is a reasonable lower threshold for changed/per-commit coverage.
-- [Microsoft Visual Studio / Azure DevOps docs](https://learn.microsoft.com/en-us/visualstudio/test/using-code-coverage-to-determine-how-much-code-is-being-tested): teams typically target about 80%, typical project requirements can be 75%, and generated code may be relaxed.
-- [ChromiumOS EC](https://chromium.googlesource.com/chromiumos/platform/ec/+/main/docs/code_coverage.md): new or changed lines require at least 80% coverage.
-
-## Maintaining Agent Instructions
-
-Keep project constraints and entry points in root `AGENTS.md`, specialized rules near the code, and explanations/examples in on-demand documentation. Shared guidance must work for contributors using different models. Revisit duplicated workflows and broad stopping conditions as capabilities change, while preserving current safety and CI contracts. This cleanup draws on Eric Provencher's [Rethinking skills and prompts for GPT-6 Astra](https://x.com/pvncher/status/2095991462416490862) (2026-09-04).
-
-The "How This Contract Is Maintained" section of `AGENTS.md` turns that principle into an executable rule: a rule stays in the root contract only when all three hold — it changes a direction decision, violating it causes irreversible loss, and it cannot be read from the code. Otherwise it moves here and leaves a one-line pointer. When a trigger fires (a top-level directory or gate added or removed, a `ChangeArea` change, a workflow change, a referenced file moved), fix the contract in the **same commit**. `scripts/pr/quality-contract.test.ts` checks the byte budget and checks that the contract's pointers still resolve to real content — re-inlining a copy of what was moved out after the fact is caught by that assertion.
-
-Repository skill descriptions should identify the applicable task and necessary distinctions; put operational detail in the body or referenced files. Use a short router for multiple workflows and avoid broadening triggers just to match more keywords. Model defaults, tool formats, and compaction behavior describe product implementation, so check the source before updating those docs.
-
-Two general disciplines apply when merging and releasing:
-
-- **Adjudicate conflicts hunk by hunk.** A merge conflict is two decisions stacked together. Never apply blanket `--ours` or `--theirs`; read both sides per hunk and decide which half to keep.
-- **Audit public identity before shipping a merge.** README, docs, release notes, package metadata, diagnostics exports, signing and privacy pages, update links, and desktop "About" defaults must never name another project or its author as EchoFlow's author, maintainer, contact, or product identity. The executable check is `bun run check:release-surface`.
+Coverage has limits too: `desktop/vitest.config.ts` collects only `src/**` and excludes the Electron main process; the current Bun coverage baseline has no branch records, so `0/0` shown as 100% does not mean every branch was tested. Treat the current configuration and reports as evidence.
 
 ## Feature Quality Contract
 
-Every feature, bugfix, and behavior change must ship with verifiable evidence. This rule applies to human authors and AI coding agents:
+Every feature, bugfix, and behavior change must come with verifiable evidence:
 
-- Name the changed surface first: `desktop`, `server`, `adapter`, `native`, `docs`, `provider/runtime`, `agent-loop`, or `release`.
-- Executable JS/TS production changes must include same-area tests in the same PR. `scripts/pr/change-policy.ts` checks desktop, server, each adapter package (`adapters/<platform>/`), mobile, and the remaining root runtime separately, unless a maintainer explicitly applies `allow-missing-tests`. Non-executable files such as prose or CSS do not independently require new tests under this rule; all impact-selected checks still apply.
-- Pure logic needs unit tests. Server/API/provider/runtime behavior needs API or request-shape tests. Desktop UI/store/API behavior needs Vitest or Testing Library coverage. Cross-boundary user flows through UI, WebSocket, provider proxying, native sidecars, or release packaging need E2E or desktop UI smoke.
-- Agent loop, tool execution, provider routing, model selection, file editing, permissions, session resume, and desktop chat changes need mock/fixture tests in PR. Run live smoke or baseline only after deterministic checks pass and a maintainer explicitly authorizes quota use. Finding a local provider is not authorization; report when live checks were not run.
-- Coverage is part of the feature. This project follows a Google/Microsoft-style policy: generated/build output is not counted as product coverage, maintained product areas should move toward 75-80%+, and new or changed executable production lines must pass the changed-line coverage threshold in `coverage-thresholds.json`.
-- Do not lower `coverage-baseline.json` or `coverage-thresholds.json` just to pass the gate; real baseline/threshold changes require `allow-coverage-baseline-change` and a reason. Legacy low-coverage areas are debt; new PRs must leave touched areas better than they found them.
-- The PR description must record changed files, tests added, coverage report path, E2E/live report path or blocker, and remaining risk.
+- Declare the changed surface first and add same-area tests for executable JS/TS production code; the exact area and blocking decisions are enforced by `scripts/pr/change-policy.ts`.
+- Pure logic gets unit tests; server/API/provider/runtime code gets API or request-shape tests; desktop UI/store/API code gets Vitest or Testing Library tests; flows that cross UI, WebSocket, provider proxy, native sidecar, and release packaging add E2E or smoke coverage.
+- Changes to the agent loop, tool calls, provider routing, model selection, file editing, permissions, session recovery, and desktop chat must have mock/fixture tests. Live smoke or baseline runs only after the deterministic checks pass and a maintainer explicitly authorizes it.
+- New or changed executable production lines must meet the changed-line coverage threshold in `coverage-thresholds.json`. Changing the coverage baseline or thresholds requires maintainer authorization and `allow-coverage-baseline-change`.
+- The handoff should record changed files, tests added or updated, coverage evidence, E2E/live evidence or a blocker, and known risk / rollback.
 
 ## Local Pre-Push Reminder
 
-push no longer runs a local quality gate. Run checks manually when needed:
+A push no longer runs the local quality gate automatically. Run it manually when needed:
 
 ```bash
 bun run quality:push
 ```
 
-`bun run quality:push` reuses the PR gate impact, policy, and path-aware checks, but skips the expensive coverage lane by default; full coverage remains in `bun run verify`, `bun run quality:pr`, and CI.
+It reuses the impact, policy, and path checks and skips the expensive coverage run by default. `bun run hooks:install` installs only a non-blocking reminder and will not hold up a push.
 
-You can still install the local pre-push hook, but it only prints a non-blocking reminder and never blocks `git push`:
+A failure of a required contract in `bun run audit:harness` exits nonzero; other rubric findings, such as legacy names still inside a compatibility window, are reported but do not block. Changes to repository settings, rulesets, secrets, and required checks need explicit authorization.
 
-```bash
-bun run hooks:install
-```
+## Delivery Evidence
 
-Maintainers with a trusted repository environment and model quota can run real provider smoke and desktop agent-browser smoke manually:
+The scope of `bun run verify` is described above under "Deterministic Agent Gate (no model required)". Only maintainer-authorized live provider and baseline runs are not required of regular contributors.
 
-```bash
-bun run quality:providers
-bun run quality:smoke -- --provider-model minimax:main:minimax-main
-```
+In the handoff, write:
 
-To run the full live baseline, use:
+- user impact and changed surface;
+- changed files, tests added or updated;
+- the commands actually run and the quality/coverage report paths;
+- E2E or live evidence, or an explicit blocker;
+- known risk, rollback notes, and checks not run.
 
-```bash
-bun run quality:gate --mode baseline --allow-live --provider-model minimax:main:minimax-main
-```
+## Maintainer Verification and Releases
 
-## PR CI Merge Gate
+Real-model baselines, provider configuration, signing, and real upgrade verification are maintainer procedures, not requirements for everyday changes. When these procedures are needed, maintainers should consult `docs/_internal/release-windows.md` and the other `_internal/` runbooks; do not record local providers, credentials, or real upgrade steps in this public contribution guide.
 
-`.github/workflows/pr-quality.yml` runs for PR `opened`, `synchronize`, `reopened`, `ready_for_review`, `labeled`, and `unlabeled` events. `scope-plan` installs no dependencies and only produces the stable impact plan. `policy-enforcement` installs the frozen dependency graph independently and runs policy, so a policy failure cannot swallow product-test results. Product jobs depend only on `scope-plan` and select desktop, server, adapter, native, provider contract, chat contract, persistence, docs, and coverage lanes by path. The final `pr-quality-gate` validates every result strictly: selected jobs must succeed, unselected jobs must be skipped, and cancelled or missing results cannot be mistaken for success.
-
-Path-to-area routing lives in `scripts/pr/area-routing.json`. `change-policy.ts` consumes it directly, while `pr-triage.yml` reads the same file from the base revision through the GitHub API: it never checks out, installs, or executes PR code. That keeps `site/` on docs, `native/` on desktop, and `.github/workflows/**` on the policy lane, without a second advisory prefix graph.
-
-`bun run audit:harness` runs with `--fail-on-required`: failures in the fixed `REQUIRED_CHECK_IDS` repository-contract set exit nonzero, while other rubric findings, such as historical names that remain inside a compatibility window, stay report-only.
-
-Repository settings should protect `main` with GitHub branch protection / rulesets and require the `pr-quality-gate` status check. CODEOWNERS requires maintainer review for workflows, quality policy, and high-risk provider/WebSocket boundaries. The local hook only reminds; the PR gate is what blocks low-quality merges.
-
-## Area-Specific Checks
-
-`bun run check:impact` prints a `## Required local checks` list derived from the changed paths and the import graph; run that list. The most common entry points:
-
-```bash
-bun run check:server      # Server API, WebSocket, providers, sessions, and related tests
-bun run check:desktop     # Desktop lint, Vitest, and production build
-bun run check:adapters    # IM adapter tests
-bun run check:docs        # Isolated install, build, and validation for the site/ React docs
-```
-
-Entry points for mobile, native, provider/chat contracts, persistence, and coverage live in the `check:*` scripts in `package.json`; do not maintain a second list here.
-
-Focused tests are the normal development loop. Run `bun run verify` locally when claiming PR-ready/full validation; hosted CI still executes every selected required lane.
-
-Executable JS/TS production changes must include matching tests. See the Feature Quality Contract above and `scripts/pr/change-policy.ts` for area boundaries; missing same-area tests block the change unless a maintainer applies `allow-missing-tests`. Coverage baseline/threshold changes are also blocked unless a maintainer applies `allow-coverage-baseline-change`.
-
-### What each lane actually runs
-
-- `bun run check:impact` selection is import-aware: a change routes to every surface that imports it, not only the directory it lives in. The report's `## Cross-surface impact` section names the importer that pulled in each extra check.
-- Provider, auth, proxy, or runtime changes may additionally select `bun run check:provider-contract`; desktop chat/WebSocket/session changes may additionally select `bun run check:chat-contract`. Both contracts are offline and do not replace their selected surface checks.
-- `bun run check:agent-flow` is the deterministic end-to-end agent lane: a real server and WebSocket drive session creation, runtime selection, streaming, tool permission allow/deny, tool failure, API error, interrupt, reconnect replay, and session recovery against the repository's mock SDK CLI. It needs no provider, credentials, or network, so every contributor can run it.
-- `bun run check:desktop-ui-smoke` drives the real desktop UI against that same mock runtime and answers the permission dialog by clicking the real button. It skips with a printed reason when `agent-browser` or the desktop dependencies are missing.
-- `agent-browser` is an implementation detail of that committed lane and of the maintainer-run `desktop/scripts/e2e-*-agent-browser.sh` scripts. It is **not** the tool for ad-hoc browser work: for manual verification, screenshots, and exploratory UI checks use the installed `playwright` plugin or the `browser` tools, and record which path you used in the handoff.
-- `bun run check:docs` runs `npm ci` internally; run it **sequentially** with checks that rely on root `node_modules`.
-- When `bun run verify` fails: read its latest Result Matrix and lane log, fix the concrete lane, rerun the narrow check, then rerun `verify`. `bun run check:coverage` gives PR-level coverage proof; `quality:providers` and live `quality:gate` require explicit maintainer authorization.
-
-## Live Model Baseline
-
-`quality:baseline` runs real Coding Agent tasks: it starts the local server, creates isolated fixtures, asks a model through chat to fix code, runs tests, and saves transcripts, diffs, verification logs, and a report. It also runs provider live smoke: saved or active OpenAI-compatible providers validate connectivity, proxy conversion, and streaming proxy behavior; env-only provider smoke validates upstream connectivity and the transform pipeline.
-
-The default baseline command does not call real models:
-
-```bash
-bun run quality:baseline
-```
-
-To actually call models, pass `--allow-live` and choose a local provider.
-
-First list your local providers and copyable selectors:
-
-```bash
-bun run quality:providers
-```
-
-Example output:
-
-```text
-Saved providers:
-  MiniMax
-    selector: minimax
-    main: MiniMax-M2.7-highspeed
-      --provider-model minimax:main:minimax-main
-```
-
-Copy one of the listed values:
-
-```bash
-bun run quality:gate --mode baseline --allow-live --provider-model minimax:main:minimax-main
-```
-
-To run only provider smoke plus desktop agent-browser smoke, use:
-
-```bash
-bun run quality:smoke --provider-model minimax:main:minimax-main
-```
-
-You can run multiple models in one pass:
-
-```bash
-bun run quality:gate --mode baseline --allow-live \
-  --provider-model codingplan:main:codingplan-main \
-  --provider-model minimax:main:minimax-main
-```
-
-Provider selectors come from the providers saved in your local desktop app under Settings > Model settings. Contributors do not need the maintainer's provider UUIDs or vendor accounts. They can add their own provider locally, run `bun run quality:providers`, and choose their own model.
-
-If you do not have a saved provider, you can run one unsaved provider smoke with environment variables:
-
-```bash
-QUALITY_GATE_PROVIDER_BASE_URL=https://example.com \
-QUALITY_GATE_PROVIDER_API_KEY=... \
-QUALITY_GATE_PROVIDER_MODEL=model-id \
-QUALITY_GATE_PROVIDER_API_FORMAT=openai_chat \
-bun run quality:gate --mode baseline --allow-live
-```
-
-## When To Run The Baseline
-
-After deterministic contract/E2E checks pass, a trusted maintainer should run the live baseline for changes touching:
-
-- Desktop chat, session resume, WebSocket, or the CLI bridge
-- Provider, model, or runtime selection
-- Permissions, tool calls, file edits, and task execution
-- agent-browser smoke, Computer Use, Skills, or MCP
-- Release preparation or broad cross-module refactors
-
-External PRs from forks do not receive repository secrets, and contributors are not expected to pay for model calls. Record `live model: not run (untrusted fork / no provider)` in the PR. A maintainer should add live evidence before merging or releasing high-risk changes; missing live evidence must not make deterministic PR lanes flaky.
-
-## Release Gate
-
-Before a release, run release mode:
-
-```bash
-bun run quality:gate --mode release --allow-live --provider-model <selector>:main
-```
-
-Release mode composes PR checks, baseline catalog validation, live baseline cases, provider smoke, native checks, and current-platform canonical release `package-smoke --package-kind release`. Reports are written to `artifacts/quality-runs/<timestamp>/`. `release-desktop.yml` runs content-gate and parallel verification in CI (`check:policy` / `check:server` / `check:desktop` / `check:agent-flow` / `check:adapters` / `check:persistence-upgrade`); publishing requires both the build and verification to pass. `quality:release` is an optional stricter local check that additionally covers native/packaging smoke and real provider baselines.
-
-In release mode, live lanes are not allowed to be silently skipped. Missing providers, model quota, or external account access will fail the gate and must be recorded as a release blocker.
-
-## Releases and Auto-Update
-
-`desktop/package.json` is the single source of the desktop version number. A real release requires the version, the Git tag, and `release-notes/vX.Y.Z.md` to match exactly.
-
-In-app updates are driven by `electron-updater`, with artifacts hosted on GitHub Releases:
-
-| Platform | Install / update target | Metadata |
-|---|---|---|
-| macOS arm64 / x64 | `dmg` for first install, `zip` for Squirrel.Mac updates | `latest-mac.yml` |
-| Windows x64 / ARM64 | NSIS `.exe` | `latest.yml` |
-| Linux x64 | `.AppImage` for updates, `.deb` for manual install | `latest-linux.yml` |
-| Linux arm64 | `.AppImage` for updates, `.deb` for manual install | `latest-linux-arm64.yml` |
-
-The release workflow generates `latest*.yml` inside each platform matrix job, renames colliding metadata to `latest-<platform>.yml`, and finally lets `scripts/release-update-metadata.ts` merge them back into the standard filenames electron-updater expects. Do not change this so each matrix job publishes the GitHub Release directly — the metadata files would overwrite each other.
-
-### Update channel and site sync
-
-Release finishing mirrors the update channel to the public site, with three separate responsibilities:
-
-- **Update metadata**: the app requests `latest*.yml` from `https://code.echoflow.cn/update/` first, then falls back to GitHub directly on a missing file, network error, or empty response. When `ECHOFLOW_UPDATE_FEED_URL` is set, it is the only source and there is no fallback.
-- **Installer downloads**: the download page and in-app download prefer the `gh-proxy.org` acceleration prefix, with GitHub direct download as the fallback.
-- **Failure guidance**: when an in-app update fails, Settings → About points the user to `code.echoflow.cn/download` for a manual download.
-
-On release, `site-release-sync` in `release-desktop.yml` triggers `deploy-docs.yml` with `--release <tag>` after the GitHub release completes. `scripts/site-release-manifest.ts` copies the four yml files byte-for-byte into `site/dist/update/` and writes `site/dist/download/manifest.json` from the release asset list. Ordinary docs deploys use `--release latest` so the machine endpoints remain present; the sync step runs before the upload, so a failed sync fails the workflow.
-
-Three invariants must not break:
-
-1. GitHub Releases keeps the complete electron-builder asset set. Existing apps only know the compiled-in GitHub feed and cannot discover a new channel.
-2. Mirrored yml files must stay byte-for-byte identical to the GitHub release assets. Do not rewrite or re-serialize them: Ed25519 signatures cover their contents, and any change breaks updates.
-3. Keep `artifactName` as `EchoFlow-Code-${version}-${os}-${arch}.${ext}`. The download-page manifest file names and installer verification both depend on it.
-
-### Signing secrets
-
-macOS signing and notarization depend on these GitHub Actions repository secrets:
-
-```text
-MACOS_CERTIFICATE
-MACOS_CERTIFICATE_PASSWORD
-APPLE_ID
-APPLE_APP_SPECIFIC_PASSWORD
-APPLE_TEAM_ID
-```
-
-`MACOS_CERTIFICATE` is the base64 content of a Developer ID Application `.p12`. The project does not ship a `.pkg`, so no Developer ID Installer certificate is needed.
-
-Windows signing is optional:
-
-```text
-WINDOWS_CERTIFICATE
-WINDOWS_CERTIFICATE_PASSWORD
-```
-
-Auto-update still works without Windows signing; users may just see a SmartScreen prompt.
-
-### Pre-release checks
-
-CI runs verification during the build. Locally, just confirm content alignment:
-
-```bash
-bun run scripts/release.ts <version> --dry   # dry-run: checks version/tag/notes consistency
-bun run check:release-surface                # release surface: branding markers, version/brand drift, conflict residue
-```
-
-To run a full verification before tagging, trigger the `Quality Check` workflow manually from GitHub Actions.
-
-Confirm `release-notes/v<version>.md` exists before running `bun run scripts/release.ts <version>` for real.
-
-`check:release-surface` is the first check in the release workflow's `release-contract` job and a gate in `push-quality.yml`; it is read-only with no external dependencies and takes milliseconds, so it is worth confirming on its own before tagging.
-
-### Verify one real update path
-
-Every release should be verified by upgrading from the previous stable build at least once:
-
-1. Install the previous stable release from GitHub Releases.
-2. Push the tag and let the `Release Desktop` workflow finish green.
-3. Open the old build and wait for the startup check, or check for updates manually in settings.
-4. Confirm the new version is offered, then install and restart.
-5. After restart, confirm the version in About, and that providers, sessions, skills, agents, memories, custom pets, and a custom data directory all still work.
-6. Confirm historical attachment context, subagent details, and task state restore correctly; open a pet window and check the overlay and current-session navigation.
-
-Platforms differ in what matters: on macOS confirm the release job used the signed artifacts and the launch-policy check passed; on Windows confirm `latest.yml`, `.exe`, and `.exe.blockmap` are all in the release assets, and remember that a SmartScreen prompt on an unsigned build does not mean the updater failed; on Linux verify auto-update through the AppImage, since `.deb` ships as a manual installer only.
-
-## PR Workflow
-
-1. Create a product branch such as `fix/session-reconnect` or `feat/provider-quality-gate`.
-2. Install dependencies and make the change.
-3. Add tests for behavior changes.
-4. Run focused checks for the affected area.
-5. Optional: run `bun run hooks:install` to show a non-blocking reminder before later pushes.
-6. Run `bun run verify` if you are claiming PR-ready/full validation.
-7. A trusted maintainer runs the live baseline for high-risk changes; external contributors only record why it was not run.
-8. In the PR description, include user impact, verification commands, coverage/quality report summary, and known risks.
-
-## FAQ
-
-### Can I run checks without a provider?
-
-Yes. Run the impact report and its selected deterministic checks:
-
-```bash
-bun run check:impact
-```
-
-`bun run verify` also needs no real model. Only the live baseline does. Maintainers can add a provider in the desktop app under Settings > Model settings, then run:
-
-```bash
-bun run quality:providers
-```
-
-### What if provider selectors conflict?
-
-If two provider names produce the same selector, `quality:providers` falls back to the provider ID. Copy the `--provider-model ...` value it prints.
-
-### What if a model ID contains a colon?
-
-Prefer role selectors:
-
-```bash
---provider-model custom:haiku:custom-haiku
-```
-
-The runner resolves `haiku` to the real model ID from your local provider configuration.
+The public release contract only requires the version, the Git tag, and `release-notes/vX.Y.Z.md` to match and `bun run check:release-surface` to pass.

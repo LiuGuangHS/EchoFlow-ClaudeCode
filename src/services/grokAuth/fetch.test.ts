@@ -21,10 +21,13 @@ import { isRetryableStreamTransportError } from '../api/withRetry.js'
 describe('Grok Responses fetch adapter', () => {
   let tmpDir: string
   let original: string | undefined
+  let originalConfigDir: string | undefined
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'grok-fetch-'))
     original = process.env[GROK_OAUTH_FILE_ENV_KEY]
+    originalConfigDir = process.env.CLAUDE_CONFIG_DIR
+    process.env.CLAUDE_CONFIG_DIR = tmpDir
     process.env[GROK_OAUTH_FILE_ENV_KEY] = path.join(tmpDir, 'tokens.json')
     await fs.writeFile(process.env[GROK_OAUTH_FILE_ENV_KEY], JSON.stringify({
       accessToken: 'access',
@@ -37,6 +40,8 @@ describe('Grok Responses fetch adapter', () => {
     setGrokRuntimeModelCatalog(GROK_MODEL_CATALOG)
     if (original === undefined) delete process.env[GROK_OAUTH_FILE_ENV_KEY]
     else process.env[GROK_OAUTH_FILE_ENV_KEY] = original
+    if (originalConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR
+    else process.env.CLAUDE_CONFIG_DIR = originalConfigDir
     await fs.rm(tmpDir, { recursive: true, force: true })
   })
 
@@ -453,6 +458,51 @@ describe('Grok Responses fetch adapter', () => {
       }) },
     )
     expect(response.status).toBe(403)
+    expect(calls).toBe(1)
+  })
+
+  test('fails closed before direct OAuth dispatch when local redaction is enabled, malformed, or unreadable', async () => {
+    const calls: string[] = []
+    const fetchOverride: typeof fetch = async input => {
+      calls.push(String(input))
+      return new Response('unexpected')
+    }
+    const request = { method: 'POST', body: JSON.stringify({ model: 'grok-4.5', max_tokens: 16, messages: [{ role: 'user', content: 'secret' }] }) }
+    const settingsPath = path.join(tmpDir, 'settings.json')
+    for (const settings of [
+      { localRedaction: { enabled: true, personalInfo: false, customWords: [] } },
+      { localRedaction: { enabled: 'yes' } },
+    ]) {
+      await fs.writeFile(settingsPath, JSON.stringify(settings), 'utf8')
+      await expect(buildGrokFetch(fetchOverride, 'test')('https://api.anthropic.com/v1/messages', request)).rejects.toThrow(/Local redaction/)
+    }
+    await fs.writeFile(settingsPath, '{invalid json', 'utf8')
+    await expect(buildGrokFetch(fetchOverride, 'test')('https://api.anthropic.com/v1/messages', request)).rejects.toThrow(/Local redaction/)
+    await fs.rm(settingsPath)
+    await fs.mkdir(settingsPath)
+    await expect(buildGrokFetch(fetchOverride, 'test')('https://api.anthropic.com/v1/messages', request)).rejects.toThrow(/Local redaction/)
+    expect(calls).toHaveLength(0)
+  })
+
+  test('preserves direct OAuth dispatch when local redaction is explicitly disabled', async () => {
+    await fs.writeFile(path.join(tmpDir, 'settings.json'), JSON.stringify({ localRedaction: { enabled: false, personalInfo: false, customWords: [] } }), 'utf8')
+    let calls = 0
+    const fetch = buildGrokFetch(async () => {
+      calls++
+      return new Response([
+        'event: response.created',
+        'data: {"response":{"id":"r","object":"response","created_at":1,"model":"grok-4.5","status":"in_progress"}}',
+        '',
+        'event: response.completed',
+        'data: {"response":{"id":"r","object":"response","created_at":1,"model":"grok-4.5","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}',
+        '',
+        '',
+      ].join('\n'), { headers: { 'Content-Type': 'text/event-stream' } })
+    }, 'test')
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST', body: JSON.stringify({ model: 'grok-4.5', max_tokens: 16, messages: [{ role: 'user', content: 'ok' }] }),
+    })
+    expect(response.status).toBe(200)
     expect(calls).toBe(1)
   })
 })

@@ -57,7 +57,7 @@ an upgrade is a deliberate, reviewed step — never an automatic one.
    plugin or rename an existing one. A `cordis.patch.yml` entry for a plugin id
    that no longer exists is not an error — it is silently ignored, with only a
    line in the log to show for it. This is the one failure mode the automated
-   lane cannot catch, so a human reads the upstream release notes against the
+   lane cannot catch, so a human reads the dsh release notes against the
    blocklist on every upgrade.
 5. Record the upgrade in the commit message.
 

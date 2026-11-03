@@ -17,20 +17,25 @@ describe('feature quality contract', () => {
     // AGENTS.md states direction; procedures and case law live in docs/.
     // Assert the obligations themselves rather than `## ` section headings, so
     // the file can be restructured without a false failure.
-    expect(agents).toContain('## How This Contract Is Maintained')
-    expect(agents).toContain('Otherwise it belongs in `docs/` with a one-line pointer')
-    expect(agents).toContain('under 24 KiB')
-    expect(agents).toContain('Check `git status --short` before editing')
-    expect(agents).toContain('Production code changes under `desktop/src`, `src/server`, `src/tools`, `src/utils`, or `adapters`')
+    expect(agents).toContain('## 契约如何维护')
+    expect(agents).toContain('否则应放在 `docs/`，并在这里保留一行指针')
+    expect(agents).toContain('24 KiB 以下')
+    expect(agents).toContain('编辑前检查 `git status --short`')
     expect(agents).toContain('`bun run check:impact`')
     expect(agents).toContain('`bun run verify`')
-    expect(agents).toContain('`bun run check:persistence-upgrade`')
     expect(agents).toContain('`bun run audit:harness`')
-    expect(agents).toContain('`.claude/` stays local-only')
-    expect(agents).toContain('`~/.claude/settings.json` is user-owned shared state')
-    expect(agents).toContain('Official vendor APIs and official OAuth integrations, including Grok Official')
-    expect(agents).toContain('rejected by default')
-    expect(agents).toContain('Never apply blanket `--ours` or `--theirs`')
+    expect(agents).toContain('`.claude/` 仅供本地使用')
+    expect(agents).toContain('`~/.claude/settings.json` 是用户拥有的共享状态')
+    expect(agents).toContain('官方 vendor API 和官方 OAuth 集成（包括 Grok Official）')
+    expect(agents).toContain('新的 provider 或 preset 默认拒绝')
+    expect(agents).toContain('绝不整体使用 `--ours` 或 `--theirs`')
+    expect(agents).toContain('`docs/internals/contributing.md` 负责贡献流程、测试设计、质量门禁、coverage 策略和 Agent flow 案例规则')
+    expect(agents).toContain('`docs/internals/structure.md` 负责目录地图和模块职责')
+    expect(agents).toContain('`docs/_internal/release-windows.md` 及其英文镜像')
+    expect(agents).not.toContain('## Build, Test, and Development Commands')
+    expect(agents).not.toContain('## Project Structure & Module Organization')
+    expect(agents).not.toContain('## Test Design Direction')
+    expect(agents).not.toContain('## Desktop & UX Expectations')
     // A resolved gap must not survive as prose. The contract once stated that
     // `mobile/` had no area and no route; both now exist, and nothing tied the
     // claim to the code, so the stale sentence outlived the fix.
@@ -41,23 +46,21 @@ describe('feature quality contract', () => {
     const agents = readFileSync('AGENTS.md', 'utf8')
     const contributing = readFileSync('docs/internals/contributing.md', 'utf8')
     const englishContributing = readFileSync('docs/en/internals/contributing.md', 'utf8')
+    const internalIndex = readFileSync('docs/_internal/README.md', 'utf8')
 
-    // AGENTS.md delegates the upstream-sync procedure and the regression case
-    // law to docs/. A pointer that no longer resolves is worse than no pointer,
-    // and re-inlining the procedure silently re-inflates the contract.
     expect(agents).toContain('docs/internals/contributing.md')
     expect(agents).not.toContain('### Manual Sync Workflow')
     expect(agents).not.toContain('### Automated Release Tracking')
+    expect(agents).not.toContain('upstream-derived')
+    expect(agents).not.toContain('former upstream')
+    expect(agents).not.toContain('upstream project this repository')
+    expect(agents).not.toContain('upstream identity markers')
 
-    // The upstream sync procedure is retired, but the two disciplines that
-    // survive it — per-hunk conflict adjudication and the public-identity
-    // audit — are still load-bearing and must stay documented.
     expect(contributing).toContain('冲突逐 hunk 裁决')
-    expect(englishContributing).toContain('Adjudicate conflicts hunk by hunk')
-    // The retired scripts must not reappear as instructions.
-    expect(contributing).not.toContain('bun run upstream:audit')
-    expect(contributing).not.toContain('bun run upstream:sync')
-    expect(englishContributing).not.toContain('bun run upstream:audit')
+    expect(englishContributing).toContain('hunk by hunk')
+    expect(contributing).not.toContain('archive/upstream-sync-agent-handoff.md')
+    expect(englishContributing).not.toContain('archive/upstream-sync-agent-handoff.md')
+    expect(internalIndex).not.toContain('upstream-sync-agent-handoff.md')
 
     // The agent toolset is documented in docs/ and pointed at from AGENTS.md.
     // ECC is no longer the toolset, and re-inlining its commands would put a
@@ -81,7 +84,7 @@ describe('feature quality contract', () => {
     const changeAreas = [...union.matchAll(/'([a-z][a-z-]*)'/g)].map((match) => match[1])
     expect(changeAreas.length).toBeGreaterThan(0)
 
-    const vocabulary = agents.match(/canonical vocabulary is the `ChangeArea` union in `scripts\/pr\/change-policy\.ts`: ([^\n]+?)\.\s/)?.[1] ?? ''
+    const vocabulary = agents.match(/规范词汇以 `scripts\/pr\/change-policy\.ts` 中的 `ChangeArea` 联合类型为准：([^\n]+?)。本文中的文字表面映射/)?.[1] ?? ''
     const documentedAreas = [...vocabulary.matchAll(/`([^`]+)`/g)].map((match) => match[1])
     expect([...documentedAreas].sort()).toEqual([...changeAreas].sort())
 
@@ -91,7 +94,7 @@ describe('feature quality contract', () => {
     expect(sectionIds.length).toBeGreaterThan(0)
 
     const documentedSections = [
-      ...(docsGuidance.match(/top-level sections: ([^\n]+?)\./)?.[1] ?? '').matchAll(/`([a-z-]+)\//g),
+      ...(docsGuidance.match(/顶层共有七个 section：([^\n]+?)。/)?.[1] ?? '').matchAll(/`([a-z-]+)\//g),
     ].map((match) => match[1])
     expect(documentedSections).toEqual(sectionIds)
   })
@@ -148,11 +151,11 @@ describe('feature quality contract', () => {
     const docs = readFileSync('docs/AGENTS.md', 'utf8')
     const mobile = readFileSync('mobile/AGENTS.md', 'utf8')
 
-    expect(policy).toContain('`scripts/pr/change-policy.ts` is the source of truth')
+    expect(policy).toContain('`scripts/pr/change-policy.ts` 是路径到检查路由的唯一事实来源')
     expect(policy).toContain('`pull_request_target`')
     expect(policy).toContain('`pr-quality-gate`')
     expect(runtime).toContain('`bun run check:server`')
-    expect(runtime).toContain('temporary `HOME`/`CLAUDE_CONFIG_DIR`')
+    expect(runtime).toContain('临时 `HOME`/`CLAUDE_CONFIG_DIR`')
     expect(runtime).toContain('`bun run check:provider-contract`')
     expect(desktop).toContain('`bun run check:desktop`')
     expect(desktop).toContain('`bun run check:chat-contract`')
@@ -225,11 +228,19 @@ describe('feature quality contract', () => {
     expect(contributing).toContain('AI Coding Agent 修复循环')
     expect(englishContributing).toContain('bun run verify')
     expect(englishContributing).toContain('bun run quality:push')
-    expect(englishContributing).toContain('push no longer runs a local quality gate')
-    expect(englishContributing).toContain('AI Coding Agent Fix Loop')
+    expect(englishContributing).toContain('A push no longer runs the local quality gate automatically')
+    expect(englishContributing).toContain('## AI Coding Agent Fix Loop')
     expect(rootContributing).toContain('bun run verify')
     expect(rootContributing).toContain('bun run quality:push')
     expect(rootContributing).toContain('不再自动运行本地质量门禁')
+  })
+
+  test('keeps the English contributing mirror free of Chinese text', () => {
+    // The mirror was once overwritten with the Chinese page, and the harness audit,
+    // which only checks that a counterpart file exists, stayed green.
+    const englishContributing = readFileSync('docs/en/internals/contributing.md', 'utf8')
+
+    expect(englishContributing).not.toMatch(/[一-鿿]/)
   })
 
   test('keeps desktop native CI aligned with Electron packaging', () => {

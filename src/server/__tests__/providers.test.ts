@@ -1619,6 +1619,34 @@ describe('ProviderService', () => {
     })
   })
 
+  // ─── getProviderRuntimeEnv ───────────────────────────────────────────────
+
+  describe('getProviderRuntimeEnv', () => {
+    test('routes an otherwise-direct Anthropic provider through the proxy when local redaction is enabled', async () => {
+      await fs.writeFile(
+        path.join(tmpDir, 'settings.json'),
+        JSON.stringify({ localRedaction: { enabled: true, personalInfo: false, customWords: [] } }),
+        'utf-8',
+      )
+      const svc = new ProviderService()
+      const provider = await svc.addProvider(sampleInput({ supportsNestedToolResultMedia: true }))
+
+      const env = await svc.getProviderRuntimeEnv(provider.id)
+
+      expect(env.ANTHROPIC_BASE_URL).toContain(`/proxy/providers/${provider.id}`)
+    })
+
+    test('routes through the proxy when the local redaction settings cannot be parsed', async () => {
+      await fs.writeFile(path.join(tmpDir, 'settings.json'), '{not json', 'utf-8')
+      const svc = new ProviderService()
+      const provider = await svc.addProvider(sampleInput({ supportsNestedToolResultMedia: true }))
+
+      const env = await svc.getProviderRuntimeEnv(provider.id)
+
+      expect(env.ANTHROPIC_BASE_URL).toContain(`/proxy/providers/${provider.id}`)
+    })
+  })
+
   // ─── getProviderForProxy ─────────────────────────────────────────────────
 
   describe('getProviderForProxy', () => {

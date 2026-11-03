@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { createElectronDevEnv, DEFAULT_RENDERER_URL, mergeNoProxy, resolveElectronExecutable } from './electron-dev'
+import { createElectronDevEnv, DEFAULT_RENDERER_URL, mergeNoProxy, resolveElectronAppArgs, resolveElectronExecutable } from './electron-dev'
 
 // resolveElectronExecutable 依赖 node_modules/electron/dist 真实存在,
 // 但 bun 默认不执行 electron 的 postinstall 下载,dist 在本机/CI 经常缺席。
@@ -71,6 +71,12 @@ describe('desktop dev launcher environment', () => {
     ['linux', /dist[\\/]electron$/],
   ] as const)('resolves the %s Electron executable directly instead of shelling through bunx', (platform, pattern) => {
     expect(resolveElectronExecutable(createDesktopRootFixture(), platform)).toMatch(pattern)
+  })
+
+  it('launches the app root so Electron reads the desktop package version', () => {
+    const desktopRoot = createDesktopRootFixture()
+
+    expect(resolveElectronAppArgs(desktopRoot)).toEqual([desktopRoot])
   })
 
   it('throws an actionable error when the Electron executable is missing', () => {

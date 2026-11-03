@@ -51,6 +51,25 @@ describe('titleService', () => {
     )
   }
 
+  test('fails closed for direct Anthropic title requests when local redaction is enabled', async () => {
+    await fs.writeFile(path.join(tmpDir, 'settings.json'), JSON.stringify({
+      localRedaction: { enabled: true, personalInfo: false, customWords: [] },
+    }))
+    const provider = await new ProviderService().addProvider({
+      presetId: 'custom', name: 'Direct Anthropic Fixture', apiKey: 'test-key',
+      baseUrl: 'https://provider.example.test', apiFormat: 'anthropic',
+      models: { main: 'large-test', haiku: 'small-test', sonnet: 'large-test', opus: 'large-test' },
+    })
+    let calls = 0
+    globalThis.fetch = (async () => {
+      calls += 1
+      throw new Error('custom Anthropic title must not bypass redaction')
+    }) as typeof fetch
+
+    await expect(generateTitle('secret conversation', provider.id)).resolves.toBeNull()
+    expect(calls).toBe(0)
+  })
+
   test('generates titles with a versioned Anthropic base URL (#1279)', async () => {
     const paths: string[] = []
     const server = Bun.serve({
@@ -418,6 +437,28 @@ describe('titleService', () => {
       language: 'English',
       source: 'response-language',
     })
+  })
+
+  test('fails closed for ChatGPT Official title generation when local redaction is enabled', async () => {
+    await fs.writeFile(
+      path.join(tmpDir, 'settings.json'),
+      JSON.stringify({ localRedaction: { enabled: true, personalInfo: false, customWords: [] } }),
+      'utf-8',
+    )
+    const providerService = new ProviderService()
+    await providerService.activateProvider('openai-official')
+    await echoFlowOpenAIOAuthService.saveTokens({
+      accessToken: 'fake-openai-token', refreshToken: 'fake-refresh-token',
+      expiresAt: Date.now() + 60 * 60_000, accountId: 'acct_title', email: 'title@example.com',
+    })
+    let calls = 0
+    globalThis.fetch = (async () => {
+      calls += 1
+      throw new Error('official title helper must not bypass redaction')
+    }) as typeof fetch
+
+    await expect(generateTitle('secret conversation')).resolves.toBeNull()
+    expect(calls).toBe(0)
   })
 
   test('generates titles when ChatGPT Official OAuth is active', async () => {

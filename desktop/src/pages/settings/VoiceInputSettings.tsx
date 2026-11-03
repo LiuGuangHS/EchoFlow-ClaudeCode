@@ -245,7 +245,7 @@ export function VoiceInputSettings() {
                       <button
                         type="button"
                         className="font-medium text-[var(--color-brand)] hover:underline"
-                        onClick={() => useUIStore.getState().setActiveSettingsTab('general')}
+                        onClick={() => useUIStore.getState().setActiveSettingsTab('network')}
                       >
                         {t('voice.settings.downloadSource.changeProxy')}
                       </button>

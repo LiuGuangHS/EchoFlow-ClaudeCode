@@ -12,7 +12,7 @@ Use GitHub's **Private vulnerability reporting** for this repository when it is 
 
 Reports are relevant when they affect EchoFlow Code source, official release assets, the local server, desktop application, supported update paths, or project-controlled documentation and workflows.
 
-第三方 Provider、模型服务、操作系统或上游项目自身的问题，请优先向对应维护者报告；如果 EchoFlow Code 的集成方式扩大了影响，也请说明。
+第三方 Provider、模型服务、操作系统或其他软件项目自身的问题，请优先向对应维护者报告；如果 EchoFlow Code 的集成方式扩大了影响，也请说明。
 
 ## Handling / 处理方式
 

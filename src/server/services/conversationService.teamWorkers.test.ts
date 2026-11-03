@@ -14,7 +14,7 @@ beforeEach(async () => {
   home = await mkdtemp(join(tmpdir(), 'team-workers-'))
   process.env.HOME = home
   process.env.CLAUDE_CONFIG_DIR = home
-  process.env.CC_HAHA_DISABLE_TERMINAL_SHELL_ENV = '1'
+  process.env.ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV = '1'
   resetTerminalShellEnvironmentCacheForTests()
 })
 afterEach(async () => {
@@ -78,7 +78,7 @@ test('independent configured providers produce disjoint child credentials and ro
   expect(JSON.stringify(b)).not.toContain('fake-key-a')
   expect(a.ECHOFLOW_SESSION_COLLABORATION_TOKEN).toBe('a')
   expect(b.ECHOFLOW_SESSION_COLLABORATION_TOKEN).toBe('b')
-  expect(a.CC_HAHA_TEAM_REVIEW_REQUIRED).toBe('1')
+  expect(a.ECHOFLOW_TEAM_REVIEW_REQUIRED).toBe('1')
   expect(process.env.ANTHROPIC_API_KEY).toBe('parent-key')
 })
 
@@ -131,7 +131,7 @@ test('real independent CLI processes send their first request to the approved pr
   try {
     process.env.CLAUDE_CLI_PATH = join(import.meta.dir, '__fixtures__', 'team-worker-cli.ts')
     process.env.CLAUDE_CODE_SUBAGENT_MODEL = 'wrong-inherited-model'
-    process.env.CC_HAHA_TEAM_WORKER_OMIT_CLAUDE_MD = '1'
+    process.env.ECHOFLOW_TEAM_WORKER_OMIT_CLAUDE_MD = '1'
     const providers = new ProviderService()
     const models = { main: 'cheap', sonnet: 'cheap', opus: 'capable', haiku: 'cheap' }
     const pa = await providers.addProvider({ presetId: 'custom', name: 'A', baseUrl: a.url.toString(), apiKey: 'fake-a', models })

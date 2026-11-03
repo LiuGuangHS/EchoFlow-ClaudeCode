@@ -531,7 +531,7 @@ describe('extractAssistantOutputTargets with changedFiles reconciliation', () =>
 })
 
 describe('explicit output path identity', () => {
-  const root = '/Users/nanmi/workspace/myself_code/cchaha-promo'
+  const root = '/Users/dev/workspace/promo-project'
   const content = `\`${root}/out/echoflow-code-promo.mp4\`
 顺带，项目根目录是 \`${root}/\`：
 - \`out/echoflow-code-promo.mp4\` — 成片

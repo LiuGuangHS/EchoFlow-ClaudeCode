@@ -3,11 +3,18 @@ import type {
   AppModeConfig as SettingsAppModeConfig,
 } from '../../types/settings'
 import type { Locale } from '../../i18n/locale'
+import type { ShareableConfig } from '../../types/configShare'
 
 // Version 2 adds remote provider management and selected General settings.
 export const PUBLIC_ACCESS_CONSENT_VERSION = 2
 
 export type DesktopHostKind = 'browser' | 'electron'
+
+/** An `echoflowcode://` import link received by the main process. */
+export type DesktopConfigImport =
+  | { config: ShareableConfig; apiKey?: string }
+  | { invalid: true }
+
 export type EchoFlowLoginEndpoint = 'main' | 'dedicated'
 
 export type DesktopHostCapability =
@@ -441,6 +448,8 @@ export type DesktopHost = {
   echoFlow: {
     openLogin(endpoint?: EchoFlowLoginEndpoint): Promise<'authenticated' | 'cancelled' | 'failed'>
     signOut(endpoint?: EchoFlowLoginEndpoint): Promise<void>
+    /** Resolves once the startup restore has settled, reporting whether it signed an account back in. */
+    whenAccountRestored(): Promise<boolean>
   }
   runtimeDiscovery: {
     list(options?: { includeWsl?: boolean }): Promise<RuntimeDiscoveryResult>
@@ -459,6 +468,12 @@ export type DesktopHost = {
     setLocalePreference(locale: Locale): Promise<void>
     getPreferredSystemLanguages(): Promise<string[]>
     onLocaleChanged(handler: (locale: Locale) => void): Promise<DesktopHostUnlisten>
+  }
+  configImport: {
+    /** Reads the pending import without clearing it; ack only after the UI handles it. */
+    take(): Promise<DesktopConfigImport | null>
+    ack(): Promise<void>
+    onPending(handler: () => void): Promise<DesktopHostUnlisten>
   }
   commands: {
     invoke<T>(command: string, args?: Record<string, unknown>): Promise<T>

@@ -228,7 +228,7 @@ describe('session messages HTTP surface', () => {
     const sessionId = await seedSessionWithSubagent()
     await fs.appendFile(path.join(tmpDir, 'projects', '-tmp-http-invariant', `${sessionId}.jsonl`),
       JSON.stringify({
-        type: 'cc-haha-task-notification',
+        type: 'echoflow-code-task-notification',
         taskNotification: { taskId: 'task-1', toolUseId: 'Agent:0', status: 'completed', summary: 'Done' },
         timestamp: '2026-01-01T00:02:00.000Z',
       }) + '\n')

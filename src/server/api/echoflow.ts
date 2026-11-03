@@ -1,8 +1,6 @@
 import { timingSafeEqual } from 'node:crypto'
 import { z } from 'zod'
 import { ECHOFLOW_BASE_URLS, EchoFlowApiError, EchoFlowApiService } from '../services/echoflowApiService.js'
-import { LegacyMigrationService } from '../services/legacyMigrationService.js'
-import { isLocalAccessAuthorized } from '../localAccessAuth.js'
 import { ProviderService, toPublicProvider } from '../services/providerService.js'
 import { fetchProviderModels } from '../services/providerModelCatalog.js'
 import { errorResponse } from '../middleware/errorHandler.js'
@@ -53,9 +51,6 @@ const CreateEchoFlowTokenSchema = z.object({
   name: z.string().trim().min(1).max(64).optional(),
 })
 
-const LegacyMigrationConfirmationSchema = z.object({
-  confirmed: z.literal(true),
-})
 const EchoFlowSiteCookiesSchema = z.object({
   cookie: z.string().min(1).max(16 * 1024).refine(value => !/[\r\n\0]/.test(value)),
   userId: z.string().trim().min(1).max(128).refine(value => !/[\r\n\0]/.test(value)),
@@ -142,20 +137,6 @@ export async function handleEchoFlowApi(
       if (req.method === 'PATCH') {
         const input = UpdateEndpointSchema.parse(await req.json())
         return Response.json({ account: await service.updateEndpoint(input.endpoint) })
-      }
-    }
-
-    if (action === 'migration') {
-      if (!isLocalAccessAuthorized(req)) {
-        return Response.json({ error: 'local_access_required' }, { status: 403 })
-      }
-      const migrationService = new LegacyMigrationService()
-      if (req.method === 'GET') {
-        return Response.json(await migrationService.getStatus())
-      }
-      if (req.method === 'POST') {
-        LegacyMigrationConfirmationSchema.parse(await req.json())
-        return Response.json(await migrationService.run())
       }
     }
 

@@ -148,7 +148,35 @@ describe('Electron updater service', () => {
     expect(localUpdater.checkForUpdates).toHaveBeenCalledTimes(3)
   })
 
-  it('disables differential download so update downloads run at full bandwidth', () => {
+  it('enables differential download only for a verified requested feed', () => {
+    const directFeed = 'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest/download/'
+    const contract = { version: 'range-v1', fingerprint: '06c65fc3422243ebb7f83089cc304009c4cfcb43407c4877e2c07f2521b5b379' }
+    const localUpdater = fakeUpdater()
+
+    void new ElectronUpdaterService(localUpdater, undefined, {
+      differentialDownload: true,
+      downloadFeedUrls: [directFeed],
+      differentialDownloadFeedUrls: [directFeed],
+      differentialDownloadContracts: { [directFeed]: contract },
+    })
+
+    expect(localUpdater.disableDifferentialDownload).toBe(false)
+  })
+
+  it('keeps differential download disabled for an unverified feed', () => {
+    const localUpdater = fakeUpdater()
+
+    void new ElectronUpdaterService(localUpdater, undefined, {
+      differentialDownload: true,
+      downloadFeedUrls: ['https://gh-proxy.org/https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest/download/'],
+      differentialDownloadFeedUrls: [],
+      differentialDownloadContracts: {},
+    })
+
+    expect(localUpdater.disableDifferentialDownload).toBe(true)
+  })
+
+  it('disables differential download by default', () => {
     const localUpdater = fakeUpdater()
 
     void new ElectronUpdaterService(localUpdater)
@@ -339,5 +367,102 @@ describe('Electron updater metadata fallback chain', () => {
       'mismatched-metadata',
       'mismatched-metadata',
     ])
+  })
+
+  it('does not mark a failed download as finished or installable', async () => {
+    const localUpdater = fakeUpdater()
+    localUpdater.checkForUpdates.mockResolvedValue({ updateInfo: { version: '2.0.0' } })
+    localUpdater.downloadUpdate.mockRejectedValueOnce(new Error('range request failed'))
+    const service = new ElectronUpdaterService(localUpdater)
+    const events: unknown[] = []
+    await service.checkForUpdates()
+
+    await expect(service.downloadUpdate(event => events.push(event))).rejects.toThrow('range request failed')
+
+    expect(events).not.toContainEqual({ event: 'Finished' })
+    expect(service.hasDownloadedUpdate()).toBe(false)
+    expect(() => service.quitAndInstallDownloadedUpdate()).toThrow('has not finished downloading')
+  })
+
+  it('tries the next download feed after the primary source fails', async () => {
+    const firstFeed = 'https://dl1.test/feed/'
+    const secondFeed = 'https://dl2.test/feed/'
+    const localUpdater = fakeUpdater()
+    localUpdater.checkForUpdates
+      .mockResolvedValueOnce({ updateInfo: { version: '2.0.0' } })
+      .mockResolvedValue({ updateInfo: { version: '2.0.0' } })
+    localUpdater.downloadUpdate
+      .mockRejectedValueOnce(new Error('first source failed'))
+      .mockResolvedValueOnce(undefined)
+    const service = new ElectronUpdaterService(localUpdater, undefined, {
+      metadataFeedUrl: METADATA_FEED,
+      downloadFeedUrls: [firstFeed, secondFeed],
+    })
+    await service.checkForUpdates()
+
+    await expect(service.downloadUpdate(() => {})).resolves.toBeUndefined()
+
+    expect(localUpdater.downloadUpdate).toHaveBeenCalledTimes(2)
+    expect(localUpdater.setFeedURL).toHaveBeenNthCalledWith(1, METADATA_FEED)
+    expect(localUpdater.setFeedURL).toHaveBeenNthCalledWith(2, firstFeed)
+    expect(localUpdater.setFeedURL).toHaveBeenNthCalledWith(3, secondFeed)
+    expect(service.hasDownloadedUpdate()).toBe(true)
+  })
+
+  it('reports every download source failure with feed diagnostics', async () => {
+    const firstFeed = 'https://dl1.test/feed/'
+    const secondFeed = 'https://dl2.test/feed/'
+    const localUpdater = fakeUpdater()
+    localUpdater.checkForUpdates
+      .mockResolvedValueOnce({ updateInfo: { version: '2.0.0' } })
+      .mockResolvedValue({ updateInfo: { version: '2.0.0' } })
+    localUpdater.downloadUpdate
+      .mockRejectedValueOnce(new Error('first source failed'))
+      .mockRejectedValueOnce(new Error('second source failed'))
+    const service = new ElectronUpdaterService(localUpdater, undefined, {
+      metadataFeedUrl: METADATA_FEED,
+      downloadFeedUrls: [firstFeed, secondFeed],
+    })
+    await service.checkForUpdates()
+
+    const error = await service.downloadUpdate(() => {}).then(() => null, thrown => thrown as Error)
+
+    expect(error).toBeInstanceOf(Error)
+    expect(error?.message).toContain(firstFeed)
+    expect(error?.message).toContain(secondFeed)
+    expect(service.hasDownloadedUpdate()).toBe(false)
+  })
+
+  it('emits Finished again without downloading after a successful download', async () => {
+    const localUpdater = fakeUpdater()
+    localUpdater.checkForUpdates.mockResolvedValue({ updateInfo: { version: '2.0.0' } })
+    localUpdater.downloadUpdate.mockResolvedValue(undefined)
+    const service = new ElectronUpdaterService(localUpdater)
+    const events: unknown[] = []
+
+    await service.checkForUpdates()
+    await service.downloadUpdate(event => events.push(event))
+    await service.downloadUpdate(event => events.push(event))
+
+    expect(localUpdater.downloadUpdate).toHaveBeenCalledTimes(1)
+    expect(events.filter(event => event && typeof event === 'object' && 'event' in event && event.event === 'Finished')).toHaveLength(2)
+  })
+
+  it('rechecks for an update after canceling an installed download', async () => {
+    const localUpdater = fakeUpdater()
+    localUpdater.checkForUpdates.mockResolvedValue({ updateInfo: { version: '2.0.0' } })
+    localUpdater.downloadUpdate.mockResolvedValue(undefined)
+    const service = new ElectronUpdaterService(localUpdater)
+
+    await service.checkForUpdates()
+    await service.downloadUpdate(() => {})
+    expect(service.hasDownloadedUpdate()).toBe(true)
+
+    service.cancelInstall()
+    expect(service.hasDownloadedUpdate()).toBe(false)
+    await service.downloadUpdate(() => {})
+
+    expect(localUpdater.checkForUpdates).toHaveBeenCalledTimes(2)
+    expect(localUpdater.downloadUpdate).toHaveBeenCalledTimes(2)
   })
 })

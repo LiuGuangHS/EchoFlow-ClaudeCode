@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
 import path from 'node:path'
 import { evaluateSignedChainReport, fixtureSigningEnvironment, parseSignedChainArgs, planFixtureSigning, privateKeychainCommands, verifySignedChainReport } from './computer-use-signed-chain'
+import { CU_HELPER_PROTOCOL_VERSION } from '../../src/utils/computerUse/cuHelperDaemon.js'
 
 test('default signing plans use only the explicitly scoped private keychain', () => {
   const directory = path.resolve('/tmp/fixture')
@@ -87,7 +88,7 @@ test('private signing fixtures always address their explicit keychain and never 
 test('an authenticated permission denial cannot be reported as a native GUI replay pass', () => {
   const report = {
     result: {
-      ping: { protocolVersion: 'CCHahaComputerUseIPC-2' },
+      ping: { protocolVersion: CU_HELPER_PROTOCOL_VERSION },
       permissions: { accessibility: false, screenRecording: false },
       first: { content: [{ text: '1' }] }, second: { content: [{ text: '2' }] },
       nativeObservation: { isError: true },

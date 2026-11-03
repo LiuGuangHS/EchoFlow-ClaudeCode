@@ -1465,6 +1465,89 @@ describe('settingsStore desktop terminal shell persistence', () => {
   })
 })
 
+describe('settingsStore local redaction persistence', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    vi.clearAllMocks()
+    window.localStorage.clear()
+  })
+
+  it('serializes rapid edits so the newest value is persisted last', async () => {
+    const firstSave = createDeferred<Record<string, unknown>>()
+    const updateUser = vi.fn()
+      .mockImplementationOnce(() => firstSave.promise)
+      .mockResolvedValueOnce({ ok: true })
+
+    vi.doMock('../api/settings', () => ({
+      settingsApi: {
+        getUser: vi.fn(),
+        updateUser,
+        getPermissionMode: vi.fn(),
+        setPermissionMode: vi.fn(),
+        getCliLauncherStatus: vi.fn(),
+      },
+    }))
+
+    const { useSettingsStore } = await import('./settingsStore')
+    const firstRequest = useSettingsStore.getState().setLocalRedaction({
+      enabled: true,
+      personalInfo: false,
+      customWords: ['first'],
+    })
+    const secondRequest = useSettingsStore.getState().setLocalRedaction({
+      enabled: true,
+      personalInfo: false,
+      customWords: ['second'],
+    })
+
+    await vi.waitFor(() => {
+      expect(updateUser).toHaveBeenCalledTimes(1)
+    })
+    expect(updateUser).toHaveBeenNthCalledWith(1, {
+      localRedaction: { enabled: true, personalInfo: false, customWords: ['first'] },
+    })
+
+    firstSave.resolve({ ok: true })
+    await firstRequest
+    await secondRequest
+
+    expect(updateUser).toHaveBeenNthCalledWith(2, {
+      localRedaction: { enabled: true, personalInfo: false, customWords: ['second'] },
+    })
+    expect(useSettingsStore.getState().localRedaction.customWords).toEqual(['second'])
+  })
+
+  it('restores the last persisted value when the newest save fails', async () => {
+    const updateUser = vi.fn()
+      .mockResolvedValueOnce({ ok: true })
+      .mockRejectedValueOnce(new Error('save failed'))
+
+    vi.doMock('../api/settings', () => ({
+      settingsApi: {
+        getUser: vi.fn(),
+        updateUser,
+        getPermissionMode: vi.fn(),
+        setPermissionMode: vi.fn(),
+        getCliLauncherStatus: vi.fn(),
+      },
+    }))
+
+    const { useSettingsStore } = await import('./settingsStore')
+    await useSettingsStore.getState().setLocalRedaction({
+      enabled: true,
+      personalInfo: false,
+      customWords: ['first'],
+    })
+    await expect(useSettingsStore.getState().setLocalRedaction({
+      enabled: true,
+      personalInfo: false,
+      customWords: ['second'],
+    })).rejects.toThrow('save failed')
+
+    expect(useSettingsStore.getState().localRedaction.customWords).toEqual(['first'])
+  })
+})
+
 describe('settingsStore theme persistence', () => {
   beforeEach(() => {
     vi.resetModules()

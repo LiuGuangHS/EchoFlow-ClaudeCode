@@ -28,7 +28,6 @@ export type ParsedGoalCommand =
   | { type: 'set'; objective: string }
 
 const GOAL_HOOK_MARKER = '<echoflow-code-goal-hook>'
-const LEGACY_GOAL_HOOK_MARKER = '<echoflow-code-goal-hook>'
 const GOAL_HOOK_TIMEOUT_SECONDS = 45
 const RESERVED_GOAL_ARGS = new Set(['status', 'pause', 'resume', 'complete'])
 const goalsByThread = new Map<string, ThreadGoal>()
@@ -127,10 +126,7 @@ export function ensureThreadGoalHookFromTranscript(
 }
 
 export function isGoalPromptHookCommand(command: string | undefined): boolean {
-  return typeof command === 'string' && (
-    command.includes(GOAL_HOOK_MARKER) ||
-    command.includes(LEGACY_GOAL_HOOK_MARKER)
-  )
+  return typeof command === 'string' && command.includes(GOAL_HOOK_MARKER)
 }
 
 export function goalObjectiveFromHookCommand(command: string | undefined): string | null {

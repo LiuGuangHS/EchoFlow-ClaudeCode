@@ -1,4 +1,5 @@
 import { formatImHelp } from '../common/format.js'
+import { ECHOFLOW_PRODUCT_NAME } from '../common/brand.js'
 import { listProjectSessionHistory, restoreSelectedSession } from '../common/session-selection.js'
 import { SESSION_RECONNECT_NOTICE, type SessionRestoreResult } from '../common/session-recovery.js'
 import type { SessionEntry } from '../common/session-store.js'
@@ -125,7 +126,7 @@ export async function ensureAuthorizedTelegramPrivateChat(
 ): Promise<boolean> {
   if (!ctx.from || ctx.chat?.type !== 'private') return false
   if (isAllowedUser(ctx.from.id)) return true
-  await ctx.reply('🔒 未授权。请在 Claude Code 桌面端生成配对码后发送给我。')
+  await ctx.reply(`🔒 未授权。请在 ${ECHOFLOW_PRODUCT_NAME} 桌面端生成配对码后发送给我。`)
   return false
 }
 
@@ -760,7 +761,7 @@ export function createTelegramCommandController(deps: TelegramCommandControllerD
 
 export function buildTelegramHelpText(): string {
   return [
-    '👋 Claude Code Bot 已就绪。',
+    `👋 ${ECHOFLOW_PRODUCT_NAME} Bot 已就绪。`,
     '',
     formatImHelp(),
     '',

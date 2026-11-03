@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-  openTraceCaptureSettings,
   openTraceDetail,
   openTraceList,
   returnToTraceList,
@@ -31,13 +30,6 @@ describe('traceNavigation', () => {
     expect(useTabStore.getState().activeTabId).toBe(SETTINGS_TAB_ID)
     expect(useTabStore.getState().tabs.find((tab) => tab.sessionId === SETTINGS_TAB_ID)?.type).toBe('settings')
     expect(useUIStore.getState().pendingSettingsTab).toBe('trace')
-  })
-
-  it('sends the capture switches to General, not to the list', () => {
-    openTraceCaptureSettings()
-
-    expect(useTabStore.getState().activeTabId).toBe(SETTINGS_TAB_ID)
-    expect(useUIStore.getState().pendingSettingsTab).toBe('general')
   })
 
   it('titles a detail tab with the session alone, no trace prefix', () => {

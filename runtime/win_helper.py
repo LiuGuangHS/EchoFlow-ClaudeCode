@@ -90,7 +90,9 @@ if hasattr(sys.stderr, "reconfigure"):
 pyautogui.FAILSAFE = False
 pyautogui.PAUSE = 0
 
-DESKTOP_HOST_BUNDLE_ID = "com.claude-code-haha.desktop"
+# Must match the frozen executable name and the bundle ID the desktop passes in
+# ECHOFLOW_COMPUTER_USE_HOST_BUNDLE_ID (desktop/package.json build.appId).
+DESKTOP_HOST_BUNDLE_ID = "com.echoflow.code.desktop"
 
 # ---------------------------------------------------------------------------
 # Key mapping — Windows uses 'win' instead of 'command'
@@ -523,7 +525,7 @@ def app_display_name(bundle_id: str) -> str | None:
 def _windows_bundle_id(exe_path: str) -> str:
     """Stable identity for the packaged Electron host; stem for other apps."""
     stem = Path(exe_path).stem
-    if stem.casefold() == "claude code haha":
+    if stem.casefold() == "echoflow code":
         return DESKTOP_HOST_BUNDLE_ID
     return stem
 
@@ -811,7 +813,7 @@ SM_CYVIRTUALSCREEN = 79
 try:
     _INPUT_TAG = int(os.environ["ECHOFLOW_COMPUTER_USE_INPUT_TAG"]) & 0xFFFFFFFF
 except (KeyError, TypeError, ValueError):
-    _INPUT_TAG = int.from_bytes(os.urandom(4), "little") or 0x43434841
+    _INPUT_TAG = int.from_bytes(os.urandom(4), "little") or 0x45434846
 
 _LRESULT = ctypes.c_ssize_t
 _HOOKPROC = ctypes.WINFUNCTYPE(

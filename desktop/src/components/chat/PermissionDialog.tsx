@@ -99,7 +99,9 @@ function getPermissionTitle(
   const obj = (input && typeof input === 'object') ? input as Record<string, unknown> : {}
   const filePath = typeof obj.file_path === 'string' ? obj.file_path : ''
   const fileName = filePath ? filePath.split('/').pop() || filePath : ''
-  const actor = displayName || 'Claude'
+  // Without an agent display name the prompt still has to name who is asking;
+  // it is our product, not the runtime the request came from.
+  const actor = displayName || 'EchoFlow'
 
   switch (toolName) {
     case 'Edit':

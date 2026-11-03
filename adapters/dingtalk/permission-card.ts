@@ -1,5 +1,6 @@
 import { truncateInput } from '../common/format.js'
 import { parsePermitCallbackData, type PermissionDecision } from '../common/permission.js'
+import { ECHOFLOW_PRODUCT_NAME } from '../common/brand.js'
 
 export const DINGTALK_PERMISSION_CARD_CALLBACK_ROUTE = 'permission'
 
@@ -18,7 +19,7 @@ export function buildDingTalkPermissionCardParams(
   const denyValue = { action: 'permit', requestId, allowed: false }
 
   return {
-    title: 'Claude Code 需要权限确认',
+    title: `${ECHOFLOW_PRODUCT_NAME} 需要权限确认`,
     toolName,
     requestId,
     inputPreview: truncateInput(input, 600),

@@ -377,6 +377,16 @@ describe('overlay opacity contract', () => {
     expect(fallback![1]).toMatch(/background:\s*rgb\(var\(--cc-bg-rgb\)\)/)
   })
 
+  it('disables glass blur for reduced-transparency and forced-colors users', () => {
+    const fallback = normalizedCss.match(
+      /@media \(prefers-reduced-transparency: reduce\), \(forced-colors: active\)\s*\{\s*\.glass-panel \{([^}]*)\}/,
+    )
+    expect(fallback, 'expected accessibility fallbacks for .glass-panel').not.toBeNull()
+    expect(fallback![1]).toMatch(/background:\s*var\(--color-surface-dialog\)/)
+    expect(fallback![1]).toMatch(/backdrop-filter:\s*none/)
+    expect(fallback![1]).toMatch(/-webkit-backdrop-filter:\s*none/)
+  })
+
   it('keeps the dialog panel off backdrop-filter entirely', () => {
     const rule = normalizedCss.match(/\n\.dialog-panel \{([^}]*)\}/)
     expect(rule, 'expected a .dialog-panel rule').not.toBeNull()

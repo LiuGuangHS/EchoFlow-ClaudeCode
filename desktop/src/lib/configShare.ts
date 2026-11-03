@@ -1,6 +1,5 @@
 import * as pako from 'pako'
 import type { ShareableConfig, ShareableProvider } from '../types/configShare'
-import type { SavedProvider } from '../types/provider'
 
 export type { ShareableConfig, ShareableProvider } from '../types/configShare'
 
@@ -97,52 +96,6 @@ function containsSensitiveData(value: unknown): boolean {
   if (Array.isArray(value)) return value.some(containsSensitiveData)
   if (!isRecord(value)) return false
   return Object.entries(value).some(([key, nested]) => SENSITIVE_KEYS.test(key) || containsSensitiveData(nested))
-}
-
-/** Builds a strict import DTO instead of copying local IDs or credential metadata. */
-export function sanitizeProviderForSharing(provider: SavedProvider): ShareableProvider {
-  return {
-    presetId: provider.presetId,
-    name: provider.name,
-    baseUrl: provider.baseUrl,
-    apiFormat: provider.apiFormat,
-    ...(provider.authStrategy && { authStrategy: provider.authStrategy }),
-    ...(provider.runtimeKind && { runtimeKind: provider.runtimeKind }),
-    models: { ...provider.models },
-    ...(provider.model1mSupport && { model1mSupport: { ...provider.model1mSupport } }),
-    ...(provider.autoCompactWindow !== undefined && { autoCompactWindow: provider.autoCompactWindow }),
-    ...(provider.modelContextWindows && { modelContextWindows: { ...provider.modelContextWindows } }),
-    ...(provider.toolSearchEnabled !== undefined && { toolSearchEnabled: provider.toolSearchEnabled }),
-    ...(provider.disableExperimentalBetas !== undefined && { disableExperimentalBetas: provider.disableExperimentalBetas }),
-    ...(provider.supportsNestedToolResultMedia !== undefined && { supportsNestedToolResultMedia: provider.supportsNestedToolResultMedia }),
-    ...(provider.requestCompatibility && { requestCompatibility: pickRequestCompatibility(provider.requestCompatibility) }),
-    ...(provider.imageGeneration && {
-      imageGeneration: {
-        model: provider.imageGeneration.model,
-        ...(provider.imageGeneration.baseUrl && { baseUrl: provider.imageGeneration.baseUrl }),
-      },
-    }),
-    ...(provider.notes && { notes: provider.notes }),
-  }
-}
-
-function pickRequestCompatibility(value: NonNullable<SavedProvider['requestCompatibility']>) {
-  const fields = [
-    'maxOutputTokens', 'outputTokenLimit', 'outputTokenField', 'sampling', 'reasoning',
-    'parallelTools', 'structuredOutput',
-  ] as const
-  return Object.fromEntries(fields.flatMap(key => value[key] === undefined ? [] : [[key, value[key]]]))
-}
-
-export const providerToShareable = sanitizeProviderForSharing
-
-export function generateDeepLinkUrl(config: ShareableConfig): string {
-  return `echoflowcode://config/import?v=1&data=${encodeConfigPayload(config)}`
-}
-
-/** Compatibility alias for provider-oriented deep-link templates. */
-export function generateProviderDeepLinkUrl(config: ShareableConfig): string {
-  return `echoflowcode://provider/add?v=1&data=${encodeConfigPayload(config)}`
 }
 
 export function parseDeepLinkUrl(url: string): { action: string; params: URLSearchParams } | null {

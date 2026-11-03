@@ -232,6 +232,10 @@ describe('IconButton', () => {
 
   it('rounds fully when shape is circle', () => {
     const { container } = render(<IconButton icon={<span />} label="Avatar" shape="circle" />)
-    expect(container.firstElementChild?.className).toContain('rounded-full')
+    const roundedClasses = container.firstElementChild!.className
+      .split(/\s+/)
+      .filter((className) => className.startsWith('rounded-'))
+
+    expect(roundedClasses).toEqual(['rounded-full'])
   })
 })

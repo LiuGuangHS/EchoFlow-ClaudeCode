@@ -335,7 +335,62 @@ describe('Content-only pages render without errors', () => {
     render(<ActiveSession />)
 
     const composer = screen.getByRole('textbox')
-    expect(composer).toHaveAttribute('data-placeholder', 'Ask Claude to edit, debug or explain...')
+    expect(composer).toHaveAttribute('data-placeholder', 'Ask EchoFlow to edit, debug or explain...')
+
+    resetPageStores()
+  })
+
+  it('ActiveSession localizes a session the server left with its placeholder title', () => {
+    const SESSION_ID = 'test-active-session-placeholder-title'
+    useTabStore.setState({ tabs: [{ sessionId: SESSION_ID, title: 'Test', type: 'session' as const, status: 'idle' }], activeTabId: SESSION_ID })
+    useChatStore.setState({
+      sessions: {
+        [SESSION_ID]: {
+          messages: [{
+            id: 'msg-1',
+            type: 'user_text',
+            content: 'hello',
+            timestamp: Date.now(),
+          }],
+          chatState: 'idle',
+          connectionState: 'connected',
+          streamingText: '',
+          streamingToolInput: '',
+          activeToolUseId: null,
+          activeToolName: null,
+          activeThinkingId: null,
+          pendingPermission: null,
+          pendingComputerUsePermission: null,
+          tokenUsage: { input_tokens: 0, output_tokens: 0 },
+          streamingResponseChars: 0,
+          elapsedSeconds: 0,
+          statusVerb: '',
+          slashCommands: [],
+          agentTaskNotifications: {},
+          elapsedTimer: null,
+        },
+      },
+    })
+    useSessionStore.setState({
+      sessions: [{
+        id: SESSION_ID,
+        title: 'New Session',
+        createdAt: '2026-04-10T00:00:00.000Z',
+        modifiedAt: '2026-04-10T00:00:00.000Z',
+        messageCount: 1,
+        projectPath: '',
+        workDir: null,
+        workDirExists: true,
+      }],
+      activeSessionId: SESSION_ID,
+      isLoading: false,
+      error: null,
+    })
+
+    render(<ActiveSession />)
+
+    expect(screen.getByText('Untitled Session')).toBeInTheDocument()
+    expect(screen.queryByText('New Session')).not.toBeInTheDocument()
 
     resetPageStores()
   })

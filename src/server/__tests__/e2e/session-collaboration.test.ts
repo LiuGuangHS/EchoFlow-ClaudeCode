@@ -22,7 +22,7 @@ test('desktop host dispatches independent sessions, exchanges messages, exposes 
   const original = { ...process.env }
   const env = createSandboxedTestEnvironment(home, {
     CLAUDE_CLI_PATH: fileURLToPath(new URL('../fixtures/mock-sdk-cli.ts', import.meta.url)),
-    CC_HAHA_DISABLE_TERMINAL_SHELL_ENV: '1', MOCK_SDK_STREAM_DELAY_MS: '100',
+    ECHOFLOW_DISABLE_TERMINAL_SHELL_ENV: '1', MOCK_SDK_STREAM_DELAY_MS: '100',
     DISABLE_TELEMETRY: '1', DISABLE_ERROR_REPORTING: '1', DISABLE_AUTOUPDATER: '1',
   })
   for (const key of Object.keys(process.env)) delete process.env[key]

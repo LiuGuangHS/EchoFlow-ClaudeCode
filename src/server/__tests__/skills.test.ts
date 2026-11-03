@@ -145,7 +145,7 @@ describe('Skills API', () => {
     const candidate = body.skills.find((item: { name: string }) => item.name === 'mention-fixture')
     expect(candidate.kind).toBe('skill')
     expect(candidate.modelText).toBe('Use the Skill tool with skill: "mention-fixture" for this request.')
-    expect(body.plugins.some((item: { source: string }) => item.source.endsWith('@haha-connectors'))).toBe(false)
+    expect(body.plugins.some((item: { source: string }) => item.source.endsWith('@echoflow-connectors'))).toBe(false)
   })
 
   it('offers bundled imagegen to @ mentions only when the session provider generates images', async () => {

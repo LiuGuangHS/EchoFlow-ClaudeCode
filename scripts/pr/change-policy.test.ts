@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { evaluateChangePolicy } from './change-policy'
 
 describe('evaluateChangePolicy', () => {
-  test('blocks CLI core changes without an override label', () => {
+  test('blocks production changes without matching test overrides', () => {
     const result = evaluateChangePolicy([
       'src/commands/help.ts',
       'desktop/src/pages/Settings.tsx',
@@ -19,13 +19,12 @@ describe('evaluateChangePolicy', () => {
     expect(result.cliCoreFiles).toEqual(['src/commands/help.ts'])
   })
 
-  test('allows CLI core changes with a maintainer override label', () => {
+  test('blocks root runtime changes without matching test overrides', () => {
     const result = evaluateChangePolicy(
       ['src/tools/WebSearchTool/backend.ts'],
-      ['allow-cli-core-change', 'allow-missing-tests'],
     )
 
-    expect(result.blocked).toBe(false)
+    expect(result.blocked).toBe(true)
     expect(result.areas).toEqual(['cli-core'])
     expect(result.checks.server).toBe(true)
   })
@@ -185,6 +184,16 @@ describe('evaluateChangePolicy', () => {
     expect(result.checks.desktopNative).toBe(true)
   })
 
+  test('routes desktop launcher scripts to native without selecting the desktop UI lane', () => {
+    const result = evaluateChangePolicy([
+      'desktop/scripts/electron-dev.ts',
+      'desktop/scripts/dev-launcher.test.ts',
+    ])
+
+    expect(result.checks.desktop).toBe(false)
+    expect(result.checks.desktopNative).toBe(true)
+  })
+
   test.each([
     'native/cu-helper/Sources/cu-helper/VirtualCursor.swift',
     'native/cu-helper/Tests/CuHelperTests/VirtualCursorResourceTests.swift',
@@ -338,7 +347,7 @@ describe('evaluateChangePolicy', () => {
     }
   })
 
-  test('applies cli-core approval to the whole root runtime except server', () => {
+  test('routes cli-core across the whole root runtime and blocks missing tests', () => {
     const runtime = evaluateChangePolicy(['src/services/example.ts'])
     expect(runtime.areas).toEqual(['cli-core'])
     expect(runtime.cliCoreFiles).toEqual(['src/services/example.ts'])
@@ -348,7 +357,7 @@ describe('evaluateChangePolicy', () => {
     expect(server.areas).toEqual(['server'])
     expect(server.cliCoreFiles).toEqual([])
 
-    const entrypoint = evaluateChangePolicy(['bin/echoflow-code'], ['allow-cli-core-change'])
+    const entrypoint = evaluateChangePolicy(['bin/echoflow-code'])
     expect(entrypoint.checks.server).toBe(true)
     expect(entrypoint.checks.policy).toBe(true)
   })
@@ -375,7 +384,7 @@ describe('evaluateChangePolicy', () => {
     const covered = evaluateChangePolicy([
       'src/services/api/client.ts',
       'src/services/api/client.test.ts',
-    ], ['allow-cli-core-change'])
+    ])
     expect(covered.blocked).toBe(false)
     expect(covered.missingTestSignals).toEqual([])
   })
@@ -472,6 +481,33 @@ describe('evaluateChangePolicy', () => {
         // Cleanup failed, likely file lock on Windows
       }
     }
+  }, 30000)
+
+  test('prints each missing-test signal once in the impact report', async () => {
+    if (process.platform === 'win32') return
+    const proc = Bun.spawn([
+      'bun',
+      'run',
+      'scripts/pr/impact-report.ts',
+      '--files',
+      'desktop/src/pages/Settings.tsx',
+      '--no-dependency-graph',
+    ], {
+      cwd: process.cwd(),
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+
+    const exitCode = await Promise.race([
+      proc.exited,
+      new Promise<number>((_, reject) => setTimeout(() => reject(new Error('Process timeout')), 20000)),
+    ])
+    expect(exitCode).toBe(0)
+
+    const output = await new Response(proc.stdout).text()
+    const signal = 'Desktop product files changed without a desktop test file in the PR.'
+    expect(output.split(signal).length - 1).toBe(1)
+    expect(output).toContain(`- BLOCKING: ${signal}`)
   }, 30000)
 })
 

@@ -42,7 +42,7 @@ type OutputStyleListItem = {
 
 const DEFAULT_OUTPUT_STYLE_LABEL = 'Default'
 const DEFAULT_OUTPUT_STYLE_DESCRIPTION =
-  'Claude completes coding tasks efficiently and provides concise responses'
+  'EchoFlow completes coding tasks efficiently and provides concise responses'
 
 export async function handleSettingsApi(
   req: Request,

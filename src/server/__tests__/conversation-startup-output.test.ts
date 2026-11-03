@@ -64,4 +64,23 @@ describe('ConversationService startup output', () => {
       'CLI exited during startup (code 1): provider rejected request: invalid model id',
     )
   }, 10_000)
+
+  test('rejects the official OAuth session before spawning when local redaction is enabled', async () => {
+    await fs.writeFile(
+      path.join(tmpDir, 'settings.json'),
+      JSON.stringify({
+        localRedaction: { enabled: true, personalInfo: false, customWords: [] },
+      }),
+      'utf8',
+    )
+
+    await expect(
+      service.startSession(
+        `redaction-official-${crypto.randomUUID()}`,
+        tmpDir,
+        'ws://127.0.0.1:1/sdk/redaction-official?token=test-token',
+        { providerId: null },
+      ),
+    ).rejects.toMatchObject({ code: 'LOCAL_REDACTION_REQUIRED' })
+  })
 })

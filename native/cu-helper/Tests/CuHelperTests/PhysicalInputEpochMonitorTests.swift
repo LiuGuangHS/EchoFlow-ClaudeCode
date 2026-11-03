@@ -31,6 +31,17 @@ final class PhysicalInputEpochMonitorTests: XCTestCase {
         XCTAssertEqual(injectionSource.userData, actionSource.userData)
     }
 
+    /// The marker is a provenance stamp, not a random value. It must not spell
+    /// a retired product name in its bytes.
+    func testMarkerCarriesNoRetiredBrandFingerprint() {
+        let bytes = (0..<8).map { index in
+            UInt8((HelperEventMarker.value >> (56 - index * 8)) & 0xFF)
+        }
+        let spelling = String(decoding: bytes, as: UTF8.self)
+
+        XCTAssertFalse(spelling.lowercased().contains("ccha"))
+    }
+
     /// Fixed counters → fixed epoch, and reading twice changes nothing.
     func testStableCountersProduceAStableEpoch() {
         let monitor = PhysicalInputEpochMonitor(counterReader: { _ in 7 })
