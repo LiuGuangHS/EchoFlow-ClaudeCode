@@ -117,6 +117,23 @@ describe('dsh Host runtime driver', () => {
     expect(host.calls[0]).toContain('queue:item-1')
   })
 
+  test('resume retains the native session while events keep the product session id', async () => {
+    const host = createHost()
+    const nativeSessionId = await host.client.sessions.create({ cwd: '/tmp' })
+    const connection = await createDshHostDriver({ connectHost: async () => host.client }).start({ installation: {} as never, runId: 'resume-run', cwd: '/tmp' })
+    try {
+      const session = await connection.resumeSession({ sessionId: 'product-resumed', nativeSessionId, cwd: '/tmp' })
+      expect(session.nativeSessionId).toBe(nativeSessionId)
+      const events: RuntimeEvent[] = []
+      for await (const event of session.send({ text: 'hello' })) events.push(event)
+      expect(events.some(event => event.kind === 'assistant.delta')).toBe(true)
+      expect(events.every(event => event.sessionId === 'product-resumed' && event.runId === 'resume-run')).toBe(true)
+      expect(host.client.sessions.list.getSnapshot().items).toHaveLength(1)
+    } finally {
+      await connection.close()
+    }
+  })
+
   test('a missing resumed session rejects with an open error', async () => {
     const host = createHost()
     const driver = createDshHostDriver({ connectHost: async () => host.client })

@@ -81,11 +81,11 @@ export function createDshHostDriver(options: DshHostDriverOptions): RuntimeDrive
       const sessions = new Set<RuntimeSession>()
       let closed = false
 
-      async function retain(sessionId: string, cwd: string, create: boolean): Promise<HostSessionReference> {
+      async function retain(sessionId: string, cwd: string, create: boolean, nativeSessionId?: string): Promise<HostSessionReference> {
         const existing = opening.get(sessionId)
         if (existing) return existing
         const promise = (async () => {
-          const nativeId = create ? await host.sessions.create({ cwd, sessionId }) : sessionId
+          const nativeId = create ? await host.sessions.create({ cwd, sessionId }) : nativeSessionId!
           const reference = host.sessions.retain(nativeId, { source: 'echoflow-runtime' })
           try {
             await reference.ready
@@ -103,9 +103,9 @@ export function createDshHostDriver(options: DshHostDriverOptions): RuntimeDrive
         }
       }
 
-      async function open(input: { sessionId: string; cwd: string; create: boolean; runId: string }): Promise<RuntimeSession> {
+      async function open(input: { sessionId: string; nativeSessionId?: string; cwd: string; create: boolean; runId: string }): Promise<RuntimeSession> {
         if (closed) throw new Error('dsh Host connection is closed')
-        const reference = await retain(input.sessionId, input.cwd, input.create)
+        const reference = await retain(input.sessionId, input.cwd, input.create, input.nativeSessionId)
         const nativeSessionId = reference.sessionId
         const sessionId = input.sessionId
         const capabilities = dshHostCapabilities()
