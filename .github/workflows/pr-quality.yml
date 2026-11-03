@@ -634,6 +634,7 @@ jobs:
     needs:
       - scope-plan
       - harness-audit
+      - harness-checks
       - policy-enforcement
       - desktop-checks
       - server-checks

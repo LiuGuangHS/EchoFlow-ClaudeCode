@@ -204,6 +204,19 @@ describe('PR quality workflow', () => {
     expect(workflow).toContain('require_selected "coverage-checks"')
   })
 
+  test('declares every quality job referenced by the stable gate as a dependency', () => {
+    const jobs = workflowJobs(readFileSync('.github/workflows/pr-quality.yml', 'utf8'))
+    const gate = jobs['pr-quality-gate']!
+    const gateScript = gate.steps!.find(step => step.run?.includes('require_selected'))!.run!
+    const referencedJobs = [...gateScript.matchAll(/needs\.([a-z0-9-]+)\.(?:result|outputs\.)/g)]
+      .map(match => match[1])
+      .filter((job): job is string => Boolean(job))
+    const dependencies = Array.isArray(gate.needs) ? gate.needs : [gate.needs]
+
+    expect(referencedJobs.length).toBeGreaterThan(0)
+    expect(dependencies).toEqual(expect.arrayContaining([...new Set(referencedJobs)]))
+  })
+
   test('routes the deterministic agent flow through the scope plan and keeps its evidence', () => {
     const workflow = readFileSync('.github/workflows/pr-quality.yml', 'utf8')
     const jobs = workflowJobs(workflow)

@@ -26,7 +26,8 @@ describe('download page theme contract', () => {
     assert.match(pageSource, /className="dl-release-summary"/)
   })
 
-  test('retains shared breakpoints and theme tokens', () => {
+  test('tightens the first-screen spacing while retaining shared breakpoints and theme tokens', () => {
+    assert.match(styleSource, /padding: clamp\(44px, 5vw, 72px\).*56px;/)
     assert.match(styleSource, /@media \(max-width: 1180px\)/)
     assert.match(styleSource, /@media \(max-width: 900px\)/)
     assert.match(styleSource, /@media \(max-width: 620px\)/)
