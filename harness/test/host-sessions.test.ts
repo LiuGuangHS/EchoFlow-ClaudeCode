@@ -116,4 +116,10 @@ describe('the Host sessions facade', () => {
     unsubscribe()
     reference.release()
   }, TEST_TIMEOUT)
+
+  test('lists created sessions in a synchronous snapshot', async () => {
+    const { client, workspace } = await connect()
+    const sessionId = await client.sessions.create({ cwd: workspace })
+    expect(client.sessions.list.getSnapshot().items).toEqual(expect.arrayContaining([{ sessionId }]))
+  }, TEST_TIMEOUT)
 })

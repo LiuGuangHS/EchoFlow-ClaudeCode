@@ -14,6 +14,7 @@ function valueOf(result) {
  */
 export function createHostSessions(remote) {
   const references = new Set()
+  const known = new Set()
 
   function retain(sessionId) {
     const entries = []
@@ -98,12 +99,17 @@ export function createHostSessions(remote) {
       },
     }
     references.add(reference)
+    known.add(sessionId)
     return reference
   }
 
   return {
+    // Synchronous view of the sessions this client created or retained.
+    list: { getSnapshot: () => ({ items: [...known].map(sessionId => ({ sessionId })) }) },
     async create(options = {}) {
-      return valueOf(await remote.session.create(options)).sessionId
+      const { sessionId } = valueOf(await remote.session.create(options))
+      known.add(sessionId)
+      return sessionId
     },
     retain,
     dispose() {
