@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.4.0",
+    "@deepseek-ai/cordis": "4.0.5",
     "@deepseek-ai/dsh-acp-app": "0.2.1-rc.5",
     "@deepseek-ai/dsh-api-gateway": "0.2.1-rc.5",
     "@deepseek-ai/dsh-api-session-controller": "0.2.1-rc.5",
@@ -27,6 +28,7 @@
     "@deepseek-ai/dsh-session-reference": "0.2.1-rc.5",
     "@deepseek-ai/dsh-session-stats": "0.2.1-rc.5",
     "@deepseek-ai/dsh-tool-schedule": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-typert-registry": "0.2.1-rc.5",
     "@deepseek-ai/dsh-workspace": "0.2.1-rc.5",
     "@deepseek-ai/dsh-workspace-changes": "0.2.1-rc.5",
     "@echoflow/egress-guard": "file:./bundles/egress-guard",

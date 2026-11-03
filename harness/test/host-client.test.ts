@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { connectDshHost } from '../src/hostClient.js'
 import { startDshHost } from '../src/hostProcess.js'
 
 const TEST_TIMEOUT = 60_000
@@ -77,5 +78,17 @@ describe('the official dsh Host seam', () => {
     expect(invalidToken.status).toBe(401)
     const invalidInteractions = await fetch(`${host.origin}/connect?token=${encodeURIComponent(host.token)}&interactions=maybe`, { headers })
     expect(invalidInteractions.status).toBe(400)
+  }, TEST_TIMEOUT)
+
+  test('lists sessions through the mounted Remote session namespace', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'echoflow-dsh-host-'))
+    sandboxes.push(root)
+    const host = await startDshHost({ cwd: join(root, 'workspace'), env: sandboxEnv(root) })
+    hosts.push(host)
+    const client = await connectDshHost({ origin: host.origin, token: host.token })
+    clients.push(client)
+
+    const listed = await client.remote.session.list({})
+    expect(listed).toMatchObject({ ok: true })
   }, TEST_TIMEOUT)
 })

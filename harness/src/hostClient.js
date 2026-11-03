@@ -1,6 +1,8 @@
 import { WebSocket } from 'ws'
 import { installConnection } from '@deepseek-ai/dsh-client-connection/client'
+import { apply as applyRegistry } from '@deepseek-ai/dsh-typert-registry/client'
 import { apply as applyGateway } from '@deepseek-ai/dsh-api-gateway/client'
+import sessionRemote from '@deepseek-ai/dsh-api-session-controller/remote'
 import { Context } from '@deepseek-ai/cordis'
 
 function cookieValue(setCookie) {
@@ -28,14 +30,27 @@ export async function connectDshHost({ origin, token }) {
   const context = new Context()
   const transport = {
     streamBaseUrl: origin,
-    fetch: (input, init) => fetch(input, {
-      ...init,
-      headers: { ...(init?.headers ?? {}), cookie },
-    }),
+    // The browser client sends relative paths (`api/session/list`) and lets the
+    // page resolve them; Node's fetch rejects them, so resolve against the Host.
+    fetch: (input, init) => {
+      const headers = new Headers(init?.headers)
+      headers.set('cookie', cookie)
+      const target = typeof input === 'string' ? new URL(input, `${origin}/`) : input
+      return fetch(target, { ...init, headers })
+    },
     createWebSocket: url => connectionWebSocket(url, cookie),
   }
+  applyRegistry(context)
   installConnection(context, { transport })
   applyGateway(context)
+  try {
+    // The session namespace is not part of the gateway; mounting the generated
+    // contribution is what installs `remote.session` on a Node client.
+    await context.remote.$mount(sessionRemote)
+  } catch (error) {
+    await context.fiber.dispose()
+    throw error
+  }
   return {
     context,
     connection: context.connection,
