@@ -185,6 +185,9 @@ function createFakeSession(shape: FakeShape, input: FakeInput): RuntimeSession {
       }
       pending.resolve(optionId)
     },
+    async updateQueue() {
+      throw new UnsupportedRuntimeCapabilityError('prompt.queue')
+    },
     async interrupt() {
       if (!active) return { status: 'not-running', forcedTerminate: false }
       interruptRequested = true

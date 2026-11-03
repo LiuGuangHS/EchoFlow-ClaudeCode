@@ -14,6 +14,12 @@ function cap(state: CapabilityState, note?: string): Capability {
 const native = (note?: string) => cap('native', note)
 const unsupported = (note?: string) => cap('unsupported', note)
 
+export function dshHostCapabilities(): RuntimeCapabilities {
+  const capabilities = dshBaselineCapabilities()
+  capabilities.prompt.queue = { state: 'native', source: 'extension' }
+  return capabilities
+}
+
 export function dshBaselineCapabilities(): RuntimeCapabilities {
   return {
     session: {
