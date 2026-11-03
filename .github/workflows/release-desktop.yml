@@ -59,7 +59,7 @@ jobs:
       release_tag: ${{ steps.resolve.outputs.release_tag }}
     steps:
       - name: Validate official release authorization
-        if: github.event_name == 'workflow_call'
+        if: inputs.official_release == true
         shell: bash
         env:
           OFFICIAL_RELEASE: ${{ inputs.official_release == true }}
@@ -78,7 +78,7 @@ jobs:
           fi
 
       - name: Validate release tag input
-        if: github.event_name != 'push' && inputs.release_tag != ''
+        if: inputs.release_tag != ''
         shell: bash
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
@@ -104,7 +104,7 @@ jobs:
         run: bun run check:release-surface
 
       - name: Verify version matches tag
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && inputs.release_tag == ''
         shell: bash
         run: |
           VERSION=$(node -p "require('./desktop/package.json').version")
@@ -115,7 +115,7 @@ jobs:
           fi
 
       - name: Verify release tag matches packaged version
-        if: github.event_name != 'push' && inputs.release_tag != ''
+        if: inputs.release_tag != ''
         shell: bash
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
@@ -470,7 +470,7 @@ jobs:
           echo "value=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Validate tag matches version
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && inputs.release_tag == ''
         shell: bash
         run: |
           EXPECTED_TAG="v${{ steps.version.outputs.value }}"
@@ -480,7 +480,7 @@ jobs:
           fi
 
       - name: Validate release tag matches version
-        if: github.event_name != 'push' && inputs.release_tag != ''
+        if: inputs.release_tag != ''
         shell: bash
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
@@ -1104,7 +1104,7 @@ jobs:
           if-no-files-found: error
 
   publish-release:
-    if: (github.event_name == 'workflow_call' && inputs.official_release == true) || (github.event_name == 'workflow_dispatch' && inputs.draft == true)
+    if: inputs.official_release == true || (github.event_name == 'workflow_dispatch' && inputs.draft == true)
     outputs:
       version: ${{ steps.version.outputs.value }}
     needs:
@@ -1126,7 +1126,7 @@ jobs:
           echo "value=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Validate tag matches version
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && inputs.release_tag == ''
         shell: bash
         run: |
           EXPECTED_TAG="v${{ steps.version.outputs.value }}"
@@ -1136,7 +1136,7 @@ jobs:
           fi
 
       - name: Validate release tag matches version
-        if: github.event_name != 'push' && inputs.release_tag != ''
+        if: inputs.release_tag != ''
         shell: bash
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
@@ -1401,7 +1401,7 @@ jobs:
           fi
 
       - name: Publish GitHub release after complete upload
-        if: github.event_name == 'workflow_call' && inputs.official_release == true
+        if: inputs.official_release == true
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1437,7 +1437,7 @@ jobs:
   # The condition matches the undraft step: draft releases never trigger a sync.
   site-release-sync:
     needs: publish-release
-    if: github.event_name == 'workflow_call' && inputs.official_release == true
+    if: inputs.official_release == true
     permissions:
       contents: read
       pages: write

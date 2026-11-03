@@ -528,7 +528,7 @@ describe('release desktop workflow', () => {
     const publishJob = extractJob(workflow, 'publish-release')
 
     expect(workflow).not.toContain('publish_draft_release:')
-    expect(publishJob).toContain("if: (github.event_name == 'workflow_call' && inputs.official_release == true) || (github.event_name == 'workflow_dispatch' && inputs.draft == true)")
+    expect(publishJob).toContain("if: inputs.official_release == true || (github.event_name == 'workflow_dispatch' && inputs.draft == true)")
     expect(publishJob).toContain('Refuse to overwrite an existing published release')
     expect(publishJob).toContain("if: github.event_name == 'workflow_dispatch' && inputs.draft == true")
     expect(publishJob).toContain('Refusing to overwrite published release v${{ steps.version.outputs.value }} with manual draft artifacts')
@@ -560,7 +560,7 @@ describe('release desktop workflow', () => {
     expect(publishJob).toContain('desktop/scripts/install-macos-unsigned.sh')
     expect(publishJob).toContain('draft: true')
     expect(publishJob).toContain('Publish GitHub release after complete upload')
-    expect(publishJob).toContain("if: github.event_name == 'workflow_call' && inputs.official_release == true")
+    expect(publishJob).toContain("if: inputs.official_release == true")
     expect(publishJob).toContain('--method PATCH')
     expect(publishJob).toContain('releases/${RELEASE_ID}')
     expect(publishJob).toContain('undrafted_id')
@@ -589,7 +589,7 @@ describe('release desktop workflow', () => {
     const workflow = readReleaseWorkflow()
     const publishJob = extractJob(workflow, 'publish-release')
     const syncJob = extractJob(workflow, 'site-release-sync')
-    const undraftCondition = "if: github.event_name == 'workflow_call' && inputs.official_release == true"
+    const undraftCondition = "if: inputs.official_release == true"
     expect(publishJob).toContain('outputs:')
     expect(publishJob).toContain('version: ${{ steps.version.outputs.value }}')
     expect(syncJob).toBeTruthy()
@@ -985,8 +985,8 @@ describe('release desktop workflow', () => {
     const publishJob = extractJob(workflow, 'publish-release')
     const syncJob = extractJob(workflow, 'site-release-sync')
 
-    expect(publishJob).toContain("(github.event_name == 'workflow_call' && inputs.official_release == true) || (github.event_name == 'workflow_dispatch' && inputs.draft == true)")
-    expect(syncJob).toContain("github.event_name == 'workflow_call' && inputs.official_release == true")
+    expect(publishJob).toContain("inputs.official_release == true || (github.event_name == 'workflow_dispatch' && inputs.draft == true)")
+    expect(syncJob).toContain("inputs.official_release == true")
     expect(workflow).toContain("default: true")
     expect(publishJob).not.toContain("github.event_name == 'workflow_dispatch' && inputs.draft == false")
   })
@@ -1016,6 +1016,15 @@ describe('release desktop workflow', () => {
     expect(contractJob).toContain('inputs.official_release == true')
     expect(contractJob).toContain('inputs.release_sha')
     expect(workflow).toContain('release-please.yml')
+  })
+
+  test('reusable official call does not depend on the caller event name', () => {
+    const workflow = readReleaseWorkflow()
+
+    // 被 workflow_call 调用时 github.event_name 沿用调用方的 push，ref_name 是 main。
+    expect(workflow).not.toContain("github.event_name == 'workflow_call'")
+    expect(workflow).not.toContain("github.event_name != 'push'")
+    expect(workflow).toContain("github.event_name == 'push' && inputs.release_tag == ''")
   })
 
   test('all release jobs use immutable release SHA and verify peeled tag commit', () => {
