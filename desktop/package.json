@@ -15,7 +15,9 @@
     "productName": "EchoFlow Code",
     "protocols": {
       "name": "EchoFlow Code URL",
-      "schemes": ["echoflowcode"]
+      "schemes": [
+        "echoflowcode"
+      ]
     },
     "asar": true,
     "asarUnpack": [
