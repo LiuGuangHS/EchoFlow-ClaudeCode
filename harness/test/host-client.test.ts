@@ -91,4 +91,27 @@ describe('the official dsh Host seam', () => {
     const listed = await client.remote.session.list({})
     expect(listed).toMatchObject({ ok: true })
   }, TEST_TIMEOUT)
+
+  test('opens the Remote stream WebSocket and follows a session', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'echoflow-dsh-host-'))
+    sandboxes.push(root)
+    const host = await startDshHost({ cwd: join(root, 'workspace'), env: sandboxEnv(root) })
+    hosts.push(host)
+    const client = await connectDshHost({ origin: host.origin, token: host.token })
+    clients.push(client)
+
+    const created = await client.remote.session.create({ cwd: join(root, 'workspace') })
+    expect(created).toMatchObject({ ok: true })
+    const abort = new AbortController()
+    const stream = client.remote.session.follow({ address: { kind: 'session', sessionId: created.value.sessionId } }, abort.signal)
+    try {
+      const first = await Promise.race([
+        stream[Symbol.asyncIterator]().next(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('no follow frame within 10s')), 10_000)),
+      ])
+      expect(first.value).toMatchObject({ type: 'snapshot' })
+    } finally {
+      abort.abort()
+    }
+  }, TEST_TIMEOUT)
 })

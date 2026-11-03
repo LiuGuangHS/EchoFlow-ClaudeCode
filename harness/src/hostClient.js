@@ -11,12 +11,25 @@ function cookieValue(setCookie) {
 
 function connectionWebSocket(url, cookie) {
   const socket = new WebSocket(url, { headers: { cookie } })
+  // The gateway reads browser-style events (`event.data` as a string); ws hands
+  // `message` listeners a Buffer and an isBinary flag instead.
+  const wrapped = new Map()
   return {
     get readyState() { return socket.readyState },
     send(data) { socket.send(data) },
     close(code, reason) { socket.close(code, reason) },
-    addEventListener(type, listener) { socket.on(type, listener) },
-    removeEventListener(type, listener) { socket.off(type, listener) },
+    addEventListener(type, listener, options) {
+      const handler = type === 'message'
+        ? (data, isBinary) => listener({ data: isBinary ? data : data.toString('utf8') })
+        : listener
+      wrapped.set(listener, handler)
+      if (options?.once === true) socket.once(type, handler)
+      else socket.on(type, handler)
+    },
+    removeEventListener(type, listener) {
+      socket.off(type, wrapped.get(listener) ?? listener)
+      wrapped.delete(listener)
+    },
   }
 }
 
