@@ -113,9 +113,8 @@ artifacts/coverage/<timestamp>/coverage-report.json
 
 发版验证已经搬到 CI 里了，本地不需要再跑全量。日常流程：
 
-1. **开发迭代**：先跑本次行为的定向测试；不要仅凭目录名启动完整 surface gate。检查最终 diff、需要完整验证证据时，再运行 `bun run check:impact`，并按报告选择检查。
-2. **打 tag 前**（可选）：手动触发 GitHub Actions 里的 `Quality Check` workflow，确认代码库是绿的。
-3. **打 tag**：`release-desktop.yml` 自动跑内容门禁 + 并行验证 + 6 平台构建，全过了才发。
+1. **打 tag 前**（可选）：手动触发 GitHub Actions 里的 `Quality Check` workflow，确认代码库是绿的。
+2. **打 tag**：`release-desktop.yml` 自动跑内容门禁 + 并行验证 + 6 平台构建，全过了才发。
 
 如果确实要在本地跑一遍（比如网络不方便），用下面这组命令，覆盖面和 CI 验证一致：
 
@@ -145,7 +144,7 @@ bun run check:release-surface     # 发版面：品牌标记、版本/品牌漂�
 4. 只修复本次改动造成的失败；无关的既有失败或环境阻塞要如实报告，不要擅自扩大范围。
 5. 只有最终 diff 的 `bun run verify` 通过，才能声明 full validation。
 
-诊断 lane 失败时，先看 `artifacts/quality-runs/<timestamp>/report.md` 的 Summary / Result Matrix 和对应 `logs/<lane>.log`。coverage 失败看 `artifacts/coverage/<timestamp>/coverage-report.md` 或 `.json`，不要降低 baseline、threshold 或改写测试预期来掩盖失败。`bun run check:impact` 用于确定最终 diff 的检查范围；必须先读取 impact 结果，再启动它选中的检查，不得与 impact 分析并行抢跑。`check:native` 包含 sidecar 构建、打包和 package smoke，成本较高，仅在报告选中且交付证据需要时运行。检查失败或输出不完整时，先查看已有日志和进程；只有出现新的诊断依据时才重跑同一检查。没有后续改动或未解决风险时，不要反复运行已经通过的检查。无关的现有失败或环境阻塞应准确报告，而不是为了让结果变绿擅自扩大修改范围。
+诊断 lane 失败时，先看 `artifacts/quality-runs/<timestamp>/report.md` 的 Summary / Result Matrix 和对应 `logs/<lane>.log`。coverage 失败看 `artifacts/coverage/<timestamp>/coverage-report.md` 或 `.json`，不要降低 baseline、threshold 或改写测试预期来掩盖失败。`bun run check:impact` 用于确定最终 diff 的检查范围；必须先读取 impact 结果，再启动它选中的检查，不得与 impact 分析并行抢跑。检查失败或输出不完整时，先查看已有日志和进程；只有出现新的诊断依据时才重跑同一检查。没有后续改动或未解决风险时，不要反复运行已经通过的检查。无关的现有失败或环境阻塞应准确报告，而不是为了让结果变绿擅自扩大修改范围。
 
 合并时必须对冲突逐 hunk 裁决，不能整体套用 `--ours` 或 `--theirs`；发布前还要运行 `bun run check:release-surface` 审计公开身份。
 

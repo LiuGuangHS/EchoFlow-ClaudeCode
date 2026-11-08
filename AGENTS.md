@@ -95,6 +95,7 @@
 
 - 在 README、文档、release notes、package metadata、诊断导出、签名/隐私页、更新链接和桌面 About/profile 默认值中保持 EchoFlow 的署名、维护者、联系方式和产品身份一致。
 - 第三方版权和许可声明必须保留在它们覆盖的代码旁。若文件需要单独携带许可，将它们移动到 `THIRD_PARTY_LICENSES.md`；绝不删除许可证要求保留的声明。
+
 ## 提交边界
 
 - 使用 Conventional Commit 前缀和正常的产品分支前缀，例如 `fix/xxx`、`feat/xxx` 或 `docs/xxx`；不要创建 `codex/` 前缀的分支。
@@ -102,5 +103,5 @@
 
 ## 深入指南
 
-- 安装、测试或准备贡献时，从 `CONTRIBUTING.md` 开始；其余文档归属见“质量与验证边界”和“发布完整性”。
+- 安装、测试或准备贡献时，从 `CONTRIBUTING.md` 开始；其余文档归属见“验证与质量归属”和“发布完整性”。
 - 选择命令或判断改动需要哪些检查时，参考 `package.json` 和 `scripts/pr/change-policy.ts`。

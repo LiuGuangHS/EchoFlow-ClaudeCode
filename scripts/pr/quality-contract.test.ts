@@ -85,6 +85,7 @@ describe('feature quality contract', () => {
     expect(changeAreas.length).toBeGreaterThan(0)
 
     const vocabulary = agents.match(/规范词汇以 `scripts\/pr\/change-policy\.ts` 中的 `ChangeArea` 联合类型为准：([^\n]+?)。本文中的文字表面映射/)?.[1] ?? ''
+    expect(vocabulary, 'AGENTS.md no longer matches the ChangeArea sentence pattern in this test').not.toBe('')
     const documentedAreas = [...vocabulary.matchAll(/`([^`]+)`/g)].map((match) => match[1])
     expect([...documentedAreas].sort()).toEqual([...changeAreas].sort())
 
@@ -96,6 +97,7 @@ describe('feature quality contract', () => {
     const documentedSections = [
       ...(docsGuidance.match(/顶层共有七个 section：([^\n]+?)。/)?.[1] ?? '').matchAll(/`([a-z-]+)\//g),
     ].map((match) => match[1])
+    expect(documentedSections.length, 'docs/AGENTS.md no longer matches the section sentence pattern in this test').toBeGreaterThan(0)
     expect(documentedSections).toEqual(sectionIds)
   })
 
@@ -235,12 +237,24 @@ describe('feature quality contract', () => {
     expect(rootContributing).toContain('不再自动运行本地质量门禁')
   })
 
-  test('keeps the English contributing mirror free of Chinese text', () => {
-    // The mirror was once overwritten with the Chinese page, and the harness audit,
-    // which only checks that a counterpart file exists, stayed green.
-    const englishContributing = readFileSync('docs/en/internals/contributing.md', 'utf8')
+  test('keeps the English docs mirror free of Chinese text', () => {
+    // The contributing mirror was once overwritten with the Chinese page, and the
+    // harness audit, which only checks that a counterpart file exists, stayed green.
+    // docs/en/im/ is exempt: it documents the Chinese command aliases users type in IM chats.
+    const walk = (dir: string, acc: string[] = []): string[] => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name).replaceAll('\\', '/')
+        if (entry.isDirectory()) walk(full, acc)
+        else if (entry.name.endsWith('.md')) acc.push(full)
+      }
+      return acc
+    }
 
-    expect(englishContributing).not.toMatch(/[一-鿿]/)
+    const withChinese = walk('docs/en')
+      .filter((file) => !file.startsWith('docs/en/im/'))
+      .filter((file) => /[一-鿿]/.test(readFileSync(file, 'utf8')))
+
+    expect(withChinese).toEqual([])
   })
 
   test('keeps desktop native CI aligned with Electron packaging', () => {

@@ -113,9 +113,8 @@ Paste the commands you actually ran and their summaries into the handoff. `quali
 
 Release verification now lives in CI, so a full local run is no longer needed. The routine flow:
 
-1. **Development iteration**: run the targeted tests for the behavior you changed; do not start a full surface gate just because of a directory name. When you need to check the final diff or collect full-validation evidence, run `bun run check:impact` and select checks from its report.
-2. **Before tagging** (optional): manually trigger the `Quality Check` workflow in GitHub Actions to confirm the codebase is green.
-3. **Tag**: `release-desktop.yml` runs the content gate, the parallel verification jobs, and the six-platform builds automatically, and publishes only if all of them pass.
+1. **Before tagging** (optional): manually trigger the `Quality Check` workflow in GitHub Actions to confirm the codebase is green.
+2. **Tag**: `release-desktop.yml` runs the content gate, the parallel verification jobs, and the six-platform builds automatically, and publishes only if all of them pass.
 
 If you really need to run everything locally (for example, with an inconvenient network), use this set of commands, which covers the same ground as the CI verification:
 
@@ -145,7 +144,7 @@ The coverage gate runs the root, desktop, and adapters suites that match the cha
 4. Fix only the failures this change caused; report unrelated existing failures or environment blockers honestly instead of expanding scope.
 5. Claim full validation only after `bun run verify` passes for the final diff.
 
-When diagnosing a failed lane, first read the Summary / Result Matrix in `artifacts/quality-runs/<timestamp>/report.md` and the matching `logs/<lane>.log`. For coverage failures, read `artifacts/coverage/<timestamp>/coverage-report.md` or `.json`; do not lower baselines, thresholds, or test expectations to hide a failure. `bun run check:impact` determines the check scope of the final diff: read its result before starting the checks it selects, and never launch them in parallel with the impact analysis. `check:native` includes sidecar builds, packaging, and package smoke, so it is expensive; run it only when the report selects it and delivery evidence needs it. When a check fails or its output is incomplete, look at the existing logs and processes first; rerun the same check only when there is new diagnostic evidence. Do not keep rerunning checks that already passed when there are no further edits or unresolved risks. Report unrelated existing failures or environment blockers accurately instead of widening the change just to turn the result green.
+When diagnosing a failed lane, first read the Summary / Result Matrix in `artifacts/quality-runs/<timestamp>/report.md` and the matching `logs/<lane>.log`. For coverage failures, read `artifacts/coverage/<timestamp>/coverage-report.md` or `.json`; do not lower baselines, thresholds, or test expectations to hide a failure. `bun run check:impact` determines the check scope of the final diff: read its result before starting the checks it selects, and never launch them in parallel with the impact analysis. When a check fails or its output is incomplete, look at the existing logs and processes first; rerun the same check only when there is new diagnostic evidence. Do not keep rerunning checks that already passed when there are no further edits or unresolved risks. Report unrelated existing failures or environment blockers accurately instead of widening the change just to turn the result green.
 
 Resolve merge conflicts hunk by hunk; never apply blanket `--ours` or `--theirs`. Before release, also run `bun run check:release-surface` to audit the public identity.
 
