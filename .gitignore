@@ -31,6 +31,17 @@ docs/.vitepress/cache/
 docs/.vitepress/dist/
 desktop-vitest-latest.log
 
+# Local Bun install cache and retired root npm lock
+/.bun/install/cache/
+/package-lock.json
+
+# Local issue investigation notes
+/issue-1672-remediation-plan.md
+/issue-triage-after-v0.5.5.md
+
+# Shared local issue-router state (all worktrees use the primary checkout)
+/.issue-router/
+
 # Desktop build output
 desktop/dist/
 desktop/electron-dist/
@@ -82,6 +93,7 @@ runtime/__pycache__
 .codex-logs/
 
 # Local AI assistant artifacts (graph, notes)
+CLAUDE.md
 .claude.local.md
 .mavis/
 .opencode/
