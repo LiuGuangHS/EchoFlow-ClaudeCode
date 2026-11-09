@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
+import { join } from 'node:path'
 import { createFakeDshShapedDriver, createFakeMinimalDriver, createMemoryContractDriver } from '../__fixtures__/fakeDrivers.js'
 import { runRuntimeContractSuite, runRuntimeCapabilitySuite, runScriptedTurn } from '../__fixtures__/contractSuite.js'
+import { createDshDriver } from '../dshDriver.js'
 
 runRuntimeContractSuite('fake dsh-shaped', createFakeDshShapedDriver)
 runRuntimeContractSuite('fake minimal', createFakeMinimalDriver)
@@ -14,6 +16,8 @@ for (const [label, factory] of [
 runRuntimeCapabilitySuite('independent memory fixture, not a production engine', createMemoryContractDriver, {
   text: 'ordinary text', approval: 'approval fixture', usage: 'usage fixture',
 })
+const acpFixture = join(import.meta.dir, '..', '__fixtures__', 'fixtureAcpAgent.ts')
+runRuntimeContractSuite('acp fixture', () => createDshDriver({ resolveCommand: () => [process.execPath, acpFixture, JSON.stringify({ contractScript: true })] }))
 
 describe('the two fakes are interchangeable', () => {
   test('produce the same contract events for the same script', async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { Capability } from '../contract.js'
-import { dshBaselineCapabilities } from '../capabilitySnapshot.js'
+import { dshBaselineCapabilities, dshHostCapabilities } from '../capabilitySnapshot.js'
 
 /** Every source a capability may cite; a leaf naming one outside this list is a bug. */
 const SOURCES: Capability['source'][] = ['handshake', 'protocol-baseline', 'version-assumption', 'extension']
@@ -59,6 +59,10 @@ describe('dshBaselineCapabilities', () => {
     expect(['native', 'unsupported']).toContain(leaf.state)
     expect(SOURCES).toContain(leaf.source)
     expect(leaf.source).toBe('extension')
+  })
+
+  test('dsh-host reports prompt.queue as native with an extension source', () => {
+    expect(dshHostCapabilities().prompt.queue).toEqual({ state: 'native', source: 'extension' })
   })
 
   test('returns a fresh snapshot each call', () => {

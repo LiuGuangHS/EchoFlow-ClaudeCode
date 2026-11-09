@@ -718,6 +718,9 @@ export function createDshDriver(options: DshDriverOptions = {}): RuntimeDriver {
           pendingApprovals.delete(requestId)
           resolve({ optionId, decidedBy: 'user' })
         },
+        async updateQueue() {
+          throw new UnsupportedRuntimeCapabilityError('prompt.queue')
+        },
         interrupt,
         async close() {
           if (closed) return

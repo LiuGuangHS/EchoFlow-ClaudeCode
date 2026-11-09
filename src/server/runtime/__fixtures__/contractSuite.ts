@@ -92,6 +92,14 @@ export function runRuntimeContractSuite(label: string, makeDriver: () => Runtime
       await connection.close()
     })
 
+    test('updateQueue rejects as unsupported when prompt.queue is not native', async () => {
+      const { connection, session } = await open()
+      if (session.capabilities.prompt.queue.state !== 'native') {
+        await expect(session.updateQueue('item-1', { kind: 'remove' })).rejects.toBeInstanceOf(UnsupportedRuntimeCapabilityError)
+      }
+      await connection.close()
+    })
+
     test('interrupt with no active turn reports not-running', async () => {
       const { connection, session } = await open()
       expect(await session.interrupt()).toMatchObject({ status: 'not-running', forcedTerminate: false })

@@ -9,7 +9,7 @@
 
 export type EngineId = 'echoflow-agent' | 'dsh' | 'claude-code' | 'codex'
 
-export type DriverId = 'dsh-acp' | 'claude-agent-sdk' | 'codex-app-server' | 'legacy-echoflow-runtime'
+export type DriverId = 'dsh-acp' | 'dsh-host' | 'claude-agent-sdk' | 'codex-app-server' | 'legacy-echoflow-runtime'
 
 export type RuntimeLocation = { kind: 'local' } | { kind: 'wsl'; distro: string }
 
@@ -276,6 +276,7 @@ export type RuntimeSession = {
    */
   onEngineTurn(listener: (events: AsyncIterable<RuntimeEvent>) => void | Promise<void>): () => void
   respondApproval(requestId: string, optionId: string): Promise<void>
+  updateQueue(itemId: string, action: unknown): Promise<void>
   interrupt(): Promise<InterruptResult>
   close(): Promise<void>
 }

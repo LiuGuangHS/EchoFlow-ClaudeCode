@@ -86,7 +86,32 @@ app.onRequest(AGENT_METHODS.session_prompt, async (ctx) => {
       update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: chunk } },
     })
 
-  switch (text) {
+  if (handshake.contractScript === true) {
+    if (text === 'hello') {
+      await send('one')
+      await send('two')
+      return { stopReason: 'end_turn' as const }
+    }
+    if (text === 'think') {
+      await ctx.client.notify(CLIENT_METHODS.session_update, {
+        sessionId,
+        update: { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'planning' } },
+      })
+      await send('answer')
+      return { stopReason: 'end_turn' as const }
+    }
+    if (text === 'usage') {
+      await ctx.client.notify(CLIENT_METHODS.session_update, {
+        sessionId,
+        update: { sessionUpdate: 'usage_update', used: 10, size: 100 },
+      })
+      return { stopReason: 'end_turn' as const }
+    }
+  }
+  const scriptedText = handshake.contractScript === true
+    ? ({ ask: 'needs-approval', schedule: 'schedule-fired' }[text] ?? text)
+    : text
+  switch (scriptedText) {
     case 'hello':
       await send('hello from fixture')
       return { stopReason: 'end_turn' as const }
