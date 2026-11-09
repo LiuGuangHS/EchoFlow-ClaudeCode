@@ -1,13 +1,17 @@
 import * as fs from 'node:fs/promises'
+import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 import * as path from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { ApiError } from '../middleware/errorHandler.js'
 import { normalizeJsonObject, readRecoverableJsonFile } from './recoverableJsonFile.js'
-import { getEchoFlowConfigDir, getEchoFlowInternalDir } from './echoFlowConfigRoot.js'
 import { ensurePersistentStorageUpgraded } from './persistentStorageMigrations.js'
 
 export class ManagedSettingsService {
   private static writeLocks = new Map<string, Promise<void>>()
+
+  static async drainForMigration(): Promise<void> {
+    await Promise.all([...this.writeLocks.values()])
+  }
 
   private getConfigDir(): string {
     return getEchoFlowConfigDir()
@@ -36,8 +40,7 @@ export class ManagedSettingsService {
     }
   }
 
-  private async writeSettings(settings: Record<string, unknown>): Promise<void> {
-    const filePath = this.getSettingsPath()
+  private async writeSettings(settings: Record<string, unknown>, filePath: string): Promise<void> {
     const dir = path.dirname(filePath)
     const contents = JSON.stringify(settings, null, 2) + '\n'
     const tmpFile = `${filePath}.tmp.${process.pid}.${Date.now()}.${randomBytes(6).toString('hex')}`
@@ -53,10 +56,10 @@ export class ManagedSettingsService {
     }
   }
 
-  async readSettings(): Promise<Record<string, unknown>> {
+  async readSettings(filePath = this.getSettingsPath()): Promise<Record<string, unknown>> {
     await ensurePersistentStorageUpgraded()
     return readRecoverableJsonFile({
-      filePath: this.getSettingsPath(),
+      filePath,
       label: 'EchoFlow managed settings',
       defaultValue: {},
       normalize: normalizeJsonObject,
@@ -71,12 +74,15 @@ export class ManagedSettingsService {
       settings: Record<string, unknown>
       result: T
     },
+    onCommitted?: (previous: Record<string, unknown>, next: Record<string, unknown>) => void,
   ): Promise<T> {
     const filePath = this.getSettingsPath()
     return this.withWriteLock(filePath, async () => {
-      const current = await this.readSettings()
+      const current = await this.readSettings(filePath)
       const { settings, result } = await updater(current)
-      await this.writeSettings(settings)
+      await this.writeSettings(settings, filePath)
+      // Notify before releasing the lock: later mutations must not overtake revocation.
+      onCommitted?.(current, settings)
       return result
     })
   }

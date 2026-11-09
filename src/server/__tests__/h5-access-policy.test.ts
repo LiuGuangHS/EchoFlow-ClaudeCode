@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import {
   classifyH5Request,
+  isH5AccessControlPath,
   resolveTrustedRendererOrigin,
   isLocalCredentialOnlyPath,
   isLoopbackHost,
@@ -248,6 +249,30 @@ describe('h5AccessPolicy', () => {
     expect(requiresLocalAccessCredential('/api/h5-access', { clientAddress: '127.0.0.1' })).toBe(false)
   })
 
+  test('matches H5 control paths by normalized router segments', () => {
+    const context = { clientAddress: '127.0.0.1', localAccessTokenConfigured: true }
+    for (const pathname of [
+      '/api//h5-access',
+      '/api//h5-access//enable/',
+      '/api//h5-access/disable',
+      '/api//h5-access/regenerate',
+      '//api/h5-access//',
+    ]) {
+      expect(isH5AccessControlPath(pathname)).toBe(true)
+      expect(requiresLocalAccessCredential(pathname, context)).toBe(true)
+      expect(requiresLocalAccessCredential(pathname, { ...context, localAccessAuthorized: true })).toBe(false)
+    }
+    for (const pathname of [
+      '/api/h5-access/verify/',
+      '/api//h5-access//verify//',
+      '/api/h5-access-extra',
+      '/api/h5-access-extra/enable',
+    ]) {
+      expect(isH5AccessControlPath(pathname)).toBe(false)
+      expect(requiresLocalAccessCredential(pathname, context)).toBe(false)
+    }
+  })
+
   test('keeps bulk session deletion off the H5 token', () => {
     const unauthorizedContext = {
       clientAddress: '10.0.0.5',
@@ -292,7 +317,7 @@ describe('h5AccessPolicy', () => {
     }
 
     for (const pathname of [
-      '/api/echoflow-grok-oauth/success',
+      '/api/haha-grok-oauth/success',
       '/api/sessions',
       '/preview-fs/session-1/index.html',
       '/ws/session-1',

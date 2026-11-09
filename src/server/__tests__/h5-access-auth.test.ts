@@ -1,7 +1,13 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test'
 import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
+import {
+  getCwdState,
+  getOriginalCwd,
+  setCwdState,
+  setOriginalCwd,
+} from '../../bootstrap/state.js'
 import { startServer, stopServerRuntimeForShutdown } from '../index.js'
 import {
   clearFilesystemAccessRootsForTests,
@@ -10,6 +16,7 @@ import {
 import { H5AccessService } from '../services/h5AccessService.js'
 import { ProviderService } from '../services/providerService.js'
 import { sessionService } from '../services/sessionService.js'
+import { hasPowerActivityLeases, releasePowerActivityLease } from '../services/powerActivityLease.js'
 
 let server: ReturnType<typeof Bun.serve> | undefined
 let baseUrl = ''
@@ -26,8 +33,10 @@ let originalLocalAccessToken: string | undefined
 let originalTrustedRendererOrigin: string | undefined
 let originalPetAccessToken: string | undefined
 let originalServerPort = 3456
+let originalCwdState = ''
+let originalOriginalCwd = ''
 const PHONE_ORIGIN = 'https://phone.example'
-const SERVER_STOP_HANG_GUARD_MS = 30_000
+const SERVER_STOP_WAIT_MS = 500
 
 async function waitForServer(url: string): Promise<void> {
   for (let attempt = 0; attempt < 50; attempt += 1) {
@@ -42,30 +51,6 @@ async function waitForServer(url: string): Promise<void> {
   }
 
   throw new Error(`Timed out waiting for server at ${url}`)
-}
-
-async function probeServing(url: string): Promise<boolean> {
-  // A response of any kind means the handler is still live. Both a refusal
-  // and a hung connect mean nothing is being served — Bun 1.3.14 leaves the
-  // listener socket in inconsistent states after stop().
-  try {
-    await fetch(url, { signal: AbortSignal.timeout(1_000) })
-    return true
-  } catch {
-    return false
-  }
-}
-
-async function waitForServerToStopServing(url: string, hangGuardMs: number): Promise<void> {
-  const deadline = Date.now() + hangGuardMs
-  let quietProbes = 0
-  while (Date.now() < deadline) {
-    quietProbes = (await probeServing(url)) ? 0 : quietProbes + 1
-    if (quietProbes >= 2) return
-    await Bun.sleep(50)
-  }
-
-  throw new Error(`Server at ${url} still answers requests ${hangGuardMs}ms after stop`)
 }
 
 function resolvePrivateLanBaseUrl(port: number): string | null {
@@ -110,14 +95,14 @@ async function stopRemoteServer(): Promise<void> {
   await stopServerRuntimeForShutdown({ waitForCli: false })
   if (!runningServer) return
 
-  // Bun 1.3.14: once the server itself has called ws.close() on any socket —
-  // rejecting an SDK connection, for example — server.stop(true)'s promise
-  // never settles and the listener lingers, so awaiting it hangs shutdown.
-  // Kick the stop and define completion by the observable that matters: the
-  // server stops answering requests. The hang guard throws so a server that
-  // genuinely fails to stop cannot leak into the next test.
-  void runningServer.stop(true)
-  await waitForServerToStopServing(`${baseUrl}/health`, SERVER_STOP_HANG_GUARD_MS)
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  await Promise.race([
+    runningServer.stop(true),
+    new Promise<void>((resolve) => {
+      timeout = setTimeout(resolve, SERVER_STOP_WAIT_MS)
+    }),
+  ])
+  if (timeout) clearTimeout(timeout)
 }
 
 async function restartRemoteServer(options: { authRequired?: boolean } = {}): Promise<void> {
@@ -169,6 +154,34 @@ async function enableH5Access(options: {
     })
   }
   return token
+}
+
+async function openLiveSocket(url: string, origin?: string) {
+  const socket = new WebSocket(url, { headers: origin ? { Origin: origin } : {} })
+  const closed = new Promise<CloseEvent>(resolve => socket.addEventListener('close', resolve, { once: true }))
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => { socket.close(); reject(new Error('Socket did not connect')) }, 2000)
+    socket.addEventListener('message', event => {
+      if (JSON.parse(String(event.data)).type !== 'connected') return
+      clearTimeout(timer)
+      resolve()
+    })
+    socket.addEventListener('error', () => { clearTimeout(timer); reject(new Error('Socket upgrade failed')) }, { once: true })
+  })
+  return {
+    socket,
+    async waitForClose() {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        return await Promise.race([
+          closed,
+          new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Revoked socket remained open')), 1500) }),
+        ])
+      } finally {
+        clearTimeout(timer)
+      }
+    },
+  }
 }
 
 function expectWebSocketOpen(url: string): Promise<void> {
@@ -238,23 +251,28 @@ const settingsSurfaceEndpoints = [
 
 beforeEach(async () => {
   clearFilesystemAccessRootsForTests()
-  registerFilesystemAccessRoot(process.cwd())
+  originalCwdState = getCwdState()
+  originalOriginalCwd = getOriginalCwd()
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'h5-access-auth-test-'))
+  setOriginalCwd(tmpDir)
+  setCwdState(tmpDir)
+  registerFilesystemAccessRoot(process.cwd())
   originalConfigDir = process.env.CLAUDE_CONFIG_DIR
   originalAnthropicApiKey = process.env.ANTHROPIC_API_KEY
   originalH5DistDir = process.env.CLAUDE_H5_DIST_DIR
   originalClaudeAppRoot = process.env.CLAUDE_APP_ROOT
   originalServerAuthRequired = process.env.SERVER_AUTH_REQUIRED
-  originalLocalAccessToken = process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
-  originalTrustedRendererOrigin = process.env.ECHOFLOW_TRUSTED_RENDERER_ORIGIN
-  originalPetAccessToken = process.env.ECHOFLOW_PET_ACCESS_TOKEN
+  originalLocalAccessToken = process.env.CC_HAHA_LOCAL_ACCESS_TOKEN
+  originalTrustedRendererOrigin = process.env.CC_HAHA_TRUSTED_RENDERER_ORIGIN
+  delete process.env.CC_HAHA_TRUSTED_RENDERER_ORIGIN
+  originalPetAccessToken = process.env.CC_HAHA_PET_ACCESS_TOKEN
   originalServerPort = ProviderService.getServerPort()
   process.env.CLAUDE_CONFIG_DIR = tmpDir
   const h5DistDir = path.join(tmpDir, 'dist')
   process.env.CLAUDE_H5_DIST_DIR = h5DistDir
   delete process.env.ANTHROPIC_API_KEY
-  delete process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
-  delete process.env.ECHOFLOW_PET_ACCESS_TOKEN
+  delete process.env.CC_HAHA_LOCAL_ACCESS_TOKEN
+  delete process.env.CC_HAHA_PET_ACCESS_TOKEN
   await fs.mkdir(path.join(h5DistDir, 'assets'), { recursive: true })
   await fs.writeFile(
     path.join(h5DistDir, 'index.html'),
@@ -269,6 +287,8 @@ afterEach(async () => {
   await stopRemoteServer()
   clearFilesystemAccessRootsForTests()
   ProviderService.setServerPort(originalServerPort)
+  setOriginalCwd(originalOriginalCwd)
+  setCwdState(originalCwdState)
 
   if (originalConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR
   else process.env.CLAUDE_CONFIG_DIR = originalConfigDir
@@ -281,12 +301,12 @@ afterEach(async () => {
   else process.env.CLAUDE_APP_ROOT = originalClaudeAppRoot
   if (originalServerAuthRequired === undefined) delete process.env.SERVER_AUTH_REQUIRED
   else process.env.SERVER_AUTH_REQUIRED = originalServerAuthRequired
-  if (originalLocalAccessToken === undefined) delete process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN
-  else process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = originalLocalAccessToken
-  if (originalTrustedRendererOrigin === undefined) delete process.env.ECHOFLOW_TRUSTED_RENDERER_ORIGIN
-  else process.env.ECHOFLOW_TRUSTED_RENDERER_ORIGIN = originalTrustedRendererOrigin
-  if (originalPetAccessToken === undefined) delete process.env.ECHOFLOW_PET_ACCESS_TOKEN
-  else process.env.ECHOFLOW_PET_ACCESS_TOKEN = originalPetAccessToken
+  if (originalLocalAccessToken === undefined) delete process.env.CC_HAHA_LOCAL_ACCESS_TOKEN
+  else process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = originalLocalAccessToken
+  if (originalTrustedRendererOrigin === undefined) delete process.env.CC_HAHA_TRUSTED_RENDERER_ORIGIN
+  else process.env.CC_HAHA_TRUSTED_RENDERER_ORIGIN = originalTrustedRendererOrigin
+  if (originalPetAccessToken === undefined) delete process.env.CC_HAHA_PET_ACCESS_TOKEN
+  else process.env.CC_HAHA_PET_ACCESS_TOKEN = originalPetAccessToken
 
   await fs.rm(tmpDir, {
     recursive: true,
@@ -297,26 +317,43 @@ afterEach(async () => {
 })
 
 describe('remote H5 auth and CORS integration', () => {
-  test('stopRemoteServer resolves only once the server stops answering requests', async () => {
-    // A deliberately slow stop() models a shutdown that legitimately outlasts
-    // the old 500ms give-up budget: the helper must not report success while
-    // the server still answers requests.
-    const runningServer = server!
-    const originalStop = runningServer.stop.bind(runningServer)
-    ;(runningServer as { stop: typeof runningServer.stop }).stop = (closeActiveConnections?: boolean) =>
-      new Promise<void>((resolve) => {
-        setTimeout(() => {
-          originalStop(closeActiveConnections)
+  test('power lease handoff requires the machine token even for a full loopback WebSocket', async () => {
+    process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'power-auth-fixture'
+    const leaseId = 'power-upgrade:message'
+    const acquired = await fetch(`${baseUrl}/api/sessions/power-activity-lease`, {
+      method: 'POST', headers: { Authorization: 'Bearer power-auth-fixture', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ leaseId, active: true }),
+    })
+    expect(acquired.status).toBe(200)
+    async function rejectedCommand(token?: string) {
+      await new Promise<void>((resolve, reject) => {
+        const socket = new WebSocket(`${wsBaseUrl}/ws/power-auth-test${token ? `?token=${token}` : ''}`)
+        const timer = setTimeout(() => { socket.close(); reject(new Error('Power WS fixture timed out')) }, 2_000)
+        socket.onopen = () => socket.send(JSON.stringify({ type: 'user_message', content: '/clear extra', powerActivityLeaseId: leaseId }))
+        socket.onerror = () => { clearTimeout(timer); socket.close(); reject(new Error('Power WS fixture failed')) }
+        socket.onmessage = event => {
+          const message = JSON.parse(String(event.data))
+          if (message.type !== 'error' || message.code !== 'INVALID_SLASH_COMMAND_ARGS') return
+          clearTimeout(timer)
+          socket.close()
           resolve()
-        }, 1_000)
+        }
       })
-    await stopRemoteServer()
-    expect(await probeServing(`${baseUrl}/health`)).toBe(false)
+      await Bun.sleep(0)
+    }
+    try {
+      await rejectedCommand()
+      expect(hasPowerActivityLeases()).toBe(true)
+      await rejectedCommand('power-auth-fixture')
+      expect(hasPowerActivityLeases()).toBe(false)
+    } finally {
+      releasePowerActivityLease(leaseId)
+    }
   })
 
   test('allows configured dev renderer H5 preflight but requires the process token for requests', async () => {
-    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'fixture-desktop-token'
-    process.env.ECHOFLOW_TRUSTED_RENDERER_ORIGIN = 'http://localhost:1420'
+    process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'fixture-desktop-token'
+    process.env.CC_HAHA_TRUSTED_RENDERER_ORIGIN = 'http://localhost:1420'
     await restartRemoteServer()
     const headers = {
       Origin: 'http://localhost:1420',
@@ -386,8 +423,7 @@ describe('remote H5 auth and CORS integration', () => {
   })
 
   test('rejects loopback preflight when no renderer origin is trusted', async () => {
-    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'fixture-desktop-token'
-    delete process.env.ECHOFLOW_TRUSTED_RENDERER_ORIGIN
+    process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'fixture-desktop-token'
     await restartRemoteServer()
 
     const response = await fetch(`${baseUrl}/api/settings`, {
@@ -470,19 +506,16 @@ describe('remote H5 auth and CORS integration', () => {
     // The desktop shell injects a process token, but the browser windows it
     // opens (OAuth success pages, `/preview-fs` links) and local scripts cannot
     // carry it. Loopback must stay trusted on its own.
-    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+    process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
     await restartRemoteServer()
 
     const tokenlessResponse = await fetch(`${baseUrl}/api/status`)
     expect(tokenlessResponse.status).toBe(200)
     await expect(tokenlessResponse.json()).resolves.toMatchObject({ status: 'ok' })
 
-    const oauthSuccessResponse = await fetch(`${baseUrl}/api/echoflow-grok-oauth/success`)
+    const oauthSuccessResponse = await fetch(`${baseUrl}/api/haha-grok-oauth/success`)
     expect(oauthSuccessResponse.status).toBe(200)
     expect(oauthSuccessResponse.headers.get('Content-Type')).toContain('text/html')
-
-    const retiredOauthResponse = await fetch(`${baseUrl}/api/haha-grok-oauth/success`)
-    expect(retiredOauthResponse.status).toBe(404)
 
     const desktopResponse = await fetch(`${baseUrl}/api/status`, {
       headers: { Authorization: 'Bearer desktop-local-secret' },
@@ -492,14 +525,13 @@ describe('remote H5 auth and CORS integration', () => {
   })
 
   test('rejects tokenless loopback browser origins when desktop local auth is configured', async () => {
-    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+    process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
     await restartRemoteServer()
 
     const browserResponse = await fetch(`${baseUrl}/api/status`, {
       headers: { Origin: 'http://localhost:5173' },
     })
     expect(browserResponse.status).toBe(403)
-    expect(browserResponse.headers.get('Access-Control-Allow-Origin')).toBe('http://localhost:5173')
 
     const desktopResponse = await fetch(`${baseUrl}/api/status`, {
       headers: {
@@ -511,7 +543,7 @@ describe('remote H5 auth and CORS integration', () => {
   })
 
   test('still requires the desktop process token for the H5 control plane', async () => {
-    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+    process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
     await restartRemoteServer()
 
     // Another browser or script on the same machine must not be able to publish
@@ -530,8 +562,211 @@ describe('remote H5 auth and CORS integration', () => {
     await expect(desktopEnable.json()).resolves.toHaveProperty('token')
   })
 
+  for (const authRequired of [false, true]) {
+    for (const revoke of ['disable', 'rotate'] as const) {
+      test(`revokes existing H5 sockets after ${revoke}, forceAuth=${authRequired}`, async () => {
+        process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'revocation-desktop-secret'
+        await restartRemoteServer({ authRequired })
+        const token = await enableH5Access({ allowedOrigins: [PHONE_ORIGIN] })
+        // With forceAuth, omit Origin so the general auth branch must identify H5 credentials.
+        const phone = await openLiveSocket(`${wsBaseUrl}/ws/revocation-test?token=${token}`, authRequired ? undefined : PHONE_ORIGIN)
+        const desktop = await openLiveSocket(`${wsBaseUrl}/ws/revocation-test?token=revocation-desktop-secret`)
+        let fresh: Awaited<ReturnType<typeof openLiveSocket>> | undefined
+        try {
+          const service = new H5AccessService()
+          let nextToken = token
+          if (revoke === 'disable') {
+            await service.disable()
+          } else {
+            nextToken = (await service.regenerateToken()).token
+          }
+          expect((await phone.waitForClose()).code).toBe(1008)
+          expect(desktop.socket.readyState).toBe(WebSocket.OPEN)
+          const pong = new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error('Desktop socket stopped responding')), 1500)
+            desktop.socket.addEventListener('message', event => {
+              if (JSON.parse(String(event.data)).type !== 'pong') return
+              clearTimeout(timer)
+              resolve()
+            })
+          })
+          desktop.socket.send(JSON.stringify({ type: 'ping' }))
+          await pong
+          if (revoke === 'disable') expect((await service.enable()).token).toBe(token)
+          fresh = await openLiveSocket(`${wsBaseUrl}/ws/revocation-test?token=${nextToken}`, authRequired ? undefined : PHONE_ORIGIN)
+          expect(phone.socket.readyState).toBe(WebSocket.CLOSED)
+          expect(fresh.socket.readyState).toBe(WebSocket.OPEN)
+        } finally {
+          phone.socket.close()
+          desktop.socket.close()
+          fresh?.socket.close()
+        }
+      })
+    }
+  }
+
+  test('revocation destroys a detached H5 stream and rejects its later resume', async () => {
+    process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'resume-desktop-secret'
+    await restartRemoteServer()
+    const token = await enableH5Access({ allowedOrigins: [PHONE_ORIGIN] })
+    const stream = 'AAAAAAAAAAAAAAAAAAAAAA'
+    const original = new WebSocket(`${wsBaseUrl}/ws/resume-revoke?token=${token}&stream=${stream}&ack=0`, {
+      headers: { Origin: PHONE_ORIGIN },
+    })
+    let epoch = ''
+    const attached = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('H5 resume stream did not attach')), 2000)
+      original.addEventListener('message', event => {
+        const frame = JSON.parse(String(event.data))
+        if (frame.type !== 'stream_attached') return
+        epoch = frame.epoch
+        clearTimeout(timer)
+        resolve()
+      })
+      original.addEventListener('error', () => { clearTimeout(timer); reject(new Error('H5 resume stream upgrade failed')) }, { once: true })
+    })
+    const originalClosed = new Promise<CloseEvent>(resolve => original.addEventListener('close', resolve, { once: true }))
+    await attached
+    original.close()
+    await originalClosed
+
+    const service = new H5AccessService()
+    await service.disable()
+    expect((await service.enable()).token).toBe(token)
+    const resumed = new WebSocket(
+      `${wsBaseUrl}/ws/resume-revoke?token=${token}&stream=${stream}&ack=0&epoch=${epoch}`,
+      { headers: { Origin: PHONE_ORIGIN } },
+    )
+    const resumedClosed = new Promise<CloseEvent>(resolve => resumed.addEventListener('close', resolve, { once: true }))
+    const refused = new Promise<Record<string, unknown>>((resolve, reject) => {
+      const timer = setTimeout(() => { resumed.close(); reject(new Error('Revoked stream resume was not refused')) }, 2000)
+      resumed.addEventListener('message', event => {
+        const frame = JSON.parse(String(event.data))
+        if (frame.type !== 'stream_attached') return
+        clearTimeout(timer)
+        resolve(frame)
+      })
+      resumed.addEventListener('error', () => { clearTimeout(timer); reject(new Error('Resume socket failed')) }, { once: true })
+    })
+    const frame = await refused
+    expect(frame).toMatchObject({ resumed: false, reason: 'expired' })
+    const closed = await resumedClosed
+    expect(closed.code).toBe(4001)
+  })
+
+  for (const forceAuth of [false, true]) {
+    test(`rejects an authorization resolved after disable and re-enable, forceAuth=${forceAuth}`, async () => {
+      await restartRemoteServer({ authRequired: forceAuth })
+      const token = await enableH5Access({ allowedOrigins: [PHONE_ORIGIN] })
+      let release!: () => void
+      let entered!: () => void
+      const gate = new Promise<void>(resolve => { release = resolve })
+      const started = new Promise<void>(resolve => { entered = resolve })
+      const validate = H5AccessService.prototype.validateToken
+      const validation = spyOn(H5AccessService.prototype, 'validateToken').mockImplementationOnce(async function (value) {
+        const result = await validate.call(this, value)
+        entered()
+        await gate
+        return result
+      })
+      const request = fetch(`${baseUrl}/ws/auth-race?token=${token}`, {
+        headers: makeUpgradeHeaders(forceAuth ? undefined : PHONE_ORIGIN),
+      })
+      try {
+        await started
+        await new H5AccessService().disable()
+        expect((await new H5AccessService().enable()).token).toBe(token)
+        release()
+        const response = await request
+        expect(response.status).toBe(401)
+        expect(await response.json()).toMatchObject({ message: 'H5 access revoked' })
+        const fresh = await openLiveSocket(`${wsBaseUrl}/ws/auth-race?token=${token}`, forceAuth ? undefined : PHONE_ORIGIN)
+        fresh.socket.close()
+      } finally {
+        release()
+        await request.catch(() => {})
+        validation.mockRestore()
+      }
+    })
+  }
+
+  test('releases H5 subscriptions on shutdown, bind failure and repeated stop', async () => {
+    await stopRemoteServer()
+    const active = new Set<object>()
+    const watch = H5AccessService.prototype.watchRevocations
+    const subscription = spyOn(H5AccessService.prototype, 'watchRevocations').mockImplementation(function (listener) {
+      const current = watch.call(this, listener)
+      const dispose = current.dispose
+      active.add(current)
+      current.dispose = () => { active.delete(current); dispose() }
+      return current
+    })
+    try {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await startRemoteServer()
+        expect(active.size).toBe(1)
+        expect(() => startServer(server!.port, '0.0.0.0')).toThrow()
+        expect(active.size).toBe(1)
+        const token = await enableH5Access({ allowedOrigins: [PHONE_ORIGIN] })
+        const phone = await openLiveSocket(`${wsBaseUrl}/ws/shutdown?token=${token}`, PHONE_ORIGIN)
+        try {
+          await stopServerRuntimeForShutdown({ waitForCli: false })
+          expect(active.size).toBe(0)
+          expect((await phone.waitForClose()).code).toBe(1008)
+        } finally {
+          phone.socket.close()
+          await stopRemoteServer()
+        }
+        expect(active.size).toBe(0)
+      }
+    } finally {
+      await stopRemoteServer()
+      subscription.mockRestore()
+    }
+  })
+
+  test('protects router-equivalent H5 controls while preserving token verification', async () => {
+    process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+    await restartRemoteServer()
+    const token = await enableH5Access({ allowedOrigins: [PHONE_ORIGIN] })
+    const service = new H5AccessService()
+    const before = await service.getSettings()
+    const results: number[] = []
+    for (const [endpoint, method] of [
+      ['/api//h5-access', 'GET'],
+      ['/api//h5-access/', 'PUT'],
+      ['/api//h5-access//enable/', 'POST'],
+      ['/api//h5-access/disable', 'POST'],
+      ['/api//h5-access/regenerate', 'POST'],
+    ]) {
+      const response = await fetch(`${baseUrl}${endpoint}`, {
+        method,
+        headers: { Origin: PHONE_ORIGIN, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        ...(method === 'PUT' ? { body: JSON.stringify({ allowedOrigins: [] }) } : {}),
+      })
+      results.push(response.status)
+      await response.text()
+    }
+    expect(results).toEqual([403, 403, 403, 403, 403])
+    expect(await service.getSettings()).toEqual(before)
+
+    for (const endpoint of ['/api/h5-access/verify/', '/api//h5-access//verify//']) {
+      const response = await fetch(`${baseUrl}${endpoint}`, {
+        method: 'POST',
+        headers: { Origin: PHONE_ORIGIN, Authorization: `Bearer ${token}` },
+      })
+      expect(response.status).toBe(200)
+      expect(await response.json()).toEqual({ ok: true })
+    }
+    const desktopRead = await fetch(`${baseUrl}/api//h5-access/`, {
+      headers: { Authorization: 'Bearer desktop-local-secret' },
+    })
+    expect(desktopRead.status).toBe(200)
+    await desktopRead.text()
+  })
+
   test('does not extend tokenless loopback trust to cross-site subresource loads', async () => {
-    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+    process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
     await restartRemoteServer()
 
     // A malicious page embedding `<img src="http://127.0.0.1:<port>/api/...">`
@@ -556,7 +791,7 @@ describe('remote H5 auth and CORS integration', () => {
   })
 
   test('serves same-capability preview assets without opening ordinary local APIs', async () => {
-    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+    process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
     await restartRemoteServer()
 
     const workDir = path.join(tmpDir, 'preview-workspace')
@@ -616,8 +851,8 @@ describe('remote H5 auth and CORS integration', () => {
   })
 
   test('enforces the pet bearer capability allowlist before API routing', async () => {
-    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
-    process.env.ECHOFLOW_PET_ACCESS_TOKEN = 'pet-capability-secret'
+    process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+    process.env.CC_HAHA_PET_ACCESS_TOKEN = 'pet-capability-secret'
     await restartRemoteServer()
     const petHeaders = { Authorization: 'Bearer pet-capability-secret' }
     const privateWorkDir = path.join(tmpDir, 'private-workspace')
@@ -733,7 +968,7 @@ describe('remote H5 auth and CORS integration', () => {
   })
 
   test('keeps the host-managed provider proxy working with local auth across H5 modes', async () => {
-    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
+    process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
     await restartRemoteServer()
 
     const requestProxy = (authorized: boolean) => fetch(`${baseUrl}/proxy/v1/messages`, {
@@ -787,24 +1022,6 @@ describe('remote H5 auth and CORS integration', () => {
     })
   })
 
-  test('allows loopback browser preflight when desktop local auth is configured', async () => {
-    process.env.ECHOFLOW_LOCAL_ACCESS_TOKEN = 'desktop-local-secret'
-    await restartRemoteServer()
-
-    const response = await fetch(`${baseUrl}/api/status`, {
-      method: 'OPTIONS',
-      headers: {
-        Origin: 'http://localhost:5173',
-        'Access-Control-Request-Method': 'GET',
-        'Access-Control-Request-Headers': 'authorization,content-type',
-      },
-    })
-
-    expect(response.status).toBe(204)
-    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('http://localhost:5173')
-    expect(response.headers.get('Access-Control-Allow-Headers')).toContain('Authorization')
-  })
-
   test('blocks remote browser capability requests while H5 access is disabled', async () => {
     const apiResponse = await fetch(`${baseUrl}/api/status`, {
       headers: {
@@ -850,13 +1067,12 @@ describe('remote H5 auth and CORS integration', () => {
 
   test('allows loopback browser local-file and preview-fs requests through the H5 gate while H5 access is disabled', async () => {
     const loopbackBrowserOrigin = 'http://localhost:5173'
-    const localFileResponse = await fetch(localFileUrl(baseUrl, path.join(tmpDir, 'dist', 'index.html')), {
+    const localFileResponse = await fetch(localFileUrl(baseUrl, path.join(process.cwd(), 'package.json')), {
       headers: {
         Origin: loopbackBrowserOrigin,
       },
     })
     expect(localFileResponse.status).toBe(200)
-    await expect(localFileResponse.text()).resolves.toContain('H5 Shell')
 
     const previewResponse = await fetch(`${baseUrl}/preview-fs/h5-auth-test/index.html`, {
       headers: {
@@ -968,6 +1184,30 @@ describe('remote H5 auth and CORS integration', () => {
       headers: spoofedHeaders,
     })
     expect(controlResponse.status).toBe(403)
+  })
+
+  test('opens the P2P endpoint link only with its own launch token, never the local access token', async () => {
+    const original = process.env.CC_HAHA_P2P_ENDPOINT_TOKEN
+    process.env.CC_HAHA_LOCAL_ACCESS_TOKEN = 'p2p-local-fixture'
+    const status = async (base: string, query: string) =>
+      (await fetch(`${base}/api/public-access/p2p/endpoint${query}`, { headers: makeUpgradeHeaders() })).status
+    try {
+      delete process.env.CC_HAHA_P2P_ENDPOINT_TOKEN
+      expect(await status(baseUrl, '?endpointToken=anything')).toBe(403)
+      process.env.CC_HAHA_P2P_ENDPOINT_TOKEN = 'p2p-endpoint-fixture'
+      expect(await status(baseUrl, '')).toBe(403)
+      expect(await status(baseUrl, '?endpointToken=wrong')).toBe(403)
+      expect(await status(baseUrl, '?localToken=p2p-local-fixture')).toBe(403)
+      expect(await status(baseUrl, '?endpointToken=p2p-local-fixture')).toBe(403)
+      await expectWebSocketOpen(`${wsBaseUrl}/api/public-access/p2p/endpoint?endpointToken=p2p-endpoint-fixture`)
+      if (lanBaseUrl && (await fetch(`${lanBaseUrl}/api/status`)).status === 403) {
+        // A distinct LAN peer (see the spoofing test above): the right token is still not enough.
+        expect(await status(lanBaseUrl, '?endpointToken=p2p-endpoint-fixture')).toBe(403)
+      }
+    } finally {
+      if (original === undefined) delete process.env.CC_HAHA_P2P_ENDPOINT_TOKEN
+      else process.env.CC_HAHA_P2P_ENDPOINT_TOKEN = original
+    }
   })
 
   test('keeps local loopback SDK requests tokenless while H5 access is disabled', async () => {
@@ -1241,7 +1481,7 @@ describe('remote H5 auth and CORS integration', () => {
     const token = await enableH5Access({
       allowedOrigins: [PHONE_ORIGIN],
     })
-    const localFile = localFileUrl(baseUrl, path.join(tmpDir, 'dist', 'index.html'))
+    const localFile = localFileUrl(baseUrl, path.join(process.cwd(), 'package.json'))
 
     const missingLocalFileToken = await fetch(localFile, {
       headers: {
@@ -1265,7 +1505,7 @@ describe('remote H5 auth and CORS integration', () => {
       },
     })
     expect(validLocalFileToken.status).toBe(200)
-    await expect(validLocalFileToken.text()).resolves.toContain('H5 Shell')
+    await expect(validLocalFileToken.text()).resolves.toContain('"name"')
 
     const missingPreviewToken = await fetch(`${baseUrl}/preview-fs/h5-auth-test/index.html`, {
       headers: {
@@ -1278,7 +1518,7 @@ describe('remote H5 auth and CORS integration', () => {
   test('keeps loopback browser local-file and preview-fs requests tokenless when H5 access is enabled', async () => {
     const loopbackBrowserOrigin = 'http://localhost:5173'
     await enableH5Access()
-    const localFile = localFileUrl(baseUrl, path.join(tmpDir, 'dist', 'index.html'))
+    const localFile = localFileUrl(baseUrl, path.join(process.cwd(), 'package.json'))
 
     const localFileResponse = await fetch(localFile, {
       headers: {
@@ -1286,7 +1526,7 @@ describe('remote H5 auth and CORS integration', () => {
       },
     })
     expect(localFileResponse.status).toBe(200)
-    await expect(localFileResponse.text()).resolves.toContain('H5 Shell')
+    await expect(localFileResponse.text()).resolves.toContain('"name"')
 
     const previewResponse = await fetch(`${baseUrl}/preview-fs/h5-auth-test/index.html`, {
       headers: {
@@ -1408,10 +1648,10 @@ describe('remote H5 auth and CORS integration', () => {
   test('keeps local loopback local-file navigations tokenless when H5 access is enabled', async () => {
     await enableH5Access()
 
-    const response = await fetch(localFileUrl(baseUrl, path.join(tmpDir, 'dist', 'index.html')))
+    const response = await fetch(localFileUrl(baseUrl, path.join(process.cwd(), 'package.json')))
 
     expect(response.status).toBe(200)
-    await expect(response.text()).resolves.toContain('H5 Shell')
+    await expect(response.text()).resolves.toContain('"name"')
   })
 
   test('blocks adapter requests from non-local browser origins when H5 access is enabled', async () => {

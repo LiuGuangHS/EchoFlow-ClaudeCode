@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test'
 import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
@@ -12,6 +12,7 @@ import {
 } from '../services/h5AccessService.js'
 import { ProviderService } from '../services/providerService.js'
 import { getEchoFlowInternalDir } from '../services/echoFlowConfigRoot.js'
+import { ManagedSettingsService } from '../services/managedSettingsService.js'
 
 let tmpDir: string
 let originalConfigDir: string | undefined
@@ -42,6 +43,134 @@ afterEach(async () => {
 })
 
 describe('H5AccessService', () => {
+  test('revocation crosses instances of the same root, not other roots or disposed subscriptions', async () => {
+    const service = new H5AccessService()
+    const first = await service.enable()
+    const seen: string[] = []
+    const watch = service.watchRevocations(id => seen.push(id))
+    const otherRoot = path.join(tmpDir, 'other-root')
+    process.env.CLAUDE_CONFIG_DIR = otherRoot
+    const other = new H5AccessService()
+    await other.enable()
+    const otherSeen: string[] = []
+    const otherWatch = other.watchRevocations(id => otherSeen.push(id))
+    process.env.CLAUDE_CONFIG_DIR = tmpDir
+    try {
+      const originalIdentity = watch.identity
+      await new H5AccessService().enable()
+      await service.updateSettings({ disconnectGraceSeconds: 600 })
+      expect(seen).toEqual([])
+      await new H5AccessService().disable()
+      expect(seen).toEqual([originalIdentity])
+      expect(watch.isCurrent(originalIdentity)).toBe(false)
+      expect(otherSeen).toEqual([])
+      expect(otherWatch.isCurrent(otherWatch.identity)).toBe(true)
+      expect((await service.enable()).token).toBe(first.token)
+      expect(watch.isCurrent(originalIdentity)).toBe(false)
+      const beforeRotation = watch.identity
+      await new H5AccessService().regenerateToken()
+      expect(seen).toEqual([originalIdentity, beforeRotation])
+      watch.dispose()
+      watch.dispose()
+      await service.disable()
+      expect(seen).toHaveLength(2)
+      expect(watch.isCurrent(watch.identity)).toBe(false)
+    } finally {
+      watch.dispose()
+      otherWatch.dispose()
+      process.env.CLAUDE_CONFIG_DIR = tmpDir
+    }
+  })
+
+  test('publishes revocation only after rename commits and before the next queued write', async () => {
+    const service = new H5AccessService()
+    await service.enable()
+    const seen: string[] = []
+    const watch = service.watchRevocations(id => seen.push(id))
+    const identity = watch.identity
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const reachedRename = new Promise<void>(resolve => { entered = resolve })
+    const rename = fs.rename
+    const renameSpy = spyOn(fs, 'rename').mockImplementationOnce(async (from, to) => {
+      entered()
+      await gate
+      await rename(from, to)
+    })
+    const pending = service.disable()
+    try {
+      await reachedRename
+      expect(seen).toEqual([])
+      expect(watch.isCurrent(identity)).toBe(true)
+      expect(await service.validateToken((await service.getSettings()).token)).toBe(true)
+      const queuedEnable = service.enable()
+      release()
+      await pending
+      expect(seen).toEqual([identity])
+      await queuedEnable
+      expect(watch.isCurrent(identity)).toBe(false)
+      expect(seen).toEqual([identity])
+    } finally {
+      release()
+      await pending.catch(() => {})
+      renameSpy.mockRestore()
+      watch.dispose()
+    }
+  })
+
+  test('failed persistence keeps the old authorization and a later retry revokes once', async () => {
+    const service = new H5AccessService()
+    const enabled = await service.enable()
+    const before = await fs.readFile(getManagedSettingsPath(), 'utf8')
+    const seen: string[] = []
+    const watch = service.watchRevocations(id => seen.push(id))
+    const identity = watch.identity
+    const renameSpy = spyOn(fs, 'rename').mockRejectedValueOnce(new Error('fixture rename failure'))
+    try {
+      await expect(service.disable()).rejects.toThrow('fixture rename failure')
+      expect(seen).toEqual([])
+      expect(watch.isCurrent(identity)).toBe(true)
+      expect(await fs.readFile(getManagedSettingsPath(), 'utf8')).toBe(before)
+      expect(await service.validateToken(enabled.token)).toBe(true)
+      expect((await fs.readdir(path.dirname(getManagedSettingsPath()))).filter(name => name.includes('.tmp.'))).toEqual([])
+      await service.disable()
+      expect(seen).toEqual([identity])
+    } finally {
+      renameSpy.mockRestore()
+      watch.dispose()
+    }
+  })
+
+  test('a queued settings mutation keeps its captured root through asynchronous work', async () => {
+    const managed = new ManagedSettingsService()
+    await managed.updateSettings(() => ({ settings: { preserved: 'root-a' }, result: undefined }))
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const started = new Promise<void>(resolve => { entered = resolve })
+    const first = managed.updateSettings(async current => {
+      entered()
+      await gate
+      return { settings: { ...current, first: true }, result: undefined }
+    })
+    await started
+    const second = new ManagedSettingsService().updateSettings(current => ({ settings: { ...current, second: true }, result: undefined }))
+    const otherRoot = path.join(tmpDir, 'other-root')
+    process.env.CLAUDE_CONFIG_DIR = otherRoot
+    try {
+      await new ManagedSettingsService().updateSettings(() => ({ settings: { preserved: 'root-b' }, result: undefined }))
+      release()
+      await Promise.all([first, second])
+      expect(JSON.parse(await fs.readFile(getManagedSettingsPath(), 'utf8'))).toEqual({ preserved: 'root-a', first: true, second: true })
+      expect(await new ManagedSettingsService().readSettings()).toEqual({ preserved: 'root-b' })
+    } finally {
+      release()
+      await Promise.allSettled([first, second])
+      process.env.CLAUDE_CONFIG_DIR = tmpDir
+    }
+  })
+
   test('defaults to disabled state with sanitized settings', async () => {
     const service = new H5AccessService()
 
@@ -609,9 +738,7 @@ describe('H5AccessService', () => {
     expect(diag.storedHostStaleness).toBe('proxy')
     expect(diag.storedPublicBaseUrl).toBe('https://h5.mydomain.com')
 
-    // ok: stored URL host is on local interfaces. Some machines expose
-    // public or non-private IPv4 addresses first, which are intentionally
-    // classified as proxy URLs rather than directly reachable LAN URLs.
+    // ok: stored URL host is on local interfaces
     const localHost = collectLocalIPv4Hosts()
       .find((host) => classifyH5PublicBaseUrl(`http://${host}:55379`) === 'plain-lan')
     if (localHost) {

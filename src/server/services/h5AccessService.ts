@@ -1,5 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import os from 'node:os'
+import path from 'node:path'
+import { getEchoFlowConfigDir } from './echoFlowConfigRoot.js'
 import { ApiError } from '../middleware/errorHandler.js'
 import { isBrowserSafePort } from './browserSafePort.js'
 import { ManagedSettingsService } from './managedSettingsService.js'
@@ -600,8 +602,52 @@ function normalizeStoredSettings(value: unknown): StoredH5AccessSettings {
   }
 }
 
+type H5RevocationScope = { identity: string; listeners: Set<(identity: string) => void> }
+const revocationScopes = new Map<string, H5RevocationScope>()
+const createAuthorizationIdentity = () => randomBytes(16).toString('hex')
+
 export class H5AccessService {
   private managedSettingsService = new ManagedSettingsService()
+
+  /** Main-listener authorization only; paired public devices have their own lifecycle. */
+  watchRevocations(listener: (identity: string) => void) {
+    const root = path.resolve(getEchoFlowConfigDir())
+    let scope = revocationScopes.get(root)
+    if (!scope) {
+      scope = { identity: createAuthorizationIdentity(), listeners: new Set() }
+      revocationScopes.set(root, scope)
+    }
+    scope.listeners.add(listener)
+    const watched = scope
+    let disposed = false
+    return {
+      get identity() { return watched.identity },
+      isCurrent(identity: string) { return !disposed && identity === watched.identity },
+      dispose() {
+        disposed = true
+        watched.listeners.delete(listener)
+        if (!watched.listeners.size && revocationScopes.get(root) === watched) revocationScopes.delete(root)
+      },
+    }
+  }
+
+  private onSettingsCommitted() {
+    const root = path.resolve(getEchoFlowConfigDir())
+    return (previous: Record<string, unknown>, next: Record<string, unknown>) => {
+      const before = normalizeStoredSettings(previous.h5Access)
+      const after = normalizeStoredSettings(next.h5Access)
+      if (!before.enabled || (after.enabled && before.tokenHash === after.tokenHash
+        && before.publicBaseUrl === after.publicBaseUrl
+        && JSON.stringify(before.allowedOrigins) === JSON.stringify(after.allowedOrigins))) return
+      const scope = revocationScopes.get(root)
+      if (!scope) return
+      const revoked = scope.identity
+      scope.identity = createAuthorizationIdentity()
+      for (const listener of [...scope.listeners]) {
+        try { listener(revoked) } catch { console.error('[H5] Connection revocation listener failed') }
+      }
+    }
+  }
 
   private async readStoredSettings(): Promise<{
     managedSettings: Record<string, unknown>
@@ -655,7 +701,7 @@ export class H5AccessService {
       return this.setToken(current, normalizeStoredSettings(current.h5Access), {
         reuseExistingToken: true,
       })
-    })
+    }, this.onSettingsCommitted())
   }
 
   async disable(): Promise<H5AccessSettings> {
@@ -675,7 +721,7 @@ export class H5AccessService {
         },
         result: toPublicSettings(nextSettings),
       }
-    })
+    }, this.onSettingsCommitted())
   }
 
   async regenerateToken(): Promise<H5AccessEnableResult> {
@@ -683,7 +729,7 @@ export class H5AccessService {
       return this.setToken(current, normalizeStoredSettings(current.h5Access), {
         reuseExistingToken: false,
       })
-    })
+    }, this.onSettingsCommitted())
   }
 
   async updateSettings(input: {
@@ -752,7 +798,7 @@ export class H5AccessService {
         },
         result: toPublicSettings(nextSettings),
       }
-    })
+    }, this.onSettingsCommitted())
   }
 
   async getDiagnostics(): Promise<H5AccessDiagnostics> {
