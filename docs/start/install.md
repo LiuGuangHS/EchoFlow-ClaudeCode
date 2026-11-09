@@ -9,40 +9,38 @@ order: 1
 
 装完就能用，不需要另外安装 Node.js、Python 或 Claude Code——CLI 内核和文件搜索用的 ripgrep 都已经打进安装包里了。
 
-产品名称统一为 **EchoFlow Code**。更早版本安装的应用和系统进程可能仍显示旧名称 `Claude Code Haha` 或 `cc-haha`。
+产品名称统一为 **cc-haha**。现有安装包、已安装的应用和系统进程可能仍显示旧名称 `Claude Code Haha`；下面的文件名和命令按实际发布包保留。
 
 ## 挑对安装包
 
-打开[下载页](https://code.echoflow.cn/download)，按系统和 CPU 架构直接下载安装包。各平台文件名对照：
+所有 EchoFlow 安装包都在 [GitHub Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest)，按系统和 CPU 架构选一个；以该发布页实际列出的文件名为准，下面保留的上游文件名不代表 EchoFlow 已发布这些产物：
 
 | 你的系统 | 下载 |
 |---|---|
-| macOS，M 系列芯片 | `EchoFlow-Code-<版本>-mac-arm64.dmg` |
-| macOS，Intel 芯片 | `EchoFlow-Code-<版本>-mac-x64.dmg` |
-| Windows x64 | `EchoFlow-Code-<版本>-win-x64.exe` |
-| Windows ARM64 | `EchoFlow-Code-<版本>-win-arm64.exe` |
-| Linux x64 | `EchoFlow-Code-<版本>-linux-x86_64.AppImage` 或 `-linux-amd64.deb` |
-| Linux ARM64 | `EchoFlow-Code-<版本>-linux-arm64.AppImage` 或 `-linux-arm64.deb` |
-
-直链、其他架构和历史版本见 [GitHub Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest)。
+| macOS，Apple 芯片（M 系列） | `Claude-Code-Haha-<版本>-macOS-Apple-Silicon.dmg` |
+| macOS，Intel 芯片 | `Claude-Code-Haha-<版本>-macOS-Intel.dmg` |
+| Windows x64 | `Claude-Code-Haha-<版本>-Windows-x64-Setup.exe` |
+| Windows ARM64 | `Claude-Code-Haha-<版本>-Windows-arm64-Setup.exe` |
+| Linux x64 | `Claude-Code-Haha-<版本>-Linux-x64.AppImage`、`.deb` 或 `.rpm` |
+| Linux ARM64 | `Claude-Code-Haha-<版本>-Linux-arm64.AppImage`、`.deb` 或 `.rpm` |
 
 不确定自己是哪种架构：macOS 看「关于本机」里的芯片型号，Windows 看「设置 → 系统 → 系统信息」里的系统类型。别只凭机器牌子猜。
 
-`.blockmap` 和 `latest*.yml` 是应用自动更新用的，不用手动下载。
+名字以 `-update.zip` 结尾的文件和 `latest*.yml` 是应用自动更新用的，不用手动下载。v0.7.6 及更早的版本用的是 `mac-arm64`、`win-x64`、`linux-x86_64` 这类旧文件名。
 
 ## macOS
 
 1. 双击 DMG。
-2. 把 EchoFlow Code 拖进「应用程序」。
+2. 把 cc-haha 拖进「应用程序」。
 3. 从「应用程序」打开。
 
 ### 如果提示「已损坏，无法打开」
 
-这不是文件坏了。macOS 会给从网上下载的安装包打一个隔离标记（quarantine），遇到没有 Apple 签名的应用就直接拒绝启动，报错文案偏偏写成「已损坏」。经过签名和公证的正式版本不会有这一步；如果你拿到的是未签名构建，用下面两种办法之一放行。
+这不是文件坏了。macOS 会给从网上下载的安装包打一个隔离标记（quarantine），遇到没有 Apple 签名的应用就直接拒绝启动，报错文案偏偏写成「已损坏」。Releases 里的正式版本都经过签名和公证，不会有这一步；如果你拿到的是未签名的开发构建，用下面两种办法之一放行。
 
-**办法一：用官方脚本（推荐）**
+**办法一：用构建附带的脚本**
 
-从同一个 Release 里把 `install-macos-unsigned.sh` 下载到和 DMG **同一个文件夹**（比如「下载」），然后在终端里跑：
+未签名的开发构建会附带 `install-macos-unsigned.sh`。把它和 DMG 放在**同一个文件夹**（比如「下载」），然后在终端里跑：
 
 ```bash
 cd ~/Downloads
@@ -56,7 +54,7 @@ bash install-macos-unsigned.sh
 已经把应用拖进「应用程序」了，就直接执行：
 
 ```bash
-xattr -dr com.apple.quarantine "/Applications/EchoFlow Code.app"
+xattr -dr com.apple.quarantine "/Applications/Claude Code Haha.app"
 ```
 
 只对你确认来自本仓库 Release 的安装包这么做。来路不明的应用不要绕过 Gatekeeper。
@@ -71,75 +69,54 @@ xattr -dr com.apple.quarantine "/Applications/EchoFlow Code.app"
 
 覆盖升级时安装器会检查旧安装目录里的用户数据。如果它提示「程序仍在运行」，退出主窗口和托盘图标，等几秒让后台的 sidecar、终端和 IM adapter 退干净，再重新运行安装器。别先手动删掉旧安装目录。
 
-## Linux / WSL
-
-WSL 用户建议在 WSL 内直接使用 Linux CLI，项目放在 Linux 文件系统（例如 `/home/<user>/projects`），不要把 Windows 桌面路径 `C:\...` 或 `\\wsl$\...` 当成 WSL 项目路径传给 CLI。
-
-先确认运行环境：
-
-```bash
-uname -a
-echo "$WSL_DISTRO_NAME"
-command -v bun
-git --version
-```
+## Linux
 
 **AppImage**（免安装，下载即用）：
 
 ```bash
-chmod +x EchoFlow-Code-<版本>-linux-x86_64.AppImage
-./EchoFlow-Code-<版本>-linux-x86_64.AppImage
+chmod +x Claude-Code-Haha-<版本>-Linux-x64.AppImage
+./Claude-Code-Haha-<版本>-Linux-x64.AppImage
 ```
 
 启动失败并提示 FUSE 相关错误时，装一下运行库：Ubuntu 22.04 及更早用 `sudo apt install libfuse2`，24.04 及以后用 `libfuse2t64`。
 
-**deb**（装进系统菜单）：
+**deb**（Ubuntu、Debian 等，装进系统菜单）：
 
 ```bash
-sudo apt install ./EchoFlow-Code-<版本>-linux-amd64.deb
+sudo apt install ./Claude-Code-Haha-<版本>-Linux-x64.deb
 ```
 
-ARM64 机器换成对应的 `linux-arm64` 文件。
-
-## WSL 中从源码跑
-
-WSL-native 使用时，建议从 WSL shell 执行，并让项目、Bun 和 Git 都使用 Linux 环境：
+**rpm**（Fedora、openSUSE 等）：
 
 ```bash
-git clone https://github.com/LiuGuangHS/EchoFlow-ClaudeCode.git ~/src/echoflow-code
-cd ~/src/echoflow-code
-bun install
-cp .env.example .env
-./bin/echoflow-code
+sudo dnf install ./Claude-Code-Haha-<版本>-Linux-x64.rpm
 ```
 
-将项目放在 `/home/<user>` 下通常比 `/mnt/c` 更快，也更不容易遇到文件监听和权限差异。Windows/Git Bash 中设置 `CLAUDE_CODE_SHELL_PREFIX='wsl -e bash -lc'` 是另一种“Windows CLI 调 WSL 工具链”的模式，不能替代 WSL-native 启动。
-
-Windows 桌面版选择的 `C:\...` 或 `\\wsl$\...` 路径也不等价于 WSL-native 的 `/home/<user>/...`。当前不要把 Windows 桌面直接管理 WSL 项目视为完整支持；需要这类用法时，请在 WSL 内启动 CLI 或 Web 服务。
+ARM64 机器换成对应的 `Linux-arm64` 文件。
 
 ## 从源码跑
 
 想改代码、调试内核，或者只想在终端里用 CLI，可以从源码起：
 
 ```bash
-git clone https://github.com/LiuGuangHS/EchoFlow-ClaudeCode.git echoflow-code
-cd echoflow-code
+git clone https://github.com/NanmiCoder/cc-haha.git
+cd cc-haha
 bun install
 cp .env.example .env
-./bin/echoflow-code
+./bin/claude-haha
 ```
 
 需要 [Bun](https://bun.sh) 和 Git。这条路只跑 CLI，桌面端的构建方式和本地服务参数见 [命令行](../cli/index.md)。
 
 ## 升级
 
-**应用内更新（推荐）。** 打开「设置 → 关于 → 应用更新」，点「检查更新」。它会比对当前版本和官网更新服务上的最新版本，有新版就下载，下载完提示「安装并重启」。
+**应用内更新（推荐）。** 打开「设置 → 关于 → 应用更新」，点「检查更新」。它会比对当前版本和 GitHub Releases 上的最新版本，有新版就下载，下载完提示「安装并重启」。
 
 更新前先把正在跑的会话停掉，未提交的代码存好。
 
 下载卡住不动，多半是网络到不了 GitHub。同一个面板里有「高级更新代理」，可以切成系统代理或填一个本地 HTTP 代理地址（例如 `http://127.0.0.1:7890`）。这个代理只管应用自己的更新下载，不影响模型请求。
 
-**手动换包。** 「设置 → 关于 → 应用更新」里始终有「前往下载页」按钮；也可以直接打开[下载页](https://code.echoflow.cn/download)，下新版安装包后按上面各平台的步骤重装一遍。会话、服务商配置、技能、Agent、记忆都存在 `~/.claude` 下，不在应用目录里，覆盖安装不会动它们。
+**手动换包。** 从 Releases 下新版安装包，按上面各平台的步骤重装一遍即可。会话、服务商配置、技能、Agent、记忆都存在 `~/.claude` 下，不在应用目录里，覆盖安装不会动它们。
 
 :::warning
 安装器的数据保护不等于备份。真正重要的东西请自己另存一份。

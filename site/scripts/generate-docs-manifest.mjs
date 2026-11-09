@@ -19,15 +19,15 @@ export const paths = {
   siteDir
 }
 
-const excludedDirectoryNames = new Set(['superpowers', 'public', 'images', '_internal'])
+const excludedDirectoryNames = new Set(['superpowers', 'ui-clone', 'public', 'images', '_internal'])
 const excludedFiles = new Set(['AGENTS.md'])
 
-/** 分区顺序与标题。新增一个 docs/ 顶层目录时在这里登记，否则会排到最后并显示裸目录名。 */
+/** 公开分区的顺序与标题；未登记的目录会在生成前报错。 */
 export const sections = [
   { id: 'start', zh: '开始使用', en: 'Get started' },
   { id: 'cases', zh: '实战案例', en: 'Practical guides' },
   { id: 'desktop', zh: '桌面端功能', en: 'Desktop app' },
-  { id: 'mobile', zh: '移动端', en: 'Mobile' },
+  { id: 'mobile', zh: '移动端', en: 'Mobile app' },
   { id: 'im', zh: 'IM 接入', en: 'Messaging' },
   { id: 'cli', zh: '命令行', en: 'Command line' },
   { id: 'internals', zh: '深入原理', en: 'Internals' }
@@ -72,19 +72,17 @@ async function listMarkdownFiles(directory, prefix = '') {
 }
 
 function parseFrontmatter(markdown) {
-  // 允许 CRLF：Windows 上直接编辑过的 .md 会带回行尾 \r，
-  // 若只认 '\n' 会整段漏掉 frontmatter，把 title/nav_title/order 和正文一起弄错。
-  const normalized = markdown.replace(/\r\n/g, '\n')
-  if (!normalized.startsWith('---\n')) {
-    return { body: normalized, attributes: {} }
+  const source = markdown.replace(/\r\n/g, '\n')
+  if (!source.startsWith('---\n')) {
+    return { body: source, attributes: {} }
   }
 
-  const closingIndex = normalized.indexOf('\n---\n', 4)
+  const closingIndex = source.indexOf('\n---\n', 4)
   if (closingIndex === -1) {
-    return { body: normalized, attributes: {} }
+    return { body: markdown, attributes: {} }
   }
 
-  const rawFrontmatter = normalized.slice(4, closingIndex)
+  const rawFrontmatter = source.slice(4, closingIndex)
   const attributes = {}
 
   for (const line of rawFrontmatter.split('\n')) {
@@ -95,7 +93,7 @@ function parseFrontmatter(markdown) {
   }
 
   return {
-    body: normalized.slice(closingIndex + 5),
+    body: source.slice(closingIndex + 5),
     attributes
   }
 }
@@ -151,10 +149,19 @@ function moduleIdFor(relativePath) {
 
 function buildRecord(relativePath, markdown) {
   const { body, attributes } = parseFrontmatter(markdown)
+  for (const field of ['title', 'nav_title', 'description', 'order']) {
+    const value = attributes[field]
+    if (!value || (field === 'order' && !/^-?\d+$/.test(value))) {
+      throw new Error(`docs/${relativePath}: invalid or missing frontmatter ${field}`)
+    }
+  }
   const segments = relativePath.split('/')
   const locale = segments[0] === 'en' ? 'en' : 'zh'
   const localeRelativePath = locale === 'en' ? segments.slice(1).join('/') : relativePath
   const section = localeRelativePath.split('/')[0]
+  if (!sectionIndex.has(section)) {
+    throw new Error(`docs/${relativePath}: unregistered documentation section ${section}`)
+  }
   const route = routeFromRelativePath(relativePath)
   const basename = path.posix.basename(relativePath, '.md')
   const fallbackTitle = basename === 'index'
@@ -175,7 +182,7 @@ function buildRecord(relativePath, markdown) {
     path: route,
     search: searchBody(body),
     section,
-    sectionRank: sectionIndex.has(section) ? sectionIndex.get(section) : 999,
+    sectionRank: sectionIndex.get(section),
     slug: route.replace(/^\//, ''),
     sourcePath: `docs/${relativePath}`,
     title
@@ -238,6 +245,14 @@ export async function generateDocsManifest() {
   for (const relativePath of relativePaths) {
     const markdown = await fs.readFile(path.join(docsDir, relativePath), 'utf8')
     records.push(buildRecord(relativePath, markdown))
+  }
+
+  const publicPaths = new Set(relativePaths)
+  for (const relativePath of relativePaths) {
+    const counterpart = relativePath.startsWith('en/') ? relativePath.slice(3) : `en/${relativePath}`
+    if (!publicPaths.has(counterpart)) {
+      throw new Error(`docs/${relativePath}: missing translation docs/${counterpart}`)
+    }
   }
 
   const sorted = sortRecords(records)

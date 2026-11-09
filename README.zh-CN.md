@@ -13,7 +13,7 @@
 [![GitHub Forks](https://img.shields.io/github/forks/LiuGuangHS/EchoFlow-ClaudeCode?style=social)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/network/members)
 [![GitHub Issues](https://img.shields.io/github/issues/LiuGuangHS/EchoFlow-ClaudeCode)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/issues)
 [![GitHub Pull Requests](https://img.shields.io/github/issues-pr/LiuGuangHS/EchoFlow-ClaudeCode)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/pulls)
-[![License](https://img.shields.io/badge/License-MIT-blue)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/LICENSE)
+[![License](https://img.shields.io/badge/License-Community_Source-orange)](LICENSE)
 [![English](https://img.shields.io/badge/English-Available-green)](README.md)
 [![Docs](https://img.shields.io/badge/文档站点-Visit-FF7A00)](https://code.echoflow.cn)
 
@@ -94,9 +94,9 @@ EchoFlow Code 的目标不是再包一层聊天框，而是把 Coding Agent 变�
 - **Agent Teams 协作工作台**：桌面端可视化多 Agent 协作团队——成员、任务、通信流和依赖泳道一目了然。
 - **动态 Workflow 编排**：模型当场编写并运行编排脚本，并发或流水线调度多个子代理，支持阶段视图、中断与断点续跑。
 - **模型请求追踪**：本地记录每轮模型请求的状态与耗时，可搜索筛选，快速定位卡死或失败调用。
-- **Computer Use**：让 Agent 在授权后截图、点击、输入并控制桌面应用。macOS 上由原生运行时在后台完成，不会接管你真实的鼠标键盘。
+- **Computer Use**：macOS / Windows / Linux 原生桌面控制，无需 Python；一次确认授权所有受支持应用。macOS 保留原生引擎，Windows / Linux 复用 agent-desktop。支持的后台语义操作不移动真实鼠标；物理输入仍受前台和系统限制。
 - **桌面宠物**：搭搭、弧弧、补补、回回随任务状态换动作，也能自己做一只（默认关闭）。
-- **H5 远程访问**：扫码用手机浏览器接入当前会话，锁屏切后台都不打断正在跑的任务。
+- **手机 App 与 H5**：Android / iPhone App 或手机浏览器扫码接入，可审批工具调用、回答提问、派新任务、查看改动或停止工作；任务始终在电脑运行，锁屏不打断。EchoFlow 手机安装包状态以 [Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest) 为准，上游 APK 和 TestFlight 群组不是 EchoFlow 分发渠道。上游手机实现要求桌面端 v0.7.6 或更新版本，不代表 EchoFlow 的版本承诺。
 - **IM 接入**：通过 Telegram / 飞书 / 微信 / 钉钉 / WhatsApp / 企业微信 / QQ / Slack 远程对话、切换项目和审批权限。
 - **定时任务与用量统计**：创建计划任务在独立会话执行，并查看本机 Token 使用趋势。
 
@@ -135,3 +135,11 @@ EchoFlow Code 的目标不是再包一层聊天框，而是把 Coding Agent 变�
 - [React](https://github.com/facebook/react)：前端工程与组件化 UI 生态。
 - [Electron](https://github.com/electron/electron)：跨端桌面应用能力与工程实践。
 - [cc-switch](https://github.com/farion1231/cc-switch)：模型供应商配置能力参考。
+- [cc-haha](https://github.com/NanmiCoder/cc-haha)（NanmiCoder）：上游来源，保留其署名和适用许可。
+- [agent-desktop](https://github.com/vercel-labs/agent-desktop)（Vercel Labs）：Windows / Linux Computer Use 直接复用其原生实现，固定版本 **1.0.2**、commit `9eb9b296192fcb70bda25e918cd6dd66abfa3d0d`；保留 [Apache-2.0 许可](native/agent-desktop/LICENSE)、[来源与摘要](native/agent-desktop/UPSTREAM.json)及[本地改动说明](native/agent-desktop/PATCHES.md)。
+
+## 许可说明
+
+当前上游条款为 [cc-haha Community Source License 1.0](LICENSE)。允许个人非商业使用及企业内部自用；接单、对外商业盈利、收费修改或二次开发、商业分发及付费服务须事先取得书面商业授权；二次分发须显著保留来源署名。历史 MIT 授权与第三方许可继续有效。详见[许可说明](LICENSING.md)。当前许可属于源码可用许可，不是 OSI 认可的开源许可证。恢复 EchoFlow 产品身份不撤销新增的上游许可条款，也不授予商业许可。
+
+复用的 agent-desktop 原有代码继续适用 Apache-2.0，其原授权不受本项目 Community Source License 的额外限制；第三方依赖保留各自许可，见[第三方许可](THIRD_PARTY_LICENSES.md)。

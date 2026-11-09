@@ -7,10 +7,10 @@ order: 1
 
 # 命令参考
 
-EchoFlow Code 默认启动交互式会话，也可以用 `--print` 作为脚本、CI 或其他程序中的非交互式 Agent。源码仓库中的命令是 `./bin/echoflow-code`；安装后的可执行文件名称以安装方式为准。
+cc-haha 默认启动交互式会话，也可以用 `--print` 作为脚本、CI 或其他程序中的非交互式 Agent。源码仓库中的命令是 `./bin/claude-haha`；安装后的可执行文件名称以安装方式为准。
 
 ```bash
-./bin/echoflow-code --help
+./bin/claude-haha --help
 ```
 
 `--help` 是当前版本参数的最终依据。本页按任务解释最常用的参数，避免复制一份很快过期的完整帮助输出。
@@ -19,25 +19,25 @@ EchoFlow Code 默认启动交互式会话，也可以用 `--print` 作为脚本�
 
 ```bash
 # 在当前目录开始交互式会话
-./bin/echoflow-code
+./bin/claude-haha
 
 # 带着第一条需求进入会话
-./bin/echoflow-code "解释这个仓库的启动路径"
+./bin/claude-haha "解释这个仓库的启动路径"
 
 # 返回一段文本后退出
-./bin/echoflow-code --print "总结最近一次提交"
+./bin/claude-haha --print "总结最近一次提交"
 
 # 返回一个完整 JSON 结果
-./bin/echoflow-code --print --output-format json "列出主要模块"
+./bin/claude-haha --print --output-format json "列出主要模块"
 
 # 继续当前目录最近的会话
-./bin/echoflow-code --continue
+./bin/claude-haha --continue
 
 # 恢复指定会话，同时创建新的会话分支
-./bin/echoflow-code --resume <session-id> --fork-session
+./bin/claude-haha --resume <session-id> --fork-session
 
 # 在新 Git worktree 中工作
-./bin/echoflow-code --worktree docs-refresh
+./bin/claude-haha --worktree docs-refresh
 ```
 
 ## 先理解 `--print` 的安全边界
@@ -72,7 +72,7 @@ EchoFlow Code 默认启动交互式会话，也可以用 `--print` 作为脚本�
 结构化输出示例：
 
 ```bash
-./bin/echoflow-code --print \
+./bin/claude-haha --print \
   --output-format json \
   --json-schema '{"type":"object","properties":{"risk":{"type":"string"}},"required":["risk"]}' \
   "审查当前改动，只返回风险级别"
@@ -158,8 +158,8 @@ EchoFlow Code 默认启动交互式会话，也可以用 `--print` 作为脚本�
 每个子命令都有独立帮助：
 
 ```bash
-./bin/echoflow-code mcp --help
-./bin/echoflow-code plugin --help
+./bin/claude-haha mcp --help
+./bin/claude-haha plugin --help
 ```
 
 ## 交互式命令

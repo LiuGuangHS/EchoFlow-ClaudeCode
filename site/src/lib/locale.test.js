@@ -4,12 +4,8 @@ import { describe, it } from 'node:test'
 import { runInNewContext } from 'node:vm'
 
 import { DEFAULT_LOCALE, normalizeStoredLocale, resolveBrowserLocale, resolveRootRedirect } from './locale.js'
-import { normalizeSitePath } from './locale.js'
 
-// The page is read from source, where Vite has not yet substituted `%BASE_URL%`.
-// Apply the same substitution the build performs so the bootstrap runs on the
-// string the browser will actually receive.
-const html = readFileSync(new URL('../../index.html', import.meta.url), 'utf8').replaceAll('%BASE_URL%', '/')
+const html = readFileSync(new URL('../../index.html', import.meta.url), 'utf8')
 const bootstrap = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)]
   .map((match) => match[1])
   .find((script) => script.includes('window.location.pathname'))
@@ -54,19 +50,6 @@ describe('resolveBrowserLocale', () => {
   it('优先使用浏览器的语言列表，并在没有列表时回退到 language', () => {
     assert.equal(resolveBrowserLocale({ languages: ['ja-JP', 'zh-CN'], language: 'zh-CN' }), 'en')
     assert.equal(resolveBrowserLocale({ languages: [], language: 'zh-CN' }), 'zh')
-  })
-})
-
-describe('normalizeSitePath', () => {
-  it('removes the GitHub Pages project base before routing', () => {
-    assert.equal(normalizeSitePath('/EchoFlow-ClaudeCode/', '/EchoFlow-ClaudeCode/'), '/')
-    assert.equal(normalizeSitePath('/EchoFlow-ClaudeCode/en/', '/EchoFlow-ClaudeCode/'), '/en')
-  })
-
-  it('preserves root deployments and unrelated paths', () => {
-    assert.equal(normalizeSitePath('/', '/'), '/')
-    assert.equal(normalizeSitePath('/start/', '/'), '/start')
-    assert.equal(normalizeSitePath('/elsewhere/', '/EchoFlow-ClaudeCode/'), '/elsewhere')
   })
 })
 

@@ -7,9 +7,9 @@ order: 2
 
 # Environment Variables
 
-EchoFlow Code has two configuration paths:
+cc-haha has two configuration paths:
 
-- Desktop users should select, test, and activate a provider under **Settings → Model settings**. The app manages authentication, model mappings, and protocol translation.
+- Desktop users should select, test, and activate a provider under **Settings → Providers**. The app manages authentication, model mappings, and protocol translation.
 - When running the CLI from source, use a repository `.env`, shell variables, or Claude Code `settings.json`.
 
 Do not store the same API key in several places. When troubleshooting, first check whether a Desktop provider is active.
@@ -59,6 +59,7 @@ AZURE_OPENAI_CODEX_DEPLOYMENT=your_codex_deployment
 | Variable | Description |
 |----------|-------------|
 | `CLAUDE_CONFIG_DIR` | Use a specific configuration directory instead of `~/.claude`; useful for portable mode and isolated tests |
+| `CC_HAHA_TRACE_DIR` | Separate Agent Trace storage directory; must be an absolute path. When empty, defaults to `cc-haha/traces` under the configuration directory. See [Settings](../desktop/settings.md) |
 | `CLAUDE_CODE_FORCE_RECOVERY_CLI` | Set to `1` to use the simplified Recovery CLI |
 | `CLAUDE_CODE_SHELL_PREFIX` | Prefix Bash tool commands, for example `wsl -e bash -lc` on Windows |
 | `DISABLE_TELEMETRY` | Set to `1` to disable telemetry |
@@ -73,16 +74,16 @@ See [Local Server](../internals/server.md) for `SERVER_HOST`, `SERVER_PORT`, `SE
 Desktop stores the provider index at:
 
 ```text
-~/.claude/echoflow-code/providers.json
+~/.claude/cc-haha/providers.json
 ```
 
-Provider-managed environment data is written to an isolated EchoFlow configuration. You do not need to copy it into `~/.claude/settings.json`. When the CLI finds an active provider, it reuses its credentials, models, and protocol settings. Providers using `openai_chat` or `openai_responses` automatically use a loopback proxy.
+Provider-managed environment data is written to an isolated Haha configuration. You do not need to copy it into `~/.claude/settings.json`. When the CLI finds an active provider, it reuses its credentials, models, and protocol settings. Providers using `openai_chat` or `openai_responses` automatically use a loopback proxy.
 
 See [Third-Party Models](../start/models.md) for the setup flow.
 
 ### Repository `.env`
 
-The source `bin/echoflow-code` launcher loads a `.env` file from the repository root when it exists:
+The source `bin/claude-haha` launcher loads a `.env` file from the repository root when it exists:
 
 ```bash
 cp .env.example .env
@@ -121,9 +122,9 @@ A project can also contain `.claude/settings.json` or `.claude/settings.local.js
 
 There is no reliable three-step rule such as “shell > `.env` > settings”:
 
-1. `bin/echoflow-code` first lets Bun load the repository `.env`.
+1. `bin/claude-haha` first lets Bun load the repository `.env`.
 2. CLI initialization merges enabled user, project, local, command-line, and managed setting sources.
-3. An active EchoFlow provider overrides provider-routing values from ordinary Claude settings so the two clients do not contaminate each other.
+3. An active Haha provider overrides provider-routing values from ordinary Claude settings so the two clients do not contaminate each other.
 4. Runtime values injected by the Desktop host are protected from same-name fields in `settings.json`.
 5. Enterprise policy and `--setting-sources` can also change the effective result.
 

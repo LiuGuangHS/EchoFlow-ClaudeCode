@@ -34,6 +34,20 @@ curl http://127.0.0.1:3456/health
 
 `/health` 是启动探针，始终公开，不代表其他接口已通过认证。
 
+## 启动顺序
+
+`Bun.serve` 先完成端口监听，之后才开始本地索引初始化：
+
+1. 端口绑定，从这里开始操作系统就会接受 TCP 连接。
+2. 在同一次同步调用里启动后台索引。会话投影在第一个 `await` 之前打开 SQLite、读取 `source_files`，全文检索回填随后才开始。
+3. 这段同步工作交还事件循环后，`/health` 就能应答，不等待发现、投影或回填；随后建立文件监听时每处理 25 个项目目录就让出一次事件循环。需要索引的 REST 请求在 `fetch` 内等待 `localIndexCoordinator.start()`。
+
+在这一切之前，`startServer` 会先打印 `[Server] modules loaded <ms> ms after process start; binding <host>:<port>`。在桌面 sidecar 里，`[claude-sidecar] starting server mode` 到这一行之间是模块加载耗时；之后到 `[Server] Claude Code API server running` 是启动工作。
+
+先监听并不会让 `/health` 更早应答，HTTP 仍要等这段同步工作结束。它改变的是宿主能看到的状态：旧顺序下整个同步初始化期间端口都不监听，看起来像进程已死；现在端口已打开而 `/health` 没有应答，就能判断为「进程活着但很忙」，桌面端的超时文案也据此区分。
+
+索引重建是可续跑的：每份 transcript 单独提交事务，进程重启后已提交的部分不会重做。首次启动遇到 parser 版本升级（例如 v12 → v13）会全量重投影，耗时随数据量线性增长。启动后的第一轮全量扫描会打印 `[local-index]` 前缀的分阶段日志：`opening`、`opened`、`ready to reconcile`、`rebuilding <n> sources`、`discovery start`、最多每 5 秒一行的 `reprojected <n> sources (<checked>/<known> checked)`、`discovery complete`、`activity backfill start/complete`。进度只统计真正重新读取的文件。之后定期的兜底扫描保持安静，只有确实重新读取了文件时才打印一行 `discovery complete`。日志写 stdout，桌面端会把它记进诊断日志，也会放进启动失败弹窗的 `Recent server logs`。
+
 ## 启动参数
 
 | 参数 | 环境变量 | 默认值 | 说明 |
@@ -55,6 +69,8 @@ bun run build
 cd ..
 bun run src/server/index.ts
 ```
+
+`bun run build` 最后会把手机 App（`mobile/`）导出成网页放进 `desktop/dist/m`，所以构建前要先在 `mobile/` 里 `bun install`。手机和平板浏览器在桌面 H5 入口完成令牌验证或远程配对后，会跳到 `/m/` 使用这套界面；`/m/*` 的刷新由 Server 回落到 `dist/m/index.html`。没有构建 `dist/m` 时，`/m/*` 的页面请求重定向回 `/`，入口保留桌面版自带的手机布局。
 
 Server 会自动查找仓库的 `desktop/dist`。从其他目录启动时，用绝对路径指定构建产物：
 
@@ -123,27 +139,13 @@ ws://127.0.0.1:3456/ws/<session-id>
 
 - `user_message`、`stop_generation`
 - `permission_response`、`computer_use_permission_response`
-- `set_permission_mode`、`set_runtime_config`（会话级服务商、模型与推理参数覆盖）
-- `set_cli_runtime`（选择 `bundled` 或 `installed` CLI；桌面端在会话输入区提供选择器，设置页的「运行时管理」另管默认值）
+- `set_permission_mode`、`set_runtime_config`
 - `sync_state`、`prewarm_session`
 - `ping`
 
-服务端会发送连接与会话状态、文本增量、思考、工具调用与结果、权限请求、重试/降级状态、错误、任务/团队更新和 `pong`。`set_runtime_config` 当前只更新会话级的 `providerId`、`modelId` 和可选的推理参数，并触发当前会话的配置应用流程；它不选择 CLI 执行运行时。发送 `set_cli_runtime` 后，Server 会校验并应用 `bundled` 或 `installed`，成功时回传 `cli_runtime_applied`；活动回合可能延迟切换，非法或不可用的运行时会返回错误。完整字段以 `src/server/ws/events.ts` 为准。
+服务端会发送连接与会话状态、文本增量、思考、工具调用与结果、权限请求、重试/降级状态、错误、任务/团队更新和 `pong`。完整字段以 `src/server/ws/events.ts` 为准。
 
 桌面客户端每 30 秒发送一次 ping；等待 pong 10 秒后会主动重连。重连退避上限为 30 秒，并不会在固定次数后永久停止。自定义客户端应能重复连接、重新同步状态，并忽略未知的新增消息字段。
-
-### 谁跟随用户选的 CLI 运行时
-
-选定 `installed` 之后，执行 CLI 的每一条路径都必须解析同一份运行时配置。新增执行入口时照此办理：
-
-- 会话启动与重启：`conversationService.resolveCliArgs`，会话级选择和持久化的 `cliRuntimeId` 都在这里生效。
-- Team worker：`teamPlanRuntime.buildTeamWorkerStartOptions` 继承父会话的运行时；服务商、模型和推理强度仍然按成员各自批准的值。
-- 定时任务：`cronScheduler.buildCronCliArgs` 读运行时配置，**不读** `CLAUDE_CLI_PATH`。定时任务不交互，配置指向的文件被删时退回默认运行时，而不是让任务失败。
-
-两处刻意不跟随，修改前先确认理由仍然成立：
-
-- `desktopCliLauncherService` 解析的是要装到用户 PATH 上的内置 sidecar，装的就是内置。
-- `bashProvider` 定义的是新开 shell 里的 `claude()` 函数；新 shell 没有会话可继承，跟随应用默认值是唯一说得通的行为。
 
 ## 反向代理清单
 

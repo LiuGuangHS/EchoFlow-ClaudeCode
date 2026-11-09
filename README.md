@@ -7,130 +7,69 @@
   </picture>
 </p>
 
-<div align="center">
+[English](README.en.md) · [简体中文](README.zh-CN.md)
 
-[![GitHub Stars](https://img.shields.io/github/stars/LiuGuangHS/EchoFlow-ClaudeCode?style=social)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/stargazers)
-[![GitHub Forks](https://img.shields.io/github/forks/LiuGuangHS/EchoFlow-ClaudeCode?style=social)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/network/members)
-[![GitHub Issues](https://img.shields.io/github/issues/LiuGuangHS/EchoFlow-ClaudeCode)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/issues)
-[![GitHub Pull Requests](https://img.shields.io/github/issues-pr/LiuGuangHS/EchoFlow-ClaudeCode)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/pulls)
-[![License](https://img.shields.io/badge/License-Proprietary-FF7A00)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/blob/main/LICENSE)
-[![Chinese](https://img.shields.io/badge/Chinese-Available-green)](README.zh-CN.md)
-[![Docs](https://img.shields.io/badge/Docs-Visit-FF7A00)](https://code.echoflow.cn)
+EchoFlow Code is a **local-first desktop workspace for Claude Code and model providers** on macOS, Windows, and Linux. Run coding sessions, inspect every diff, coordinate Agent Teams and Dynamic Workflows, and keep control of every tool call and model connection.
 
-**English** · [简体中文](README.zh-CN.md)
+[Download desktop app](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest) · [Start in five minutes](docs/en/start/first-session.md) · [Documentation](https://code.echoflow.cn) · [Feedback and discussions](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/discussions)
 
-</div>
+## Install
 
-EchoFlow Code is a **local-first desktop workspace for Claude Code and model providers**. Run coding sessions, inspect every diff, coordinate Agent Teams and Dynamic Workflows, and keep control of every tool call and model connection.
-
-<p align="center">
-  <a href="https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest"><strong>Download desktop app</strong></a> · <a href="docs/en/start/first-session.md"><strong>Start in five minutes</strong></a> · <a href="https://code.echoflow.cn">Documentation</a> · <a href="https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/discussions">Feedback and discussions</a>
-</p>
-
-| Inspect every change | Coordinate complex work | Keep control of your setup |
-| --- | --- | --- |
-| Tool calls, workspace diffs, and undo stay visible. | Subagents, Agent Teams, and Dynamic Workflow make parallel work readable. | Connect official OAuth, vendor APIs, local models, or custom compatible endpoints. |
-
-## Desktop Preview
-
-<p align="center">
-  <a href="https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases"><img src="https://img.shields.io/badge/Download_Desktop-macOS_%7C_Windows_%7C_Linux-FF7A00?style=for-the-badge" alt="Download desktop"></a>
-  <a href="docs/en/start/install.md"><img src="https://img.shields.io/badge/Install_Guide-Guide-gray?style=for-the-badge" alt="Install guide"></a>
-</p>
-
-<table>
-  <tr>
-    <td align="center" width="33.33%"><img src="docs/images/app/en/session-new.webp" alt="Empty session"><br><b>Start with a clear session</b><br><sub>Project and permissions stay visible</sub></td>
-    <td align="center" width="33.33%"><img src="docs/images/app/en/session-main.webp" alt="Running task"><br><b>Follow work as it runs</b><br><sub>Tool calls and progress stay in view</sub></td>
-    <td align="center" width="33.33%"><img src="docs/images/app/en/workspace-diff.webp" alt="Workspace diff"><br><b>Review every change</b><br><sub>Focused syntax-highlighted diffs</sub></td>
-  </tr>
-  <tr>
-    <td align="center" width="33.33%"><img src="docs/images/app/en/workspace-preview.webp" alt="Built-in browser preview"><br><b>Verify on the spot</b><br><sub>Open the real edited page in the app</sub></td>
-    <td align="center" width="33.33%"><img src="docs/images/app/en/model-picker.webp" alt="Model picker"><br><b>Choose the exact model</b><br><sub>Providers, presets, and local endpoints together</sub></td>
-    <td align="center" width="33.33%"><img src="docs/images/app/en/skill-market.webp" alt="Skill marketplace"><br><b>Add the right skill</b><br><sub>Source and safety status are visible first</sub></td>
-  </tr>
-</table>
-
-## Install the Desktop App
-
-1. Download the macOS, Windows, or Linux installer from [Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases).
-2. Configure a model provider, API key, and default model in Desktop Settings.
-3. Public macOS releases require signing and notarization. Draft or unsigned builds may require one-time manual approval. Unsigned Windows installers can show SmartScreen; choose “More info” then “Run anyway.” See the [installation guide](docs/en/start/install.md).
-
-## Run the CLI from Source
-
-```bash
-bun install
-cp .env.example .env
-./bin/echoflow-code
-```
-
-See [environment variables](docs/en/cli/env.md) and [CLI setup](docs/en/cli/index.md) for configuration details.
-
-## Why EchoFlow Code
-
-EchoFlow Code turns a coding-agent runtime into a visible, reviewable workspace rather than another opaque chat window.
-
-- **Coordinate real multi-agent work**: the Agent Teams workbench shows members, a shared task list, communication, dependency lanes, and completed-session history. Dynamic Workflow runs parallel or pipeline orchestration with phase progress, interruption, and recovery.
-- **Keep every change inspectable**: sessions expose permission requests, tool calls, workspace diffs, browser previews, model traces, diagnostics, and an undo path instead of hiding agent execution behind a single response.
-- **Use the setup you trust**: connect official Claude, ChatGPT, and Grok sign-in flows; vendor APIs; LM Studio or Ollama; and compatible custom endpoints. Provider credentials, model selection, and permissions remain under your control.
-- **Continue beyond one desktop**: keep the same session moving through H5, Android, and messaging integrations while the desktop remains the source of truth for project context and approval.
-- **Recover with evidence**: local activity, diagnostics exports, upgrade-safe persistence, and controlled repair paths help investigate startup, provider, or session failures without exposing secrets.
+1. Download the installer for your operating system and architecture from [EchoFlow Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases).
+2. Configure your model provider, API key, and default model in Settings.
+3. Check the release's signing status before installing. See the [installation guide](docs/en/start/install.md), [code signing policy](docs/en/start/code-signing.md), and [privacy and network access](docs/en/start/privacy.md).
+4. For phone access, see [Mobile app and remote connection](docs/en/desktop/remote.md). Mobile package availability must be checked against EchoFlow Releases; upstream APKs and TestFlight groups are not EchoFlow distribution channels.
 
 ## Desktop Highlights
 
-- **Multi-session workspace**: tabs, project switching, terminal entry, and session history in one place, with a resizable sidebar.
-- **Global search**: press Cmd+K to search across every session and jump to the match.
-- **Branch / Worktree launch**: choose a repository branch and decide whether to use the current working tree or an isolated Worktree.
-- **Review edits file by file**: the workspace lists this turn's changes; open any file for a syntax-highlighted diff, or undo the whole turn.
-- **Built-in browser preview**: the page your agent just edited renders right inside the app, cookies and login state included.
-- **Five permission modes**: from "ask every time" to "skip permissions" — risky commands, tool calls, and follow-up questions are all approved in the GUI.
-- **Bring your own model**: sign in to Claude, ChatGPT, or Grok; use presets for DeepSeek, Kimi, Zhipu GLM and others; or point it at LM Studio and Ollama running locally.
-- **Image generation**: generate and edit images right in the chat — sign in with ChatGPT or Grok for instant use, or plug in any OpenAI-compatible Images API.
-- **Visual MCP manager**: add and edit MCP servers in a GUI — STDIO / Streamable HTTP / SSE, with project, shared, or global scope.
-- **Six colour themes**: white, paper, warm classic, celadon, ink night, and ink blue — optionally following your system's light/dark setting.
-- **Skill marketplace**: discover, preview, and install third-party skills from ClawHub / SkillHub, with source and safety status shown up front.
-- **Session activity panel**: track task progress, background tasks, SubAgents, and sources in one side panel.
-- **Visual SubAgent manager**: create and tune SubAgents in a GUI — model, tools, and permission mode.
-- **Agent Teams workbench**: visualize multi-agent collaboration in the GUI — members, tasks, a communication feed, and a dependency-lane canvas.
-- **Dynamic Workflow orchestration**: the model writes and runs orchestration scripts on the fly, driving subagents concurrently or in pipelines, with phase views, interrupts, and resume.
-- **Model trace**: every model request is logged locally with status and timing — search and filter to diagnose stuck or failed calls.
-- **Computer Use**: let the agent take screenshots, click, type, and control desktop apps after authorization. On macOS the native runtime works in the background without taking over your real mouse and keyboard.
-- **Desktop pets**: Dada, Huhu, Bubu, and Huihui change what they do with the task at hand — or raise one of your own (off by default).
-- **H5 remote access**: scan a QR code to continue the session in your phone browser; locking the screen won't kill a running task.
-- **IM integration**: chat, switch projects, and approve actions through Telegram / Feishu / WeChat / DingTalk / WhatsApp / WeCom / QQ / Slack.
-- **Scheduled tasks and usage stats**: run planned tasks in their own sessions and track local token usage trends.
+- **Multi-session workspace and global search**: tabs, project switching, terminal entry, resizable sidebar, and session history; Cmd+K searches across sessions and jumps to a match.
+- **Branch / Worktree launch**: choose a repository branch and use the current working tree or an isolated Worktree.
+- **File-by-file review**: syntax-highlighted diffs, line-level feedback, and an undo path keep every change inspectable.
+- **Built-in browser preview**: verify edited pages inside the app with real cookies and login state.
+- **Five permission modes**: approve commands, tool calls, and follow-up questions in the GUI, or select planning and other permission modes.
+- **Bring your own model**: official Claude, ChatGPT, and Grok sign-in; vendor APIs, presets, LM Studio, Ollama, and compatible custom endpoints.
+- **Image generation**: generate and edit images through ChatGPT / Grok sign-in or an OpenAI-compatible Images API.
+- **Visual MCP manager**: STDIO / Streamable HTTP / SSE transports with project-private, shared, and global scopes.
+- **Six colour themes**: white, paper, warm classic, celadon, ink night, and ink blue, optionally following system appearance.
+- **Skill marketplace**: discover, preview, and install third-party ClawHub / SkillHub skills, with source and safety status visible before installation.
+- **Session activity and SubAgents**: inspect task progress, background tasks and sources; configure SubAgent models, tools, and permissions visually.
+- **Agent Teams workbench**: members, shared tasks, communication, dependency lanes, and completed-session history in one place.
+- **Dynamic Workflow orchestration**: model-written scripts coordinate parallel or pipeline subagents with phase views, interrupts, and resume.
+- **Model trace and diagnostics**: local request status and timing, searchable failure evidence, upgrade-safe persistence, and controlled repair paths.
+- **Computer Use**: native desktop control on macOS / Windows / Linux without Python. macOS retains its native engine; Windows / Linux reuse agent-desktop. Supported background semantic actions leave the physical pointer alone; physical input still uses the foreground and remains subject to OS limits. Enabling and confirming consent authorizes all supported apps.
+- **Desktop pets**: Dada, Huhu, Bubu, and Huihui reflect task state, with custom pets supported (off by default).
+- **Mobile app and H5**: QR pairing lets a phone approve tools, answer questions, start tasks, review changes, or stop work. Tasks run on the computer, so locking the phone does not interrupt them. The upstream mobile implementation requires desktop v0.7.6 or later; this is not an EchoFlow release-version promise.
+- **IM integration**: Telegram / Feishu / WeChat / DingTalk / WhatsApp / WeCom / QQ / Slack support remote chat, project switching, and permission approval.
+- **Scheduled tasks and usage stats**: run planned tasks in independent sessions and track local token usage.
 
 ## Documentation
 
 Full documentation: <https://code.echoflow.cn>
 
 | Area | Documents |
-|------|-----------|
-| Getting started | [Install](docs/en/start/install.md) · [Connect a model](docs/en/start/models.md) · [First session](docs/en/start/first-session.md) · [Troubleshooting](docs/en/start/troubleshooting.md) |
-| Desktop | [Overview](docs/en/desktop/index.md) · [Agent Teams](docs/en/desktop/agent-teams.md) · [Dynamic Workflow](docs/en/desktop/dynamic-workflow.md) · [Computer Use](docs/en/desktop/computer-use.md) · [Pets](docs/en/desktop/pets.md) · [H5 and IM relay](docs/en/desktop/remote.md) |
+|---|---|
+| Getting started | [Overview](docs/en/start/index.md) · [Install](docs/en/start/install.md) · [Models](docs/en/start/models.md) · [First session](docs/en/start/first-session.md) · [Troubleshooting](docs/en/start/troubleshooting.md) |
+| Desktop | [Overview](docs/en/desktop/index.md) · [Computer Use](docs/en/desktop/computer-use.md) · [Pets](docs/en/desktop/pets.md) · [Mobile, H5 and IM](docs/en/desktop/remote.md) |
+| IM | [Pairing and platforms](docs/en/im/index.md) |
 | CLI | [Setup](docs/en/cli/index.md) · [Reference](docs/en/cli/reference.md) · [Environment](docs/en/cli/env.md) |
-| Internals | [Desktop architecture](docs/en/internals/desktop.md) · [Agents](docs/en/internals/agent.md) · [Skills](docs/en/internals/skills.md) · [Server API](docs/en/internals/server.md) · [Contributing](docs/en/internals/contributing.md) |
+| Internals | [Desktop](docs/en/internals/desktop.md) · [Agents and Teams](docs/en/internals/agent.md) · [Skills](docs/en/internals/skills.md) · [Memory](docs/en/internals/memory.md) · [Computer Use](docs/en/internals/computer-use.md) · [Server API](docs/en/internals/server.md) · [Channels](docs/en/internals/channel.md) · [Structure](docs/en/internals/structure.md) · [Contributing](docs/en/internals/contributing.md) |
 
-## Feedback and discussions
+## Feedback
 
-Use [Discussions](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/discussions) for questions, ideas, and usage notes. Use [Issues](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/issues) for reproducible bugs. Read [SUPPORT.md](SUPPORT.md) before sharing logs, and use [SECURITY.md](SECURITY.md) for vulnerabilities.
+Use [Discussions](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/discussions) for questions and ideas, and [Issues](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/issues) for reproducible bugs. Read [SUPPORT.md](SUPPORT.md) before sharing logs and [SECURITY.md](SECURITY.md) for vulnerabilities.
 
-## Stack
+## Stack and acknowledgements
 
-| Category | Technology |
-|----------|------------|
-| Language | TypeScript |
-| Desktop | Electron |
-| Desktop UI | React + Vite |
-| Local runtime | [Bun](https://bun.sh) |
-| Terminal UI | React + [Ink](https://github.com/vadimdemedes/ink) |
-| CLI parsing | Commander.js |
-| API | Anthropic SDK |
-| Protocols | MCP, LSP |
+TypeScript, Electron, React + Vite, Bun, React + Ink, Commander.js, Anthropic SDK, MCP, and LSP.
 
-## Acknowledgements
+- [React](https://github.com/facebook/react) and [Electron](https://github.com/electron/electron): UI ecosystem and cross-platform desktop capabilities.
+- [cc-haha](https://github.com/NanmiCoder/cc-haha) by NanmiCoder: upstream source; its attribution and applicable license terms remain in place.
+- [agent-desktop](https://github.com/vercel-labs/agent-desktop) by Vercel Labs: directly reused Windows / Linux native implementation, pinned to **1.0.2**, commit [`9eb9b296192fcb70bda25e918cd6dd66abfa3d0d`](https://github.com/vercel-labs/agent-desktop/tree/9eb9b296192fcb70bda25e918cd6dd66abfa3d0d). Retained [Apache-2.0 license](native/agent-desktop/LICENSE), [provenance and hashes](native/agent-desktop/UPSTREAM.json), and [local changes](native/agent-desktop/PATCHES.md).
+- [cc-switch](https://github.com/farion1231/cc-switch): model provider configuration references.
+- [LINUX DO](https://linux.do/): community practices and inspiration.
 
-- [React](https://github.com/facebook/react): UI ecosystem and component model.
-- [Electron](https://github.com/electron/electron): cross-platform desktop capabilities.
-- [cc-switch](https://github.com/farion1231/cc-switch): provider configuration references.
+## License
+
+Current upstream terms are the [cc-haha Community Source License 1.0](LICENSE). Noncommercial personal use and internal business operations are allowed; paid client work, commercial deliverables, paid customization or secondary development, commercial distribution, and paid services require prior written commercial permission; redistributions require visible source attribution. Existing MIT grants and third-party licenses remain valid. See the [licensing guide](LICENSING.md). This is source-available, not an OSI-approved open-source license. Restoring EchoFlow product identity does not remove these additional upstream terms or grant a commercial license.
+
+Original reused agent-desktop code remains under Apache-2.0; the project's Community Source License does not add restrictions to those existing grants. Third-party dependencies retain their own licenses; see [Third-Party Licenses](THIRD_PARTY_LICENSES.md).

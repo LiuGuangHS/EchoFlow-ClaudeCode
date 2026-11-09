@@ -7,7 +7,7 @@ order: 0
 
 # Architecture Overview
 
-EchoFlow Code looks like one desktop app, but it is five pieces of code that each run on their own. Before reading source or opening a PR, get the boundaries straight — every other page in this section lives inside one of them.
+cc-haha looks like one desktop app, but it is five pieces of code that each run on their own. Before reading source or opening a PR, get the boundaries straight — every other page in this section lives inside one of them.
 
 ```text
 desktop/src/          Frontend — React + Zustand. Draws the UI, touches no native capability.
@@ -17,9 +17,10 @@ src/                  CLI core — agent loop, tool system, permissions, memory,
 adapters/             IM bridges — one sidecar per platform, all wired back to the same sessions.
 ```
 
-Three facts are worth holding onto:
+Keep these boundaries in mind:
 
-- **The CLI core is the only thing that executes.** Every desktop session makes the server spawn a CLI subprocess; every button in the frontend eventually becomes a message sent to it.
+- **The CLI core executes Agent requests on the current default path.** Server manages the session's CLI subprocess, through which the desktop submits Agent requests; product operations such as project management remain in the product layer. Any future engine must still give each operation one owner, with no double execution or automatic replay after delivery.
+- **EchoFlow's global capabilities sit above the execution engine.** Projects, workspaces, sessions, tasks, teams, schedules, memory, extensions, notifications, and IM integration must survive an engine change.
 - **The local server is the only entry point.** Desktop, mobile H5, and IM adapters share one REST and WebSocket surface — they differ only in how much they are trusted.
 - **Electron is the current desktop path.** `desktop/src-tauri/` keeps packaging assets and historical code as a rollback option; it is not the runtime.
 
@@ -58,6 +59,7 @@ Every tool registers in one registry, grouped by capability: files, shell, syste
 | Background memory consolidation | [AutoDream memory consolidation](./autodream.md) |
 | Screen control tools, authorization, coordinate mapping | [Computer Use architecture](./computer-use.md) |
 | IM message protocol, access control, permission relay | [Channel system](./channel.md) |
+| Execution bindings, session persistence, external messages, Electron navigation, and verification evidence | [Execution, data, and trust boundaries](./execution-boundaries.md) |
 | What to run before a PR, and the release process | [Contributing and quality gates](./contributing.md) |
 | Running the CLI in a terminal or from a script | [CLI install and run](../cli/index.md) |
 

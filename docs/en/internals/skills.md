@@ -34,7 +34,7 @@ Claude Code loads Skills from 6 different sources, ordered by priority from high
 
 ### 1. Bundled (Built-in Skills)
 
-Compiled into the CLI binary and available to all users. Defined in TypeScript and registered via `registerBundledSkill()`.
+Compiled into the CLI binary, with availability determined by the runtime environment and feature gates. Defined in TypeScript and registered via `registerBundledSkill()`.
 
 **Current Built-in Skills:**
 
@@ -48,10 +48,14 @@ Compiled into the CLI binary and available to all users. Defined in TypeScript a
 | `/stuck` | Help when stuck | -- |
 | `/skillify` | Create a new Skill | -- |
 | `/keybindings` | Custom keyboard shortcuts | -- |
-| `/loop` | Timed loop tasks | AGENT_TRIGGERS feature gate |
-| `/schedule` | Remote agent scheduling | AGENT_TRIGGERS_REMOTE feature gate |
+| `/loop` | In-process CLI recurring tasks | AGENT_TRIGGERS gate; not registered when desktop scheduling is available |
+| `/schedule` | Desktop scheduling and result queries; remote agent scheduling outside desktop | Local implementation with an authenticated desktop bridge and a non-lean profile; otherwise the remote implementation still requires AGENT_TRIGGERS_REMOTE and its account/policy conditions |
 | `/claude-api` | Claude API integration | BUILDING_CLAUDE_APPS feature gate |
 | `/dream` | Automatic memory organization | KAIROS feature gate |
+
+Desktop `/schedule` is registered by `src/skills/bundled/scheduleDesktop.ts` and guides the model to the native `ScheduledTask` tool. Natural-language requests can call the tool directly without invoking the skill first. `src/skills/bundled/index.ts` registers the local and remote versions mutually exclusively so desktop requests are not accidentally sent to the cloud.
+
+`ScheduledTask` uses a session-authenticated local bridge to the existing desktop `CronService`, sharing storage with the task page. The server derives the caller's session identity from authentication. The tool supports task CRUD, execution-history listings, and bounded, paginated result reads. Successful results are serialized as versioned JSON in the actual `tool_result.content`, allowing live chat and reloaded history to render the same cards. The original CLI Cron tools and project-local task file retain separate semantics; desktop scheduling does not require enabling AGENT_TRIGGERS. For user instructions, see [Scheduled tasks](../desktop/schedule.md).
 
 ### 2. Managed (Policy-Managed Skills)
 
@@ -62,7 +66,7 @@ Controlled by organizational policies, stored in `<managed-path>/.claude/skills/
 Defined by individual users, stored in `~/.claude/skills/`. The cross-client open-standard
 directory `~/.agents/skills/` is read as well.
 
-```text
+```
 ~/.claude/skills/
 ├── my-review/
 │   └── SKILL.md          ← Main Skill file
@@ -80,7 +84,7 @@ directory `~/.agents/skills/` is read as well.
 Defined at the project level, stored in `.claude/skills/` or `.agents/skills/`. Can be
 committed to version control.
 
-```text
+```
 your-project/
 ├── .claude/
 │   └── skills/
@@ -116,7 +120,7 @@ Provided by installed plugins. Plugins declare Skills directories via `skillsPat
 
 Naming format: `{pluginName}:{skillName}`
 
-```text
+```
 Examples: superpowers:code-reviewer
           superpowers:brainstorming
 ```
@@ -133,7 +137,7 @@ Provided by connected MCP servers, naming format: `mcp__server-name__prompt-name
 
 Each Skill is a directory containing a `SKILL.md` file:
 
-```text
+```
 skill-name/
 └── SKILL.md    ← Filename must be SKILL.md (case-insensitive)
 ```
@@ -211,7 +215,7 @@ Supported special syntax:
 
 Type `/skill-name` directly in the terminal:
 
-```text
+```
 > /commit
 > /review-pr 123
 > /verify
@@ -223,7 +227,7 @@ Type `/skill-name` directly in the terminal:
 
 When Claude identifies a suitable Skill during conversation, it automatically invokes it via SkillTool:
 
-```text
+```
 User: Please review this code for me
 Claude: [Invokes superpowers:code-reviewer via SkillTool]
 ```
@@ -234,7 +238,7 @@ Claude: [Invokes superpowers:code-reviewer via SkillTool]
 
 One Skill can trigger another during execution:
 
-```text
+```
 /verify → internally invokes → /simplify
 ```
 
@@ -244,7 +248,7 @@ Tracked in telemetry via `invocation_trigger: 'nested-skill'`.
 
 When Skills with the same name exist in multiple sources, they are resolved in the following order (first match wins):
 
-```text
+```
 1. Bundled (built-in)           ← Highest priority
 2. Built-in Plugin
 3. Skill Dirs (user/project directories)
@@ -312,7 +316,7 @@ paths: "src/**/*.ts, test/**/*.ts"
 
 ### How It Works
 
-```text
+```
 1. All Skills are loaded at startup
 2. Skills with paths are stored in the conditionalSkills Map (not exposed to the model)
 3. When the user operates on a file (Read/Write/Edit)
@@ -325,7 +329,7 @@ paths: "src/**/*.ts, test/**/*.ts"
 
 In addition to conditional activation, Skills also support **runtime discovery**:
 
-```text
+```
 1. User operates on a file in a deeply nested directory
 2. discoverSkillDirsForPaths() traverses upward from the file path
 3. Looks for .claude/skills/ and .agents/skills/ directories (not beyond cwd)
@@ -343,7 +347,7 @@ If a Skill contains only "safe properties" (no `allowedTools`, no `hooks`, no `f
 
 Skills with tool restrictions, hooks, or fork execution will prompt the user on first invocation:
 
-```text
+```
 Execute skill: my-custom-skill
 Allow? (y)es / (n)o / (a)lways allow / (d)eny
 ```

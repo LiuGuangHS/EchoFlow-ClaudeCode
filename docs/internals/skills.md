@@ -34,7 +34,7 @@ Claude Code 从 6 个不同来源加载 Skills，按优先级从高到低：
 
 ### 1. Bundled（内置 Skills）
 
-编译到 CLI 二进制中，所有用户可用。以 TypeScript 定义，通过 `registerBundledSkill()` 注册。
+编译到 CLI 二进制中，按运行环境和特性开关决定是否可用。以 TypeScript 定义，通过 `registerBundledSkill()` 注册。
 
 **当前内置 Skills：**
 
@@ -48,10 +48,14 @@ Claude Code 从 6 个不同来源加载 Skills，按优先级从高到低：
 | `/stuck` | 卡住时求助 | — |
 | `/skillify` | 创建新 Skill | — |
 | `/keybindings` | 自定义快捷键 | — |
-| `/loop` | 定时循环任务 | AGENT_TRIGGERS 特性门控 |
-| `/schedule` | 远程代理调度 | AGENT_TRIGGERS_REMOTE 特性门控 |
+| `/loop` | CLI 进程内定时循环 | AGENT_TRIGGERS 特性门控；桌面调度入口可用时不注册 |
+| `/schedule` | 桌面定时任务管理与结果查询；非桌面环境可为远程代理调度 | 桌面认证 bridge 可用且非 lean profile 时使用本地实现；否则远程实现仍受 AGENT_TRIGGERS_REMOTE、账号与策略限制 |
 | `/claude-api` | Claude API 集成 | BUILDING_CLAUDE_APPS 特性门控 |
 | `/dream` | 自动记忆整理 | KAIROS 特性门控 |
+
+桌面 `/schedule` 由 `src/skills/bundled/scheduleDesktop.ts` 注册，指导模型调用原生 `ScheduledTask` 工具；自然语言请求也可直接调用该工具，不依赖先调用 skill。`src/skills/bundled/index.ts` 对本地和远程同名 skill 采用互斥注册，避免桌面任务被误发到云端。
+
+`ScheduledTask` 通过会话认证的本地 bridge 调用已有桌面 `CronService`，与任务页共享存储。当前会话身份由服务端认证提供；工具支持任务 CRUD、运行记录列表和有长度限制的结果分页读取。成功结果以版本化 JSON 写入实际 `tool_result.content`，供实时聊天和历史重载渲染卡片。CLI 原有 Cron 工具及项目级任务文件保留独立语义，桌面入口无需启用 AGENT_TRIGGERS。用户操作见[定时任务](../desktop/schedule.md)。
 
 ### 2. Managed（策略管理 Skills）
 
@@ -61,7 +65,7 @@ Claude Code 从 6 个不同来源加载 Skills，按优先级从高到低：
 
 用户个人定义，存放在 `~/.claude/skills/`，同时也会读取跨工具开放标准目录 `~/.agents/skills/`。
 
-```text
+```
 ~/.claude/skills/
 ├── my-review/
 │   └── SKILL.md          ← 主 Skill 文件
@@ -78,7 +82,7 @@ Claude Code 从 6 个不同来源加载 Skills，按优先级从高到低：
 
 项目级别定义，存放在 `.claude/skills/` 或 `.agents/skills/`，可提交到版本控制。
 
-```text
+```
 your-project/
 ├── .claude/
 │   └── skills/
@@ -112,7 +116,7 @@ OpenAI Codex、Cursor、Gemini CLI、opencode 等工具都会扫描它。放在�
 
 命名格式：`{pluginName}:{skillName}`
 
-```text
+```
 例如：superpowers:code-reviewer
       superpowers:brainstorming
 ```
@@ -129,7 +133,7 @@ OpenAI Codex、Cursor、Gemini CLI、opencode 等工具都会扫描它。放在�
 
 每个 Skill 是一个目录，包含一个 `SKILL.md` 文件：
 
-```text
+```
 skill-name/
 └── SKILL.md    ← 文件名必须是 SKILL.md（大小写不敏感）
 ```
@@ -207,7 +211,7 @@ hooks:
 
 直接在终端输入 `/skill-name`：
 
-```text
+```
 > /commit
 > /review-pr 123
 > /verify
@@ -219,7 +223,7 @@ hooks:
 
 Claude 在对话中识别到合适的 Skill 时，通过 SkillTool 自动调用：
 
-```text
+```
 用户：帮我审查一下这段代码
 Claude：[通过 SkillTool 调用 superpowers:code-reviewer]
 ```
@@ -230,7 +234,7 @@ Claude：[通过 SkillTool 调用 superpowers:code-reviewer]
 
 一个 Skill 执行过程中可以触发另一个 Skill：
 
-```text
+```
 /verify → 内部调用 → /simplify
 ```
 
@@ -240,7 +244,7 @@ Claude：[通过 SkillTool 调用 superpowers:code-reviewer]
 
 当同名 Skill 存在于多个来源时，按以下顺序解析（先匹配先用）：
 
-```text
+```
 1. Bundled（内置）      ← 最高优先级
 2. Built-in Plugin（内置插件）
 3. Skill Dirs（用户/项目目录）
@@ -308,7 +312,7 @@ paths: "src/**/*.ts, test/**/*.ts"
 
 ### 工作原理
 
-```text
+```
 1. 启动时加载所有 Skill
 2. 带 paths 的 Skill 存入 conditionalSkills Map（不暴露给模型）
 3. 当用户操作文件时（Read/Write/Edit）
@@ -321,7 +325,7 @@ paths: "src/**/*.ts, test/**/*.ts"
 
 除了条件激活，Skills 还支持**运行时发现**：
 
-```text
+```
 1. 用户操作某个深层目录中的文件
 2. discoverSkillDirsForPaths() 从文件路径向上遍历
 3. 寻找 .claude/skills/ 与 .agents/skills/ 目录（不超过 cwd）
@@ -339,7 +343,7 @@ paths: "src/**/*.ts, test/**/*.ts"
 
 包含工具限制、Hook 或 fork 执行的 Skill，首次调用时会提示用户：
 
-```text
+```
 Execute skill: my-custom-skill
 Allow? (y)es / (n)o / (a)lways allow / (d)eny
 ```

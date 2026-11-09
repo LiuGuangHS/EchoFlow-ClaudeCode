@@ -6,7 +6,6 @@ import { useTheme } from '../lib/theme'
 import SearchDialog from './SearchDialog'
 
 export const GITHUB_URL = 'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode'
-// 保留 GitHub Releases 作为无 JS 与「其他架构」的兜底目标；主下载入口是站内 /download。
 export const DOWNLOAD_URL = 'https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest'
 
 const copy = {
@@ -15,11 +14,9 @@ const copy = {
     download: '下载',
     entries: [
       ['/start', '开始使用'],
-      ['/desktop', '桌面端功能'],
-      ['/mobile', '移动端'],
-      ['/im', 'IM 接入'],
-      ['/cli', '命令行'],
-      ['/internals', '深入原理']
+      ['/cases', '实战案例'],
+      ['/desktop/settings', '配置指南'],
+      ['/desktop', '桌面端功能']
     ],
     menu: '打开导航',
     // 页脚也有一栏叫「文档」，主导航得换个名字，否则地标列表里两个 nav 同名。
@@ -34,11 +31,9 @@ const copy = {
     download: 'Download',
     entries: [
       ['/en/start', 'Get started'],
-      ['/en/desktop', 'Desktop app'],
-      ['/en/mobile', 'Mobile'],
-      ['/en/im', 'Messaging'],
-      ['/en/cli', 'Command line'],
-      ['/en/internals', 'Internals']
+      ['/en/cases', 'Cases'],
+      ['/en/desktop/settings', 'Settings'],
+      ['/en/desktop', 'Desktop app']
     ],
     menu: 'Open navigation',
     nav: 'Main',
@@ -117,7 +112,7 @@ export default function SiteHeader({ activeSection, locale = 'zh', localeHref })
             <a aria-label="GitHub" className="icon-btn" href={GITHUB_URL} rel="noreferrer" target="_blank">
               <Icon name="github" />
             </a>
-            <a className="btn btn--primary header-download" href={toSiteHref(locale === 'en' ? '/en/download' : '/download')}>
+            <a className="btn btn--primary header-download" href={DOWNLOAD_URL}>
               <Icon name="download" size={16} />
               {c.download}
             </a>

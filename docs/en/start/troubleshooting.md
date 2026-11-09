@@ -2,14 +2,14 @@
 title: Won't install, won't open, won't connect
 nav_title: Troubleshooting
 description: Organized by symptom — install failures, blank window, model 401s, stuck sessions, port conflicts, phone access.
-order: 5
+order: 4
 ---
 
 # Won't install, won't open, won't connect
 
 Find your symptom below. Each entry is "what you see → why → what to do".
 
-First, one check: make sure you're on the latest stable build from the [download page](https://code.echoflow.cn/download). A lot of problems on older versions are already fixed.
+First, one check: make sure you're on the latest stable build from [GitHub Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest). A lot of problems on older versions are already fixed.
 
 ## Won't install
 
@@ -17,13 +17,13 @@ First, one check: make sure you're on the latest stable build from the [download
 
 **Why** — The file isn't damaged. macOS quarantines downloads and refuses to launch anything without an Apple signature, but words the error as "damaged", which sends everyone down the wrong path.
 
-**What to do** — Download `install-macos-unsigned.sh` from the same Release, put it in the same folder as the DMG, and run `bash install-macos-unsigned.sh`. Or, if the app is already in Applications, run `xattr -dr com.apple.quarantine "/Applications/EchoFlow Code.app"`. Full details in [Download and install](./install.md).
+**What to do** — Releases are signed and notarized, so this usually means an unsigned development build. Put the `install-macos-unsigned.sh` that ships with the build in the same folder as the DMG, and run `bash install-macos-unsigned.sh`. Or, if the app is already in Applications, run `xattr -dr com.apple.quarantine "/Applications/Claude Code Haha.app"`. Full details in [Download and install](./install.md).
 
 ### Windows shows a SmartScreen warning
 
-**Why** — Unsigned installers get flagged by SmartScreen. The project is applying for free code signing through SignPath, so **Windows artifacts may remain unsigned until that approval completes** (macOS builds are signed and notarized).
+**Why** — Unsigned installers get flagged by SmartScreen.
 
-**What to do** — Confirm the file came from this repository's Releases, then click "More info" → "Run anyway". If the filename or origin doesn't match, don't bypass it. Signing status is described in [Code signing policy](./code-signing.md).
+**What to do** — Confirm the file came from this repository's Releases, then click "More info" → "Run anyway". If the filename or origin doesn't match, don't bypass it.
 
 ### The Windows installer says the program is still running
 
@@ -33,7 +33,7 @@ First, one check: make sure you're on the latest stable build from the [download
 
 1. Quit the main window, and quit the tray icon too.
 2. Give background processes a few seconds to exit.
-3. Still stuck? End any remaining EchoFlow Code processes in Task Manager.
+3. Still stuck? End any remaining cc-haha processes in Task Manager; installed versions may still show the legacy name `Claude Code Haha`.
 4. Run the installer again. **Don't** use "Run as administrator", and **don't** manually delete data from the old install directory.
 
 ### The Linux AppImage does nothing when I run it
@@ -46,7 +46,7 @@ First, one check: make sure you're on the latest stable build from the [download
 
 ### Nothing happens when I launch it
 
-**Why** — Most often the wrong CPU architecture: `mac-x64` on Apple Silicon, or `win-x64` on ARM64 Windows.
+**Why** — Most often the wrong CPU architecture: `macOS-Intel` on Apple Silicon, or `Windows-x64` on ARM64 Windows.
 
 **What to do** — Re-check your architecture against [Download and install](./install.md) and reinstall the right package. An old version still running in the background can also block startup, so quit everything first.
 
@@ -76,7 +76,7 @@ Never delete `~/.claude` while troubleshooting. Your sessions, provider configur
 
 **Why** — The auth method doesn't match the provider, or the key itself is wrong.
 
-**What to do** — Open Settings → Model settings, edit the entry, and check in order:
+**What to do** — Open Settings → Providers, edit the entry, and check in order:
 
 1. Is **Base URL** the API root rather than the marketing site?
 2. Is **Auth Variable** correct? Third-party Anthropic-compatible services almost always want `Bearer Token (ANTHROPIC_AUTH_TOKEN)`; only direct Anthropic access uses `API Key (ANTHROPIC_API_KEY)`. If unsure, try both.
@@ -117,26 +117,6 @@ For local models (LM Studio / Ollama), **do not append `/v1` to the base URL** �
 
 **What to do** — Keep the app running through the whole flow; complete the authorization in your system browser with the same account; disable proxies and blocking extensions; and check that your system clock is correct, since a skewed clock breaks the handshake. If the browser never opens, click "Copy authorization link" and paste it manually.
 
-### Signing in to EchoFlow SiHub fails
-
-**Why** — Usually one of three things: the window closed before the site sign-in finished, the wrong line was selected (main site versus dedicated line), or a manual binding whose token has expired.
-
-**What to do** — Check that the line tab matches the account; the two lines sign in independently and their credentials never overwrite each other. Click **Sign in to EchoFlow SiHub** again; a transient network fault or a local server restart can close the window early. With manual binding, regenerate the token under Security settings → System access token in the console and use **Update token**. If the balance still reads "not synced yet" after signing in, click **Refresh** once.
-
-### The model selector stops responding
-
-**Why** — 0.5.5 fixed a defect where a runtime transition in a pending state locked the whole selector, making every later click appear dead. Older builds hit it.
-
-**What to do** — Upgrade to 0.5.5 or newer. If it still happens, wait for the current switch to finish, or restart the app once.
-
-### I sent an image to a model without vision support
-
-**Symptom** — The model reports it can't take images, and later text-only turns repeat the same error.
-
-**Why** — Before 0.5.5 that failure state poisoned the whole session.
-
-**What to do** — Upgrade to 0.5.5 or newer; later text-only turns no longer repeat the error. In the current session, switch to a vision-capable model or drop the image and ask again.
-
 ## Sessions that hang
 
 ### It spins forever without producing anything
@@ -164,52 +144,41 @@ For local models (LM Studio / Ollama), **do not append `/v1` to the base URL** �
 
 **What to do** — Run `git status` and `git diff` before shipping. Disk and Git are the source of truth.
 
-## A project added in WSL cannot be accessed
-
-First confirm that EchoFlow was started from a WSL shell, rather than the Windows desktop app trying to access a WSL path:
-
-```bash
-echo "$WSL_DISTRO_NAME"
-pwd
-command -v echoflow-code
-git rev-parse --show-toplevel
-```
-
-WSL-native projects should use Linux paths such as `/home/<user>/...`. `C:\\...` and `\\\\wsl$\\...` are Windows-host paths and do not guarantee that the Windows sidecar, Git, terminal, and WSL filesystem share one runtime. Projects under `/mnt/c` may also have slower search or file watching; move a test project under `/home/<user>` first.
-
-If the directory picker does not open or shows no entries:
-
-1. Check that the current WSL user can read the project: `ls -ld /home/<user>/project`.
-2. Run `echoflow-code` from the project directory to rule out Windows/Git Bash path conversion.
-3. Check whether the path is outside the project roots; the server only allows the home directory, temporary directories, and registered workspace roots.
-4. Record the exact error, startup mode, and path. Do not add all of `/` or `/mnt` to the access allowlist as a workaround.
-
-Managing a `\\wsl$\\...` project directly from the Windows desktop is a separate cross-host workflow and is not the same as WSL-native support.
-
 ## Port conflicts
 
 **What you see** — H5 won't load, or the local service doesn't come up after launch.
 
 **Why** — The local server defaults to port `3456`. If something else already holds that port, the service moves elsewhere or fails to start.
 
-**What to do** — Open Settings → H5 Access and read "Current port" — it may have already moved, leaving your old QR code pointing at the wrong place. If you need a stable address (for a bookmark or a reverse proxy), set "Fixed port" on the same page, anywhere in 1024–65535. Port changes apply after restarting the app.
+**What to do** — Open Settings → Phone connection → Same Wi-Fi, expand "Advanced connection settings", and read "Current port" — it may have already moved, leaving your old QR code pointing at the wrong place. If you need a stable LAN address (for a bookmark or a reverse proxy), set "Fixed port" here, anywhere in 1024–65535. Port changes apply after restarting the app. This port is independent of the local gateway port used for Cloudflare remote connections.
 
 ## Phone won't connect
 
 **What you see** — Scanning the QR code opens nothing, or you get an unauthorized error.
 
-**Why** — Address, port, token, and network all have to line up. Any one of them being wrong breaks the connection.
+**Why** — Same-Wi-Fi connections use a LAN address and access token. Cloudflare remote connections use a public address and individual device pairing. First identify your connection method, then check its address, network, and authorization.
 
-**What to do** — Go through Settings → H5 Access:
+**What to do** — Open Settings → Phone connection and check the method you are using.
 
-1. Is H5 access actually switched on?
+### Same Wi-Fi
+
+1. Is "Enable local connection" actually switched on?
 2. Does "Access host / IP" still match your computer's current network interface? It changes when you switch Wi-Fi.
 3. Does the port in the QR code match "Current port"?
 4. Are the phone and computer on the same local network?
 5. Does your firewall allow that port?
 6. Has the token been regenerated? **The moment you regenerate it, every old QR code is dead.**
 
-If you changed the fixed port, restart the app. Full deployment guidance and security boundaries are in [Phone and IM handoff](../desktop/remote.md).
+If you changed the fixed port, restart the app and use the new QR code.
+
+### Cloudflare remote connection
+
+1. Does the desktop show "Connection ready"? For a network or proxy error, check the computer's network and Settings → General → Network proxy. Turn the connection off and on again after changing settings.
+2. Can the phone's current network open the assigned public hostname? Verification on the computer does not prove the phone's network can reach it. Turn off the phone's Wi-Fi and test over cellular data. Keep the computer running, online, and awake.
+3. Are you using the complete pairing link, such as `https://host/remote#pair=one-time-code`? The code lasts five minutes and works once. If it expired or was already used, click "Connect a phone" on the desktop to generate a new QR code, or copy a new pairing link. **Each newly created quick tunnel changes the address and requires another scan.**
+4. After the phone requests pairing, have you approved that device on the computer? Browser users should open the link in their usual browser. Authorization is not shared across browsers or private windows.
+
+Quick connection needs no account or domain; the desktop manages the connector. Fixed-domain setup, full instructions, and security boundaries are in [Phone and IM handoff](../desktop/remote.md).
 
 ### Does locking my phone kill a running task?
 
@@ -233,30 +202,10 @@ Scanning only binds the platform account; it doesn't authorize everyone who can 
 2. Does your page show the native runtime component or the Python compatibility path? macOS 14.4 and later prefer the native component; update or reinstall if it is missing. Install Python 3 or select an existing interpreter only when Python checks are shown.
 3. If the page shows virtual environment and dependency checks, make sure both are ready; otherwise click "Install Environment".
 4. On macOS, both "Accessibility Permission" and "Screen Recording Permission" must show as granted. Grant them under System Settings → Privacy & Security.
-5. **Restart EchoFlow Code after granting them.** System permissions don't apply to an already-running process.
-6. Did you confirm the one-time Computer Use consent in the app? It covers all supported apps; check that the target app is running and OS permissions are granted.
+5. **Restart cc-haha after granting them.** System permissions don't apply to an already-running process.
+6. Did you confirm the one-time Computer Use consent in the app? It covers all apps; also check that the target app is running and OS permissions are granted.
 
 Full details in [Computer Use](../desktop/computer-use.md).
-
-## Other features that do nothing
-
-### DeepSeek Harness reports "runtime unavailable"
-
-**Why** — The bundled runtime requires Node.js 22.19.0 or newer; either the machine doesn't meet that, or automatic preparation failed.
-
-**What to do** — As of 0.5.6 the app downloads a compatible LTS release, verifies its SHA-256, and switches over with automatic rollback on failure, so waiting usually resolves it. On an older build, upgrade first; if it still fails afterwards, read the error in the panel. See [DeepSeek Harness](../desktop/deepseek-harness.md).
-
-### A connector won't install and hangs
-
-**Why** — 0.5.6 fixed stale state blocking installs. On older builds, a previous failed install leaves state that blocks the next attempt.
-
-**What to do** — Remove the entry and install it again; upgrade the app if it still hangs. Note that installed is not connected — **without account authorization the capability is not attached to any session**, and the entry is marked as not connected. See [Connectors](../desktop/connectors.md).
-
-### Opening an old session is slow
-
-**Why** — Older builds loaded the entire JSONL file into memory when reading a large session, so long transcripts dragged.
-
-**What to do** — 0.5.6 uses bounded history and the local index, which noticeably improves scrolling and Trace reads in large sessions; upgrade. If it still drags, rebuild the index under Settings → Diagnostics → Local index (it only affects the index, not source conversations).
 
 ## Still stuck
 

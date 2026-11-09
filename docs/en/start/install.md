@@ -9,40 +9,38 @@ order: 1
 
 Install and go. You don't need Node.js, Python, or Claude Code — the CLI engine and the ripgrep binary used for file search are both bundled inside the installer.
 
-The product is now called **EchoFlow Code**. Apps installed by earlier versions, and their system processes, may still show the legacy names `Claude Code Haha` or `cc-haha`.
+The product is now called **cc-haha**. Existing packages, installed apps, and system processes may still use the legacy name `Claude Code Haha`; filenames and commands below match those published packages.
 
 ## Pick the right package
 
-Open the [download page](https://code.echoflow.cn/download) and download the installer for your operating system and CPU architecture. File names per platform:
+EchoFlow installers live on [GitHub Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest). Choose by operating system and CPU architecture, using the filenames actually listed there. The upstream filenames retained below do not imply that EchoFlow has published those artifacts:
 
 | Your system | Download |
 |---|---|
-| macOS, Apple Silicon | `EchoFlow-Code-<version>-mac-arm64.dmg` |
-| macOS, Intel | `EchoFlow-Code-<version>-mac-x64.dmg` |
-| Windows x64 | `EchoFlow-Code-<version>-win-x64.exe` |
-| Windows ARM64 | `EchoFlow-Code-<version>-win-arm64.exe` |
-| Linux x64 | `EchoFlow-Code-<version>-linux-x86_64.AppImage` or `-linux-amd64.deb` |
-| Linux ARM64 | `EchoFlow-Code-<version>-linux-arm64.AppImage` or `-linux-arm64.deb` |
-
-Direct links, other architectures, and older builds stay on [GitHub Releases](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/releases/latest).
+| macOS, Apple Silicon (M series) | `Claude-Code-Haha-<version>-macOS-Apple-Silicon.dmg` |
+| macOS, Intel | `Claude-Code-Haha-<version>-macOS-Intel.dmg` |
+| Windows x64 | `Claude-Code-Haha-<version>-Windows-x64-Setup.exe` |
+| Windows ARM64 | `Claude-Code-Haha-<version>-Windows-arm64-Setup.exe` |
+| Linux x64 | `Claude-Code-Haha-<version>-Linux-x64.AppImage`, `.deb` or `.rpm` |
+| Linux ARM64 | `Claude-Code-Haha-<version>-Linux-arm64.AppImage`, `.deb` or `.rpm` |
 
 Not sure which architecture you have? On macOS check the chip listed in "About This Mac"; on Windows check the system type under Settings → System → About. Don't guess from the brand of the machine.
 
-The `.blockmap` and `latest*.yml` files are used by the app's own updater. You don't need to download them.
+Files ending in `-update.zip` and the `latest*.yml` files are used by the app's own updater. You don't need to download them. v0.7.6 and earlier used older names such as `mac-arm64`, `win-x64` and `linux-x86_64`.
 
 ## macOS
 
 1. Open the DMG.
-2. Drag EchoFlow Code into Applications.
+2. Drag cc-haha into Applications.
 3. Launch it from Applications.
 
 ### If macOS says the app is damaged
 
-Nothing is actually damaged. macOS quarantines anything downloaded from the web and refuses to launch it without an Apple signature — but it words the error as "damaged", which is thoroughly misleading. Signed and notarized releases skip this entirely; if you have an unsigned build, use one of the two routes below.
+Nothing is actually damaged. macOS quarantines anything downloaded from the web and refuses to launch it without an Apple signature — but it words the error as "damaged", which is thoroughly misleading. Releases are signed and notarized and skip this entirely; if you have an unsigned development build, use one of the two routes below.
 
-**Option 1: the official script (recommended)**
+**Option 1: the script that ships with the build**
 
-Download `install-macos-unsigned.sh` from the same Release into **the same folder as the DMG** (Downloads, for example), then run:
+Unsigned development builds include `install-macos-unsigned.sh`. Put it in **the same folder as the DMG** (Downloads, for example), then run:
 
 ```bash
 cd ~/Downloads
@@ -56,7 +54,7 @@ The script picks the DMG matching your architecture, mounts it, installs the app
 If the app is already in Applications:
 
 ```bash
-xattr -dr com.apple.quarantine "/Applications/EchoFlow Code.app"
+xattr -dr com.apple.quarantine "/Applications/Claude Code Haha.app"
 ```
 
 Only do this for packages you have confirmed came from this repository's Releases. Never bypass Gatekeeper for software of unknown origin.
@@ -71,75 +69,54 @@ Unsigned packages trigger a SmartScreen warning. Once you've confirmed the file 
 
 When upgrading in place, the installer inspects user data in the old install directory. If it reports that the program is still running, quit the main window and the tray icon, give the background sidecar, terminal, and IM adapter processes a few seconds to exit, then run the installer again. Don't delete the old install directory by hand first.
 
-## Linux / WSL
-
-For WSL, run the Linux CLI directly from a WSL shell and keep projects on the Linux filesystem (for example `/home/<user>/projects`). Do not pass Windows desktop paths such as `C:\...` or `\\wsl$\...` to the WSL-native CLI.
-
-Check the runtime before starting:
-
-```bash
-uname -a
-echo "$WSL_DISTRO_NAME"
-command -v bun
-git --version
-```
+## Linux
 
 **AppImage** (no installation, just run it):
 
 ```bash
-chmod +x EchoFlow-Code-<version>-linux-x86_64.AppImage
-./EchoFlow-Code-<version>-linux-x86_64.AppImage
+chmod +x Claude-Code-Haha-<version>-Linux-x64.AppImage
+./Claude-Code-Haha-<version>-Linux-x64.AppImage
 ```
 
 If it fails with a FUSE-related error, install the runtime: `sudo apt install libfuse2` on Ubuntu 22.04 and earlier, `libfuse2t64` on 24.04 and later.
 
-**deb** (installs into your application menu):
+**deb** (Ubuntu, Debian and similar; installs into your application menu):
 
 ```bash
-sudo apt install ./EchoFlow-Code-<version>-linux-amd64.deb
+sudo apt install ./Claude-Code-Haha-<version>-Linux-x64.deb
 ```
 
-On ARM64 machines, use the corresponding `linux-arm64` file.
-
-## Running from source in WSL
-
-For WSL-native use, run from a WSL shell and keep the project, Bun, and Git on the Linux side:
+**rpm** (Fedora, openSUSE and similar):
 
 ```bash
-git clone https://github.com/LiuGuangHS/EchoFlow-ClaudeCode.git ~/src/echoflow-code
-cd ~/src/echoflow-code
-bun install
-cp .env.example .env
-./bin/echoflow-code
+sudo dnf install ./Claude-Code-Haha-<version>-Linux-x64.rpm
 ```
 
-Keeping projects under `/home/<user>` is usually faster than `/mnt/c` and avoids many file-watcher and permission differences. Setting `CLAUDE_CODE_SHELL_PREFIX='wsl -e bash -lc'` in Windows/Git Bash is a different mode—Windows CLI routing commands through WSL—not a replacement for WSL-native startup.
-
-A Windows desktop path such as `C:\...` or `\\wsl$\...` is also not the same as the WSL-native `/home/<user>/...` path. Directly managing WSL projects from the Windows desktop is not currently a complete supported workflow; use the CLI or Web service started inside WSL for that use case.
+On ARM64 machines, use the corresponding `Linux-arm64` file.
 
 ## Running from source
 
 If you want to modify the code, debug the engine, or just use the CLI in a terminal:
 
 ```bash
-git clone https://github.com/LiuGuangHS/EchoFlow-ClaudeCode.git echoflow-code
-cd echoflow-code
+git clone https://github.com/NanmiCoder/cc-haha.git
+cd cc-haha
 bun install
 cp .env.example .env
-./bin/echoflow-code
+./bin/claude-haha
 ```
 
 Requires [Bun](https://bun.sh) and Git. This runs the CLI only; for building the desktop app and configuring the local server, see [Command line](../cli/index.md).
 
 ## Updating
 
-**In-app updates (recommended).** Open Settings → About → App Updates and click "Check now". It compares your installed version against the latest release from the update service, downloads the new build, and offers "Install and restart".
+**In-app updates (recommended).** Open Settings → About → App Updates and click "Check now". It compares your installed version against the latest GitHub Release, downloads the new build, and offers "Install and restart".
 
 Before updating, stop any running sessions and save uncommitted work.
 
 If the download stalls, you probably can't reach GitHub. The same panel has an "Advanced update proxy" setting where you can switch to the system proxy or enter a local HTTP proxy address (`http://127.0.0.1:7890`, for instance). This proxy only affects the app's own update downloads — it has no effect on model requests.
 
-**Manual replacement.** Settings → About → App Updates always offers an "Open download page" button. You can also open the [download page](https://code.echoflow.cn/download) directly, download the new installer, and repeat the steps for your platform. Sessions, provider configuration, skills, agents, and memory live under `~/.claude`, not in the application directory, so installing over the top doesn't touch them.
+**Manual replacement.** Download the new installer from Releases and repeat the steps for your platform. Sessions, provider configuration, skills, agents, and memory live under `~/.claude`, not in the application directory, so installing over the top doesn't touch them.
 
 :::warning
 The installer's data protection is not a backup. Keep your own copy of anything you can't afford to lose.

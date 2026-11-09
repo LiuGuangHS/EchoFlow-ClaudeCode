@@ -7,32 +7,32 @@ order: 2
 
 # Connect a model
 
-EchoFlow Code ships without a model. It's the shell that does the work; you have to give it a brain first.
+cc-haha ships without a model. It's the shell that does the work; you have to give it a brain first.
 
-Click "Settings" at the bottom of the sidebar, then pick the first tab, **Model Settings** (called "Providers" in older builds). From there you have four routes:
+Click "Settings" at the bottom of the sidebar, then pick the first tab, "Providers". From there you have three routes:
 
-- **You have an EchoFlow SiHub account** — sign in and pick a call token to build a channel, with no vendor keys to apply for. See [Sign in to EchoFlow SiHub](./account.md).
-- **You have an official account** — Claude, ChatGPT, and Grok each have a built-in card. One click opens a browser sign-in. No API key to type.
+- **You have an official account** — Claude, ChatGPT, Grok, and DeepSeek each have a built-in card. One click opens a browser sign-in. No API key to type.
 - **You have a third-party API key** — DeepSeek, Kimi, Zhipu GLM and others come as presets. Paste the key and you're done.
 - **You want it free** — run LM Studio or Ollama on your own machine. The model runs on your GPU, costs nothing, and works offline.
 
-You can configure all of these and switch between them in the model list. This switches the shared model configuration, not the execution runtime of a session. Each session can also override its model and effort independently; those choices do not create or replace a runtime-specific configuration.
+You can configure all three and switch between them in the provider list.
 
 ## Sign in with an official account
 
-Three cards sit at the top of Settings → Model Settings:
+Four cards sit at the top of Settings → Providers:
 
 | Card | What you need |
 |---|---|
 | **Claude Official** | A Claude.ai account (Pro / Max subscription, or an API account with credit) |
 | **ChatGPT Official** | A ChatGPT account, via OpenAI OAuth |
 | **Grok Official** | An xAI account, via official Grok OAuth |
+| **DeepSeek Account** | A DeepSeek platform account, billed to the account balance; no API key |
 
-Click the sign-in button on the card ("Sign in to Claude" / "Sign in with ChatGPT" / "Sign in with Grok"). Your system browser opens the provider's authorization page; complete it with the same account and the browser hands you back to the app, where the card now reads as signed in.
+Click the sign-in button on the card ("Sign in to Claude" / "Sign in with ChatGPT" / "Sign in with Grok" / "Sign in with DeepSeek"). Your system browser opens the provider's authorization page; complete it with the same account and the browser hands you back to the app, where the card now reads as signed in.
 
 Three things to watch for:
 
-- Leave EchoFlow Code running for the whole flow — the callback has to land in the running app.
+- Leave cc-haha running for the whole flow — the callback has to land in the running app.
 - If the browser doesn't open by itself, click "Copy authorization link" and paste it in manually.
 - Proxies and blocking browser extensions can intercept either the authorization page or the local callback. Turn them off before retrying.
 
@@ -40,23 +40,35 @@ Which models you get afterwards depends on your account tier and entitlements, n
 
 ## Third-party API providers
 
-With an API key in hand, this is the fastest route. Click "Add Model", pick something under "Preset", and the base URL and default models are filled in for you — all you supply is the key.
+With an API key in hand, this is the fastest route. Click "Add Provider", pick something under "Preset", and the base URL and default models are filled in for you — all you supply is the key.
 
 The built-in presets, as they appear in the dialog:
 
-- **EchoFlow SiHub** — EchoFlow's recommended access entry point, used together with [Sign in to EchoFlow SiHub](./account.md).
-- **DeepSeek** · **Zhipu GLM** · **Kimi** · **MiniMax** — official model-vendor APIs; the base URLs point at each one's Anthropic-compatible endpoint.
-- **OpenCode Go** — an official subscription. Enter the subscription key to use GLM, Kimi, MiniMax, Qwen, Grok and GPT models; the gateway picks the protocol endpoint by model family, with nothing to configure.
-- **LM Studio** · **Ollama** — official local-model integrations; see the next section.
-- **Custom** — anything not listed above. Private gateways go here too.
+- **DeepSeek** · **Zhipu GLM** · **Kimi** · **MiniMax** — major Chinese model vendors; the base URLs point at each one's Anthropic-compatible endpoint.
+- **XuanShu API** · **FennoAI** — routing services that give you access to official Claude models through their own gateways.
+- **Qiniu Cloud AI** · **OpenRouter** — aggregators: one key for DeepSeek, GLM, Kimi, Qwen, Claude, and more.
+- **LM Studio** · **Ollama** — local models; see the next section.
+- **Custom** — anything not listed above.
+
+Which models FennoAI and Qiniu Cloud AI give you depends on the plan you bought, so those two presets fill in the base URL only and pin no models: paste your key, hit "Fetch models", and pick one from the live list.
 
 When a preset has a signup page for API keys, a "Get API Key" button appears under the key field.
+
+### OpenRouter
+
+OpenRouter is an aggregator: one key reaches Claude, DeepSeek, GLM, Kimi and more. The preset fills in `https://openrouter.ai/api`, where OpenRouter serves an Anthropic-native protocol. The app connects directly instead of going through the local proxy, so thinking, tool use, and prompt caching keep their native semantics. As with the local models, don't append `/v1` to that address.
+
+Three things to know:
+
+- **Model IDs carry an `author/slug` namespace**, e.g. `anthropic/claude-sonnet-5.5` or `deepseek/deepseek-v4-pro`. All four prefilled slots are Claude 5.5; for anything else, click "Fetch models" and pick from the live list instead of copying a name from elsewhere — with a catalogue this size, a hand-typed ID is easy to get wrong.
+- **Claude Code only guarantees full compatibility with Anthropic first-party providers.** Reaching another vendor's model through OpenRouter can hit differences in tool calling, thinking, or parameter shape. On a 400, check "Disable experimental beta headers" first, then try another model.
+- **To use `/fast`**, pin the slot to a specific Opus ID (`~…-latest` aliases don't carry the fast parameter) and add `CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK=1` to `env` in "Settings JSON". To let Claude Code run its own model discovery, add `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1` there too.
 
 ## Local models
 
 To spend nothing and stay offline, run a model server on your machine and point the app at it.
 
-**LM Studio**: load a model, start the local server, then choose the `LM Studio` preset in "Add Model" with base URL `http://localhost:1234`.
+**LM Studio**: load a model, start the local server, then choose the `LM Studio` preset in "Add Provider" with base URL `http://localhost:1234`.
 
 **Ollama**: run `ollama serve`, choose the `Ollama` preset, and use base URL `http://localhost:11434`.
 
@@ -67,9 +79,20 @@ Check two things when connecting:
 
 Whether a local model can complete an agent workflow depends on its tool-calling ability, API compatibility, configuration, and task. If it outputs text without calling tools, inspect the requests, responses, and tool configuration rather than inferring the cause from model size alone.
 
-## The Add Model dialog, field by field
+## Magpie
 
-![Add Model dialog: preset, base URL, auth variable, API key, model mapping](../../images/app/en/settings-provider-add.webp)
+[Magpie](https://usemagpie.ai) is a local gateway: the API keys, subscriptions, local models and routing groups you set up in it are served to every agent from one address. If you already use Magpie, there is nothing to enter twice here.
+
+1. Open Magpie. "Magpie is running on this computer" appears at the top of the API Key list in Model Settings; click "Connect".
+2. Pick a main model and click "Connect and make default". No key, no address.
+
+Once connected, the composer's model picker lists every Magpie model, and each conversation can switch at any time. Each model's context length and reply limit come straight from Magpie, so the compaction point and the context percentage follow the model. A model Magpie gives no context length for (common for local models) is counted as 200K; set its length in Magpie. Compaction happens when the context is nearly full by default; to save usage, choose "At 272K" under the Magpie configuration's "Edit".
+
+While Magpie is closed, the configuration shows "Not running" and sending a message tells you to open Magpie; it never switches to another configuration on its own. If you change Magpie's port, the next check follows it.
+
+## The Add Provider dialog, field by field
+
+![Add Provider dialog: preset, base URL, auth variable, API key, model mapping (Chinese interface)](../../images/app/en/settings-provider-add.webp)
 
 **Name** (required) — how this provider appears in the list. A preset fills it in; rename it to something you'll recognize, like "DeepSeek — work account".
 
@@ -107,53 +130,20 @@ Each slot has a `1M` checkbox. Tick it only if that model genuinely supports a o
 
 Click "Add" when you're done.
 
-## Request compatibility settings
-
-The provider editor also carries a **request compatibility** group, for endpoints that are fussy about the request body. Leaving it alone is right most of the time; come back when something errors.
-
-**Reply output budget** — the maximum output tokens for an ordinary reply request. Blank means choose automatically; short background requests keep their own smaller budget regardless. **A value you set here is no longer clamped back to the ceiling inferred from the model name** — that is the point of the group.
-
-**Known endpoint output limit** — fill this in only when the provider documents a hard ceiling. The request budget will not exceed it. Leave it blank if unsure.
-
-**Output token field** — which field carries the limit, and whether to send it at all. Options: automatic, supported, unsupported, omit the limit.
-
-Below those sit four capability switches, **shown only for OpenAI-compatible formats**: sampling parameters, reasoning parameters, parallel tool calls, and structured output. Turn off whatever the endpoint rejects.
-
-This group is stored on the provider only, never in global settings.
-
-## Importing an existing setup
-
-Two import paths save you typing:
-
-- **Import from cc-switch** — if you previously managed Claude Code providers in cc-switch, their config can be read directly. Existing providers are left untouched, and you can pick which ones to bring over.
-- **List models from an OpenAI-compatible endpoint** — with the base URL and key in place, let the app fetch the available models instead of typing model IDs by hand.
-
-When cc-switch config cannot be read, the UI names the reason (not installed, unreadable, too old, and so on) and tells you what to do.
-
 ## After saving
 
-Back in the model list, on the entry you just created:
+Back in the provider list, on the entry you just created:
 
-1. Click "Test". Anthropic-native providers run one step, "① Connectivity"; OpenAI formats add "② Proxy pipeline". Both must pass. EchoFlow SiHub channels test through the account and token, so you never supply the full key.
+1. Click "Test". Anthropic-native providers run one step, "① Connectivity"; OpenAI formats add "② Proxy pipeline". Both must pass.
 2. Click "Set default" so new sessions use it.
-3. Multiple entries can be dragged to reorder. Order only affects how the list is displayed.
+3. Multiple providers can be dragged to reorder. Order only affects how the list is displayed.
 
-Then start a new session and **pick the specific model from the session configuration controls in the composer** — that list reflects what the selected provider actually offers. The model selector **supports search**, so type a name when the list is long. With no model configured yet, it walks you through setup.
-
-**Reasoning effort follows the selected model**: switching models changes the default effort with it. Leave it alone if unsure.
-
-If a configured provider is temporarily unreachable, **it does not block app startup** — the model catalog is served from cache until you need a fresh fetch.
-
-:::info
-Model configuration and a session's execution runtime are two different things. The runtime (EchoFlow's bundled Agent or Claude Code installed on this computer) switches under Settings → General, in **EchoFlow Agent runtime**, or straight from the top of a session.
-:::
+Then start a new session and **pick the specific model from the model selector at the bottom right of the composer** — that list reflects what the active provider actually offers. The control next to it sets reasoning effort; leave it at the default if you're unsure.
 
 :::tip
 A passing test isn't a guarantee. It proves the endpoint is reachable and the credentials work — not that the model can sustain tool calls and long context. The real check is asking for a task that edits a file, and seeing whether it actually does.
 :::
 
 Getting a 401, a connection failure, or an empty model list? See the model section of [Won't install, won't open, won't connect](./troubleshooting.md).
-
-Using EchoFlow SiHub? See [Sign in to EchoFlow SiHub](./account.md).
 
 With a model connected, go [run your first session](./first-session.md).

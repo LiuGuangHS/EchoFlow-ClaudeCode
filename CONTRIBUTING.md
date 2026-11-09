@@ -1,6 +1,8 @@
 # 贡献指南
 
-感谢你帮助改进 EchoFlow Code。提交改动前请先确认影响面，再运行对应的确定性检查。不需要提供真实模型账号或额度。
+提交 PR 前请先确认改动影响面，再运行对应的确定性检查。外部贡献者不需要提供真实模型账号或额度。
+
+跨目录的长期不变量见[执行、数据与信任边界](docs/internals/execution-boundaries.md)：EchoFlow 产品能力与执行引擎分离；一次操作只有一个执行 owner；持久化、平台回调、文件外发和 Electron 导航都必须在各自的信任边界内验证。原生运行时迁移不因修复或接入某个 sidecar 而自动开始。
 
 ## 1. 按影响面运行本地检查
 
@@ -8,19 +10,31 @@
 bun run check:impact
 ```
 
-`check:impact` 会列出这次改动选中的检查。普通任务运行这些检查；需要完整验证时，直接运行统一入口，不必先单独重复执行其全部检查：
+`check:impact` 会列出这次改动选中的检查。普通任务运行这些检查；准备声明 PR-ready 或需要完整验证时，直接运行统一入口，不必先单独重复执行其全部检查：
 
 ```bash
 bun run verify
 ```
 
-`bun run verify` 会按改动路径执行被选中的 policy、产品、契约、持久化和 coverage lane，但不会调用真实模型。小范围改动无需在本机重复所有无关模块；自动化环境会再次执行并严格核对 selected / skipped 状态。
+`bun run verify` 会按改动路径执行被选中的 policy、产品、契约、持久化和 coverage lane，但不会调用真实模型。小范围贡献无需在本机重复所有无关模块；GitHub PR gate 会再次执行并严格核对 selected / skipped 状态。
 
 修复期间重跑受影响的窄检查，交付时补齐最终 diff 的验证证据；没有后续改动或未解决风险时，已通过的检查无需重跑。
 
 `git push` 不再自动运行本地质量门禁。需要质量检查时请手动运行 `bun run quality:push` 或 `bun run verify`；完整覆盖率仍以 `bun run verify` 为准。
 
-需要窄范围迭代时，直接跑 `bun run check:impact`，按输出的 `## Required local checks` 执行。最常用的入口是 `bun run check:server`、`bun run check:desktop`、`bun run check:adapters` 和 `bun run check:docs`；完整清单以 `package.json` 和 impact 输出为准，不在文档里维护第二份。
+只改了某个模块时可以用窄命令快速迭代：
+
+| 改动范围 | 快速验证 |
+| --- | --- |
+| CLI / Server / 工具 | `bun run check:server` |
+| 桌面端 | `bun run check:desktop` |
+| 移动端 App / H5 | `bun run check:mobile` |
+| IM Adapter | `bun run check:adapters` |
+| 桌面 Electron / 原生打包 | `bun run check:native` |
+| Provider / runtime / proxy | `bun run check:provider-contract` |
+| 桌面聊天 / WebSocket / 会话 | `bun run check:chat-contract` |
+| 持久化格式与迁移 | `bun run check:persistence-upgrade` |
+| 文档 | `bun run check:docs` |
 
 门禁失败时，查看最新质量报告和对应 lane 日志定位问题：
 
@@ -33,20 +47,34 @@ artifacts/quality-runs/<timestamp>/logs/<lane>.log
 
 改动涉及用户可见 UI、跨 WebSocket/进程流程、Electron host 或 native/packaging 时，除了自动门禁外，还应在真机上验证相关流程。纯样式、纯工具或已有组件单元测试能够完整证明的改动，不要求重复无关流程：
 
-- 优先使用 `bun run check:desktop-ui-smoke` 的隔离 mock runtime 验证真实桌面 UI。
-- 需要手动启动服务和桌面端时，复用 `scripts/quality-gate/sandbox.ts` 的临时配置和测试环境，避免服务读写真实 `~/.claude`；临时浏览器操作使用已安装的 `playwright` 插件或 `browser` 工具。
-- 验证改动涉及的交互流程：页面渲染、按钮/表单行为、弹窗、快捷键、多窗口等。
-- 必要时打本地 macOS 包 `desktop/scripts/build-macos-arm64.sh` 做完整验证。
+- 优先使用 `bun run check:desktop-ui-smoke` 的隔离 mock runtime 验证真实桌面 UI
+- 需要手动启动服务和桌面端时，复用 `scripts/quality-gate/sandbox.ts` 的临时配置和测试环境，避免服务读写真实 `~/.claude`；临时浏览器操作使用 `ego-browser` skill
+- 验证改动涉及的交互流程：页面渲染、按钮/表单行为、弹窗、快捷键、多窗口等
+- 必要时打本地 macOS 包 `desktop/scripts/build-macos-arm64.sh` 做完整验证
 
-## 3. 核心行为与维护者验证
+## 3. PR 必须附上影响范围和测试说明
 
-provider/runtime、agent-loop、文件编辑、权限、session 等核心路径必须先通过离线 mock/fixture/contract 测试。真实模型验证只由拥有可信 secrets 和额度的维护者在高风险改动或发版前运行：
+每个 PR 的描述里必须包含：
+
+- **影响范围**：改了哪些模块（desktop / server / adapter / native / docs / provider / agent-loop）
+- **测试说明**：跑了哪些测试、覆盖率情况、手工测试了哪些流程（用户可见或跨进程桌面改动需有真机记录）
+- **剩余风险**：已知未覆盖的边界或需要后续跟进的点
+
+provider/runtime、agent-loop、文件编辑、权限、session 等核心路径必须先通过离线 mock/fixture/contract 测试。真实模型验证只由拥有可信 secrets 和额度的维护者在高风险合并或发版前运行：
 
 ```bash
 bun run quality:providers
 bun run quality:smoke --provider-model <provider:model>
 ```
 
+来自 fork 的 PR 不会获得仓库 secrets，也不应被要求运行真实模型。贡献者只需在 PR 中明确写 `live model: not run (untrusted fork / no provider)`；这不是确定性 PR gate 的失败理由。
+
+## 贡献的许可边界
+
+贡献前请阅读 [LICENSE](LICENSE) 和[许可说明](LICENSING.md)。提交新贡献时，请明确同意将你有权授权的新增部分按当前的 cc-haha Community Source License 1.0 提供；如果你希望使用其他许可，请在 PR 中明确说明，由维护者在合入前确认。此说明不追溯变更既有 MIT 贡献，也不转移版权或授予维护者无限制重新许可权。
+
+引入或修改第三方代码时，保留原许可及版权通知，并说明来源。不要把已有第三方许可改成项目当前许可。
+
 ## 更多
 
-完整质量门禁和覆盖率说明见 [贡献指南](docs/internals/contributing.md)；`AGENTS.md` 仅保留 Agent 的高信号入口与路由。
+完整质量门禁、覆盖率、回归测试和跨边界安全规范见 [贡献指南](docs/internals/contributing.md) 与[执行、数据与信任边界](docs/internals/execution-boundaries.md)；`AGENTS.md` 仅保留 Agent 的高信号入口与路由。

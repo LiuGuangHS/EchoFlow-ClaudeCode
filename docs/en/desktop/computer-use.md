@@ -1,119 +1,83 @@
 ---
 title: Computer Use
 nav_title: Computer Use
-description: Let Claude read your screen, move the mouse, and type into other apps.
-order: 8
+description: Let Claude read interfaces and operate desktop apps on macOS, Windows, and Linux.
+order: 7
 ---
 
 # Computer Use
 
-With Computer Use enabled, Claude can take screenshots, click, and type in applications that have no API at all: system settings, native note apps, Finder, and third-party desktop software.
+Computer Use lets Claude read interface elements, take screenshots, click, and type in native notes, file managers, system settings, and other desktop apps. macOS, Windows, and Linux use native runtime components; no Python installation or virtual environment is required.
 
-**On macOS, it does not take over your physical mouse or keyboard.** The native runtime sends actions to the target app and displays a separate virtual cursor. Your real pointer stays in place, so you can keep using your own mouse and keyboard for other work. Actions still change the target app, and some may change app focus. The Windows compatibility executor moves the real pointer, so this benefit is specific to macOS.
+## Support and background actions
 
-It acts on this computer, so read what you're authorizing before you turn it on.
+| Platform | Requirements | Background action limits |
+|---|---|---|
+| macOS | macOS 14.4 or later, Accessibility and Screen Recording permissions | The native engine directs input to the target process without moving the physical pointer; you can keep working in another app |
+| Windows | Windows 10 1809 / Windows Server 2019 or later, in the signed-in user's interactive desktop | Controls that support background semantic actions can be read, clicked, and assigned values. Controls can change focus themselves. Physical input uses the real mouse or keyboard |
+| Linux | The signed-in user's graphical session and AT-SPI accessibility service; Ubuntu 24.04 or later is recommended | Supported AT-SPI actions work in the background on X11 and Wayland; physical input, capture, and window control depend on the desktop |
 
-macOS and Windows are supported. There is no Linux executor yet. The full **background-operation** experience needs macOS 14.4 or newer — see "How Windows differs" below.
+**Background actions have limits.** They do not create an isolated virtual desktop for the agent. Target apps still change; window switching, shell UI, shortcuts, and clipboard operations can affect your work. Avoid editing the same app at the same time as the agent.
 
-## Check the environment
+Background text replacement on Windows requires a control with a writable value; simulated typing needs foreground input. Minimized windows may need to be restored first. Linux physical pointer actions for ordinary apps require X11. Wayland supports semantic actions, while some keyboard operations depend on Mutter RemoteDesktop capabilities. Wayland screenshots may require your response to a system consent dialog, and its clipboard needs `wl-clipboard`; ordinary-app physical pointer input and the visual agent cursor are unavailable.
 
-![Settings → Computer Use: enable switch and OS permission status (Chinese interface)](../../images/app/en/settings-computer-use.webp)
+## Enable Computer Use
 
-Open **Settings → Computer Use**. On macOS 14.4 or later, the app prefers the native runtime component and shows OS permission status. Windows and other compatible runtime paths show checks for Python 3, a virtual environment, and dependencies. Follow the checks shown on your own screen; the native macOS page does not require a Python setup step.
+Open **Settings → Computer Use**, check the native runtime status, then turn on **Enabled** and read the confirmation dialog.
 
-If the page shows Python checks, install Python 3 if needed. For conda, pyenv, or another custom installation, select **Python interpreter path**, then click **Install Environment** to create the isolated venv and dependencies. Click **Re-check** when finished. If the native runtime component is missing, update or reinstall the app and check again.
+**One confirmation authorizes Computer Use for all supported apps on this computer; there is no separate approval for each app.** macOS system permissions, the global switch, and target-validity checks still apply. Windows and Linux do not show the macOS permission card or require **Download Python** or **Install Environment**.
 
-## The two macOS permissions
+![macOS example: Computer Use switch and system permissions](../../images/app/en/settings-computer-use.webp)
 
-macOS additionally requires two system permissions. Neither is optional:
+The image shows macOS. Windows and Linux display the native runtime status and their platform's input limits.
 
-| Permission | What it's for |
+### macOS system permissions
+
+The native permission card guides you through granting two permissions to the runtime component:
+
+| Permission | Purpose |
 |---|---|
-| Accessibility | Sending clicks and typing to the target app without moving the physical pointer |
-| Screen Recording | Taking screenshots — i.e. letting it see |
+| Accessibility | Read app interfaces and deliver actions to the target app |
+| Screen Recording | Capture the target window or screen |
 
-The page has **Open accessibility settings** and **Open screen recording settings** buttons that jump straight to the right pane.
+Follow the card's system-settings instructions, then choose **Recheck Status**. Use **Reopen authorization card** to revisit it. If a new grant has not taken effect, fully quit and reopen cc-haha, then check again. A failed check does not mean permission was granted.
 
-:::warning
-After granting either one you must **fully quit and reopen the app**. macOS reads these permissions once at process start, so without a restart the page will keep reporting them as not granted.
-:::
+### Windows and Linux environments
 
-Make sure you're granting the permission to the app that actually launches EchoFlow Code. Screen Recording detection is occasionally unreliable — if the system settings clearly show it granted but the page still says otherwise, it generally works anyway.
+Windows must run in the signed-in user's interactive desktop. Locked screens, the UAC secure desktop, services in Session 0, and another user's desktop are outside the supported environment. Elevated apps may also be restricted by system permission boundaries.
 
-## One global consent when you enable it
+On Linux, launch cc-haha from the graphical session containing the target apps. A plain TTY, SSH without desktop session variables, a container without the session bus, or another user's session does not provide the same app access. If the accessibility bus is unavailable, check the graphical session and AT-SPI service, then recheck.
 
-**As of 0.5.5, the per-app prompt for every new app is gone.** What replaces it is **a single global consent** when you enable Computer Use: ticking **Enable** raises a risk summary, and you click **Confirm and enable** after reading it.
+## Start a task
 
-That summary states what you are accepting. Three points matter most:
-
-- Claude can capture your screen and may see sensitive or private information on it.
-- Claude can click, type, use the clipboard and system shortcuts, and can send, modify, or delete content.
-- **Once enabled, Claude can control all supported apps directly without asking per app**; product safety limits still apply.
-
-There are two ways out: stop or press `Esc` in the session to interrupt control, or turn Computer Use off here. With it off, **new sessions do not inject the computer-use MCP**, and desktop-control tools are not exposed to the coding agent.
-
-Settings still keeps an **Authorized Apps** list with a search box. Its role has changed from "approve one at a time" to "declare up front" — tick the apps you use constantly and there will be no confirmation step when they're needed.
-
-Two more grants are separate and never come along with enabling Computer Use:
-
-- **Clipboard access** — reading and writing the system clipboard.
-- **System key combos** — sending system-level shortcuts.
-
-:::danger
-With the global consent there is no per-request interception left, so the boundary is yours to draw. Be careful with password managers, banking apps, and corporate chat — don't leave them permanently controllable.
-:::
-
-## Getting started
-
-Start a session and describe the goal and the allowed apps in plain language. Begin with something small and reversible:
+Create a session and describe the goal, app, and permitted changes in plain language:
 
 ```text
-Take a screenshot and tell me what you see.
-Open Notes and create an empty note titled "test".
-Find the Displays pane in System Settings, but don't change anything.
+Read the file manager's current window and list its files. Do not change anything.
+Create an empty note titled "test" in the notes app.
+Find the display settings page, but do not change any options.
 ```
 
-Claude works in a screenshot → decide → act → screenshot loop, so it's slower than you are and will occasionally misclick. Explicit boundaries ("only inside app X", "don't save") work far better than a broad goal.
+In desktop chat, start a request with `/computer-use` or explicitly ask to use Computer Use to select the native desktop tools for that turn. If those tools are unavailable, the chat explains why.
 
-Only one session can use Computer Use at a time. If another session holds the control lock, stop or finish it first. On macOS, this does not mean your physical mouse or keyboard is occupied.
+The agent observes the interface, acts, and reads the result. After a UI change, observe again: old coordinates or element references may no longer apply. Interfaces that expose no accessibility controls may not support background semantic actions; another entry point or explicitly allowed foreground input may be needed.
 
-## Background operation: it doesn't take over your input
+Only one product session can hold the Computer Use control lock at a time. A main agent and subagents can collaborate and display their own cursors. Operations run in a queue and share app state and the clipboard. The virtual cursor shows where the agent is acting.
 
-On macOS, Claude can click, type, scroll and drag **in the background** while you keep working in other applications.
+On Windows, the cursor appears with an `Agent` label when an action can display it, at the scale of the monitor it is on. It stays visible for up to about 45 seconds between actions during a turn, then clears when the turn finishes or you stop it. On Wayland, tool results report the outcome of semantic actions.
 
-- **An independent virtual cursor** shows what the agent is doing on screen. It is separate from your real pointer, which never gets pulled away.
-- **Occlusion-proof** — the target window stays capturable while another app covers it.
-- **Batched execution** — native actions run in a long-lived worker process, so known operations complete back to back instead of waiting for a model round trip each time.
-- **Cancellable at any point** — cancellation propagates through the worker rather than silently failing.
+## Stop and troubleshoot
 
-### How Windows differs
+Use the session's **Stop** button, or **Ctrl+C** in the CLI. Do not rely on pressing Esc in another app as a global stop shortcut. Turn Computer Use off in Settings when finished; new sessions will no longer receive its tools.
 
-**On Windows the system mouse and keyboard are still used** — background input is a macOS-only capability. If you try this on Windows and it seems not to work, that is why, not a fault.
+| Message or symptom | What to do |
+|---|---|
+| Native runtime missing | Update or reinstall the complete app, then recheck. Source checkouts must build the native component first; see [architecture and builds](../internals/computer-use.md#build-and-distribution) |
+| Linux accessibility bus unavailable | Confirm cc-haha and the app share the same graphical user session and that AT-SPI is available; repeated restarts do not establish permission |
+| macOS permission missing or check failed | Reopen the authorization card, follow its instructions, and recheck; fully quit and reopen if needed |
+| Windows background typing refused | Use a supported background value-setting action, or allow foreground physical input; restore minimized windows first |
+| Wayland pointer or window command unsupported | Use semantic actions, or switch to X11 when physical mouse input is required; retries cannot add a missing platform capability |
+| Action result unknown | Read the current interface before deciding what happened; do not repeat clicks, typing, or submission blindly |
+| Another session is using Computer Use | Wait for that session to finish or stop it first |
 
-Windows did gain more reliable input handling, target validation, and a consistent virtual cursor in this release, but those background capabilities are not part of it.
-
-## Known limits
-
-- **Only one session can use Computer Use at a time.** Let another session finish or stop it before trying to take control.
-- **Screenshots can contain sensitive information.** Every visible window may appear in a Windows screenshot; tidy windows and the desktop on any platform before capture.
-- **To stop control,** use the session stop button, Esc, or the **Enable** switch in Settings.
-- **Re-read the UI after it changes.** Old coordinates don't survive a page change.
-- **Windows screenshots aren't filtered.** On macOS a screenshot keeps only authorized apps and the desktop; on Windows every visible window is captured. Close or minimize anything sensitive first.
-- **Browsers and terminals are restricted.** Browsers are read-only (visible but not clickable) and terminals and IDEs are click-only (no typing). Use the browser extension for web pages and the Bash tool for commands.
-
-## Troubleshooting
-
-**The page keeps saying permissions are missing**
-Confirm you granted them to the app that actually launches EchoFlow Code, fully quit and reopen, then click **Re-check**.
-
-**The environment won't install**
-If your page shows Python checks, choose a Python 3 installation that supports `venv` and click **Install Environment** again. If the native runtime component is missing, update or reinstall the app. For other failures, check **Settings → Diagnostics**.
-
-**Screenshots work but clicks don't**
-Check that Computer Use is still enabled, that macOS Accessibility permission is granted, and that the target app is still running. After changing OS permissions, fully quit and reopen the app, then click **Re-check**.
-Make sure the target app is within the allowed set and is currently in the foreground. Browsers and terminals are subject to the tier restrictions above.
-
-**Background operation doesn't work on Windows**
-Expected. Background clicking and typing are macOS-only; on Windows the app uses your system mouse and keyboard.
-
-For global consent, the permission tiers, the native runtime component, and the Python bridge, see [Computer Use architecture](../internals/computer-use.md).
+Screenshots and interface text may contain sensitive information. Arrange your windows and define the task's boundaries before starting. A ready runtime does not guarantee automation of every app or control. See [Computer Use architecture](../internals/computer-use.md) for implementation details.
