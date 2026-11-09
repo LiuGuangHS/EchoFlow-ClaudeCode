@@ -13,7 +13,7 @@
 [![GitHub Forks](https://img.shields.io/github/forks/LiuGuangHS/EchoFlow-ClaudeCode?style=social)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/network/members)
 [![GitHub Issues](https://img.shields.io/github/issues/LiuGuangHS/EchoFlow-ClaudeCode)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/issues)
 [![GitHub Pull Requests](https://img.shields.io/github/issues-pr/LiuGuangHS/EchoFlow-ClaudeCode)](https://github.com/LiuGuangHS/EchoFlow-ClaudeCode/pulls)
-[![License](https://img.shields.io/badge/License-Community_Source-orange)](LICENSE)
+[![License](https://img.shields.io/badge/License-Proprietary-orange)](LICENSE)
 [![English](https://img.shields.io/badge/English-Available-green)](README.md)
 [![Docs](https://img.shields.io/badge/文档站点-Visit-FF7A00)](https://code.echoflow.cn)
 
@@ -140,6 +140,6 @@ EchoFlow Code 的目标不是再包一层聊天框，而是把 Coding Agent 变�
 
 ## 许可说明
 
-当前上游条款为 [cc-haha Community Source License 1.0](LICENSE)。允许个人非商业使用及企业内部自用；接单、对外商业盈利、收费修改或二次开发、商业分发及付费服务须事先取得书面商业授权；二次分发须显著保留来源署名。历史 MIT 授权与第三方许可继续有效。详见[许可说明](LICENSING.md)。当前许可属于源码可用许可，不是 OSI 认可的开源许可证。恢复 EchoFlow 产品身份不撤销新增的上游许可条款，也不授予商业许可。
+根目录的 [LICENSE](LICENSE) 仅对 EchoFlow Code 原创内容作权利保留，不授予第三方代码的许可，也不授予项目使用或分发许可；相关许可须另行取得书面协议。
 
-复用的 agent-desktop 原有代码继续适用 Apache-2.0，其原授权不受本项目 Community Source License 的额外限制；第三方依赖保留各自许可，见[第三方许可](THIRD_PARTY_LICENSES.md)。
+复用的 agent-desktop 代码保留 Apache-2.0 许可。其他第三方代码和依赖保留各自适用的许可与声明，见[第三方许可](THIRD_PARTY_LICENSES.md)及源码附带的声明。

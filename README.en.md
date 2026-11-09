@@ -63,6 +63,6 @@ TypeScript, Electron, React + Vite, Bun, React + Ink, Commander.js, Anthropic SD
 
 ## License
 
-Current upstream terms are the [cc-haha Community Source License 1.0](LICENSE). Noncommercial personal use and internal business operations are allowed; paid client work, commercial deliverables, paid customization or secondary development, commercial distribution, and paid services require prior written commercial permission; redistributions require visible source attribution. Existing MIT grants and third-party licenses remain valid. See the [licensing guide](LICENSING.md). This is source-available, not an OSI-approved open-source license. Restoring EchoFlow product identity does not remove these additional upstream terms or grant a commercial license.
+The root [LICENSE](LICENSE) reserves rights in original EchoFlow Code work only; it does not license third-party code or grant permission to use or redistribute the project. Such permission requires a separate written agreement.
 
-Original reused agent-desktop code remains under Apache-2.0; the project's Community Source License does not add restrictions to those existing grants. Third-party dependencies retain their own licenses; see [Third-Party Licenses](THIRD_PARTY_LICENSES.md).
+Reused agent-desktop code retains its Apache-2.0 license. Other third-party code and dependencies retain their applicable licenses and notices; see [Third-Party Licenses](THIRD_PARTY_LICENSES.md) and the notices alongside the source.

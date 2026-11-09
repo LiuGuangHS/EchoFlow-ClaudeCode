@@ -114,7 +114,7 @@ bun desktop/scripts/native-agent-desktop.ts --target-triple x86_64-unknown-linux
 
 `desktop/scripts/build-sidecars.ts` integrates the script, builds with `cargo +stable build --locked --offline`, and stages the CLI under `desktop/src-tauri/binaries/`. Linux also requires `agent-desktop-linux-clipboard-owner` beside the CLI; Windows uses `.exe`. macOS packaging continues to build the Swift helper. Generated binaries, Cargo targets, and manifests are not committed.
 
-The development resolver can read the source tree's Cargo targets; the packaged resolver reads the app's binaries directory. Electron places these files in `app.asar.unpacked`, with `LICENSE`, `NOTICE`, `THIRD-PARTY-NOTICES`, `UPSTREAM.json`, and `PATCHES.md` under `agent-desktop-licenses/`. Original upstream code remains licensed under Apache-2.0; the root Community Source License does not narrow those existing rights. Dependencies keep their own licenses. Distributing an executable alone does not replace the required notices.
+The development resolver can read the source tree's Cargo targets; the packaged resolver reads the app's binaries directory. Electron places these files in `app.asar.unpacked`, with `LICENSE`, `NOTICE`, `THIRD-PARTY-NOTICES`, `UPSTREAM.json`, and `PATCHES.md` under `agent-desktop-licenses/`. Original upstream code retains its Apache-2.0 license. Dependencies keep their own licenses. Distributing an executable alone does not replace the required notices.
 
 ## Source entry points
 

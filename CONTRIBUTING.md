@@ -71,7 +71,7 @@ bun run quality:smoke --provider-model <provider:model>
 
 ## 贡献的许可边界
 
-贡献前请阅读 [LICENSE](LICENSE) 和[许可说明](LICENSING.md)。提交新贡献时，请明确同意将你有权授权的新增部分按当前的 cc-haha Community Source License 1.0 提供；如果你希望使用其他许可，请在 PR 中明确说明，由维护者在合入前确认。此说明不追溯变更既有 MIT 贡献，也不转移版权或授予维护者无限制重新许可权。
+贡献前请阅读 [LICENSE](LICENSE) 和[第三方许可声明](THIRD_PARTY_LICENSES.md)。根许可证只保留 EchoFlow 原创内容的权利，不授予第三方代码的许可。提交新贡献时，请在 PR 中明确新增内容的来源及你有权提供的授权，由维护者在合入前确认；此说明不变更既有授权，也不转移版权或授予维护者重新许可权。
 
 引入或修改第三方代码时，保留原许可及版权通知，并说明来源。不要把已有第三方许可改成项目当前许可。
 

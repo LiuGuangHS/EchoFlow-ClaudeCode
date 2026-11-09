@@ -114,7 +114,7 @@ bun desktop/scripts/native-agent-desktop.ts --target-triple x86_64-unknown-linux
 
 `desktop/scripts/build-sidecars.ts` 集成该脚本，使用 `cargo +stable build --locked --offline`，将 CLI 放入 `desktop/src-tauri/binaries/`。Linux 还必须把 `agent-desktop-linux-clipboard-owner` 放在 CLI 旁；Windows 使用 `.exe`。macOS 打包继续构建原 Swift helper。生成的二进制、Cargo target 与 manifest 不提交到仓库。
 
-开发 resolver 可读取源码树下的 Cargo target；打包 resolver 从应用的 binaries 目录读取。Electron 将这些文件放在 `app.asar.unpacked`，同时携带 `agent-desktop-licenses/` 下的 `LICENSE`、`NOTICE`、`THIRD-PARTY-NOTICES`、`UPSTREAM.json` 与 `PATCHES.md`。上游原有代码按 Apache-2.0 授权，原授权不因根目录的 Community Source License 而被收窄；依赖保留各自许可。不能删掉这些声明后仅分发可执行文件。
+开发 resolver 可读取源码树下的 Cargo target；打包 resolver 从应用的 binaries 目录读取。Electron 将这些文件放在 `app.asar.unpacked`，同时携带 `agent-desktop-licenses/` 下的 `LICENSE`、`NOTICE`、`THIRD-PARTY-NOTICES`、`UPSTREAM.json` 与 `PATCHES.md`。上游原有代码保留 Apache-2.0 许可；依赖保留各自许可。不能删掉这些声明后仅分发可执行文件。
 
 ## 主要源码入口
 
